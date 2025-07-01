@@ -2,6 +2,7 @@
 import TopicPage from "@/components/templates/TopicPage";
 import CodeBlock from "@/components/ui/CodeBlock";
 import { DiagramPlaceholder } from "@/components/templates/InfoPage";
+import Link from 'next/link'; // Import Link
 
 // PLACEHOLDER CONTENT - All content below must be populated from the "SystemVerilog and UVM Mastery Blueprint"
 
@@ -11,7 +12,9 @@ const UVMFactoryPage = () => {
   // Level 1: The Elevator Pitch
   const level1Content = (
     <>
-      <p><strong>What is it?</strong> [Placeholder: Clear definition of the UVM factory as a mechanism for creating UVM objects and components by type or by registered string name, enabling late binding and overrides, from blueprint].</p>
+      <p><strong>What is it?</strong> [Placeholder: Clear definition of the UVM factory as a mechanism for creating {' '}
+        <Link href="/uvm-concepts/phasing-hierarchy" className="text-primary hover:underline">UVM objects and components</Link>
+        {' '}by type or by registered string name, enabling late binding and overrides, from blueprint].</p>
       <p><strong>The Analogy:</strong> [Placeholder: Analogy for UVM factory, e.g., "Think of the UVM factory like a car factory that can produce different models (base car, sports car, luxury car) from the same 'car' blueprint, and you can request specific models or even swap them out without changing the assembly line instructions," from blueprint].</p>
       <p><strong>The "Why":</strong> [Placeholder: Core problem the factory solves – enabling test-specific customization and replacement of components/objects without modifying the original testbench code, promoting reusability and flexibility, from blueprint].</p>
     </>
@@ -108,3 +111,14 @@ endclass`}
 };
 
 export default UVMFactoryPage;
+
+// Metadata
+const pageTitleForMetadata = "The UVM Factory";
+const level1PitchForMetadata = "The UVM factory provides a powerful mechanism for creating UVM objects and components by type or string name, enabling test-specific customization and polymorphism through type and instance overrides without modifying original testbench code.";
+
+export async function generateMetadata() {
+  return {
+    title: `${pageTitleForMetadata} | SystemVerilog & UVM Mastery`,
+    description: level1PitchForMetadata,
+  };
+}

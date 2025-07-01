@@ -2,6 +2,7 @@
 import TopicPage from "@/components/templates/TopicPage";
 import CodeBlock from "@/components/ui/CodeBlock";
 import { DiagramPlaceholder } from "@/components/templates/InfoPage";
+import Link from 'next/link'; // Import Link
 
 // PLACEHOLDER CONTENT - All content below must be populated from the "SystemVerilog and UVM Mastery Blueprint"
 
@@ -13,7 +14,9 @@ const UvmRalPage = () => {
     <>
       <p><strong>What is it?</strong> [Placeholder: Clear definition of UVM RAL as a standardized way to model and access DUT registers from the testbench, abstracting physical bus details, from blueprint].</p>
       <p><strong>The Analogy:</strong> [Placeholder: Analogy for RAL, e.g., &quot;Think of RAL like a &apos;universal remote control&apos; for your DUT&apos;s registers. You know the button names (register names) and what they do, without needing to know the infrared codes (bus protocol) for each specific TV (DUT),&quot; from blueprint].</p>
-      <p><strong>The &quot;Why&quot;:</strong> [Placeholder: Core problem RAL solves – simplifying register access, enabling reusable register tests (like frontdoor/backdoor access), integrating with functional coverage for register activity, and managing complex register maps, from blueprint].</p>
+      <p><strong>The &quot;Why&quot;:</strong> [Placeholder: Core problem RAL solves – simplifying register access, enabling reusable register tests (like {' '}
+        <Link href="/uvm-concepts/layered-testbench-architecture" className="text-primary hover:underline">frontdoor</Link>
+        /backdoor access), integrating with functional coverage for register activity, and managing complex register maps, from blueprint].</p>
     </>
   );
 

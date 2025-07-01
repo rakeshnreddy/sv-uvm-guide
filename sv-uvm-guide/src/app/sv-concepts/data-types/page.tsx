@@ -127,3 +127,14 @@ memory_transaction_s transaction_q[$]; // Queue of memory_transaction_s structs
 };
 
 export default DataTypesPage;
+
+// Metadata
+const pageTitleForMetadata = "SystemVerilog Data Types";
+const level1PitchForMetadata = "Understand SystemVerilog data types: the crucial difference between 2-state (bit, int) and 4-state (logic, wire, reg) types, and their application in modeling hardware signals and building verification testbenches.";
+
+export async function generateMetadata() {
+  return {
+    title: `${pageTitleForMetadata} | SystemVerilog & UVM Mastery`,
+    description: level1PitchForMetadata,
+  };
+}
