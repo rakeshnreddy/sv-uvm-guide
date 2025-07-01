@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { PrismAsyncLight as SyntaxHighlighter } from "react-syntax-highlighter";
 // Choosing a dark theme for code blocks, can be customized or made theme-aware
-import { materialDark } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { okaidia } from "react-syntax-highlighter/dist/esm/styles/prism"; // Changed to okaidia
 import { Copy, Check } from "lucide-react";
 import { Button } from "./Button"; // Using our existing Button component
 
@@ -69,15 +69,15 @@ const CodeBlock: React.FC<CodeBlockProps> = ({
   // For full glassmorphism, background of SyntaxHighlighter needs to be transparent
   // and the parent div should have the glassmorphism class.
   const codeBlockStyle = {
-    ...materialDark,
+    ...okaidia, // Use okaidia here
     'pre[class*="language-"]': {
-      ...materialDark['pre[class*="language-"]'],
+      ...okaidia['pre[class*="language-"]'], // Use okaidia here
       backgroundColor: "transparent", // Try to make it transparent for parent glassmorphism
       padding: "1em",
     },
      // Ensure the code itself has a background if the pre is transparent
     'code[class*="language-"]': {
-        ...materialDark['code[class*="language-"]'],
+        ...okaidia['code[class*="language-"]'], // Use okaidia here
         // backgroundColor: "rgba(0,0,0,0.1)", // Slight dark background for text readability
     }
   };
