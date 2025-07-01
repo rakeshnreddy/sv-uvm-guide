@@ -5,7 +5,7 @@ import { DiagramPlaceholder } from "@/components/templates/InfoPage";
 
 // PLACEHOLDER CONTENT - All content below must be populated from the "SystemVerilog and UVM Mastery Blueprint"
 
-const UVM RALPage = () => {
+const UvmRalPage = () => {
   const pageTitle = "UVM Register Abstraction Layer (RAL)";
 
   // Level 1: The Elevator Pitch
@@ -105,4 +105,4 @@ endclass
   );
 };
 
-export default UVM RALPage;
+export default UvmRalPage;
