@@ -22,6 +22,8 @@ interface CodeBlockProps {
   language?: string; // e.g., "systemverilog", "javascript"
   fileName?: string;
   showLineNumbers?: boolean;
+  lineProps?: (lineNumber: number) => React.HTMLAttributes<HTMLElement>; // Added lineProps
+  customStyle?: React.CSSProperties; // Added to allow passing through customStyle
 }
 
 const CodeBlock: React.FC<CodeBlockProps> = ({
@@ -29,6 +31,8 @@ const CodeBlock: React.FC<CodeBlockProps> = ({
   language = "systemverilog", // Default to systemverilog
   fileName,
   showLineNumbers = true,
+  lineProps, // Destructure new prop
+  customStyle, // Destructure new prop
 }) => {
   const [isCopied, setIsCopied] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
@@ -123,10 +127,12 @@ const CodeBlock: React.FC<CodeBlockProps> = ({
         showLineNumbers={showLineNumbers}
         lineNumberStyle={{ color: "#6b7280", fontSize: "0.8em", marginRight: "1em" }} // Tailwind gray-500
         wrapLines={true}
+        lineProps={lineProps} // Pass through lineProps
         customStyle={{
           margin: 0, // Remove default margin from SyntaxHighlighter
           borderRadius: "0", // Ensure no double border radius if parent has one
           // backgroundColor: "transparent" // Already part of codeBlockStyle modification
+          ...customStyle // Merge passed customStyle
         }}
       >
         {code.trim()}

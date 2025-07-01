@@ -30,16 +30,22 @@ const FlashcardWidgetPlaceholder = () => (
   </div>
 );
 
+import FlashcardWidget from "@/components/widgets/FlashcardWidget"; // Import the actual widget
+
 // Removed AIAssistantPlaceholder as it will be globally available from RootLayout
 
+interface CardData { // Duplicating interface for now, ideally import from FlashcardWidget or a shared types file
+  id: string | number;
+  front: ReactNode;
+  back: ReactNode;
+}
 interface TopicPageProps {
   title: string;
   level1Content: ReactNode;
   level2Content: ReactNode;
   level3Content: ReactNode;
-  // Placeholder for where other components might be injected if needed directly as props
-  // feynmanPrompt?: ReactNode;
-  // flashcardWidget?: ReactNode;
+  flashcards?: CardData[]; // Optional prop for flashcard data
+  topicId?: string; // To identify the topic in Firestore
 }
 
 const TopicPage: React.FC<TopicPageProps> = ({
@@ -47,7 +53,43 @@ const TopicPage: React.FC<TopicPageProps> = ({
   level1Content,
   level2Content,
   level3Content,
+  flashcards,
+  topicId, // Will be used for Firestore interaction
 }) => {
+  // TODO: Add states for initialCardIndex and loading user progress from Firestore
+  // const [initialCardIndex, setInitialCardIndex] = useState(0);
+  // const [isLoadingProgress, setIsLoadingProgress] = useState(true);
+
+  // Placeholder for Firestore interaction logic
+  // This would typically involve:
+  // - Getting the current user from AuthContext
+  // - Reading /users/{userId}/topics/{topicId}/flashcardProgress
+  // - Setting initialCardIndex
+  // useEffect(() => {
+  //   if (user && topicId) {
+  //     // const fetchProgress = async () => { ... firebase call ... setInitialCardIndex(progress.lastViewedCardIndex); setIsLoadingProgress(false); }
+  //     // fetchProgress();
+  //   } else {
+  //     setIsLoadingProgress(false);
+  //   }
+  // }, [user, topicId]);
+
+
+  const handleFlashcardProgressUpdate = (lastViewedCardIndex: number) => {
+    // TODO: Interact with Firebase to save progress
+    // This would typically involve:
+    // - Getting the current user from AuthContext
+    // - Writing to /users/{userId}/topics/{topicId}/flashcardProgress
+    if (topicId) {
+      console.log(
+        `Flashcard progress for topic "${topicId}": last viewed card ${lastViewedCardIndex}`
+      );
+      // Placeholder for actual Firestore save:
+      // if (user) { firestore.doc(`users/${user.uid}/topics/${topicId}`).set({ flashcardProgress: { lastViewedCardIndex } }, { merge: true }); }
+    }
+  };
+
+
   const handleMarkAsComplete = () => {
     // TODO: Interact with Firebase to mark the topic as complete for the user
     console.log(`Topic "${title}" marked as complete.`);
@@ -69,8 +111,15 @@ const TopicPage: React.FC<TopicPageProps> = ({
         </AccordionItem>
         <AccordionItem title="Level 3: The Deep Dive" id="level3">
           {level3Content}
-          {/* Designated slot for FlashcardWidget - shown within Level 3 */}
-          <FlashcardWidgetPlaceholder />
+          {flashcards && flashcards.length > 0 ? (
+            <FlashcardWidget
+              cards={flashcards}
+              onProgressUpdate={handleFlashcardProgressUpdate}
+              // initialCardIndex={initialCardIndex} // TODO: Pass this once loaded from Firestore
+            />
+          ) : (
+            <FlashcardWidgetPlaceholder /> // Show placeholder if no cards or still loading
+          )}
         </AccordionItem>
       </Accordion>
 
