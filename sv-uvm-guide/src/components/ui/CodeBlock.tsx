@@ -3,7 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { PrismAsyncLight as SyntaxHighlighter } from "react-syntax-highlighter";
 // Choosing a dark theme for code blocks, can be customized or made theme-aware
-import { okaidia } from "react-syntax-highlighter/dist/cjs/styles/prism"; // Changed to cjs path
+import okaidia from "react-syntax-highlighter/dist/cjs/styles/prism/okaidia"; // Direct import of okaidia style
 import { Copy, Check } from "lucide-react";
 import { Button } from "./Button"; // Using our existing Button component
 
