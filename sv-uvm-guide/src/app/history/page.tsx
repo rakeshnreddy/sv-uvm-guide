@@ -1,5 +1,6 @@
 // app/history/page.tsx
-import InfoPage, { InteractiveChartPlaceholder } from "@/components/templates/InfoPage";
+import InfoPage from "@/components/templates/InfoPage"; // Removed InteractiveChartPlaceholder from here
+import HistoryTimelineChart from "@/components/charts/HistoryTimelineChart"; // Import the new chart
 
 // PLACEHOLDER CONTENT - All content below must be populated from the "SystemVerilog and UVM Mastery Blueprint"
 
@@ -32,12 +33,16 @@ const HistoryPage = () => {
         <p>[Placeholder: Standardization of UVM (e.g., IEEE 1800.2) and its widespread adoption in the industry, from blueprint].</p>
       </section>
 
+      {/* Section for the chart */}
       <section>
-        <h2 className="text-2xl font-semibold mt-6 mb-3">Interactive Timeline</h2>
-        <p>[Placeholder: Introduction to the interactive timeline chart that will visually represent these key historical milestones, from blueprint].</p>
-        <InteractiveChartPlaceholder title="Key Milestones in SV & UVM History" />
-        <p className="text-sm text-foreground/70 mt-2">
-          [Placeholder: Brief explanation of how to interact with the timeline or what it depicts, from blueprint].
+        <h2 className="text-2xl font-semibold mt-6 mb-3">Interactive Timeline of SV & UVM Evolution</h2>
+        <p className="mb-4">
+          The following timeline visualizes the key milestones in the development of SystemVerilog and UVM.
+          Hover over the data points to see more details about each event. The size of the circle can be indicative of the event&apos;s impact or scope.
+        </p>
+        <HistoryTimelineChart />
+        <p className="text-sm text-muted-foreground mt-2 text-center">
+          This chart illustrates the journey from early hardware description languages to the comprehensive verification methodologies used today.
         </p>
       </section>
 

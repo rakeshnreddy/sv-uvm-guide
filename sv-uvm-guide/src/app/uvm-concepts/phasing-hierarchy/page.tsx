@@ -1,7 +1,8 @@
 // app/uvm-concepts/phasing-hierarchy/page.tsx
 import TopicPage from "@/components/templates/TopicPage";
 import CodeBlock from "@/components/ui/CodeBlock";
-import { DiagramPlaceholder } from "@/components/templates/InfoPage";
+import { DiagramPlaceholder } from "@/components/templates/InfoPage"; // Still used for Phasing Diagram
+import UvmHierarchySunburstChart from "@/components/charts/UvmHierarchySunburstChart"; // Import the new chart
 
 // PLACEHOLDER CONTENT - All content below must be populated from the "SystemVerilog and UVM Mastery Blueprint"
 
@@ -60,8 +61,15 @@ endclass`}
       <h3 className="text-xl font-semibold mt-4 mb-2">Visualizations:</h3>
       <DiagramPlaceholder title="UVM Phasing Diagram" />
       <p>[Placeholder: Description of a diagram illustrating the sequence of UVM phases and their purpose, from blueprint].</p>
-      <DiagramPlaceholder title="Simplified UVM Class Hierarchy" />
-      <p>[Placeholder: Description of a tree diagram showing key UVM base classes and their relationships, from blueprint].</p>
+
+      <h4 className="text-lg font-semibold mt-6 mb-2">UVM Class Hierarchy Explorer</h4>
+      <p className="mb-2 text-sm text-muted-foreground">
+        The UVM class library is built upon a hierarchy of base classes. The sunburst chart below provides a simplified view. Hover over segments for details.
+      </p>
+      <UvmHierarchySunburstChart />
+      <p className="text-xs text-muted-foreground text-center mt-1">
+        (Note: This is a simplified representation. Some intermediate classes or all derivatives might not be shown for clarity.)
+      </p>
     </>
   );
 
