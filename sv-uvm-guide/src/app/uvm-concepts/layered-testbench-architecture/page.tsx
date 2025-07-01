@@ -61,14 +61,14 @@ const LayeredTestbenchArchitecturePage: React.FC = () => {
 
 export default LayeredTestbenchArchitecturePage;
 
+// Consistent approach for metadata:
+const pageTitleForMetadata = "Layered Testbench Architecture";
+// This is the "Level 1 Elevator Pitch" content for this topic.
+const level1PitchForMetadata = "The UVM layered testbench provides a standardized, reusable, and modular architecture for creating robust verification environments. It organizes components into logical layers, facilitating complexity management and promoting best practices in functional verification.";
+
 export async function generateMetadata() {
-  const topicData: TopicData = {
-    title: "Layered Testbench Architecture",
-    description: "Understand the UVM layered testbench architecture with an interactive diagram, including tests, environments, agents, sequencers, drivers, monitors, and scoreboards.",
-    level1: "The UVM layered testbench provides a standardized, reusable, and modular architecture for creating robust verification environments."
-  };
   return {
-    title: `${topicData.title} | SystemVerilog & UVM Mastery`,
-    description: topicData.description,
+    title: `${pageTitleForMetadata} | SystemVerilog & UVM Mastery`,
+    description: level1PitchForMetadata, // Use the defined Level 1 pitch
   };
 }

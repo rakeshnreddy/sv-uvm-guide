@@ -2,6 +2,7 @@
 import TopicPage from "@/components/templates/TopicPage";
 import CodeBlock from "@/components/ui/CodeBlock";
 import { DiagramPlaceholder } from "@/components/templates/InfoPage";
+import Link from 'next/link'; // Import Link
 
 // PLACEHOLDER CONTENT - All content below must be populated from the "SystemVerilog and UVM Mastery Blueprint"
 
@@ -20,7 +21,9 @@ const ProgramClockingBlocksPage = () => {
   // Level 2: The Practical Explanation
   const level2Content = (
     <>
-      <p><strong>Core Mechanics of Program Blocks:</strong> [Placeholder: Detailed explanation of `program` block execution regions (reactive region), interaction with `module`s, `initial` blocks within programs, test termination, from blueprint].</p>
+      <p><strong>Core Mechanics of Program Blocks:</strong> [Placeholder: Detailed explanation of `program` block execution regions (e.g., the reactive region in the SystemVerilog {' '}
+        <Link href="/sv-concepts/procedural-semantics" className="text-primary hover:underline">event scheduler</Link>
+        ), interaction with `module`s, `initial` blocks within programs, test termination, from blueprint].</p>
       <p><strong>Core Mechanics of Clocking Blocks:</strong> [Placeholder: How `clocking` blocks specify clock signals, input/output skews for signal sampling and driving, default skews, usage with modports, from blueprint].</p>
       <h3 className="text-xl font-semibold mt-4 mb-2">Code Examples:</h3>
       <CodeBlock

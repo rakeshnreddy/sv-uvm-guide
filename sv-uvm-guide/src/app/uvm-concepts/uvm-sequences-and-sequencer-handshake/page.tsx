@@ -131,14 +131,13 @@ endclass
 
 export default UvmSequencesAndHandshakePage;
 
+// Metadata
+const pageTitleForMetadata = "UVM Sequences and Sequencer-Driver Handshake";
+const level1PitchForMetadata = "UVM sequences are fundamental to generating targeted and random stimulus in a UVM testbench. They define series of transactions that are sent to the DUT through a well-defined handshake protocol involving the sequencer and the driver.";
+
 export async function generateMetadata() {
-  const topicData: TopicData = {
-    title: "UVM Sequences & Sequencer Handshake",
-    description: "Learn about UVM sequences, stimulus generation, and the detailed sequencer-driver handshake protocol with an interactive animated diagram.",
-    level1: "UVM sequences are fundamental to generating targeted and random stimulus in a UVM testbench."
-  };
   return {
-    title: `${topicData.title} | SystemVerilog & UVM Mastery`,
-    description: topicData.description,
+    title: `${pageTitleForMetadata} | SystemVerilog & UVM Mastery`,
+    description: level1PitchForMetadata,
   };
 }

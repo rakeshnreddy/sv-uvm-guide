@@ -54,14 +54,13 @@ const ClockDomainCrossingPage: React.FC = () => {
 
 export default ClockDomainCrossingPage;
 
+// Metadata
+const pageTitleForMetadata = "Clock Domain Crossing (CDC)";
+const level1PitchForMetadata = "Clock Domain Crossing (CDC) is a critical aspect of modern SoC design where signals must reliably pass between parts of the chip operating on different or asynchronous clocks. Incorrect CDC handling can lead to metastability and design failure.";
+
 export async function generateMetadata() {
-  const topicData: TopicData = {
-    title: "Clock Domain Crossing (CDC) Techniques",
-    description: "Explore interactive sketches of Clock Domain Crossing (CDC) techniques like 2-flop synchronizers, MUX handshake, and asynchronous FIFOs.",
-    level1: "Clock Domain Crossing (CDC) is a critical aspect of modern SoC design..."
-  };
   return {
-    title: `${topicData.title} | SystemVerilog & UVM Mastery`,
-    description: topicData.description,
+    title: `${pageTitleForMetadata} | SystemVerilog & UVM Mastery`,
+    description: level1PitchForMetadata,
   };
 }
