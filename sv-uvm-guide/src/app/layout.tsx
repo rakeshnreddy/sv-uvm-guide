@@ -4,7 +4,7 @@ import localFont from 'next/font/local';
 import { AnimatePresence } from 'framer-motion'; // Import AnimatePresence
 import "./globals.css";
 // Navbar and Footer are now part of MainLayout
-import MainLayout from "@/components/layout/MainLayout"; // Import MainLayout
+import MainLayout from "@/app/components/layout/MainLayout"; // Corrected Import MainLayout path
 import { AuthProvider } from "@/contexts/AuthContext";
 // The AIAssistant (full chat) is removed from global layout for now.
 // The PersistentAITutorButton will be the global widget.
