@@ -2,12 +2,13 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Button, buttonVariants } from './Button';
-import React, { HTMLAttributes } from 'react'; // Added HTMLAttributes for more specific prop typing
+import React from 'react';
 import '@testing-library/jest-dom';
 
 // Mock framer-motion specifically for these tests if not done globally
 vi.mock('framer-motion', () => ({
   motion: {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     button: ({ whileHover, whileTap, ...props }: any) => (
       <button
         {...props}
@@ -15,6 +16,7 @@ vi.mock('framer-motion', () => ({
         data-whiletap={whileTap ? JSON.stringify(whileTap) : undefined}
       />
     ),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     div: ({ whileHover, whileTap, ...props }: any) => (
       <div
         {...props}
