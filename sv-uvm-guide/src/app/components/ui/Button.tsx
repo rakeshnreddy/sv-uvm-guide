@@ -1,7 +1,7 @@
 "use client";
 
 import React from 'react';
-import { motion, HTMLMotionProps } from 'framer-motion';
+import { motion } from 'framer-motion';
 import { cva, type VariantProps } from 'class-variance-authority';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -32,19 +32,13 @@ const buttonVariants = cva(
   }
 );
 
-export interface ButtonProps extends HTMLMotionProps<"button">, VariantProps<typeof buttonVariants> {
-  asChild?: boolean; // For compatibility with Radix Slot if needed later
+export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {
+  asChild?: boolean;
 }
 
-// Define a more generic ref type that can handle different elements for asChild
-type PolymorphicRef<C extends React.ElementType> = React.ComponentPropsWithRef<C>["ref"];
-
-const Button = React.forwardRef(
-  <C extends React.ElementType = typeof motion.button>(
-    { className, variant, size, asChild = false, type, ...props }: ButtonProps & { as?: C }, // Added 'as' for better type inference with asChild
-    ref: PolymorphicRef<C>
-  ) => {
-    const Comp = asChild ? motion.div : motion.button;
+const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, variant = 'primary', size, asChild = false, type, ...props }, ref) => {
+    const Comp: React.ElementType = asChild ? motion.div : motion.button;
 
     // Animation props
     const hoverAnimation = {
@@ -61,12 +55,12 @@ const Button = React.forwardRef(
       transition: { type: "spring" as const, stiffness: 400, damping: 10 } // Added "as const"
     };
 
-    const buttonType = type || (Comp === motion.button && !asChild ? "button" : undefined);
+    const buttonType = type || (!asChild ? "button" : undefined);
 
     return (
       <Comp
         className={twMerge(clsx(buttonVariants({ variant, size, className })))}
-        ref={ref as React.Ref<HTMLButtonElement> | React.Ref<HTMLDivElement>} // Cast ref based on common Comp types
+        ref={ref as unknown as React.Ref<HTMLButtonElement>}
         whileHover={hoverAnimation}
         whileTap={tapAnimation}
         type={buttonType}
