@@ -1,26 +1,39 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen } from '@testing-library/react'; // Removed fireEvent
 import userEvent from '@testing-library/user-event';
-import { Button, buttonVariants } from './Button'; // Assuming Button.tsx is in the same directory or path is adjusted
-import React from 'react';
+import { Button, buttonVariants } from './Button';
+import React, { HTMLAttributes } from 'react'; // Added HTMLAttributes for more specific prop typing
 
 // Mock framer-motion specifically for these tests if not done globally
-// This allows us to check props passed to motion.button without complex animation testing
 vi.mock('framer-motion', async () => {
-  const actual = await vi.importActual('framer-motion');
+  const actual = await vi.importActual('framer-motion') as any; // Cast to any to handle potential deep motion structure
+
+  // Define a type for the props our mock button will accept
+  type MockButtonProps = Omit<HTMLAttributes<HTMLButtonElement>, 'whileHover' | 'whileTap'> & {
+    whileHover?: any; // Keep any for simplicity if exact type is complex for mock data-* attributes
+    whileTap?: any;
+    // Add other specific motion props if needed for testing them
+  } & React.RefAttributes<HTMLButtonElement>;
+
+
+  const MockedMotionButton = React.forwardRef<HTMLButtonElement, MockButtonProps>(
+    ({ whileHover, whileTap, ...props }, ref) => (
+      <button
+        ref={ref}
+        {...props}
+        data-whilehover={whileHover ? JSON.stringify(whileHover) : undefined}
+        data-whiletap={whileTap ? JSON.stringify(whileTap) : undefined}
+      />
+    )
+  );
+  MockedMotionButton.displayName = "MockMotionButton"; // Added display name
+
   return {
     ...actual,
-    motion: {
+    motion: actual.motion && typeof actual.motion === 'object' ? { // Check if actual.motion is an object
       ...actual.motion,
-      button: React.forwardRef(({ whileHover, whileTap, ...props }: any, ref: any) => (
-        <button
-          ref={ref}
-          {...props}
-          data-whilehover={JSON.stringify(whileHover)} // Pass animation props for inspection
-          data-whiletap={JSON.stringify(whileTap)}
-        />
-      )),
-    },
+      button: MockedMotionButton,
+    } : { button: MockedMotionButton }, // Fallback if actual.motion is not as expected
   };
 });
 

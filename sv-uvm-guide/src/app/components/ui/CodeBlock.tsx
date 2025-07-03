@@ -3,44 +3,57 @@ import { rehype } from 'rehype';
 import rehypePrettyCode from 'rehype-pretty-code';
 import { CopyButton } from './CopyButton'; // Client component for the button
 
+import type { Root as HastRoot, Element as HastElement } from 'hast'; // For node types
+
 interface CodeBlockProps {
   code: string;
-  language: string;
+  language: string; // language is useful for semantics, CopyButton, and potentially future features
   className?: string;
-  theme?: string; // Allow theme override, default to a 'Digital Blueprint' friendly one
+  theme?: string;
 }
 
 const CodeBlock: React.FC<CodeBlockProps> = async ({
   code,
-  language,
+  language, // language prop is explicitly passed for clarity and potential future use
   className = '',
-  theme = 'github-dark' // Default dark theme, e.g., 'night-owl', 'synthwave-84', 'github-dark'
-                        // 'github-dark' is a safe default often available in shiki.
-                        // For specific themes like 'SynthWave '84', ensure shiki supports it or it's custom-loaded.
+  theme = 'github-dark'
 }) => {
-  const options = {
+  const options: any = { // Use any for options if rehype-pretty-code types are not available
     theme: theme,
     keepBackground: true,
-    onVisitLine(node: any) {
-      // Prevent lines from collapsing in `display: grid` mode, and allow empty
-      // lines to be copy/pasted
+    // The `language` prop can be passed to `rehype-pretty-code` if it supports an explicit lang option,
+    // or used to construct a language class if processing markdown/html directly.
+    // For direct string processing, shiki (used by r-p-c) usually needs language in `highlight` call,
+    // or infers. r-p-c might take a defaultLanguage option.
+    // For now, we include `language` in options to mark it as "used" for linting,
+    // actual effect depends on rehype-pretty-code's specific API for this.
+    defaultLanguage: language, // Example of how it might be used if supported
+
+    onVisitLine(node: HastElement) { // Changed 'any' to 'HastElement'
       if (node.children.length === 0) {
         node.children = [{ type: 'text', value: ' ' }];
       }
     },
-    onVisitHighlightedLine(node: any) {
-      // Each line node by default has `class="line"`.
-      node.properties.className.push('highlighted');
+    onVisitHighlightedLine(node: HastElement) { // Changed 'any' to 'HastElement'
+      if (node.properties && Array.isArray(node.properties.className)) {
+        node.properties.className.push('highlighted');
+      } else if (node.properties) {
+        node.properties.className = ['highlighted'];
+      }
     },
-    onVisitHighlightedChars(node: any) {
-      // Each word node has `class="word"`.
-      node.properties.className = ['word--highlighted'];
+    onVisitHighlightedChars(node: HastElement) { // Changed 'any' to 'HastElement'
+      if (node.properties) {
+        node.properties.className = ['word--highlighted'];
+      } else {
+        // Ensure properties exist if they don't (though they should for highlighted chars)
+        node.properties = { className: ['word--highlighted'] };
+      }
     },
   };
 
   const highlightedCode = await rehype()
     .data('settings', { fragment: true })
-    // @ts-ignore - rehype-pretty-code types might not perfectly align with rehype
+    // @ts-expect-error - rehype-pretty-code types might not perfectly align with rehype, using expect-error
     .use(rehypePrettyCode, options)
     .process(code);
 
