@@ -3,7 +3,7 @@ import { rehype } from 'rehype';
 import rehypePrettyCode from 'rehype-pretty-code';
 import { CopyButton } from './CopyButton'; // Client component for the button
 
-import type { Root as HastRoot, Element as HastElement } from 'hast'; // For node types
+import type { Element as HastElement } from 'hast';
 
 interface CodeBlockProps {
   code: string;
@@ -18,7 +18,7 @@ const CodeBlock: React.FC<CodeBlockProps> = async ({
   className = '',
   theme = 'github-dark'
 }) => {
-  const options: any = { // Use any for options if rehype-pretty-code types are not available
+  const options = {
     theme: theme,
     keepBackground: true,
     // The `language` prop can be passed to `rehype-pretty-code` if it supports an explicit lang option,
@@ -49,12 +49,12 @@ const CodeBlock: React.FC<CodeBlockProps> = async ({
         node.properties = { className: ['word--highlighted'] };
       }
     },
-  };
+  } satisfies Record<string, unknown>;
 
   const highlightedCode = await rehype()
     .data('settings', { fragment: true })
-    // @ts-expect-error - rehype-pretty-code types might not perfectly align with rehype, using expect-error
-    .use(rehypePrettyCode, options)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .use(rehypePrettyCode as any, options as any)
     .process(code);
 
   return (
