@@ -13,12 +13,39 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // Digital Blueprint Colors
         background: '#0A192F',
         'brand-text-primary': '#E6F1FF',
         accent: '#64FFDA',
         'secondary-accent': '#FFCA86',
-        // Simplified: Remove HSL-based colors for now to test
+        // Restore HSL-based colors
+        border: "hsl(var(--border-hsl))",
+        input: "hsl(var(--input-hsl))",
+        ring: "hsl(var(--ring-hsl))",
+        foreground: "hsl(var(--foreground-hsl))", // This was the original default text color
+        primary: {
+          DEFAULT: "hsl(var(--primary-hsl))",
+          foreground: "hsl(var(--primary-foreground-hsl))",
+        },
+        secondary: {
+          DEFAULT: "hsl(var(--secondary-hsl, 240 4.8% 95.9%))",
+          foreground: "hsl(var(--secondary-foreground-hsl, 240 5.9% 10%))",
+        },
+        destructive: {
+          DEFAULT: "hsl(var(--destructive-hsl, 0 84.2% 60.2%))",
+          foreground: "hsl(var(--destructive-foreground-hsl, 0 0% 98%))",
+        },
+        muted: {
+          DEFAULT: "hsl(var(--muted-hsl, 240 4.8% 95.9%))",
+          foreground: "hsl(var(--muted-foreground-hsl, 240 3.8% 46.1%))",
+        },
+        popover: {
+          DEFAULT: "hsl(var(--popover-hsl, 0 0% 100%))",
+          foreground: "hsl(var(--popover-foreground-hsl, 240 10% 3.9%))",
+        },
+        card: { // This 'card' color definition might be used by the Card component later
+          DEFAULT: "hsl(var(--card-hsl, 0 0% 100%))",
+          foreground: "hsl(var(--card-foreground-hsl, 240 10% 3.9%))",
+        },
       },
       fontFamily: {
         sans: ['"Cal Sans"', ...fontFamily.sans],
