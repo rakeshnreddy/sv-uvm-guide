@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import localFont from 'next/font/local';
-import { AnimatePresence } from 'framer-motion'; // Import AnimatePresence
+// Import AnimatePresence from the client component provider
+import { AnimatePresence } from '@/app/components/providers/FramerMotionProvider';
 import "./globals.css";
 // Navbar and Footer are now part of MainLayout
 import MainLayout from "@/app/components/layout/MainLayout"; // Corrected Import MainLayout path
@@ -41,7 +42,7 @@ interface RootLayoutProps {
 export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${inter.variable} ${jetbrains_mono.variable} ${calSans.variable} font-body bg-background text-primary-text transition-colors duration-300`}>
+      <body className={`${inter.variable} ${jetbrains_mono.variable} ${calSans.variable} font-body bg-background text-brand-text-primary transition-colors duration-300`}>
         <AuthProvider>
           <AnimatePresence mode="wait">
             {/* MainLayout now wraps the children and includes Header/Footer */}

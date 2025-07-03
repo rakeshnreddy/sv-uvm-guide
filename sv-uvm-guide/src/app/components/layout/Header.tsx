@@ -6,24 +6,24 @@ const Header = () => {
       <div className="container mx-auto px-4 h-16 flex items-center justify-between">
         <div className="flex items-center">
           {/* Placeholder for Logo */}
-          <Link href="/" className="text-2xl font-bold text-primary-text hover:text-accent transition-colors">
+          <Link href="/" className="text-2xl font-bold text-brand-text-primary hover:text-accent transition-colors">
             Logo
           </Link>
         </div>
         <nav className="flex items-center space-x-6">
-          <Link href="/curriculum" className="text-primary-text hover:text-accent transition-colors">
+          <Link href="/curriculum" className="text-brand-text-primary hover:text-accent transition-colors">
             Curriculum
           </Link>
-          <Link href="/practice" className="text-primary-text hover:text-accent transition-colors">
+          <Link href="/practice" className="text-brand-text-primary hover:text-accent transition-colors">
             Practice Hub
           </Link>
-          <Link href="/resources" className="text-primary-text hover:text-accent transition-colors">
+          <Link href="/resources" className="text-brand-text-primary hover:text-accent transition-colors">
             Resources
           </Link>
-          <Link href="/community" className="text-primary-text hover:text-accent transition-colors">
+          <Link href="/community" className="text-brand-text-primary hover:text-accent transition-colors">
             Community
           </Link>
-          <Link href="/dashboard" className="text-primary-text hover:text-accent transition-colors">
+          <Link href="/dashboard" className="text-brand-text-primary hover:text-accent transition-colors">
             Dashboard
           </Link>
         </nav>
