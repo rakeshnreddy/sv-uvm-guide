@@ -2,8 +2,8 @@ import Image from "next/image";
 
 export default function Home() {
   return (
-    <>
-      {/* Tailwind Test Div */}
+    // <React.Fragment> {/* Using React.Fragment explicitly for clarity during debug */}
+      /* Tailwind Test Div */
       <div
         id="tailwind-test-div"
         className="p-10 m-10 border-4 border-red-500 bg-blue-500 text-yellow-300 text-3xl font-bold"
@@ -16,11 +16,14 @@ export default function Home() {
           White text on custom 'background' color.
         </p>
       </div>
+    // </React.Fragment>
 
-      {/* Original Page Content */}
+      /*
+      // Original Page Content - Temporarily commented out for debugging JSX error
       <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
         <main className="flex flex-col gap-[32px] row-start-2 items-center sm:items-start">
           <Image
+      */
           className="dark:invert"
           src="/next.svg"
           alt="Next.js logo"
