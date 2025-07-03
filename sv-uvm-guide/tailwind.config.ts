@@ -12,7 +12,7 @@ const config: Config = {
     extend: {
       colors: {
         background: '#0A192F',
-        'primary-text': '#E6F1FF',
+        'brand-text-primary': '#E6F1FF', // Renamed from 'primary-text'
         accent: '#64FFDA',
         'secondary-accent': '#FFCA86',
         // Keeping other existing colors for now, can be cleaned up later if not used
