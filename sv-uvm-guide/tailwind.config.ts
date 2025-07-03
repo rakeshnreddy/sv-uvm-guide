@@ -3,9 +3,11 @@ import { fontFamily } from "tailwindcss/defaultTheme";
 
 const config: Config = {
   content: [
-    "./src/pages/**/*.{js,ts,jsx,tsx,mdx}",
-    "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
-    "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
+    "./src/app/**/*.{js,ts,jsx,tsx,mdx}", // Primary location for App Router
+    "./src/components/**/*.{js,ts,jsx,tsx,mdx}", // If you have a global src/components
+    "./app/**/*.{js,ts,jsx,tsx,mdx}", // If components are in a root /app folder (less common with src)
+    "./components/**/*.{js,ts,jsx,tsx,mdx}", // If components are in a root /components folder
+    // Add any other top-level directories that might contain JSX/TSX using Tailwind classes
   ],
   darkMode: "class",
   theme: {
