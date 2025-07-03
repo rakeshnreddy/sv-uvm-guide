@@ -36,9 +36,15 @@ export interface ButtonProps extends HTMLMotionProps<"button">, VariantProps<typ
   asChild?: boolean; // For compatibility with Radix Slot if needed later
 }
 
-const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant, size, asChild = false, ...props }, ref) => {
-    const Comp = asChild ? motion.div : motion.button; // Use motion.div if asChild to avoid button-inside-button
+// Define a more generic ref type that can handle different elements for asChild
+type PolymorphicRef<C extends React.ElementType> = React.ComponentPropsWithRef<C>["ref"];
+
+const Button = React.forwardRef(
+  <C extends React.ElementType = typeof motion.button>(
+    { className, variant, size, asChild = false, type, ...props }: ButtonProps & { as?: C }, // Added 'as' for better type inference with asChild
+    ref: PolymorphicRef<C>
+  ) => {
+    const Comp = asChild ? motion.div : motion.button;
 
     // Animation props
     const hoverAnimation = {
@@ -47,22 +53,23 @@ const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         variant === 'primary' ? "0px 0px 15px rgba(255, 202, 134, 0.6)" : // secondary-accent glow
         variant === 'secondary' ? "0px 0px 15px rgba(100, 255, 218, 0.6)" : // accent glow
         "none", // No glow for other variants by default
-      transition: { type: "spring", stiffness: 300, damping: 15 }
+      transition: { type: "spring" as const, stiffness: 300, damping: 15 } // Added "as const"
     };
 
     const tapAnimation = {
       scale: 0.97,
-      transition: { type: "spring", stiffness: 400, damping: 10 }
+      transition: { type: "spring" as const, stiffness: 400, damping: 10 } // Added "as const"
     };
+
+    const buttonType = type || (Comp === motion.button && !asChild ? "button" : undefined);
 
     return (
       <Comp
         className={twMerge(clsx(buttonVariants({ variant, size, className })))}
-        ref={ref}
+        ref={ref as React.Ref<HTMLButtonElement> | React.Ref<HTMLDivElement>} // Cast ref based on common Comp types
         whileHover={hoverAnimation}
         whileTap={tapAnimation}
-        // Pass type="button" by default if not specified, to prevent accidental form submissions
-        type={props.type || "button"}
+        type={buttonType}
         {...props}
       />
     );
