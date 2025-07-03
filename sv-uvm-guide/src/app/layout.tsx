@@ -9,7 +9,7 @@ import { AuthProvider } from "@/contexts/AuthContext";
 // The AIAssistant (full chat) is removed from global layout for now.
 // The PersistentAITutorButton will be the global widget.
 // import AIAssistant from "@/components/ai/AIAssistant";
-import PersistentAITutorButton from "@/components/ai/PersistentAITutorButton"; // Import the new button
+import PersistentAITutorButton from "@/app/components/ai/PersistentAITutorButton"; // Corrected Import path
 
 const inter = Inter({
   subsets: ["latin"],
