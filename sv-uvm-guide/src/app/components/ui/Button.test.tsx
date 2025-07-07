@@ -9,6 +9,7 @@ import '@testing-library/jest-dom';
 vi.mock('framer-motion', () => ({
   motion: {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
     button: ({ whileHover, whileTap, ...props }: any) => (
       <button
         {...props}
