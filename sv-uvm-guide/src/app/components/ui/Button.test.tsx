@@ -1,18 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react'; // Removed fireEvent
+import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Button, buttonVariants } from './Button';
-import React, { HTMLAttributes } from 'react'; // Added HTMLAttributes for more specific prop typing
+import React from 'react'; // Removed unused HTMLAttributes
 
 // Mock framer-motion specifically for these tests if not done globally
 vi.mock('framer-motion', async () => {
-  const actual = await vi.importActual('framer-motion') as any; // Cast to any to handle potential deep motion structure
+  const actual = await vi.importActual('framer-motion') as any;
 
   // Define a type for the props our mock button will accept
-  type MockButtonProps = Omit<HTMLAttributes<HTMLButtonElement>, 'whileHover' | 'whileTap'> & {
-    whileHover?: any; // Keep any for simplicity if exact type is complex for mock data-* attributes
-    whileTap?: any;
-    // Add other specific motion props if needed for testing them
+  // For whileHover/whileTap, using a general object or unknown if specific Framer Motion types are too complex for this mock.
+  // Let's use 'object' for now as they are expected to be objects.
+  type MockButtonProps = Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'whileHover' | 'whileTap'> & {
+    whileHover?: Record<string, unknown>;
+    whileTap?: Record<string, unknown>;
   } & React.RefAttributes<HTMLButtonElement>;
 
 
@@ -26,7 +27,7 @@ vi.mock('framer-motion', async () => {
       />
     )
   );
-  MockedMotionButton.displayName = "MockMotionButton"; // Added display name
+  MockedMotionButton.displayName = "MockMotionButton";
 
   return {
     ...actual,
