@@ -2,14 +2,20 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { Button, buttonVariants } from './Button';
-
-import React, { HTMLAttributes } from 'react'; // Added HTMLAttributes for more specific prop typing
-import '@testing-library/jest-dom';
+import React from 'react'; // Removed unused HTMLAttributes
 
 // Mock framer-motion specifically for these tests if not done globally
-vi.mock('framer-motion', () => ({
-  motion: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+vi.mock('framer-motion', async () => {
+  const actual = await vi.importActual('framer-motion') as any;
+
+  // Define a type for the props our mock button will accept
+  // For whileHover/whileTap, using a general object or unknown if specific Framer Motion types are too complex for this mock.
+  // Let's use 'object' for now as they are expected to be objects.
+  type MockButtonProps = Omit<React.ButtonHTMLAttributes<HTMLButtonElement>, 'whileHover' | 'whileTap'> & {
+    whileHover?: Record<string, unknown>;
+    whileTap?: Record<string, unknown>;
+  } & React.RefAttributes<HTMLButtonElement>;
+
 
     button: ({ whileHover, whileTap, ...props }: any) => (
       <button
@@ -17,19 +23,19 @@ vi.mock('framer-motion', () => ({
         data-whilehover={whileHover ? JSON.stringify(whileHover) : undefined}
         data-whiletap={whileTap ? JSON.stringify(whileTap) : undefined}
       />
-    ),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
 
-    div: ({ whileHover, whileTap, ...props }: any) => (
-      <div
-        {...props}
-        data-whilehover={whileHover ? JSON.stringify(whileHover) : undefined}
-        data-whiletap={whileTap ? JSON.stringify(whileTap) : undefined}
-      />
-    ),
-  },
-  AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-}));
+    )
+  );
+  MockedMotionButton.displayName = "MockMotionButton";
+
+  return {
+    ...actual,
+    motion: actual.motion && typeof actual.motion === 'object' ? { // Check if actual.motion is an object
+      ...actual.motion,
+      button: MockedMotionButton,
+    } : { button: MockedMotionButton }, // Fallback if actual.motion is not as expected
+  };
+});
 
 describe('Button Component', () => {
   it('renders correctly with children', () => {
