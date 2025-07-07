@@ -1,5 +1,5 @@
 import type { Config } from "tailwindcss";
-import { fontFamily } from "tailwindcss/defaultTheme";
+import defaultTheme from "tailwindcss/defaultTheme";
 
 const config: Config = {
   content: [
@@ -48,9 +48,9 @@ const config: Config = {
         },
       },
       fontFamily: {
-        sans: ['"Cal Sans"', ...fontFamily.sans],
-        body: ['Inter', ...fontFamily.sans],
-        mono: ['"JetBrains Mono"', ...fontFamily.mono],
+        sans: ['"Cal Sans"', ...defaultTheme.fontFamily.sans],
+        body: ['Inter', ...defaultTheme.fontFamily.sans],
+        mono: ['"JetBrains Mono"', ...defaultTheme.fontFamily.mono],
       },
       borderRadius: {
         lg: "var(--radius, 0.5rem)",
