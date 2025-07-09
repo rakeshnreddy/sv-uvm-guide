@@ -8,17 +8,22 @@ import '@testing-library/jest-dom';
 // Mock framer-motion specifically for these tests if not done globally
 vi.mock('framer-motion', () => ({
   motion: {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-
-    button: ({ whileHover, whileTap, ...props }: any) => (
+    button: ({
+      whileHover,
+      whileTap,
+      ...props
+    }: { whileHover?: object; whileTap?: object } & React.ButtonHTMLAttributes<HTMLButtonElement>) => (
       <button
         {...props}
         data-whilehover={whileHover ? JSON.stringify(whileHover) : undefined}
         data-whiletap={whileTap ? JSON.stringify(whileTap) : undefined}
       />
     ),
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    div: ({ whileHover, whileTap, ...props }: any) => (
+    div: ({
+      whileHover,
+      whileTap,
+      ...props
+    }: { whileHover?: object; whileTap?: object } & React.HTMLAttributes<HTMLDivElement>) => (
       <div
         {...props}
         data-whilehover={whileHover ? JSON.stringify(whileHover) : undefined}
