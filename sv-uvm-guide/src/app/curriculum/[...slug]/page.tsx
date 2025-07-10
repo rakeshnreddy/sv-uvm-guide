@@ -13,7 +13,7 @@ import {
   type CurriculumNode,
 } from '@/lib/curriculum-data';
 import Breadcrumbs from '@/app/components/layout/Breadcrumbs';
-import Button from '@/app/components/ui/Button';
+import { Button } from '@/app/components/ui/Button';
 import { CodeBlock } from '@/app/components/ui/CodeBlock'; // Assuming CodeBlock is suitable for MDX
 import { Card } from '@/app/components/ui/Card';
 
