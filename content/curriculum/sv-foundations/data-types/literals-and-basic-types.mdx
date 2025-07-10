@@ -1,0 +1,134 @@
+---
+title: "Literals and Basic Data Types in SystemVerilog"
+description: "Understanding number literals (sized, unsized, base specifiers) and basic integer types like integer, time, and real in SystemVerilog, as per IEEE 1800-2017 Clause 5."
+---
+
+# Literals and Basic Data Types
+
+In SystemVerilog, literals are constant values that are directly written into the code. Understanding how to define and use different types of literals is fundamental to writing effective hardware descriptions and testbenches. This section also covers some of the basic data types used for representing numbers and time.
+
+## Theory (Based on IEEE 1800-2017 Clause 5)
+
+### Number Literals
+
+SystemVerilog provides a flexible way to represent numerical values. Numbers can be specified with or without a size, and in different bases (decimal, hexadecimal, binary, octal).
+
+1.  **Unsized Literals:**
+    *   These are simple decimal numbers written without a size or base specifier. The simulator infers their size, typically defaulting to 32 bits.
+    *   Example: `123`, `42`
+
+2.  **Sized Literals:**
+    *   These explicitly define the number of bits the literal represents. This is crucial for precise hardware modeling.
+    *   The format is `<size>'<base><value>`.
+        *   `<size>`: A decimal number specifying the number of bits.
+        *   `<base>`: A single letter indicating the base:
+            *   `'d` or `'D`: Decimal (optional, default if only size is present and value is decimal)
+            *   `'h` or `'H`: Hexadecimal
+            *   `'b` or `'B`: Binary
+            *   `'o` or `'O`: Octal
+        *   `<value>`: The numerical value in the specified base. Underscores (`_`) can be used for readability and are ignored.
+    *   Examples:
+        *   `8'b0101_1010` (8-bit binary)
+        *   `16'hCafe` (16-bit hexadecimal)
+        *   `32'd255` (32-bit decimal)
+        *   `4'b1x0z` (4-bit binary with unknown 'x' and high-impedance 'z' values)
+
+3.  **Base Specifiers without Size:**
+    *   You can specify a base without a size. The size will be inferred by the simulator, typically 32 bits.
+    *   Examples: `'hFF`, `'b101`
+
+### Basic Integer Data Types
+
+SystemVerilog offers several built-in data types for representing integer values and time.
+
+1.  **`integer`**:
+    *   A 32-bit signed variable (4-state: 0, 1, X, Z).
+    *   It's a traditional Verilog type, often used for loop counters or general-purpose integer calculations in testbenches.
+    *   Example: `integer count;`
+
+2.  **`time`**:
+    *   A 64-bit unsigned integer variable (4-state) specifically intended for storing simulation time.
+    *   Used with time-related system functions like `$time`.
+    *   Example: `time current_time; current_time = $time;`
+
+3.  **`real`**:
+    *   Represents a double-precision floating-point number.
+    *   Used for calculations requiring fractional values, typically in testbenches or for high-level modeling. Not generally synthesizable into hardware.
+    *   Example: `real voltage_level; voltage_level = 1.25;`
+
+4.  **`shortint`**, **`int`**, **`longint`**:
+    *   SystemVerilog introduced more C-like integer types:
+        *   `shortint`: 16-bit signed integer (2-state: 0, 1).
+        *   `int`: 32-bit signed integer (2-state: 0, 1).
+        *   `longint`: 64-bit signed integer (2-state: 0, 1).
+    *   These are 2-state types, meaning they cannot hold 'X' (unknown) or 'Z' (high-impedance) values, which makes them faster for simulation but less suitable for modeling uninitialized hardware.
+
+5.  **`byte`**:
+    *   An 8-bit signed integer (2-state: 0, 1).
+    *   Useful for representing byte-sized data.
+
+## Example
+
+Here's a code snippet demonstrating the declaration and assignment of different literals and basic types:
+
+```systemverilog
+module LiteralExamples;
+  // Unsized decimal literal
+  integer my_int_unsized = 123;
+
+  // Sized binary literal
+  logic [7:0] my_byte_bin = 8'b0101_1010; // my_byte_bin will be 90 in decimal
+
+  // Sized hexadecimal literal
+  logic [31:0] my_word_hex = 32'hDEAD_BEEF;
+
+  // Sized decimal literal
+  logic [9:0] my_val_dec = 10'd255;
+
+  // Literals with X and Z
+  logic [3:0] status_reg = 4'b1x0z;
+
+  // Basic integer types
+  integer counter;
+  time    sim_time;
+  real    voltage;
+  int     data_value; // 2-state signed 32-bit integer
+
+  initial begin
+    counter = 0;
+    sim_time = $time;
+    voltage = 3.3;
+    data_value = -100;
+
+    $display("Time: %0t", sim_time);
+    $display("Unsized Integer: %d", my_int_unsized);
+    $display("Binary Byte: %b (Decimal: %d)", my_byte_bin, my_byte_bin);
+    $display("Hex Word: %h", my_word_hex);
+    $display("Decimal Value: %d", my_val_dec);
+    $display("Status Register: %b", status_reg);
+    $display("Counter: %d, Voltage: %f, Data Value: %d", counter, voltage, data_value);
+
+    // Example of potential ambiguity with unsized, non-decimal literals
+    logic [7:0] data_bus;
+    data_bus = 'hA; // 'hA is typically 32 bits (32'h0000000A), then truncated to 8 bits (8'h0A)
+    $display("data_bus from 'hA: %b", data_bus); // Will show 00001010
+
+    data_bus = 8'hA; // Explicitly sized
+    $display("data_bus from 8'hA: %b", data_bus); // Will show 00001010
+  end
+
+endmodule
+```
+
+## Best Practices
+
+*   **Always Use Sized Literals for Hardware Modeling:** When defining constants that will be synthesized into hardware (e.g., parameters, assignments to `logic` vectors representing signals), always use sized literals (e.g., `8'hF0`, `16'd100`). This avoids ambiguity and ensures that the value has the intended bit-width, preventing unexpected truncation or extension issues.
+*   **Use Underscores for Readability:** For long literals, use underscores (`_`) to improve readability (e.g., `32'hCAFE_1234`, `16'b0101_1010_0011_1100`).
+*   **Choose Appropriate Integer Types:**
+    *   For general-purpose counters or variables in testbenches where 4-state behavior (0, 1, X, Z) is useful, `integer` is fine.
+    *   For performance-critical simulations or when modeling data that is known to be only 0 or 1, consider 2-state types like `int`. However, be cautious as they cannot model unknown states in hardware.
+    *   Use `time` for storing simulation time values.
+    *   Use `real` for floating-point calculations, primarily in testbenches.
+*   **Be Mindful of `'bx`, `'bz`:** While useful for modeling unknown or high-impedance states, ensure their propagation and handling are well understood in your design and verification environment.
+
+Understanding and correctly using literals and basic data types is a crucial first step in mastering SystemVerilog for both design and verification.
