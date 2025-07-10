@@ -1,0 +1,303 @@
+---
+title: "The UVM Phases in Detail"
+description: "A detailed explanation of the UVM phasing mechanism, including build, run-time, and clean-up phases, their order of execution, and purpose, based on the UVM 1.2 User Guide."
+---
+
+# The UVM Phases in Detail
+
+The UVM phasing mechanism is a cornerstone of the methodology, providing a structured approach to the execution flow of a verification environment. It ensures that components are built, connected, configured, and run in an orderly and synchronized manner. All `uvm_component`-derived classes participate in phasing. Phases are methods that are called automatically by the UVM framework at the appropriate time during simulation.
+
+This section describes the main UVM phases as defined in the UVM 1.2 User Guide and Class Reference.
+
+## Overview of Phasing
+
+UVM defines a series of predefined phases. Some execute in a specific order (sequentially), while others can execute in parallel. Some phases are executed top-down (from parent to child in the component hierarchy), some bottom-up (from child to parent), and the main run-time phase executes in parallel for all components.
+
+## Diagram of Phase Execution Order
+
+Here's a Mermaid diagram illustrating the typical execution order of the main UVM phases:
+
+```mermaid
+graph TD
+    A[Start of Simulation] --> B(Build Phases);
+    B --> B1(build_phase - Top Down);
+    B1 --> B2(connect_phase - Bottom Up);
+    B2 --> B3(end_of_elaboration_phase - Bottom Up);
+    B3 --> C(Run-Time Phases);
+    C --> C1(start_of_simulation_phase - Bottom Up);
+    C1 --> R(Run Phase Group - Parallel);
+
+    subgraph Run Phase Group (run_phase and its sub-phases)
+        direction LR
+        PReset(pre_reset_phase) --> Reset(reset_phase);
+        Reset --> PostReset(post_reset_phase);
+        PostReset --> PreConfig(pre_configure_phase);
+        PreConfig --> Config(configure_phase);
+        Config --> PostConfig(post_configure_phase);
+        PostConfig --> PreMain(pre_main_phase);
+        PreMain --> Main(main_phase);
+        Main --> PostMain(post_main_phase);
+        PostMain --> PreShutdown(pre_shutdown_phase);
+        PreShutdown --> Shutdown(shutdown_phase);
+        Shutdown --> PostShutdown(post_shutdown_phase);
+    end
+
+    R --> D(Clean-up Phases);
+    D --> D1(extract_phase - Bottom Up);
+    D1 --> D2(check_phase - Bottom Up);
+    D2 --> D3(report_phase - Bottom Up);
+    D3 --> D4(final_phase - Top Down);
+    D4 --> E[End of Simulation];
+
+    style B fill:#lightgreen,stroke:#333,stroke-width:2px
+    style C fill:#lightblue,stroke:#333,stroke-width:2px
+    style R fill:#cyan,stroke:#333,stroke-width:2px
+    style D fill:#lightcoral,stroke:#333,stroke-width:2px
+```
+
+*(This Mermaid diagram shows the common phases. The `run_phase` itself is a task-based phase that runs in parallel with its twelve distinct sub-phases if they are used. If only `run_phase` is implemented, it spans the entire duration of these sub-phases).*
+
+## 1. Build Phases (Function-based, Execute in Order)
+
+These phases are primarily for constructing, configuring, and connecting the testbench component hierarchy. They are implemented as functions and execute in zero simulation time.
+
+### a. `build_phase(uvm_phase phase)` - Top-Down
+
+*   **Purpose:**
+    *   Construct child components using the factory: `ChildType::type_id::create("child_name", this);`
+    *   Get configuration settings from `uvm_config_db` that were set by parent components.
+    *   Set configuration settings for child components using `uvm_config_db`.
+*   **Execution Order:** Called top-down. A parent's `build_phase` completes before its children's `build_phase` methods are called.
+*   **Key Actions:** Component instantiation, configuration database access.
+
+### b. `connect_phase(uvm_phase phase)` - Bottom-Up
+
+*   **Purpose:**
+    *   Establish TLM (Transaction-Level Modeling) port and export connections between components.
+    *   Make other connections, such as assigning virtual interfaces to components that need them (though often virtual interfaces are passed via `uvm_config_db` during `build_phase`).
+*   **Execution Order:** Called bottom-up. A child's `connect_phase` completes before its parent's `connect_phase`. This ensures that components are fully built before connections are made to them.
+*   **Key Actions:** `child.port.connect(this.export);`
+
+### c. `end_of_elaboration_phase(uvm_phase phase)` - Bottom-Up
+
+*   **Purpose:**
+    *   Perform any final adjustments to the testbench structure or configuration after all components have been built and connected.
+    *   This is a good place to display detailed topology information or perform checks that require the entire hierarchy to be established.
+    *   Cannot create new components or change connectivity here.
+*   **Execution Order:** Called bottom-up.
+*   **Key Actions:** Final checks, displaying testbench structure.
+
+### Code Snippet for Build Phases:
+
+```systemverilog
+class my_component extends uvm_component;
+  `uvm_component_utils(my_component)
+
+  my_child_component child_inst;
+  uvm_analysis_export #(my_transaction) analysis_export;
+  int val_from_config;
+
+  function new(string name = "my_component", uvm_component parent = null);
+    super.new(name, parent);
+  endfunction
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase); // Good practice to call super
+    `uvm_info(get_type_name(), "In build_phase", UVM_MEDIUM)
+
+    // Get configuration from parent
+    if(!uvm_config_db#(int)::get(this, "", "my_val", val_from_config))
+      `uvm_warning("NOCONFIG", "my_val not found in config_db")
+
+    // Create child component
+    child_inst = my_child_component::type_id::create("child_inst", this);
+
+    // Set configuration for child (if child_inst expects "child_config_val")
+    // uvm_config_db#(string)::set(this, "child_inst", "child_config_val", "hello_child");
+
+    analysis_export = new("analysis_export", this);
+  endfunction
+
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    `uvm_info(get_type_name(), "In connect_phase", UVM_MEDIUM)
+    // Example: Connecting child's analysis port to this component's export
+    if (child_inst != null && child_inst.analysis_port != null) begin
+      child_inst.analysis_port.connect(this.analysis_export);
+    end
+  endfunction
+
+  virtual function void end_of_elaboration_phase(uvm_phase phase);
+    super.end_of_elaboration_phase(phase);
+    `uvm_info(get_type_name(), "In end_of_elaboration_phase", UVM_MEDIUM)
+    // Display component hierarchy or final checks
+  endfunction
+
+  // Dummy write method for the analysis export
+  virtual function void write(my_transaction t);
+    `uvm_info(get_type_name(), $sformatf("Received transaction: %s", t.convert2string()), UVM_MEDIUM)
+  endfunction
+endclass
+```
+
+## 2. Run-Time Phases (Task-based, Execute in Parallel)
+
+These phases are where the actual simulation activity, stimulus generation, and checking occur. They are implemented as tasks, allowing them to consume simulation time.
+
+### a. `start_of_simulation_phase(uvm_phase phase)` - Bottom-Up (Function)
+
+*   **Purpose:**
+    *   Perform any final setup that requires the simulation to have started but before time advancing tasks begin.
+    *   Example: Displaying final configuration, initializing DUT registers through a back-door mechanism if needed before stimulus.
+    *   This is a function phase, so it executes in zero time, but after `end_of_elaboration` and before any time-consuming `run_phase` or its sub-phases.
+*   **Execution Order:** Called bottom-up.
+
+### b. The `run_phase` and its Sub-Phases - Parallel (Tasks)
+
+The `run_phase` is unique. It's the primary phase for time-consuming operations. UVM provides a set of twelve "run-time" sub-phases that execute in a specific sequence *within* the overall span of the `run_phase`. Components can implement the main `run_phase` directly, or they can implement one or more of these finer-grained sub-phases. If a component implements both `run_phase` and some sub-phases, they all run concurrently.
+
+*   **`run_phase(uvm_phase phase)` (Task):**
+    *   The main task-based phase for stimulus generation, monitoring, and DUT interaction.
+    *   All components' `run_phase` methods start in parallel.
+    *   The `run_phase` terminates when all components agree to end it (e.g., by `phase.raise_objection()` and `phase.drop_objection()` or if a time limit is reached).
+
+*   **Run-Time Sub-Phases (Tasks, execute in the following order):**
+    These allow for more granular control over the sequence of actions during simulation runtime. They are particularly useful for coordinating complex test scenarios involving resets, configuration, and different stages of stimulus.
+    1.  **`pre_reset_phase`**: Actions before reset is applied.
+    2.  **`reset_phase`**: Apply reset sequences.
+    3.  **`post_reset_phase`**: Actions after reset is de-asserted.
+    4.  **`pre_configure_phase`**: Prepare for DUT configuration.
+    5.  **`configure_phase`**: Configure the DUT (e.g., write registers).
+    6.  **`post_configure_phase`**: Actions after DUT configuration.
+    7.  **`pre_main_phase`**: Prepare for main stimulus.
+    8.  **`main_phase`**: Apply the primary stimulus and perform main checking.
+    9.  **`post_main_phase`**: Actions after main stimulus.
+    10. **`pre_shutdown_phase`**: Prepare for test termination.
+    11. **`shutdown_phase`**: Extract final DUT state, stop stimulus.
+    12. **`post_shutdown_phase`**: Final actions before exiting run-time.
+
+    Each of these sub-phases also uses objection mechanisms (`phase.raise_objection()`, `phase.drop_objection()`) to control its duration. A sub-phase does not end until all raised objections are dropped. The next sub-phase begins only after the current one has completed for all participating components.
+
+### Code Snippet for Run-Time Phases:
+
+```systemverilog
+class my_driver extends uvm_driver #(my_transaction);
+  `uvm_component_utils(my_driver)
+  // ... constructor, build_phase ...
+
+  virtual task run_phase(uvm_phase phase);
+    // Example: Continuously drive transactions
+    // This task will run in parallel with other components' run_phases
+    // and also in parallel with this component's main_phase if implemented.
+    my_transaction tx;
+    phase.raise_objection(this, "Starting main driver stimulus");
+    for (int i = 0; i < 10; i++) begin
+      tx = my_transaction::type_id::create("tx");
+      assert(tx.randomize());
+      `uvm_info(get_type_name(), $sformatf("Driving tx %0d: %s", i, tx.convert2string()), UVM_MEDIUM)
+      // Drive tx to DUT...
+      #10ns;
+      seq_item_port.put(tx); // Assuming connected to a sequencer or directly driving
+    end
+    phase.drop_objection(this, "Finished main driver stimulus");
+  endtask
+
+  // Example of using a run-time sub-phase
+  virtual task main_phase(uvm_phase phase);
+    super.main_phase(phase); // Good practice
+    phase.raise_objection(this, "Main phase stimulus started");
+    `uvm_info(get_type_name(), "In main_phase", UVM_MEDIUM);
+    // Specific main_phase actions, e.g., starting a specific sequence
+    // my_main_sequence seq = my_main_sequence::type_id::create("seq");
+    // seq.start(m_sequencer); // Assuming m_sequencer is available
+    #200ns; // Example work
+    phase.drop_objection(this, "Main phase stimulus completed");
+  endtask
+endclass
+```
+
+## 3. Clean-up Phases (Function-based, Execute in Order)
+
+These phases are for extracting simulation results, performing final checks, and reporting. They are implemented as functions and execute in zero simulation time after all run-time phases have completed.
+
+### a. `extract_phase(uvm_phase phase)` - Bottom-Up
+
+*   **Purpose:**
+    *   Extract data and coverage information from the scoreboard, monitors, or DUT.
+    *   Perform calculations based on collected data.
+*   **Execution Order:** Called bottom-up.
+*   **Key Actions:** Reading values, coverage sampling.
+
+### b. `check_phase(uvm_phase phase)` - Bottom-Up
+
+*   **Purpose:**
+    *   Check for simulation correctness based on extracted data.
+    *   Compare expected results with actual results.
+    *   Issue errors or warnings if discrepancies are found.
+*   **Execution Order:** Called bottom-up.
+*   **Key Actions:** Data comparison, error checking.
+
+### c. `report_phase(uvm_phase phase)` - Bottom-Up
+
+*   **Purpose:**
+    *   Generate and display the final simulation report.
+    *   Summarize test results, coverage, and any errors.
+*   **Execution Order:** Called bottom-up.
+*   **Key Actions:** `$display`, `uvm_report_info/warning/error/fatal`.
+
+### d. `final_phase(uvm_phase phase)` - Top-Down
+
+*   **Purpose:**
+    *   Perform any last-minute cleanup actions before the simulation terminates.
+    *   Close files, release resources.
+*   **Execution Order:** Called top-down.
+*   **Key Actions:** Final cleanup.
+
+### Code Snippet for Clean-up Phases:
+
+```systemverilog
+class my_scoreboard extends uvm_scoreboard;
+  `uvm_component_utils(my_scoreboard)
+  // ... constructor, build_phase, uvm_analysis_imp for receiving transactions ...
+
+  int received_item_count = 0;
+  // Assume expected_item_count is set via config_db or calculated
+
+  // write method for uvm_analysis_imp
+  virtual function void write_actual(my_transaction t);
+    `uvm_info(get_type_name(), $sformatf("SB Actual: %s", t.convert2string()), UVM_HIGH)
+    received_item_count++;
+    // Store transaction for checking later
+  endfunction
+
+  virtual function void extract_phase(uvm_phase phase);
+    super.extract_phase(phase);
+    `uvm_info(get_type_name(), "In extract_phase", UVM_MEDIUM)
+    // Calculations based on collected data
+  endfunction
+
+  virtual function void check_phase(uvm_phase phase);
+    super.check_phase(phase);
+    `uvm_info(get_type_name(), "In check_phase", UVM_MEDIUM)
+    if (received_item_count < expected_item_count) begin
+      `uvm_error("SCOREBOARD_CHECK", $sformatf("Mismatch! Expected %0d items, got %0d",
+                                              expected_item_count, received_item_count))
+    end else begin
+      `uvm_info("SCOREBOARD_CHECK", "Item count matches expected.", UVM_LOW)
+    end
+  endfunction
+
+  virtual function void report_phase(uvm_phase phase);
+    super.report_phase(phase);
+    `uvm_info(get_type_name(), "In report_phase", UVM_MEDIUM)
+    `uvm_info(get_full_name(), $sformatf("Final Report: Received %0d items.", received_item_count), UVM_LOW)
+  endfunction
+
+  virtual function void final_phase(uvm_phase phase);
+    super.final_phase(phase);
+    `uvm_info(get_type_name(), "In final_phase. Simulation ending.", UVM_MEDIUM)
+  endfunction
+endclass
+```
+
+Understanding and correctly utilizing these UVM phases is essential for building robust, reusable, and maintainable verification environments. Each phase has a distinct purpose, contributing to the overall structured flow of a UVM simulation.

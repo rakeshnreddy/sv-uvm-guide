@@ -1,0 +1,110 @@
+---
+title: "Nets and Variables: logic vs. wire"
+description: "Understanding the difference between nets (like wire) and variables (like logic) in SystemVerilog, their usage, and best practices, referencing IEEE 1800-2017 Clause 6."
+---
+
+# Nets and Variables: `logic` vs. `wire`
+
+A core concept in SystemVerilog, inherited and expanded from Verilog, is the distinction between **nets** and **variables**. These represent different ways of modeling hardware behavior and data flow. Understanding this difference is crucial for writing correct and efficient SystemVerilog code.
+
+## Theory (Based on IEEE 1800-2017 Clause 6)
+
+### Nets
+
+*   **Purpose:** Nets represent physical connections between hardware elements. They do not store values themselves but reflect the value of their drivers. Think of them as wires in an electronic circuit.
+*   **Driving Requirement:** A net must be continuously driven by something, such as a continuous assignment, the output of a primitive, or an `inout` port. If a net has no driver, its value is typically high-impedance (`z`), unless it's a special net type like `trireg` which can store charge.
+*   **Resolution:** If multiple drivers are connected to the same net, SystemVerilog uses a resolution function to determine the net's value (e.g., `wand` for wired-AND, `wor` for wired-OR). The default for `wire` is that multiple drivers result in an `X` (unknown) if they drive conflicting values.
+*   **Common Net Type: `wire`**
+    *   The most common net type. It represents a simple electrical connection.
+    *   Cannot be assigned a value within a procedural block (e.g., `initial`, `always`). Assignments to wires must be continuous assignments using the `assign` keyword.
+    *   Example: `wire signal_a; assign signal_a = input_1 & input_2;`
+
+### Variables
+
+*   **Purpose:** Variables store values. They behave much like variables in software programming languages. They hold a value until it is explicitly changed by an assignment.
+*   **Assignment:** Variables are assigned values within procedural blocks (e.g., `initial`, `always`, `always_comb`, `always_ff`, `always_latch`) or through continuous assignments.
+*   **Traditional Verilog Variable: `reg`**
+    *   In Verilog, `reg` was the primary type for variables assigned in procedural blocks. The name `reg` is somewhat misleading as it doesn't always imply a hardware register (flip-flop). It simply meant a variable that could store a value.
+*   **SystemVerilog's General-Purpose Variable: `logic`**
+    *   SystemVerilog introduced the `logic` data type as a more versatile replacement for `reg`.
+    *   `logic` is a **4-state** data type (0, 1, X, Z), just like `reg` and `wire`.
+    *   **Key Advantage:** `logic` can be used for both procedural assignments (like `reg`) AND continuous assignments (like `wire`, if there's only a single driver).
+    *   This versatility simplifies code, as you don't always have to decide upfront whether a signal will be assigned procedurally or continuously.
+    *   If `logic` is driven by multiple `assign` statements or by multiple outputs of primitives, it behaves like a `wire` and its value is resolved; however, this is generally discouraged for clarity. It's best practice for a `logic` type to have a single continuous driver or be driven procedurally.
+    *   When `logic` is used on the left-hand side of a procedural assignment (e.g., in an `always_ff` block), it typically infers sequential logic (like a flip-flop).
+    *   When `logic` is used on the left-hand side of a continuous assignment (`assign my_logic = ...;`) or in an `always_comb` block, it typically infers combinational logic.
+
+### `logic` vs. `reg`
+
+*   `logic` can do everything `reg` can do.
+*   `logic` can be continuously assigned by a single driver, whereas `reg` cannot be continuously assigned (you'd need a `wire` and then assign the `reg` from the `wire` if you wanted that effect traditionally).
+*   Because of its flexibility, `logic` is generally recommended over `reg` in modern SystemVerilog code.
+
+## Example
+
+This example demonstrates a `wire` driven by a continuous assignment and `logic` variables assigned within `always_ff` (sequential) and `always_comb` (combinational) blocks.
+
+```systemverilog
+module NetVsVariable (
+  input  logic clk,
+  input  logic reset_n,
+  input  logic data_in_a,
+  input  logic data_in_b,
+  output logic result_out_seq,
+  output logic result_out_comb
+);
+
+  // A 'wire' for an intermediate combinational signal
+  // Wires MUST be driven by continuous assignments or primitive outputs.
+  wire intermediate_and;
+  assign intermediate_and = data_in_a & data_in_b;
+
+  // 'logic' used for a sequential output (infers a flip-flop)
+  // This 'logic' variable stores its value between clock edges.
+  always_ff @(posedge clk or negedge reset_n) begin
+    if (!reset_n) begin
+      result_out_seq <= 1'b0;
+    end else begin
+      result_out_seq <= intermediate_and; // Driven by the wire's value
+    end
+  end
+
+  // 'logic' used for a combinational output
+  // This 'logic' variable's value changes immediately with input changes.
+  // It can also be continuously assigned.
+  // assign result_out_comb = data_in_a | data_in_b; // Alternative continuous assignment
+
+  always_comb begin
+    result_out_comb = data_in_a | data_in_b;
+    // Note: result_out_comb could also have been declared as 'wire' if
+    // it was only driven by a single continuous assignment.
+    // However, using 'logic' here is fine and common practice.
+  end
+
+  // Example of a logic type being continuously assigned (single driver)
+  logic another_logic_signal;
+  assign another_logic_signal = data_in_a ^ data_in_b;
+
+  // This would be an error for a 'reg' type:
+  // reg my_reg;
+  // assign my_reg = data_in_a; // ERROR: reg cannot be a target of continuous assignment
+
+endmodule
+```
+
+## Best Practices
+
+Using `logic` is now widely adopted and recommended by many SystemVerilog experts and coding guidelines.
+
+**Quoting a common guideline (similar to those found on Doulos or Verification Academy):**
+
+> "In SystemVerilog, prefer `logic` over `reg` for all variable declarations that were traditionally `reg`. The `logic` type is a 4-state data type that can be driven by continuous assignments, procedural blocks, or primitives. This removes an artificial Verilog constraint where `reg` types could only be assigned in procedural blocks. Using `logic` consistently simplifies code and reduces potential errors. Reserve `wire` for signals that genuinely represent physical connections with multiple drivers or require specific net resolution semantics (though such scenarios are less common in typical RTL design using `logic`)."
+
+**Key Takeaways:**
+
+*   **Nets (`wire`)**: Represent connections, must be continuously driven, don't store values.
+*   **Variables (`logic`, `reg`, `integer`, etc.)**: Store values, assigned in procedural blocks or by a single continuous driver for `logic`.
+*   **`logic` is the preferred type for general-purpose 4-state data holding in SystemVerilog**, capable of being used where `reg` was traditionally used, and also in many contexts where `wire` might have been used (especially with single continuous drivers).
+*   Use `wire` explicitly when you need to model multiple driver scenarios or specific net types (e.g., `tri`, `wand`). For most synthesizable RTL and testbench variables, `logic` is the more versatile and recommended choice.
+
+By understanding these distinctions and leveraging the power of the `logic` type, you can write more robust, readable, and modern SystemVerilog code.
