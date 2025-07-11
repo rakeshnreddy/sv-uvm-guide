@@ -24,8 +24,8 @@ const jetbrains_mono = JetBrains_Mono({
 
 // Assuming Cal Sans will be a local font file
 const calSans = localFont({
-  src: '../../public/fonts/CalSans-SemiBold.otf', // Adjust path as needed
-  variable: '--font-cal-sans', // CSS variable
+  src: './public/fonts/CalSans-SemiBold.otf',
+  variable: '--font-cal-sans',
   weight: '600',
   display: 'swap',
 });
