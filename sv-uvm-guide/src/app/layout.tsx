@@ -1,6 +1,40 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
 import localFont from 'next/font/local';
+
+// Use local copies of fonts from @fontsource to avoid network issues
+const inter = localFont({
+  src: [
+    {
+      path: '../../node_modules/@fontsource/inter/files/inter-latin-400-normal.woff2',
+      weight: '400',
+      style: 'normal',
+    },
+    {
+      path: '../../node_modules/@fontsource/inter/files/inter-latin-700-normal.woff2',
+      weight: '700',
+      style: 'normal',
+    },
+  ],
+  variable: '--font-inter',
+  display: 'swap',
+});
+
+const jetbrains_mono = localFont({
+  src: [
+    {
+      path: '../../node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2',
+      weight: '400',
+      style: 'normal',
+    },
+    {
+      path: '../../node_modules/@fontsource/jetbrains-mono/files/jetbrains-mono-latin-700-normal.woff2',
+      weight: '700',
+      style: 'normal',
+    },
+  ],
+  variable: '--font-jetbrains-mono',
+  display: 'swap',
+});
 // Import AnimatePresence from the client component provider
 import { AnimatePresence } from '@/app/components/providers/FramerMotionProvider';
 import "./globals.css";
@@ -12,15 +46,6 @@ import { AuthProvider } from "@/contexts/AuthContext";
 // import AIAssistant from "@/components/ai/AIAssistant";
 import PersistentAITutorButton from "@/app/components/ai/PersistentAITutorButton"; // Corrected Import path
 
-const inter = Inter({
-  subsets: ["latin"],
-  variable: '--font-inter', // CSS variable
-});
-
-const jetbrains_mono = JetBrains_Mono({
-  subsets: ['latin'],
-  variable: '--font-jetbrains-mono', // CSS variable
-});
 
 // Assuming Cal Sans will be a local font file
 const calSans = localFont({
