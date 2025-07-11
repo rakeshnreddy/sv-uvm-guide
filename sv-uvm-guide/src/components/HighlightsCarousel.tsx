@@ -3,33 +3,36 @@
 import React from 'react';
 import useEmblaCarousel from 'embla-carousel-react';
 import Autoplay from 'embla-carousel-autoplay';
-import Card from './Card'; // Assuming Card.tsx is in the same directory
+import Card from './Card'; // Path will be correct once Card.tsx is also in src/components
 
-// All emblaStyles have been moved to globals.css
+// Embla specific styles like .embla, .embla__container, .embla__slide
+// should be in `sv-uvm-guide/src/app/globals.css`.
+// This component itself doesn't need additional Tailwind classes for its direct structure,
+// as Embla handles the layout. The styling of the Cards within is handled by Card.tsx.
 
 const features = [
   {
-    icon: '📚', // Placeholder icon
+    icon: '📚', // Placeholder icon, consider using Lucide icons later
     title: "Authoritative Curriculum",
     description: "Master SystemVerilog and UVM with content vetted by industry experts."
   },
   {
-    icon: '💻', // Placeholder icon
+    icon: '💻',
     title: "Interactive Labs",
     description: "Apply your knowledge with hands-on coding exercises and a waveform studio."
   },
   {
-    icon: '🤖', // Placeholder icon
+    icon: '🤖',
     title: "AI-Powered Tutor",
     description: "Get instant feedback and explanations from your personal AI learning assistant."
   },
   {
-    icon: '🧠', // Placeholder icon
+    icon: '🧠',
     title: "Spaced Repetition",
     description: "Reinforce concepts effectively with our intelligent flashcard system."
   },
   {
-    icon: '💬', // Placeholder icon
+    icon: '💬',
     title: "Community Forum",
     description: "Connect with fellow learners, ask questions, and share your projects."
   }
@@ -39,19 +42,19 @@ const HighlightsCarousel: React.FC = () => {
   const [emblaRef] = useEmblaCarousel(
     {
       loop: true,
-      align: 'start', // Align slides to the start
+      align: 'start',
     },
-    [Autoplay({ delay: 4000, stopOnInteraction: false })] // Autoplay plugin
+    [Autoplay({ delay: 4000, stopOnInteraction: false, stopOnMouseEnter: true })]
   );
 
   return (
-    // Removed <style jsx global>{emblaStyles}</style> as styles are in globals.css
     <div className="embla" ref={emblaRef}>
       <div className="embla__container">
         {features.map((feature, index) => (
           <div className="embla__slide" key={index}>
+            {/* The Card component is now styled with Tailwind internally */}
             <Card
-              icon={<span>{feature.icon}</span>} // Replace with actual icons later
+              icon={<span className="text-4xl">{feature.icon}</span>}
               title={feature.title}
               description={feature.description}
             />
