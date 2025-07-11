@@ -5,28 +5,7 @@ import useEmblaCarousel from 'embla-carousel-react';
 import Autoplay from 'embla-carousel-autoplay';
 import Card from './Card'; // Assuming Card.tsx is in the same directory
 
-// Basic Embla Carousel styles - you should move these to a global CSS file
-// or use CSS modules for better organization.
-const emblaStyles = `
-.embla {
-  overflow: hidden;
-  padding-top: 1rem;
-  padding-bottom: 1rem;
-}
-.embla__container {
-  display: flex;
-}
-.embla__slide {
-  position: relative;
-  flex: 0 0 80%; /* Show 80% of a slide, so part of the next is visible */
-  margin-right: 1rem;
-}
-@media (min-width: 768px) {
-  .embla__slide {
-    flex: 0 0 30%; /* On larger screens, show more slides */
-  }
-}
-`;
+// All emblaStyles have been moved to globals.css
 
 const features = [
   {
@@ -66,22 +45,20 @@ const HighlightsCarousel: React.FC = () => {
   );
 
   return (
-    <>
-      <style jsx global>{emblaStyles}</style> {/* Not ideal for production, better to use global css */}
-      <div className="embla" ref={emblaRef}>
-        <div className="embla__container">
-          {features.map((feature, index) => (
-            <div className="embla__slide" key={index}>
-              <Card
-                icon={<span>{feature.icon}</span>} // Replace with actual icons later
-                title={feature.title}
-                description={feature.description}
-              />
-            </div>
-          ))}
-        </div>
+    // Removed <style jsx global>{emblaStyles}</style> as styles are in globals.css
+    <div className="embla" ref={emblaRef}>
+      <div className="embla__container">
+        {features.map((feature, index) => (
+          <div className="embla__slide" key={index}>
+            <Card
+              icon={<span>{feature.icon}</span>} // Replace with actual icons later
+              title={feature.title}
+              description={feature.description}
+            />
+          </div>
+        ))}
       </div>
-    </>
+    </div>
   );
 };
 
