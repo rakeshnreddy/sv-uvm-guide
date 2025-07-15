@@ -1,4 +1,4 @@
-import { getDueFlashcards, reviewFlashcard } from '@/app/actions/srs';
+import { getDueFlashcards, reviewFlashcard } from '@/actions/srs';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { revalidatePath } from 'next/cache';

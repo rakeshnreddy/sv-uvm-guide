@@ -10,8 +10,8 @@ import {
   getNextPrevLessons
 } from '@/lib/curriculum-data';
 import { notFound } from 'next/navigation'; // For 404 pages
-import { createFlashcard } from '@/app/actions/srs';
-import { createNotebookEntry } from '@/app/actions/notebook';
+import { createFlashcard } from '@/actions/srs';
+import { createNotebookEntry } from '@/actions/notebook';
 
 // Define the Props type for the page component
 type CurriculumTopicPageProps = {
