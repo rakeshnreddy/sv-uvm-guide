@@ -10,6 +10,8 @@ import {
   getNextPrevLessons
 } from '@/lib/curriculum-data';
 import { notFound } from 'next/navigation'; // For 404 pages
+import { createFlashcard } from '@/app/actions/srs';
+import { createNotebookEntry } from '@/app/actions/notebook';
 
 // Define the Props type for the page component
 type CurriculumTopicPageProps = {
@@ -115,12 +117,22 @@ export default function CurriculumTopicPage({ params }: CurriculumTopicPageProps
 
       {/* End-of-Lesson Actions - Styled with Tailwind */}
       <div className="my-8 p-4 bg-slate-800/60 border border-slate-700/50 rounded-lg flex flex-wrap gap-4 justify-center">
-        <button className="px-6 py-2 bg-accent text-background font-semibold rounded-md hover:bg-accent/80 transition-colors">
-          Add to Memory Hub
-        </button>
-        <button className="px-6 py-2 bg-secondary-accent text-background font-semibold rounded-md hover:bg-secondary-accent/80 transition-colors">
-          Explain in Notebook
-        </button>
+        <form action={async () => {
+          'use server';
+          await createFlashcard(node.id);
+        }}>
+          <button type="submit" className="px-6 py-2 bg-accent text-background font-semibold rounded-md hover:bg-accent/80 transition-colors">
+            Add to Memory Hub
+          </button>
+        </form>
+        <form action={async () => {
+          'use server';
+          await createNotebookEntry(node.id, node.title);
+        }}>
+          <button type="submit" className="px-6 py-2 bg-secondary-accent text-background font-semibold rounded-md hover:bg-secondary-accent/80 transition-colors">
+            Explain in Notebook
+          </button>
+        </form>
         <button className="px-6 py-2 bg-sky-500 text-white font-semibold rounded-md hover:bg-sky-600 transition-colors">
           Practice this Concept
         </button>
