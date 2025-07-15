@@ -1,183 +1,179 @@
 ---
-title: "Inheritance, Polymorphism, and Virtual Methods in SystemVerilog OOP"
-description: "Exploring class inheritance (extends), polymorphism, and the crucial role of virtual methods in SystemVerilog's Object-Oriented Programming features, as per IEEE 1800-2017 Clause 8."
+id: 'sv-advanced-oop-inheritance'
+title: 'Inheritance, Polymorphism, and Virtual Methods'
 ---
 
-# Inheritance, Polymorphism, and Virtual Methods
-
-Object-Oriented Programming (OOP) is a cornerstone of modern verification methodologies like UVM, and SystemVerilog provides robust OOP capabilities. Key among these are inheritance, polymorphism, and virtual methods, which allow for creating flexible, extensible, and reusable verification components and data structures. This section is based on concepts from IEEE 1800-2017, Clause 8.
+Object-Oriented Programming (OOP) is a cornerstone of modern SystemVerilog verification methodologies, particularly UVM. Key OOP concepts like inheritance, polymorphism, and virtual methods allow for the creation of flexible, reusable, and extensible verification components.
 
 ## Theory
 
-### Class Inheritance (`extends`)
+(Reference: IEEE 1800-2017 Standard, Clause 8: Classes)
 
-*   **Concept:** Inheritance allows a new class (called a **derived class** or **subclass**) to acquire the properties (data members) and methods (functions and tasks) of an existing class (called a **base class** or **superclass**).
-*   **Syntax:** The `extends` keyword is used to define an inheritance relationship.
+### Inheritance (`extends`)
+
+*   **Concept:** Inheritance allows a new class (called a *derived class* or *subclass*) to acquire the properties (data members) and methods (functions/tasks) of an existing class (called a *base class* or *superclass*). This promotes code reuse and establishes an "is-a" relationship (e.g., an `EthPacket` *is a* type of `Packet`).
+*   **Syntax:** Achieved using the `extends` keyword.
     ```systemverilog
     class BaseClass;
-      // Base class members
+      // members and methods
     endclass
 
     class DerivedClass extends BaseClass;
-      // Derived class can access BaseClass members
-      // and add its own specific members
+      // additional members and methods
+      // can also override base class methods
     endclass
     ```
-*   **Benefits:**
-    *   **Code Reusability:** Avoids redundant code by inheriting common functionality.
-    *   **Extensibility:** Allows adding new features or specializing behavior in derived classes without modifying the base class.
-    *   **Hierarchical Classification:** Creates a natural "is-a" relationship (e.g., an `EthPacket` *is a* `Packet`).
+*   **`super` keyword:** Used within a derived class to call methods or access members of the base class, particularly useful for invoking the base class constructor (`super.new()`).
 
 ### Polymorphism
 
-*   **Concept:** Polymorphism (from Greek, meaning "many forms") allows a base class handle (pointer or reference) to hold an object of any of its derived classes. This means you can write code that operates on base class handles, and it will behave correctly regardless of the actual derived class object being referenced.
-*   **Mechanism:** In SystemVerilog, when a base class handle stores a derived class object, you can call methods defined in the base class using that handle. The actual method executed depends on the object's type and whether the method is `virtual`.
-*   **Example Scenario:** You might have an array of `Packet` handles, where some elements point to `EthPacket` objects and others to `UsbPacket` objects.
+*   **Concept:** Polymorphism (literally "many forms") allows a base class handle (pointer or reference) to hold an object of any of its derived classes. This means you can write code that operates on base class handles, and it will behave correctly regardless of the actual derived class object being pointed to at runtime.
+*   **Example:** If `Packet` is a base class and `EthPacket` and `UsbPacket` are derived classes, a variable of type `Packet` can hold an instance of `Packet`, `EthPacket`, or `UsbPacket`.
+    ```systemverilog
+    Packet p;
+    EthPacket eth_p = new();
+    UsbPacket usb_p = new();
+
+    p = eth_p; // Base class handle holds derived class object
+    p.some_method(); // Behavior depends on the actual object type if some_method is virtual
+
+    p = usb_p;
+    p.some_method();
+    ```
 
 ### Virtual Methods
 
-*   **Problem Solved:** Consider a base class `Packet` with a `print()` method, and derived classes `EthPacket` and `UsbPacket` that also have their own `print()` methods. If you have a `Packet` handle `p` pointing to an `EthPacket` object, and you call `p.print()`, which `print()` method should be called?
-    *   If `print()` in the base class is **not** `virtual`, the base class version of `print()` is called (this is determined at compile time based on the handle type). This is often not what's desired.
-    *   If `print()` in the base class is declared as **`virtual`**, the version of `print()` corresponding to the **actual object type** (`EthPacket` in this case) is called. This is determined at runtime and is the essence of polymorphic behavior.
-*   **Syntax:** The `virtual` keyword is used when declaring the method in the base class.
+*   **Concept:** When a base class handle holds a derived class object, and a method is called on that handle, a virtual method ensures that the derived class's implementation of that method is executed, not the base class's. This is crucial for achieving true polymorphic behavior. If a method is *not* virtual, the base class's version is always called, regardless of the object's actual type.
+*   **Syntax:** The `virtual` keyword is used in the base class when declaring the method. Derived classes that override this method do not need to repeat the `virtual` keyword (though it's not an error if they do).
     ```systemverilog
-    class BaseClass;
-      virtual function void display();
-        $display("BaseClass display");
+    class Packet;
+      virtual function void print(); // Declared as virtual
+        $display("Generic Packet");
       endfunction
     endclass
 
-    class DerivedClass extends BaseClass;
-      // Override the virtual method
-      virtual function void display(); // 'virtual' keyword is optional here but good practice
-        $display("DerivedClass display");
+    class EthPacket extends Packet;
+      // Override the print method
+      virtual function void print(); // 'virtual' here is optional but good practice
+        $display("Ethernet Packet");
       endfunction
     endclass
     ```
-*   **Rule:** If a method is declared `virtual` in a base class, it remains `virtual` in all derived classes, whether or not the `virtual` keyword is repeated in the derived class. It's good practice to repeat it for clarity.
-*   **Constructors (`new`) are never virtual.**
+*   **Late Binding:** Virtual methods enable "late binding" or "dynamic dispatch," where the decision of which method implementation to execute is made at runtime based on the actual object type, not at compile time based on the handle type.
 
 ## Example: Packet Hierarchy
 
-Let's illustrate these concepts with a classic example of a generic `Packet` class and specific packet types.
+This example demonstrates inheritance, polymorphism, and virtual methods with a simple packet hierarchy.
 
 ```systemverilog
 // Base class Packet
 class Packet;
   string name;
-  int    id;
 
-  // Constructor
-  function new(string name = "GenericPacket", int id = 0);
+  function new(string name = "Packet");
     this.name = name;
-    this.id = id;
   endfunction
 
-  // Virtual method to print packet details
-  virtual function void print_info();
-    $display("[%0s] ID: %0d", name, id);
+  // Virtual method to display packet information
+  virtual function void print();
+    $display("[%s] Generic packet data", name);
   endfunction
 
-  virtual function void process();
-    $display("[%0s] Performing generic processing.", name);
+  function void common_processing();
+    $display("[%s] Performing common packet processing.", name);
   endfunction
 endclass
 
 // Derived class EthPacket
 class EthPacket extends Packet;
-  logic [47:0] src_mac;
-  logic [47:0] dst_mac;
+  int eth_type;
 
-  function new(string name = "EthPacket", int id = 1, logic [47:0] src_mac = 48'hAABBCC001122, logic [47:0] dst_mac = 48'hDDEEFF334455);
-    super.new(name, id); // Call base class constructor
-    this.src_mac = src_mac;
-    this.dst_mac = dst_mac;
+  function new(string name = "EthPacket", int eth_type = 'h0800);
+    super.new(name); // Call base class constructor
+    this.eth_type = eth_type;
   endfunction
 
-  // Override the virtual print_info method
-  virtual function void print_info();
-    super.print_info(); // Optionally call base class method
-    $display("  L2 Info: SRC MAC: %h, DST MAC: %h", src_mac, dst_mac);
+  // Override the virtual print method
+  virtual function void print();
+    super.print(); // Optionally call base class method
+    $display("[%s] Ethernet Type: 0x%0h", name, eth_type);
   endfunction
 
-  // Override the virtual process method
-  virtual function void process();
-    $display("[%0s] Processing Ethernet headers...", name);
-    // Specific Ethernet processing logic
+  function void eth_specific_feature();
+    $display("[%s] Executing Ethernet-specific feature.", name);
   endfunction
 endclass
 
 // Derived class UsbPacket
 class UsbPacket extends Packet;
-  typedef enum { SETUP, DATA, ACK } UsbPacketType;
-  UsbPacketType type;
+  typedef enum { BULK, INTERRUPT, ISOCHRONOUS } usb_transfer_type;
+  usb_transfer_type transfer_type;
 
-  function new(string name = "UsbPacket", int id = 2, UsbPacketType type = UsbPacketType.DATA);
-    super.new(name, id); // Call base class constructor
-    this.type = type;
+  function new(string name = "UsbPacket", usb_transfer_type type = BULK);
+    super.new(name);
+    this.transfer_type = type;
   endfunction
 
-  // Override the virtual print_info method
-  virtual function void print_info();
-    super.print_info(); // Optionally call base class method
-    $display("  USB Info: Type: %s", type.name());
+  // Override the virtual print method
+  virtual function void print();
+    super.print();
+    $display("[%s] USB Transfer Type: %s", name, transfer_type.name());
   endfunction
 
-  // Override the virtual process method
-  virtual function void process();
-    $display("[%0s] Processing USB transaction type %s...", name, type.name());
-    // Specific USB processing logic
+  function void usb_specific_feature();
+    $display("[%s] Executing USB-specific feature.", name);
   endfunction
 endclass
 
-// Test module to demonstrate polymorphism
-module test_oop;
+// Test module
+module oop_example_test;
   initial begin
-    Packet pkt_handles[3]; // Array of base class handles
+    Packet      pkt_array[3]; // Array of base class handles
+    Packet      generic_pkt;
+    EthPacket   eth_pkt;
+    UsbPacket   usb_pkt;
 
-    // Create objects of derived classes and assign to base class handles
-    pkt_handles[0] = new("BasePkt", 100);         // A base Packet object
-    pkt_handles[1] = new EthPacket("EthPkt-A", 101, 48'h112233AABBCC, 48'h445566DDEEFF);
-    pkt_handles[2] = new UsbPacket("UsbPkt-X", 102, UsbPacket.SETUP);
+    // Create objects of different types
+    generic_pkt = new("GenericPkt");
+    eth_pkt     = new("EthPkt0", 'h86DD); // IPv6 EtherType
+    usb_pkt     = new("UsbPkt0", UsbPacket::INTERRUPT);
 
-    $display("--- Demonstrating Polymorphism via virtual print_info() ---");
-    foreach (pkt_handles[i]) begin
-      if (pkt_handles[i] != null) begin
-        $display("Calling print_info() for element %0d:", i);
-        pkt_handles[i].print_info(); // Calls the appropriate derived class version
-        $display("");
+    // Polymorphism: Assign derived class objects to base class handles
+    pkt_array[0] = generic_pkt;
+    pkt_array[1] = eth_pkt;
+    pkt_array[2] = usb_pkt;
+
+    $display("--- Calling virtual print() method on each packet in array ---");
+    foreach (pkt_array[i]) begin
+      if (pkt_array[i] != null) begin
+        pkt_array[i].print(); // Calls the appropriate derived class print()
+        pkt_array[i].common_processing(); // Calls base class method
+
+        // To call derived-class specific methods, we need to downcast safely
+        EthPacket temp_eth_pkt;
+        UsbPacket temp_usb_pkt;
+
+        if ($cast(temp_eth_pkt, pkt_array[i])) begin // Check if it's an EthPacket
+          temp_eth_pkt.eth_specific_feature();
+        end else if ($cast(temp_usb_pkt, pkt_array[i])) begin // Check if it's a UsbPacket
+          temp_usb_pkt.usb_specific_feature();
+        end
+        $display("--------------------");
       end
     end
 
-    $display("--- Demonstrating Polymorphism via virtual process() ---");
-    foreach (pkt_handles[i]) begin
-      if (pkt_handles[i] != null) begin
-        pkt_handles[i].process(); // Calls the appropriate derived class version
-      end
-    end
+    // Example without virtual method (if print was not virtual)
+    // If print() were not virtual, generic_pkt.print() would always be called.
+    // pkt_array[1].print(); // Would call Packet::print(), not EthPacket::print()
   end
 endmodule
 ```
 
-**Explanation of the Example:**
-
-1.  **`Packet` (Base Class):** Defines a `name`, `id`, and a `virtual function void print_info()` and `virtual function void process()`.
-2.  **`EthPacket` (Derived Class):** `extends Packet`, adds `src_mac` and `dst_mac`, and *overrides* `print_info()` and `process()` to include Ethernet-specific details. It calls `super.new()` to initialize base class members and `super.print_info()` to include generic packet info.
-3.  **`UsbPacket` (Derived Class):** `extends Packet`, adds `type` (an enum), and *overrides* `print_info()` and `process()` for USB-specific details.
-4.  **`test_oop` Module:**
-    *   An array `pkt_handles` of type `Packet` is declared. This array can hold handles to `Packet` objects or any object derived from `Packet`.
-    *   Objects of `Packet`, `EthPacket`, and `UsbPacket` are created and their handles are stored in `pkt_handles`.
-    *   When `pkt_handles[i].print_info()` or `pkt_handles[i].process()` is called in the loop, SystemVerilog checks the actual type of the object stored at `pkt_handles[i]`. Because `print_info` and `process` are `virtual`, the version of the method specific to that object's class (`EthPacket::print_info` or `UsbPacket::print_info`) is executed. This is polymorphism in action.
-
 ## UVM Context
 
-The concepts of inheritance, polymorphism, and especially **virtual methods** are absolutely fundamental to the Universal Verification Methodology (UVM).
+These OOP concepts are fundamental to the Universal Verification Methodology (UVM):
 
-*   **UVM Base Classes:** UVM provides a rich set of base classes (e.g., `uvm_object`, `uvm_component`, `uvm_sequence_item`, `uvm_driver`). Your custom verification components and transaction items will typically extend these base classes.
-*   **UVM Phasing Methods:** Methods like `build_phase`, `connect_phase`, `run_phase`, etc., in `uvm_component` are `virtual`. This allows you to override them in your custom components to define specific behavior for each phase. When the UVM framework calls `component.build_phase()`, it's the version you implemented in your derived component that gets executed.
-*   **UVM Factory and Overrides:**
-    *   The UVM factory mechanism heavily relies on polymorphism. You can request the factory to create an object of a certain base type.
-    *   Later, you can configure the factory to *override* that base type with a derived type, often for specific tests or configurations. When the factory creates the object, it will now provide an instance of the derived type, but it can still be assigned to a base type handle.
-    *   This allows for powerful test customization without changing the core testbench structure. For example, you could replace a generic `my_packet` with an `error_injecting_packet` for a specific test case, and existing code using `my_packet` handles will automatically use the error-injecting version if its methods are virtual.
+*   **Inheritance:** All UVM components (`uvm_driver`, `uvm_monitor`, etc.) and objects (`uvm_sequence_item`, etc.) are derived from base classes like `uvm_component` and `uvm_object`. Users create their specific components by extending these UVM base classes.
+*   **Polymorphism & Virtual Methods:** The UVM factory relies heavily on polymorphism and virtual methods. When you use the factory to create components or override types (`set_type_override_by_name` or `set_type_override_by_type`), you are leveraging the ability of base class handles (e.g., `uvm_component`) to hold derived class objects. UVM's phasing methods (e.g., `build_phase`, `run_phase`) are virtual. This ensures that when the UVM framework calls `comp.run_phase()`, it executes the specific `run_phase` implementation of the component `comp`, not just the base `uvm_component::run_phase`. This allows for test-specific behavior and the construction of layered, configurable testbench environments.
 
-Understanding inheritance, polymorphism, and virtual methods is therefore essential not just for general SystemVerilog OOP but is a prerequisite for effective UVM adoption. These features enable the creation of highly modular, reusable, and configurable verification environments.
+Mastering inheritance, polymorphism, and virtual methods in SystemVerilog is essential for effectively using and customizing UVM for complex verification tasks.
