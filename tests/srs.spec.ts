@@ -1,5 +1,6 @@
+/// <reference types="vitest/globals" />
 import { describe, it, expect, vi } from 'vitest';
-import { createFlashcard, reviewFlashcard, getDueFlashcards } from '../app/actions/srs';
+import { createFlashcard, reviewFlashcard, getDueFlashcards } from '../src/app/actions/srs';
 import { PrismaClient } from '@prisma/client';
 
 // Mock Prisma Client
@@ -18,6 +19,17 @@ vi.mock('@prisma/client', () => {
 // Mock iron-session
 vi.mock('iron-session', () => ({
   getIronSession: vi.fn().mockResolvedValue({ userId: 'test-user-id' }),
+}));
+
+vi.mock('next/headers', () => ({
+  cookies: vi.fn(() => ({
+    get: vi.fn(),
+    set: vi.fn(),
+  })),
+}));
+
+vi.mock('next/cache', () => ({
+  revalidatePath: vi.fn(),
 }));
 
 describe('SRS Actions', () => {
