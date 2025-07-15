@@ -5,6 +5,7 @@ import { useState, useEffect } from "react";
 import { Menu, X, Moon, Sun } from "lucide-react"; // Icons
 import { motion, AnimatePresence } from "framer-motion";
 
+
 const navLinks = [
   { href: "/sv-concepts", label: "SV Concepts" },
   { href: "/uvm-concepts", label: "UVM Concepts" },

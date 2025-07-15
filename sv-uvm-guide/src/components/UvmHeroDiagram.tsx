@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 // Assuming SVGR is configured in next.config.js to handle SVG imports as React components.
 // The path should be relative to the `public` directory at the root of `sv-uvm-guide`.
 import UvmSvg from '../../public/uvm-hero-diagram.svg'; // Corrected path relative to `sv-uvm-guide/public`
@@ -84,7 +84,7 @@ const UvmHeroDiagram: React.FC = () => {
 
 // Need to import AnimatePresence or remove it if not used here.
 // Assuming Framer Motion is installed.
-import { AnimatePresence } from 'framer-motion';
+
 
 
 export default UvmHeroDiagram;
