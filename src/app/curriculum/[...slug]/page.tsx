@@ -69,7 +69,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
   }
 
   const currentPath = `/curriculum/${slug.join('/')}`;
-  const node = findNodeByPath(curricu lumData, currentPath);
+  const node = findNodeByPath(curriculumData, currentPath);
 
   if (!node) {
     notFound();
