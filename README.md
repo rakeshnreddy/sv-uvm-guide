@@ -34,10 +34,16 @@ The core philosophy of this platform is a layered approach rooted in understandi
     npm install
     ```
 
-2.  Run the development server:
+2.  Generate the Prisma client:
+
+    ```bash
+    npx prisma generate
+    ```
+
+3.  Run the development server:
 
     ```bash
     npm run dev
     ```
 
-3.  Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+4.  Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
