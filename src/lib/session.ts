@@ -1,9 +1,12 @@
-import { SessionOptions } from 'iron-session';
+import { getIronSession, IronSession } from 'iron-session';
+import { cookies } from 'next/headers';
+import { sessionOptions } from './session-options';
 
-export const sessionOptions: SessionOptions = {
-  password: process.env.SESSION_SECRET as string,
-  cookieName: 'iron-session/examples/next.js',
-  cookieOptions: {
-    secure: process.env.NODE_ENV === 'production',
-  },
-};
+export interface SessionData {
+  userId?: string;
+}
+
+export async function getSession(): Promise<IronSession<SessionData>> {
+  const session = await getIronSession<SessionData>(cookies(), sessionOptions);
+  return session;
+}
