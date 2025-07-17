@@ -70,7 +70,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
       <head>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/wavedrom/3.5.0/wavedrom.min.js"></script>
       </head>
-      <body className={`${inter.variable} ${jetbrains_mono.variable} ${calSans.variable} font-body bg-background text-text-primary transition-colors duration-300`}>
+      <body className={`${inter.variable} ${jetbrains_mono.variable} ${calSans.variable} font-body !bg-background !text-text-primary transition-colors duration-300`}>
         <SessionProvider>
           <AnimatePresence mode="wait">
             {/* MainLayout now wraps the children and includes Header/Footer */}
