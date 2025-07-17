@@ -18,6 +18,21 @@ To get a local copy up and running, follow these simple steps.
 *   npm
 *   Docker
 
+### Environment Variables
+
+Before you can run the application, you need to create a `.env` file and set the following environment variables:
+
+1.  Create a `.env` file by copying the `.env.example` file.
+    ```sh
+    cp .env.example .env
+    ```
+2.  Open the `.env` file and add your Gemini API key and a session secret.
+    ```
+    GEMINI_API_KEY="YOUR_API_KEY"
+    SESSION_SECRET="YOUR_SESSION_SECRET"
+    ```
+3.  The `DATABASE_URL` is already set in the `.env.example` file, but you can change it if you need to.
+
 ### Installation
 
 1.  **Start the database:** Open your terminal and run the following command to start the PostgreSQL database:
@@ -28,18 +43,11 @@ To get a local copy up and running, follow these simple steps.
     ```sh
     npm install
     ```
-3.  **Set up environment variables:**
-    *   In the `sv-uvm-guide` directory, create a new file named `.env`.
-    *   Add the following lines to the `.env` file, replacing `YOUR_GEMINI_API_KEY` with your actual Gemini API key:
-        ```
-        DATABASE_URL="postgresql://postgres:postgres@localhost:5432/postgres"
-        GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
-        ```
-4.  **Apply database migrations:** This command will set up the database schema:
+3.  **Apply database migrations:** This command will set up the database schema:
     ```sh
     npx prisma migrate dev --name init
     ```
-5.  **Run the application:**
+4.  **Run the application:**
     ```sh
     npm run dev
     ```
