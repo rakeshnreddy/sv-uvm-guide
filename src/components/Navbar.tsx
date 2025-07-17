@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Menu, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Logo from "@/components/ui/Logo";
+import { ThemeSwitcher } from "@/app/components/ui/ThemeSwitcher";
 
 const navLinks = [
   { href: "/sv-concepts", label: "SV Concepts" },
@@ -27,7 +28,7 @@ const Navbar = () => {
       initial={{ y: -100 }}
       animate={{ y: 0 }}
       transition={{ type: "spring", stiffness: 50, delay: 0.2 }}
-      className="sticky top-0 z-50 bg-primary shadow-md"
+      className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur-sm"
     >
       <div className="container mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
@@ -41,11 +42,12 @@ const Navbar = () => {
               <Link
                 key={link.href}
                 href={link.href}
-                className="text-text-primary hover:text-accent transition-colors px-3 py-2 rounded-md text-sm font-medium"
+                className="transition-colors hover:text-foreground/80 text-foreground/60"
               >
                 {link.label}
               </Link>
             ))}
+            <ThemeSwitcher />
           </div>
           <div className="md:hidden flex items-center">
             <button

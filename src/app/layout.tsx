@@ -37,6 +37,7 @@ const jetbrains_mono = localFont({
 });
 // Import AnimatePresence from the client component provider
 import { AnimatePresence } from '@/app/components/providers/FramerMotionProvider';
+import { ThemeProvider } from "@/app/components/providers/ThemeProvider";
 import "./globals.css";
 // Navbar and Footer are now part of MainLayout
 import MainLayout from "@/app/components/layout/MainLayout"; // Corrected Import MainLayout path
@@ -70,14 +71,21 @@ export default function RootLayout({ children }: RootLayoutProps) {
       <head>
         <script src="https://cdnjs.cloudflare.com/ajax/libs/wavedrom/3.5.0/wavedrom.min.js"></script>
       </head>
-      <body className={`${inter.variable} ${jetbrains_mono.variable} ${calSans.variable} font-body !bg-background !text-text-primary transition-colors duration-300`}>
+      <body className={`${inter.variable} ${jetbrains_mono.variable} ${calSans.variable} font-sans`}>
         <SessionProvider>
+            <ThemeProvider
+            attribute="class"
+            defaultTheme="dark"
+            enableSystem
+            disableTransitionOnChange
+          >
           <AnimatePresence mode="wait">
             {/* MainLayout now wraps the children and includes Header/Footer */}
             {/* We might need to pass a key here if children can change in a way AnimatePresence needs to track */}
             <MainLayout>{children}</MainLayout>
           </AnimatePresence>
           <PersistentAITutorButton /> {/* Add Persistent AI Tutor Button globally */}
+          </ThemeProvider>
         </SessionProvider>
       </body>
     </html>
