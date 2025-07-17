@@ -16,6 +16,7 @@ export default defineConfig({
     environment: 'jsdom', // Use jsdom to simulate browser environment
     setupFiles: ['./vitest.setup.ts'], // Global setup file for tests
     css: true, // Enable CSS processing if your components import CSS files directly
+    exclude: ['**/node_modules/**', '**/dist/**', '**/e2e/**'],
     alias: {
       '@': path.resolve(__dirname, './src'), // Match Next.js path alias
     },
