@@ -14,6 +14,7 @@ import { notFound } from 'next/navigation';
 import { createFlashcard } from '@/app/actions/srs';
 import { createNotebookEntry } from '@/app/actions/notebook';
 import { Button } from '@/app/components/ui/Button';
+import { mdxMapping } from '@/lib/mdx-mapping';
 
 type CurriculumTopicPageProps = {
   params: { slug: string[] };
@@ -78,7 +79,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
   const flatNodes = getAllCurriculumNodes(curriculumData);
   const { prev: prevLesson, next: nextLesson } = getNextPrevLessons(flatNodes, currentPath);
 
-  const mdxPath = path.join(process.cwd(), 'content', node.path + '.mdx');
+  const mdxPath = path.join(process.cwd(), 'content', mdxMapping[node.path]);
   let mdxContent;
   try {
     mdxContent = await fs.readFile(mdxPath, 'utf8');
