@@ -8,26 +8,6 @@ The core philosophy of this platform is a layered approach rooted in understandi
 2.  **Practical Toolchain Proficiency:** Providing guidance on a complete, accessible open-source digital workbench.
 3.  **Cognitive Learning Strategies:** Integrating techniques like Spaced Repetition (SRS) and the Feynman Technique directly into the platform to forge lasting knowledge.
 
-## Project Structure
-
-*   **/src**: Contains the main source code for the Next.js application.
-    *   **/src/app**: The main application routes.
-        *   **/src/app/api**: API routes.
-        *   **/src/app/components**: UI components used throughout the application.
-        *   **/src/app/curriculum**: The curriculum pages.
-        *   **/src/app/dashboard**: The user dashboard.
-    *   **/src/lib**: Utility functions and libraries.
-*   **/content**: Contains the MDX content for the curriculum.
-*   **/public**: Contains static assets like images and fonts.
-*   **/tests**: Contains the tests for the application.
-*   **next.config.mjs**: The configuration file for Next.js.
-*   **package.json**: The project dependencies and scripts.
-*   **tsconfig.json**: The TypeScript configuration file.
-*   **prisma**: Contains the Prisma schema for the database.
-*   **.env.example**: An example of the environment variables needed to run the application.
-*   **Dockerfile**: The Dockerfile for the Next.js application.
-*   **docker-compose.yml**: The Docker Compose file for running the application and the database.
-
 ## Getting Started
 
 To get a local copy up and running, follow these simple steps.
@@ -38,56 +18,40 @@ To get a local copy up and running, follow these simple steps.
 *   npm
 *   Docker
 
-### Environment Variables
+### Installation
 
-Before you can run the application, you need to create a `.env` file and set the following environment variables:
-
-1.  Create a `.env` file by copying the `.env.example` file.
+1.  **Start the database:** Open your terminal and run the following command to start the PostgreSQL database:
     ```sh
-    cp .env.example .env
+    docker run --name some-postgres -e POSTGRES_PASSWORD=postgres -e POSTGRES_USER=postgres -p 5432:5432 -d postgres:14.1-alpine
     ```
-2.  Open the `.env` file and add your Gemini API key.
-    ```
-    GEMINI_API_KEY="YOUR_API_KEY"
-    ```
-3.  The `DATABASE_URL` is already set in the `.env.example` file, but you can change it if you need to.
-
-### Installation with Docker
-
-1.  Clone the repo
-    ```sh
-    git clone https://github.com/your_username_/sv-uvm-guide.git
-    ```
-2.  Start the database and the application
-    ```sh
-    docker-compose up -d
-    ```
-3.  Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
-
-### Installation without Docker
-
-1.  Clone the repo
-    ```sh
-    git clone https://github.com/your_username_/sv-uvm-guide.git
-    ```
-2.  Install NPM packages
+2.  **Install dependencies:** Navigate to the `sv-uvm-guide` directory in your terminal and run this command to install the project's dependencies:
     ```sh
     npm install
     ```
-3.  Start the database
+3.  **Set up environment variables:**
+    *   In the `sv-uvm-guide` directory, create a new file named `.env`.
+    *   Add the following lines to the `.env` file, replacing `YOUR_GEMINI_API_KEY` with your actual Gemini API key:
+        ```
+        DATABASE_URL="postgresql://postgres:postgres@localhost:5432/postgres"
+        GEMINI_API_KEY="YOUR_GEMINI_API_KEY"
+        ```
+4.  **Apply database migrations:** This command will set up the database schema:
     ```sh
-    docker-compose up -d db
+    npx prisma migrate dev --name init
     ```
-4.  Set up the database
-    ```sh
-    npx prisma generate
-    npx prisma db push
-    ```
-5.  Run the development server
+5.  **Run the application:**
     ```sh
     npm run dev
     ```
-6.  Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+    After these steps, the application should be running at [http://localhost:3000](http://localhost:3000).
+
+## Clean and Run
+
+To clean up local files and builds, do a clean install, and run the dev server, use the following command:
+
+```bash
+npm run clean-and-run
+```
 
 ## Running the tests
 
