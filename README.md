@@ -25,6 +25,8 @@ The core philosophy of this platform is a layered approach rooted in understandi
 *   **tsconfig.json**: The TypeScript configuration file.
 *   **prisma**: Contains the Prisma schema for the database.
 *   **.env.example**: An example of the environment variables needed to run the application.
+*   **Dockerfile**: The Dockerfile for the Next.js application.
+*   **docker-compose.yml**: The Docker Compose file for running the application and the database.
 
 ## Getting Started
 
@@ -34,27 +36,52 @@ To get a local copy up and running, follow these simple steps.
 
 *   Node.js (v18 or later)
 *   npm
+*   Docker
 
-### Installation
+### Installation with Docker
 
 1.  Clone the repo
     ```sh
     git clone https://github.com/your_username_/sv-uvm-guide.git
     ```
-2.  Install NPM packages
+2.  Create a `.env` file by copying the `.env.example` file.
+    ```sh
+    cp .env.example .env
+    ```
+3.  Start the database and the application
+    ```sh
+    docker-compose up -d
+    ```
+4.  Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+
+### Installation without Docker
+
+1.  Clone the repo
+    ```sh
+    git clone https://github.com/your_username_/sv-uvm-guide.git
+    ```
+2.  Create a `.env` file by copying the `.env.example` file.
+    ```sh
+    cp .env.example .env
+    ```
+3.  Install NPM packages
     ```sh
     npm install
     ```
-3.  Set up the database
+4.  Start the database
+    ```sh
+    docker-compose up -d db
+    ```
+5.  Set up the database
     ```sh
     npx prisma generate
     npx prisma db push
     ```
-4.  Run the development server
+6.  Run the development server
     ```sh
     npm run dev
     ```
-5.  Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+7.  Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
 ## Running the tests
 
