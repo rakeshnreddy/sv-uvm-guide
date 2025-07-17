@@ -38,21 +38,31 @@ To get a local copy up and running, follow these simple steps.
 *   npm
 *   Docker
 
+### Environment Variables
+
+Before you can run the application, you need to create a `.env` file and set the following environment variables:
+
+1.  Create a `.env` file by copying the `.env.example` file.
+    ```sh
+    cp .env.example .env
+    ```
+2.  Open the `.env` file and add your Gemini API key.
+    ```
+    GEMINI_API_KEY="YOUR_API_KEY"
+    ```
+3.  The `DATABASE_URL` is already set in the `.env.example` file, but you can change it if you need to.
+
 ### Installation with Docker
 
 1.  Clone the repo
     ```sh
     git clone https://github.com/your_username_/sv-uvm-guide.git
     ```
-2.  Create a `.env` file by copying the `.env.example` file.
-    ```sh
-    cp .env.example .env
-    ```
-3.  Start the database and the application
+2.  Start the database and the application
     ```sh
     docker-compose up -d
     ```
-4.  Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+3.  Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
 ### Installation without Docker
 
@@ -60,28 +70,24 @@ To get a local copy up and running, follow these simple steps.
     ```sh
     git clone https://github.com/your_username_/sv-uvm-guide.git
     ```
-2.  Create a `.env` file by copying the `.env.example` file.
-    ```sh
-    cp .env.example .env
-    ```
-3.  Install NPM packages
+2.  Install NPM packages
     ```sh
     npm install
     ```
-4.  Start the database
+3.  Start the database
     ```sh
     docker-compose up -d db
     ```
-5.  Set up the database
+4.  Set up the database
     ```sh
     npx prisma generate
     npx prisma db push
     ```
-6.  Run the development server
+5.  Run the development server
     ```sh
     npm run dev
     ```
-7.  Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+6.  Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
 
 ## Running the tests
 
