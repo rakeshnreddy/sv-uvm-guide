@@ -32,23 +32,25 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
-export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+export const AuthProvider: React.FC<AuthProviderProps & { userId?: string }> = ({ children, userId }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Check if a user is already "signed in" in our mock environment
-    const initialMockUser = getCurrentUserMock();
-    if (initialMockUser) {
-      setUser({
-        uid: initialMockUser.uid,
-        isAnonymous: initialMockUser.isAnonymous,
-        displayName: initialMockUser.displayName,
-      });
+    if (userId) {
+      // If a userId is passed from the server, we can assume the user is "signed in".
+      // We can either fetch the user details or use a mock user.
+      const mockUser = getCurrentUserMock();
+      if (mockUser && mockUser.uid === userId) {
+        setUser({
+          uid: mockUser.uid,
+          isAnonymous: mockUser.isAnonymous,
+          displayName: mockUser.displayName,
+        });
+      }
     }
-    setLoading(false); // Initial load complete
+    setLoading(false);
 
-    // Subscribe to auth state changes using the mock
     const unsubscribe = onAuthStateChangedMock((mockUser) => {
       if (mockUser) {
         setUser({
@@ -59,12 +61,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       } else {
         setUser(null);
       }
-      // setLoading(false); // Moved initial setLoading(false) out of listener
     });
 
-    // Cleanup subscription on unmount
     return () => unsubscribe();
-  }, []);
+  }, [userId]);
 
   const handleSignInAnonymously = async (): Promise<AuthUser | null> => {
     setLoading(true);

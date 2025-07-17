@@ -2,16 +2,13 @@
 
 import { PrismaClient } from '@prisma/client';
 import { getIronSession } from 'iron-session';
-import { sessionOptions } from '@/lib/session';
+import { sessionOptions } from '@/lib/session-options';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 
 const prisma = new PrismaClient();
 
-async function getSession() {
-  const session = await getIronSession<{ userId?: string }>(cookies(), sessionOptions);
-  return session;
-}
+import { getSession } from '@/lib/session';
 
 export async function createNotebookEntry(topicId: string, topicTitle: string) {
   const session = await getSession();
