@@ -4,6 +4,7 @@ import TopicPage from "@/components/templates/TopicPage";
 import InteractiveCode, { ExplanationStep } from "@/components/ui/InteractiveCode"; // Import new component
 import { DiagramPlaceholder } from "@/components/templates/InfoPage"; // For placeholder visuals
 import DataTypeComparisonChart from "@/components/charts/DataTypeComparisonChart"; // Import the new chart
+import Quiz from "@/components/ui/Quiz";
 import { ReactNode } from "react"; // For CardData type
 
 // PLACEHOLDER CONTENT - All content below must be populated from the "SystemVerilog and UVM Mastery Blueprint"
@@ -84,6 +85,22 @@ memory_transaction_s transaction_q[$]; // Queue of memory_transaction_s structs
         Understanding these differences is crucial for selecting the appropriate type for your design or testbench.
       </p>
       <DataTypeComparisonChart />
+
+      <h3 className="text-xl font-semibold mt-6 mb-2">Check Your Understanding</h3>
+      <Quiz
+        questions={[
+          {
+            question: "Which data type is best suited for modeling a bus with multiple drivers?",
+            options: ["bit", "logic", "wire", "int"],
+            correctAnswer: "wire",
+          },
+          {
+            question: "What is a key advantage of using 2-state data types like 'bit'?",
+            options: ["Can represent 'X' and 'Z'", "Faster simulation speed", "Can be used in clocking blocks", "Are always signed"],
+            correctAnswer: "Faster simulation speed",
+          },
+        ]}
+      />
     </>
   );
 

@@ -1,220 +1,333 @@
-export interface CurriculumNode {
-  id: string; // A unique identifier, e.g., 'sv-foundations-data-types'
+export interface Topic {
   title: string;
-  path: string; // The full URL path, e.g., '/curriculum/sv-foundations/data-types/literals-and-basic-types'
-  status: 'published' | 'draft' | 'planned';
-  children?: CurriculumNode[]; // Corrected: children should be an array of CurriculumNode
+  slug: string;
+  description: string;
 }
 
-export const curriculumData: CurriculumNode[] = [ // Changed to array to represent multiple top-level modules
+export interface Section {
+  title: string;
+  slug: string;
+  topics: Topic[];
+}
+
+export interface Module {
+  title: string;
+  slug: string;
+  sections: Section[];
+}
+
+export const curriculumData: Module[] = [
   {
-    id: 'sv-foundations',
-    title: 'SystemVerilog Foundations',
-    path: '/curriculum/sv-foundations',
-    status: 'planned',
-    children: [
+    title: "SystemVerilog Language Foundations",
+    slug: "sv-foundations",
+    sections: [
       {
-        id: 'sv-foundations-introduction',
-        title: 'Introduction to SystemVerilog Foundations',
-        path: '/curriculum/sv-foundations/introduction',
-        status: 'planned',
+        title: "Introduction",
+        slug: "introduction",
+        topics: [
+          { title: "Welcome", slug: "welcome", description: "An introduction to the SystemVerilog Language." }
+        ]
       },
       {
-        id: 'sv-foundations-data-types',
-        title: 'Data Types',
-        path: '/curriculum/sv-foundations/data-types',
-        status: 'planned',
-        children: [
-          {
-            id: 'sv-foundations-data-types-literals',
-            title: 'Literals and Basic Types',
-            path: '/curriculum/sv-foundations/data-types/literals-and-basic-types',
-            status: 'planned',
-          },
-          {
-            id: 'sv-foundations-data-types-nets-variables',
-            title: 'Nets and Variables: logic vs. wire',
-            path: '/curriculum/sv-foundations/data-types/nets-and-variables-logic-vs-wire',
-            status: 'planned',
-          },
+        title: "Data Types",
+        slug: "data-types",
+        topics: [
+          { title: "Literals and Basic Types", slug: "literals-and-basic-types", description: "A look at the basic data types in SystemVerilog." },
+          { title: "Nets and Variables: logic vs. wire", slug: "nets-and-variables-logic-vs-wire", description: "Understanding the difference between nets and variables." },
+          { title: "4-state vs. 2-state Data Types", slug: "4-state-vs-2-state-data-types", description: "A look at 4-state and 2-state data types." },
+          { title: "Arrays: Packed, Unpacked, Dynamic, Queues, Associative", slug: "arrays-packed-unpacked-dynamic-queues-associative", description: "An overview of arrays in SystemVerilog." },
+          { title: "User-Defined Types: structs, unions, enums, typedef", slug: "user-defined-types-structs-unions-enums-typedef", description: "How to create user-defined types." },
         ],
       },
+      {
+        title: "Procedural Constructs",
+        slug: "procedural-constructs",
+        topics: [
+            { title: "Initial, Always, and Final Blocks", slug: "initial-always-final-blocks", description: "..." },
+            { title: "Tasks and Functions: Scoping and Lifetimes", slug: "tasks-and-functions-scoping-and-lifetimes", description: "..." },
+            { title: "Procedural Flow Control", slug: "procedural-flow-control", description: "..." },
+            { title: "Fork-Join and Process Control", slug: "fork-join-and-process-control", description: "..." },
+        ]
+      },
+      {
+          title: "RTL and Testbench Constructs",
+          slug: "rtl-and-testbench-constructs",
+          topics: [
+              { title: "Packages and Compilation Scopes", slug: "packages-and-compilation-scopes", description: "..." },
+              { title: "Modules and Hierarchy", slug: "modules-and-hierarchy", description: "..." },
+              { title: "Interfaces and Modports", slug: "interfaces-and-modports", description: "..." },
+              { title: "Program and Clocking Blocks", slug: "program-and-clocking-blocks", description: "..." },
+          ]
+      }
     ],
   },
   {
-    id: 'sv-advanced',
-    title: 'Advanced SystemVerilog Topics',
-    path: '/curriculum/sv-advanced',
-    status: 'planned',
-    children: [
-      {
-        id: 'sv-advanced-oop',
-        title: 'Object-Oriented Programming',
-        path: '/curriculum/sv-advanced/object-oriented-programming',
-        status: 'planned',
-        children: [
-          {
-            id: 'sv-advanced-oop-inheritance',
-            title: 'Inheritance, Polymorphism, and Virtual Methods',
-            path: '/curriculum/sv-advanced/object-oriented-programming/inheritance-polymorphism-virtual-methods',
-            status: 'planned',
-          },
-        ],
-      },
-    ],
+    title: "Advanced SystemVerilog for Verification",
+    slug: "sv-advanced",
+    sections: [
+        {
+            title: "Introduction",
+            slug: "introduction",
+            topics: [
+                { title: "Advanced SystemVerilog", slug: "advanced-sv", description: "..." },
+            ]
+        },
+        {
+            title: "Object-Oriented Programming",
+            slug: "object-oriented-programming",
+            topics: [
+                { title: "Classes, Objects, and Handles", slug: "classes-objects-handles", description: "..." },
+                { title: "Constructors, 'this', and 'super'", slug: "constructors-this-super", description: "..." },
+                { title: "Inheritance, Polymorphism, and Virtual Methods", slug: "inheritance-polymorphism-virtual-methods", description: "..." },
+                { title: "Parameterized Classes and Abstract Classes", slug: "parameterized-classes-and-abstract-classes", description: "..." },
+            ]
+        },
+        {
+            title: "Constrained Randomization",
+            slug: "constrained-randomization",
+            topics: [
+                { title: "rand, randc, and randomize()", slug: "rand-randc-and-randomize", description: "..." },
+                { title: "Constraint Blocks, soft, and solve...before", slug: "constraint-blocks-soft-solve-before", description: "..." },
+                { title: "Controlling Randomization: pre_randomize and post_randomize", slug: "controlling-randomization-pre-post", description: "..." },
+                { title: "Advanced Constraints: implication and iteration", slug: "advanced-constraints-implication-iteration", description: "..." },
+            ]
+        },
+        {
+            title: "Inter-Process Communication",
+            slug: "inter-process-communication",
+            topics: [
+                { title: "Events", slug: "events", description: "..." },
+                { title: "Semaphores", slug: "semaphores", description: "..." },
+                { title: "Mailboxes", slug: "mailboxes", description: "..." },
+            ]
+        },
+        {
+            title: "Assertions (SVA)",
+            slug: "assertions-sva",
+            topics: [
+                { title: "Immediate vs. Concurrent Assertions", slug: "immediate-vs-concurrent-assertions", description: "..." },
+                { title: "Sequences, Properties, and Operators", slug: "sequences-properties-and-operators", description: "..." },
+                { title: "Multi-Clocking and disable-iff", slug: "multi-clocking-and-disable-iff", description: "..." },
+                { title: "Local Variables in Sequences", slug: "local-variables-in-sequences", description: "..." },
+            ]
+        }
+    ]
   },
   {
-    id: 'uvm-core',
-    title: 'UVM Core Concepts',
-    path: '/curriculum/uvm-core',
-    status: 'planned',
-    children: [
-      {
-        id: 'uvm-core-base-class-library',
-        title: 'Base Class Library',
-        path: '/curriculum/uvm-core/base-class-library',
-        status: 'planned',
-        children: [
+      title: "The UVM Universe - Core Concepts",
+      slug: "uvm-core",
+      sections: [
           {
-            id: 'uvm-core-bcl-object-vs-component',
-            title: 'uvm_object vs. uvm_component',
-            path: '/curriculum/uvm-core/base-class-library/uvm-object-vs-uvm-component',
-            status: 'planned',
+              title: "Introduction",
+              slug: "introduction",
+              topics: [
+                  { title: "Welcome to UVM", slug: "welcome-uvm", description: "..." },
+              ]
           },
-        ],
-      },
-      {
-        id: 'uvm-core-phasing',
-        title: 'Phasing and Synchronization',
-        path: '/curriculum/uvm-core/phasing-and-synchronization',
-        status: 'planned',
-        children: [
           {
-            id: 'uvm-core-phasing-detail',
-            title: 'The UVM Phases in Detail',
-            path: '/curriculum/uvm-core/phasing-and-synchronization/the-uvm-phases-in-detail',
-            status: 'planned',
+              title: "Base Class Library",
+              slug: "base-class-library",
+              topics: [
+                  { title: "uvm_object vs. uvm_component", slug: "uvm-object-vs-uvm-component", description: "..." },
+                  { title: "The UVM Macros: `uvm_field`, `uvm_component`, `uvm_object`", slug: "the-uvm-macros-field-component-object", description: "..." },
+                  { title: "UVM Report Server and Verbosity", slug: "uvm-report-server-and-verbosity", description: "..." },
+                  { title: "uvm_root and Test Execution", slug: "uvm-root-and-test-execution", description: "..." },
+              ]
           },
-        ],
-      },
-    ],
+          {
+              title: "Component Communication",
+              slug: "component-communication",
+              topics: [
+                  { title: "uvm_config_db: set and get", slug: "uvm-config-db-set-and-get", description: "..." },
+                  { title: "uvm_resource_db and Precedence", slug: "uvm-resource-db-and-precedence", description: "..." },
+                  { title: "Transaction-Level Modeling (TLM 1.0)", slug: "transaction-level-modeling-tlm-1.0", description: "..." },
+              ]
+          },
+          {
+              title: "Factory and Overrides",
+              slug: "factory-and-overrides",
+              topics: [
+                  { title: "What the Factory Solves", slug: "what-the-factory-solves", description: "..." },
+                  { title: "Registering with the Factory", slug: "registering-with-the-factory", description: "..." },
+                  { title: "Overriding by Type and Instance", slug: "overriding-by-type-and-instance", description: "..." },
+              ]
+          },
+          {
+              title: "Phasing and Synchronization",
+              slug: "phasing-and-synchronization",
+              topics: [
+                  { title: "The UVM Phases in Detail", slug: "the-uvm-phases-in-detail", description: "..." },
+                  { title: "Domains and Phase Jumping", slug: "domains-and-phase-jumping", description: "..." },
+                  { title: "UVM Objections for Ending the Test", slug: "uvm-objections-for-ending-the-test", description: "..." },
+                  { title: "uvm_event and uvm_barrier", slug: "uvm-event-and-uvm-barrier", description: "..." },
+              ]
+          }
+      ]
   },
+  {
+      title: "Building a UVM Testbench",
+      slug: "uvm-building",
+      sections: [
+          {
+              title: "Introduction",
+              slug: "introduction",
+              topics: [
+                  { title: "UVM Testbench Architecture", slug: "uvm-testbench-architecture", description: "..." },
+              ]
+          },
+          {
+              title: "Stimulus Generation",
+              slug: "stimulus-generation",
+              topics: [
+                  { title: "uvm_sequence_item and uvm_sequence", slug: "uvm-sequence-item-and-uvm-sequence", description: "..." },
+                  { title: "The Sequencer-Driver Handshake", slug: "the-sequencer-driver-handshake", description: "..." },
+                  { title: "Layered Sequences and p_sequencer", slug: "layered-sequences-and-p-sequencer", description: "..." },
+                  { title: "Sequence Libraries and grab/ungrab", slug: "sequence-libraries-and-grab-ungrab", description: "..." },
+              ]
+          },
+          {
+              title: "Analysis Components",
+              slug: "analysis-components",
+              topics: [
+                  { title: "uvm_monitor and Analysis Ports", slug: "uvm-monitor-and-analysis-ports", description: "..." },
+                  { title: "uvm_subscriber", slug: "uvm-subscriber", description: "..." },
+                  { title: "The UVM Scoreboard", slug: "the-uvm-scoreboard", description: "..." },
+              ]
+          },
+          {
+              title: "The UVM Agent",
+              slug: "the-uvm-agent",
+              topics: [
+                  { title: "Agent Structure: Active vs. Passive", slug: "agent-structure-active-vs-passive", description: "..." },
+                  { title: "Connecting the Agent Components", slug: "connecting-the-agent-components", description: "..." },
+                  { title: "The Environment and Test Classes", slug: "the-environment-and-test-classes", description: "..." },
+              ]
+          }
+      ]
+  },
+  {
+      title: "Advanced UVM Techniques & Strategy",
+      slug: "uvm-advanced",
+      sections: [
+          {
+              title: "Introduction",
+              slug: "introduction",
+              topics: [
+                  { title: "Advanced UVM", slug: "advanced-uvm", description: "..." },
+              ]
+          },
+          {
+              title: "Register Abstraction Layer (RAL)",
+              slug: "register-abstraction-layer-ral",
+              topics: [
+                  { title: "RAL Model and Integration", slug: "ral-model-and-integration", description: "..." },
+                  { title: "Frontdoor vs. Backdoor Access", slug: "frontdoor-vs-backdoor-access", description: "..." },
+                  { title: "Explicit vs. Implicit Prediction", slug: "explicit-vs-implicit-prediction", description: "..." },
+                  { title: "Built-in RAL Sequences and Adapters", slug: "built-in-ral-sequences-and-adapters", description: "..." },
+              ]
+          },
+          {
+              title: "Advanced Sequencing",
+              slug: "advanced-sequencing",
+              topics: [
+                  { title: "Virtual Sequences and Sequencers", slug: "virtual-sequences-and-sequencers", description: "..." },
+                  { title: "Sequence Arbitration and Priority", slug: "sequence-arbitration-and-priority", description: "..." },
+                  { title: "Interrupt Handling and Layered Stimulus", slug: "interrupt-handling-and-layered-stimulus", description: "..." },
+              ]
+          },
+          {
+              title: "Extending UVM",
+              slug: "extending-uvm",
+              topics: [
+                  { title: "UVM Callbacks and Facade Classes", slug: "uvm-callbacks-and-facade-classes", description: "..." },
+                  { title: "Heartbeats and Testbench Monitoring", slug: "heartbeats-and-testbench-monitoring", description: "..." },
+                  { title: "Custom Phase and Domain Creation", slug: "custom-phase-and-domain-creation", description: "..." },
+              ]
+          },
+          {
+              title: "Functional Coverage in UVM",
+              slug: "functional-coverage-in-uvm",
+              topics: [
+                  { title: "Integrating Covergroups in Subscribers", slug: "integrating-covergroups-in-subscribers", description: "..." },
+                  { title: "Coverage Options and Sampling", slug: "coverage-options-and-sampling", description: "..." },
+                  { title: "Linking Coverage to the V-Plan", slug: "linking-coverage-to-the-vplan", description: "..." },
+              ]
+          }
+      ]
+  },
+  {
+      title: "The Professional Verification Craft",
+      slug: "verification-craft",
+      sections: [
+          {
+              title: "Introduction",
+              slug: "introduction",
+              topics: [
+                  { title: "Professional Verification Craft", slug: "professional-verification-craft", description: "..." },
+              ]
+          },
+          {
+              title: "Planning and Management",
+              slug: "planning-and-management",
+              topics: [
+                  { title: "The Verification Plan (V-Plan)", slug: "the-verification-plan-vplan", description: "..." },
+                  { title: "Coverage Closure and Metrics", slug: "coverage-closure-and-metrics", description: "..." },
+                  { title: "Regression and Triage Strategies", slug: "regression-and-triage-strategies", description: "..." },
+              ]
+          },
+          {
+              title: "Advanced Design Patterns",
+              slug: "advanced-design-patterns",
+              topics: [
+                  { title: "Reusable Verification IP (VIP) Architecture", slug: "reusable-verification-ip-vip-architecture", description: "..." },
+                  { title: "Coding Guidelines and Best Practices", slug: "coding-guidelines-and-best-practices", description: "..." },
+                  { title: "Effective Debug Techniques in UVM", slug: "effective-debug-techniques-in-uvm", description: "..." },
+              ]
+          },
+          {
+              title: "Interoperability",
+              slug: "interoperability",
+              topics: [
+                  { title: "Direct Programming Interface (DPI)", slug: "direct-programming-interface-dpi", description: "..." },
+                  { title: "Clock Domain Crossing (CDC) Verification", slug: "clock-domain-crossing-cdc-verification", description: "..." },
+                  { title: "Introduction to Portable Stimulus (PSS)", slug: "introduction-to-portable-stimulus-pss", description: "..." },
+              ]
+          }
+      ]
+  }
 ];
 
-// Helper function to get a flat list of all nodes (useful for generateStaticParams)
-export function getAllCurriculumNodes(nodes: CurriculumNode[]): CurriculumNode[] {
-  let flatList: CurriculumNode[] = [];
-  for (const node of nodes) {
-    flatList.push(node);
-    if (node.children) {
-      flatList = flatList.concat(getAllCurriculumNodes(node.children));
-    }
-  }
-  return flatList;
+// Helper functions to navigate the new structure
+
+export function findTopicBySlug(slug: string[]): Topic | undefined {
+  if (slug.length !== 3) return undefined;
+  const [moduleSlug, sectionSlug, topicSlug] = slug;
+  const module = curriculumData.find(m => m.slug === moduleSlug);
+  if (!module) return undefined;
+  const section = module.sections.find(s => s.slug === sectionSlug);
+  if (!section) return undefined;
+  return section.topics.find(t => t.slug === topicSlug);
 }
 
-// Helper function to find a node by path
-export function findNodeByPath(nodes: CurriculumNode[], path: string): CurriculumNode | undefined {
-  for (const node of nodes) {
-    if (node.path === path) {
-      return node;
-    }
-    if (node.children) {
-      const foundInChildren = findNodeByPath(node.children, path);
-      if (foundInChildren) {
-        return foundInChildren;
+export function getBreadcrumbs(slug: string[]): { title: string, path: string }[] {
+  const breadcrumbs: { title: string, path: string }[] = [];
+  if (slug.length > 0) {
+    const module = curriculumData.find(m => m.slug === slug[0]);
+    if (module) {
+      breadcrumbs.push({ title: module.title, path: `/curriculum/${module.slug}` });
+      if (slug.length > 1) {
+        const section = module.sections.find(s => s.slug === slug[1]);
+        if (section) {
+          breadcrumbs.push({ title: section.title, path: `/curriculum/${module.slug}/${section.slug}` });
+          if (slug.length > 2) {
+            const topic = section.topics.find(t => t.slug === slug[2]);
+            if (topic) {
+              breadcrumbs.push({ title: topic.title, path: `/curriculum/${module.slug}/${section.slug}/${topic.slug}` });
+            }
+          }
+        }
       }
     }
   }
-  return undefined;
-}
-
-// Helper function to get breadcrumbs for a given path
-export function getBreadcrumbs(
-  nodes: CurriculumNode[],
-  currentPath: string
-): CurriculumNode[] {
-  const pathSegments = currentPath.split('/').filter(Boolean); // e.g., ['curriculum', 'sv-foundations', 'data-types']
-  const breadcrumbs: CurriculumNode[] = [];
-  let currentNodes = nodes;
-  let builtPath = '';
-
-  for (let i = 1; i < pathSegments.length; i++) { // Start from 1 to skip 'curriculum'
-    builtPath += '/' + pathSegments[i-1] ; // Path for parent
-    if (i > 1) builtPath += '/' + pathSegments[i]; else builtPath += '/' + pathSegments[i];
-
-
-    const segmentToFind = pathSegments.slice(0, i + 1).join('/');
-    const node = findNodeByPath(nodes, `/${segmentToFind}`);
-
-
-    if (node) {
-       // Check if the node is already added to avoid duplicates from nested searches
-      if (!breadcrumbs.find(b => b.id === node.id)) {
-        breadcrumbs.push(node);
-      }
-      currentNodes = node.children || [];
-    } else {
-      // If a specific segment doesn't match a node path directly,
-      // we might be looking for a parent path.
-      // This logic might need refinement based on how paths are structured.
-      const parentPath = '/' + pathSegments.slice(0, i).join('/');
-      const parentNode = findNodeByPath(nodes, parentPath);
-      if (parentNode && !breadcrumbs.find(b => b.id === parentNode.id)) {
-          // breadcrumbs.push(parentNode); // Avoid pushing parent if current segment is the actual node
-      }
-    }
-  }
-   // Add the current page itself to breadcrumbs if it's a valid node path
-  const currentNode = findNodeByPath(nodes, currentPath);
-  if (currentNode && !breadcrumbs.find(b => b.id === currentNode.id)) {
-    // Check if the last breadcrumb added is not the current node already
-    if (breadcrumbs.length === 0 || breadcrumbs[breadcrumbs.length-1].path !== currentPath) {
-       // breadcrumbs.push(currentNode); // This might be redundant if paths are exact
-    }
-  }
-
-
-  // Refined breadcrumb generation
-  const resultCrumbs: CurriculumNode[] = [];
-  let pathAcc = '';
-  for(const segment of pathSegments) {
-    pathAcc += `/${segment}`;
-    const foundNode = findNodeByPath(nodes, pathAcc);
-    if (foundNode && !resultCrumbs.find(n => n.id === foundNode.id)) {
-      resultCrumbs.push(foundNode);
-    }
-  }
-
-
-  return resultCrumbs;
-}
-
-
-// Helper function to find next and previous lessons
-export function getNextPrevLessons(
-  flatNodes: CurriculumNode[],
-  currentPath: string
-): { prev?: CurriculumNode; next?: CurriculumNode } {
-  const currentIndex = flatNodes.findIndex(node => node.path === currentPath && !node.children); // Only consider leaf nodes as "lessons"
-  if (currentIndex === -1) {
-    return {};
-  }
-
-  let prevNode: CurriculumNode | undefined = undefined;
-  for (let i = currentIndex - 1; i >= 0; i--) {
-    if (!flatNodes[i].children) { // Found previous leaf node
-      prevNode = flatNodes[i];
-      break;
-    }
-  }
-
-  let nextNode: CurriculumNode | undefined = undefined;
-  for (let i = currentIndex + 1; i < flatNodes.length; i++) {
-    if (!flatNodes[i].children) { // Found next leaf node
-      nextNode = flatNodes[i];
-      break;
-    }
-  }
-  return { prev: prevNode, next: nextNode };
+  return breadcrumbs;
 }
