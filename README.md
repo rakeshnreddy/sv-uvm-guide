@@ -81,6 +81,10 @@ Contributions are what make the open source community such an amazing place to l
 
 If you have a suggestion that would make this better, please fork the repo and create a pull request. You can also simply open an issue with the tag "enhancement".
 
+### Styling
+
+The site uses Tailwind CSS with custom CSS variables. Colors like `text-brand-text-primary` are driven by variables defined in `src/app/globals.css` and mapped in `tailwind.config.ts`. Make sure these variables are present when customizing themes, otherwise the components will appear unstyled.
+
 Don't forget to give the project a star! Thanks again!
 
 1.  Fork the Project
