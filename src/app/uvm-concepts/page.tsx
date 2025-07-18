@@ -2,6 +2,7 @@ import React from 'react';
 import InfoPage from '@/components/templates/InfoPage';
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
+import UvmHeroDiagram from '@/components/UvmHeroDiagram';
 
 interface TopicLink {
   href: string;
@@ -83,6 +84,7 @@ const UvmConceptsLandingPage: React.FC = () => {
       </section>
 
       <section>
+        <UvmHeroDiagram />
         <h2 className="text-2xl font-semibold text-primary mb-4">Explore UVM Topics</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {uvmTopicLinks.map((topic) => (
