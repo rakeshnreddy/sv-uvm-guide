@@ -30,7 +30,7 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
   if (currentQuestionIndex >= questions.length) {
     return (
       <div className="p-4 bg-primary rounded-lg shadow-lg">
-        <h3 className="text-xl font-bold text-text-primary">Quiz Complete!</h3>
+        <h3 className="text-xl font-bold text-primary-foreground">Quiz Complete!</h3>
       </div>
     );
   }
@@ -39,7 +39,7 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
 
   return (
     <div className="p-4 bg-primary rounded-lg shadow-lg">
-      <h3 className="text-xl font-bold text-text-primary mb-4">{question}</h3>
+      <h3 className="text-xl font-bold text-primary-foreground mb-4">{question}</h3>
       <div className="space-y-2">
         {options.map((option) => (
           <Button
@@ -54,7 +54,7 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
       </div>
       {selectedAnswer && (
         <div className="mt-4">
-          <p className={`text-lg ${isCorrect ? 'text-success' : 'text-danger'}`}>
+          <p className={`text-lg ${isCorrect ? 'text-success' : 'text-destructive'}`}>
             {isCorrect ? 'Correct!' : 'Incorrect.'}
           </p>
           <Button onClick={handleNextQuestion} className="mt-2">
