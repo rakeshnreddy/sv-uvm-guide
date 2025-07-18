@@ -1,50 +1,59 @@
+"use client";
+
+import { useState, useEffect } from 'react';
 import { getDueFlashcards, reviewFlashcard } from '@/app/actions/srs';
-import { Button } from '@/app/components/ui/Button';
-import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/app/components/ui/Card';
-import { revalidatePath } from 'next/cache';
+import FlashcardWidget from '@/components/widgets/FlashcardWidget';
+import { Button } from '@/components/ui/Button';
+import { useAuth } from '@/contexts/AuthContext';
 
-export default async function MemoryHubPage() {
-  const dueFlashcards = await getDueFlashcards();
+type Card = {
+  id: string;
+  front: string;
+  back: string;
+};
 
-  const handleReview = async (flashcardId: string, quality: number) => {
-    'use server';
-    await reviewFlashcard(flashcardId, quality);
-    revalidatePath('/dashboard/memory-hub');
+export default function MemoryHubPage() {
+  const { user } = useAuth();
+  const [dueCards, setDueCards] = useState<Card[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    async function fetchDueCards() {
+      if (user) {
+        const cards = await getDueFlashcards();
+        setDueCards(cards);
+      }
+      setIsLoading(false);
+    }
+    fetchDueCards();
+  }, [user]);
+
+  const handleReview = async (cardId: string, quality: number) => {
+    await reviewFlashcard(cardId, quality);
+    setDueCards(dueCards.filter(card => card.id !== cardId));
   };
 
+  if (isLoading) {
+    return <div>Loading...</div>;
+  }
+
+  if (dueCards.length === 0) {
+    return <div>No due cards for today!</div>;
+  }
+
   return (
-    <div className="container mx-auto py-10">
-      <h1 className="text-3xl font-bold mb-6">Memory Hub</h1>
-      {dueFlashcards.length > 0 ? (
-        <Card>
-          <CardHeader>
-            <CardTitle>Due Flashcards</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-lg">{dueFlashcards[0].front}</div>
-            <details className="mt-4">
-              <summary className="cursor-pointer">Show Answer</summary>
-              <div className="mt-2 text-gray-600">{dueFlashcards[0].back}</div>
-            </details>
-          </CardContent>
-          <CardFooter className="flex justify-end space-x-2">
-            <form action={handleReview.bind(null, dueFlashcards[0].id, 0)}>
-              <Button type="submit" variant="destructive">Again</Button>
-            </form>
-            <form action={handleReview.bind(null, dueFlashcards[0].id, 2)}>
-              <Button type="submit" variant="secondary">Hard</Button>
-            </form>
-            <form action={handleReview.bind(null, dueFlashcards[0].id, 4)}>
-              <Button type="submit">Good</Button>
-            </form>
-            <form action={handleReview.bind(null, dueFlashcards[0].id, 5)}>
-              <Button type="submit" variant="ghost">Easy</Button>
-            </form>
-          </CardFooter>
-        </Card>
-      ) : (
-        <p>No flashcards due for review. Well done!</p>
-      )}
+    <div className="p-4">
+      <h1 className="text-2xl font-bold mb-4">Memory Hub</h1>
+      <FlashcardWidget
+        cards={dueCards}
+        onProgressUpdate={() => {}}
+      />
+      <div className="flex justify-center space-x-4 mt-4">
+        <Button onClick={() => handleReview(dueCards[0].id, 0)}>Again</Button>
+        <Button onClick={() => handleReview(dueCards[0].id, 2)}>Hard</Button>
+        <Button onClick={() => handleReview(dueCards[0].id, 4)}>Good</Button>
+        <Button onClick={() => handleReview(dueCards[0].id, 5)}>Easy</Button>
+      </div>
     </div>
   );
 }
