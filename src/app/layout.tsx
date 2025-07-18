@@ -73,23 +73,19 @@ export default function RootLayout({ children }: RootLayoutProps) {
         <script src="https://cdnjs.cloudflare.com/ajax/libs/wavedrom/3.5.0/wavedrom.min.js"></script>
       </head>
       <body className={`${inter.variable} ${jetbrains_mono.variable} ${calSans.variable} font-sans`}>
-        <SessionProvider>
-          <AuthProvider>
-            <ThemeProvider
-              attribute="class"
-              defaultTheme="dark"
-              enableSystem
-              disableTransitionOnChange
-            >
-              <AnimatePresence mode="wait">
-                {/* MainLayout now wraps the children and includes Header/Footer */}
-                {/* We might need to pass a key here if children can change in a way AnimatePresence needs to track */}
-                <MainLayout>{children}</MainLayout>
-              </AnimatePresence>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem
+          disableTransitionOnChange
+        >
+          <SessionProvider>
+            <AuthProvider>
+              <MainLayout>{children}</MainLayout>
               <AIAssistantWidget />
-            </ThemeProvider>
-          </AuthProvider>
-        </SessionProvider>
+            </AuthProvider>
+          </SessionProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
