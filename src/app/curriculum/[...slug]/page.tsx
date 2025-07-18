@@ -6,6 +6,7 @@ import { MDXRemote } from 'next-mdx-remote/rsc';
 import { findTopicBySlug, getBreadcrumbs } from '@/lib/curriculum-data';
 import { notFound } from 'next/navigation';
 import Breadcrumbs from '@/app/components/layout/Breadcrumbs';
+import FeynmanPromptWidget from '@/components/widgets/FeynmanPromptWidget';
 
 type CurriculumTopicPageProps = {
   params: { slug: string[] };
@@ -42,6 +43,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
       <article className="prose prose-invert max-w-none">
         <MDXRemote source={mdxContent} />
       </article>
+      <FeynmanPromptWidget topicTitle={topic.title} />
     </div>
   );
 }

@@ -11,9 +11,10 @@ interface FeynmanPromptWidgetProps {
 
 const FeynmanPromptWidget: React.FC<FeynmanPromptWidgetProps> = ({
   conceptTitle,
-  onSubmit,
 }) => {
   const [explanation, setExplanation] = useState("");
+  const [feedback, setFeedback] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -21,14 +22,27 @@ const FeynmanPromptWidget: React.FC<FeynmanPromptWidgetProps> = ({
     setExplanation(event.target.value);
   };
 
-  const handleSubmit = () => {
-    if (onSubmit) {
-      onSubmit(explanation);
+  const handleSubmit = async () => {
+    setIsLoading(true);
+    setFeedback("");
+    try {
+      const response = await fetch('/api/ai/feynman-feedback', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          content: `Topic: ${conceptTitle}\n\nExplanation: ${explanation}`,
+        }),
+      });
+      const data = await response.json();
+      setFeedback(data.feedback);
+    } catch (error) {
+      console.error("Error getting feedback:", error);
+      setFeedback("Sorry, I couldn't get feedback for you. Please try again.");
+    } finally {
+      setIsLoading(false);
     }
-    // Optional: Clear textarea after submit, or show a success message
-    // setExplanation("");
-    console.log("Feynman explanation submitted:", explanation);
-    alert(`Your explanation for "${conceptTitle || 'this concept'}" has been noted (placeholder).`);
   };
 
   // Auto-resize textarea height based on content
@@ -62,11 +76,14 @@ const FeynmanPromptWidget: React.FC<FeynmanPromptWidgetProps> = ({
         className="w-full p-3 min-h-[80px] text-sm bg-background/70 dark:bg-background/40 border border-border rounded-md focus:ring-2 focus:ring-primary focus:border-transparent outline-none resize-none overflow-y-hidden transition-shadow duration-150 ease-in-out focus:shadow-md"
         rows={3} // Initial rows, will expand
       />
-      {onSubmit && explanation.trim() && ( // Show submit button only if onSubmit is provided and there's text
-        <div className="mt-3 text-right">
-          <Button onClick={handleSubmit} size="sm" variant="default">
-            Submit Explanation
-          </Button>
+      <div className="mt-3 text-right">
+        <Button onClick={handleSubmit} size="sm" variant="default" disabled={!explanation.trim() || isLoading}>
+          {isLoading ? 'Getting Feedback...' : 'Submit Explanation'}
+        </Button>
+      </div>
+      {feedback && (
+        <div className="mt-4 p-4 bg-green-100 dark:bg-green-900/20 border border-green-200 dark:border-green-800/30 rounded-md">
+          <p className="text-sm text-green-800 dark:text-green-200">{feedback}</p>
         </div>
       )}
     </div>
