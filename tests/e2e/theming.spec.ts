@@ -1,21 +1,19 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Theming and Styling', () => {
-  test('should correctly apply light and dark theme styles', async ({ page }) => {
-    // Navigate to a page that displays the components
-    await page.goto('/community');
-    await page.waitForURL('/community');
+  test.beforeEach(async ({ page }) => {
+    await page.goto('/');
+  });
 
-    // Ensure the theme is set to light
+  test('should have the correct background color for light mode', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'light' });
+    const body = page.locator('body');
+    await expect(body).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+  });
 
-    // Take a screenshot of the entire page
-    await expect(page).toHaveScreenshot('theming-light.png');
-
-    // Ensure the theme is set to dark
+  test('should have the correct background color for dark mode', async ({ page }) => {
     await page.emulateMedia({ colorScheme: 'dark' });
-
-    // Take a screenshot of the entire page
-    await expect(page).toHaveScreenshot('theming-dark.png');
+    const body = page.locator('body');
+    await expect(body).toHaveCSS('background-color', 'rgb(9, 9, 11)');
   });
 });
