@@ -8,6 +8,8 @@ import Logo from "@/components/ui/Logo";
 import { ThemeSwitcher } from "@/components/ui/ThemeSwitcher";
 
 const navLinks = [
+  { href: "/dashboard", label: "Dashboard" },
+  { href: "/community", label: "Community" },
   { href: "/history", label: "History" },
   { href: "/resources", label: "Resources" },
   { href: "/projects", label: "Projects" },
