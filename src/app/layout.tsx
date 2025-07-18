@@ -42,6 +42,7 @@ import "./globals.css";
 // Navbar and Footer are now part of MainLayout
 import MainLayout from "@/components/layout/MainLayout"; // Corrected Import MainLayout path
 import { SessionProvider } from '@/components/providers/SessionProvider';
+import { AuthProvider } from '@/contexts/AuthContext';
 // The AIAssistant (full chat) is removed from global layout for now.
 // The PersistentAITutorButton will be the global widget.
 // import AIAssistant from "@/components/ai/AIAssistant";
@@ -73,19 +74,21 @@ export default function RootLayout({ children }: RootLayoutProps) {
       </head>
       <body className={`${inter.variable} ${jetbrains_mono.variable} ${calSans.variable} font-sans`}>
         <SessionProvider>
+          <AuthProvider>
             <ThemeProvider
-            attribute="class"
-            defaultTheme="dark"
-            enableSystem
-            disableTransitionOnChange
-          >
-          <AnimatePresence mode="wait">
-            {/* MainLayout now wraps the children and includes Header/Footer */}
-            {/* We might need to pass a key here if children can change in a way AnimatePresence needs to track */}
-            <MainLayout>{children}</MainLayout>
-          </AnimatePresence>
-          <AIAssistantWidget />
-          </ThemeProvider>
+              attribute="class"
+              defaultTheme="dark"
+              enableSystem
+              disableTransitionOnChange
+            >
+              <AnimatePresence mode="wait">
+                {/* MainLayout now wraps the children and includes Header/Footer */}
+                {/* We might need to pass a key here if children can change in a way AnimatePresence needs to track */}
+                <MainLayout>{children}</MainLayout>
+              </AnimatePresence>
+              <AIAssistantWidget />
+            </ThemeProvider>
+          </AuthProvider>
         </SessionProvider>
       </body>
     </html>
