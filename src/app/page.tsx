@@ -18,8 +18,6 @@ export default function HomePage() {
         <p className="text-lg sm:text-xl md:text-2xl text-brand-text-primary max-w-2xl mx-auto mb-8 font-body">
           Your journey to becoming a verification expert starts here. Explore our interactive curriculum and tools.
         </p>
-        {/* UvmHeroDiagram will need its own styling adapted to Tailwind if necessary */}
-        <UvmHeroDiagram />
       </section>
 
       {/* Highlights Carousel Section */}
