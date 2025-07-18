@@ -5,7 +5,7 @@ import path from 'path';
 import { MDXRemote } from 'next-mdx-remote/rsc';
 import { findTopicBySlug, getBreadcrumbs } from '@/lib/curriculum-data';
 import { notFound } from 'next/navigation';
-import Breadcrumbs from '@/app/components/layout/Breadcrumbs';
+import Breadcrumbs from '@/components/layout/Breadcrumbs';
 import FeynmanPromptWidget from '@/components/widgets/FeynmanPromptWidget';
 
 type CurriculumTopicPageProps = {

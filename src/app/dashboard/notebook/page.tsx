@@ -1,9 +1,9 @@
 "use client";
 
 import { useState } from 'react';
-import { Button } from '@/app/components/ui/Button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/Card';
-import { Textarea } from '@/app/components/ui/Textarea';
+import { Button } from '@/components/ui/Button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Textarea } from '@/components/ui/Textarea';
 
 // Mock data for notebook entries
 const mockNotebookEntries = [

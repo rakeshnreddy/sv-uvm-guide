@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Menu, X } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import Logo from "@/components/ui/Logo";
-import { ThemeSwitcher } from "@/app/components/ui/ThemeSwitcher";
+import { ThemeSwitcher } from "@/components/ui/ThemeSwitcher";
 
 const navLinks = [
   { href: "/sv-concepts", label: "SV Concepts" },
