@@ -45,7 +45,7 @@ import { SessionProvider } from '@/app/components/providers/SessionProvider';
 // The AIAssistant (full chat) is removed from global layout for now.
 // The PersistentAITutorButton will be the global widget.
 // import AIAssistant from "@/components/ai/AIAssistant";
-import PersistentAITutorButton from "@/app/components/ai/PersistentAITutorButton"; // Corrected Import path
+import AIAssistantWidget from "@/components/widgets/AIAssistantWidget";
 
 
 // Assuming Cal Sans will be a local font file
@@ -84,7 +84,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
             {/* We might need to pass a key here if children can change in a way AnimatePresence needs to track */}
             <MainLayout>{children}</MainLayout>
           </AnimatePresence>
-          <PersistentAITutorButton /> {/* Add Persistent AI Tutor Button globally */}
+          <AIAssistantWidget />
           </ThemeProvider>
         </SessionProvider>
       </body>

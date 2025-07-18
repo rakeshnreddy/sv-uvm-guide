@@ -14,7 +14,7 @@ interface Message {
   timestamp: Date;
 }
 
-const AIAssistant: React.FC = () => {
+const AIAssistantWidget: React.FC = () => {
   const { user } = useAuth(); // Example: could use user.displayName if available
   const [isOpen, setIsOpen] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -243,4 +243,4 @@ const AIAssistant: React.FC = () => {
   );
 };
 
-export default AIAssistant;
+export default AIAssistantWidget;
