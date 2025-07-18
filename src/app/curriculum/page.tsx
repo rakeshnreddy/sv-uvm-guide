@@ -9,7 +9,7 @@ export default function CurriculumPage() {
       <h1 className="text-3xl sm:text-4xl font-bold text-accent font-sans mb-6 pb-2 border-b border-secondary">
         Learning Journey
       </h1>
-      <p className="text-lg text-text-secondary font-body leading-relaxed mb-8">
+      <p className="text-lg text-muted-foreground font-body leading-relaxed mb-8">
         Navigate through the modules to master SystemVerilog and UVM.
       </p>
       <Accordion className="w-full">
@@ -23,11 +23,11 @@ export default function CurriculumPage() {
                       <li key={topic.slug}>
                         <Link
                           href={`/curriculum/${module.slug}/${section.slug}/${topic.slug}`}
-                          className="text-text-primary hover:text-accent transition-colors"
+                          className="text-brand-text-primary hover:text-accent transition-colors"
                         >
                           {topic.title}
                         </Link>
-                        <p className="text-text-secondary text-sm">{topic.description}</p>
+                        <p className="text-muted-foreground text-sm">{topic.description}</p>
                       </li>
                     ))}
                   </ul>

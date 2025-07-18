@@ -52,7 +52,7 @@ const Navbar = () => {
             <button
               onClick={toggleNavbar}
               type="button"
-              className="inline-flex items-center justify-center p-2 rounded-md text-text-primary hover:text-accent focus:outline-none"
+              className="inline-flex items-center justify-center p-2 rounded-md text-brand-text-primary hover:text-accent focus:outline-none"
               aria-controls="mobile-menu"
               aria-expanded={isOpen}
             >
@@ -79,7 +79,7 @@ const Navbar = () => {
                   key={link.href}
                   href={link.href}
                   onClick={() => setIsOpen(false)}
-                  className="text-text-primary hover:text-accent block px-3 py-2 rounded-md text-base font-medium transition-colors"
+                  className="text-brand-text-primary hover:text-accent block px-3 py-2 rounded-md text-base font-medium transition-colors"
                 >
                   {link.label}
                 </Link>

@@ -38,14 +38,14 @@ const CardHeader: React.FC<CardProps> = ({ children, className, ...props }) => (
 CardHeader.displayName = "CardHeader";
 
 const CardTitle: React.FC<React.HTMLAttributes<HTMLHeadingElement>> = ({ children, className, ...props }) => (
-  <h3 className={twMerge(clsx("text-2xl font-semibold leading-none tracking-tight text-primary-text", className))} {...props}>
+  <h3 className={twMerge(clsx("text-2xl font-semibold leading-none tracking-tight text-brand-text-primary", className))} {...props}>
     {children}
   </h3>
 );
 CardTitle.displayName = "CardTitle";
 
 const CardDescription: React.FC<React.HTMLAttributes<HTMLParagraphElement>> = ({ children, className, ...props }) => (
-  <p className={twMerge(clsx("text-sm text-primary-text/80", className))} {...props}>
+  <p className={twMerge(clsx("text-sm text-brand-text-primary/80", className))} {...props}>
     {children}
   </p>
 );
