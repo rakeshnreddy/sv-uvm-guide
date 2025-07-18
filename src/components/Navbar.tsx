@@ -8,9 +8,6 @@ import Logo from "@/components/ui/Logo";
 import { ThemeSwitcher } from "@/components/ui/ThemeSwitcher";
 
 const navLinks = [
-  { href: "/sv-concepts", label: "SV Concepts" },
-  { href: "/uvm-concepts", label: "UVM Concepts" },
-  { href: "/exercises", label: "Exercises" },
   { href: "/history", label: "History" },
   { href: "/resources", label: "Resources" },
   { href: "/projects", label: "Projects" },
@@ -47,8 +44,8 @@ const Navbar = () => {
                 {link.label}
               </Link>
             ))}
-            <ThemeSwitcher />
           </div>
+          <ThemeSwitcher />
           <div className="md:hidden flex items-center">
             <button
               onClick={toggleNavbar}

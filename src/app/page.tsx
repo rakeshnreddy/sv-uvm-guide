@@ -18,6 +18,20 @@ export default function HomePage() {
         <p className="text-lg sm:text-xl md:text-2xl text-brand-text-primary max-w-2xl mx-auto mb-8 font-body">
           Your journey to becoming a verification expert starts here. Explore our interactive curriculum and tools.
         </p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <Link href="/sv-concepts" className="p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
+            <h3 className="text-xl font-semibold text-accent-foreground mb-2">SV Concepts</h3>
+            <p className="text-sm text-muted-foreground">Master the fundamentals of SystemVerilog.</p>
+          </Link>
+          <Link href="/uvm-concepts" className="p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
+            <h3 className="text-xl font-semibold text-accent-foreground mb-2">UVM Concepts</h3>
+            <p className="text-sm text-muted-foreground">Learn the Universal Verification Methodology.</p>
+          </Link>
+          <Link href="/exercises" className="p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
+            <h3 className="text-xl font-semibold text-accent-foreground mb-2">Exercises</h3>
+            <p className="text-sm text-muted-foreground">Test your knowledge with interactive exercises.</p>
+          </Link>
+        </div>
       </section>
 
       {/* Highlights Carousel Section */}
