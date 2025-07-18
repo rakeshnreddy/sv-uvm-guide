@@ -1,5 +1,5 @@
 import { getIronSession, IronSession } from 'iron-session';
-import { cookies } from 'next/headers';
+import { cookies } from 'next/headers.js';
 import { sessionOptions } from './session-options';
 
 export interface SessionData {
