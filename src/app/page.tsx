@@ -1,6 +1,7 @@
 import UvmHeroDiagram from '@/components/UvmHeroDiagram'; // Adjusted import path
 import HighlightsCarousel from '@/components/HighlightsCarousel'; // Adjusted import path
 import React from 'react';
+import Link from 'next/link';
 
 // Inline styles will be replaced by Tailwind classes
 
