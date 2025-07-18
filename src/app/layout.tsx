@@ -36,12 +36,12 @@ const jetbrains_mono = localFont({
   display: 'swap',
 });
 // Import AnimatePresence from the client component provider
-import { AnimatePresence } from '@/app/components/providers/FramerMotionProvider';
-import { ThemeProvider } from "@/app/components/providers/ThemeProvider";
+import { AnimatePresence } from '@/components/providers/FramerMotionProvider';
+import { ThemeProvider } from "@/components/providers/ThemeProvider";
 import "./globals.css";
 // Navbar and Footer are now part of MainLayout
-import MainLayout from "@/app/components/layout/MainLayout"; // Corrected Import MainLayout path
-import { SessionProvider } from '@/app/components/providers/SessionProvider';
+import MainLayout from "@/components/layout/MainLayout"; // Corrected Import MainLayout path
+import { SessionProvider } from '@/components/providers/SessionProvider';
 // The AIAssistant (full chat) is removed from global layout for now.
 // The PersistentAITutorButton will be the global widget.
 // import AIAssistant from "@/components/ai/AIAssistant";
