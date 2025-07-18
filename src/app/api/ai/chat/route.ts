@@ -33,25 +33,16 @@ export async function POST(req: NextRequest) {
     }
     fullPrompt += `USER QUESTION:\n${userQuestion}`;
 
-    console.log("\n--- Sending to Mock Gemini API ---");
-    console.log("Full Prompt:\n", fullPrompt);
-    console.log("--- End Mock Gemini API ---\n");
+    const { GoogleGenerativeAI } = await import("@google/generative-ai");
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: "gemini-pro" });
 
-    // Placeholder for actual Gemini API call
-    // const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    // const model = genAI.getGenerativeModel({ model: "gemini-pro" }); // Or your chosen model
-    // const result = await model.generateContent(fullPrompt);
-    // const response = await result.response;
-    // const text = response.text();
-
-    // MOCK RESPONSE (to be replaced with actual API call)
-    const mockAiResponse = `This is a mocked AI response based on your question: "${userQuestion}".\nPage context provided: ${pageContext ? 'Yes' : 'No'}.`;
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API delay
-
+    const result = await model.generateContent(fullPrompt);
+    const response = await result.response;
+    const text = response.text();
 
     return NextResponse.json({
-      reply: mockAiResponse
-      // In a real scenario, you might also return other metadata or structured data
+      reply: text,
     });
 
   } catch (error) {
