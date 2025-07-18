@@ -20,11 +20,15 @@ export default function HomePage() {
           Your journey to becoming a verification expert starts here. Explore our interactive curriculum and tools.
         </p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Link href="/sv-concepts" className="p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
+          <Link href="/curriculum" className="p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
+            <h3 className="text-xl font-semibold text-accent-foreground mb-2">Curriculum</h3>
+            <p className="text-sm text-muted-foreground">Explore the full curriculum.</p>
+          </Link>
+          <Link href="/curriculum/sv-concepts" className="p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
             <h3 className="text-xl font-semibold text-accent-foreground mb-2">SV Concepts</h3>
             <p className="text-sm text-muted-foreground">Master the fundamentals of SystemVerilog.</p>
           </Link>
-          <Link href="/uvm-concepts" className="p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
+          <Link href="/curriculum/uvm-concepts" className="p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
             <h3 className="text-xl font-semibold text-accent-foreground mb-2">UVM Concepts</h3>
             <p className="text-sm text-muted-foreground">Learn the Universal Verification Methodology.</p>
           </Link>
