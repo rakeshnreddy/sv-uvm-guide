@@ -30,10 +30,12 @@ const LabClientPage = ({ lab }: LabClientPageProps) => {
   const [currentStep, setCurrentStep] = useState(0);
   const [code, setCode] = useState(lab.steps[0].starterCode);
   const [consoleOutput, setConsoleOutput] = useState("");
+  const [isSuccess, setIsSuccess] = useState<boolean | null>(null);
   const [completedSteps, setCompletedSteps] = useState<string[]>([]);
 
   const checkSolution = async () => {
     setConsoleOutput("Checking solution...");
+    setIsSuccess(null);
     const response = await fetch("/api/labs/run", {
       method: "POST",
       body: JSON.stringify({
@@ -43,7 +45,10 @@ const LabClientPage = ({ lab }: LabClientPageProps) => {
       }),
     });
     const result = await response.json();
-    setConsoleOutput(result.hint || (result.success ? "Correct!" : "Incorrect."));
+    setIsSuccess(result.success);
+    setConsoleOutput(
+      result.hint || (result.success ? "Correct!" : "Incorrect."),
+    );
     if (result.success) {
       setCompletedSteps([...completedSteps, lab.steps[currentStep].id]);
       if (currentStep < lab.steps.length - 1) {
@@ -65,7 +70,10 @@ const LabClientPage = ({ lab }: LabClientPageProps) => {
                 currentStep === index ? "font-bold" : ""
               }`}
               onClick={() => {
-                if (completedSteps.includes(lab.steps[index - 1]?.id) || index === 0) {
+                if (
+                  completedSteps.includes(lab.steps[index - 1]?.id) ||
+                  index === 0
+                ) {
                   setCurrentStep(index);
                   setCode(lab.steps[index].starterCode);
                 }
@@ -97,7 +105,17 @@ const LabClientPage = ({ lab }: LabClientPageProps) => {
           >
             Check Solution
           </button>
-          <pre className="text-white">{consoleOutput}</pre>
+          <pre
+            className={`text-white ${
+              isSuccess === true
+                ? "text-success"
+                : isSuccess === false
+                  ? "text-destructive"
+                  : ""
+            }`}
+          >
+            {consoleOutput}
+          </pre>
         </div>
       </div>
     </div>
