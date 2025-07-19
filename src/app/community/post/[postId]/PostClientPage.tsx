@@ -61,16 +61,16 @@ export default function PostClientPage({ post }: PostClientPageProps) {
             placeholder="Add a comment"
             value={newComment}
             onChange={(e) => setNewComment(e.target.value)}
-            className="w-full p-2 mb-2 border rounded"
+            className="w-full p-2 mb-2 border border-border rounded bg-background"
           />
-          <button type="submit" className="px-4 py-2 bg-blue-500 text-white rounded">
+          <button type="submit" className="px-4 py-2 bg-primary text-primary-foreground rounded">
             Add Comment
           </button>
         </form>
       )}
       <div>
-        {comments.map((comment) => (
-          <div key={comment.id} className="p-4 mb-4 border rounded">
+          {comments.map((comment) => (
+          <div key={comment.id} className="p-4 mb-4 border border-border rounded bg-card text-card-foreground">
             <p>{comment.text}</p>
           </div>
         ))}

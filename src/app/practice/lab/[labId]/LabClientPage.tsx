@@ -60,7 +60,7 @@ const LabClientPage = ({ lab }: LabClientPageProps) => {
 
   return (
     <div className="flex h-screen">
-      <div className="w-1/4 bg-gray-800 text-white p-4">
+      <div className="w-1/4 bg-secondary text-secondary-foreground p-4">
         <h2 className="text-xl font-bold mb-4">{lab.title}</h2>
         <ul>
           {lab.steps.map((step, index) => (
@@ -85,7 +85,7 @@ const LabClientPage = ({ lab }: LabClientPageProps) => {
         </ul>
       </div>
       <div className="w-3/4 flex flex-col">
-        <div className="p-4 bg-gray-700 text-white">
+        <div className="p-4 bg-card text-card-foreground">
           <h3 className="text-lg font-bold">{lab.steps[currentStep].title}</h3>
           <p>{lab.steps[currentStep].instructions}</p>
         </div>
@@ -98,10 +98,10 @@ const LabClientPage = ({ lab }: LabClientPageProps) => {
             theme="vs-dark"
           />
         </div>
-        <div className="h-1/4 bg-gray-900 p-4">
+        <div className="h-1/4 bg-muted p-4">
           <button
             onClick={checkSolution}
-            className="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded mb-4"
+            className="bg-primary hover:bg-primary/90 text-primary-foreground font-bold py-2 px-4 rounded mb-4"
           >
             Check Solution
           </button>

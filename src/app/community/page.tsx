@@ -50,22 +50,22 @@ export default function CommunityPage() {
             placeholder="Title"
             value={newPost.title}
             onChange={(e) => setNewPost({ ...newPost, title: e.target.value })}
-            className="w-full p-2 mb-2 border rounded"
+            className="w-full p-2 mb-2 border border-border rounded bg-background"
           />
           <textarea
             placeholder="Content"
             value={newPost.content}
             onChange={(e) => setNewPost({ ...newPost, content: e.target.value })}
-            className="w-full p-2 mb-2 border rounded"
+            className="w-full p-2 mb-2 border border-border rounded bg-background"
           />
-          <button type="submit" className="px-4 py-2 bg-blue-500 text-white rounded">
+          <button type="submit" className="px-4 py-2 bg-primary text-primary-foreground rounded">
             Create Post
           </button>
         </form>
       )}
       <div>
         {posts.map((post) => (
-          <div key={post.id} className="p-4 mb-4 border rounded">
+          <div key={post.id} className="p-4 mb-4 border border-border rounded bg-card text-card-foreground">
             <Link href={`/community/post/${post.id}`}>
               <h2 className="text-2xl font-bold">{post.title}</h2>
             </Link>
