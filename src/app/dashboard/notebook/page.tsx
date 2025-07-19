@@ -42,7 +42,7 @@ export default function NotebookPage() {
                 <li
                   key={entry.id}
                   className={`cursor-pointer p-2 rounded ${
-                    selectedEntry.id === entry.id ? 'bg-gray-200' : ''
+                    selectedEntry.id === entry.id ? 'bg-muted' : ''
                   }`}
                   onClick={() => setSelectedEntry(entry)}
                 >
@@ -69,8 +69,8 @@ export default function NotebookPage() {
             <Button onClick={handleFeedbackSubmit} disabled={isLoading} className="mt-4">
               {isLoading ? 'Getting Feedback...' : 'Submit for AI Feedback'}
             </Button>
-            {feedback && (
-              <div className="mt-4 p-4 bg-gray-100 rounded">
+              {feedback && (
+              <div className="mt-4 p-4 bg-card rounded">
                 <h3 className="font-bold">AI Feedback (Score: {feedback.score})</h3>
                 <p>{feedback.feedback}</p>
               </div>
