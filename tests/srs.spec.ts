@@ -79,7 +79,7 @@ describe('SRS Actions', () => {
     };
 
     (prisma.flashcard.findUnique as vi.Mock).mockResolvedValue(initialFlashcard);
-    (prisma.flashcard.update as vi.Mock).mockImplementation(async ({ data }) => ({
+    (prisma.flashcard.update as vi.Mock).mockImplementation(async ({ data }: { data: any }) => ({
       ...initialFlashcard,
       ...data,
     }));

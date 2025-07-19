@@ -5,7 +5,7 @@ import { test, expect } from '@playwright/test';
  * representation using the browser's computed styles.
  */
 async function cssVarToRgb(page: any, variable: string) {
-  return page.evaluate((v) => {
+  return page.evaluate((v: string) => {
     const value = getComputedStyle(document.documentElement)
       .getPropertyValue(v)
       .trim();
