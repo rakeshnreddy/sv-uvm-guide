@@ -1,4 +1,4 @@
-import type { Config } from 'tailwindcss';
+import type { Config } from "tailwindcss";
 
 const config: Config = {
   content: [
@@ -43,10 +43,6 @@ const config: Config = {
           foreground: "hsl(var(--accent-foreground) / <alpha-value>)",
         },
         "brand-text-primary": "hsl(var(--brand-text-primary) / <alpha-value>)",
-        popover: {
-          DEFAULT: "hsl(var(--popover) / <alpha-value>)",
-          foreground: "hsl(var(--popover-foreground) / <alpha-value>)",
-        },
         card: {
           DEFAULT: "hsl(var(--card) / <alpha-value>)",
           foreground: "hsl(var(--card-foreground) / <alpha-value>)",
@@ -71,9 +67,7 @@ const config: Config = {
       },
     },
   },
-  plugins: [
-    require("@tailwindcss/typography"),
-  ],
+  plugins: [require("@tailwindcss/typography")],
 };
 
 export default config;
