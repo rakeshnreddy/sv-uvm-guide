@@ -26,10 +26,12 @@ Before you can run the application, you need to create a `.env` file and set the
     ```sh
     cp .env.example .env
     ```
-2.  Open the `.env` file and add your Gemini API key and a session secret.
+2.  Open the `.env` file and add your Gemini API key, session secret, and Google OAuth credentials.
     ```
     GEMINI_API_KEY="YOUR_API_KEY"
     SESSION_SECRET="YOUR_SESSION_SECRET"
+    GOOGLE_CLIENT_ID="YOUR_GOOGLE_CLIENT_ID"
+    GOOGLE_CLIENT_SECRET="YOUR_GOOGLE_CLIENT_SECRET"
     ```
 3.  The `DATABASE_URL` is already set in the `.env.example` file, but you can change it if you need to.
 
