@@ -9,11 +9,11 @@ import Breadcrumbs from '@/components/layout/Breadcrumbs';
 import FeynmanPromptWidget from '@/components/widgets/FeynmanPromptWidget';
 
 type CurriculumTopicPageProps = {
-  params: { slug: string[] };
+  params: Promise<{ slug: string[] }>;
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {
-  const { slug } = params;
+  const { slug } = await params;
 
   if (!slug || slug.length === 0) {
     notFound();
@@ -43,7 +43,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
       <article className="prose prose-invert max-w-none">
         <MDXRemote source={mdxContent} />
       </article>
-      <FeynmanPromptWidget topicTitle={topic.title} />
+      <FeynmanPromptWidget conceptTitle={topic.title} />
     </div>
   );
 }

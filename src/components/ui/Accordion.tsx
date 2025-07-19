@@ -10,6 +10,7 @@ interface AccordionItemProps {
   isOpenDefault?: boolean;
   id: string; // For ARIA attributes
   buttonId?: string; // For aria-labelledby
+  prose?: boolean;
 }
 
 export const AccordionItem: React.FC<AccordionItemProps> = ({
@@ -18,6 +19,7 @@ export const AccordionItem: React.FC<AccordionItemProps> = ({
   isOpenDefault = false,
   id,
   buttonId,
+  prose = false,
 }) => {
   const [isOpen, setIsOpen] = useState(isOpenDefault);
   const generatedButtonId = buttonId || `accordion-button-${id}`;
@@ -59,8 +61,7 @@ export const AccordionItem: React.FC<AccordionItemProps> = ({
             transition={{ duration: 0.3, ease: "easeInOut" }}
             className="overflow-hidden"
           >
-            <div className="px-5 pb-4 pt-2 text-foreground/90 prose dark:prose-invert max-w-none">
-              {/* Added prose styles for better default content formatting */}
+            <div className={`px-5 pb-4 pt-2 text-foreground/90 ${prose ? 'prose dark:prose-invert max-w-none' : ''}`}>
               {children}
             </div>
           </motion.div>

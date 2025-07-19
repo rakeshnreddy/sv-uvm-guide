@@ -101,27 +101,30 @@ const TopicPage: React.FC<TopicPageProps> = ({
       <h1 className="text-4xl font-bold mb-6 text-foreground border-b border-border pb-4">{title}</h1>
 
       <Accordion className="mb-8">
-        <AccordionItem title="Level 1: The Elevator Pitch" id="level1" isOpenDefault>
+        <AccordionItem title="Level 1: The Elevator Pitch" id="level1" isOpenDefault prose>
           {level1Content}
         </AccordionItem>
-        <AccordionItem title="Level 2: The Practical Explanation" id="level2">
+        <AccordionItem title="Level 2: The Practical Explanation" id="level2" prose>
           {level2Content}
           {/* Designated slot for FeynmanPrompt - shown within Level 2 */}
           <FeynmanPromptPlaceholder />
         </AccordionItem>
-        <AccordionItem title="Level 3: The Deep Dive" id="level3">
-          {level3Content}
-          {flashcards && flashcards.length > 0 ? (
-            <FlashcardWidget
-              cards={flashcards}
-              onProgressUpdate={handleFlashcardProgressUpdate}
-              // initialCardIndex={initialCardIndex} // TODO: Pass this once loaded from Firestore
-            />
-          ) : (
-            <FlashcardWidgetPlaceholder /> // Show placeholder if no cards or still loading
-          )}
-        </AccordionItem>
       </Accordion>
+
+      <div>
+        <h2 className="text-2xl font-semibold text-foreground mt-10 mb-4">Level 3: The Deep Dive</h2>
+        <div className="prose dark:prose-invert max-w-none">
+          {level3Content}
+        </div>
+      </div>
+
+      {flashcards && flashcards.length > 0 && (
+        <FlashcardWidget
+          cards={flashcards}
+          onProgressUpdate={handleFlashcardProgressUpdate}
+          // initialCardIndex={initialCardIndex} // TODO: Pass this once loaded from Firestore
+        />
+      )}
 
       <div className="mt-8 mb-4 text-center">
         <Button onClick={handleMarkAsComplete} variant="default" size="lg">

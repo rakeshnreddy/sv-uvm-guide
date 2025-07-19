@@ -25,7 +25,7 @@ const sampleWaveJSONs = [
 
 export default function WaveformStudioPage() {
   const [waveJson, setWaveJson] = useState(sampleWaveJSONs[0].json);
-  const waveformRef = useRef(null);
+  const waveformRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (waveformRef.current) {

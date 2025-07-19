@@ -2,14 +2,8 @@ import UvmHeroDiagram from '@/components/UvmHeroDiagram';
 import HighlightsCarousel from '@/components/HighlightsCarousel';
 import React from 'react';
 import Link from 'next/link';
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Carousel,
-  CarouselContent,
-  CarouselItem,
-  CarouselNext,
-  CarouselPrevious,
-} from "@/components/ui/carousel";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+
 import { DollarSign, Zap, BarChart, BookOpen, Code, MessageSquare, Users } from "lucide-react";
 
 export default function HomePage() {

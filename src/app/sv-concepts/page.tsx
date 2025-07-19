@@ -80,14 +80,12 @@ const SvConceptsLandingPage: React.FC = () => {
         <h2 className="text-2xl font-semibold text-primary mb-4">Explore SystemVerilog Topics</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {svTopicLinks.map((topic) => (
-            <Link href={topic.href} key={topic.href} legacyBehavior>
-              <a className="block p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
-                <h3 className="text-xl font-semibold text-accent-foreground mb-2 flex justify-between items-center">
-                  {topic.title}
-                  <ArrowRight className="w-5 h-5 text-primary" />
-                </h3>
-                <p className="text-sm text-muted-foreground">{topic.description}</p>
-              </a>
+            <Link href={topic.href} key={topic.href} className="block p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
+              <h3 className="text-xl font-semibold text-accent-foreground mb-2 flex justify-between items-center">
+                {topic.title}
+                <ArrowRight className="w-5 h-5 text-primary" />
+              </h3>
+              <p className="text-sm text-muted-foreground">{topic.description}</p>
             </Link>
           ))}
         </div>

@@ -69,9 +69,6 @@ interface RootLayoutProps {
 export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <head>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/wavedrom/3.5.0/wavedrom.min.js"></script>
-      </head>
       <body className={`${inter.variable} ${jetbrains_mono.variable} ${calSans.variable} font-sans`}>
         <ThemeProvider
           attribute="class"

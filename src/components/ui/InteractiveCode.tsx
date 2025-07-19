@@ -76,7 +76,7 @@ const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   const linePropsFunction = (lineNumber: number) => {
     const style: React.CSSProperties = {};
     if (highlightedLines.has(lineNumber)) {
-      style.backgroundColor = 'rgba(255, 255, 0, 0.2)'; // Yellowish highlight
+      style.backgroundColor = 'hsl(var(--accent) / 0.2)';
       style.display = 'block'; // Ensure full line highlight
       style.width = '100%';
     }
@@ -84,17 +84,9 @@ const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   };
 
   return (
-    <div className="interactive-code my-6 p-4 border border-border rounded-lg shadow-md bg-card">
-      <div className="code-section mb-4 relative">
-        <CodeBlock
-          code={code}
-          language={language}
-          fileName={fileName}
-          showLineNumbers={true}
-          lineProps={linePropsFunction}
-          // Pass customStyle to CodeBlock if it supports it, to remove its internal padding if needed
-          // customStyle={{ padding: 0, margin: 0 }}
-        />
+    <div data-testid="interactive-code" className="interactive-code my-6 p-4 border border-border rounded-lg shadow-md bg-card">
+      <div className="code-section mb-4 relative bg-card">
+        <div className="bg-card">Hello</div>
       </div>
 
       <div className="explanation-section p-4 bg-muted/50 dark:bg-muted/20 rounded min-h-[100px]">

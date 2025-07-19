@@ -14,15 +14,15 @@ export default function Breadcrumbs({ slug }: BreadcrumbsProps) {
   return (
     <nav className="flex items-center text-sm text-muted-foreground mb-4">
       {breadcrumbs.map((breadcrumb, index) => (
-        <div key={breadcrumb.href} className="flex items-center">
+        <div key={breadcrumb.path} className="flex items-center">
           {index > 0 && <ChevronRight className="w-4 h-4 mx-1" />}
           <Link
-            href={breadcrumb.href}
+            href={breadcrumb.path}
             className={`hover:text-foreground ${
               index === breadcrumbs.length - 1 ? "text-foreground font-semibold" : ""
             }`}
           >
-            {breadcrumb.label}
+            {breadcrumb.title}
           </Link>
         </div>
       ))}

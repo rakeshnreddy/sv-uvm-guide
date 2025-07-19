@@ -231,6 +231,7 @@ export const curriculumData: Module[] = [
               slug: "advanced-sequencing",
               topics: [
                   { title: "Virtual Sequences and Sequencers", slug: "virtual-sequences-and-sequencers", description: "..." },
+                  { title: "UVM Virtual Sequencer", slug: "uvm-virtual-sequencer", description: "Coordinating stimulus across multiple agents." },
                   { title: "Sequence Arbitration and Priority", slug: "sequence-arbitration-and-priority", description: "..." },
                   { title: "Interrupt Handling and Layered Stimulus", slug: "interrupt-handling-and-layered-stimulus", description: "..." },
               ]
@@ -302,9 +303,9 @@ export const curriculumData: Module[] = [
 export function findTopicBySlug(slug: string[]): Topic | undefined {
   if (slug.length !== 3) return undefined;
   const [moduleSlug, sectionSlug, topicSlug] = slug;
-  const module = curriculumData.find(m => m.slug === moduleSlug);
-  if (!module) return undefined;
-  const section = module.sections.find(s => s.slug === sectionSlug);
+  const courseModule = curriculumData.find(m => m.slug === moduleSlug);
+  if (!courseModule) return undefined;
+  const section = courseModule.sections.find(s => s.slug === sectionSlug);
   if (!section) return undefined;
   return section.topics.find(t => t.slug === topicSlug);
 }
@@ -312,17 +313,17 @@ export function findTopicBySlug(slug: string[]): Topic | undefined {
 export function getBreadcrumbs(slug: string[]): { title: string, path: string }[] {
   const breadcrumbs: { title: string, path: string }[] = [];
   if (slug.length > 0) {
-    const module = curriculumData.find(m => m.slug === slug[0]);
-    if (module) {
-      breadcrumbs.push({ title: module.title, path: `/curriculum/${module.slug}` });
+    const courseModule = curriculumData.find(m => m.slug === slug[0]);
+    if (courseModule) {
+      breadcrumbs.push({ title: courseModule.title, path: `/curriculum/${courseModule.slug}` });
       if (slug.length > 1) {
-        const section = module.sections.find(s => s.slug === slug[1]);
+        const section = courseModule.sections.find(s => s.slug === slug[1]);
         if (section) {
-          breadcrumbs.push({ title: section.title, path: `/curriculum/${module.slug}/${section.slug}` });
+          breadcrumbs.push({ title: section.title, path: `/curriculum/${courseModule.slug}/${section.slug}` });
           if (slug.length > 2) {
             const topic = section.topics.find(t => t.slug === slug[2]);
             if (topic) {
-              breadcrumbs.push({ title: topic.title, path: `/curriculum/${module.slug}/${section.slug}/${topic.slug}` });
+              breadcrumbs.push({ title: topic.title, path: `/curriculum/${courseModule.slug}/${section.slug}/${topic.slug}` });
             }
           }
         }
