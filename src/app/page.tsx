@@ -1,8 +1,8 @@
 import UvmHeroDiagram from '@/components/UvmHeroDiagram';
-import HighlightsCarousel from '@/components/HighlightsCarousel';
 import React from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Button } from "@/components/ui/Button";
 
 import { DollarSign, Zap, BarChart, BookOpen, Code, MessageSquare, Users } from "lucide-react";
 
@@ -19,40 +19,80 @@ export default function HomePage() {
           Your comprehensive guide to mastering SystemVerilog and the Universal Verification Methodology (UVM).
           From fundamentals to advanced topics, kickstart your journey to becoming a verification expert.
         </p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <Link href="/curriculum" className="p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
-            <h3 className="text-xl font-semibold text-accent-foreground mb-2">Curriculum</h3>
-            <p className="text-sm text-muted-foreground">Explore the full curriculum.</p>
+        <div className="flex flex-wrap justify-center gap-4">
+          <Link href="/curriculum">
+            <Button>Explore Curriculum</Button>
           </Link>
-          <Link href="/sv-concepts" className="p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
-            <h3 className="text-xl font-semibold text-accent-foreground mb-2">SV Concepts</h3>
-            <p className="text-sm text-muted-foreground">Master the fundamentals of SystemVerilog.</p>
+          <Link href="/sv-concepts">
+            <Button variant="secondary">SV Concepts</Button>
           </Link>
-          <Link href="/uvm-concepts" className="p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
-            <h3 className="text-xl font-semibold text-accent-foreground mb-2">UVM Concepts</h3>
-            <p className="text-sm text-muted-foreground">Learn the Universal Verification Methodology.</p>
-          </Link>
-          <Link href="/exercises" className="p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
-            <h3 className="text-xl font-semibold text-accent-foreground mb-2">Exercises</h3>
-            <p className="text-sm text-muted-foreground">Test your knowledge with interactive exercises.</p>
-          </Link>
-          <Link href="/dashboard" className="p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
-            <h3 className="text-xl font-semibold text-accent-foreground mb-2">Dashboard</h3>
-            <p className="text-sm text-muted-foreground">Track your progress and review your notes.</p>
-          </Link>
-          <Link href="/community" className="p-6 bg-card hover:bg-accent/50 rounded-lg shadow-md transition-all hover:shadow-lg transform hover:-translate-y-1">
-            <h3 className="text-xl font-semibold text-accent-foreground mb-2">Community</h3>
-            <p className="text-sm text-muted-foreground">Connect with other learners and experts.</p>
+          <Link href="/uvm-concepts">
+            <Button variant="secondary">UVM Concepts</Button>
           </Link>
         </div>
       </section>
 
-      {/* Highlights Carousel Section */}
-      <section id="highlights-carousel-section" className="w-full max-w-6xl mt-8 md:mt-16 mb-8 md:mb-16 px-4">
-        <h2 className="text-3xl sm:text-4xl font-bold text-brand-text-primary text-center mb-8 md:mb-12 font-sans">
+      {/* Key Features Section */}
+      <section id="key-features-section" className="w-full max-w-6xl mt-8 md:mt-16 mb-8 md:mb-16 px-4">
+        <h2 className="text-3xl sm:text-4xl font-bold text-primary text-center mb-8 md:mb-12 font-sans">
           Key Features
         </h2>
-        <HighlightsCarousel />
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <Card>
+            <CardHeader>
+              <BookOpen className="w-12 h-12 text-accent" />
+              <CardTitle>Authoritative Curriculum</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p>Master SystemVerilog and UVM with content vetted by industry experts.</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <Code className="w-12 h-12 text-accent" />
+              <CardTitle>Interactive Labs</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p>Apply your knowledge with hands-on coding exercises and a waveform studio.</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <Zap className="w-12 h-12 text-accent" />
+              <CardTitle>AI-Powered Tutor</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p>Get instant feedback and explanations from your personal AI learning assistant.</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <BarChart className="w-12 h-12 text-accent" />
+              <CardTitle>Spaced Repetition</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p>Reinforce concepts effectively with our intelligent flashcard system.</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <Users className="w-12 h-12 text-accent" />
+              <CardTitle>Community Forum</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p>Connect with fellow learners, ask questions, and share your projects.</p>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <DollarSign className="w-12 h-12 text-accent" />
+              <CardTitle>Free and Open Source</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p>All content is free and the project is open source. Contribute on GitHub!</p>
+            </CardContent>
+          </Card>
+        </div>
       </section>
     </div>
   );
