@@ -128,8 +128,8 @@ const ScoreboardConnectorExercise: React.FC = () => {
   // TODO: Add validation, scoring, feedback, retry
 
   return (
-    <div className="w-full max-w-2xl mx-auto p-4 bg-muted/30 dark:bg-muted/20 rounded-lg shadow-md">
-      <h3 className="text-lg font-semibold mb-4 text-center text-foreground">Connect the UVM Components</h3>
+    <div className="w-full max-w-2xl mx-auto p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
+      <h3 className="text-lg font-semibold mb-4 text-center text-primary">Connect the UVM Components</h3>
       <p className="text-sm text-center text-muted-foreground mb-4">
         Click on an output port (e.g., an analysis_port on a monitor) and then click on a compatible input port
         (e.g., an analysis_imp on a scoreboard or coverage collector) to make a connection.
@@ -139,7 +139,7 @@ const ScoreboardConnectorExercise: React.FC = () => {
         width="100%"
         height="400"
         viewBox="0 0 600 400"
-        className="border border-border rounded bg-background"
+        className="border border-white/20 rounded bg-white/10"
         onMouseMove={handleMouseMove}
         onClick={handleSvgClick}
       >
@@ -152,7 +152,7 @@ const ScoreboardConnectorExercise: React.FC = () => {
               key={`conn-${index}`}
               x1={fromPos.x} y1={fromPos.y}
               x2={toPos.x} y2={toPos.y}
-              stroke="#2F855A" // green-600
+              stroke="hsl(var(--accent))"
               strokeWidth="2.5"
             />
           );
@@ -163,7 +163,7 @@ const ScoreboardConnectorExercise: React.FC = () => {
           <line
             x1={drawingLine.x1} y1={drawingLine.y1}
             x2={drawingLine.x2} y2={drawingLine.y2}
-            stroke="#4A5568" // gray-700
+            stroke="hsl(var(--foreground))"
             strokeWidth="2"
             strokeDasharray="4 4"
           />
@@ -176,11 +176,11 @@ const ScoreboardConnectorExercise: React.FC = () => {
               width={comp.width}
               height={comp.height}
               rx="5"
-              fill="#F7FAFC" // gray-50
-              stroke="#4A5568" // gray-700
+              fill="hsla(var(--primary-foreground), 0.1)"
+              stroke="hsl(var(--primary))"
               strokeWidth="1.5"
             />
-            <text x={comp.width / 2} y="20" textAnchor="middle" fontSize="12" fill="#2D3748"> {/* gray-800 */}
+            <text x={comp.width / 2} y="20" textAnchor="middle" fontSize="12" fill="hsl(var(--foreground))">
               {comp.name}
             </text>
             {comp.ports.map(port => (
@@ -189,10 +189,10 @@ const ScoreboardConnectorExercise: React.FC = () => {
                 cx={port.x}
                 cy={port.y}
                 r={portRadius}
-                fill={selectedPort?.portId === port.id ? portFillColorHover : portFillColor}
-                stroke={portStrokeColor}
+                fill={selectedPort?.portId === port.id ? "hsl(var(--accent))" : "hsl(var(--primary-foreground))"}
+                stroke="hsl(var(--primary))"
                 strokeWidth="1.5"
-                className="cursor-pointer hover:fill-gray-300"
+                className="cursor-pointer hover:fill-hsl(var(--accent))"
                 onClick={(e) => { e.stopPropagation(); handlePortClick(comp.id, port.id);}}
                 aria-label={`Port ${port.name} on ${comp.name}`}
               />
@@ -201,12 +201,12 @@ const ScoreboardConnectorExercise: React.FC = () => {
         ))}
       </svg>
        <div className="mt-4 flex justify-center">
-        <button
+        <Button
             onClick={() => setConnections([])}
-            className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
+            variant="destructive"
         >
             Reset Connections
-        </button>
+        </Button>
         {/* TODO: Add Check Connections button */}
       </div>
     </div>
