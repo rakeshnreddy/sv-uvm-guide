@@ -52,9 +52,9 @@ const CodeBlock: React.FC<CodeBlockProps> = ({
   const codeTheme = theme === "dark" ? darkTheme : lightTheme;
 
   return (
-    <div data-testid="code-block" className="my-4 rounded-lg shadow-lg overflow-hidden bg-secondary/70 backdrop-blur-sm border border-border">
+    <div data-testid="code-block" className="my-4 rounded-lg shadow-lg overflow-hidden bg-white/10 backdrop-blur-lg border border-white/20">
       {fileName && (
-        <div className="flex justify-between items-center px-4 py-2 bg-secondary/50 border-b border-border">
+        <div className="flex justify-between items-center px-4 py-2 bg-white/10 border-b border-white/20">
           <span className="text-xs font-mono text-muted-foreground">{fileName}</span>
           <Button
             variant="ghost"

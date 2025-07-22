@@ -84,12 +84,27 @@ const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   
 
   return (
-    <div data-testid="interactive-code" className="interactive-code my-6 p-4 border border-border rounded-lg shadow-md bg-card">
-      <div className="code-section mb-4 relative bg-card">
-        <div className="bg-card">Hello</div>
+    <div data-testid="interactive-code" className="interactive-code my-6 p-4 border border-white/20 rounded-lg shadow-md bg-white/10 backdrop-blur-lg">
+      <div className="code-section mb-4 relative bg-transparent">
+        <CodeBlock
+          code={code}
+          language={language}
+          fileName={fileName}
+          showLineNumbers={true}
+          lineProps={(lineNumber) => {
+            const style: React.CSSProperties = { display: 'block', width: '100%' };
+            if (highlightedLines.has(lineNumber)) {
+              style.backgroundColor = 'hsla(var(--primary), 0.2)';
+              style.borderLeft = '2px solid hsl(var(--primary))';
+              style.paddingLeft = '10px';
+              style.marginLeft = '-12px'; // Adjust to align with the border
+            }
+            return { style };
+          }}
+        />
       </div>
 
-      <div className="explanation-section p-4 bg-muted/50 dark:bg-muted/20 rounded min-h-[100px]">
+      <div className="explanation-section p-4 bg-white/10 dark:bg-black/10 rounded min-h-[100px]">
         <AnimatePresence mode="wait">
           <motion.div
             key={currentStepIndex}
