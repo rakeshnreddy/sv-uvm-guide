@@ -73,15 +73,15 @@ const InteractiveCode: React.FC<InteractiveCodeProps> = ({
     setCurrentStepIndex((prev) => Math.max(prev - 1, 0));
   };
 
-  const linePropsFunction = (lineNumber: number) => {
-    const style: React.CSSProperties = {};
-    if (highlightedLines.has(lineNumber)) {
-      style.backgroundColor = 'hsl(var(--accent) / 0.2)';
-      style.display = 'block'; // Ensure full line highlight
-      style.width = '100%';
+  React.useEffect(() => {
+    const element = document.querySelector('[data-testid="interactive-code"]');
+    if (element) {
+      const styles = getComputedStyle(element);
+      console.log('InteractiveCode background-color:', styles.backgroundColor);
     }
-    return { style };
-  };
+  }, []);
+
+  
 
   return (
     <div data-testid="interactive-code" className="interactive-code my-6 p-4 border border-border rounded-lg shadow-md bg-card">
