@@ -44,39 +44,40 @@ const InfoPage: React.FC<InfoPageProps> = ({
           The 'max-w-none' removes the default max-width from prose for full container width.
           Adjust 'lg:prose-xl' for desired text size.
         */}
-        <header className="mb-8">
-          <h1 className="text-4xl font-bold text-foreground !mb-4 border-b border-border pb-4">
-            {/* Added !mb-4 to override prose heading margin if needed */}
-            {title}
-          </h1>
-        </header>
+          <header className="mb-8">
+            <h1 className="text-4xl font-bold text-primary !mb-4 border-b border-white/20 pb-4">
+              {/* Added !mb-4 to override prose heading margin if needed */}
+              {title}
+            </h1>
+          </header>
 
-        <section className="mb-8">
-          {children}
-        </section>
-
-        {charts && charts.length > 0 && (
           <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-foreground mt-10 mb-4">Charts & Visualizations</h2>
-            {charts.map((chart, index) => (
-              <div key={`chart-${index}`}>{chart}</div>
-            ))}
-            {/* Example of using the placeholder directly */}
-            {/* <InteractiveChartPlaceholder /> */}
+            {children}
           </section>
-        )}
 
-        {diagrams && diagrams.length > 0 && (
-          <section className="mb-8">
-            <h2 className="text-2xl font-semibold text-foreground mt-10 mb-4">Diagrams & Illustrations</h2>
-            {diagrams.map((diagram, index) => (
-              <div key={`diagram-${index}`}>{diagram}</div>
-            ))}
-            {/* Example of using the placeholder directly */}
-            {/* <DiagramPlaceholder /> */}
-          </section>
-        )}
-      </article>
+          {charts && charts.length > 0 && (
+            <section className="mb-8">
+              <h2 className="text-2xl font-semibold text-primary mt-10 mb-4">Charts & Visualizations</h2>
+              {charts.map((chart, index) => (
+                <div key={`chart-${index}`}>{chart}</div>
+              ))}
+              {/* Example of using the placeholder directly */}
+              {/* <InteractiveChartPlaceholder /> */}
+            </section>
+          )}
+
+          {diagrams && diagrams.length > 0 && (
+            <section className="mb-8">
+              <h2 className="text-2xl font-semibold text-primary mt-10 mb-4">Diagrams & Illustrations</h2>
+              {diagrams.map((diagram, index) => (
+                <div key={`diagram-${index}`}>{diagram}</div>
+              ))}
+              {/* Example of using the placeholder directly */}
+              {/* <DiagramPlaceholder /> */}
+            </section>
+          )}
+        </article>
+      </div>
     </div>
   );
 };
