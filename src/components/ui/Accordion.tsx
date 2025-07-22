@@ -78,7 +78,7 @@ interface AccordionProps {
 
 export const Accordion: React.FC<AccordionProps> = ({ children, className }) => {
   return (
-    <div className={`border border-border/50 rounded-lg shadow-sm bg-card ${className}`}>
+    <div className={`bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg ${className}`}>
       {children}
     </div>
   );

@@ -12,9 +12,8 @@ const Card: React.FC<CardProps> = ({ children, className, ...props }) => {
     <div
       className={twMerge(
         clsx(
-          "bg-card/70 backdrop-blur-sm", // Slightly lighter/more transparent than main background, with blur
+          "bg-white/10 backdrop-blur-lg border border-white/20",
           "rounded-lg",
-          "border border-border", // Use the themed border color
           "shadow-lg", // Adding a subtle shadow for depth
           className
         )

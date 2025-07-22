@@ -40,7 +40,7 @@ const config: Config = {
         },
       },
       fontFamily: {
-        sans: ["var(--font-inter)"],
+        sans: ["var(--font-cal-sans)", "var(--font-inter)"],
         mono: ["var(--font-jetbrains-mono)"],
         serif: ["Georgia", "serif"],
       },
