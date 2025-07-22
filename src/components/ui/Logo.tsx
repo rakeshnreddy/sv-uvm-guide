@@ -12,9 +12,9 @@ const Logo = () => {
       <text
         x="0"
         y="15"
-        fontFamily="Georgia, serif"
+        fontFamily="var(--font-cal-sans)"
         fontSize="16"
-        fill="currentColor"
+        fill="hsl(var(--primary))"
         className="font-bold"
       >
         SV/UVM Hub

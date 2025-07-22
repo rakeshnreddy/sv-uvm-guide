@@ -29,8 +29,8 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
 
   if (currentQuestionIndex >= questions.length) {
     return (
-      <div className="p-4 bg-card rounded-lg shadow-lg">
-        <h3 className="text-xl font-bold text-card-foreground">Quiz Complete!</h3>
+      <div className="p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
+        <h3 className="text-xl font-bold text-primary">Quiz Complete!</h3>
       </div>
     );
   }
@@ -38,8 +38,8 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
   const { question, options } = questions[currentQuestionIndex];
 
   return (
-    <div className="p-4 bg-card rounded-lg shadow-lg">
-      <h3 className="text-xl font-bold text-card-foreground mb-4">{question}</h3>
+    <div className="p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
+      <h3 className="text-xl font-bold text-primary mb-4">{question}</h3>
       <div className="space-y-2">
         {options.map((option) => (
           <Button
