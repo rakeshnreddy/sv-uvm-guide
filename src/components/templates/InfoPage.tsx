@@ -79,7 +79,6 @@ const InfoPage: React.FC<InfoPageProps> = ({
         </article>
       </div>
     </div>
-    </div>
   );
 };
 
