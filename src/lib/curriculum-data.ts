@@ -231,7 +231,10 @@ export const curriculumData: Module[] = [
               slug: "advanced-sequencing",
               topics: [
                   { title: "Virtual Sequences and Sequencers", slug: "virtual-sequences-and-sequencers", description: "..." },
+                  { title: "Virtual Sequences and Sequencers", slug: "virtual-sequences-and-sequencers", description: "..." },
                   { title: "UVM Virtual Sequencer", slug: "uvm-virtual-sequencer", description: "Coordinating stimulus across multiple agents." },
+                  { title: "Sequence Arbitration and Priority", slug: "sequence-arbitration-and-priority", description: "..." },
+                  { title: "Interrupt Handling and Layered Stimulus", slug: "interrupt-handling-and-layered-stimulus", description: "..." }
                   { title: "Sequence Arbitration and Priority", slug: "sequence-arbitration-and-priority", description: "..." },
                   { title: "Interrupt Handling and Layered Stimulus", slug: "interrupt-handling-and-layered-stimulus", description: "..." },
               ]
