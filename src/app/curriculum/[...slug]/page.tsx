@@ -35,9 +35,9 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
   }
 
   return (
-    <div>
+    <div className="p-4 md:p-6 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
       <Breadcrumbs slug={slug} />
-      <h1 className="text-3xl sm:text-4xl font-bold text-accent font-sans mb-6 pb-2 border-b border-secondary">
+      <h1 className="text-3xl sm:text-4xl font-bold text-primary font-sans mb-6 pb-2 border-b border-white/20">
         {topic.title}
       </h1>
       <article className="prose prose-invert max-w-none">
