@@ -84,19 +84,18 @@ const SortablePhaseItem: React.FC<SortablePhaseItemProps> = ({ phase }) => {
     transition,
     opacity: isDragging ? 0.7 : 1,
     zIndex: isDragging ? 1 : 'auto',
-    boxShadow: isDragging ? '0 4px 12px rgba(0,0,0,0.2)' : '0 1px 3px rgba(0,0,0,0.1)',
   };
 
   return (
     <div
       ref={setNodeRef}
       style={style}
-      className="flex items-center p-3 mb-2 bg-card text-card-foreground rounded-md border border-border touch-none select-none"
+      className="flex items-center p-3 mb-2 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg text-foreground touch-none select-none"
     >
       <button
         {...attributes}
         {...listeners}
-        className="cursor-grab p-1 mr-3 text-muted-foreground hover:bg-muted rounded"
+        className="cursor-grab p-1 mr-3 text-muted-foreground hover:bg-white/20 rounded"
         aria-label={`Drag ${phase.name}`}
       >
         <GripVertical size={20} />
@@ -147,8 +146,8 @@ const UvmPhaseSorterExercise: React.FC = () => {
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
     >
-      <div className="w-full max-w-md mx-auto p-4 bg-muted/30 dark:bg-muted/20 rounded-lg shadow-md">
-        <h3 className="text-lg font-semibold mb-4 text-center text-foreground">Sort the UVM Phases</h3>
+      <div className="w-full max-w-md mx-auto p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
+        <h3 className="text-lg font-semibold mb-4 text-center text-primary">Sort the UVM Phases</h3>
         <SortableContext items={items.map(item => item.id)} strategy={verticalListSortingStrategy}>
           <div className="space-y-2">
             {items.map((phase) => (
@@ -158,7 +157,7 @@ const UvmPhaseSorterExercise: React.FC = () => {
         </SortableContext>
         <DragOverlay>
           {activeItem ? (
-            <div className="flex items-center p-3 mb-2 bg-primary text-primary-foreground rounded-md border border-border shadow-xl cursor-grabbing">
+            <div className="flex items-center p-3 mb-2 bg-primary text-primary-foreground rounded-md border border-white/20 shadow-xl cursor-grabbing">
                <GripVertical size={20} className="mr-3"/>
               <span>{activeItem.name}</span>
             </div>

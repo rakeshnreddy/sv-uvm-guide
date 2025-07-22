@@ -145,23 +145,23 @@ const UvmAgentBuilderExercise: React.FC = () => {
     >
       <div className="flex flex-col md:flex-row gap-6 p-4 items-start">
         {/* Available Components */}
-        <div className="w-full md:w-1/3 p-4 bg-gray-100 dark:bg-gray-800 rounded-lg shadow">
-          <h3 className="text-lg font-semibold mb-3 text-gray-700 dark:text-gray-300">Available UVM Components</h3>
+        <div className="w-full md:w-1/3 p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
+          <h3 className="text-lg font-semibold mb-3 text-primary">Available UVM Components</h3>
           <SortableContext items={availableComponents.map(i => i.id)} strategy={verticalListSortingStrategy} id="available-droppable">
-             <div id="available-droppable" className="min-h-[200px] border-2 border-dashed border-gray-300 dark:border-gray-600 rounded p-2">
+             <div id="available-droppable" className="min-h-[200px] border-2 border-dashed border-white/20 rounded p-2">
                 {availableComponents.map(item => <SortableItem key={item.id} item={item} />)}
-                {availableComponents.length === 0 && <p className="text-gray-500 text-center py-4">All components used.</p>}
+                {availableComponents.length === 0 && <p className="text-muted-foreground text-center py-4">All components used.</p>}
              </div>
           </SortableContext>
         </div>
 
         {/* Agent Target Area */}
-        <div className="w-full md:w-2/3 p-4 bg-green-50 dark:bg-green-900/30 rounded-lg shadow-lg border-2 border-green-500 dark:border-green-700">
-          <h3 className="text-lg font-semibold mb-3 text-green-700 dark:text-green-300">UVM Agent (Drop Zone)</h3>
+        <div className="w-full md:w-2/3 p-4 bg-white/10 backdrop-blur-lg border-2 border-accent rounded-lg shadow-lg">
+          <h3 className="text-lg font-semibold mb-3 text-accent">UVM Agent (Drop Zone)</h3>
            <SortableContext items={agentComponents.map(i => i.id)} strategy={verticalListSortingStrategy} id="agent-droppable">
-            <div id="agent-droppable" className="min-h-[200px] p-2 bg-white dark:bg-gray-700 rounded border border-dashed border-green-600 dark:border-green-500">
+            <div id="agent-droppable" className="min-h-[200px] p-2 bg-white/10 rounded border border-dashed border-accent">
                 {agentComponents.map(item => <SortableItem key={item.id} item={item} />)}
-                {agentComponents.length === 0 && <p className="text-gray-500 dark:text-gray-400 text-center py-4">Drag components here</p>}
+                {agentComponents.length === 0 && <p className="text-muted-foreground text-center py-4">Drag components here</p>}
             </div>
           </SortableContext>
         </div>

@@ -36,8 +36,9 @@ const InfoPage: React.FC<InfoPageProps> = ({
 }) => {
   return (
     <div className="container mx-auto py-8 px-4">
-      <article className="prose dark:prose-invert lg:prose-xl max-w-none">
-        {/*
+      <div className="p-4 md:p-6 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
+        <article className="prose dark:prose-invert lg:prose-xl max-w-none">
+          {/*
           Using Tailwind Typography (prose classes) for rich text formatting.
           Ensure @tailwindcss/typography plugin is installed if not already.
           The 'max-w-none' removes the default max-width from prose for full container width.
