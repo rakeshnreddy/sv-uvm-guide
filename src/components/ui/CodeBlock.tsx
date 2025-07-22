@@ -1,3 +1,4 @@
+'use client';
 import React, { useState, useEffect } from "react";
 import { PrismAsyncLight as SyntaxHighlighter } from "react-syntax-highlighter";
 import { useTheme } from "next-themes";

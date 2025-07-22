@@ -12,9 +12,10 @@ const Logo = () => {
       <text
         x="0"
         y="15"
-        fontFamily="Roboto Mono, monospace"
+        fontFamily="Georgia, serif"
         fontSize="16"
         fill="currentColor"
+        className="font-bold"
       >
         SV/UVM Hub
       </text>
