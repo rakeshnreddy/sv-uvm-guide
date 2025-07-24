@@ -72,7 +72,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
       <body className={`${inter.variable} ${jetbrains_mono.variable} ${calSans.variable} font-sans`}>
         <ThemeProvider
           attribute="class"
-          defaultTheme="dark"
+          defaultTheme="default-dark"
           disableTransitionOnChange
         >
           <SessionProvider>
