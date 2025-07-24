@@ -4,8 +4,8 @@ This file tracks the content that still needs to be added to the curriculum.
 
 ## Tier 1: Foundational
 
-*   [ ] F3_Procedural_Constructs
-*   [ ] F4_RTL_and_Testbench_Constructs
+*   [x] F3_Procedural_Constructs
+*   [x] F4_RTL_and_Testbench_Constructs
 
 ## Tier 2: Intermediate
 
