@@ -15,7 +15,7 @@ The curriculum is organized into a four-tiered structure, based on the principle
 
 ## Comprehensive Curriculum Module Map
 
-[Link to the Comprehensive Curriculum Module Map will be added here once it is created.]
+[Comprehensive Curriculum Module Map](COMPREHENSIVE_CURRICULUM_MODULE_MAP.md)
 
 ## Start Here
 
