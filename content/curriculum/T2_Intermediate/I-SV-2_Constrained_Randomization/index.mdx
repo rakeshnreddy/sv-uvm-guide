@@ -24,26 +24,45 @@ We use the `rand` and `randc` keywords to declare random variables within a clas
 
 <InteractiveCode>
 ```systemverilog
-class MyPacket;
-  // Standard random variable
-  rand bit [7:0] addr;
+class Packet;
+  rand logic [7:0] length;
+  rand logic [3:0] kind;
+  rand logic [31:0] payload[]; // Dynamic array
 
-  // Random-cyclic variable for opcodes
-  randc bit [2:0] opcode; // Will not repeat until all 8 values are hit
+  // Constraint on a single variable
+  constraint c_length { length inside {[10:20], [50:60]}; }
+
+  // Constraint with distribution
+  constraint c_kind   { kind != 0; kind dist { 1 := 40, [2:5] :/ 60 }; }
+
+  // Relational constraint between two variables
+  constraint c_payload_size { payload.size() == length; }
+
+  function void post_randomize();
+    $display("Randomized Packet: length=%0d, kind=%0d, payload_size=%0d", length, kind, payload.size());
+  endfunction
 endclass
 
-program main;
+program test;
+  Packet pkt = new();
   initial begin
-    MyPacket pkt = new();
-    // Randomize the packet 10 times and observe opcodes
-    repeat (10) begin
-      pkt.randomize();
-      $display("addr: 0x%h, opcode: %d", pkt.addr, pkt.opcode);
+    repeat (3) begin
+      // Standard randomization
+      if (!pkt.randomize()) begin
+        $error("Randomization failed!");
+      end
+
+      // Randomization with an inline constraint
+      if (!pkt.randomize() with { length == 15; }) begin
+         $error("Inline randomization failed!");
+      end
     end
   end
 endprogram
 ```
 </InteractiveCode>
+
+<DiagramPlaceholder title="Constraint Solver Decision Space (Conceptual)" />
 
 ### Constraint Blocks
 

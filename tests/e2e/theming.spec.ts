@@ -9,7 +9,7 @@ test.describe('Theme and Styling Verification', () => {
   });
 
   test('should toggle theme and apply correct styles to InteractiveCode', async ({ page }) => {
-    await page.goto('/uvm-concepts/uvm-virtual-sequencer');
+    await page.goto('/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/virtual-sequences');
 
     const interactiveCode = page.getByTestId('interactive-code');
 

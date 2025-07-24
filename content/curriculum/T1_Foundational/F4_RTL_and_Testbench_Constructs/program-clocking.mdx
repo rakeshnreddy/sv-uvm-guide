@@ -1,17 +1,110 @@
-import { InfoPage } from "@/components/templates/InfoPage";
+---
+title: "F4: Program and Clocking Blocks"
+description: "Understand how program and clocking blocks help create race-free testbenches by separating the testbench from the DUT and defining clear timing for signal interaction."
+---
 
-export const metadata = {
-  title: "Program and Clocking Blocks | SystemVerilog Language Foundations",
-  description: "...",
-};
+import { Quiz, InteractiveCode } from '@/components/ui';
+import { DiagramPlaceholder } from '@/components/templates/InfoPage';
 
-<InfoPage
-  title="Program and Clocking Blocks"
-  sv_concept_tags={["program blocks", "clocking blocks"]}
->
+## The "Why" of Program and Clocking Blocks
 
-  ## Program and Clocking Blocks
+In SystemVerilog, the Design Under Test (DUT) and the testbench run concurrently. This can lead to race conditions where it's unclear whether the testbench sees a signal *before* or *after* the DUT updates it in the same simulation time step. `program` and `clocking` blocks were introduced to solve this problem.
 
-  This section is under construction. Please check back later.
+## Level 1: The Safe Zone and Synchronized Lens
 
-</InfoPage>
+- **`program` block:** Think of this as the "safe zone" for your testbench code. It executes in a different simulation region (the Reactive region) than the DUT's design code (the Active region). This scheduling difference ensures that the testbench sees the stable, final values of DUT signals from the current time step.
+- **`clocking` block:** This is like a "synchronized lens" for viewing and interacting with the DUT's signals. It samples signals at a specific point relative to a clock edge, and drives signals with a specified skew, eliminating timing ambiguity.
+
+## Level 2: Core Mechanics
+
+### Program Blocks
+
+A `program` block is similar to a `module`, but it is specifically designed for testbench code. It helps separate the testbench from the DUT and has specific scheduling semantics to prevent race conditions.
+
+### Clocking Blocks
+
+A `clocking` block, usually defined within an `interface`, specifies the timing of testbench interaction with the DUT.
+
+- `default input #1step output #2;`: This is a common setting.
+  - **`input #1step`**: Sample input signals 1 "step" before the clock edge. This ensures we capture the value before it changes on the upcoming clock edge.
+  - **`output #2`**: Drive output signals 2 time units *after* the clock edge. This ensures the DUT has a stable value to sample on its next clock edge.
+
+<InteractiveCode>
+```systemverilog
+// 1. Clocking block defined in an interface
+interface my_interface(input logic clk);
+  logic        req;
+  logic [7:0]  data;
+  logic        ack;
+
+  clocking tb_cb @(posedge clk);
+    default input #1step output #2; // Define skews
+    output req, data;
+    input  ack;
+  endclocking
+
+  modport TB (input clk, ack, clocking tb_cb); // Connect TB to clocking block
+endinterface
+
+// 2. Program block for the test
+program automatic test(my_interface.TB bus); // Use the TB modport
+  initial begin
+    $display("Test starting...");
+
+    // Drive signals using the clocking block
+    bus.tb_cb.req <= 1'b1;
+    bus.tb_cb.data <= 8'hA5;
+
+    // Wait for a clocking block event (a clock edge)
+    @(bus.tb_cb);
+
+    $display("Data driven. Waiting for ack...");
+
+    // Wait for ack to be asserted
+    wait(bus.tb_cb.ack == 1'b1);
+
+    $display("Ack received. Test finished.");
+    $finish;
+  end
+endprogram
+```
+</InteractiveCode>
+
+### Visualizing the Timing
+
+<DiagramPlaceholder title="Clocking Block Skew Timing Diagram" />
+
+A timing diagram would show the `posedge clk`, with the testbench `input` signals being sampled just before it, and `output` signals being driven some time after it, preventing any ambiguity.
+
+## Level 3: Expert Insights
+
+**Are `program` blocks still used?** While fundamental, `program` blocks are less common in modern UVM testbenches. The UVM methodology uses class-based components running in the module context, and relies heavily on `virtual interfaces` with `clocking blocks` to achieve synchronization. The principles of race avoidance are the same, but the implementation is different. Understanding `program` blocks is still valuable for non-UVM testbenches and for grasping the underlying SystemVerilog scheduling model.
+
+**Memory & Retention Tip:** Remember: **Program Block = Testbench's "Safe Zone"**. **Clocking Block = "Synchronized Goggles"** for DUT signals.
+
+## Check Your Understanding
+
+<Quiz>
+  {[
+    {
+      "question": "What is the primary problem that `program` and `clocking` blocks solve?",
+      "answers": [
+        {"text": "They reduce the amount of code needed.", "correct": false},
+        {"text": "They prevent race conditions between the testbench and the DUT.", "correct": true},
+        {"text": "They are required for object-oriented programming.", "correct": false},
+        {"text": "They automatically generate stimulus.", "correct": false}
+      ],
+      "explanation": "Their main purpose is to create a deterministic, race-free environment for the testbench to interact with the DUT by defining execution regions and signal timing."
+    },
+    {
+      "question": "In a clocking block, what does `input #1step` typically signify?",
+      "answers": [
+        {"text": "Drive the input signal 1ns after the clock.", "correct": false},
+        {"text": "Sample the input signal 1 simulation time step before the clock edge.", "correct": true},
+        {"text": "The input signal is 1 bit wide.", "correct": false},
+        {"text": "Delay the clock by 1 step.", "correct": false}
+      ],
+      "explanation": "The `input` skew directs the simulator to sample the signal just before the clock edge, ensuring it captures the value that was present right before the flip-flops in the DUT would change state."
+    }
+  ]}
+</Quiz>

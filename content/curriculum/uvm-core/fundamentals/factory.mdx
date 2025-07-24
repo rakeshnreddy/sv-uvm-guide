@@ -1,40 +1,125 @@
 ---
 title: "UVM Factory"
+description: "Learn how the UVM factory enables test-specific customization and replacement of components and objects without modifying the original testbench code."
 ---
 
-import CodeBlock from '/src/components/ui/CodeBlock'
-import Link from 'next/link'
+import { Quiz, InteractiveCode } from '@/components/ui';
+import { DiagramPlaceholder } from '@/components/templates/InfoPage';
 
-## Level 1: Definition and Analogy
+## The "Why" of the Factory
 
-The UVM Factory is like a **customizable production line**. You order the type you want and the factory delivers it, letting you swap models without rewiring the assembly line. It solves the problem of replacing components or sequence items for specific tests without editing their creators.
+Imagine you have a stable, well-tested UVM environment. Now, for one specific test, you need to use a special "error-injecting" driver instead of the normal one. How do you do this without changing the environment code? The UVM factory is the answer. It provides a mechanism for creating objects and components that allows you to "override" the type being created at runtime.
 
-## Level 2: In‑Depth Walkthrough
+## Level 1: The Car Factory Analogy
 
-### Registration and Creation
+Think of the UVM factory like a car factory.
+- The assembly line is programmed to request a "standard engine".
+- Normally, the factory provides the standard engine.
+- However, for a "sports car" order, you can tell the factory, "whenever the assembly line requests a 'standard engine', give it a 'turbo engine' instead."
+The assembly line doesn't need to change; it just gets a different part. This is the power of factory overrides.
 
+## Level 2: Core Mechanics
+
+### 1. Registration
+
+Before the factory can create an object or component, its type must be "registered" with the factory. This is done using the `uvm_*_utils` macros.
+
+- `uvm_object_utils`: For `uvm_object`-based classes (like transactions).
+- `uvm_component_utils`: For `uvm_component`-based classes (like drivers, monitors).
+
+### 2. Creation
+
+You should *never* use `new()` to construct UVM components or transactions that you might want to override. Instead, use the factory's `create()` method.
+
+### 3. Overrides
+
+In your test, you can instruct the factory to provide a different type of object or component.
+
+- **Type Override:** Replaces all instances of a certain type with a different type.
+- **Instance Override:** Replaces a specific instance (by its hierarchical path) with a different type.
+
+<InteractiveCode>
 ```systemverilog
-class my_item extends uvm_sequence_item;
-  `uvm_object_utils(my_item)
+// 1. Define and register a base transaction
+class base_transaction extends uvm_sequence_item;
+  `uvm_object_utils(base_transaction)
+  rand int data;
+  function new(string name = "base_transaction"); super.new(name); endfunction
 endclass
 
-class my_driver extends uvm_driver#(my_item);
+// 2. Define and register an extended transaction
+class extended_transaction extends base_transaction;
+  `uvm_object_utils(extended_transaction)
+  rand int extra_field;
+  function new(string name = "extended_transaction"); super.new(name); endfunction
+endclass
+
+// 3. A driver that creates transactions using the factory
+class my_driver extends uvm_driver #(base_transaction);
   `uvm_component_utils(my_driver)
+  // ... constructor ...
+  virtual task run_phase(uvm_phase phase);
+    // Use the factory to create the transaction
+    base_transaction tr = base_transaction::type_id::create("tr");
+    // ...
+  endtask
 endclass
 
-my_item item = my_item::type_id::create("item");
+// 4. A test that overrides the transaction type
+class test_with_override extends uvm_test;
+  `uvm_component_utils(test_with_override)
+  my_driver driver;
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+
+    // Override all base_transactions with extended_transactions
+    factory.set_type_override_by_type(base_transaction::get_type(),
+                                      extended_transaction::get_type());
+
+    // Now, when the driver calls base_transaction::type_id::create("tr"),
+    // the factory will return an extended_transaction object.
+    driver = my_driver::type_id::create("driver", this);
+  endfunction
+endclass
 ```
+</InteractiveCode>
 
-### Overrides
+<DiagramPlaceholder title="UVM Factory Override Mechanism" />
 
-```systemverilog
-factory.set_type_override_by_type(my_item::get_type(), my_item_ext::get_type());
-```
+## Level 3: Expert Insights
 
-## Level 3: Edge‑Case Insights
+**Type vs. Instance Overrides:**
+- Use **type overrides** when you want to change the behavior globally (e.g., "always use the error-injecting driver in this test").
+- Use **instance overrides** for targeted changes (e.g., "only the agent for interface 0 should use the error-injecting driver"). Instance overrides are more precise but can be more brittle if the testbench hierarchy changes.
 
-* **Type vs Instance Overrides:** Type overrides replace all creations; instance overrides target one path.
-* Use `+uvm_set_inst_override` and `+uvm_set_type_override` from the command line for debugging.
-* Veteran tip: **"Factory = UVM's switchboard operator"** – it redirects calls to create objects.
+**Debugging:** Use the `+uvm_factory_trace` command-line plusarg to get detailed printouts of all factory creations and override lookups. This is invaluable for debugging override issues.
 
-[Next: Phasing](./phasing)
+**Memory & Retention Tip:** Remember: **`_utils` = Register**, **`create()` = Dial the number**, **Override = Redirect the call**.
+
+## Check Your Understanding
+
+<Quiz>
+  {[
+    {
+      "question": "Why should you use `my_driver::type_id::create(\"drv\")` instead of `new uvm_driver(\"drv\")`?",
+      "answers": [
+        {"text": "It is shorter to type.", "correct": false},
+        {"text": "It allows the factory to apply overrides, enabling polymorphism and test-specific customization.", "correct": true},
+        {"text": "It automatically connects the component to the testbench hierarchy.", "correct": false},
+        {"text": "It prevents the component from being garbage collected.", "correct": false}
+      ],
+      "explanation": "Using the factory's `create` method is the essential first step to enabling the override mechanism. If you use `new()`, the factory is bypassed, and overrides will not work."
+    },
+    {
+      "question": "You want to replace the `my_driver` in `env.agent1` with `error_driver`, but leave the `my_driver` in `env.agent2` unchanged. What kind of override should you use?",
+      "answers": [
+        {"text": "A type override", "correct": false},
+        {"text": "An instance override", "correct": true},
+        {"text": "A `uvm_config_db` set", "correct": false},
+        {"text": "A sequence override", "correct": false}
+      ],
+      "explanation": "An instance override allows you to target a specific component by its hierarchical path (e.g., `env.agent1.*`), providing the precision needed for this scenario."
+    }
+  ]}
+</Quiz>
