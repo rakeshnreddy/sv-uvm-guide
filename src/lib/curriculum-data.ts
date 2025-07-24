@@ -80,45 +80,31 @@ export const curriculumData: Module[] = [
             ]
         },
         {
-            title: "Assertions (SVA)",
-            slug: "I-SV-4_Assertions_SVA",
+            title: "SystemVerilog Assertions (SVA)",
+            slug: "I-SV-4_SVA",
             topics: [
-                { title: "Assertions (SVA)", slug: "index", description: "Using SystemVerilog Assertions for verification." },
+                { title: "SystemVerilog Assertions (SVA)", slug: "index", description: "Using SystemVerilog Assertions for verification." },
             ]
         },
         {
-            title: "Core UVM Concepts",
-            slug: "I-UVM-1_Core_Concepts",
+            title: "UVM Introduction: Objects, Components, and Factory",
+            slug: "I-UVM-1_UVM_Intro",
             topics: [
-                { title: "Core UVM Concepts", slug: "index", description: "An introduction to the Universal Verification Methodology." },
+                { title: "UVM Introduction", slug: "index", description: "An introduction to the Universal Verification Methodology." },
             ]
         },
         {
-            title: "UVM Base Class Library",
-            slug: "I-UVM-2_Base_Class_Library",
+            title: "Building a UVM Testbench: Components & Hierarchy",
+            slug: "I-UVM-2_Building_TB",
             topics: [
-                { title: "UVM Base Class Library", slug: "index", description: "Exploring the foundational classes of UVM." },
+                { title: "Building a UVM Testbench", slug: "index", description: "Exploring the foundational classes of UVM." },
             ]
         },
         {
-            title: "UVM Component Communication",
-            slug: "I-UVM-3_Component_Communication",
+            title: "Basic UVM Sequences and Stimulus Generation",
+            slug: "I-UVM-3_Sequences",
             topics: [
-                { title: "UVM Component Communication", slug: "index", description: "How UVM components talk to each other." },
-            ]
-        },
-        {
-            title: "UVM Factory and Overrides",
-            slug: "I-UVM-4_Factory_and_Overrides",
-            topics: [
-                { title: "UVM Factory and Overrides", slug: "index", description: "The power of the UVM factory." },
-            ]
-        },
-        {
-            title: "UVM Phasing and Synchronization",
-            slug: "I-UVM-5_Phasing_and_Synchronization",
-            topics: [
-                { title: "UVM Phasing and Synchronization", slug: "index", description: "Managing the UVM simulation lifecycle." },
+                { title: "Basic UVM Sequences", slug: "index", description: "How UVM components talk to each other." },
             ]
         },
     ]
@@ -140,13 +126,6 @@ export const curriculumData: Module[] = [
               slug: "A-UVM-2_The_UVM_Factory_In-Depth",
               topics: [
                 { title: "The UVM Factory In-Depth", slug: "index", description: "A deeper dive into the UVM factory." },
-              ]
-          },
-          {
-              title: "Advanced UVM Techniques",
-              slug: "A-UVM-3_Advanced_UVM_Techniques",
-              topics: [
-                { title: "Advanced UVM Techniques", slug: "index", description: "Exploring advanced UVM features." },
               ]
           },
           {
@@ -182,13 +161,6 @@ export const curriculumData: Module[] = [
               slug: "E-INT-1_Integrating_UVM_with_Formal_Verification",
               topics: [
                 { title: "Integrating UVM with Formal Verification", slug: "index", description: "Combining the power of UVM and formal methods." },
-              ]
-          },
-          {
-              title: "UVM Performance",
-              slug: "E-PERF-1_UVM_Performance",
-              topics: [
-                { title: "UVM Performance", slug: "index", description: "Optimizing UVM for speed." },
               ]
           },
           {

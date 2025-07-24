@@ -25,13 +25,12 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
     notFound();
   }
 
-  const mdxPath = path.join(process.cwd(), 'content', 'curriculum', ...slug) + '.mdx';
+  const mdxPath = path.join(process.cwd(), ...slug) + '.mdx';
   let mdxContent;
   try {
     mdxContent = await fs.readFile(mdxPath, 'utf8');
   } catch (error) {
-    // It's possible the file doesn't exist, so we'll just render the title
-    mdxContent = `# ${topic.title}\n\nContent coming soon...`;
+    notFound();
   }
 
   return (
