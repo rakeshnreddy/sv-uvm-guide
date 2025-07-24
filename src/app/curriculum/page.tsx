@@ -15,25 +15,20 @@ export default function CurriculumPage() {
       <Accordion className="w-full">
         {curriculumData.map((module) => (
           <AccordionItem key={module.slug} title={module.title} id={module.slug}>
-            <Accordion className="w-full">
-              {module.sections.map((section) => (
-                <AccordionItem key={section.slug} title={section.title} id={`${module.slug}-${section.slug}`}>
-                  <ul className="space-y-2">
-                    {section.topics.map((topic) => (
-                      <li key={topic.slug}>
-                        <Link
-                          href={`/curriculum/${module.slug}/${section.slug}/${topic.slug}`}
-                          className="text-brand-text-primary hover:text-accent transition-colors"
-                        >
-                          {topic.title}
-                        </Link>
-                        <p className="text-muted-foreground text-sm">{topic.description}</p>
-                      </li>
-                    ))}
-                  </ul>
-                </AccordionItem>
-              ))}
-            </Accordion>
+            {module.sections.map((section) => (
+              <AccordionItem key={section.slug} title={section.title} id={`${module.slug}-${section.slug}`}>
+                {section.topics.map((topic) => (
+                  <Link
+                    key={topic.slug}
+                    href={`/curriculum/${module.slug}/${section.slug}/${topic.slug}`}
+                    className="block text-brand-text-primary hover:text-accent transition-colors py-2"
+                  >
+                    {topic.title}
+                    <p className="text-muted-foreground text-sm">{topic.description}</p>
+                  </Link>
+                ))}
+              </AccordionItem>
+            ))}
           </AccordionItem>
         ))}
       </Accordion>
