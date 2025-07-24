@@ -55,12 +55,6 @@ const uvmTopicLinks: TopicLink[] = [
     title: 'UVM Coding Guidelines & Patterns',
     description: 'Best practices and common design patterns for writing effective UVM code.',
   },
-  // This one might be redundant if layered-testbench-architecture is comprehensive
-  {
-    href: '/uvm-concepts/layered-testbench',
-    title: 'Layered Testbench (Overview)',
-    description: 'An overview of the UVM layered testbench concept.',
-  },
   // Add other UVM topics here
 ];
 

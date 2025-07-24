@@ -25,7 +25,12 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
     notFound();
   }
 
-  const mdxPath = path.join(process.cwd(), ...slug) + '.mdx';
+  const mdxPath = path.join(
+    process.cwd(),
+    'content',
+    'curriculum',
+    ...slug
+  ) + '.mdx';
   let mdxContent;
   try {
     mdxContent = await fs.readFile(mdxPath, 'utf8');
