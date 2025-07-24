@@ -36,5 +36,5 @@ This file tracks the content that still needs to be added to the curriculum.
 
 ## Other
 
-*   [ ] Comprehensive Curriculum Module Map
+*   [x] Comprehensive Curriculum Module Map
 *   [ ] Lab smoke tests
