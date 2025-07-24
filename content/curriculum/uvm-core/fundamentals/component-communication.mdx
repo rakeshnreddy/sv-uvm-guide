@@ -1,0 +1,52 @@
+---
+title: "Component Communication"
+---
+
+import CodeBlock from '/src/components/ui/CodeBlock'
+
+## Level 1: Definition and Analogy
+
+TLM ports in UVM act like **phone lines** between components. A driver "calls" the sequencer through a `seq_item_port`, while monitors broadcast transactions using `uvm_analysis_port` – much like a radio station reaching many listeners.
+
+## Level 2: In‑Depth Walkthrough
+
+### uvm_config_db Example
+
+```systemverilog
+// Set
+uvm_config_db#(int)::set(null, "*", "mtu", 1500);
+// Get
+int mtu;
+if(!uvm_config_db#(int)::get(this, "", "mtu", mtu))
+  `uvm_fatal("CFG", "MTU not set")
+```
+
+### Analysis Port to Subscriber
+
+```systemverilog
+class my_monitor extends uvm_monitor;
+  `uvm_component_utils(my_monitor)
+  uvm_analysis_port#(my_item) ap;
+  function new(string name, uvm_component parent);
+    super.new(name,parent);
+    ap = new("ap", this);
+  endfunction
+  task run_phase(uvm_phase phase);
+    my_item tr = my_item::type_id::create("tr");
+    ap.write(tr);
+  endtask
+endclass
+
+class my_scoreboard extends uvm_subscriber#(my_item);
+  `uvm_component_utils(my_scoreboard)
+  function void write(my_item t);
+    // check t
+  endfunction
+endclass
+```
+
+## Level 3: Edge‑Case Insights
+
+* `uvm_resource_db` can override `uvm_config_db` values; remember precedence when debugging.
+* TLM 2.0 provides timed transactions but is rarely used in simple testbenches.
+* Mnemonic: **"Ports phone home"** – recall that ports initiate communication, exports answer.
