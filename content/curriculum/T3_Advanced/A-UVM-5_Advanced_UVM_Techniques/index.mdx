@@ -1,17 +1,110 @@
 import { InfoPage } from "@/components/templates/InfoPage";
+import InteractiveCode from "@/components/ui/InteractiveCode";
 
 export const metadata = {
-  title: "Advanced UVM | Advanced UVM Techniques & Strategy",
-  description: "...",
+  title: "Advanced UVM Techniques & Strategy | Advanced UVM",
+  description: "Expert-level concepts like RAL, virtual sequences, callbacks, and coverage integration.",
 };
 
-<InfoPage
-  title="Advanced UVM"
-  uvm_concept_tags={["advanced uvm"]}
->
+<InfoPage title="Advanced UVM Techniques & Strategy" uvm_concept_tags={["ral","virtual sequence","callback","coverage"]}>
 
-  ## Advanced UVM
+## Level 1: Quick Overviews
 
-  This section is under construction. Please check back later.
+- **Register Abstraction Layer (RAL)** – A framework to model DUT registers as objects. It lets tests read/write registers consistently and keeps a mirrored view of the hardware.
+- **Virtual Sequences & Advanced Sequencing** – Virtual sequences orchestrate multiple sequencers for complex scenarios such as resets or simultaneous bus traffic.
+- **UVM Extensibility** – Callbacks and custom phases allow code to hook into the standard UVM flow without modifying existing components.
+- **Functional Coverage in UVM** – Covergroups embedded in monitors or scoreboards collect metrics that link back to the verification plan.
+
+## Level 2: Detailed Examples
+
+### RAL Basics
+<InteractiveCode
+  code={`class my_reg extends uvm_reg;
+  rand uvm_reg_field f;
+  function new(); super.new("my_reg", 8, UVM_NO_COVERAGE); endfunction
+  virtual function void build();
+    f = uvm_reg_field::type_id::create("f");
+    f.configure(this, 8, 0, "RW", 0, 0, 1, 0);
+  endfunction
+endclass
+
+class my_block extends uvm_reg_block;
+  my_reg r;
+  virtual function void build();
+    r = my_reg::type_id::create("r");
+    r.configure(this, null);
+    r.build();
+    default_map = create_map("sbus", 'h0, 4, UVM_LITTLE_ENDIAN);
+    default_map.add_reg(r, 'h0, "RW");
+  endfunction
+endclass
+
+class reg_seq extends uvm_sequence#(uvm_reg_item);
+  my_block model;
+  virtual task body();
+    uvm_status_e status;
+    model.r.write(status, 'hAA, UVM_FRONTDOOR);
+    model.r.write(status, 'h55, UVM_BACKDOOR);
+  endtask
+endclass`}
+  language="systemverilog"
+  explanationSteps={[
+    { target: "1-7", title: "Register Definition", explanation: "Define fields inside a uvm_reg class." },
+    { target: "9-18", title: "Register Block", explanation: "Registers are placed into maps for addressability." },
+    { target: "20-30", title: "Frontdoor vs Backdoor", explanation: "Sequences can access regs via bus or directly." }
+  ]}
+/>
+
+### Advanced Sequencing
+<InteractiveCode
+  code={`class top_virtual_seq extends uvm_sequence;
+  virtual task body();
+    p_sequencer.seqrA.grab(this);
+    fork
+      seqA.start(p_sequencer.seqrA);
+      seqB.start(p_sequencer.seqrB);
+    join
+    p_sequencer.seqrA.ungrab(this);
+  endtask
+endclass`}
+  language="systemverilog"
+  explanationSteps={[
+    { target: "2-3", explanation: "Grab locks a sequencer for exclusive use." },
+    { target: "4-6", explanation: "Start child sequences on two sequencers." },
+    { target: "7", explanation: "Release the lock when done." }
+  ]}
+/>
+
+### Custom Phase
+<InteractiveCode
+  code={`class reset_phase extends uvm_phase;
+  function new(); super.new("reset_phase", UVM_PHASE_SCHEDULE | UVM_PHASE_NODE); endfunction
+  virtual task exec_task(uvm_component c, uvm_phase p);
+    ` + "`uvm_info(\"RESET\", \"Applying reset\", UVM_LOW)" + `
+  endtask
+endclass`}
+  language="systemverilog"
+  explanationSteps={[{target:"1-5", explanation:"Define a new phase and print reset"}]}
+/>
+
+### Coverage Monitor
+<InteractiveCode
+  code={`class monitor;
+  covergroup cg;
+    cp_type: coverpoint tr.type;
+  endgroup
+  function new(); cg = new(); endfunction
+  function void write(tr); cg.sample(); endfunction
+endclass`}
+  language="systemverilog"
+  explanationSteps={[{target:"2-5", explanation:"Covergroup defined in monitor and sampled on write."}]}
+/>
+
+## Level 3: Expert Insights
+
+- **RAL Naming** – Use consistent prefix/suffix conventions so the predictor can associate bus transactions with model fields.
+- **Sequencer Handles** – Always access sequencers via `p_sequencer` to avoid type mismatches. Be cautious with `grab`/`lock`; forgetting to release can stall simulation.
+- **Callbacks vs Factory vs ConfigDB** – Use callbacks for localized behavior hooks, factory overrides for substituting component types, and config DB for parameter-like settings.
+- **Phase Order Mnemonic** – Remember "build, connect, end_of_elaboration, start" to keep custom phases aligned.
 
 </InfoPage>
