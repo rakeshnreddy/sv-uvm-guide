@@ -107,7 +107,40 @@ export const curriculumData: Module[] = [
                 { title: "Basic UVM Sequences", slug: "index", description: "How UVM components talk to each other." },
             ]
         },
-    ]
+  },
+  {
+      title: "The UVM Universe - Core Concepts",
+      slug: "uvm-core",
+      tier: "T2",
+      sections: [
+        {
+          title: "Fundamentals",
+          slug: "fundamentals",
+          topics: [
+            { title: "UVM Base Classes", slug: "base-classes", description: "uvm_object vs uvm_component." },
+            { title: "Component Communication", slug: "component-communication", description: "TLM ports and analysis ports." },
+            { title: "Factory", slug: "factory", description: "Factory overrides and creation." },
+            { title: "Phasing", slug: "phasing", description: "UVM phasing mechanism." }
+          ]
+        }
+      ]
+  },
+  {
+      title: "Building a UVM Testbench",
+      slug: "uvm-building",
+      tier: "T2",
+      sections: [
+        {
+          title: "Essentials",
+          slug: "essentials",
+          topics: [
+            { title: "Architecture Overview", slug: "architecture-overview", description: "Overview of a UVM testbench." },
+            { title: "Stimulus Generation", slug: "stimulus-generation", description: "Sequences and driver handshake." },
+            { title: "Analysis Components", slug: "analysis-components", description: "Monitors, subscribers, scoreboards." },
+            { title: "Agents and Environment", slug: "agents-and-environment", description: "Agent vs environment." }
+          ]
+        }
+      ]
   },
   {
       title: "Advanced",
