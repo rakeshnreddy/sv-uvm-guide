@@ -1,6 +1,6 @@
 'use client';
 
-import React, 'react';
+import React from 'react';
 import InteractiveUvmDiagram from './InteractiveUvmDiagram';
 
 const UvmHeroDiagram: React.FC = () => {
