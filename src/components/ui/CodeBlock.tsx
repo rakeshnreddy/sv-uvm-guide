@@ -85,22 +85,24 @@ const CodeBlock: React.FC<CodeBlockProps> = ({
             </Button>
          </div>
       )}
-      <SyntaxHighlighter
-        language={language.toLowerCase() === "systemverilog" ? "verilog" : language}
-        style={codeTheme}
-        showLineNumbers={showLineNumbers}
-        lineNumberStyle={{ color: "var(--muted-foreground)", fontSize: "0.8em", marginRight: "1em" }}
-        wrapLines={true}
-        lineProps={lineProps}
-        customStyle={{
-          margin: 0,
-          borderRadius: "0",
-          backgroundColor: "transparent",
-          ...customStyle,
-        }}
-      >
-        {code.trim()}
-      </SyntaxHighlighter>
+      <div className="overflow-x-auto">
+        <SyntaxHighlighter
+          language={language.toLowerCase() === "systemverilog" ? "verilog" : language}
+          style={codeTheme as any}
+          showLineNumbers={showLineNumbers}
+          lineNumberStyle={{ color: "var(--muted-foreground)", fontSize: "0.8em", marginRight: "1em" }}
+          wrapLines={true}
+          lineProps={lineProps}
+          customStyle={{
+            margin: 0,
+            borderRadius: "0",
+            backgroundColor: "transparent",
+            ...customStyle,
+          }}
+        >
+          {code.trim()}
+        </SyntaxHighlighter>
+      </div>
     </div>
   );
 };

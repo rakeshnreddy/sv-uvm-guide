@@ -29,7 +29,7 @@ const AnimatedUvmTestbenchDiagram: React.FC = () => {
   const [hoveredComponent, setHoveredComponent] = useState<string | null>(null);
 
   return (
-    <svg width="600" height="650" viewBox="0 0 600 650" style={{ border: '1px solid #ccc', borderRadius: '8px' }}>
+    <svg className="w-full h-auto" viewBox="0 0 600 650" style={{ border: '1px solid #ccc', borderRadius: '8px' }} role="img" aria-label="Animated UVM testbench diagram">
       {/* Connection Lines */}
       {connections.map((conn, index) => {
         const fromComponent = components.find(c => c.id === conn.from);
