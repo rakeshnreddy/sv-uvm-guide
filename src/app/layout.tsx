@@ -70,11 +70,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
   return (
     <html lang="en" suppressHydrationWarning>
       <body className={`${inter.variable} ${jetbrains_mono.variable} ${calSans.variable} font-sans`}>
-        <ThemeProvider
-          attribute="class"
-          defaultTheme="default-dark"
-          disableTransitionOnChange
-        >
+        <ThemeProvider attribute="data-theme" defaultTheme="default-dark" disableTransitionOnChange>
           <SessionProvider>
             <AuthProvider>
               <MainLayout>{children}</MainLayout>
