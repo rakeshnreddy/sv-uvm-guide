@@ -7,9 +7,22 @@ import { findTopicBySlug, getBreadcrumbs } from '@/lib/curriculum-data';
 import { notFound } from 'next/navigation';
 import Breadcrumbs from '@/components/layout/Breadcrumbs';
 import FeynmanPromptWidget from '@/components/widgets/FeynmanPromptWidget';
+import InteractiveCode from '@/components/ui/InteractiveCode';
+import Quiz from '@/components/ui/Quiz';
+import Panel from '@/components/ui/Panel';
+import { InfoPage } from '@/components/templates/InfoPage';
+import UvmHeroDiagram from '@/components/UvmHeroDiagram';
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
+};
+
+const components = {
+  InteractiveCode,
+  Quiz,
+  Panel,
+  InfoPage,
+  UvmHeroDiagram,
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {
@@ -45,7 +58,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
         {topic.title}
       </h1>
       <article className="prose prose-invert max-w-none">
-        <MDXRemote source={mdxContent} />
+        <MDXRemote source={mdxContent} components={components} />
       </article>
       <FeynmanPromptWidget conceptTitle={topic.title} />
     </div>

@@ -15,10 +15,10 @@ export interface ExplanationStep {
 }
 
 interface InteractiveCodeProps {
-  code: string;
+  children: React.ReactNode;
   language?: string;
   fileName?: string;
-  explanationSteps: ExplanationStep[];
+  explanationSteps?: ExplanationStep[];
   initialStep?: number;
 }
 
@@ -50,14 +50,36 @@ const parseTargetLines = (target: string): Set<number> => { // Removed totalLine
 };
 
 const InteractiveCode: React.FC<InteractiveCodeProps> = ({
-  code,
+  children,
   language = "plaintext",
   fileName,
-  explanationSteps,
+  explanationSteps = [],
   initialStep = 0,
 }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(initialStep);
   // const totalLines = useMemo(() => code.split('\n').length, [code]); // Removed
+
+  const code = React.useMemo(() => {
+    let codeString = '';
+    React.Children.forEach(children, (child) => {
+      if (typeof child === 'string') {
+        codeString += child;
+      } else if (React.isValidElement(child) && child.props.children) {
+        // This handles the case where MDX wraps the code in a <pre><code> structure
+        if (child.props.mdxType === 'pre') {
+            const codeChild = React.Children.toArray(child.props.children).find(c => React.isValidElement(c) && c.props.mdxType === 'code');
+            if(codeChild && React.isValidElement(codeChild)) {
+                codeString += React.Children.toArray(codeChild.props.children).join('');
+            }
+        } else {
+            codeString += React.Children.toArray(child.props.children).join('');
+        }
+      }
+    });
+    return codeString.trim();
+  }, [children]);
+
+  const hasExplanations = explanationSteps.length > 0;
 
   const currentStep = explanationSteps[currentStepIndex];
   const highlightedLines = useMemo(
@@ -104,32 +126,36 @@ const InteractiveCode: React.FC<InteractiveCodeProps> = ({
         />
       </div>
 
-      <div className="explanation-section p-4 bg-white/10 dark:bg-black/10 rounded min-h-[100px]">
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={currentStepIndex}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -10 }}
-            transition={{ duration: 0.3 }}
-          >
-            {currentStep?.title && <h4 className="font-semibold text-lg mb-2 text-primary">{currentStep.title}</h4>}
-            <div className="text-sm text-foreground/90">{currentStep?.explanation || 'End of walkthrough.'}</div>
-          </motion.div>
-        </AnimatePresence>
-      </div>
+      {hasExplanations && (
+        <>
+          <div className="explanation-section p-4 bg-white/10 dark:bg-black/10 rounded min-h-[100px]">
+            <AnimatePresence mode="wait">
+              <motion.div
+                key={currentStepIndex}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                transition={{ duration: 0.3 }}
+              >
+                {currentStep?.title && <h4 className="font-semibold text-lg mb-2 text-primary">{currentStep.title}</h4>}
+                <div className="text-sm text-foreground/90">{currentStep?.explanation || 'End of walkthrough.'}</div>
+              </motion.div>
+            </AnimatePresence>
+          </div>
 
-      <div className="navigation-controls flex justify-between items-center mt-4">
-        <Button onClick={handlePrevious} disabled={currentStepIndex === 0} variant="outline">
-          <ArrowLeft className="w-4 h-4 mr-2" /> Previous
-        </Button>
-        <span className="text-sm text-muted-foreground">
-          Step {currentStepIndex + 1} of {explanationSteps.length}
-        </span>
-        <Button onClick={handleNext} disabled={currentStepIndex === explanationSteps.length - 1} variant="outline">
-          Next <ArrowRight className="w-4 h-4 ml-2" />
-        </Button>
-      </div>
+          <div className="navigation-controls flex justify-between items-center mt-4">
+            <Button onClick={handlePrevious} disabled={currentStepIndex === 0} variant="outline">
+              <ArrowLeft className="w-4 h-4 mr-2" /> Previous
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              Step {currentStepIndex + 1} of {explanationSteps.length}
+            </span>
+            <Button onClick={handleNext} disabled={currentStepIndex === explanationSteps.length - 1} variant="outline">
+              Next <ArrowRight className="w-4 h-4 ml-2" />
+            </Button>
+          </div>
+        </>
+      )}
     </div>
   );
 };

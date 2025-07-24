@@ -21,7 +21,7 @@ const DiagramPlaceholder = ({ title = "Diagram" }: { title?: string }) => (
 );
 
 interface InfoPageProps {
-  title: string;
+  title?: string;
   children: ReactNode; // Main content of the page
   // Optional slots for specific types of content
   charts?: ReactNode[];

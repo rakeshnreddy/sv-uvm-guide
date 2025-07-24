@@ -81,7 +81,7 @@ export const curriculumData: Module[] = [
         },
         {
             title: "SystemVerilog Assertions (SVA)",
-            slug: "I-SV-4_SVA",
+            slug: "I-SV-4_Assertions_SVA",
             topics: [
                 { title: "SystemVerilog Assertions (SVA)", slug: "index", description: "Using SystemVerilog Assertions for verification." },
             ]
@@ -106,7 +106,8 @@ export const curriculumData: Module[] = [
             topics: [
                 { title: "Basic UVM Sequences", slug: "index", description: "How UVM components talk to each other." },
             ]
-        },
+        }
+    ]
   },
   {
       title: "The UVM Universe - Core Concepts",
