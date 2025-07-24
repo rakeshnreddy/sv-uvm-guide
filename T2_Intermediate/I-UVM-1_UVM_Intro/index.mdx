@@ -1,0 +1,195 @@
+---
+title: "I-UVM-1: UVM Introduction: Objects, Components, and Factory"
+description: "Understanding the most fundamental UVM concepts: uvm_object, uvm_component, and the UVM Factory."
+---
+
+import { Quiz, InteractiveCode, Panel } from '/src/components/ui/index.js'
+
+## The "Why" of the UVM Factory
+
+Before we dive into *how* the UVM factory works, we must understand the problem it solves.
+
+Imagine you've built a complex, highly reusable verification environment for verifying Ethernet packets. It has drivers, monitors, and scoreboards all designed to handle a `standard_packet`. Now, for one specific test, you need to inject a packet with an error. How do you do this?
+
+The naive approach is to go into your environment's source code and change the line that creates the packet:
+`// standard_packet pkt = new();`
+`error_packet pkt = new();`
+
+This is a terrible solution. It breaks the reusability of your environment and requires modifying code that should be stable.
+
+The UVM factory provides the elegant solution. It allows you to **replace the type of an object being created without changing a single line of the source code that creates it.**
+
+## Level 1: The Elevator Pitch
+
+### Objects vs. Components: Data vs. Structure
+
+UVM has two fundamental base classes:
+- **`uvm_component`**: Used for the static, structural parts of your testbench. These are the "roads and bridges" of your verification city. Examples: drivers, monitors, scoreboards, agents, environments. They have a persistent place in the testbench hierarchy.
+- **`uvm_object`**: Used for the dynamic, transient data that flows through the testbench. These are the "cars and trucks" that travel on the roads. Examples: transactions, sequence items, configuration objects. They are created, used, and then disappear.
+
+### The Flexible Car Factory Analogy
+
+Think of the UVM Factory as a flexible car factory.
+1.  **Normal Production:** By default, the assembly line is configured to produce `standard_sedan` cars.
+2.  **Special Order:** You go to the factory manager and give a special order: "For the next hour, whenever the assembly line asks for a `standard_sedan` chassis, I want you to substitute it with a `sports_car` chassis instead."
+3.  **Transparent Change:** The assembly line itself doesn't change. It still requests a `standard_sedan`, but the factory intercepts this request and delivers a `sports_car` instead. The rest of the assembly line (painting, adding wheels) continues, unaware of the substitution.
+
+This is exactly what the UVM factory does: it replaces the *type* of object being created at the point of construction.
+
+## Level 2: The Three Core Mechanics of the Factory
+
+The factory operates on a simple three-step process: **Register, Create, and Override.**
+
+### 1. Registration (`uvm_*_utils`)
+
+A class must be "registered" with the factory to be eligible for creation and overrides. This is like getting a birth certificate. We use the `uvm_object_utils` macro for `uvm_object`-based classes and `uvm_component_utils` for `uvm_component`-based classes.
+
+```systemverilog
+import uvm_pkg::*;
+`include "uvm_macros.svh"
+
+class base_packet extends uvm_sequence_item;
+  // Registration with the factory
+  `uvm_object_utils(base_packet)
+
+  // Constructor
+  function new(string name = "base_packet");
+    super.new(name);
+  endfunction
+endclass
+```
+
+### 2. Creation (`create()`)
+
+To allow the factory to work its magic, you **must never call `new()` directly** for UVM objects and components. Instead, you must always use the factory's `create()` method. This is the "hook" that allows the factory to intercept the request and perform an override if one is registered.
+
+```systemverilog
+// In some component (e.g., a driver)
+...
+base_packet my_pkt;
+// Instead of my_pkt = new();
+// We use the factory to create the object.
+my_pkt = base_packet::type_id::create("my_pkt");
+...
+```
+
+### 3. Overrides (`set_*_override`)
+
+This is where the power lies. In your test, you can instruct the factory to substitute one type for another. There are two main ways to do this:
+
+-   **Type Override:** Replace *all* instances of a certain type with another type.
+-   **Instance Override:** Replace a *specific instance* of a certain type with another type, based on its path in the component hierarchy.
+
+Here is a complete, runnable example demonstrating a type override.
+
+<InteractiveCode>
+```systemverilog
+import uvm_pkg::*;
+`include "uvm_macros.svh"
+
+// 1. The base packet class
+class base_packet extends uvm_sequence_item;
+  `uvm_object_utils(base_packet)
+  function new(string name = "base_packet");
+    super.new(name);
+  endfunction
+  virtual function void print_type();
+    `uvm_info("PKTTYPE", "This is a base_packet", UVM_LOW)
+  endfunction
+endclass
+
+// 2. The special error packet class
+class error_packet extends base_packet;
+  `uvm_object_utils(error_packet)
+  function new(string name = "error_packet");
+    super.new(name);
+  endfunction
+  virtual function void print_type();
+    `uvm_info("PKTTYPE", "This is an **error_packet**", UVM_LOW)
+  endfunction
+endclass
+
+// 3. An environment component that creates packets
+class my_env extends uvm_env;
+  `uvm_component_utils(my_env)
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+  task run_phase(uvm_phase phase);
+    base_packet pkt;
+    phase.raise_objection(this);
+    `uvm_info("ENV", "Creating a packet...", UVM_LOW)
+    // The environment *thinks* it's creating a base_packet
+    pkt = base_packet::type_id::create("pkt");
+    pkt.print_type();
+    phase.drop_objection(this);
+  endtask
+endclass
+
+// 4. The test that applies the override
+class my_test extends uvm_test;
+  `uvm_component_utils(my_test)
+  my_env env;
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    // Set the factory override BEFORE the environment is built
+    `uvm_info("TEST", "Setting factory override: base_packet -> error_packet", UVM_LOW)
+    factory.set_type_override_by_type(base_packet::get_type(),
+                                      error_packet::get_type());
+    env = my_env::type_id::create("env", this);
+  endfunction
+endclass
+
+module top;
+  initial run_test("my_test");
+endmodule
+```
+</InteractiveCode>
+
+## Level 3: Expert Insight
+
+**Type vs. Instance Overrides:**
+-   `set_type_override_by_type`: Use this when you want a global change. "Replace all `my_driver` components with `my_debug_driver` components." This is the most common type of override.
+-   `set_inst_override_by_name`: Use this for tactical, specific changes. "In my environment, for the agent that handles the USB interface (`env.usb_agent`), and only that one, replace its `my_driver` with `my_usb_error_driver`." The instance path is a glob-style string, e.g., `"uvm_test_top.env.usb_agent.*"`.
+
+**Debugging the Factory:** The factory is powerful, but when it's not working, it can be confusing. UVM provides built-in debug methods. Calling `factory.print()` will print out the factory's current state, including all registered types and all active overrides. This is an invaluable tool for diagnosing issues like misspelled type names or incorrect override paths.
+
+## Key Takeaways
+
+-   The factory's purpose is to **decouple the creation of an object from the code that uses it**, enabling powerful test-specific configuration.
+-   The three core mechanics are:
+    1.  **Register** a class with `uvm_*_utils`.
+    2.  **Create** instances using `type_id::create()`, not `new()`.
+    3.  **Override** types in the test using `factory.set_*_override`.
+-   `uvm_component` is for the static testbench structure; `uvm_object` is for the dynamic data that flows through it.
+
+## Quiz
+
+<Quiz>
+  {[
+    {
+      "question": "To replace ALL instances of `my_driver` with `my_error_driver` throughout the entire testbench, which factory method is most appropriate?",
+      "answers": [
+        {"text": "`set_inst_override_by_name`", "correct": false},
+        {"text": "`set_type_override_by_type`", "correct": true},
+        {"text": "`set_override_by_type`", "correct": false},
+        {"text": "`set_inst_override`", "correct": false}
+      ],
+      "explanation": "`set_type_override_by_type` performs a global replacement of one type with another, which is exactly what is needed for a testbench-wide substitution."
+    },
+    {
+      "question": "Why must we use the `factory.create()` method instead of the SystemVerilog `new()` constructor?",
+      "answers": [
+        {"text": "`create()` is faster than `new()`.", "correct": false},
+        {"text": "`create()` is the hook that allows the factory to intercept the object creation request and apply an override if one exists.", "correct": true},
+        {"text": "`new()` does not automatically call the parent class constructor.", "correct": false},
+        {"text": "`create()` automatically registers the class with the factory.", "correct": false}
+      ],
+      "explanation": "The factory can only substitute a type if it is involved in the creation process. Using `factory.create()` gives the factory the control it needs to perform the substitution."
+    }
+  ]}
+</Quiz>

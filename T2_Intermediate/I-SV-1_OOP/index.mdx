@@ -1,17 +1,286 @@
-import { InfoPage } from "@/components/templates/InfoPage";
+---
+title: "I-SV-1: Object-Oriented Programming for Verification"
+description: "Understanding OOP as the foundation for modern verification methodologies like UVM."
+---
 
-export const metadata = {
-  title: "Classes, Objects, and Handles | Advanced SystemVerilog for Verification",
-  description: "...",
-};
+import { Quiz, InteractiveCode } from '/src/components/ui/index.js'
 
-<InfoPage
-  title="Classes, Objects, and Handles"
-  sv_concept_tags={["classes", "objects", "handles"]}
->
+## The "Why" of OOP: Moving Beyond Procedural Testbenches
 
-  ## Classes, Objects, and Handles
+For simple designs, a procedural, module-based testbench can suffice. But as design complexity explodes, these traditional testbenches hit a wall. Imagine verifying a network switch with dozens of ports, each supporting multiple protocols. A procedural approach leads to:
 
-  This section is under construction. Please check back later.
+- **Poor Scalability:** Adding a new protocol means massive, error-prone changes to monolithic testbench files.
+- **Difficult Maintenance:** A bug fix in one test often requires manual correction across numerous, slightly different tests.
+- **No Reusability:** The testbench for one switch is almost entirely useless for the next, even if they share common components like an AXI interface.
 
-</InfoPage>
+Object-Oriented Programming (OOP) provides a powerful paradigm to solve these problems, enabling the creation of scalable, maintainable, and—most importantly—reusable verification components.
+
+## Level 1: The Cookie-Cutter Analogy
+
+At its core, OOP is simple:
+- A **Class** is a *blueprint*. Think of it as a cookie-cutter. It defines the shape and properties (like data and methods) but isn't a tangible thing itself.
+- An **Object** is an *instance* of that blueprint. It's the actual cookie you create using the cutter. You can create many objects (cookies) from a single class (cookie-cutter), each with its own unique existence.
+
+```systemverilog
+// The blueprint for a data packet
+class BasePacket;
+  // Properties of the packet
+  bit [7:0] data;
+  int       addr;
+endclass
+
+// Creating two instances (objects) of the BasePacket
+BasePacket pkt1 = new();
+BasePacket pkt2 = new();
+```
+
+## Level 2: Core OOP Concepts for Verification
+
+Let's explore the core concepts of OOP using a practical, verification-centric example: creating a transaction class to model a data packet.
+
+### Classes and Objects: Defining the Blueprint
+
+A class bundles data (properties) and the methods (tasks/functions) that operate on that data into a single, self-contained unit. We use the `new()` constructor to create an object from this class definition.
+
+<InteractiveCode>
+```systemverilog
+// Definition of a basic transaction class
+class BasePacket;
+  // Properties
+  rand bit [31:0] addr;
+  rand bit [31:0] data;
+
+  // A method to display the packet contents
+  function void print();
+    $display("Packet: addr=0x%h, data=0x%h", addr, data);
+  endfunction
+endclass
+
+// Test code to create and use a packet object
+program main;
+  initial begin
+    BasePacket my_packet;   // Declare a handle
+    my_packet = new();      // Construct the object
+    my_packet.randomize();  // Randomize its properties
+    my_packet.print();      // Call its print method
+  end
+endprogram
+```
+</InteractiveCode>
+
+### Encapsulation: Protecting Your Data
+
+Encapsulation is about data hiding. It means bundling the data and methods within a class and controlling access to them. We use `local` and `protected` keywords to prevent accidental modification of internal data from outside the class.
+
+- `local`: Accessible only by methods within this class.
+- `protected`: Accessible by this class and any class that inherits from it.
+
+This allows a class to expose a clean, stable API while hiding internal implementation details (like a calculated CRC), preventing corruption.
+
+<InteractiveCode>
+```systemverilog
+class CrcPacket;
+  // External world can see and modify these
+  rand bit [7:0] payload;
+
+  // Internal property, hidden from the outside world
+  local bit [3:0] crc;
+
+  // A public method to trigger CRC calculation
+  function void calculate_crc();
+    crc = payload.xor(); // Simplified CRC calculation
+    $display("Calculated CRC: 0x%h", crc);
+  endfunction
+
+endclass
+
+program main;
+  initial begin
+    CrcPacket pkt = new();
+    pkt.payload = 8'hA5;
+    pkt.calculate_crc();
+    // This line would cause a compile error because 'crc' is local
+    // pkt.crc = 4'hF;
+  end
+endprogram
+```
+</InteractiveCode>
+
+### Inheritance: Specializing Your Components
+
+Inheritance allows a new class (a "derived" or "child" class) to be based on an existing class (a "base" or "parent" class). The child class inherits all the properties and methods of the parent and can add new ones or modify existing ones. This is the foundation of the UVM class library.
+
+We use the `extends` keyword to create a specialized `EthernetPacket` from our `BasePacket`.
+
+<InteractiveCode>
+```systemverilog
+// Base class
+class BasePacket;
+  rand bit [31:0] addr;
+  rand bit [31:0] data;
+
+  function void print();
+    $display("[BasePacket] addr=0x%h, data=0x%h", addr, data);
+  endfunction
+endclass
+
+// Derived class for Ethernet packets
+class EthernetPacket extends BasePacket;
+  // Add a new property specific to Ethernet
+  rand bit [47:0] mac_dest;
+
+  // Override the print function to include the new property
+  function void print();
+    // Use 'super' to call the parent's print method first
+    super.print();
+    $display("  [EthernetPacket] mac_dest=0x%h", mac_dest);
+  endfunction
+endclass
+
+program main;
+  initial begin
+    EthernetPacket eth_pkt = new();
+    eth_pkt.randomize();
+    eth_pkt.print();
+  end
+endprogram
+```
+</InteractiveCode>
+
+### Polymorphism and Virtual Methods: The Key to Reusability
+
+Polymorphism is the most powerful OOP concept for verification. It means "many forms" and allows a base class handle to point to a derived class object. When a method is declared `virtual`, the version of the method that gets called depends on the *type of the object*, not the type of the handle.
+
+This is the magic that enables a generic UVM Driver, written to handle `uvm_sequence_item` (a base class), to operate seamlessly on your specific `my_transaction` (a derived class) without modification.
+
+Let's see how a generic `Driver` can handle any packet type if the methods are `virtual`.
+
+<InteractiveCode>
+```systemverilog
+// Generic Base Packet
+class BasePacket;
+  function virtual void pack();
+    $display("Packing a generic BasePacket.");
+  endfunction
+endclass
+
+// Specific Packet Types
+class EthernetPacket extends BasePacket;
+  function virtual void pack();
+    $display("Packing an EthernetPacket with its specific header.");
+  endfunction
+endclass
+
+class UsbPacket extends BasePacket;
+  function virtual void pack();
+    $display("Packing a UsbPacket with its specific framing.");
+  endfunction
+endclass
+
+// A Generic Driver Component
+class GenericDriver;
+  // This driver works with ANY object of type BasePacket or its children
+  task run(BasePacket pkt);
+    $display("Driver received a packet. Calling pack()...");
+    pkt.pack(); // Polymorphism in action!
+  endtask
+endclass
+
+program main;
+  initial begin
+    GenericDriver  driver      = new();
+    BasePacket     base_h; // Base class handle
+    EthernetPacket eth_pkt     = new();
+    UsbPacket      usb_pkt     = new();
+
+    // Drive an Ethernet Packet
+    base_h = eth_pkt; // Point the base handle to the derived object
+    driver.run(base_h); // The driver calls EthernetPacket::pack()
+
+    $display("--------------------");
+
+    // Drive a USB Packet
+    base_h = usb_pkt; // Point the same handle to a different derived object
+    driver.run(base_h); // Now the driver calls UsbPacket::pack()
+  end
+endprogram
+```
+</InteractiveCode>
+
+### Parameterized Classes: Creating Generic Components
+
+Parameterized classes take reusability a step further, allowing you to create components that are generic not just in their behavior, but in the *type* of data they operate on. A classic example is a generic scoreboard or memory model that can be parameterized by the transaction type it needs to handle.
+
+```systemverilog
+// A generic scoreboard, parameterized by the transaction type 'T'
+class GenericScoreboard #(type T = uvm_sequence_item);
+  T expected_queue[$];
+  T actual_queue[$];
+
+  // Methods to add expected and actual items
+  function void write_expected(T item);
+    expected_queue.push_back(item);
+  endfunction
+
+  function void write_actual(T item);
+    actual_queue.push_back(item);
+  endfunction
+
+  // ... comparison logic would go here ...
+endclass
+
+// Instantiate the scoreboard for two different packet types
+GenericScoreboard #(EthernetPacket) eth_scoreboard = new();
+GenericScoreboard #(UsbPacket)      usb_scoreboard = new();
+```
+
+## Level 3: Expert Insight & Practical Trade-offs
+
+**Inheritance vs. Composition:** Deep inheritance hierarchies (`A` extends `B` extends `C`...) can become rigid and hard to manage. Often, a better approach is **composition**, where a class contains a handle to another class. For example, instead of an `EthernetPacket_with_CRC` extending `EthernetPacket`, the `EthernetPacket` class could simply *contain* a `CRCGenerator` object. This is more flexible.
+
+**The Importance of `super`:** When you override a method (like `print` in our example), you often want to add functionality, not completely replace it. Forgetting to call `super.print()` means the base class's print logic is never executed, which can lead to incomplete or incorrect behavior.
+
+**Pitfalls for Procedural Thinkers:** Engineers coming from C or Verilog often struggle with the concept of handles vs. objects. Remember: `BasePacket pkt;` only declares a handle (a pointer). The object itself doesn't exist until you call `pkt = new();`. Accessing a null handle is a common cause of simulation crashes.
+
+## Key Takeaways
+
+- **Encapsulation** creates robust components by hiding internal data, preventing accidental corruption.
+- **Inheritance** allows for specialization and forms the basis of the UVM class library, promoting code reuse.
+- **Polymorphism** (via `virtual` methods) is the key to building generic, reusable verification environments. A component can operate on a base class type, but execute the specialized method from a derived class object, decoupling the testbench from specific test data.
+
+## Quiz
+
+<Quiz>
+  {[
+    {
+      "question": "If a base class handle points to a derived class object, which version of a *virtual* method will be called?",
+      "answers": [
+        {"text": "The base class version", "correct": false},
+        {"text": "The derived class version", "correct": true},
+        {"text": "Both will be called", "correct": false},
+        {"text": "It will cause a compilation error", "correct": false}
+      ],
+      "explanation": "This is the essence of polymorphism. The `virtual` keyword ensures that the method associated with the object's type is called, not the handle's type."
+    },
+    {
+      "question": "What is the primary purpose of encapsulation?",
+      "answers": [
+        {"text": "To combine multiple classes into one.", "correct": false},
+        {"text": "To make all class properties public.", "correct": false},
+        {"text": "To hide internal data and expose a stable API.", "correct": true},
+        {"text": "To ensure methods are executed in a specific order.", "correct": false}
+      ],
+      "explanation": "Encapsulation protects an object's internal state from accidental outside modification, which is critical for building reliable and maintainable components."
+    },
+    {
+      "question": "What is the role of the `super` keyword?",
+      "answers": [
+        {"text": "To create an object of the parent class.", "correct": false},
+        {"text": "To call a method from the parent class within an overridden method of the child class.", "correct": true},
+        {"text": "To declare a class as a base class.", "correct": false},
+        {"text": "To make a method virtual.", "correct": false}
+      ],
+      "explanation": "The `super` keyword is essential for extending functionality in derived classes without having to completely rewrite the original method's logic."
+    }
+  ]}
+</Quiz>
