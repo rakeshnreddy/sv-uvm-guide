@@ -4,6 +4,8 @@ import { ChevronDown } from "lucide-react"; // Corrected import
 import { motion, AnimatePresence } from "framer-motion";
 import React, { useState, ReactNode, ReactElement } from "react"; // Added ReactElement
 
+import Link from "next/link";
+
 interface AccordionItemProps {
   title: string;
   children: ReactNode;
@@ -11,6 +13,7 @@ interface AccordionItemProps {
   id: string; // For ARIA attributes
   buttonId?: string; // For aria-labelledby
   prose?: boolean;
+  href?: string;
 }
 
 export const AccordionItem: React.FC<AccordionItemProps> = ({
@@ -20,30 +23,35 @@ export const AccordionItem: React.FC<AccordionItemProps> = ({
   id,
   buttonId,
   prose = false,
+  href,
 }) => {
   const [isOpen, setIsOpen] = useState(isOpenDefault);
   const generatedButtonId = buttonId || `accordion-button-${id}`;
   const contentId = `accordion-content-${id}`;
 
+  const content = (
+    <button
+      id={generatedButtonId}
+      type="button"
+      onClick={() => setIsOpen(!isOpen)}
+      aria-expanded={isOpen}
+      aria-controls={contentId}
+      className="flex items-center justify-between w-full py-4 px-5 text-left text-lg font-medium text-foreground hover:bg-muted/50 focus:outline-none focus-visible:ring focus-visible:ring-primary/50 transition-colors"
+    >
+      <span>{title}</span>
+      <ChevronDown
+        className={`w-5 h-5 transform transition-transform duration-300 ${
+          isOpen ? "rotate-180" : ""
+        }`}
+        aria-hidden="true"
+      />
+    </button>
+  );
+
   return (
     <div className="border-b border-border/50 last:border-b-0">
       <h2>
-        <button
-          id={generatedButtonId}
-          type="button"
-          onClick={() => setIsOpen(!isOpen)}
-          aria-expanded={isOpen}
-          aria-controls={contentId}
-          className="flex items-center justify-between w-full py-4 px-5 text-left text-lg font-medium text-foreground hover:bg-muted/50 focus:outline-none focus-visible:ring focus-visible:ring-primary/50 transition-colors"
-        >
-          <span>{title}</span>
-          <ChevronDown
-            className={`w-5 h-5 transform transition-transform duration-300 ${
-              isOpen ? "rotate-180" : ""
-            }`}
-            aria-hidden="true"
-          />
-        </button>
+        {href ? <Link href={href}>{content}</Link> : content}
       </h2>
       <AnimatePresence initial={false}>
         {isOpen && (
