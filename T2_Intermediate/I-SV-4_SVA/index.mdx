@@ -1,0 +1,157 @@
+---
+title: "I-SV-4: SystemVerilog Assertions (SVA)"
+description: "Creating a self-checking testbench with powerful, concurrent assertions."
+---
+
+import { Quiz, InteractiveCode, Panel } from '/src/components/ui/index.js'
+
+## The "Why" of SVA
+
+Manually checking waveforms in a debugger is tedious, error-prone, and simply not scalable. Procedural checking in the testbench (`if...else` statements) can be clumsy and can't easily handle complex, multi-cycle behaviors.
+
+SystemVerilog Assertions (SVA) provide the solution. SVA is a powerful, declarative language for specifying complex temporal behavior. Assertions act as formal "checkers" that are embedded in the design or testbench. They continuously monitor the DUT for correct behavior and fire an error the instant a violation occurs, pinpointing the exact time and cause of the failure.
+
+## Level 1: The Vigilant Referees
+
+Think of SVA as a team of vigilant "referees" embedded in your testbench. Each referee is given a specific, formal rule to watch, like:
+
+- *"A `request` signal must always be followed by a `grant` signal within 1 to 3 clock cycles."*
+- *"The `fifo_full` signal can never be asserted at the same time as the `fifo_empty` signal."*
+- *"After a `read` command, the `read_data_valid` signal must go high exactly 5 cycles later."*
+
+These referees watch the DUT's signals on every single clock cycle. If a rule is ever violated, they blow the whistle immediately.
+
+## Level 2: Practical Explanation
+
+### Immediate vs. Concurrent Assertions
+
+- **Immediate Assertions:** These are procedural and check a condition at a specific point in time, much like an `if` statement. They are simple but less powerful.
+  ```systemverilog
+  // Checks the condition only when this line of code executes
+  assert (data == expected_data);
+  ```
+- **Concurrent Assertions:** This is the workhorse of SVA. They are specified inside a `property` and are checked on every clock cycle from the time they are enabled until the simulation ends.
+
+### Sequences and Properties
+
+- `sequence...endsequence`: Defines a specific temporal pattern of events.
+- `property...endproperty`: Defines a behavior that should always (or never) be true. Properties are built from sequences.
+
+<Panel>
+**Timing Diagram: `req |-> ##[1:3] gnt`**
+This is a very common SVA construct. It reads as: "If `req` is true at a clock edge, then `gnt` must be true at some point between 1 and 3 clock cycles later."
+```wavedrom
+{
+  signal: [
+    {name: 'clk', wave: 'p...........'},
+    {name: 'req', wave: '0.1...0.....'},
+    {name: 'gnt', wave: '0.x.1.1.1.x.'},
+  ],
+  edge: ['v', 'v', 'v', 'v', 'v', 'v', 'v', 'v', 'v', 'v', 'v', 'v'],
+  head: {text: 'A request must be followed by a grant within 1-3 cycles'}
+}
+```
+</Panel>
+
+
+<InteractiveCode>
+```systemverilog
+module checker(input bit clk, req, gnt);
+
+  // Define a sequence: gnt is asserted 1 to 3 cycles after a starting point
+  sequence s_gnt;
+    ##[1:3] gnt;
+  endsequence
+
+  // Define a property: if req is high, the s_gnt sequence must follow
+  property p_req_gnt;
+    @(posedge clk) // All events are synchronous to the positive clock edge
+    req |-> s_gnt; // The implication operator
+  endproperty
+
+  // The assertion: check the property p_req_gnt on every clock cycle
+  a_req_gnt: assert property (p_req_gnt);
+
+endmodule
+
+// Simple testbench to demonstrate the assertion
+module top;
+  bit clk, req, gnt;
+  // Instantiate the checker
+  checker chk(clk, req, gnt);
+
+  // Clock generator
+  initial forever #5 clk = ~clk;
+
+  // Test sequence
+  initial begin
+    @(posedge clk); req <= 1;
+    @(posedge clk); req <= 0;
+    ##2;
+    gnt <= 1; // Grant comes 3 cycles after req - assertion passes
+    @(posedge clk); gnt <= 0;
+
+    ##5;
+    @(posedge clk); req <= 1;
+    @(posedge clk); req <= 0;
+    ##4; // Grant would come 5 cycles later - assertion will fail
+    gnt <= 1;
+    @(posedge clk); gnt <= 0;
+    $finish;
+  end
+endmodule
+```
+</InteractiveCode>
+
+### The Implication Operator (`|->`)
+
+This is the most important operator in SVA. The property `antecedent |-> consequent` is read as "if the `antecedent` sequence occurs, then the `consequent` sequence must follow."
+
+- **Non-overlapping `|->`**: The `consequent` sequence starts on the *next* clock tick after the `antecedent` completes.
+- **Overlapping `|=>`**: The `consequent` sequence starts on the *same* clock tick that the `antecedent` completes.
+
+## Level 3: Expert Insight
+
+**What makes a good assertion?**
+- **Specific and Unambiguous:** It should test one, and only one, feature of the spec.
+- **Non-Vacuous:** An assertion "passes vacuously" if its antecedent is never true. This is dangerous because it gives a false sense of security. It's important to also use `cover` statements to ensure that the conditions for your assertions are actually happening. `cover property (p_req_gnt);`
+- **Tied to the Spec:** Every assertion should be traceable back to a specific requirement in the design specification document.
+
+**Binding Assertions:** To make assertions reusable, they are often placed in a separate module or an `interface` and then "bound" to the DUT instance in the testbench. This avoids polluting the RTL code with verification-specific logic.
+
+**Debugging Failing Assertions:** When an assertion fails, the simulator reports the time of failure and a history of the signals involved. The key is to trace back from the failure to understand why the antecedent was met but the consequent was not.
+
+## Key Takeaways
+
+- SVA provides a formal, declarative way to specify and monitor complex DUT behavior.
+- It creates a self-checking environment that instantly flags violations, making debug much faster.
+- **Concurrent assertions** are the cornerstone of SVA, checking properties continuously.
+- The **implication operator (`|->`)** is the key construct for defining cause-and-effect relationships.
+- Good assertions are specific, non-vacuous, and directly linked to the design specification.
+
+## Quiz
+
+<Quiz>
+  {[
+    {
+      "question": "In the assertion `property p; @(posedge clk) req |-> ##[1:3] gnt; endproperty`, what does this property check?",
+      "answers": [
+        {"text": "If `req` is high, `gnt` must be high on the same cycle.", "correct": false},
+        {"text": "If `req` is high, `gnt` must be high for the next 3 cycles.", "correct": false},
+        {"text": "If `req` is high at a posedge clk, `gnt` must be high at a posedge clk between 1 and 3 cycles later.", "correct": true},
+        {"text": "If `gnt` is high, `req` must have been high 1 to 3 cycles earlier.", "correct": false}
+      ],
+      "explanation": "This is a classic temporal assertion. `|->` is the non-overlapping implication, and `##[1:3]` specifies a time window of 1 to 3 clock cycles for the consequent to be true."
+    },
+    {
+      "question": "What is the main advantage of concurrent assertions over immediate assertions?",
+      "answers": [
+        {"text": "They use less memory.", "correct": false},
+        {"text": "They can be used inside functions and tasks.", "correct": false},
+        {"text": "They continuously monitor behavior over time, rather than just at one point.", "correct": true},
+        {"text": "They run faster.", "correct": false}
+      ],
+      "explanation": "Concurrent assertions are 'always on,' checking for complex sequential behavior across the entire simulation, which is their primary advantage for verifying hardware protocols."
+    }
+  ]}
+</Quiz>

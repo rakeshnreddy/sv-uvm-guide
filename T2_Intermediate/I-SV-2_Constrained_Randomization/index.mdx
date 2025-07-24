@@ -1,17 +1,158 @@
-import { InfoPage } from "@/components/templates/InfoPage";
+---
+title: "I-SV-2: Constrained Randomization"
+description: "Using constrained randomization to intelligently search for bugs."
+---
 
-export const metadata = {
-  title: "rand, randc, and randomize() | Advanced SystemVerilog for Verification",
-  description: "...",
-};
+import { Quiz, InteractiveCode } from '/src/components/ui/index.js'
 
-<InfoPage
-  title="rand, randc, and randomize()"
-  sv_concept_tags={["rand", "randc", "randomize"]}
->
+## The "Why" of Constrained Randomization
 
-  ## rand, randc, and randomize()
+Directed testing, where engineers manually write each stimulus, is fundamentally limited. For a simple 32-bit adder, there are 2^64 possible input combinations. It's impossible to write directed tests for all of them. This is where constrained randomization comes in. It automates stimulus generation, allowing us to intelligently explore the vast state space of a complex DUT to find corner-case bugs that directed testing would likely miss.
 
-  This section is under construction. Please check back later.
+## Level 1: The Smart Dice Roller
 
-</InfoPage>
+Think of constrained randomization as a "smart dice roller." Normal dice are purely random. A constrained-random generator, however, is like a set of dice you can command: "Roll any numbers that add up to 7 and where the first die is greater than the second." It automatically explores the *valid* and *interesting* scenarios you define.
+
+## Level 2: Practical Explanation
+
+### Random Variables: `rand` and `randc`
+
+We use the `rand` and `randc` keywords to declare random variables within a class.
+
+- `rand`: The variable has a standard random distribution.
+- `randc`: The variable is "random-cyclic." It will cycle through all possible values in a random order *without repetition* until every value has been used once. This is perfect for ensuring that a set of stimuli, like all possible command opcodes, are generated.
+
+<InteractiveCode>
+```systemverilog
+class MyPacket;
+  // Standard random variable
+  rand bit [7:0] addr;
+
+  // Random-cyclic variable for opcodes
+  randc bit [2:0] opcode; // Will not repeat until all 8 values are hit
+endclass
+
+program main;
+  initial begin
+    MyPacket pkt = new();
+    // Randomize the packet 10 times and observe opcodes
+    repeat (10) begin
+      pkt.randomize();
+      $display("addr: 0x%h, opcode: %d", pkt.addr, pkt.opcode);
+    end
+  end
+endprogram
+```
+</InteractiveCode>
+
+### Constraint Blocks
+
+Constraints are the "rules" that guide the random number generator. They are defined inside a `constraint` block.
+
+<InteractiveCode>
+```systemverilog
+class Transaction;
+  rand bit [7:0] start_addr;
+  rand bit [7:0] end_addr;
+
+  // Constraint: start_addr must always be less than end_addr
+  constraint c_addr_order {
+    start_addr < end_addr;
+  }
+endclass
+
+program main;
+  initial begin
+    Transaction tr = new();
+    repeat (5) begin
+      tr.randomize();
+      $display("start: 0x%h, end: 0x%h", tr.start_addr, tr.end_addr);
+    end
+  end
+endprogram
+```
+</InteractiveCode>
+
+### Constraint Types
+
+- **Relational:** `if...else` constraints.
+- **Ordering:** `solve...before` to control the order in which variables are randomized. This is useful when one variable's legal values depend on another's.
+- **Soft Constraints:** `soft` constraints provide a default behavior that can be easily overridden by a more specific constraint in a derived class or an in-line `with` clause.
+
+<InteractiveCode>
+```systemverilog
+class Config;
+  rand bit is_read;
+  rand int data_size; // 0=byte, 1=half-word, 2=word
+
+  // if...else constraint
+  constraint c_read_write {
+    if (is_read) {
+      data_size == 2; // Reads are always full words
+    } else {
+      data_size inside {[0:2]}; // Writes can be any size
+    }
+  }
+endclass
+
+program main;
+  initial begin
+    Config cfg = new();
+    repeat (5) begin
+      cfg.randomize();
+      $display("is_read: %b, data_size: %d", cfg.is_read, cfg.data_size);
+    end
+  end
+endprogram
+```
+</InteractiveCode>
+
+## Level 3: Expert Insight
+
+**Methodology:** Good constraints are readable, maintainable, and computationally efficient. Avoid overly complex constraints that can slow down the solver.
+
+**Pitfalls:**
+- **Over-constraining:** This happens when your rules are contradictory (e.g., `x < 10; x > 20;`). The solver will fail, and randomization will not succeed.
+- **Under-constraining:** This is more insidious. The generator produces illegal stimulus (e.g., a reserved address) that the DUT is not designed to handle. This highlights the importance of a solid verification plan.
+
+**Advanced Techniques:**
+- **In-line constraints (`with` clause):** Use `with` for test-specific, tactical modifications without creating a new class.
+  ```systemverilog
+  // Force a read transaction for this specific randomization
+  tr.randomize() with { is_read == 1; };
+  ```
+- **Helper Functions:** Use functions within constraint blocks to model complex relationships that are difficult to express declaratively.
+
+## Key Takeaways
+
+- Constrained randomization is a powerful technique for automatically generating a wide range of legal and interesting stimulus.
+- It helps find corner-case bugs that are easily missed by directed testing.
+- `rand` is for standard random variables; `randc` is for cycling through all values without repetition.
+- Constraints define the "rules" for the stimulus, guiding the generator to create valid scenarios.
+
+## Quiz
+
+<Quiz>
+  {[
+    {
+      "question": "What is the primary difference between a variable declared with `rand` versus `randc`?",
+      "answers": [
+        {"text": "`randc` can only be used for integral types.", "correct": false},
+        {"text": "`rand` is purely random; `randc` iterates through all values in a random order without repetition before repeating any value.", "correct": true},
+        {"text": "`randc` variables cannot be constrained.", "correct": false},
+        {"text": "`rand` variables are always positive.", "correct": false}
+      ],
+      "explanation": "`randc` is extremely useful for covering a finite set of states, such as all instruction opcodes or all error types, ensuring each one is generated once before any are repeated."
+    },
+    {
+      "question": "What happens if you create contradictory constraints (over-constraining)?",
+      "answers": [
+        {"text": "The simulator issues a warning but continues.", "correct": false},
+        {"text": "The first constraint takes precedence.", "correct": false},
+        {"text": "The randomization solver fails, and the `randomize()` call returns 0.", "correct": true},
+        {"text": "The variables get their default values.", "correct": false}
+      ],
+      "explanation": "A failed randomization is a critical event. The `randomize()` function's return value should always be checked to ensure the stimulus is valid."
+    }
+  ]}
+</Quiz>

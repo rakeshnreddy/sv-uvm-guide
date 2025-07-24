@@ -1,17 +1,158 @@
-import { InfoPage } from "@/components/templates/InfoPage";
+---
+title: "I-SV-3: Functional Coverage"
+description: "Answering the question 'Are we done yet?' by modeling and measuring functional coverage."
+---
 
-export const metadata = {
-  title: "Integrating Covergroups in Subscribers | Advanced UVM Techniques & Strategy",
-  description: "...",
-};
+import { Quiz, InteractiveCode } from '/src/components/ui/index.js'
 
-<InfoPage
-  title="Integrating Covergroups in Subscribers"
-  uvm_concept_tags={["covergroups", "subscribers"]}
->
+## The "Why" of Functional Coverage
 
-  ## Integrating Covergroups in Subscribers
+How do we know when we're done verifying a design? How can we be sure we've tested all the important scenarios? Functional coverage provides the answer. While assertions (SVA) ensure the DUT does nothing *wrong*, functional coverage measures whether our testbench has made the DUT do everything it's *supposed* to do, according to the verification plan.
 
-  This section is under construction. Please check back later.
+This creates a "closed-loop" verification process:
+1. We run tests with constrained-random stimulus.
+2. We measure functional coverage to see what scenarios we've tested.
+3. We analyze the coverage report to find "holes" (untested scenarios).
+4. We refine our constraints or write new directed tests to target those holes.
 
-</InfoPage>
+## Level 1: The Test Plan Checklist
+
+Think of functional coverage as creating a detailed "test plan checklist" directly in your code. Every time a specific, interesting scenario occurs during simulation—like a specific packet type being sent, a FIFO overflow, or a particular bus command—an item on the list gets checked off. The goal is to use our stimulus to check off all the items on the list, giving us confidence that we have exercised the design's key functionality.
+
+## Level 2: Practical Explanation
+
+### Core Constructs: `covergroup`, `coverpoint`, `bins`
+
+- `covergroup`: A container for a set of related coverage points. It's typically instantiated within a component that can observe the relevant signals, like a monitor.
+- `coverpoint`: Defines a specific variable or expression to be covered.
+- `bins`: Defines the "checklist items" for a coverpoint. We define bins to categorize the values of the coverpoint into meaningful groups.
+
+<InteractiveCode>
+```systemverilog
+// A simple transaction class
+class Transaction;
+  rand bit [1:0] kind; // 0=READ, 1=WRITE, 2=IDLE, 3=RESET
+  rand int       addr;
+endclass
+
+// Coverage collector component
+class CoverageCollector;
+  // Covergroup to be triggered on each new transaction
+  covergroup CovGroup with function sample(Transaction tr);
+    // Coverpoint for the 'kind' property
+    option.per_instance = 1;
+    cp_kind: coverpoint tr.kind {
+      bins read_bin  = {0};
+      bins write_bin = {1};
+      bins other_bins[] = {[2:3]}; // Automatically create bins for 2 and 3
+    }
+    // Coverpoint for the 'addr' property
+    cp_addr: coverpoint tr.addr {
+      bins low_addr  = {[0:127]};
+      bins high_addr = {[128:255]};
+    }
+  endgroup
+
+  function new();
+    // Instantiate the covergroup
+    this.CovGroup = new();
+  endfunction
+
+  // Method to sample the coverage
+  function void sample_coverage(Transaction tr);
+    this.CovGroup.sample(tr);
+  endfunction
+endclass
+
+program main;
+  initial begin
+    CoverageCollector collector = new();
+    Transaction       tr        = new();
+    // Simulate receiving 50 transactions
+    repeat (50) begin
+      tr.randomize();
+      $display("Sampling transaction: kind=%d, addr=%d", tr.kind, tr.addr);
+      collector.sample_coverage(tr);
+    end
+  end
+endprogram
+```
+</InteractiveCode>
+
+### Bin Types
+
+- `bins`: Defines a bin for a specific value or set of values.
+- `illegal_bins`: These bins represent illegal or unexpected scenarios. If a value falling into an `illegal_bin` is ever sampled, the simulation will error out immediately. This is a powerful way to detect erroneous DUT or testbench behavior.
+- `ignore_bins`: These bins represent values that are uninteresting or irrelevant to our coverage goals. They are excluded from the coverage calculation.
+
+### Cross Coverage
+
+The `cross` construct is used to verify the interaction between different features. It creates a "cross product" of bins from two or more coverpoints, helping answer questions like, "Have we tested all packet types at all packet lengths?"
+
+<InteractiveCode>
+```systemverilog
+class Packet;
+  rand bit [1:0] kind;   // 0:SMALL, 1:MEDIUM, 2:LARGE
+  rand bit       has_crc;
+endclass
+
+class CoverageCollector;
+  covergroup CovPacket with function sample(Packet p);
+    cp_kind: coverpoint p.kind;
+    cp_has_crc: coverpoint p.has_crc;
+
+    // Cross coverage for kind vs. has_crc
+    // Did we see packets of all kinds, both with and without CRC?
+    kind_x_crc: cross cp_kind, cp_has_crc;
+  endgroup
+
+  function new();
+    this.CovPacket = new();
+  endfunction
+endclass
+// ... rest of the testbench ...
+```
+</InteractiveCode>
+
+## Level 3: Expert Insight
+
+**The Art of Coverage Closure:** Coverage closure is the process of analyzing coverage reports to find holes and then figuring out how to modify the stimulus to hit them. This is a core activity of the verification engineer. If you see a hole, you might ask: "Is my stimulus generator not capable of creating this scenario? Or is it just statistically unlikely, and I need to run the simulation for longer?"
+
+**Functional Coverage vs. Code Coverage:**
+- **Code Coverage:** A metric that measures which lines of source code, branches, and state machines have been executed. It's a useful safety net but doesn't understand the design's *intent*. You can have 100% code coverage and still have bugs if you never tested the right combination of features.
+- **Functional Coverage:** Measures whether the *features described in the verification plan* have been tested. It is a much better indicator of verification completeness. The two are complementary.
+
+## Key Takeaways
+
+- Functional coverage measures whether the testbench has exercised all the important functionality of the DUT.
+- It provides a concrete metric to answer the question, "Are we done yet?"
+- The process is a closed loop: run, measure, analyze, and refine stimulus to close coverage holes.
+- `covergroup`, `coverpoint`, and `bins` are the core constructs for modeling coverage.
+- `cross` coverage is essential for verifying the interaction between different DUT features.
+
+## Quiz
+
+<Quiz>
+  {[
+    {
+      "question": "You want to verify that your testbench never generates a transaction with a size of zero, which should be illegal. Which type of bin is most appropriate?",
+      "answers": [
+        {"text": "`bins size_zero = {0};`", "correct": false},
+        {"text": "`ignore_bins ignore_zero = {0};`", "correct": false},
+        {"text": "`illegal_bins illegal_zero = {0};`", "correct": true},
+        {"text": "`wildcard bins zero_bin = {1'b?};`", "correct": false}
+      ],
+      "explanation": "`illegal_bins` are specifically designed to catch unexpected or erroneous behavior. If a value corresponding to an illegal bin is ever sampled, it will immediately flag a simulation error."
+    },
+    {
+      "question": "What is the primary purpose of 'cross' coverage?",
+      "answers": [
+        {"text": "To measure coverage across different simulation runs.", "correct": false},
+        {"text": "To verify the interaction between two or more different features or coverpoints.", "correct": true},
+        {"text": "To exclude certain bins from the coverage calculation.", "correct": false},
+        {"text": "To link functional coverage to code coverage.", "correct": false}
+      ],
+      "explanation": "Cross coverage is critical for finding bugs that occur at the intersection of different functionalities, such as a specific command used with a specific data mode."
+    }
+  ]}
+</Quiz>
