@@ -26,73 +26,51 @@ A sequence must be extended from `uvm_sequence` and implement the `body()` task.
 
 <InteractiveCode>
 ```systemverilog
-import uvm_pkg::*;
-`include "uvm_macros.svh"
-
 // The transaction (sequence item)
-class my_item extends uvm_sequence_item;
-  rand bit [31:0] addr;
-  rand bit [31:0] data;
-  `uvm_object_utils_begin(my_item)
-    `uvm_field_int(addr, UVM_ALL_ON)
-    `uvm_field_int(data, UVM_ALL_ON)
+class my_transaction extends uvm_sequence_item;
+  rand int data;
+  `uvm_object_utils_begin(my_transaction)
+    `uvm_field_int(data, UVM_DEFAULT)
   `uvm_object_utils_end
-  function new(string name="my_item");
-    super.new(name);
-  endfunction
+  function new(string name = "my_transaction"); super.new(name); endfunction
 endclass
 
-// The sequence that sends one item
-class my_simple_sequence extends uvm_sequence#(my_item);
+// The sequence that generates the transactions
+class my_simple_sequence extends uvm_sequence #(my_transaction);
   `uvm_object_utils(my_simple_sequence)
-  function new(string name="my_simple_sequence");
-    super.new(name);
-  endfunction
+  function new(string name = "my_simple_sequence"); super.new(name); endfunction
 
-  task body();
-    // The `uvm_do macro does three things:
-    // 1. Creates the item (req = new())
-    // 2. Randomizes the item (req.randomize())
-    // 3. Sends it to the driver (start_item()/finish_item())
-    `uvm_do(req)
+  virtual task body();
+    my_transaction req;
+    // Send 5 transactions
+    repeat (5) begin
+      // The uvm_do macro is a shortcut for create, randomize, and send
+      `uvm_do(req)
+    end
   endtask
 endclass
 
-// A simple test to run the sequence
-class my_test extends uvm_test;
-  `uvm_component_utils(my_test)
-  uvm_sequencer#(my_item) sequencer;
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-  endfunction
+// The driver that executes the transactions
+class my_driver extends uvm_driver #(my_transaction);
+  `uvm_component_utils(my_driver)
+  // ... constructor ...
+  virtual task run_phase(uvm_phase phase);
+    forever begin
+      // 1. Get the next item from the sequencer
+      seq_item_port.get_next_item(req);
 
-  function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    // For simplicity, we create a sequencer directly in the test
-    sequencer = uvm_sequencer#(my_item)::type_id::create("sequencer", this);
-  endfunction
+      // 2. Drive the transaction to the DUT
+      `uvm_info("DRIVER", $sformatf("Driving transaction: %s", req.sprint()), UVM_MEDIUM)
+      #10; // Simulate driving time
 
-  task run_phase(uvm_phase phase);
-    my_simple_sequence seq = my_simple_sequence::type_id::create("seq");
-    phase.raise_objection(this);
-    // Start the sequence on our sequencer
-    seq.start(sequencer);
-    phase.drop_objection(this);
+      // 3. Indicate completion to the sequencer
+      seq_item_port.item_done();
+    end
   endtask
 endclass
 
-module top;
-  // A dummy driver to receive the item
-  initial begin
-    my_item item;
-    uvm_config_db#(uvm_object_wrapper)::set(null, "uvm_test_top.sequencer.*", "default_sequence", my_simple_sequence::get_type());
-    run_test("my_test");
-    // In a real TB, a driver would get this item
-    // For this example, we just show it's created.
-    // uvm_test_top.sequencer.m_sequencer.m_req_fifo.get(item);
-    // `uvm_info("STIMULUS", item.sprint(), UVM_LOW)
-  end
-endmodule
+// In a test, you would start the sequence on the agent's sequencer:
+// my_simple_sequence_inst.start(env.agent.sequencer);
 ```
 </InteractiveCode>
 

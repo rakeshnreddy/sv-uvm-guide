@@ -234,6 +234,86 @@ GenericScoreboard #(EthernetPacket) eth_scoreboard = new();
 GenericScoreboard #(UsbPacket)      usb_scoreboard = new();
 ```
 
+## Putting It All Together: A Class-Based Testbench Example
+
+The concepts above come together to form a modern testbench. Here is a simplified but complete example showing how the pieces connect.
+
+<InteractiveCode>
+```systemverilog
+// 1. The Transaction Class: Defines the data to be sent
+class BusTransaction;
+  rand logic [7:0] data;
+  rand logic [3:0] addr;
+
+  function new();
+    // Constructor logic can go here
+  endfunction
+
+  virtual function void display();
+    $display("Transaction: Addr=%h, Data=%h", addr, data);
+  endfunction
+endclass
+
+// 2. The Driver Class: Drives the transaction to the DUT
+class BusDriver;
+  // Virtual interface to connect to the physical DUT signals
+  virtual bus_if vif;
+  // Mailbox to receive transactions from the generator
+  mailbox #(BusTransaction) trans_mbx;
+
+  function new(virtual bus_if vif_in, mailbox #(BusTransaction) mbx_in);
+    this.vif = vif_in;
+    this.trans_mbx = mbx_in;
+  endfunction
+
+  task run();
+    forever begin
+      BusTransaction tr;
+      trans_mbx.get(tr); // Wait for a transaction
+      // Drive transaction to the DUT via the virtual interface
+      vif.cb.data <= tr.data;
+      vif.cb.addr <= tr.addr;
+      // ... wait for DUT response, etc. ...
+      @(vif.cb);
+    end
+  endtask
+endclass
+
+// 3. The Test Program: Instantiates and runs the environment
+program test(bus_if bus_interface);
+  BusDriver driver;
+  mailbox #(BusTransaction) mbx = new();
+
+  initial begin
+    // Create the driver and connect it to the interface and mailbox
+    driver = new(bus_interface, mbx);
+
+    // Start the driver in a non-blocking fashion
+    fork
+      driver.run();
+    join_none
+
+    // Generate and send 5 random transactions
+    for (int i = 0; i < 5; i++) begin
+      BusTransaction tr = new();
+      assert(tr.randomize()); // Randomize the transaction
+      mbx.put(tr);             // Send it to the driver
+      tr.display();
+    end
+
+    // End simulation
+    #100;
+    $finish;
+  end
+endprogram
+```
+</InteractiveCode>
+
+This example illustrates:
+- **Separation of Concerns:** The transaction (`BusTransaction`) is separate from the driver (`BusDriver`), which is separate from the test control (`program test`).
+- **Communication:** The test generates transactions and uses a `mailbox` to pass them to the driver.
+- **Hardware-Software Connection:** The `virtual interface` provides the bridge between the class-based, dynamic testbench and the static, physical DUT wiring.
+
 ## Level 3: Expert Insight & Practical Trade-offs
 
 **Inheritance vs. Composition:** Deep inheritance hierarchies (`A` extends `B` extends `C`...) can become rigid and hard to manage. Often, a better approach is **composition**, where a class contains a handle to another class. For example, instead of an `EthernetPacket_with_CRC` extending `EthernetPacket`, the `EthernetPacket` class could simply *contain* a `CRCGenerator` object. This is more flexible.

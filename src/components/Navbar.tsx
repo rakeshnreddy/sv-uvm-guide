@@ -16,8 +16,6 @@ const navLinks = [
       { href: "/curriculum/T2_Intermediate/I-SV-1_OOP/index", label: "Tier 2: Intermediate" },
       { href: "/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/index", label: "Tier 3: Advanced" },
       { href: "/curriculum/T4_Expert/E-CUST-1_UVM_Methodology_Customization/index", label: "Tier 4: Expert" },
-      { href: "/sv-concepts", label: "SV Concepts" },
-      { href: "/uvm-concepts", label: "UVM Concepts" },
     ],
   },
   {

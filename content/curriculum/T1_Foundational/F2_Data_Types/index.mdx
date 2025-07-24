@@ -1,35 +1,101 @@
-# SystemVerilog Data Types
+---
+title: "F2: SystemVerilog Data Types"
+description: "Understand SystemVerilog data types: the crucial difference between 2-state (bit, int) and 4-state (logic, wire, reg) types, and their application in modeling hardware signals and building verification testbenches."
+---
 
-SystemVerilog provides a rich set of data types for modeling hardware. Understanding these data types is crucial for writing efficient and accurate RTL and testbench code.
+import { Quiz, InteractiveCode } from '@/components/ui';
+import DataTypeComparisonChart from '@/components/charts/DataTypeComparisonChart';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 
-## 4-State vs. 2-State Data Types
+## The "Why" of Data Types
 
-One of the most important concepts in SystemVerilog is the distinction between 4-state and 2-state data types.
+In hardware design, we need to model the physical reality of circuits. Signals aren't always just `0` or `1`. They can be in an `unknown` state (`X`) during initialization or a `high-impedance` state (`Z`) on a shared bus. SystemVerilog's data types are designed to handle this reality, while also providing more abstract, software-like types for building complex testbenches.
 
-*   **4-state data types** can have four possible values:
-    *   `0`: Logic zero
-    *   `1`: Logic one
-    *   `X`: Unknown value
-    *   `Z`: High-impedance
+## Level 1: The Container Analogy
 
-    These types are essential for modeling hardware, as they can accurately represent the behavior of uninitialized memory, bus contention, and other real-world scenarios. The most common 4-state data type is `logic`.
+Think of data types like different kinds of containers for information:
+- **`bit`**: A simple box that can only hold a `0` or a `1`. It's efficient and fast, perfect for software-like counting or state machines in your testbench.
+- **`logic`**: A more complex box that can hold `0`, `1`, `X`, or `Z`. This is your go-to, general-purpose container for modeling hardware signals that are driven by a single source.
+- **`wire`**: A special container for signals that can be connected to multiple sources, like a tri-state bus. It allows multiple drivers to place values on it, and the hardware resolves the final value.
 
-*   **2-state data types** can only have two possible values:
-    *   `0`: Logic zero
-    *   `1`: Logic one
+## Level 2: Core Mechanics and Examples
 
-    These types are more memory-efficient and faster to simulate than 4-state types. They are often used in testbenches for things like loop counters and other variables that don't need to model hardware behavior. The most common 2-state data type is `bit`.
+### Interactive Code Example: Common Data Types
 
-## Arrays
+This example shows various SystemVerilog data types in action. Step through the code to understand how each one is declared and used.
 
-SystemVerilog supports several types of arrays:
+<InteractiveCode
+  language="systemverilog"
+  fileName="data_types_examples.sv"
+  code={`
+// Example of 'logic' and 'bit'
+logic my_logic_var; // 4-state: 0, 1, X, Z
+bit   my_bit_var;   // 2-state: 0, 1
 
-*   **Packed arrays:** These are arrays of bits that are packed together into a single word. They are useful for modeling things like registers and memories.
-*   **Unpacked arrays:** These are arrays of any data type, including other arrays. They are useful for creating complex data structures.
-*   **Dynamic arrays:** These are arrays that can be resized at runtime.
-*   **Associative arrays:** These are arrays that use a key of any data type to access their elements.
-*   **Queues:** These are arrays that provide a FIFO (first-in, first-out) interface.
+// Example of arrays
+logic [7:0] data_bus [3:0]; // Array of 4 elements, each an 8-bit logic vector
+int         dynamic_array[]; // Dynamic array (size can change)
+string      assoc_array[string]; // Associative array (indexed by string)
 
-## User-Defined Types
+// Example of structs and queues
+typedef struct packed { // Packed struct
+  logic [15:0] address;
+  logic [31:0] data;
+  bit          valid;
+} memory_transaction_s;
 
-SystemVerilog also allows you to define your own data types using `typedef`. This is useful for creating reusable data structures and for improving the readability of your code. You can use `struct`, `union`, and `enum` to create complex user-defined types.
+memory_transaction_s transaction_q[$]; // Queue of memory_transaction_s structs
+  `}
+  explanationSteps={[
+    { target: "2", title: "Logic Type", explanation: "`logic my_logic_var;` declares a 4-state variable (0, 1, X for unknown, Z for high-impedance). It's a general-purpose type for single-driver signals in SystemVerilog." },
+    { target: "3", title: "Bit Type", explanation: "`bit my_bit_var;` declares a 2-state variable (0, 1). Use `bit` for memory efficiency and faster simulation when X or Z states are not needed, like software variables or testbench counters." },
+    { target: "6", title: "Fixed-Size Unpacked Array", explanation: "`logic [7:0] data_bus [3:0];` declares a fixed-size unpacked array named `data_bus`. It has 4 elements (indexed 0 to 3). Each element is an 8-bit packed array (vector) of `logic`." },
+    { target: "7", title: "Dynamic Array", explanation: "`int dynamic_array[];` declares a dynamic array. Its size is not fixed at compile time and can be changed during simulation using methods like `new[]` or by assignment." },
+    { target: "8", title: "Associative Array", explanation: "`string assoc_array[string];` declares an associative array indexed by strings. Useful for sparse collections or when a non-integer index is needed, like a lookup table." },
+    { target: "11-15", title: "Struct Definition", explanation: "`typedef struct packed { ... } memory_transaction_s;` defines a user-defined `struct`. `packed` means its members are stored contiguously, allowing it to be treated as a single vector. This `memory_transaction_s` groups related signals." },
+    { target: "17", title: "Queue", explanation: "`memory_transaction_s transaction_q[$];` declares a queue named `transaction_q`. A queue is a dynamic, unpacked array that allows efficient addition/removal of elements from both ends (FIFO-like behavior). `[$]` denotes a queue." },
+  ]}
+/>
+
+### Data Type Feature Comparison
+
+The chart below compares key characteristics of `logic`, `wire`, `reg`, and `bit`. Understanding these differences is crucial for selecting the right tool for the job.
+
+<div className="my-6">
+  <DataTypeComparisonChart />
+</div>
+
+## Level 3: Expert Insights
+
+**4-state vs. 2-state Philosophy:** A senior engineer uses 4-state types (`logic`) for any signal connected to the DUT to accurately model hardware behavior, including potential `X` propagation from uninitialized registers. They use 2-state types (`bit`, `int`) for internal testbench variables (counters, loop variables, configuration objects) to improve simulation performance and memory usage. This discipline prevents bugs and speeds up regressions.
+
+**Packed vs. Unpacked Arrays:** A common mistake is not understanding the memory layout. `packed` arrays are contiguous bits, treated as a single vector. `unpacked` arrays are more like arrays in software. You can't directly assign an unpacked array to a packed one. This is crucial for interfaces and when casting to/from other types.
+
+**Memory & Retention Tip:** Relate **4-state `logic`** to the *physical hardware world* where uncertainty (`X`, `Z`) is real. Relate **2-state `bit`** to the *idealized software world* of your testbench where variables are always well-defined.
+
+## Check Your Understanding
+
+<Quiz>
+  {[
+    {
+      "question": "Which data type is essential for modeling a bus with multiple drivers (e.g., a tri-state bus)?",
+      "answers": [
+        {"text": "bit", "correct": false},
+        {"text": "logic", "correct": false},
+        {"text": "wire", "correct": true},
+        {"text": "int", "correct": false}
+      ],
+      "explanation": "`wire` is specifically designed to handle multiple drivers, correctly resolving their values, which is fundamental for net types."
+    },
+    {
+      "question": "What is a key advantage of using 2-state data types like 'bit' or 'int' in a testbench?",
+      "answers": [
+        {"text": "They can represent 'X' and 'Z'", "correct": false},
+        {"text": "Faster simulation speed and lower memory usage", "correct": true},
+        {"text": "They can be used in clocking blocks", "correct": false},
+        {"text": "They are always signed", "correct": false}
+      ],
+      "explanation": "2-state types are simpler for the simulator to process, leading to significant performance gains in large, complex testbenches."
+    }
+  ]}
+</Quiz>

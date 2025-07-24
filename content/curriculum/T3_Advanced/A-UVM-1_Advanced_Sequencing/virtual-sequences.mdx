@@ -1,17 +1,122 @@
-import { InfoPage } from "@/components/templates/InfoPage";
+---
+title: "Virtual Sequences and Sequencers"
+description: "Learn how to use virtual sequences and sequencers to coordinate and synchronize stimulus across multiple agents in a UVM testbench."
+---
 
-export const metadata = {
-  title: "Virtual Sequences and Sequencers | Advanced UVM Techniques & Strategy",
-  description: "...",
-};
+import { Quiz, InteractiveCode } from '@/components/ui';
+import UvmVirtualSequencerDiagram from '@/components/diagrams/UvmVirtualSequencerDiagram';
 
-<InfoPage
-  title="Virtual Sequences and Sequencers"
-  uvm_concept_tags={["virtual sequences", "virtual sequencers"]}
->
+## The "Why" of Virtual Sequences
 
-  ## Virtual Sequences and Sequencers
+In a complex DUT, you often have multiple interfaces that need to work together. For example, you might need to write a configuration register over a slow I2C bus and then immediately send a high-speed data packet over an Ethernet bus. How do you coordinate these two separate agents? The answer is a **virtual sequence**.
 
-  This section is under construction. Please check back later.
+## Level 1: The Orchestra Conductor Analogy
 
-</InfoPage>
+- **Agent Sequencers:** Think of these as the individual musicians in an orchestra (the violinist, the cellist, etc.). Each one can play their own instrument.
+- **Virtual Sequencer:** This is the orchestra's conductor. It doesn't play an instrument itself, but it has a podium and sheet music, and it directs all the musicians.
+- **Virtual Sequence:** This is the sheet music for the entire orchestra. It tells the conductor when each musician should play their part to create a synchronized, harmonious piece.
+
+## Level 2: Core Mechanics
+
+### The Virtual Sequencer
+
+A virtual sequencer is just a standard `uvm_sequencer` that is not connected to a driver. Its only job is to act as a placeholder for running a virtual sequence. It contains handles to the "real" sequencers in the various agents.
+
+### The Virtual Sequence
+
+A virtual sequence runs on the virtual sequencer. Its `body()` task contains the logic to start and coordinate other sequences on the agent-specific sequencers.
+
+<div className="flex justify-center items-center my-8 p-4 border rounded-lg shadow-sm bg-white">
+  <UvmVirtualSequencerDiagram />
+</div>
+
+<InteractiveCode
+  language="systemverilog"
+  fileName="virtual_sequence_example.sv"
+  code={`
+// The virtual sequencer contains handles to the agent sequencers
+class virtual_sequencer extends uvm_sequencer;
+  `uvm_component_utils(virtual_sequencer)
+
+  pci_sequencer  m_pci_sequencer;
+  eth_sequencer  m_eth_sequencer;
+
+  function new(string name="virtual_sequencer", uvm_component parent=null);
+    super.new(name, parent);
+  endfunction
+endclass
+
+// The virtual sequence coordinates the agent-specific sequences
+class virtual_sequence extends uvm_sequence;
+  `uvm_object_utils(virtual_sequence)
+
+  // Typed handle to the virtual sequencer
+  protected virtual_sequencer p_sequencer;
+
+  function new(string name="virtual_sequence", uvm_object parent=null);
+    super.new(name, parent);
+  endfunction
+
+  virtual task body();
+    // Get the virtual sequencer handle
+    if (!$cast(p_sequencer, m_sequencer)) begin
+      `uvm_fatal("VSEQ", "Failed to get virtual sequencer handle")
+    end
+
+    // Create the agent-specific sequences
+    pci_sequence  pci_seq = pci_sequence::type_id::create("pci_seq");
+    eth_sequence  eth_seq = eth_sequence::type_id::create("eth_seq");
+
+    // Start the sequences concurrently on their respective sequencers
+    fork
+      pci_seq.start(p_sequencer.m_pci_sequencer);
+      eth_seq.start(p_sequencer.m_eth_sequencer);
+    join
+  endtask
+endclass
+`}
+  explanationSteps={[
+    { target: "2-10", title: "Virtual Sequencer Class", explanation: "The `virtual_sequencer` is a standard `uvm_sequencer`. It doesn't have a type parameter because it doesn't handle a specific transaction type." },
+    { target: "5-6", title: "Sequencer Handles", explanation: "It contains handles to the real sequencers in the testbench, in this case, `m_pci_sequencer` and `m_eth_sequencer`. These handles are typically assigned using `uvm_config_db` in the environment." },
+    { target: "13-35", title: "Virtual Sequence Class", explanation: "The `virtual_sequence` runs on the `virtual_sequencer`. Its purpose is to start and coordinate other sequences on the agent-specific sequencers." },
+    { target: "17", title: "Sequencer Pointer", explanation: "It's good practice to have a typed pointer `p_sequencer` to the virtual sequencer for easier access to its members." },
+    { target: "23-25", title: "Getting the Sequencer Handle", explanation: "In the `body` task, we get the typed pointer to the virtual sequencer using `$cast`. The `m_sequencer` handle is a generic `uvm_sequencer` handle available in all sequences." },
+    { target: "28-29", title: "Creating Agent Sequences", explanation: "The virtual sequence creates the sequences that will run on the individual agents." },
+    { target: "32-35", title: "Starting Agent Sequences", explanation: "The `fork...join` block starts the `pci_seq` and `eth_seq` concurrently on their respective sequencers, which are accessed through the `p_sequencer` handle. This is the core of the coordination mechanism." }
+  ]}
+/>
+
+## Level 3: Expert Insights
+
+**Configuration is Key:** The handles in the virtual sequencer (`m_pci_sequencer`, `m_eth_sequencer`) must be connected to the actual sequencer instances in the environment. This is typically done in the environment's `connect_phase` using `uvm_config_db::set()` to set the handles and `uvm_config_db::get()` in the virtual sequencer to retrieve them.
+
+**Synchronization:** The `fork...join` is used for concurrent execution. You can also use `join_none` or `join_any` for more complex synchronization. For sequential operations, simply start the sequences one after another without a `fork`.
+
+**Memory & Retention Tip:** Remember: **Virtual Sequencer = Conductor**. **Virtual Sequence = Sheet Music**. **Agent Sequencers = Musicians**.
+
+## Check Your Understanding
+
+<Quiz>
+  {[
+    {
+      "question": "What is the primary role of a virtual sequencer?",
+      "answers": [
+        {"text": "To drive transactions to the DUT.", "correct": false},
+        {"text": "To act as a central point for coordinating sequences on multiple, different agent sequencers.", "correct": true},
+        {"text": "To check the results from a monitor.", "correct": false},
+        {"text": "To generate virtual transactions.", "correct": false}
+      ],
+      "explanation": "A virtual sequencer does not connect to a driver. Its sole purpose is to provide a place for a virtual sequence to run and to hold handles to the real agent sequencers."
+    },
+    {
+      "question": "In a virtual sequence, how do you start a sequence on a specific agent's sequencer?",
+      "answers": [
+        {"text": "`p_sequencer.start(agent_seq)`", "correct": false},
+        {"text": "`agent_seq.start(p_sequencer.m_agent_sequencer)`", "correct": true},
+        {"text": "`m_agent_sequencer.start(agent_seq)`", "correct": false},
+        {"text": "`uvm_do(agent_seq)`", "correct": false}
+      ],
+      "explanation": "You must call the `start()` method of the agent-specific sequence and pass it a handle to the corresponding agent sequencer, which you access via the virtual sequencer handle (e.g., `p_sequencer.m_agent_sequencer`)."
+    }
+  ]}
+</Quiz>

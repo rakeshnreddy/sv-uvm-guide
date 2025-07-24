@@ -4,6 +4,7 @@ description: "Answering the question 'Are we done yet?' by modeling and measurin
 ---
 
 import { Quiz, InteractiveCode } from '@/components/ui';
+import { InteractiveChartPlaceholder } from '@/components/templates/InfoPage';
 
 ## The "Why" of Functional Coverage
 
@@ -29,55 +30,54 @@ Think of functional coverage as creating a detailed "test plan checklist" direct
 
 <InteractiveCode>
 ```systemverilog
-// A simple transaction class
-class Transaction;
-  rand bit [1:0] kind; // 0=READ, 1=WRITE, 2=IDLE, 3=RESET
-  rand int       addr;
-endclass
+// Usually defined in an interface to have access to signals
+interface my_bus_if (input logic clk);
+  logic [3:0] addr;
+  logic [7:0] data;
+  logic       rw; // 0 for read, 1 for write
+  logic       valid;
 
-// Coverage collector component
-class CoverageCollector;
-  // Covergroup to be triggered on each new transaction
-  covergroup CovGroup with function sample(Transaction tr);
-    // Coverpoint for the 'kind' property
-    option.per_instance = 1;
-    cp_kind: coverpoint tr.kind {
-      bins read_bin  = {0};
-      bins write_bin = {1};
-      bins other_bins[] = {[2:3]}; // Automatically create bins for 2 and 3
+  covergroup cg_bus_activity @(posedge clk);
+    // Coverpoint for the address
+    cp_addr: coverpoint addr {
+      bins low_addr  = {[0:3]};
+      bins high_addr = {[4:15]};
+      bins specific_addr_A = {4'hA};
+      bins specific_addr_5 = {4'h5};
     }
-    // Coverpoint for the 'addr' property
-    cp_addr: coverpoint tr.addr {
-      bins low_addr  = {[0:127]};
-      bins high_addr = {[128:255]};
+
+    // Coverpoint for data, sampled only on a valid write
+    cp_data: coverpoint data iff (valid && rw == 1) {
+      bins zero_data = {8'h00};
+      bins max_data  = {8'hFF};
+      bins other_data = default;
+    }
+
+    // Coverpoint for read/write. Bins are created automatically for 0 and 1.
+    cp_rw: coverpoint rw;
+
+    // Cross coverage between address and read/write
+    cross_addr_rw: cross cp_addr, cp_rw {
+      // We don't care about writes to the low address range, so ignore them
+      ignore_bins no_write_to_low = binsof(cp_addr.low_addr) && binsof(cp_rw) intersect {1};
     }
   endgroup
 
-  function new();
-    // Instantiate the covergroup
-    this.CovGroup = new();
-  endfunction
+  // Instantiation of the covergroup
+  cg_bus_activity bus_cov = new();
 
-  // Method to sample the coverage
-  function void sample_coverage(Transaction tr);
-    this.CovGroup.sample(tr);
-  endfunction
-endclass
+  // In a real testbench, a monitor would call bus_cov.sample()
+  // whenever a transaction is observed on the bus.
 
-program main;
-  initial begin
-    CoverageCollector collector = new();
-    Transaction       tr        = new();
-    // Simulate receiving 50 transactions
-    repeat (50) begin
-      tr.randomize();
-      $display("Sampling transaction: kind=%d, addr=%d", tr.kind, tr.addr);
-      collector.sample_coverage(tr);
-    end
-  end
-endprogram
+endinterface
 ```
 </InteractiveCode>
+
+### Visualizing Coverage
+
+A key part of the coverage closure loop is visualizing the coverage data. This is often done with bar charts or tables that show the hit count for each bin.
+
+<InteractiveChartPlaceholder title="Coverage Bins Example Chart" />
 
 ### Bin Types
 

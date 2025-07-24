@@ -1,52 +1,159 @@
 ---
 title: "Component Communication"
+description: "Learn how UVM components communicate using Transaction-Level Modeling (TLM), a high-level approach that enables interoperability and reuse."
 ---
 
-import CodeBlock from '/src/components/ui/CodeBlock'
+import { Quiz, InteractiveCode } from '@/components/ui';
+import { DiagramPlaceholder } from '@/components/templates/InfoPage';
 
-## Level 1: Definition and Analogy
+## The "Why" of TLM
 
-TLM ports in UVM act like **phone lines** between components. A driver "calls" the sequencer through a `seq_item_port`, while monitors broadcast transactions using `uvm_analysis_port` – much like a radio station reaching many listeners.
+In a UVM testbench, components need to talk to each other. A monitor needs to send observed transactions to a scoreboard. A producer component might need to send transactions to a consumer. Transaction-Level Modeling (TLM) provides a standardized set of interfaces for this communication. It abstracts away the pin-level details, allowing components to communicate by passing transaction objects.
 
-## Level 2: In‑Depth Walkthrough
+## Level 1: The Mail Slot Analogy
 
-### uvm_config_db Example
+- **TLM Port:** Think of this as a mail slot. A component with a port "sends mail" (transactions).
+- **TLM Export/Imp:** This is the mailbox. A component with an export or imp "receives mail".
+- **Analysis Port:** This is a special kind of mail slot for "broadcasting". It sends a copy of the mail to every mailbox connected to it.
 
+## Level 2: Core Mechanics
+
+### TLM1: Unidirectional Communication
+
+TLM1 provides a simple, unidirectional way to pass transactions. The most common types are `put`, `get`, and `peek`.
+
+- **`uvm_blocking_put_port`:** Sends a transaction and waits until the receiving component accepts it.
+
+<InteractiveCode>
 ```systemverilog
-// Set
-uvm_config_db#(int)::set(null, "*", "mtu", 1500);
-// Get
-int mtu;
-if(!uvm_config_db#(int)::get(this, "", "mtu", mtu))
-  `uvm_fatal("CFG", "MTU not set")
+// A simple transaction
+class my_transaction extends uvm_sequence_item;
+  // ...
+endclass
+
+// A component that produces transactions
+class producer extends uvm_component;
+  `uvm_component_utils(producer)
+  uvm_blocking_put_port #(my_transaction) put_port;
+
+  function new(string name="producer", uvm_component parent=null);
+    super.new(name,parent);
+    put_port = new("put_port", this);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    my_transaction tr = new();
+    // ... randomize tr ...
+    // This call blocks until the consumer accepts the transaction
+    put_port.put(tr);
+  endtask
+endclass
+
+// A component that consumes transactions
+class consumer extends uvm_component;
+  `uvm_component_utils(consumer)
+  // The 'imp' is where the implementation of the 'put' method lives
+  uvm_blocking_put_imp #(my_transaction, consumer) put_export;
+
+  function new(string name="consumer", uvm_component parent=null);
+    super.new(name,parent);
+    put_export = new("put_export", this);
+  endfunction
+
+  // This is the implementation of the 'put' method required by the 'imp'
+  task put(my_transaction tr);
+    `uvm_info("CONSUMER", $sformatf("Received transaction: %s", tr.sprint()), UVM_MEDIUM)
+    // ... process the transaction ...
+  endtask
+endclass
+
+// In the environment's connect_phase:
+// producer_inst.put_port.connect(consumer_inst.put_export);
 ```
+</InteractiveCode>
 
-### Analysis Port to Subscriber
+### Analysis Ports: Broadcasting Data
 
+Analysis ports are the most common communication method in UVM for connecting monitors to scoreboards and coverage collectors. An analysis port is a one-to-many broadcast connection.
+
+<InteractiveCode>
 ```systemverilog
+// A monitor that observes transactions and broadcasts them
 class my_monitor extends uvm_monitor;
   `uvm_component_utils(my_monitor)
-  uvm_analysis_port#(my_item) ap;
-  function new(string name, uvm_component parent);
+  // The analysis port for broadcasting transactions
+  uvm_analysis_port #(my_transaction) ap;
+
+  function new(string name="my_monitor", uvm_component parent=null);
     super.new(name,parent);
     ap = new("ap", this);
   endfunction
-  task run_phase(uvm_phase phase);
-    my_item tr = my_item::type_id::create("tr");
+
+  virtual task run_phase(uvm_phase phase);
+    // ... capture bus activity and create a transaction 'tr' ...
+    // Broadcast the transaction to all connected subscribers
     ap.write(tr);
   endtask
 endclass
 
-class my_scoreboard extends uvm_subscriber#(my_item);
+// A scoreboard that subscribes to the monitor's analysis port
+class my_scoreboard extends uvm_scoreboard;
   `uvm_component_utils(my_scoreboard)
-  function void write(my_item t);
-    // check t
+  // The analysis 'imp' to receive transactions
+  uvm_analysis_imp #(my_transaction, my_scoreboard) analysis_export;
+
+  function new(string name="my_scoreboard", uvm_component parent=null);
+    super.new(name,parent);
+    analysis_export = new("analysis_export", this);
+  endfunction
+
+  // The 'write' method is called by the monitor's 'ap.write()'
+  function void write(my_transaction tr);
+    // ... scoreboard checking logic ...
   endfunction
 endclass
+
+// In the environment's connect_phase:
+// monitor_inst.ap.connect(scoreboard_inst.analysis_export);
 ```
+</InteractiveCode>
 
-## Level 3: Edge‑Case Insights
+<DiagramPlaceholder title="TLM Port/Export Connection" />
 
-* `uvm_resource_db` can override `uvm_config_db` values; remember precedence when debugging.
-* TLM 2.0 provides timed transactions but is rarely used in simple testbenches.
-* Mnemonic: **"Ports phone home"** – recall that ports initiate communication, exports answer.
+## Level 3: Expert Insights
+
+**TLM2: Bidirectional Communication:** TLM2 provides more complex, bidirectional communication with sockets. It's powerful but less common in everyday verification than TLM1 and analysis ports.
+
+**Choosing the Right Port:**
+- Use **analysis ports** for monitor-to-subscriber communication.
+- Use **TLM1 `put`/`get` ports** for simple producer/consumer patterns.
+- Use the **sequencer/driver handshake** (`get_next_item`/`item_done`) for stimulus generation.
+
+**Memory & Retention Tip:** Remember: **Port = "I need a service."** **Export/Imp = "I provide a service."** **Analysis Port = "Broadcasting news."** **Analysis Export/Imp = "Subscribing to the news."**
+
+## Check Your Understanding
+
+<Quiz>
+  {[
+    {
+      "question": "Which type of TLM connection is best suited for a monitor to send transactions to multiple scoreboards and coverage collectors?",
+      "answers": [
+        {"text": "A `uvm_blocking_put_port`", "correct": false},
+        {"text": "A `uvm_analysis_port`", "correct": true},
+        {"text": "A `uvm_blocking_get_port`", "correct": false},
+        {"text": "A TLM2 socket", "correct": false}
+      ],
+      "explanation": "Analysis ports are specifically designed for a one-to-many broadcast, which is the exact pattern needed to send data from a single monitor to multiple subscribers."
+    },
+    {
+      "question": "In a `uvm_blocking_put_imp`, what is the name of the method you must implement?",
+      "answers": [
+        {"text": "`get()`", "correct": false},
+        {"text": "`write()`", "correct": false},
+        {"text": "`put()`", "correct": true},
+        {"text": "`transport()`", "correct": false}
+      ],
+      "explanation": "The `uvm_blocking_put_imp` requires the component to provide an implementation for the `task put(T t);` method."
+    }
+  ]}
+</Quiz>
