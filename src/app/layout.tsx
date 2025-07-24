@@ -60,6 +60,14 @@ const calSans = localFont({
 export const metadata: Metadata = {
   title: "SystemVerilog & UVM Mastery",
   description: "The definitive online platform for mastering SystemVerilog and UVM.",
+  openGraph: {
+    title: "SystemVerilog & UVM Mastery",
+    description: "The definitive online platform for mastering SystemVerilog and UVM.",
+    url: "https://example.com",
+    siteName: "SV/UVM Hub",
+    locale: "en_US",
+    type: "website",
+  },
 };
 
 interface RootLayoutProps {

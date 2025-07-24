@@ -22,7 +22,7 @@ const connections = [
 const UvmVirtualSequencerDiagram: React.FC = () => {
   return (
     <div style={{ textAlign: 'center', fontFamily: 'Arial, sans-serif' }}>
-      <svg width="800" height="400" viewBox="0 0 800 400">
+      <svg className="w-full h-auto" viewBox="0 0 800 400" role="img" aria-label="UVM virtual sequencer diagram">
         {/* Participants */}
         {participants.map(p => (
           <g key={p.id}>

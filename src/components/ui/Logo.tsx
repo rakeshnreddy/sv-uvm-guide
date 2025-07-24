@@ -5,9 +5,9 @@ const Logo = () => {
     <svg
       xmlns="http://www.w3.org/2000/svg"
       viewBox="0 0 100 20"
-      width="150"
-      height="40"
-      className="text-accent"
+      className="text-accent w-full max-w-[150px] h-auto"
+      role="img"
+      aria-label="SV/UVM Hub logo"
     >
       <text
         x="0"

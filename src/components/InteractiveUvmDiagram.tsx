@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 
 const InteractiveUvmDiagram = () => {
   return (
-    <svg width="800" height="600" viewBox="0 0 850 650" xmlns="http://www.w3.org/2000/svg" fontFamily="Arial, sans-serif" fontSize="14px">
+    <svg className="w-full h-auto" viewBox="0 0 850 650" xmlns="http://www.w3.org/2000/svg" fontFamily="Arial, sans-serif" fontSize="14px" role="img" aria-label="UVM component interactions diagram">
       <style>
         {`
           .block { stroke: hsl(var(--primary)); stroke-width: 1.5; fill: hsl(var(--primary-foreground)); }

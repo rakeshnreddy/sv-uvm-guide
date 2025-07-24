@@ -38,7 +38,7 @@ const AnimatedUvmSequenceDriverHandshakeDiagram: React.FC = () => {
 
   return (
     <div style={{ textAlign: 'center', fontFamily: 'Arial, sans-serif' }}>
-      <svg width="800" height={lifelineHeight + 100} viewBox={`0 0 800 ${lifelineHeight + 100}`}>
+      <svg className="w-full h-auto" height={lifelineHeight + 100} viewBox={`0 0 800 ${lifelineHeight + 100}`} role="img" aria-label="UVM sequence-driver handshake diagram"> 
         {/* Participants and Lifelines */}
         {participants.map(p => (
           <g key={p.id}>
