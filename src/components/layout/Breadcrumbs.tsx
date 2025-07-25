@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { getBreadcrumbs } from "@/lib/curriculum-data";
+import { getBreadcrumbs } from "@/lib";
 import { ChevronRight } from "lucide-react";
 
 type BreadcrumbsProps = {

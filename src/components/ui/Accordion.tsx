@@ -79,6 +79,14 @@ export const AccordionItem: React.FC<AccordionItemProps> = ({
   );
 };
 
+export const AccordionTrigger = ({ children, ...props }) => (
+  <h2 {...props}>{children}</h2>
+);
+
+export const AccordionContent = ({ children, ...props }) => (
+  <div {...props}>{children}</div>
+);
+
 interface AccordionProps {
   children: ReactElement<AccordionItemProps> | ReactElement<AccordionItemProps>[];
   className?: string;

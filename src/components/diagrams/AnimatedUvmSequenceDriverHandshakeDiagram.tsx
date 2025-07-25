@@ -18,7 +18,7 @@ const participants = [
   { id: 'DUT', name: 'DUT', x: 700 },
 ];
 
-const AnimatedUvmSequenceDriverHandshakeDiagram: React.FC = () => {
+export const AnimatedUvmSequenceDriverHandshakeDiagram: React.FC = () => {
   const [currentStep, setCurrentStep] = useState(0);
 
   const handleNextStep = () => {
@@ -136,4 +136,3 @@ const buttonStyle: React.CSSProperties = {
   opacity: 1,
 };
 
-export default AnimatedUvmSequenceDriverHandshakeDiagram;

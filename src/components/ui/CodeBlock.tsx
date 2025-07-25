@@ -15,7 +15,7 @@ interface CodeBlockProps {
   customStyle?: React.CSSProperties;
 }
 
-const CodeBlock: React.FC<CodeBlockProps> = ({
+export const CodeBlock: React.FC<CodeBlockProps> = ({
   code,
   language = "systemverilog",
   fileName,
@@ -107,4 +107,3 @@ const CodeBlock: React.FC<CodeBlockProps> = ({
   );
 };
 
-export default CodeBlock;

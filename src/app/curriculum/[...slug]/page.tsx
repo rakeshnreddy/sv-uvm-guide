@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { MDXRemote } from 'next-mdx-remote/rsc';
-import { findTopicBySlug, getBreadcrumbs, findPrevNextTopics } from '@/lib/curriculum-data';
+import { findTopicBySlug, getBreadcrumbs, findPrevNextTopics } from '@/lib';
 import { notFound } from 'next/navigation';
 import Breadcrumbs from '@/components/layout/Breadcrumbs';
 import FeynmanPromptWidget from '@/components/widgets/FeynmanPromptWidget';
