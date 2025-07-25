@@ -225,6 +225,7 @@ export function getBreadcrumbs(slug: string[]): { title: string, path: string }[
   if (slug.length > 0) {
     const courseModule = curriculumData.find(m => m.slug === slug[0]);
     if (courseModule) {
+      breadcrumbs.push({ title: "Curriculum", path: `/curriculum` });
       breadcrumbs.push({ title: courseModule.title, path: `/curriculum/${courseModule.slug}` });
       if (slug.length > 1) {
         const section = courseModule.sections.find(s => s.slug === slug[1]);

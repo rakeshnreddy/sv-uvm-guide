@@ -37,6 +37,7 @@ const components = {
   Accordion,
   AccordionItem,
   Card,
+  CodeBlock,
   AnimatedUvmSequenceDriverHandshakeDiagram,
   DataTypeComparisonChart,
   DiagramPlaceholder,
