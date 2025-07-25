@@ -1,43 +1,95 @@
 ---
 title: "Analysis Components"
+description: "Learn how to use monitors, scoreboards, and other analysis components to check the correctness of your DUT."
 ---
 
-import CodeBlock from '/src/components/ui/CodeBlock'
-import Quiz from '/src/components/ui/Quiz'
+import { Quiz, InteractiveCode } from '@/components/ui';
+import { DiagramPlaceholder } from '@/components/templates/InfoPage';
 
-## Level 1: Definitions and Analogies
+## Level 1: The Elevator Pitch
 
-Monitors act like **security cameras**, observing traffic and reporting to subscribers. Scoreboards are the **referees** checking that what happened matches expectations.
+**What is it?** Analysis components are the "eyes and ears" of your testbench. They observe the behavior of the DUT and check that it is correct.
 
-## Level 2: Monitor and Scoreboard Example
+**The Analogy:** Think of a monitor as a "security camera" that records everything that happens on the DUT's interface. The scoreboard is the "security guard" who watches the camera feed and compares it to a set of rules to make sure everything is okay.
 
+**Why this matters:** Analysis components are essential for creating a self-checking testbench. Without them, you would have to manually inspect waveforms to determine if your test passed or failed.
+
+## Level 2: The Practical Explanation
+
+### The Monitor
+
+The monitor is a passive component that observes the DUT's interface and captures transactions. It should never drive any signals.
+
+### The Scoreboard
+
+The scoreboard is a checker component that compares the actual results from the DUT with the expected results.
+
+<InteractiveCode>
 ```systemverilog
+// A monitor that observes transactions and broadcasts them
 class my_monitor extends uvm_monitor;
   `uvm_component_utils(my_monitor)
-  uvm_analysis_port#(my_item) ap;
-  function new(string name, uvm_component parent);
+  uvm_analysis_port #(my_transaction) ap;
+
+  function new(string name="my_monitor", uvm_component parent=null);
     super.new(name,parent);
     ap = new("ap", this);
   endfunction
-  task run_phase(uvm_phase phase);
-    my_item tr = my_item::type_id::create("tr");
+
+  virtual task run_phase(uvm_phase phase);
+    // ... capture bus activity and create a transaction 'tr' ...
     ap.write(tr);
   endtask
 endclass
 
+// A scoreboard that subscribes to the monitor's analysis port
 class my_scoreboard extends uvm_scoreboard;
   `uvm_component_utils(my_scoreboard)
-  uvm_analysis_export#(my_item) exp;
-  function new(string name, uvm_component parent);
+  uvm_analysis_imp #(my_transaction, my_scoreboard) analysis_export;
+
+  function new(string name="my_scoreboard", uvm_component parent=null);
     super.new(name,parent);
-    exp = new("exp", this);
+    analysis_export = new("analysis_export", this);
+  endfunction
+
+  function void write(my_transaction tr);
+    // ... scoreboard checking logic ...
   endfunction
 endclass
 ```
+</InteractiveCode>
 
-## Level 3: Pitfalls
+## Level 3: Expert Insights
 
-* Monitors must **never drive** signals.
-* Subscribers can be chained via analysis ports, but avoid long chains that hide bugs.
+**Coverage Collectors:** In addition to scoreboards, you can also connect coverage collectors to the monitor's analysis port. This allows you to collect functional coverage on the transactions that are observed on the DUT's interface.
 
-<Quiz questions={[{question:'Which component receives analysis exports?', options:['Driver','Monitor','Scoreboard','Sequencer'], correctAnswer:'Scoreboard'}]} />
+**Reference Models:** For complex DUTs, you might need to use a reference model (often written in a high-level language like C++ or SystemC) to generate the expected results.
+
+**Memory & Retention Tip:** Remember: **Monitor = See.** **Scoreboard = Check.**
+
+## Check Your Understanding
+
+<Quiz>
+  {[
+    {
+      "question": "Which component should never drive signals?",
+      "answers": [
+        {"text": "Driver", "correct": false},
+        {"text": "Sequencer", "correct": false},
+        {"text": "Monitor", "correct": true},
+        {"text": "Scoreboard", "correct": false}
+      ],
+      "explanation": "The monitor is a passive component that should only observe the DUT's interface. It should never drive any signals."
+    },
+    {
+      "question": "Which component is responsible for checking the correctness of the DUT's behavior?",
+      "answers": [
+        {"text": "Driver", "correct": false},
+        {"text": "Sequencer", "correct": false},
+        {"text": "Monitor", "correct": false},
+        {"text": "Scoreboard", "correct": true}
+      ],
+      "explanation": "The scoreboard is the primary checker component in a UVM testbench. It compares the actual results from the DUT with the expected results."
+    }
+  ]}
+</Quiz>

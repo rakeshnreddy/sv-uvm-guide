@@ -1,17 +1,116 @@
-import { InfoPage } from "@/components/templates/InfoPage";
+---
+title: "A-UVM-1: Advanced UVM Sequencing"
+description: "Learn about advanced UVM sequencing techniques, including layered sequences, virtual sequences, and sequence libraries."
+---
 
-export const metadata = {
-  title: "Agent Structure: Active vs. Passive | Building a UVM Testbench",
-  description: "...",
-};
+import { Quiz, InteractiveCode } from '@/components/ui';
+import { DiagramPlaceholder } from '@/components/templates/InfoPage';
 
-<InfoPage
-  title="Agent Structure: Active vs. Passive"
-  uvm_concept_tags={["agent", "active", "passive"]}
->
+## The "Why" of Advanced Sequencing
 
-  ## Agent Structure: Active vs. Passive
+Simple, single sequences are great for basic tests, but real-world verification requires more complex and coordinated stimulus. Advanced sequencing techniques provide the tools to build sophisticated, reusable, and maintainable stimulus scenarios.
 
-  This section is under construction. Please check back later.
+## Level 1: The Screenplay Analogy
 
-</InfoPage>
+- **Simple Sequence:** A single scene in a movie.
+- **Layered Sequence:** A sequence that calls other sequences, like a scene that is made up of smaller sub-scenes.
+- **Virtual Sequence:** The master screenplay for the entire movie, coordinating all the different actors (agents) and scenes.
+- **Sequence Library:** A collection of all the different screenplays (sequences) that can be used to create different movies (tests).
+
+## Level 2: Core Mechanics
+
+### Layered Sequences
+
+A layered sequence is a sequence that executes other sequences. This is a powerful technique for building complex scenarios from smaller, reusable building blocks.
+
+<InteractiveCode>
+```systemverilog
+// A low-level sequence to write a single register
+class write_reg_seq extends uvm_sequence #(my_item);
+  // ...
+endclass
+
+// A mid-level sequence to configure the DUT
+class config_dut_seq extends uvm_sequence #(my_item);
+  `uvm_object_utils(config_dut_seq)
+  // ...
+  task body();
+    write_reg_seq write_seq = write_reg_seq::type_id::create("write_seq");
+    // Write to a series of configuration registers
+    `uvm_do_with(write_seq, {addr == 8'h01; data == 8'h10;})
+    `uvm_do_with(write_seq, {addr == 8'h02; data == 8'h20;})
+  endtask
+endclass
+
+// A high-level sequence that configures the DUT and then runs a data transfer
+class test_seq extends uvm_sequence #(my_item);
+  `uvm_object_utils(test_seq)
+  // ...
+  task body();
+    config_dut_seq config_seq = config_dut_seq::type_id::create("config_seq");
+    data_transfer_seq data_seq = data_transfer_seq::type_id::create("data_seq");
+
+    // Execute the sequences in order
+    `uvm_do(config_seq)
+    `uvm_do(data_seq)
+  endtask
+endclass
+```
+</InteractiveCode>
+
+### Virtual Sequences
+
+A virtual sequence is a sequence that runs on a virtual sequencer and coordinates the activity of multiple agents. See the "Virtual Sequences and Sequencers" topic for more details.
+
+### Sequence Libraries
+
+A sequence library is a collection of sequences that can be selected from at random during a test. This is a powerful technique for finding unexpected bugs.
+
+<InteractiveCode>
+```systemverilog
+// In the test:
+function void build_phase(uvm_phase phase);
+  // ...
+  uvm_sequence_library_pkg::add_type(my_seq_lib::get_type());
+  uvm_config_db#(uvm_object_wrapper)::set(this,
+                                          "env.agent.sequencer.run_phase",
+                                          "default_sequence",
+                                          my_seq_lib::get_type());
+endfunction
+```
+</InteractiveCode>
+
+## Level 3: Expert Insights
+
+**Sequence Priority and Arbitration:** The sequencer can be configured with different arbitration algorithms (e.g., `UVM_SEQ_ARB_FIFO`, `UVM_SEQ_ARB_WEIGHTED`, `UVM_SEQ_ARB_RANDOM`) to control which sequence gets to send its transactions when multiple sequences are running concurrently.
+
+**`is_relevant()` and `wait_for_relevant()`:** These methods can be used to create reactive sequences that only run when certain conditions are met.
+
+**Memory & Retention Tip:** Remember: **Layered Sequences = Building blocks.** **Virtual Sequences = Conductor.** **Sequence Library = Playlist.**
+
+## Check Your Understanding
+
+<Quiz>
+  {[
+    {
+      "question": "What is the primary benefit of using layered sequences?",
+      "answers": [
+        {"text": "To make sequences run faster.", "correct": false},
+        {"text": "To build complex scenarios from smaller, reusable building blocks.", "correct": true},
+        {"text": "To connect to multiple drivers.", "correct": false},
+        {"text": "To automatically generate stimulus.", "correct": false}
+      ],
+      "explanation": "Layered sequences allow you to create a library of reusable stimulus building blocks that can be combined in different ways to create complex test scenarios."
+    },
+    {
+      "question": "What is the purpose of a sequence library?",
+      "answers": [
+        {"text": "To store all the sequences in a single file.", "correct": false},
+        {"text": "To provide a way to randomly select from a collection of sequences during a test.", "correct": true},
+        {"text": "To connect sequences to drivers.", "correct": false},
+        {"text": "To create virtual sequences.", "correct": false}
+      ],
+      "explanation": "Sequence libraries are a powerful tool for finding unexpected bugs by running a random mix of stimulus scenarios."
+    }
+  ]}
+</Quiz>

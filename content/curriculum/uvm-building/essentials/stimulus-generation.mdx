@@ -1,32 +1,71 @@
 ---
 title: "Stimulus Generation"
+description: "Learn how to generate stimulus in a UVM testbench using sequences and sequencers."
 ---
 
-import AnimatedUvmSequenceDriverHandshakeDiagram from '/src/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram'
-import CodeBlock from '/src/components/ui/CodeBlock'
-import Quiz from '/src/components/ui/Quiz'
+import { Quiz, InteractiveCode } from '@/components/ui';
+import AnimatedUvmSequenceDriverHandshakeDiagram from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram';
 
-## Level 1: Definition and Analogy
+## Level 1: The Elevator Pitch
 
-Sequences drive the intent of a test like a **playlist** for a DJ. The sequencer hands items to the driver, which plays them on the DUT pins.
+**What is it?** Stimulus generation is the process of creating and sending transactions to the DUT. In UVM, this is done using sequences and sequencers.
 
-## Level 2: Handshake Example
+**The Analogy:** Think of a sequence as a "recipe" for a test. The sequencer is the "chef" who follows the recipe and sends the "dishes" (transactions) to the "waiter" (the driver), who then delivers them to the "customer" (the DUT).
+
+**Why this matters:** Separating the stimulus generation (the "what") from the driving (the "how") is a key principle of UVM. It allows you to create reusable stimulus scenarios that can be used with different drivers and different DUTs.
+
+## Level 2: The Practical Explanation
 
 <AnimatedUvmSequenceDriverHandshakeDiagram />
 
+### The Sequence/Driver Handshake
+
+1.  **`get_next_item()`:** The driver calls `seq_item_port.get_next_item(req)` to request a transaction from the sequencer. This is a blocking call.
+2.  **`start_item()`/`finish_item()`:** A sequence running on the sequencer creates a transaction and sends it to the driver using `start_item()` and `finish_item()`.
+3.  **`item_done()`:** After the driver has finished driving the transaction, it calls `seq_item_port.item_done()` to signal completion to the sequencer.
+
+<InteractiveCode>
 ```systemverilog
-seq_item_port.get_next_item(req);
-// drive req
-seq_item_port.item_done();
+// In the driver's run_phase:
+forever begin
+  seq_item_port.get_next_item(req);
+  // Drive the transaction
+  seq_item_port.item_done();
+end
 ```
+</InteractiveCode>
 
-## Level 3: Advanced Tips
+## Level 3: Expert Insights
 
-* Use `grab()` and `lock()` to control sequencer arbitration when multiple sequences run.
-* Sequence libraries package related sequences for reuse.
+**`uvm_do` Macros:** The `uvm_do` macros (`uvm_do`, `uvm_do_with`, etc.) are a convenient shortcut for creating, randomizing, and sending a transaction. However, they can sometimes make your code harder to read and debug.
 
-<Quiz questions={[{
-  question: 'Which component drives stimulus?',
-  options: ['Monitor','Driver','Scoreboard','Environment'],
-  correctAnswer: 'Driver'
-}]} />
+**Sequence Layering:** You can create complex stimulus scenarios by layering sequences. A high-level sequence can execute other, lower-level sequences.
+
+**Memory & Retention Tip:** Remember: **Sequence = The What.** **Driver = The How.**
+
+## Check Your Understanding
+
+<Quiz>
+  {[
+    {
+      "question": "Which component is responsible for generating stimulus?",
+      "answers": [
+        {"text": "Driver", "correct": false},
+        {"text": "Sequencer", "correct": true},
+        {"text": "Monitor", "correct": false},
+        {"text": "Scoreboard", "correct": false}
+      ],
+      "explanation": "The sequencer is responsible for generating sequences of transactions, which are then sent to the driver to be driven onto the DUT interface."
+    },
+    {
+      "question": "What is the purpose of the `item_done()` call in the driver?",
+      "answers": [
+        {"text": "To tell the scoreboard that the transaction is complete.", "correct": false},
+        {"text": "To log the transaction to a file.", "correct": false},
+        {"text": "To signal to the sequencer that the driver is finished with the current transaction and is ready for the next one.", "correct": true},
+        {"text": "To return the transaction to the sequence.", "correct": false}
+      ],
+      "explanation": "Forgetting to call `item_done()` is a very common bug. It prevents the sequencer from unblocking and sending the next transaction, causing the testbench to hang."
+    }
+  ]}
+</Quiz>
