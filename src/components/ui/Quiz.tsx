@@ -22,59 +22,37 @@ interface FormattedQuestion {
 }
 
 interface QuizProps {
-  children: React.ReactNode;
+  questions: (FormattedQuestion | MdxQuestion)[];
 }
 
-const Quiz: React.FC<QuizProps> = ({ children }) => {
-  const questions: FormattedQuestion[] = useMemo(() => {
+const toFormatted = (qs: (FormattedQuestion | MdxQuestion)[]): FormattedQuestion[] => {
+  return qs.map((q) => {
+    if ('options' in q && 'correctAnswer' in q) {
+      return q as FormattedQuestion;
+    }
+    const mdxQ = q as MdxQuestion;
+    const correctAnswer = mdxQ.answers.find((a) => a.correct)?.text;
+    if (!correctAnswer) {
+      throw new Error(`Question has no correct answer: "${mdxQ.question}"`);
+    }
+    return {
+      question: mdxQ.question,
+      options: mdxQ.answers.map((a) => a.text),
+      correctAnswer,
+      explanation: mdxQ.explanation,
+    };
+  });
+};
+
+const Quiz: React.FC<QuizProps> = ({ questions }) => {
+  const parsedQuestions: FormattedQuestion[] = useMemo(() => {
     try {
-      // 1. Extract the JSON string from children
-      let jsonString = '';
-      React.Children.forEach(children, (child) => {
-        if (typeof child === 'string') {
-          jsonString += child;
-        } else if (React.isValidElement(child)) {
-            // This handles the case where MDX wraps the code in a <pre><code> structure
-            if (child.props.mdxType === 'pre') {
-                const codeChild = React.Children.toArray(child.props.children).find(c => React.isValidElement(c) && c.props.mdxType === 'code');
-                if(codeChild && React.isValidElement(codeChild)) {
-                    jsonString += React.Children.toArray(codeChild.props.children).join('');
-                }
-            } else {
-                 jsonString += React.Children.toArray(child.props.children).join('');
-            }
-        }
-      });
-      
-      jsonString = jsonString.trim();
-      
-      // The MDX has a weird `{[...]}`, let's fix it to be `[...]`
-      if (jsonString.startsWith('{[')) {
-          jsonString = jsonString.substring(1, jsonString.length - 1);
-      }
-
-      // 2. Parse the JSON
-      const mdxQuestions: MdxQuestion[] = JSON.parse(jsonString);
-
-      // 3. Transform the data
-      return mdxQuestions.map((q) => {
-        const correctAnswer = q.answers.find((a) => a.correct)?.text;
-        if (!correctAnswer) {
-          // Throw an error if a question has no correct answer
-          throw new Error(`Question has no correct answer: "${q.question}"`);
-        }
-        return {
-          question: q.question,
-          options: q.answers.map((a) => a.text),
-          correctAnswer: correctAnswer,
-          explanation: q.explanation,
-        };
-      });
+      return toFormatted(questions);
     } catch (error) {
       console.error("Error parsing quiz questions:", error);
       return []; // Return an empty array if parsing fails
     }
-  }, [children]);
+  }, [questions]);
 
   const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
@@ -84,7 +62,7 @@ const Quiz: React.FC<QuizProps> = ({ children }) => {
 
   const handleAnswerSelection = (option: string) => {
     setSelectedAnswer(option);
-    const correct = option === questions[currentQuestionIndex].correctAnswer;
+    const correct = option === parsedQuestions[currentQuestionIndex].correctAnswer;
     setIsCorrect(correct);
     setShowExplanation(true);
   };
@@ -96,11 +74,11 @@ const Quiz: React.FC<QuizProps> = ({ children }) => {
     setCurrentQuestionIndex(currentQuestionIndex + 1);
   };
 
-  if (!questions || questions.length === 0) {
+  if (!parsedQuestions || parsedQuestions.length === 0) {
     return <div className="p-4 bg-red-900/50 border border-red-500/50 rounded-lg shadow-lg"><p className="text-white">Failed to load quiz. Check the console for errors.</p></div>;
   }
 
-  if (currentQuestionIndex >= questions.length) {
+  if (currentQuestionIndex >= parsedQuestions.length) {
     return (
       <div className="p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
         <h3 className="text-xl font-bold text-primary">Quiz Complete!</h3>
@@ -108,7 +86,7 @@ const Quiz: React.FC<QuizProps> = ({ children }) => {
     );
   }
 
-  const { question, options, explanation } = questions[currentQuestionIndex];
+  const { question, options, explanation } = parsedQuestions[currentQuestionIndex];
 
   return (
     <div className="p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
