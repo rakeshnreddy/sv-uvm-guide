@@ -11,7 +11,8 @@ import { InteractiveCode } from '@/components/ui/InteractiveCode';
 import Quiz from '@/components/ui/Quiz';
 import Panel from '@/components/ui/Panel';
 import { InfoPage } from '@/components/templates/InfoPage';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/Accordion';
+import UvmHeroDiagram from '@/components/UvmHeroDiagram';
+import { Accordion, AccordionItem } from '@/components/ui/Accordion';
 import { Card } from '@/components/ui/Card';
 import CodeBlock from '@/components/ui/CodeBlock';
 import AnimatedUvmSequenceDriverHandshakeDiagram from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram';
@@ -21,6 +22,8 @@ import UvmPhasingDiagram from '@/components/diagrams/UvmPhasingDiagram';
 import { DiagramPlaceholder, InteractiveChartPlaceholder } from '@/components/templates/InfoPage';
 import AnimatedUvmTestbenchDiagram from '@/components/diagrams/AnimatedUvmTestbenchDiagram';
 import { Alert } from '@/components/ui/Alert';
+import { UvmVirtualSequencerDiagram } from '@/components/diagrams/UvmVirtualSequencerDiagram';
+import { InteractiveChartPlaceholder } from '@/components/charts/InteractiveChartPlaceholder';
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -28,7 +31,7 @@ type CurriculumTopicPageProps = {
 
 const components = {
   InteractiveCode,
-  Quiz,
+  Quiz: (props) => <Quiz questions={props.questions} />,
   Panel,
   InfoPage,
   Accordion,
@@ -37,11 +40,12 @@ const components = {
   CodeBlock,
   AnimatedUvmSequenceDriverHandshakeDiagram,
   DataTypeComparisonChart,
-  UvmHierarchySunburstChart,
-  UvmPhasingDiagram,
-  Link,
   DiagramPlaceholder,
   AnimatedUvmTestbenchDiagram,
+  UvmHierarchySunburstChart,
+  UvmVirtualSequencerDiagram,
+  UvmPhasingDiagram,
+  Alert,
   InteractiveChartPlaceholder,
   Alert,
 };
