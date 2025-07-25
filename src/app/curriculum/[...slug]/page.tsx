@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { MDXRemote } from 'next-mdx-remote/rsc';
-import { findTopicBySlug, getBreadcrumbs } from '@/lib/curriculum-data';
+import { findTopicBySlug, getBreadcrumbs, findPrevNextTopics } from '@/lib/curriculum-data';
 import { notFound } from 'next/navigation';
 import Breadcrumbs from '@/components/layout/Breadcrumbs';
 import FeynmanPromptWidget from '@/components/widgets/FeynmanPromptWidget';
@@ -72,6 +72,28 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
         <MDXRemote source={mdxContent} components={components} />
       </article>
       <FeynmanPromptWidget conceptTitle={topic.title} />
+
+      {/* Navigation Footer */}
+      <div className="mt-8 pt-4 border-t border-white/20 flex justify-between items-center">
+        {findPrevNextTopics(slug).prev ? (
+          <Link href={`/curriculum/${findPrevNextTopics(slug).prev?.slug}`}>
+            <a className="text-primary hover:underline">
+              &larr; Previous: {findPrevNextTopics(slug).prev?.title}
+            </a>
+          </Link>
+        ) : (
+          <div />
+        )}
+        {findPrevNextTopics(slug).next ? (
+          <Link href={`/curriculum/${findPrevNextTopics(slug).next?.slug}`}>
+            <a className="text-primary hover:underline">
+              Next: {findPrevNextTopics(slug).next?.title} &rarr;
+            </a>
+          </Link>
+        ) : (
+          <div />
+        )}
+      </div>
     </div>
   );
 }

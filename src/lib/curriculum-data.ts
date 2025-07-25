@@ -242,3 +242,24 @@ export function getBreadcrumbs(slug: string[]): { title: string, path: string }[
   }
   return breadcrumbs;
 }
+
+export function findPrevNextTopics(slug: string[]): { prev: Topic | undefined, next: Topic | undefined } {
+  if (slug.length !== 3) return { prev: undefined, next: undefined };
+
+  const allTopics: Topic[] = [];
+  curriculumData.forEach(m => {
+    m.sections.forEach(s => {
+      s.topics.forEach(t => {
+        allTopics.push({ ...t, slug: `${m.slug}/${s.slug}/${t.slug}` });
+      });
+    });
+  });
+
+  const currentIndex = allTopics.findIndex(t => t.slug === slug.join('/'));
+  if (currentIndex === -1) return { prev: undefined, next: undefined };
+
+  const prev = currentIndex > 0 ? allTopics[currentIndex - 1] : undefined;
+  const next = currentIndex < allTopics.length - 1 ? allTopics[currentIndex + 1] : undefined;
+
+  return { prev, next };
+}
