@@ -7,12 +7,12 @@ import { findTopicBySlug, getBreadcrumbs, findPrevNextTopics } from '@/lib';
 import { notFound } from 'next/navigation';
 import Breadcrumbs from '@/components/layout/Breadcrumbs';
 import FeynmanPromptWidget from '@/components/widgets/FeynmanPromptWidget';
-import InteractiveCode from '@/components/ui/InteractiveCode';
+import { InteractiveCode } from '@/components/ui/InteractiveCode';
 import Quiz from '@/components/ui/Quiz';
 import Panel from '@/components/ui/Panel';
-import InfoPage from '@/components/templates/InfoPage';
-import UvmHeroDiagram from '@/components/UvmHeroDiagram';
-import { Accordion, AccordionItem } from '@/components/ui/Accordion';
+import { InfoPage } from '@/components/templates/InfoPage';
+import { UvmHeroDiagram } from '@/components/UvmHeroDiagram';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/Accordion';
 import { Card } from '@/components/ui/Card';
 import CodeBlock from '@/components/ui/CodeBlock';
 import AnimatedUvmSequenceDriverHandshakeDiagram from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram';
@@ -74,19 +74,15 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
       {/* Navigation Footer */}
       <div className="mt-8 pt-4 border-t border-white/20 flex justify-between items-center">
         {findPrevNextTopics(slug).prev ? (
-          <Link href={`/curriculum/${findPrevNextTopics(slug).prev?.slug}`}>
-            <a className="text-primary hover:underline">
-              &larr; Previous: {findPrevNextTopics(slug).prev?.title}
-            </a>
+          <Link href={`/curriculum/${findPrevNextTopics(slug).prev?.slug}`} className="text-primary hover:underline">
+            &larr; Previous: {findPrevNextTopics(slug).prev?.title}
           </Link>
         ) : (
           <div />
         )}
         {findPrevNextTopics(slug).next ? (
-          <Link href={`/curriculum/${findPrevNextTopics(slug).next?.slug}`}>
-            <a className="text-primary hover:underline">
-              Next: {findPrevNextTopics(slug).next?.title} &rarr;
-            </a>
+          <Link href={`/curriculum/${findPrevNextTopics(slug).next?.slug}`} className="text-primary hover:underline">
+            Next: {findPrevNextTopics(slug).next?.title} &rarr;
           </Link>
         ) : (
           <div />

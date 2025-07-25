@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from 'react';
-import CodeBlock from './CodeBlock'; // Assuming CodeBlock is in the same directory
+import { CodeBlock } from './CodeBlock'; // Assuming CodeBlock is in the same directory
 import { Button } from './Button';
 import { ArrowLeft, ArrowRight } from 'lucide-react'; // Corrected import
 import { motion, AnimatePresence } from 'framer-motion';
@@ -49,7 +49,7 @@ const parseTargetLines = (target: string): Set<number> => { // Removed totalLine
   return highlightedLines;
 };
 
-const InteractiveCode: React.FC<InteractiveCodeProps> = ({
+export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   children,
   language = "plaintext",
   fileName,
@@ -160,4 +160,3 @@ const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   );
 };
 
-export default InteractiveCode;
