@@ -1,33 +1,104 @@
 ---
 title: "Agents and Environment"
+description: "Learn how to use agents and environments to build modular and reusable UVM testbenches."
 ---
 
-import CodeBlock from '/src/components/ui/CodeBlock'
+import { Quiz, InteractiveCode } from '@/components/ui';
+import { DiagramPlaceholder } from '@/components/templates/InfoPage';
 
-## Level 1: Definitions and Analogies
+## Level 1: The Elevator Pitch
 
-An Agent is a **team**: driver, sequencer, and monitor. An Environment is the **department** that groups one or more agents with scoreboards and other components.
+**What is it?** Agents and environments are the building blocks of a UVM testbench. An agent is a container for a driver, sequencer, and monitor. An environment is a container for one or more agents, plus other components like scoreboards.
 
-## Level 2: Connecting Components
+**The Analogy:** Think of an agent as a "team" of workers. The driver is the "doer", the sequencer is the "planner", and the monitor is the "inspector". The environment is the "department" that manages one or more teams.
 
+**Why this matters:** Agents and environments allow you to build modular and reusable testbenches. You can create an agent for a specific protocol (e.g., AXI, APB) and then reuse that agent in different testbenches.
+
+## Level 2: The Practical Explanation
+
+### The Agent
+
+An agent is a container for a driver, sequencer, and monitor. It can be configured as "active" or "passive".
+
+### The Environment
+
+The environment is a container for one or more agents, plus other components like scoreboards.
+
+<InteractiveCode>
 ```systemverilog
+// An agent that contains a driver, sequencer, and monitor
 class my_agent extends uvm_agent;
   `uvm_component_utils(my_agent)
   my_driver d;
   my_sequencer s;
   my_monitor m;
+
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    if (is_active) begin
+    if (is_active == UVM_ACTIVE) begin
       d = my_driver::type_id::create("d", this);
       s = my_sequencer::type_id::create("s", this);
     end
     m = my_monitor::type_id::create("m", this);
   endfunction
+
+  function void connect_phase(uvm_phase phase);
+    if (is_active == UVM_ACTIVE) begin
+      d.seq_item_port.connect(s.seq_item_export);
+    end
+  endfunction
+endclass
+
+// An environment that contains an agent and a scoreboard
+class my_env extends uvm_env;
+  `uvm_component_utils(my_env)
+  my_agent a;
+  my_scoreboard scb;
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    a = my_agent::type_id::create("a", this);
+    scb = my_scoreboard::type_id::create("scb", this);
+  endfunction
+
+  function void connect_phase(uvm_phase phase);
+    a.m.ap.connect(scb.analysis_export);
+  endfunction
 endclass
 ```
+</InteractiveCode>
 
-## Level 3: Advanced Practices
+## Level 3: Expert Insights
 
-* Use a **virtual sequencer** in the environment to coordinate multiple agents.
-* Passive agents are ideal for system-level observation without stimulus.
+**Virtual Sequencers:** For complex SoCs with multiple agents, you'll often use a virtual sequencer in the environment to coordinate the activity of the different agents.
+
+**Layered Environments:** For very large SoCs, you might create a "top-level" environment that contains other, smaller environments.
+
+**Memory & Retention Tip:** Remember: **Agent = Team.** **Environment = Department.**
+
+## Check Your Understanding
+
+<Quiz>
+  {[
+    {
+      "question": "What are the three components of an active agent?",
+      "answers": [
+        {"text": "Driver, Sequencer, and Scoreboard", "correct": false},
+        {"text": "Driver, Sequencer, and Monitor", "correct": true},
+        {"text": "Driver, Monitor, and Scoreboard", "correct": false},
+        {"text": "Sequencer, Monitor, and Scoreboard", "correct": false}
+      ],
+      "explanation": "An active agent contains a driver, a sequencer, and a monitor. A passive agent only contains a monitor."
+    },
+    {
+      "question": "What is the purpose of the environment?",
+      "answers": [
+        {"text": "To generate stimulus.", "correct": false},
+        {"text": "To check the correctness of the DUT.", "correct": false},
+        {"text": "To contain and connect the various components of the testbench.", "correct": true},
+        {"text": "To drive signals onto the DUT interface.", "correct": false}
+      ],
+      "explanation": "The environment is the top-level container for the testbench components. It's responsible for creating and connecting the agents, scoreboards, and other components."
+    }
+  ]}
+</Quiz>
