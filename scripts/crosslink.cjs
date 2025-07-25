@@ -3,6 +3,9 @@ const path = require('path');
 
 const mappings = {
   uvm_config_db: '/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-config-db',
+  'virtual sequence': '/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/virtual-sequences',
+  mailbox: '/curriculum/T2_Intermediate/I-SV-3_Functional_Coverage/mailboxes',
+  'fork-join': '/curriculum/T1_Foundational/F3_Procedural_Constructs/fork-join',
   randc: '/curriculum/T2_Intermediate/I-SV-2_Constrained_Randomization',
 };
 
