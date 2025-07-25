@@ -11,15 +11,19 @@ import { InteractiveCode } from '@/components/ui/InteractiveCode';
 import Quiz from '@/components/ui/Quiz';
 import Panel from '@/components/ui/Panel';
 import { InfoPage } from '@/components/templates/InfoPage';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/Accordion';
+import UvmHeroDiagram from '@/components/UvmHeroDiagram';
+import { Accordion, AccordionItem } from '@/components/ui/Accordion';
 import { Card } from '@/components/ui/Card';
-import { CodeBlock } from '@/components/ui/CodeBlock';
-import { AnimatedUvmSequenceDriverHandshakeDiagram } from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram';
+import CodeBlock from '@/components/ui/CodeBlock';
+import AnimatedUvmSequenceDriverHandshakeDiagram from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram';
 import DataTypeComparisonChart from '@/components/charts/DataTypeComparisonChart';
-import UvmHierarchySunburstChart from '@/components/charts/UvmHierarchySunburstChart';
-import UvmPhasingDiagram from '@/components/diagrams/UvmPhasingDiagram';
-import { DiagramPlaceholder, InteractiveChartPlaceholder } from '@/components/templates/InfoPage';
-import AnimatedUvmTestbenchDiagram from '@/components/diagrams/AnimatedUvmTestbenchDiagram';
+import { DiagramPlaceholder } from '@/components/diagrams/DiagramPlaceholder';
+import { AnimatedUvmTestbenchDiagram } from '@/components/diagrams/AnimatedUvmTestbenchDiagram';
+import { UvmHierarchySunburstChart } from '@/components/charts/UvmHierarchySunburstChart';
+import { UvmVirtualSequencerDiagram } from '@/components/diagrams/UvmVirtualSequencerDiagram';
+import { UvmPhasingDiagram } from '@/components/diagrams/UvmPhasingDiagram';
+import { Alert } from '@/components/ui/Alert';
+import { InteractiveChartPlaceholder } from '@/components/charts/InteractiveChartPlaceholder';
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -27,7 +31,7 @@ type CurriculumTopicPageProps = {
 
 const components = {
   InteractiveCode,
-  Quiz,
+  Quiz: (props) => <Quiz questions={props.questions} />,
   Panel,
   InfoPage,
   Accordion,
@@ -35,11 +39,12 @@ const components = {
   Card,
   AnimatedUvmSequenceDriverHandshakeDiagram,
   DataTypeComparisonChart,
-  UvmHierarchySunburstChart,
-  UvmPhasingDiagram,
-  Link,
   DiagramPlaceholder,
   AnimatedUvmTestbenchDiagram,
+  UvmHierarchySunburstChart,
+  UvmVirtualSequencerDiagram,
+  UvmPhasingDiagram,
+  Alert,
   InteractiveChartPlaceholder,
 };
 
