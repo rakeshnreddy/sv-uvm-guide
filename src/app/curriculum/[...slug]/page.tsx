@@ -11,19 +11,17 @@ import { InteractiveCode } from '@/components/ui/InteractiveCode';
 import Quiz from '@/components/ui/Quiz';
 import Panel from '@/components/ui/Panel';
 import { InfoPage } from '@/components/templates/InfoPage';
-import UvmHeroDiagram from '@/components/UvmHeroDiagram';
-import { Accordion, AccordionItem } from '@/components/ui/Accordion';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/Accordion';
 import { Card } from '@/components/ui/Card';
-import CodeBlock from '@/components/ui/CodeBlock';
-import AnimatedUvmSequenceDriverHandshakeDiagram from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram';
+import { CodeBlock } from '@/components/ui/CodeBlock';
+import { AnimatedUvmSequenceDriverHandshakeDiagram } from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram';
 import DataTypeComparisonChart from '@/components/charts/DataTypeComparisonChart';
-import UvmHierarchySunburstChart from '@/components/charts/UvmHierarchySunburstChart';
-import UvmPhasingDiagram from '@/components/diagrams/UvmPhasingDiagram';
-import { DiagramPlaceholder, InteractiveChartPlaceholder } from '@/components/templates/InfoPage';
-import AnimatedUvmTestbenchDiagram from '@/components/diagrams/AnimatedUvmTestbenchDiagram';
+import { UvmHierarchySunburstChart } from '@/components/charts/UvmHierarchySunburstChart';
+import { UvmPhasingDiagram } from '@/components/diagrams/UvmPhasingDiagram';
+import { DiagramPlaceholder } from '@/components/templates/InfoPage';
+import { AnimatedUvmTestbenchDiagram } from '@/components/diagrams/AnimatedUvmTestbenchDiagram';
 import { Alert } from '@/components/ui/Alert';
-import { UvmVirtualSequencerDiagram } from '@/components/diagrams/UvmVirtualSequencerDiagram';
-import { InteractiveChartPlaceholder } from '@/components/charts/InteractiveChartPlaceholder';
+import UvmVirtualSequencerDiagram from '@/components/diagrams/UvmVirtualSequencerDiagram';
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -31,7 +29,7 @@ type CurriculumTopicPageProps = {
 
 const components = {
   InteractiveCode,
-  Quiz: (props) => <Quiz questions={props.questions} />,
+  Quiz,
   Panel,
   InfoPage,
   Accordion,
@@ -40,14 +38,13 @@ const components = {
   CodeBlock,
   AnimatedUvmSequenceDriverHandshakeDiagram,
   DataTypeComparisonChart,
+  UvmHierarchySunburstChart,
+  UvmPhasingDiagram,
+  Link,
   DiagramPlaceholder,
   AnimatedUvmTestbenchDiagram,
-  UvmHierarchySunburstChart,
+  Alert,
   UvmVirtualSequencerDiagram,
-  UvmPhasingDiagram,
-  Alert,
-  InteractiveChartPlaceholder,
-  Alert,
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {
