@@ -16,18 +16,14 @@ export default function HomePage() {
           Master SystemVerilog & UVM
         </h1>
         <p className="text-lg sm:text-xl md:text-2xl text-brand-text-primary max-w-2xl mx-auto mb-8 font-body">
-          Your comprehensive guide to mastering SystemVerilog and the Universal Verification Methodology (UVM).
-          From fundamentals to advanced topics, kickstart your journey to becoming a verification expert.
+          The premier open-source destination for mastering SystemVerilog and UVM. <br /> <strong>Engineered for students, professionals, and enthusiasts alike.</strong>
         </p>
         <div className="flex flex-wrap justify-center gap-4">
+          <Link href="/curriculum/T1_Foundational/F1_Why_Verification">
+            <Button>Start Learning</Button>
+          </Link>
           <Link href="/curriculum">
-            <Button>Explore Curriculum</Button>
-          </Link>
-          <Link href="/sv-concepts">
-            <Button variant="secondary">SV Concepts</Button>
-          </Link>
-          <Link href="/uvm-concepts">
-            <Button variant="secondary">UVM Concepts</Button>
+            <Button variant="secondary">Explore Curriculum</Button>
           </Link>
         </div>
       </section>
