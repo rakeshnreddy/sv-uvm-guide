@@ -10,12 +10,12 @@ import FeynmanPromptWidget from '@/components/widgets/FeynmanPromptWidget';
 import InteractiveCode from '@/components/ui/InteractiveCode';
 import Quiz from '@/components/ui/Quiz';
 import Panel from '@/components/ui/Panel';
-import { InfoPage } from '@/components/templates/InfoPage';
+import InfoPage from '@/components/templates/InfoPage';
 import UvmHeroDiagram from '@/components/UvmHeroDiagram';
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/Accordion';
+import { Accordion, AccordionItem } from '@/components/ui/Accordion';
 import { Card } from '@/components/ui/Card';
-import { CodeBlock } from '@/components/ui/CodeBlock';
-import { AnimatedUvmSequenceDriverHandshakeDiagram } from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram';
+import CodeBlock from '@/components/ui/CodeBlock';
+import AnimatedUvmSequenceDriverHandshakeDiagram from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram';
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
