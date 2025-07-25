@@ -11,12 +11,6 @@ const navLinks = [
   {
     label: "Curriculum",
     href: "/curriculum",
-    dropdown: [
-      { href: "/curriculum/T1_Foundational/F1_Why_Verification/index", label: "Tier 1: Foundational" },
-      { href: "/curriculum/T2_Intermediate/I-SV-1_OOP/index", label: "Tier 2: Intermediate" },
-      { href: "/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/index", label: "Tier 3: Advanced" },
-      { href: "/curriculum/T4_Expert/E-CUST-1_UVM_Methodology_Customization/index", label: "Tier 4: Expert" },
-    ],
   },
   {
     label: "Practice",
