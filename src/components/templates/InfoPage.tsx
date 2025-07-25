@@ -28,7 +28,7 @@ interface InfoPageProps {
   diagrams?: ReactNode[];
 }
 
-const InfoPage: React.FC<InfoPageProps> = ({
+export const InfoPage: React.FC<InfoPageProps> = ({
   title,
   children,
   charts,
@@ -81,8 +81,6 @@ const InfoPage: React.FC<InfoPageProps> = ({
     </div>
   );
 };
-
-export default InfoPage;
 
 // Exporting placeholders for potential use in actual page construction
 export { InteractiveChartPlaceholder, DiagramPlaceholder };

@@ -1,6 +1,6 @@
 import React from 'react';
 import Link from 'next/link';
-import { curriculumData } from '@/lib/curriculum-data';
+import { curriculumData } from '@/lib';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/Accordion';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 
