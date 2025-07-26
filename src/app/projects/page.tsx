@@ -1,6 +1,6 @@
 // app/projects/page.tsx
-import InfoPage from "@/components/templates/InfoPage";
-import CodeBlock from "@/components/ui/CodeBlock"; // For potential small config snippets
+import { InfoPage } from "@/components/templates/InfoPage";
+import { CodeBlock } from "@/components/ui/CodeBlock"; // For potential small config snippets
 
 // PLACEHOLDER CONTENT - All content below must be populated from the "SystemVerilog and UVM Mastery Blueprint"
 

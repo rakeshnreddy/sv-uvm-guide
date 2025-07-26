@@ -1,6 +1,6 @@
 import React from 'react';
 import ScoreboardConnectorExercise from '@/components/exercises/ScoreboardConnectorExercise';
-import InfoPage from '@/components/templates/InfoPage';
+import { InfoPage } from '@/components/templates/InfoPage';
 
 const ScoreboardConnectorPage: React.FC = () => {
   const pageTitle = "Exercise: Scoreboard Connector";

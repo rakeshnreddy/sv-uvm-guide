@@ -1,6 +1,6 @@
 import React from 'react';
 import UvmAgentBuilderExercise from '@/components/exercises/UvmAgentBuilderExercise';
-import InfoPage from '@/components/templates/InfoPage'; // Using InfoPage for layout
+import { InfoPage } from '@/components/templates/InfoPage'; // Using InfoPage for layout
 
 const UvmAgentBuilderPage: React.FC = () => {
   const pageTitle = "Exercise: UVM Agent Builder";
