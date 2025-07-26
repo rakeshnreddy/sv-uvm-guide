@@ -160,3 +160,4 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   );
 };
 
+export default InteractiveCode;
