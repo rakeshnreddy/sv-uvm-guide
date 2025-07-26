@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test('Module 5 InteractiveCode highlights lines', async ({ page }) => {
-  await page.goto('/curriculum/T3_Advanced/A-UVM-5_Advanced_UVM_Techniques');
+  await page.goto('/curriculum/T3_Advanced/A-UVM-3_Advanced_UVM_Techniques');
   const ic = page.getByTestId('interactive-code').first();
   await expect(ic).toBeVisible();
   const codeBlock = ic.locator('pre');
