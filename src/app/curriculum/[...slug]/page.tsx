@@ -18,7 +18,7 @@ import { AnimatedUvmSequenceDriverHandshakeDiagram } from '@/components/diagrams
 import DataTypeComparisonChart from '@/components/charts/DataTypeComparisonChart';
 import UvmHierarchySunburstChart from '@/components/charts/UvmHierarchySunburstChart';
 import UvmPhasingDiagram from '@/components/diagrams/UvmPhasingDiagram';
-import { DiagramPlaceholder} from '@/components/templates/InfoPage';
+import { DiagramPlaceholder, InteractiveChartPlaceholder } from '@/components/templates/InfoPage';
 import AnimatedUvmTestbenchDiagram from '@/components/diagrams/AnimatedUvmTestbenchDiagram';
 import { Alert } from '@/components/ui/Alert';
 import UvmVirtualSequencerDiagram from '@/components/diagrams/UvmVirtualSequencerDiagram';
