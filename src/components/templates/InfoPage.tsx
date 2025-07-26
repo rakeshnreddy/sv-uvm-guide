@@ -84,3 +84,4 @@ export const InfoPage: React.FC<InfoPageProps> = ({
 
 // Exporting placeholders for potential use in actual page construction
 export { InteractiveChartPlaceholder, DiagramPlaceholder };
+export default InfoPage;
