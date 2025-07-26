@@ -163,6 +163,13 @@ export const curriculumData: Module[] = [
               ]
           },
           {
+              title: "Advanced UVM Techniques",
+              slug: "A-UVM-3_Advanced_UVM_Techniques",
+              topics: [
+                { title: "Advanced UVM Techniques", slug: "index", description: "Callbacks, RAL, and coverage integration." },
+              ]
+          },
+          {
               title: "The UVM Register Abstraction Layer (RAL)",
               slug: "A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL",
               topics: [
