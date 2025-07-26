@@ -1,5 +1,5 @@
 import React from 'react';
-import InteractiveCode, { ExplanationStep } from '@/components/ui/InteractiveCode';
+import { InteractiveCode, ExplanationStep } from '@/components/ui/InteractiveCode';
 
 const testCode = 
 '// test_sequence.sv\n' +
@@ -24,11 +24,12 @@ export default function TestPage() {
     <div className="p-8">
       <h1 className="text-2xl font-bold mb-4">Component Test Page</h1>
       <InteractiveCode
-        code={testCode}
         language="systemverilog"
         explanationSteps={testExplanationSteps}
         fileName="test.sv"
-      />
+      >
+        {testCode}
+      </InteractiveCode>
     </div>
   );
 }

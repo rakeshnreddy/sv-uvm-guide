@@ -9,9 +9,9 @@ test.describe('Theme and Styling Verification', () => {
   });
 
   test('should toggle theme and apply correct styles to InteractiveCode', async ({ page }) => {
-    await page.goto('/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/virtual-sequences');
+    await page.goto('/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/index');
 
-    const interactiveCode = page.getByTestId('interactive-code');
+    const interactiveCode = page.getByTestId('interactive-code').first();
 
     // Check initial (dark) theme
     await expect(interactiveCode).toHaveCSS('background-color', 'rgba(255, 255, 255, 0.1)');

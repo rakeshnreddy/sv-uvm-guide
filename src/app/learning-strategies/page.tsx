@@ -1,5 +1,5 @@
 // app/learning-strategies/page.tsx
-import InfoPage, { DiagramPlaceholder } from "@/components/templates/InfoPage";
+import { InfoPage, DiagramPlaceholder } from "@/components/templates/InfoPage";
 
 // PLACEHOLDER CONTENT - All content below must be populated from the "SystemVerilog and UVM Mastery Blueprint"
 

@@ -1,5 +1,5 @@
 // app/history/page.tsx
-import InfoPage from "@/components/templates/InfoPage"; // Removed InteractiveChartPlaceholder from here
+import { InfoPage } from "@/components/templates/InfoPage"; // Removed InteractiveChartPlaceholder from here
 import HistoryTimelineChart from "@/components/charts/HistoryTimelineChart"; // Import the new chart
 
 // PLACEHOLDER CONTENT - All content below must be populated from the "SystemVerilog and UVM Mastery Blueprint"

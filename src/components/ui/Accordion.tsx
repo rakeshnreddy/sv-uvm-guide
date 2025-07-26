@@ -79,11 +79,11 @@ export const AccordionItem: React.FC<AccordionItemProps> = ({
   );
 };
 
-export const AccordionTrigger = ({ children, ...props }) => (
+export const AccordionTrigger = ({ children, ...props }: { children: React.ReactNode;[key: string]: any }) => (
   <h2 {...props}>{children}</h2>
 );
 
-export const AccordionContent = ({ children, ...props }) => (
+export const AccordionContent = ({ children, ...props }: { children: React.ReactNode;[key: string]: any }) => (
   <div {...props}>{children}</div>
 );
 

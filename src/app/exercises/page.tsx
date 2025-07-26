@@ -1,5 +1,5 @@
 import React from 'react';
-import InfoPage from '@/components/templates/InfoPage';
+import { InfoPage } from '@/components/templates/InfoPage';
 import ExerciseList from '@/components/exercises/ExerciseList'; // Import the new client component
 
 interface ExerciseLink { // This interface can be moved to a shared types file if used elsewhere

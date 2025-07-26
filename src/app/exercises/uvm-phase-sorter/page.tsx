@@ -1,6 +1,6 @@
 import React from 'react';
 import UvmPhaseSorterExercise from '@/components/exercises/UvmPhaseSorterExercise';
-import InfoPage from '@/components/templates/InfoPage';
+import { InfoPage } from '@/components/templates/InfoPage';
 
 const UvmPhaseSorterPage: React.FC = () => {
   const pageTitle = "Exercise: UVM Phase Sorter";
