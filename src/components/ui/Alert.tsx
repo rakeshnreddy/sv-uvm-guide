@@ -13,4 +13,5 @@ const Alert: React.FC<AlertProps> = ({ children, type = 'info' }) => {
   );
 };
 
+export { Alert };
 export default Alert;
