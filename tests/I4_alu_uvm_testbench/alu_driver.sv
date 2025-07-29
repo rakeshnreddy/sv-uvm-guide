@@ -16,10 +16,12 @@ class alu_driver extends uvm_driver #(alu_transaction);
   virtual task run_phase(uvm_phase phase);
     forever begin
       seq_item_port.get_next_item(req);
-      vif.a <= req.a;
-      vif.b <= req.b;
-      vif.opcode <= req.opcode;
-      #10;
+      vif.driver_cb.start <= 1;
+      vif.driver_cb.a <= req.a;
+      vif.driver_cb.b <= req.b;
+      vif.driver_cb.op <= req.op;
+      @(vif.driver_cb);
+      vif.driver_cb.start <= 0;
       seq_item_port.item_done();
     end
   endtask

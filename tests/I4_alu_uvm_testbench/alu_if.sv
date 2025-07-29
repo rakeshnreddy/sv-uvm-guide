@@ -1,20 +1,17 @@
-interface alu_if (input logic clk);
-  logic reset;
-  logic [3:0] a;
-  logic [3:0] b;
-  enum {ADD, SUB} opcode;
-  logic [4:0] y;
+interface alu_if (input bit clk);
+  logic [7:0] a;
+  logic [7:0] b;
+  logic [3:0] op;
+  logic start;
+  logic done;
+  logic [7:0] result;
 
-  // Modport for the Testbench side
-  modport Testbench (
-    output a, b, opcode, reset,
-    input  y,
-    input  clk
-  );
+  clocking driver_cb @(posedge clk);
+    output a, b, op, start;
+  endclocking
 
-  // Modport for the DUT side
-  modport DUT (
-    input  a, b, opcode, reset, clk,
-    output y
-  );
+  clocking monitor_cb @(posedge clk);
+    input a, b, op, start, done, result;
+  endclocking
+
 endinterface
