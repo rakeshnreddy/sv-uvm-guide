@@ -210,6 +210,13 @@ export const curriculumData: Module[] = [
             topics: [
                 { title: "Scoreboards and Functional Coverage in UVM", slug: "index", description: "Explain how to design and implement a UVM scoreboard for automated, self-checking tests." },
             ]
+          },
+          {
+            title: "UVM Configurations and Factory Mastery",
+            slug: "A3_Config_and_Factory_Mastery",
+            topics: [
+                { title: "UVM Configurations and Factory Mastery", slug: "index", description: "Go beyond the basics of the factory and configuration database to show how they enable highly reusable, polymorphic, and customizable testbenches." },
+            ]
           }
       ]
   },
