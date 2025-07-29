@@ -31,6 +31,13 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        title: "SystemVerilog Basics",
+        slug: "F2_SystemVerilog_Basics",
+        topics: [
+          { title: "SystemVerilog Basics", slug: "index", description: "A comprehensive introduction to the fundamental building blocks of the SystemVerilog language." }
+        ]
+      },
+      {
         title: "Data Types",
         slug: "F2_Data_Types",
         topics: [
