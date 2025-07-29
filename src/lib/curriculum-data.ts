@@ -197,6 +197,13 @@ export const curriculumData: Module[] = [
                 { title: "The UVM Register Abstraction Layer (RAL)", slug: "index", description: "Simplifying register access in UVM." },
               ]
           },
+          {
+            title: "UVM Sequences and Virtual Sequences",
+            slug: "A1_UVM_Sequences",
+            topics: [
+                { title: "UVM Sequences and Virtual Sequences", slug: "index", description: "In-depth guide to UVM sequence mechanics, layering, and the use of virtual sequences." },
+            ]
+          }
       ]
   },
   {
