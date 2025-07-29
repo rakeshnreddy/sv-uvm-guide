@@ -38,6 +38,13 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        title: "Behavioral & RTL Modeling",
+        slug: "F3_Behavioral_RTL_Modeling",
+        topics: [
+          { title: "Behavioral & RTL Modeling", slug: "index", description: "A core module that teaches how to describe hardware behavior in SystemVerilog." }
+        ]
+      },
+      {
         title: "Data Types",
         slug: "F2_Data_Types",
         topics: [

@@ -1,0 +1,229 @@
+---
+title: "F3: Behavioral & RTL Modeling"
+description: "A core module that teaches how to describe hardware behavior in SystemVerilog."
+---
+
+import { Quiz, InteractiveCode } from '@/components/ui';
+import { DiagramPlaceholder } from '@/components/templates/InfoPage';
+
+## Introduction to Concurrency
+
+In the software world, instructions typically run one after another. In the hardware world, everything happens at the same time, or **in parallel**. Think of a busy kitchen: one cook might be chopping vegetables while another is boiling water and a third is preheating the oven. All these actions happen concurrently. SystemVerilog needs a way to describe this inherent parallelism of hardware. This is where procedural blocks come in.
+
+## Procedural Blocks
+
+Procedural blocks are blocks of code that contain sequential statements. However, the blocks themselves execute concurrently with respect to each other and other elements in your design.
+
+### `initial` Block
+
+The `initial` block is the simplest procedural block. It starts executing at the very beginning of the simulation (time 0) and runs through its statements only **once**.
+
+*   **Primary Use:** Testbenches. It's perfect for setting up initial conditions, generating a clock signal, or applying a sequence of test vectors to your design.
+
+<InteractiveCode>
+```systemverilog
+module initial_example;
+  logic reset;
+  initial begin
+    reset = 1;
+    #20; // Wait for 20 time units
+    reset = 0;
+    $display("Reset released at time %0t", $time);
+  end
+endmodule
+```
+</InteractiveCode>
+
+### `always` Block
+
+The `always` block is the workhorse of RTL design. It's a procedural block that executes repeatedly. What causes it to execute is determined by its **sensitivity list**.
+
+SystemVerilog provides three specialized `always` blocks that make your design intent clearer:
+
+1.  **`always_comb` (for Combinational Logic):**
+    *   Executes whenever any of the inputs used inside the block change.
+    *   SystemVerilog automatically figures out the sensitivity list for you.
+    *   This is the recommended way to model logic like multiplexers, decoders, and arithmetic circuits.
+
+2.  **`always_ff` (for Sequential/Flip-Flop Logic):**
+    *   This is specifically for modeling synchronous, edge-triggered logic (like flip-flops and registers).
+    *   The sensitivity list is explicitly defined by a clock edge, e.g., `@(posedge clk)`.
+
+3.  **`always_latch` (for Latches):**
+    *   Infers a latch if not all paths in a combinational block assign a value to an output.
+    *   **Best Practice:** Avoid latches unless you intend to create them. Using `always_comb` helps prevent accidental latch inference because it warns you if a variable is not assigned in all branches of your code.
+
+## Blocking vs. Non-blocking Assignments: A Critical Distinction
+
+This is one of the most important, and initially confusing, topics in SystemVerilog. Using the wrong assignment operator can lead to code that simulates correctly but doesn't work in actual hardware.
+
+*   **Blocking Assignments (`=`):**
+    *   Statements are executed one after the other, in the order they appear. The simulator "blocks" and waits for the current assignment to complete before moving to the next line.
+    *   **When to use:** In `always_comb` blocks for modeling combinational logic.
+
+*   **Non-blocking Assignments (`<=`):**
+    *   Assignments are scheduled to happen at the end of the current time step. The simulator evaluates all the right-hand sides first, and then assigns the results to the left-hand sides. This mimics how data flows through flip-flops on a clock edge.
+    *   **When to use:** In `always_ff` blocks for modeling sequential logic.
+
+### The Golden Rule
+
+> **1. Use `always_ff` with non-blocking (`<=`) assignments to model synchronous sequential logic.**
+> **2. Use `always_comb` with blocking (`=`) assignments to model combinational logic.**
+
+Following this rule will prevent 99% of common synthesis and simulation problems.
+
+## Modeling Examples
+
+### Combinational Logic: 2-to-1 Multiplexer (Mux)
+
+A Mux selects one of its data inputs to pass to the output based on a select signal.
+
+<InteractiveCode>
+```systemverilog
+module mux_2_to_1 (
+  input  logic [7:0] a, b,
+  input  logic       sel,
+  output logic [7:0] y
+);
+
+  always_comb begin
+    if (sel == 0) begin
+      y = a;
+    end else begin
+      y = b;
+    end
+  end
+
+endmodule
+```
+</InteractiveCode>
+
+### Sequential Logic: D Flip-Flop with Reset
+
+A D-type flip-flop is the most basic memory element in digital design. It captures the value of its `d` input on the rising edge of the clock.
+
+<InteractiveCode>
+```systemverilog
+module d_ff (
+  input  logic       clk,
+  input  logic       reset,
+  input  logic       d,
+  output logic       q
+);
+
+  always_ff @(posedge clk or posedge reset) begin
+    if (reset)
+      q <= 1'b0;
+    else
+      q <= d;
+  end
+
+endmodule
+```
+</InteractiveCode>
+
+### Putting It Together: 4-bit Counter
+
+This counter increments on every clock edge, unless it's reset.
+
+<InteractiveCode>
+```systemverilog
+module counter (
+  input  logic       clk,
+  input  logic       reset,
+  output logic [3:0] count
+);
+
+  always_ff @(posedge clk or posedge reset) begin
+    if (reset)
+      count <= 4'b0;
+    else
+      count <= count + 1;
+  end
+
+endmodule
+```
+</InteractiveCode>
+
+### Modeling a Simple FSM
+
+A Finite State Machine (FSM) is a fundamental concept in digital design. Let's model a simple machine that detects the sequence '101' on a single-bit input.
+
+```systemverilog
+module sequence_detector (
+  input  logic clk,
+  input  logic reset,
+  input  logic din,
+  output logic detected
+);
+
+  // 1. Define the states using an enumerated type
+  typedef enum { S_IDLE, S_GOT_1, S_GOT_10 } state_t;
+  state_t current_state, next_state;
+
+  // 2. State Register: The sequential part
+  // This holds the FSM's current state and only changes on a clock edge.
+  always_ff @(posedge clk or posedge reset) begin
+    if (reset)
+      current_state <= S_IDLE;
+    else
+      current_state <= next_state;
+  end
+
+  // 3. Next State Logic: The combinational part
+  // This determines the next state based on the current state and inputs.
+  always_comb begin
+    next_state = current_state; // Default: stay in the same state
+    case (current_state)
+      S_IDLE:
+        if (din == 1) next_state = S_GOT_1;
+      S_GOT_1:
+        if (din == 0) next_state = S_GOT_10;
+        else          next_state = S_GOT_1; // Still got a 1
+      S_GOT_10:
+        if (din == 1) next_state = S_IDLE; // Sequence detected, reset
+        else          next_state = S_IDLE; // Sequence broken
+    endcase
+  end
+
+  // 4. Output Logic: The combinational part for the output
+  // This is a Moore FSM if output depends only on state.
+  // This is a Mealy FSM if output depends on state AND input.
+  // Let's make it Mealy for this example.
+  assign detected = (current_state == S_GOT_10) && (din == 1);
+
+endmodule
+```
+
+## Best Practices Summary
+
+*   Use `always_comb` for combinational logic.
+*   Use `always_ff` for sequential logic.
+*   Use non-blocking (`<=`) assignments in `always_ff` blocks.
+*   Use blocking (`=`) assignments in `always_comb` blocks.
+*   Separate your FSM logic into a state register (`always_ff`) and next-state/output logic (`always_comb`).
+
+## Check Your Understanding
+
+<Quiz questions={[
+    {
+      "question": "Which type of assignment should be used for modeling sequential logic in an `always_ff` block?",
+      "answers": [
+        {"text": "Blocking (`=`)", "correct": false},
+        {"text": "Non-blocking (`<=`)", "correct": true},
+        {"text": "Either can be used", "correct": false},
+        {"text": "Neither, use `assign`", "correct": false}
+      ],
+      "explanation": "Non-blocking assignments (`<=`) are used in `always_ff` blocks because they correctly model the behavior of flip-flops, where all inputs are sampled simultaneously on the clock edge and outputs are updated together."
+    },
+    {
+      "question": "What is the purpose of the sensitivity list in an `always` block?",
+      "answers": [
+        {"text": "To list the output variables.", "correct": false},
+        {"text": "To specify which signals should trigger the execution of the block.", "correct": true},
+        {"text": "To declare local variables.", "correct": false},
+        {"text": "To set the initial value of the variables.", "correct": false}
+      ],
+      "explanation": "The sensitivity list tells the simulator when to 'wake up' and re-evaluate the code inside the `always` block. For `always_comb`, this is implicit. For `always_ff`, it's typically a clock edge like `@(posedge clk)`."
+    }
+  ]} />
