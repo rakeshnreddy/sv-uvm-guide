@@ -221,9 +221,9 @@ export const curriculumData: Module[] = [
         slug: "uvm-visualizers",
         topics: [
           {
-            title: "Interactive Testbench Visualizer",
+            title: "Interactive UVM Testbench",
             slug: "interactive-testbench",
-            description: "An interactive tool to explore and understand the components of a UVM testbench."
+            description: "A hands-on, interactive visualizer for exploring the UVM testbench architecture, phasing, and data flow in real-time."
           }
         ]
       }
