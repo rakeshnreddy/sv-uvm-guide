@@ -18,7 +18,17 @@ Why this extra layer of abstraction?
 
 Sequences are the "brains" of the test. They represent the actual test intent.
 
-## Level 1/2: Practical Sequence Creation
+## The Sequence/Driver Handshake
+
+The communication between the sequence, sequencer, and driver is fundamental. Let's visualize the blocking handshake that occurs when `uvm_do` is called.
+
+<AnimatedUvmSequenceDriverHandshakeDiagram />
+
+1.  **`driver.get_next_item(req)`**: The driver requests the next item from the sequencer. This call blocks until an item is available from a sequence.
+2.  **`start_item(item)`**: The sequence sends the transaction to the sequencer. The sequencer places it in its FIFO and grants access to the driver. The `start_item` call is *blocking* and does not return until the driver calls `get_next_item()`.
+3.  **Driver executes**: The driver receives the transaction and has exclusive access to drive it.
+4.  **`finish_item(item)`**: The sequence call returns. The transaction has been sent to the driver.
+5.  **`driver.item_done()`**: The driver signals that it has finished with the current item and is ready for the next one. **This is the step that unblocks the sequencer to allow the next transaction.**
 
 ### Your First Sequence: Generating a Single Transaction
 
@@ -74,7 +84,7 @@ endclass
 ```
 </InteractiveCode>
 
-This example registers the default sequence using <Link href="/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-config-db"><Link href="/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-config-db">uvm_config_db</Link></Link> so the sequencer can retrieve it at runtime.
+This example registers the default sequence using <Link href="/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-config-db">uvm_config_db</Link> so the sequencer can retrieve it at runtime.
 
 ### Procedural Sequences
 
@@ -99,60 +109,52 @@ class my_burst_sequence extends uvm_sequence#(my_item);
 endclass
 ```
 
-### The Handshake In-Depth
+## Analysis Components
 
-The communication between the sequence, sequencer, and driver is fundamental. Let's visualize the blocking handshake that occurs when `uvm_do` is called.
+Analysis components are the "eyes and ears" of your testbench. They observe the behavior of the DUT and check that it is correct.
 
-<AnimatedUvmSequenceDriverHandshakeDiagram />
+### The Monitor
 
-1.  **`start_item(item)`**: The sequence sends the transaction to the sequencer. The sequencer places it in its FIFO and grants access to the driver. The `start_item` call is *blocking* and does not return until the driver calls `get_next_item()`.
-2.  **`driver.get_next_item(req)`**: The driver requests the next item from the sequencer. This call blocks until an item is available from a sequence.
-3.  **Driver executes**: The driver receives the transaction and has exclusive access to drive it.
-4.  **`finish_item(item)`**: The sequence call returns. The transaction has been sent to the driver.
-5.  **`driver.item_done()`**: The driver signals that it has finished with the current item and is ready for the next one. **This is the step that unblocks the sequencer to allow the next transaction.**
+The monitor is a passive component that observes the DUT's interface and captures transactions. It should never drive any signals.
 
-## Level 3: Expert Insight
+### The Scoreboard
 
-### Sequence Layering
+The scoreboard is a checker component that compares the actual results from the DUT with the expected results.
 
-The real power of sequences comes from layering. A high-level sequence can execute other, lower-level sequences. This allows you to build a library of reusable stimulus building blocks.
-
+<InteractiveCode>
 ```systemverilog
-class my_super_sequence extends uvm_sequence#(my_item);
-  // ... utils and constructor ...
-  rand read_sequence  read_seq;
-  rand write_sequence write_seq;
+// A monitor that observes transactions and broadcasts them
+class my_monitor extends uvm_monitor;
+  `uvm_component_utils(my_monitor)
+  uvm_analysis_port #(my_transaction) ap;
 
-  task body();
-    // Execute a sequence of other sequences
-    `uvm_do(read_seq)
-    `uvm_do(write_seq)
-    `uvm_do(read_seq)
+  function new(string name="my_monitor", uvm_component parent=null);
+    super.new(name,parent);
+    ap = new("ap", this);
+  endfunction
+
+  virtual task run_phase(uvm_phase phase);
+    // ... capture bus activity and create a transaction 'tr' ...
+    ap.write(tr);
   endtask
 endclass
+
+// A scoreboard that subscribes to the monitor's analysis port
+class my_scoreboard extends uvm_scoreboard;
+  `uvm_component_utils(my_scoreboard)
+  uvm_analysis_imp #(my_transaction, my_scoreboard) analysis_export;
+
+  function new(string name="my_scoreboard", uvm_component parent=null);
+    super.new(name,parent);
+    analysis_export = new("analysis_export", this);
+  endfunction
+
+  function void write(my_transaction tr);
+    // ... scoreboard checking logic ...
+  endfunction
+endclass
 ```
-
-### The `p_sequencer` Handle
-
-A sequence often needs to access information from the agent it's running in (e.g., a configuration object). The `p_sequencer` is a generic handle to the sequencer the sequence is running on. You should cast it to your specific sequencer type to access its contents.
-
-```systemverilog
-// In the sequence body() task:
-my_sequencer_t my_sqr;
-if (!$cast(my_sqr, m_sequencer)) `uvm_fatal(...)
-// Now you can access things in your sequencer
-if (my_sqr.config.is_dma_enabled) begin ... end
-```
-
-### Grabbing and Locking
-
-Sometimes a sequence needs to send a critical series of transactions without being interrupted by other sequences.
--   **`lock(sequencer)`**: Grants this sequence exclusive access to the driver. No other sequences can send transactions until this sequence calls `unlock()`.
--   **`grab(sequencer)`**: A more aggressive version of `lock` that will immediately take control, even if another sequence is currently locked.
-
-### Sequence Libraries
-
-For a regression, you don't want to run one test at a time. You create a "sequence library" – a collection of all your different test sequences. You can then configure the sequencer to simply pick and run sequences from this library at random, which is a very effective way to find unexpected bugs.
+</InteractiveCode>
 
 ## Key Takeaways
 

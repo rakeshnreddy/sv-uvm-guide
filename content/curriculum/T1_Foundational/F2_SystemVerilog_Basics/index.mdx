@@ -1,20 +1,22 @@
 ---
-title: "F2: SystemVerilog Basics"
+title: "F2: SystemVerilog Language Basics"
 description: "A comprehensive introduction to the fundamental building blocks of the SystemVerilog language."
 ---
 
 import { Quiz, InteractiveCode } from '@/components/ui';
+import DataTypeComparisonChart from '@/components/charts/DataTypeComparisonChart';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { DiagramPlaceholder } from '@/components/templates/InfoPage';
 
 ## Introduction
 
 Welcome to the second module in our foundational tier. Now that you understand *why* we verify, it's time to learn the basic vocabulary of the language we use to do it: **SystemVerilog**. SystemVerilog is a Hardware Description and Verification Language (HDVL), meaning it's used for both designing and testing digital circuits. This module will cover the absolute essentials you need to start reading and writing basic SystemVerilog code.
 
-### Data Types: The Building Blocks
+## Data Types: The Building Blocks
 
 In SystemVerilog, data types define what kind of data a variable or net can hold.
 
-#### `logic`: The Modern Standard
+### `logic`: The Modern Standard
 
 The most important data type for modern SystemVerilog is `logic`. It is a 4-state type, meaning it can hold one of four values:
 * `0`: Logic zero
@@ -43,7 +45,7 @@ endmodule
 ```
 </InteractiveCode>
 
-#### Integer Types
+### Integer Types
 
 SystemVerilog provides several integer types for when you need to work with whole numbers that don't need to model hardware behavior directly (e.g., for loop counters, array indices). These are typically 2-state (0 or 1) and can be more efficient in simulation.
 
@@ -65,18 +67,22 @@ endmodule
 ```
 </InteractiveCode>
 
-#### Arrays
+### Arrays
 
 Arrays are used to hold collections of data.
 
 *   **Fixed-size arrays:** Have a declared, constant size.
 *   **Dynamic arrays:** Can grow or shrink at run-time.
+*   **Queues:** Dynamic arrays that provide easy ways to add and remove elements from the beginning or end.
+*   **Associative arrays:** Use a key of any type to store and retrieve values.
 
 <InteractiveCode>
 ```systemverilog
 module array_example;
   logic [7:0] fixed_array [4]; // A fixed-size array of 4 8-bit logic vectors
   int         dynamic_array[]; // A dynamic array of integers
+  string      queue[$];        // A queue of strings
+  int         assoc_array[string]; // An associative array mapping strings to integers
 
   initial begin
     // Initialize fixed-size array
@@ -88,6 +94,49 @@ module array_example;
     dynamic_array = new[3]; // Allocate space for 3 integers
     dynamic_array = '{10, 20, 30};
     $display("Dynamic array size: %0d, contents: %p", dynamic_array.size(), dynamic_array);
+
+    // Use a queue
+    queue.push_back("hello");
+    queue.push_front("world");
+    $display("Queue: %p", queue);
+
+    // Use an associative array
+    assoc_array["foo"] = 123;
+    $display("Associative array entry for 'foo': %d", assoc_array["foo"]);
+  end
+endmodule
+```
+</InteractiveCode>
+
+### User-Defined Types
+
+SystemVerilog allows you to create your own complex data types.
+
+*   **`struct`**: A collection of variables of different types, grouped together.
+*   **`enum`**: A set of named constants.
+
+<InteractiveCode>
+```systemverilog
+module user_defined_example;
+  typedef enum { IDLE, DECODE, EXECUTE } state_t;
+  state_t current_state;
+
+  typedef struct {
+    logic [31:0] addr;
+    logic [31:0] data;
+    bit          rw;
+  } bus_transaction_t;
+
+  bus_transaction_t transaction;
+
+  initial begin
+    current_state = IDLE;
+    $display("Current state: %s", current_state.name());
+
+    transaction.addr = 32'h1000;
+    transaction.data = 32'hdeadbeef;
+    transaction.rw = 1;
+    $display("Transaction: %p", transaction);
   end
 endmodule
 ```
@@ -203,14 +252,122 @@ endmodule
 ```
 </InteractiveCode>
 
+---
+
+## Procedural Constructs
+
+Procedural constructs are the parts of SystemVerilog that look and feel like a traditional programming language. They allow you to write sequential, algorithmic code to control the flow of your testbench and model complex behavior.
+
+### `initial`, `always`, and `final` blocks
+
+- **`initial` blocks** are executed only once at the beginning of a simulation.
+- **`always` blocks** are executed continuously throughout a simulation. SystemVerilog introduces specialized `always` blocks like `always_comb`, `always_ff`, and `always_latch` to make the design intent clearer.
+- **`final` blocks** are executed only once at the end of a simulation.
+
+### Blocking vs. Non-blocking Assignments
+
+A critical concept in procedural blocks is the difference between blocking (`=`) and non-blocking (`<=`) assignments.
+
+- **Blocking assignments (`=`)** are executed in the order they appear in the code.
+- **Non-blocking assignments (`<=`)** are scheduled to occur at the end of the current time step.
+
+<InteractiveCode>
+```systemverilog
+// Example of always_ff for a simple flip-flop
+logic clk, reset, d_in, q_out;
+always_ff @(posedge clk or posedge reset) begin
+  if (reset) begin
+    q_out <= 1'b0; // Use non-blocking for state elements
+  end else begin
+    q_out <= d_in;
+  end
+end
+
+// Example of always_comb for combinational logic
+logic a, b, c, y_comb;
+always_comb begin
+  y_comb = a & b | c; // Use blocking for combinational logic
+end
+```
+</InteractiveCode>
+
+<DiagramPlaceholder title="Blocking vs. Non-blocking Assignment Timing" />
+
+### Flow Control
+
+SystemVerilog supports standard flow control statements:
+- `if-else`
+- `case`, `casex`, `casez`
+- `for` loops, `while` loops, `do-while` loops, `foreach` loops
+
+### Tasks and Functions
+
+Tasks and functions allow you to create reusable blocks of procedural code.
+- **Functions** execute in zero time and cannot contain delays. They return a single value.
+- **Tasks** can contain delays and do not return a value (but can have output arguments).
+
+### Process Control: `fork-join`
+
+The `fork-join` construct allows you to create parallel processes.
+- `fork-join`: Waits for all parallel processes to complete.
+- `fork-join_any`: Waits for any one of the parallel processes to complete.
+- `fork-join_none`: Does not wait for any processes to complete; execution continues immediately.
+
+---
+
+## RTL and Testbench Constructs
+
+SystemVerilog provides a set of building blocks for creating both the hardware design (RTL) and the testbench that verifies it.
+
+### Modules and Interfaces
+
+- **Modules:** The basic building block of a SystemVerilog design.
+- **Interfaces:** A way to bundle related signals into a single port. This simplifies connections and improves reusability.
+
+### Packages
+
+Packages are used to group related declarations, such as classes, functions, and tasks. This helps to organize your code and to prevent naming conflicts.
+
+<InteractiveCode>
+```systemverilog
+package my_pkg;
+  // All the declarations in this package can be imported
+  // into other modules or packages.
+
+  class my_transaction extends uvm_sequence_item;
+    // ...
+  endclass
+endpackage
+```
+</InteractiveCode>
+
+### Program and Clocking Blocks
+
+- **Program blocks:** Used to separate the testbench from the DUT, helping to avoid race conditions.
+- **Clocking blocks:** Used to define a set of signals that are synchronous to a specific clock, specifying input and output skews to ensure predictable timing.
+
+<InteractiveCode>
+```systemverilog
+interface my_if(input logic clk);
+  logic req, gnt;
+
+  clocking tb_cb @(posedge clk);
+    default input #1step output #2;
+    output req;
+    input gnt;
+  endclocking
+endinterface
+```
+</InteractiveCode>
+
 ## Key Takeaways
 
 *   Use `logic` as your default data type for hardware modeling.
-*   Use `int` for simulation-only counters and loops.
 *   Understand the difference between logical (`&&`, `||`) and bitwise (`&`, `|`) operators.
 *   Use `===` when you need to explicitly check for `X` or `Z` values.
-*   Modules are the basic building blocks of SystemVerilog code.
-*   The `$display` command is your primary tool for printing information.
+*   Use non-blocking assignments (`<=`) for sequential logic and blocking assignments (`=`) for combinational logic and testbench code.
+*   Use interfaces to simplify connections and improve reusability.
+*   Use packages to organize your code.
 
 ## Check Your Understanding
 
@@ -234,5 +391,15 @@ endmodule
         {"text": "`0` (FALSE)", "correct": false}
       ],
       "explanation": "A bitwise AND compares each bit individually: (1&1=1), (1&0=0), (0&1=0), (0&0=0). So, the result is `4'b1000`."
+    },
+    {
+      "question": "What is the primary purpose of an interface?",
+      "answers": [
+        {"text": "To make simulations run faster.", "correct": false},
+        {"text": "To bundle related signals into a single, reusable port.", "correct": true},
+        {"text": "To define the clocking for a module.", "correct": false},
+        {"text": "To replace the need for a testbench.", "correct": false}
+      ],
+      "explanation": "Interfaces are used to simplify connections between modules and to create clean, modular designs."
     }
   ]} />
