@@ -177,27 +177,6 @@ export const curriculumData: Module[] = [
       tier: "T3",
       sections: [
           {
-              title: "Advanced UVM Sequencing",
-              slug: "A-UVM-1_Advanced_Sequencing",
-              topics: [
-                  { title: "Advanced UVM Sequencing", slug: "index", description: "Sophisticated stimulus generation techniques." },
-              ]
-          },
-          {
-              title: "The UVM Factory In-Depth",
-              slug: "A-UVM-2_The_UVM_Factory_In-Depth",
-              topics: [
-                { title: "The UVM Factory In-Depth", slug: "index", description: "A deeper dive into the UVM factory." },
-              ]
-          },
-          {
-              title: "The UVM Register Abstraction Layer (RAL)",
-              slug: "A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL",
-              topics: [
-                { title: "The UVM Register Abstraction Layer (RAL)", slug: "index", description: "Simplifying register access in UVM." },
-              ]
-          },
-          {
             title: "UVM Sequences and Virtual Sequences",
             slug: "A1_UVM_Sequences",
             topics: [
@@ -235,39 +214,46 @@ export const curriculumData: Module[] = [
       ]
   },
   {
-      title: "Expert",
-      slug: "T4_Expert",
-      tier: "T4",
-      sections: [
-          {
-              title: "UVM Methodology Customization",
-              slug: "E-CUST-1_UVM_Methodology_Customization",
-              topics: [
-                { title: "UVM Methodology Customization", slug: "index", description: "Tailoring UVM to your needs." },
-              ]
-          },
-          {
-              title: "Advanced UVM Debug",
-              slug: "E-DBG-1_Advanced_UVM_Debug_Methodologies",
-              topics: [
-                { title: "Advanced UVM Debug", slug: "index", description: "Techniques for debugging complex UVM environments." },
-              ]
-          },
-          {
-              title: "Integrating UVM with Formal Verification",
-              slug: "E-INT-1_Integrating_UVM_with_Formal_Verification",
-              topics: [
-                { title: "Integrating UVM with Formal Verification", slug: "index", description: "Combining the power of UVM and formal methods." },
-              ]
-          },
-          {
-              title: "SoC-Level Verification",
-              slug: "E-SOC-1_SoC-Level_Verification_Strategies",
-              topics: [
-                { title: "SoC-Level Verification", slug: "index", description: "Strategies for verifying complex SoCs." },
-              ]
-          },
-      ]
+    title: "Expert",
+    slug: "T4_Expert",
+    tier: "T4",
+    sections: [
+        {
+            title: "UVM Performance Optimization",
+            slug: "E1_UVM_Performance_Optimization",
+            topics: [
+              { title: "UVM Performance Optimization", slug: "index", description: "Strategies for identifying and fixing performance bottlenecks in UVM." },
+            ]
+        },
+        {
+            title: "Customizing UVM",
+            slug: "E2_Customizing_UVM",
+            topics: [
+              { title: "Customizing UVM", slug: "index", description: "Extending UVM with custom ports, reports, and callbacks." },
+            ]
+        },
+        {
+            title: "Advanced Debugging Techniques",
+            slug: "E3_Advanced_Debugging",
+            topics: [
+              { title: "Advanced Debugging", slug: "index", description: "Expert-level strategies for tackling the most difficult bugs." },
+            ]
+        },
+        {
+            title: "UVM Register Layer (RAL)",
+            slug: "E4_UVM_Register_Layer",
+            topics: [
+              { title: "UVM Register Layer (RAL)", slug: "index", description: "A comprehensive introduction to the UVM Register Abstraction Layer." },
+            ]
+        },
+        {
+            title: "Methodology and Best Practices",
+            slug: "E5_Methodology_and_Best_Practices",
+            topics: [
+              { title: "Methodology and Best Practices", slug: "index", description: "High-level verification strategy and project planning." },
+            ]
+        }
+    ]
   }
 ];
 
