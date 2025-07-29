@@ -217,6 +217,13 @@ export const curriculumData: Module[] = [
             topics: [
                 { title: "UVM Configurations and Factory Mastery", slug: "index", description: "Go beyond the basics of the factory and configuration database to show how they enable highly reusable, polymorphic, and customizable testbenches." },
             ]
+          },
+          {
+            title: "UVM Verification IP Integration",
+            slug: "A4_VIP_Integration",
+            topics: [
+                { title: "UVM Verification IP Integration", slug: "index", description: "Provide practical guidelines and a conceptual framework for integrating pre-written or third-party Verification IP (VIP) into a custom UVM environment." },
+            ]
           }
       ]
   },
