@@ -177,27 +177,6 @@ export const curriculumData: Module[] = [
       tier: "T3",
       sections: [
           {
-              title: "Advanced UVM Sequencing",
-              slug: "A-UVM-1_Advanced_Sequencing",
-              topics: [
-                  { title: "Advanced UVM Sequencing", slug: "index", description: "Sophisticated stimulus generation techniques." },
-              ]
-          },
-          {
-              title: "The UVM Factory In-Depth",
-              slug: "A-UVM-2_The_UVM_Factory_In-Depth",
-              topics: [
-                { title: "The UVM Factory In-Depth", slug: "index", description: "A deeper dive into the UVM factory." },
-              ]
-          },
-          {
-              title: "The UVM Register Abstraction Layer (RAL)",
-              slug: "A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL",
-              topics: [
-                { title: "The UVM Register Abstraction Layer (RAL)", slug: "index", description: "Simplifying register access in UVM." },
-              ]
-          },
-          {
             title: "UVM Sequences and Virtual Sequences",
             slug: "A1_UVM_Sequences",
             topics: [
