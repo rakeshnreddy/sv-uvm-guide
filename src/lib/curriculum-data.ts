@@ -224,6 +224,13 @@ export const curriculumData: Module[] = [
             topics: [
                 { title: "UVM Verification IP Integration", slug: "index", description: "Provide practical guidelines and a conceptual framework for integrating pre-written or third-party Verification IP (VIP) into a custom UVM environment." },
             ]
+          },
+          {
+            title: "Scaling Testbenches and UVM Tips",
+            slug: "A5_Scaling_Testbenches",
+            topics: [
+                { title: "Scaling Testbenches and UVM Tips", slug: "index", description: "Discuss techniques for managing hundreds of tests, organizing large testbenches, and avoiding common UVM pitfalls that appear at scale." },
+            ]
           }
       ]
   },
