@@ -1,0 +1,231 @@
+---
+title: "F5: Intro to Object-Oriented Programming (OOP) in SV"
+description: "The final prerequisite before diving into UVM."
+---
+
+import { Quiz, InteractiveCode } from '@/components/ui';
+import { DiagramPlaceholder } from '@/components/templates/InfoPage';
+
+## Why OOP for Verification?
+
+In the last module, we built a testbench using modules and tasks. It worked, but we identified major limitations: it wasn't reusable, scalable, or structured. How do we solve these problems? The answer is **Object-Oriented Programming (OOP)**.
+
+OOP is a programming paradigm that allows us to create powerful, reusable, and organized verification components. Instead of thinking in terms of static modules and tasks, OOP lets us create "objects" that model complex data (like network packets or bus transactions) and represent dynamic components (like drivers and monitors). This is the foundation upon which UVM is built.
+
+## Classes and Objects: Blueprints and Instances
+
+The two most fundamental concepts in OOP are the **class** and the **object**.
+
+*   **Class:** A class is a **blueprint**. It defines a new data type, including its data (properties) and its behaviors (methods). For example, we can define a `class Car` that has properties like `color` and `make`, and methods like `start_engine()`.
+*   **Object:** An object is an **instance** of a class. It's a concrete realization of the blueprint. If `class Car` is the blueprint, your specific `red Toyota` is an object. You can create many objects from a single class blueprint.
+
+In SystemVerilog, we define a class with the `class ... endclass` keywords. To create an object from the class blueprint, we use the `new()` keyword. The variable that holds the object is called a **handle**. A handle is like a remote control for the object.
+
+<InteractiveCode>
+```systemverilog
+// Define the blueprint for a simple packet
+class MyPacket;
+  int data;
+endclass
+
+module test_oop;
+  initial begin
+    // 1. Declare a handle for a MyPacket object.
+    // At this point, the handle is 'null', it doesn't point to any object.
+    MyPacket pkt_h;
+
+    // 2. Create a MyPacket object in memory and assign its address to the handle.
+    pkt_h = new();
+
+    // 3. Use the handle to access the object's properties.
+    pkt_h.data = 100;
+    $display("Packet data is: %0d", pkt_h.data);
+  end
+endmodule
+```
+</InteractiveCode>
+
+## Properties and Methods
+
+*   **Properties:** These are the variables inside a class that hold its data or state.
+*   **Methods:** These are the `tasks` and `functions` defined inside a class that determine its behavior.
+
+Let's create a more useful `AluTransaction` class to model an operation for the ALU from our previous module.
+
+<InteractiveCode>
+```systemverilog
+class AluTransaction;
+
+  // --- Properties (the data) ---
+  logic [3:0] a;
+  logic [3:0] b;
+  enum {ADD, SUB} opcode;
+
+  // --- Methods (the behavior) ---
+
+  // A method to print the contents of the transaction
+  function void print();
+    $display("Transaction: a=%h, b=%h, opcode=%s", a, b, opcode.name());
+  endfunction
+
+endclass
+```
+</InteractiveCode>
+
+## Constructors (`new()`)
+
+The `new()` function is a special method called a **constructor**. It is automatically called when you create an object. You can define your own `new()` function to set default values or perform other initialization.
+
+```systemverilog
+class AluTransaction;
+  // ... properties ...
+
+  // The constructor
+  function new();
+    // Initialize properties with default values
+    a = 1;
+    b = 1;
+    opcode = ADD;
+  endfunction
+
+  // ... other methods ...
+endclass
+```
+
+## Introduction to Randomization
+
+One of the most powerful features of using classes in verification is the ability to easily generate random stimulus.
+
+*   **`rand` keyword:** By declaring a class property as `rand`, you mark it as a random variable.
+*   **`.randomize()` method:** Every class has a built-in `.randomize()` method. When you call it on an object, the simulator will assign random values to all of its `rand` properties.
+
+<InteractiveCode>
+```systemverilog
+class AluTransaction;
+
+  // Mark properties as random
+  rand logic [3:0] a;
+  rand logic [3:0] b;
+  rand enum {ADD, SUB} opcode;
+
+  // ... methods ...
+endclass
+
+module test_randomization;
+  initial begin
+    AluTransaction tx = new();
+    for (int i = 0; i < 5; i++) begin
+      if (tx.randomize()) begin
+        tx.print();
+      end
+    end
+  end
+endmodule
+```
+</InteractiveCode>
+
+## Constraints: Guiding Randomization
+
+Purely random stimulus is good, but sometimes you need to control the randomization to create specific scenarios. This is done with **constraint blocks**.
+
+A `constraint` block is a set of rules that the solver must follow when randomizing an object.
+
+```systemverilog
+class AluTransaction;
+  rand logic [3:0] a;
+  rand logic [3:0] b;
+  rand enum {ADD, SUB} opcode;
+
+  // Constraint to ensure 'a' is never zero and 'b' is less than 10
+  constraint c_valid_inputs {
+    a != 0;
+    b < 10;
+  }
+
+  // ... methods ...
+endclass
+```
+
+## Putting It All Together
+
+This example shows the complete flow: defining a class, creating an object, constraining its randomization, and using its methods.
+
+<InteractiveCode>
+```systemverilog
+// 1. Define the class blueprint
+class AluTransaction;
+
+  // Properties
+  rand logic [3:0] a;
+  rand logic [3:0] b;
+  rand enum {ADD, SUB} opcode;
+
+  // Constraint
+  constraint c_a_not_zero { a != 0; }
+
+  // Constructor
+  function new();
+    this.opcode = ADD;
+  endfunction
+
+  // Method
+  function void print();
+    $display("Transaction: a=%h, b=%h, opcode=%s", a, b, opcode.name());
+  endfunction
+
+endclass
+
+// 2. Use the class in a module
+module test_oop_flow;
+  initial begin
+    // Create a handle
+    AluTransaction tx;
+
+    // Create an object
+    tx = new();
+
+    // Randomize the object
+    if (tx.randomize()) begin
+      // Use the object's methods
+      tx.print();
+    end else begin
+      $display("Randomization failed!");
+    end
+  end
+endmodule
+```
+</InteractiveCode>
+
+## The Bridge to UVM
+
+You have just learned the fundamental pillars of UVM. The entire Universal Verification Methodology is built on SystemVerilog's OOP capabilities.
+*   A UVM "sequence item" is just a SystemVerilog class that holds transaction data, like our `AluTransaction`.
+*   A UVM "driver" is a class that takes these transaction objects and drives them to the DUT.
+*   A UVM "test" is a class that controls which sequences of transactions are generated.
+
+By understanding classes, objects, and randomization, you have taken the final and most important step in preparing for Tier 2 and the world of UVM.
+
+## Check Your Understanding
+
+<Quiz questions={[
+    {
+      "question": "In OOP, what is a 'class'?",
+      "answers": [
+        {"text": "A specific instance of a data structure.", "correct": false},
+        {"text": "A blueprint for creating objects with specific properties and methods.", "correct": true},
+        {"text": "A type of module used for verification.", "correct": false},
+        {"text": "A function that returns a random value.", "correct": false}
+      ],
+      "explanation": "A class is the template or blueprint that defines the structure and behavior of its objects. The `new()` keyword is used to create an object (an instance) from the class blueprint."
+    },
+    {
+      "question": "How do you generate random values for the `rand` properties of a class object named `tx`?",
+      "answers": [
+        {"text": "randomize(tx);", "correct": false},
+        {"text": "tx.rand();", "correct": false},
+        {"text": "tx.randomize();", "correct": true},
+        {"text": "rand(tx);", "correct": false}
+      ],
+      "explanation": "Every class has a built-in `.randomize()` method. Calling this method on an object handle (`tx.randomize()`) triggers the solver to find a set of random values that satisfy all the constraints for that object."
+    }
+  ]} />
