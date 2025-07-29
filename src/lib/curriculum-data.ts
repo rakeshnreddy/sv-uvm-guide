@@ -210,6 +210,24 @@ export const curriculumData: Module[] = [
             ]
         }
     ]
+  },
+  {
+    title: "Interactive Tools",
+    slug: "interactive-tools",
+    tier: "Tools",
+    sections: [
+      {
+        title: "UVM Visualizers",
+        slug: "uvm-visualizers",
+        topics: [
+          {
+            title: "Interactive Testbench Visualizer",
+            slug: "interactive-testbench",
+            description: "An interactive tool to explore and understand the components of a UVM testbench."
+          }
+        ]
+      }
+    ]
   }
 ];
 
