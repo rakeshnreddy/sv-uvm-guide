@@ -1,11 +1,17 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect } from 'react';
+import * as d3 from 'd3';
+import { gsap } from 'gsap';
 import { uvmComponents, uvmConnections } from './uvm-data-model';
 
 const UvmTestbenchVisualizer = () => {
-  console.log('UVM Components:', uvmComponents);
-  console.log('UVM Connections:', uvmConnections);
+  useEffect(() => {
+    console.log('D3 version:', d3.version);
+    console.log('GSAP object:', gsap);
+    console.log('UVM Components:', uvmComponents);
+    console.log('UVM Connections:', uvmConnections);
+  }, []);
 
   return (
     <svg width="100%" height="500px" style={{ border: '1px solid #ccc' }}>
