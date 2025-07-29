@@ -1,0 +1,254 @@
+---
+title: "F4: Verification Basics without UVM"
+description: "Bridging the gap between basic SystemVerilog and the complex UVM methodology."
+---
+
+import { Quiz, InteractiveCode } from '@/components/ui';
+import { DiagramPlaceholder } from '@/components/templates/InfoPage';
+
+## Introduction
+
+You've learned the basic syntax of SystemVerilog and how to model hardware behavior. Now, how do you test that hardware? Before we jump into a powerful, industrial-strength methodology like UVM, it's essential to build a simple testbench from scratch. This will help you understand the fundamental components of any verification environment and appreciate why a framework like UVM is so valuable.
+
+## The Design Under Test (DUT): A Simple ALU
+
+For this module, our DUT will be a simple 4-bit Arithmetic Logic Unit (ALU). It can perform two operations: ADD and SUBTRACT.
+
+<InteractiveCode>
+```systemverilog
+// The Design Under Test (DUT)
+module alu (
+  input  logic [3:0] a, b,
+  input  logic       opcode, // 0 for ADD, 1 for SUBTRACT
+  output logic [4:0] result
+);
+
+  always_comb begin
+    if (opcode == 0)
+      result = a + b;
+    else
+      result = a - b;
+  end
+
+endmodule
+```
+</InteractiveCode>
+
+## Testbench Components: The "What"
+
+Every testbench, regardless of its complexity, performs three basic functions.
+
+1.  **Stimulus Generator (Driver):** This component is responsible for creating input data and "driving" it to the DUT's input pins, following the DUT's protocol.
+2.  **Response Checker (Monitor/Checker):** This component observes the DUT's output pins, captures the results, and checks if they match the expected outcome.
+3.  **Test Sequencer (The Test):** This is the "brain" of the testbench. It controls the overall flow, deciding what stimulus to generate and in what order, and when the test is complete.
+
+## Building the Testbench Step-by-Step
+
+Let's build a testbench for our ALU.
+
+### Step 1: The Top Module & Clock
+
+First, we create a top-level module that will contain our DUT and all our testbench logic. We also need a clock signal to synchronize our test.
+
+<InteractiveCode>
+```systemverilog
+`timescale 1ns/1ps
+
+module tb_alu;
+
+  // Testbench signals
+  logic clk;
+  logic [3:0] a, b;
+  logic       opcode;
+  logic [4:0] result;
+
+  // Instantiate the DUT
+  alu dut (
+    .a(a),
+    .b(b),
+    .opcode(opcode),
+    .result(result)
+  );
+
+  // Clock generator
+  initial begin
+    clk = 0;
+    forever #5 clk = ~clk; // 10ns period clock
+  end
+
+  // Test scenario will go here...
+  initial begin
+    $display("Starting ALU Testbench...");
+    // ...
+    $finish;
+  end
+
+endmodule
+```
+</InteractiveCode>
+
+### Step 2: Generating Stimulus (The Driver Task)
+
+Instead of just assigning values in the `initial` block, let's create a reusable `task` to drive a transaction. This makes our test cleaner and easier to read.
+
+```systemverilog
+  // Task to drive one transaction
+  task drive_transaction(input [3:0] i_a, i_b, input logic i_op);
+    @(posedge clk); // Wait for a clock edge
+    a = i_a;
+    b = i_b;
+    opcode = i_op;
+    $display("DRV: Driving a=%0d, b=%0d, op=%s", i_a, i_b, (i_op ? "SUB" : "ADD"));
+  endtask
+```
+
+### Step 3: Checking a Response (The Checker Task)
+
+Similarly, let's create a task to check the DUT's output. It will take the expected value as an input and report whether the test passed or failed.
+
+```systemverilog
+  // Task to check the result
+  task check_response(input [4:0] expected_result);
+    @(posedge clk); // Wait for the result to be ready
+    if (result == expected_result) begin
+      $display("PASS: Result %0d == Expected %0d", result, expected_result);
+    end else begin
+      $error("FAIL: Result %0d != Expected %0d", result, expected_result);
+    end
+  endtask
+```
+
+### Step 4: The Test Scenario
+
+Now we can use our tasks to create a readable test sequence in the main `initial` block.
+
+```systemverilog
+  // Main test scenario
+  initial begin
+    $display("Starting ALU Testbench...");
+
+    // Test 1: 5 + 3 = 8
+    drive_transaction(5, 3, 0);
+    check_response(8);
+
+    // Test 2: 10 - 4 = 6
+    drive_transaction(10, 4, 1);
+    check_response(6);
+
+    // Test 3: 2 - 5 = -3 (represented as 29 in 5-bit 2's complement)
+    drive_transaction(2, 5, 1);
+    check_response(5'b11101); // -3 in 5-bit 2's complement
+
+    $display("ALU Testbench Finished.");
+    $finish;
+  end
+```
+
+## The Complete Testbench
+
+Here is the full code for our simple, non-UVM testbench.
+
+<InteractiveCode>
+```systemverilog
+`timescale 1ns/1ps
+
+module tb_alu;
+
+  // Testbench signals
+  logic clk;
+  logic [3:0] a, b;
+  logic       opcode;
+  logic [4:0] result;
+
+  // Instantiate the DUT
+  alu dut (
+    .a(a),
+    .b(b),
+    .opcode(opcode),
+    .result(result)
+  );
+
+  // Clock generator
+  initial begin
+    clk = 0;
+    forever #5 clk = ~clk; // 10ns period clock
+  end
+
+  // Task to drive one transaction
+  task drive_transaction(input [3:0] i_a, i_b, input logic i_op);
+    @(posedge clk); // Wait for a clock edge
+    a = i_a;
+    b = i_b;
+    opcode = i_op;
+    $display("DRV: Driving a=%0d, b=%0d, op=%s", i_a, i_b, (i_op ? "SUB" : "ADD"));
+  endtask
+
+  // Task to check the result
+  task check_response(input [4:0] expected_result);
+    @(posedge clk); // Wait for the result to be ready
+    if (result == expected_result) begin
+      $display("PASS: Result %0d == Expected %0d", result, expected_result);
+    end else begin
+      $error("FAIL: Result %0d != Expected %0d", result, expected_result);
+    end
+  endtask
+
+  // Main test scenario
+  initial begin
+    $display("Starting ALU Testbench...");
+
+    // Test 1: 5 + 3 = 8
+    drive_transaction(5, 3, 0);
+    check_response(8);
+
+    // Test 2: 10 - 4 = 6
+    drive_transaction(10, 4, 1);
+    check_response(6);
+
+    // Test 3: 2 - 5 = -3
+    drive_transaction(2, 5, 1);
+    check_response(5'b11101); // -3 in 5-bit 2's complement
+
+    $display("ALU Testbench Finished.");
+    $finish;
+  end
+
+endmodule
+```
+</InteractiveCode>
+
+## Conclusion: Why This Isn't Enough
+
+This testbench works, but it has serious limitations:
+
+*   **Not Reusable:** The `drive_transaction` and `check_response` tasks are tightly coupled to the `alu` module. Using them for a different DUT would require significant rewriting.
+*   **Not Scalable:** Imagine a DUT with 10 different interfaces. This single-file, task-based approach would become incredibly messy and hard to manage.
+*   **No Randomization:** We are only testing a few hand-picked values. A real design needs to be tested with thousands or millions of random inputs to find corner-case bugs.
+*   **No Standard Structure:** If another engineer joined the project, they would have to learn your specific testbench structure from scratch. There's no common methodology.
+
+These limitations are exactly what UVM is designed to solve. UVM provides a standardized, scalable, and reusable framework for building powerful verification environments. Now that you understand the basic pieces of a testbench, you're ready to see how UVM organizes them into a professional verification solution.
+
+## Check Your Understanding
+
+<Quiz questions={[
+    {
+      "question": "What is the primary role of a 'Driver' in a testbench?",
+      "answers": [
+        {"text": "To check the DUT's outputs.", "correct": false},
+        {"text": "To generate and apply input stimulus to the DUT.", "correct": true},
+        {"text": "To decide when the test is finished.", "correct": false},
+        {"text": "To instantiate the DUT.", "correct": false}
+      ],
+      "explanation": "The Driver's job is to create transactions (stimulus) and drive them to the DUT's inputs, following the correct timing and protocol."
+    },
+    {
+      "question": "What is a major limitation of the ad-hoc testbench style shown in this module?",
+      "answers": [
+        {"text": "It cannot test combinational logic.", "correct": false},
+        {"text": "It is difficult to reuse components for different projects.", "correct": true},
+        {"text": "It requires a special simulator.", "correct": false},
+        {"text": "It can only be used for small designs.", "correct": false}
+      ],
+      "explanation": "The lack of a standardized structure and the tight coupling between the testbench and the DUT make it very difficult to reuse drivers, checkers, or sequences in other verification environments."
+    }
+  ]} />

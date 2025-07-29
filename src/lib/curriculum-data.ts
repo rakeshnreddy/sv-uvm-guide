@@ -45,6 +45,13 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        title: "Verification Basics without UVM",
+        slug: "F4_Verification_Basics_without_UVM",
+        topics: [
+          { title: "Verification Basics without UVM", slug: "index", description: "Bridging the gap between basic SystemVerilog and the complex UVM methodology." }
+        ]
+      },
+      {
         title: "Data Types",
         slug: "F2_Data_Types",
         topics: [
