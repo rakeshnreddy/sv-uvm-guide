@@ -31,10 +31,13 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        title: "SystemVerilog Basics",
+        title: "SystemVerilog Language Basics",
         slug: "F2_SystemVerilog_Basics",
         topics: [
-          { title: "SystemVerilog Basics", slug: "index", description: "A comprehensive introduction to the fundamental building blocks of the SystemVerilog language." }
+          { title: "SystemVerilog Basics", slug: "index", description: "A comprehensive introduction to the fundamental building blocks of the SystemVerilog language." },
+          { title: "Data Types", slug: "F2_Data_Types", description: "Exploring SystemVerilog's data types." },
+          { title: "Procedural Constructs", slug: "F3_Procedural_Constructs", description: "Understanding the building blocks of SystemVerilog code." },
+          { title: "RTL and Testbench Constructs", slug: "F4_RTL_and_Testbench_Constructs", description: "Key constructs for design and verification." }
         ]
       },
       {
@@ -45,40 +48,19 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        title: "Verification Basics without UVM",
+        title: "Verification Fundamentals",
         slug: "F4_Verification_Basics_without_UVM",
         topics: [
           { title: "Verification Basics without UVM", slug: "index", description: "Bridging the gap between basic SystemVerilog and the complex UVM methodology." }
         ]
       },
       {
-        title: "Intro to Object-Oriented Programming (OOP) in SV",
+        title: "Object-Oriented Programming for Verification",
         slug: "F5_Intro_to_OOP_in_SV",
         topics: [
           { title: "Intro to Object-Oriented Programming (OOP) in SV", slug: "index", description: "The final prerequisite before diving into UVM." }
         ]
-      },
-      {
-        title: "Data Types",
-        slug: "F2_Data_Types",
-        topics: [
-            { title: "Data Types", slug: "index", description: "Exploring SystemVerilog's data types." },
-        ]
-      },
-      {
-        title: "Procedural Constructs",
-        slug: "F3_Procedural_Constructs",
-        topics: [
-            { title: "Procedural Constructs", slug: "index", description: "Understanding the building blocks of SystemVerilog code." },
-        ]
-      },
-      {
-        title: "RTL and Testbench Constructs",
-        slug: "F4_RTL_and_Testbench_Constructs",
-        topics: [
-            { title: "RTL and Testbench Constructs", slug: "index", description: "Key constructs for design and verification." },
-        ]
-      },
+      }
     ],
   },
   {
@@ -115,61 +97,35 @@ export const curriculumData: Module[] = [
             ]
         },
         {
-            title: "UVM Introduction: Objects, Components, and Factory",
+            title: "UVM Introduction",
             slug: "I-UVM-1_UVM_Intro",
             topics: [
                 { title: "UVM Introduction", slug: "index", description: "An introduction to the Universal Verification Methodology." },
+                { title: "UVM Base Classes", slug: "base-classes", description: "uvm_object vs uvm_component." },
+                { title: "Factory", slug: "factory", description: "Factory overrides and creation." },
+                { title: "Phasing", slug: "phasing", description: "UVM phasing mechanism." }
             ]
         },
         {
-            title: "Building a UVM Testbench: Components & Hierarchy",
+            title: "Building a UVM Testbench",
             slug: "I-UVM-2_Building_TB",
             topics: [
                 { title: "Building a UVM Testbench", slug: "index", description: "Exploring the foundational classes of UVM." },
+                { title: "Component Communication", slug: "component-communication", description: "TLM ports and analysis ports." },
+                { title: "Architecture Overview", slug: "architecture-overview", description: "Overview of a UVM testbench." },
+                { title: "Agents and Environment", slug: "agents-and-environment", description: "Agent vs environment." }
             ]
         },
         {
-            title: "Basic UVM Sequences and Stimulus Generation",
+            title: "UVM Stimulus Generation",
             slug: "I-UVM-3_Sequences",
             topics: [
                 { title: "Basic UVM Sequences", slug: "index", description: "How UVM components talk to each other." },
+                { title: "Stimulus Generation", slug: "stimulus-generation", description: "Sequences and driver handshake." },
+                { title: "Analysis Components", slug: "analysis-components", description: "Monitors, subscribers, scoreboards." }
             ]
         }
     ]
-  },
-  {
-      title: "The UVM Universe - Core Concepts",
-      slug: "uvm-core",
-      tier: "T2",
-      sections: [
-        {
-          title: "Fundamentals",
-          slug: "fundamentals",
-          topics: [
-            { title: "UVM Base Classes", slug: "base-classes", description: "uvm_object vs uvm_component." },
-            { title: "Component Communication", slug: "component-communication", description: "TLM ports and analysis ports." },
-            { title: "Factory", slug: "factory", description: "Factory overrides and creation." },
-            { title: "Phasing", slug: "phasing", description: "UVM phasing mechanism." }
-          ]
-        }
-      ]
-  },
-  {
-      title: "Building a UVM Testbench",
-      slug: "uvm-building",
-      tier: "T2",
-      sections: [
-        {
-          title: "Essentials",
-          slug: "essentials",
-          topics: [
-            { title: "Architecture Overview", slug: "architecture-overview", description: "Overview of a UVM testbench." },
-            { title: "Stimulus Generation", slug: "stimulus-generation", description: "Sequences and driver handshake." },
-            { title: "Analysis Components", slug: "analysis-components", description: "Monitors, subscribers, scoreboards." },
-            { title: "Agents and Environment", slug: "agents-and-environment", description: "Agent vs environment." }
-          ]
-        }
-      ]
   },
   {
       title: "Advanced",
@@ -180,35 +136,35 @@ export const curriculumData: Module[] = [
             title: "UVM Sequences and Virtual Sequences",
             slug: "A1_UVM_Sequences",
             topics: [
-                { title: "UVM Sequences and Virtual Sequences", slug: "index", description: "In-depth guide to UVM sequence mechanics, layering, and the use of virtual sequences." },
+                { title: "UVM Sequences and Virtual Sequences", slug: "A1_UVM_Sequences", description: "In-depth guide to UVM sequence mechanics, layering, and the use of virtual sequences." },
             ]
           },
           {
             title: "Scoreboards and Functional Coverage in UVM",
             slug: "A2_Scoreboards_and_Coverage",
             topics: [
-                { title: "Scoreboards and Functional Coverage in UVM", slug: "index", description: "Explain how to design and implement a UVM scoreboard for automated, self-checking tests." },
+                { title: "Scoreboards and Functional Coverage in UVM", slug: "A2_Scoreboards_and_Coverage", description: "Explain how to design and implement a UVM scoreboard for automated, self-checking tests." },
             ]
           },
           {
             title: "UVM Configurations and Factory Mastery",
             slug: "A3_Config_and_Factory_Mastery",
             topics: [
-                { title: "UVM Configurations and Factory Mastery", slug: "index", description: "Go beyond the basics of the factory and configuration database to show how they enable highly reusable, polymorphic, and customizable testbenches." },
+                { title: "UVM Configurations and Factory Mastery", slug: "A3_Config_and_Factory_Mastery", description: "Go beyond the basics of the factory and configuration database to show how they enable highly reusable, polymorphic, and customizable testbenches." },
             ]
           },
           {
             title: "UVM Verification IP Integration",
             slug: "A4_VIP_Integration",
             topics: [
-                { title: "UVM Verification IP Integration", slug: "index", description: "Provide practical guidelines and a conceptual framework for integrating pre-written or third-party Verification IP (VIP) into a custom UVM environment." },
+                { title: "UVM Verification IP Integration", slug: "A4_VIP_Integration", description: "Provide practical guidelines and a conceptual framework for integrating pre-written or third-party Verification IP (VIP) into a custom UVM environment." },
             ]
           },
           {
             title: "Scaling Testbenches and UVM Tips",
             slug: "A5_Scaling_Testbenches",
             topics: [
-                { title: "Scaling Testbenches and UVM Tips", slug: "index", description: "Discuss techniques for managing hundreds of tests, organizing large testbenches, and avoiding common UVM pitfalls that appear at scale." },
+                { title: "Scaling Testbenches and UVM Tips", slug: "A5_Scaling_Testbenches", description: "Discuss techniques for managing hundreds of tests, organizing large testbenches, and avoiding common UVM pitfalls that appear at scale." },
             ]
           }
       ]
@@ -222,35 +178,35 @@ export const curriculumData: Module[] = [
             title: "UVM Performance Optimization",
             slug: "E1_UVM_Performance_Optimization",
             topics: [
-              { title: "UVM Performance Optimization", slug: "index", description: "Strategies for identifying and fixing performance bottlenecks in UVM." },
+              { title: "UVM Performance Optimization", slug: "E1_UVM_Performance_Optimization", description: "Strategies for identifying and fixing performance bottlenecks in UVM." },
             ]
         },
         {
             title: "Customizing UVM",
             slug: "E2_Customizing_UVM",
             topics: [
-              { title: "Customizing UVM", slug: "index", description: "Extending UVM with custom ports, reports, and callbacks." },
+              { title: "Customizing UVM", slug: "E2_Customizing_UVM", description: "Extending UVM with custom ports, reports, and callbacks." },
             ]
         },
         {
             title: "Advanced Debugging Techniques",
             slug: "E3_Advanced_Debugging",
             topics: [
-              { title: "Advanced Debugging", slug: "index", description: "Expert-level strategies for tackling the most difficult bugs." },
+              { title: "Advanced Debugging", slug: "E3_Advanced_Debugging", description: "Expert-level strategies for tackling the most difficult bugs." },
             ]
         },
         {
             title: "UVM Register Layer (RAL)",
             slug: "E4_UVM_Register_Layer",
             topics: [
-              { title: "UVM Register Layer (RAL)", slug: "index", description: "A comprehensive introduction to the UVM Register Abstraction Layer." },
+              { title: "UVM Register Layer (RAL)", slug: "E4_UVM_Register_Layer", description: "A comprehensive introduction to the UVM Register Abstraction Layer." },
             ]
         },
         {
             title: "Methodology and Best Practices",
             slug: "E5_Methodology_and_Best_Practices",
             topics: [
-              { title: "Methodology and Best Practices", slug: "index", description: "High-level verification strategy and project planning." },
+              { title: "Methodology and Best Practices", slug: "E5_Methodology_and_Best_Practices", description: "High-level verification strategy and project planning." },
             ]
         }
     ]
