@@ -6,10 +6,10 @@ class alu_base_sequence extends uvm_sequence #(alu_transaction);
   endfunction
 
   virtual task body();
-    alu_transaction req;
-    req = alu_transaction::type_id::create("req");
-    start_item(req);
-    assert(req.randomize());
-    finish_item(req);
+    repeat (10) begin
+      `uvm_do_with(alu_transaction, { op == ADD; })
+      `uvm_do_with(alu_transaction, { op == SUB; })
+      `uvm_do_with(alu_transaction, { op == MUL; })
+    end
   endtask
 endclass

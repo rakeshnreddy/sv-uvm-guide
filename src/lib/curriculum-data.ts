@@ -203,6 +203,13 @@ export const curriculumData: Module[] = [
             topics: [
                 { title: "UVM Sequences and Virtual Sequences", slug: "index", description: "In-depth guide to UVM sequence mechanics, layering, and the use of virtual sequences." },
             ]
+          },
+          {
+            title: "Scoreboards and Functional Coverage in UVM",
+            slug: "A2_Scoreboards_and_Coverage",
+            topics: [
+                { title: "Scoreboards and Functional Coverage in UVM", slug: "index", description: "Explain how to design and implement a UVM scoreboard for automated, self-checking tests." },
+            ]
           }
       ]
   },
