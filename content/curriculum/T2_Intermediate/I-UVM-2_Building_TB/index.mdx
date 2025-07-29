@@ -5,6 +5,8 @@ description: "Assembling a standard UVM testbench and understanding the role of 
 
 import { Quiz, InteractiveCode, Panel } from '@/components/ui';
 import AnimatedUvmTestbenchDiagram from '@/components/diagrams/AnimatedUvmTestbenchDiagram';
+import { DiagramPlaceholder } from '@/components/templates/InfoPage';
+import Link from 'next/link'
 
 ## Assembling the Pieces
 
@@ -16,7 +18,7 @@ The UVM layered testbench provides a standardized, reusable, and modular archite
   <AnimatedUvmTestbenchDiagram />
 </div>
 
-## Level 1/2: The Standard UVM Components
+## The Standard UVM Components
 
 Let's follow the logical flow of data through the environment to understand the purpose of each standard component.
 
@@ -45,54 +47,69 @@ This communication happens via a standard handshake:
 3.  The driver receives `req` and drives the physical pins according to the data in the transaction.
 4.  Once done, the driver *must* call `seq_item_port.item_done()`. This signals to the sequencer that it is ready for the next item. Forgetting `item_done()` is a common cause of testbench hangs.
 
-### The Monitor and Analysis Ports: Observing and Broadcasting
+### The Monitor and Analysis Components
 
 -   **The Monitor (`uvm_monitor`)**: The monitor is the "eyes" of the testbench. It passively observes the DUT's interface signals and, based on the protocol rules, reconstructs the transactions that occurred. It should *never* drive any signals.
 -   **Analysis Ports (`uvm_analysis_port`)**: Once the monitor reconstructs a transaction, where does it send it? It writes the transaction to one or more `uvm_analysis_port`s. An analysis port is a broadcast mechanism. It can be connected to multiple subscribers. Any component that needs to know about the transactions on this interface (like a scoreboard or a coverage collector) can connect to this port. This implements a powerful subscriber/observer pattern, decoupling the monitor from the components that consume its data.
-
-### The Environment and Scoreboard
-
--   **The Environment (`uvm_env`)**: This is the top-level container for a verification environment. It instantiates one or more agents (for the different interfaces of the DUT) and other components like scoreboards and coverage collectors. The environment is responsible for connecting all the pieces together, primarily by making connections to the analysis ports of its agents' monitors.
 -   **The Scoreboard (`uvm_scoreboard`)**: The scoreboard is the primary self-checking component. It typically has at least two inputs: one for "expected" data and one for "actual" data. For example, it might receive transactions from a monitor on an upstream interface (the expected result) and transactions from a monitor on a downstream interface (the actual result). It then compares the two streams to verify that the DUT behaved correctly.
 
-## Level 3: Expert Insight & Best Practices
+### The Environment
 
-**Architectural Best Practices:**
--   **Why should a monitor never drive signals?** This violates the principle of separation of concerns. A monitor's single responsibility is to observe. Mixing stimulus generation (driving) and checking (monitoring) in the same component makes it less reusable and harder to debug.
--   **Structuring the Environment:** For a DUT with multiple identical interfaces, you would typically have a single `uvm_env` that contains an array of agents, one for each interface. For a more complex system-level environment, you might have a top-level env that instantiates other, smaller envs (e.g., a `chip_env` containing an `ethernet_env` and a `pcie_env`).
+The `uvm_env` is the top-level container for a verification environment. It instantiates one or more agents (for the different interfaces of the DUT) and other components like scoreboards and coverage collectors. The environment is responsible for connecting all the pieces together, primarily by making connections to the analysis ports of its agents' monitors.
 
-**The UVM Phasing Mechanism:** How do all these components get created and connected in the right order? UVM uses a "phasing" mechanism. The `build_phase` runs top-down, creating all the components. The `connect_phase` runs bottom-up, allowing components to connect their ports to others. For example, a scoreboard would implement the `connect_phase` to connect its analysis import to the analysis port of a monitor inside an agent. We will cover phasing in more detail in a later module.
+<InteractiveCode>
+```systemverilog
+// An agent that contains a driver, sequencer, and monitor
+class my_agent extends uvm_agent;
+  `uvm_component_utils(my_agent)
+  my_driver d;
+  my_sequencer s;
+  my_monitor m;
 
-## Key Takeaways
-
--   A UVM testbench is a hierarchy of modular, reusable components.
--   The **Agent** is the basic unit of reuse for a single interface.
--   The **Sequencer/Driver** pair decouples high-level stimulus intent from low-level pin wiggling.
--   The **Monitor** observes interface activity and uses **Analysis Ports** to broadcast transactions to subscribers like scoreboards and coverage collectors.
--   The **Environment** is the top-level container that integrates and connects all the components.
--   The **Scoreboard** is the primary checker, comparing expected results to actual DUT output.
-
-**Summary Diagram: A Simple UVM Environment**
-```mermaid
-graph TD
-    subgraph UVM Test
-        subgraph UVM Env
-            subgraph Active Agent
-                Sequencer --> Driver
-            end
-            subgraph Passive Agent
-                Monitor
-            end
-            Scoreboard
-        end
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if (is_active == UVM_ACTIVE) begin
+      d = my_driver::type_id::create("d", this);
+      s = my_sequencer::type_id::create("s", this);
     end
+    m = my_monitor::type_id::create("m", this);
+  endfunction
 
-    Driver --> DUT
-    DUT --> Monitor
+  function void connect_phase(uvm_phase phase);
+    if (is_active == UVM_ACTIVE) begin
+      d.seq_item_port.connect(s.seq_item_export);
+    end
+  endfunction
+endclass
 
-    Monitor -- Analysis Port --> Scoreboard
+// An environment that contains an agent and a scoreboard
+class my_env extends uvm_env;
+  `uvm_component_utils(my_env)
+  my_agent a;
+  my_scoreboard scb;
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    a = my_agent::type_id::create("a", this);
+    scb = my_scoreboard::type_id::create("scb", this);
+  endfunction
+
+  function void connect_phase(uvm_phase phase);
+    a.m.ap.connect(scb.analysis_export);
+  endfunction
+endclass
 ```
+</InteractiveCode>
 
+### Component Communication: TLM
+
+In a UVM testbench, components need to talk to each other. A monitor needs to send observed transactions to a scoreboard. A producer component might need to send transactions to a consumer. Transaction-Level Modeling (TLM) provides a standardized set of interfaces for this communication. It abstracts away the pin-level details, allowing components to communicate by passing transaction objects.
+
+- **TLM Port:** Think of this as a mail slot. A component with a port "sends mail" (transactions).
+- **TLM Export/Imp:** This is the <Link href="/curriculum/T2_Intermediate/I-SV-3_Functional_Coverage/mailboxes">mailbox</Link>. A component with an export or imp "receives mail".
+- **Analysis Port:** This is a special kind of mail slot for "broadcasting". It sends a copy of the mail to every mailbox connected to it.
+
+<DiagramPlaceholder title="TLM Port/Export Connection" />
 
 ## Quiz
 
