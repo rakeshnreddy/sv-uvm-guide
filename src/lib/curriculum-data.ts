@@ -52,6 +52,13 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        title: "Intro to Object-Oriented Programming (OOP) in SV",
+        slug: "F5_Intro_to_OOP_in_SV",
+        topics: [
+          { title: "Intro to Object-Oriented Programming (OOP) in SV", slug: "index", description: "The final prerequisite before diving into UVM." }
+        ]
+      },
+      {
         title: "Data Types",
         slug: "F2_Data_Types",
         topics: [
