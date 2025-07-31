@@ -8,8 +8,8 @@ export interface UvmComponent {
 }
 
 export interface UvmConnection {
-  from: string; // ID of the source component
-  to: string;   // ID of the target component
+  source: string; // ID of the source component
+  target: string;   // ID of the target component
   type: 'seq_item' | 'analysis' | 'parent_child'; // Type of connection
   description: string; // Tooltip text for the connection
 }
@@ -91,18 +91,18 @@ export const uvmComponents: UvmComponent[] = [
 ];
 
 export const uvmConnections: UvmConnection[] = [
-  { from: 'test', to: 'env', type: 'parent_child', description: 'Test instantiates the Environment.' },
-  { from: 'env', to: 'agent_active', type: 'parent_child', description: 'Environment instantiates the Active Agent.' },
-  { from: 'env', to: 'agent_passive', type: 'parent_child', description: 'Environment instantiates the Passive Agent.' },
-  { from: 'env', to: 'scoreboard', type: 'parent_child', description: 'Environment instantiates the Scoreboard.' },
-  { from: 'env', to: 'coverage_collector', type: 'parent_child', description: 'Environment instantiates the Coverage Collector.' },
-  { from: 'agent_active', to: 'sequencer_active', type: 'parent_child', description: 'Active Agent instantiates the Sequencer.' },
-  { from: 'agent_active', to: 'driver_active', type: 'parent_child', description: 'Active Agent instantiates the Driver.' },
-  { from: 'agent_active', to: 'monitor_active', type: 'parent_child', description: 'Active Agent instantiates the Monitor.' },
-  { from: 'agent_passive', to: 'monitor_passive', type: 'parent_child', description: 'Passive Agent instantiates the Monitor.' },
-  { from: 'sequencer_active', to: 'driver_active', type: 'seq_item', description: 'Sequencer sends transaction items to the Driver for execution.' },
-  { from: 'monitor_active', to: 'scoreboard', type: 'analysis', description: 'Active Monitor sends observed transactions to the Scoreboard for checking.' },
-  { from: 'monitor_passive', to: 'scoreboard', type: 'analysis', description: 'Passive Monitor sends observed transactions to the Scoreboard for checking.' },
-  { from: 'monitor_active', to: 'coverage_collector', type: 'analysis', description: 'Active Monitor sends observed transactions to the Functional Coverage collector.' },
-  { from: 'monitor_passive', to: 'coverage_collector', type: 'analysis', description: 'Passive Monitor sends observed transactions to the Functional Coverage collector.' }
+  { source: 'test', target: 'env', type: 'parent_child', description: 'Test instantiates the Environment.' },
+  { source: 'env', target: 'agent_active', type: 'parent_child', description: 'Environment instantiates the Active Agent.' },
+  { source: 'env', target: 'agent_passive', type: 'parent_child', description: 'Environment instantiates the Passive Agent.' },
+  { source: 'env', target: 'scoreboard', type: 'parent_child', description: 'Environment instantiates the Scoreboard.' },
+  { source: 'env', target: 'coverage_collector', type: 'parent_child', description: 'Environment instantiates the Coverage Collector.' },
+  { source: 'agent_active', target: 'sequencer_active', type: 'parent_child', description: 'Active Agent instantiates the Sequencer.' },
+  { source: 'agent_active', target: 'driver_active', type: 'parent_child', description: 'Active Agent instantiates the Driver.' },
+  { source: 'agent_active', target: 'monitor_active', type: 'parent_child', description: 'Active Agent instantiates the Monitor.' },
+  { source: 'agent_passive', target: 'monitor_passive', type: 'parent_child', description: 'Passive Agent instantiates the Monitor.' },
+  { source: 'sequencer_active', target: 'driver_active', type: 'seq_item', description: 'Sequencer sends transaction items to the Driver for execution.' },
+  { source: 'monitor_active', target: 'scoreboard', type: 'analysis', description: 'Active Monitor sends observed transactions to the Scoreboard for checking.' },
+  { source: 'monitor_passive', target: 'scoreboard', type: 'analysis', description: 'Passive Monitor sends observed transactions to the Scoreboard for checking.' },
+  { source: 'monitor_active', target: 'coverage_collector', type: 'analysis', description: 'Active Monitor sends observed transactions to the Functional Coverage collector.' },
+  { source: 'monitor_passive', target: 'coverage_collector', type: 'analysis', description: 'Passive Monitor sends observed transactions to the Functional Coverage collector.' }
 ];
