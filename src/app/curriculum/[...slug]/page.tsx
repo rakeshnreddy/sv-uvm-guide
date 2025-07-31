@@ -22,6 +22,7 @@ import { DiagramPlaceholder, InteractiveChartPlaceholder } from '@/components/te
 import AnimatedUvmTestbenchDiagram from '@/components/diagrams/AnimatedUvmTestbenchDiagram';
 import { Alert } from '@/components/ui/Alert';
 import UvmVirtualSequencerDiagram from '@/components/diagrams/UvmVirtualSequencerDiagram';
+import UvmTestbenchVisualizer from '@/components/diagrams/UvmTestbenchVisualizer';
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -46,6 +47,7 @@ const components = {
   Alert,
   UvmVirtualSequencerDiagram,
   InteractiveChartPlaceholder,
+  UvmTestbenchVisualizer,
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {
