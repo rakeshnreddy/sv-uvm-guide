@@ -16,7 +16,7 @@ interface CodeBlockProps {
 }
 
 export const CodeBlock: React.FC<CodeBlockProps> = ({
-  code,
+  code = '',
   language = "systemverilog",
   fileName,
   showLineNumbers = true,

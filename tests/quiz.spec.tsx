@@ -8,6 +8,7 @@ describe('Quiz component', () => {
       question: '2 + 2 = ?',
       options: ['3', '4'],
       correctAnswer: '4',
+      explanation: 'Basic addition.',
     },
   ];
 

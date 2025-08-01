@@ -64,18 +64,11 @@ export function useCurriculumProgress() {
     return Math.round(totalProgress / moduleProgressValues.length);
   }, [getModuleProgress]);
 
-  const isTierUnlocked = useCallback((tierId: string): boolean => {
-    if (tierId === tiers[0]?.slug) {
-      return true; // First tier is always unlocked
-    }
-    const tierIndex = tiers.findIndex(t => t.slug === tierId);
-    if (tierIndex <= 0) {
-      return true;
-    }
-    const previousTier = tiers[tierIndex - 1];
-    const previousTierProgress = getTierProgress(previousTier.slug);
-    return previousTierProgress / 100 >= TIER_UNLOCK_THRESHOLD;
-  }, [getTierProgress]);
+  // Currently all tiers are accessible without completion requirements
+  const isTierUnlocked = useCallback((_tierId: string): boolean => {
+    return true;
+  }, []);
+
 
   // This function would be called from a topic page to mark a lesson as complete
   const completeLesson = useCallback((moduleId: string, lessonSlug: string) => {
@@ -93,14 +86,14 @@ export function useCurriculumProgress() {
   }, []);
 
   // A helper to check if a specific module is locked
-  const isModuleLocked = useCallback((moduleId: string, tierId: string): boolean => {
-      if (!isTierUnlocked(tierId)) {
-          return true;
-      }
-      const moduleData = tiers.flatMap(t => getModules(t)).find(m => m.id === moduleId);
-      if (!moduleData) return true;
+  // Modules are never locked so users can freely explore
+  const isModuleLocked = useCallback(
+    (_moduleId: string, _tierId: string): boolean => {
       return false;
-  }, [isTierUnlocked]);
+    },
+    []
+  );
+
 
 
   return {

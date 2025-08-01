@@ -68,7 +68,7 @@ const DashboardPage = () => {
         <h2 className="text-2xl font-bold mb-4">Progress by Tier</h2>
         <div className="space-y-6">
           {curriculumData.map(tier => (
-            <Card key={tier.id}>
+            <Card key={tier.slug}>
               <CardHeader>
                 <CardTitle>{tier.title}</CardTitle>
               </CardHeader>
