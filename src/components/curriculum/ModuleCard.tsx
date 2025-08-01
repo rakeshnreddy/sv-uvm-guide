@@ -1,13 +1,13 @@
 import React from 'react';
 import Link from 'next/link';
-import { Section, Tier } from '@/lib/curriculum-data';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/Card";
+import { ModuleEntry, Tier } from '@/lib/curriculum-data';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/utils';
 import { CheckCircle, Lock, PlayCircle, Star, Book } from 'lucide-react';
 
 interface ModuleCardProps {
-  module: Section;
+  module: ModuleEntry;
   tier: Tier;
   isLocked?: boolean;
   progress?: number;
