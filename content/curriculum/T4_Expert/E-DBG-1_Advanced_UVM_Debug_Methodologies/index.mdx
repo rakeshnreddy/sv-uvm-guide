@@ -61,17 +61,94 @@ endclass
 ```
 </InteractiveCode>
 
-## Level 3: Expert Insights
+### Systematic Hang Debug: Using Objection Drains
 
-**Debugging hangs:** A common problem in UVM testbenches is a simulation hang. This is almost always caused by a forgotten `item_done()` call in a driver or a dropped objection.
+A simulation hang is one of the most common and frustrating UVM debug scenarios. It's almost always caused by a component failing to drop a phase objection. UVM provides a built-in mechanism to debug this systematically.
 
-**UVM Command Line Plusargs:** UVM provides a rich set of command-line plusargs for controlling and debugging your testbench. Some of the most useful are:
-- `+UVM_TESTNAME=<test_name>`: Specifies which test to run.
-- `+UVM_VERBOSITY=<verbosity>`: Sets the verbosity level.
-- `+uvm_factory_trace`: Prints detailed factory debug information.
-- `+uvm_set_config_int=<path>,<field>,<value>`: Sets a configuration value from the command line.
+<InteractiveCode
+  language="systemverilog"
+  fileName="hang_debug.sv"
+  code={`
+// In your base test or environment
+function void my_base_test::build_phase(uvm_phase phase);
+  // Set a drain time for the run phase.
+  // If the phase doesn't end 1000ns after all objections are dropped,
+  // it's a sign of a problem.
+  phase.phase_done.set_drain_time(this, 1000ns);
+endfunction
 
-**Memory & Retention Tip:** Remember: **Reporting = Your Eyes and Ears.** **Factory Debug = The Blueprints.** **Waveform Debug = The Replay.**
+function void my_base_test::end_of_elaboration_phase(uvm_phase phase);
+  // Enable the objection trace plusarg for maximum debug info
+  // This can also be done on the command line: +UVM_OBJECTION_TRACE
+  uvm_top.set_objection_trace(1);
+endfunction
+
+// In a driver, a bug is introduced: item_done() is forgotten
+task my_driver::run_phase(uvm_phase phase);
+  forever begin
+    seq_item_port.get_next_item(req);
+    // BUG: The objection is raised but never dropped!
+    phase.raise_objection(this, "Driving one transaction");
+    drive_item(req);
+    // seq_item_port.item_done(); // FORGOTTEN!
+  end
+endtask
+  `}
+  explanationSteps={[
+    { target: "3-7", title: "Setting a Drain Time", explanation: "The `set_drain_time` method tells the UVM scheduler to wait a specified amount of time after all objections for a phase have been dropped before actually ending the phase. If new objections are raised during this time, the phase continues. It's a safety net." },
+    { target: "9-13", title: "Enabling Objection Tracing", explanation: "Calling `uvm_top.set_objection_trace(1)` or using the `+UVM_OBJECTION_TRACE` plusarg on the command line tells UVM to print a detailed message every time an objection is raised or dropped, including the component path and the total objection count." },
+    { target: "16-23", title: "The Bug", explanation: "Here, the driver correctly raises an objection before driving an item. However, the author has forgotten to call `item_done()`, which is what ultimately causes the sequencer to drop its objection. The total objection count will never go to zero." },
+    { title: "The Debug Process", explanation: "When the simulation hangs, you would look at the log file. The objection trace would show the last component to raise an objection was this driver. You would see the total count go to 1 and never come back down. This immediately pinpoints the component (and likely the specific `get_next_item` call) that is the source of the hang." }
+  ]}
+/>
+
+## Level 3: Advanced Debug & Tool Integration
+
+### Systematic Debug Methodology: The 4-Step Process
+
+When faced with a complex bug, avoid random guessing. Follow a systematic process:
+1.  **Reproduce:** Find a *minimal* failing test case. Can you reproduce the bug with a specific seed? Can you simplify the sequence? A simple, repeatable failure is the most important first step.
+2.  **Isolate:** Narrow down the source of the failure. Is it in the DUT or the testbench? Use the UVM reporting system (`set_report_verbosity_level_hier`) to turn on `UVM_HIGH` verbosity for the suspect component. Use waveform logging of the interface signals to determine if the testbench is driving correctly and if the DUT is responding correctly.
+3.  **Root Cause:** Once isolated to a component, use UVM-aware debug tools to understand the internal state. Set breakpoints, examine UVM component hierarchy, inspect sequence states, and trace TLM connections.
+4.  **Fix and Verify:** Fix the bug, then *add a specific check* to your testbench to catch this exact failure mode in the future. This turns a bug into a permanent improvement in your verification environment.
+
+### Advanced Tool Integration: UVM-Aware Debugging
+
+Modern debug tools like **Verdi** and **Simvision** have powerful UVM-aware features.
+- **UVM Hierarchy Browser:** Instead of a simple design hierarchy, you can view the UVM component tree, making it easy to navigate your environment.
+- **Transaction-Level Debug:** You can see transactions (sequence items) as high-level objects in the waveform, and automatically trace them from the sequencer, through the driver, onto the physical pins, and back through the monitor to the scoreboard.
+- **Objection Debug:** These tools provide graphical views of the UVM phase and objection status, making it easy to spot the source of a hang.
+- **TLM Debug:** You can visualize TLM connections and see the transactions flowing through `uvm_analysis_port`s, which is invaluable for debugging scoreboards and coverage collectors.
+
+## Level 4: Architect's Corner
+
+### Debug Automation: The "Self-Checking" Environment
+
+As an architect, your goal is to build an environment that debugs itself as much as possible.
+- **Protocol Checkers:** Your monitors should not just observe traffic; they should contain protocol checkers that fire UVM errors if they see illegal behavior on the bus (e.g., a response arriving without a request).
+- **Scoreboard Assertions:** Your scoreboard should use `uvm_error` or `uvm_fatal` when it sees a data mismatch, not just a `$display`. A failing test should be loud and unambiguous.
+- **Automatic Timeouts:** Every test should have a timeout mechanism. The base test can `fork...join_none` a "watchdog" process that simply waits for a long time (e.g., 1ms) and then calls `uvm_fatal` if it's still running. This prevents a single hung test from stalling an entire overnight regression.
+
+### Performance Profiling
+
+Debug isn't just about correctness; it's also about performance. A testbench that takes 10 hours to run is a major bottleneck.
+- **Simulator Profilers:** Most simulators have a built-in profiler (e.g., VCS's `-profile` option). This tool will show you which parts of your code (both testbench and DUT) are consuming the most simulation time.
+- **Common Bottlenecks:**
+  - **Excessive Waveform Dumping:** Dumping large busses or memories can be extremely slow. Use conditional dumping (`$dumpvars(1, top.dut.sub_block)`) to only record the signals you need.
+  - **Inefficient Scoreboards:** Scoreboards that use associative arrays with deep queues can consume huge amounts of memory and CPU time during lookups. Consider optimizing your data structures.
+  - **Chatty TLM Connections:** A monitor that sends millions of transactions through an analysis port can create a huge amount of overhead. Consider adding a filter in the monitor to only send "interesting" transactions.
+
+### Case Study: Debugging a Coherency Protocol
+
+**The Challenge:** In a multi-core SoC, a test for the cache coherency protocol was failing. A read from one core was occasionally returning stale data after another core had written to the same cache line.
+
+**The Debug Process:**
+1.  **Reproduce:** The failure was intermittent. The team ran the test with 100 different seeds until they found one that failed consistently.
+2.  **Isolate:** This was a system-level problem. They couldn't isolate it to a single agent. Instead, they used the UVM's transaction recording features (`UVM_RECORD`) on all the bus interfaces.
+3.  **Root Cause (UVM-Aware Debug):** They loaded the waveform into Verdi. Using the transaction-level viewing feature, they could see the flow of coherency commands (Read-Shared, Write-Invalidate, etc.) across all the interfaces. They were able to put the transactions from all interfaces onto a single timeline. This revealed that a "Write-Invalidate" command from Core 2 was being dropped by the interconnect fabric under very specific load conditions, so Core 1 never knew its cache line was stale.
+4.  **Fix and Verify:** The DUT bug in the interconnect was fixed. Crucially, the verification team added a new monitor inside the interconnect that specifically watched for dropped coherency commands and would fire a `uvm_error` if it detected one.
+
+**The Lesson:** For system-level bugs, transaction-level debug is not a luxury; it's a necessity. The ability to see and correlate high-level transactions across multiple interfaces is the only way to efficiently debug complex, system-level interactions.
 
 ## Check Your Understanding
 

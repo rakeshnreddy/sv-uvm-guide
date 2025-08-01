@@ -15,28 +15,112 @@ Verifying individual IP blocks is essential, but it's not enough. When you integ
 - **IP-Level Verification:** Verifying individual buildings (the post office, the fire station, etc.).
 - **SoC-Level Verification:** Verifying the entire city. Do the roads connect the buildings correctly? Is there enough water and power for everyone? Does the fire department know how to get to the post office?
 
-## Level 2: Core Mechanics
+## Level 2: Core Strategies in Practice
 
-### Key Challenges
+### Hierarchical Verification & Vertical Reuse
 
-- **Complexity:** SoCs are incredibly complex, with many different IPs, clock domains, and power domains.
-- **Scale:** The sheer number of signals and components in an SoC can make simulation very slow.
-- **Integration Bugs:** These are bugs that only appear when multiple IPs are interacting with each other.
+The cornerstone of modern SoC verification is **vertical reuse**. You don't throw away your IP-level testbench when you move to the SoC level. Instead, you reuse it. At the SoC level, the IP-level testbench's active agent is configured to be *passive*, and it acts as a monitor and checker, while system-level stimulus is driven from other sources.
 
-### Key Strategies
+#### Interactive Example: Reusing an IP-Level Agent
 
-- **Hierarchical Verification:** Verify each IP block thoroughly before integrating it into the SoC.
-- **Vertical Reuse:** Reuse IP-level testbenches and sequences at the SoC level.
-- **Virtual Platforms:** Use virtual platforms (e.g., SystemC models) for early software development and integration testing.
-- **Hardware/Software Co-verification:** Verify the interaction between the hardware and software.
+Let's assume we have a `spi_agent` that was used to verify an SPI IP block. At the SoC level, this SPI IP is now connected to a CPU. We will reuse the `spi_agent` in passive mode to monitor the traffic driven by the CPU.
 
-## Level 3: Expert Insights
+<InteractiveCode
+  language="systemverilog"
+  fileName="soc_reuse.sv"
+  code={`
+// The IP-level test for the SPI block
+class spi_ip_test extends uvm_test;
+  spi_env m_env;
+  // ...
+  function void build_phase(uvm_phase phase);
+    // In the IP test, the agent is ACTIVE by default
+    // uvm_config_db#(uvm_active_passive_enum)::set(this, "m_env.m_agent", "is_active", UVM_ACTIVE);
+  endfunction
+endclass
 
-**The Importance of a Good Verification Plan:** A detailed verification plan is essential for SoC-level verification. It should specify which features need to be verified, how they will be verified, and what coverage metrics will be used to measure success.
+// The SoC-level test
+class my_soc_test extends uvm_test;
+  my_soc_env m_env;
+  // ...
+  function void build_phase(uvm_phase phase);
+    // At the SoC level, we set the SAME agent to PASSIVE
+    uvm_config_db#(uvm_active_passive_enum)::set(this, "m_env.m_spi_agent", "is_active", UVM_PASSIVE);
 
-**The Role of Emulation and Prototyping:** Emulation and prototyping are essential for finding bugs that are difficult to find in simulation, such as performance bottlenecks and race conditions.
+    // We also configure the CPU agent to drive SPI traffic
+    // ...
+  endfunction
 
-**Memory & Retention Tip:** Remember: **IP Verification = Building Inspection.** **SoC Verification = City Planning.**
+  task run_phase(uvm_phase phase);
+    // A virtual sequence coordinates the CPU to send SPI data
+    // The passive SPI agent will monitor the bus and check for correctness
+  endtask
+endclass
+  `}
+  explanationSteps={[
+    { target: "2-8", title: "IP-Level Test", explanation: "At the IP level, the `spi_agent` is configured as `UVM_ACTIVE`. Its driver generates stimulus and drives the SPI IP directly. This is how the IP is thoroughly verified in isolation." },
+    { target: "11-24", title: "SoC-Level Test", explanation: "At the SoC level, we instantiate the *exact same* `spi_env`. However, this time we use the `uvm_config_db` to configure its agent to be `UVM_PASSIVE`." },
+    { target: "16", title: "Configuring for Passivity", explanation: "This single line is the key to vertical reuse. The agent, seeing it's in `UVM_PASSIVE` mode, will not create its driver or sequencer. It will only create its monitor." },
+    { target: "21-23", title: "System-Level Stimulus", explanation: "In the `run_phase`, a system-level virtual sequence will command a CPU model (or other bus master) to generate SPI traffic. The `spi_agent`'s monitor will see this traffic, check it for protocol correctness, and send it to the system-level scoreboard, completely reusing the IP-level verification components." }
+  ]}
+/>
+
+## Level 3: Leadership & Multi-Domain Verification
+
+### Verification Planning & Risk Management
+
+For an SoC, the verification plan is the single most important document.
+- **Feature-Based Planning:** The plan should not be a list of registers or modules. It should be a list of *features* (e.g., "Boot from SPI", "DMA transfer from Ethernet to DDR").
+- **Risk Analysis:** Each feature must have a risk score (e.g., High/Medium/Low). The risk is a function of the feature's complexity, the novelty of the design, and the impact of a failure. High-risk features get the most verification resources.
+- **Verification Methodology Specification:** The plan must specify *how* each feature will be verified.
+  - **Example Feature: "Boot from SPI"**
+    - **UVM:** A virtual sequence will have the boot ROM agent read from the SPI agent and the CPU agent execute the code.
+    - **Formal:** Properties will prove the boot ROM state machine can never get stuck.
+    - **Emulation:** The actual boot code will be run on an emulator at high speed.
+- **Exit Criteria:** The plan must define when you are *done*. This is not just "100% code coverage." It's a combination of code coverage, functional coverage, assertion density, and a list of successfully run system-level scenarios.
+
+### Multi-Domain Verification (Digital, Analog, Mixed-Signal)
+
+Modern SoCs are not purely digital. They contain analog components like PLLs, ADCs, and DACs.
+- **Modeling Analog:** You cannot simulate analog circuits at the transistor level in a UVM environment. Instead, you use abstract models.
+  - **SystemVerilog Real Number Modeling:** Use `real` numbers and continuous assignments to create an approximate, fast-simulating model of the analog behavior.
+  - **SystemC/Wreal:** Use `wreal` (real number wires) to connect a digital SystemVerilog model to a more accurate analog model written in SystemC.
+- **Connecting Domains:** The `uvm_config_db` can be used to pass configuration from the digital UVM world to the analog models (e.g., setting a bias voltage). A custom UVM driver can be written to drive `real` values to the analog model.
+
+## Level 4: Architect's Corner
+
+### Case Study: Verification of a Multi-Core AI Accelerator SoC
+
+**The Challenge:** Verify a complex SoC designed for AI workloads. It contained a custom RISC-V multi-core processor cluster, a specialized neural network accelerator (NNA), and high-speed memory interfaces (HBM).
+
+**The Verification Strategy:**
+
+1.  **Hierarchical Verification:**
+    *   **IP-Level:** The RISC-V cores were verified with a standard core-level UVM environment. The NNA and HBM controllers were also verified in standalone UVM environments.
+    *   **Sub-System Level:** The multi-core cluster was verified as a subsystem. A UVM environment was created to test the coherency protocol and the interconnect between the cores.
+2.  **Vertical Reuse:**
+    *   At the SoC level, the IP-level agents for the RISC-V cores, NNA, and HBM were all reused in passive mode. Their monitors and coverage collectors were essential for SoC-level debug.
+3.  **System-Level Scenarios (UVM):**
+    *   A library of virtual sequences was created to model realistic AI workloads. For example, a `run_inference_seq` would:
+        1.  Use the HBM agent's sequences to load weights and input data into memory.
+        2.  Use the RISC-V agent's sequences to have the CPU cores configure the NNA.
+        3.  Trigger the NNA to run the inference calculation.
+        4.  Use the HBM agent's monitor to check that the correct output data was written to memory.
+4.  **Hardware/Software Co-Verification (Emulation):**
+    *   The same C/C++ tests that were run on the instruction set simulator (ISS) for the RISC-V cores were compiled and run on an emulator (e.g., Palladium or Zebu). This allowed the team to run real-world applications (like a small neural network) millions of times faster than in simulation.
+5.  **Formal Verification:**
+    *   Formal was used to prove that the interconnect between the cores and the NNA was deadlock-free and that the security registers were not accessible by non-secure transactions.
+
+**The Outcome:** This multi-pronged strategy was essential for success. A critical coherency bug was found by the subsystem-level UVM test. A performance bottleneck was only found when running a real application on the emulator. A security flaw was proven to be absent by the formal tools. No single methodology could have provided the required level of confidence.
+
+### Final Word: The Verification Architect's Mindset
+
+SoC verification is about managing complexity. Your job as an architect is not just to write code, but to make strategic decisions. You must constantly ask:
+- What is the biggest risk on this project, and how can I best mitigate it?
+- What is the most efficient way to verify this feature (UVM, Formal, Emulation)?
+- How can I build a verification environment that is not just correct, but also reusable, scalable, and easy for a large team to use?
+
+Answering these questions is the difference between a verification engineer and a verification architect.
 
 ## Check Your Understanding
 
