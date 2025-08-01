@@ -22,7 +22,7 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
   const Icon = Book;
   const tierColor = '#0ea5e9';
 
-  const firstTopicSlug = module.lessons[0]?.slug || 'index';
+  const firstTopicSlug = module.topics[0]?.slug || 'index';
   const startLink = `/curriculum/${tier.slug}/${module.slug}/${firstTopicSlug}`;
 
   const isCompleted = progress === 100;
@@ -51,7 +51,7 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
               <div className="space-y-2 text-sm text-muted-foreground">
                 <div className="flex items-center gap-2">
                     <Star className="w-4 h-4" />
-                    <span>{module.lessons.length} Lessons</span>
+                    <span>{module.topics.length} Lessons</span>
                 </div>
               </div>
             </CardContent>
