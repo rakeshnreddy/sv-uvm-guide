@@ -1,14 +1,28 @@
 import { test, expect } from '@playwright/test';
-import { curriculumData } from '../../src/lib/curriculum-data';
+import { tiers } from '../../src/lib/curriculum-data';
 
-test('all curriculum pages load', async ({ page }) => {
-  for (const module of curriculumData) {
-    for (const section of module.sections) {
-      for (const topic of section.topics) {
-        const url = `/curriculum/${module.slug}/${section.slug}/${topic.slug}`;
-        const response = await page.goto(url);
-        expect(response?.status(), `Failed to load ${url}`).toBeLessThan(400);
+test.describe('Curriculum Navigation', () => {
+  test('all curriculum topic pages load successfully', async ({ page }) => {
+    // Increase timeout as this test visits many pages
+    test.setTimeout(240000); // 4 minutes
+
+    for (const tier of tiers) {
+      for (const module of tier.modules) {
+        for (const topic of module.lessons) {
+          const url = `/curriculum/${tier.slug}/${module.slug}/${topic.slug}`;
+          console.log(`Navigating to: ${url}`);
+          const response = await page.goto(url, { waitUntil: 'domcontentloaded' });
+
+          // Check for successful response (200 OK)
+          expect(response?.status(), `Failed to load ${url}`).toBe(200);
+
+          // Check for a main heading to ensure content rendered
+          const heading = page.locator('h1');
+          await expect(heading.first(), `URL ${url} should have an h1 title`).toBeVisible();
+          const headingText = await heading.first().textContent();
+          expect(headingText?.trim(), `h1 at ${link} should not be empty`).not.toBe('');
+        }
       }
     }
-  }
+  });
 });
