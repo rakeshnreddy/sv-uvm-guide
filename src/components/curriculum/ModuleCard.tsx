@@ -8,7 +8,7 @@ import { CheckCircle, Lock, PlayCircle, Star, Book } from 'lucide-react';
 
 interface ModuleCardProps {
   module: ModuleEntry;
-  tier: Tier;
+  tier?: Tier;
   isLocked?: boolean;
   progress?: number;
 }
@@ -22,8 +22,10 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
   const Icon = Book;
   const tierColor = '#0ea5e9';
 
-  const firstTopicSlug = module.topics[0]?.slug || 'index';
-  const startLink = `/curriculum/${tier.slug}/${module.slug}/${firstTopicSlug}`;
+  const firstTopicSlug = module.lessons?.[0]?.slug || 'index';
+  const startLink = tier
+    ? `/curriculum/${tier.slug}/${module.slug}/${firstTopicSlug}`
+    : '#';
 
   const isCompleted = progress === 100;
 
