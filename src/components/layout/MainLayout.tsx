@@ -2,8 +2,11 @@
 import React from "react";
 import Navbar from "@/components/Navbar";
 import Footer from "@/components/Footer";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 
 const MainLayout = ({ children }: { children: React.ReactNode }) => {
+  useKeyboardShortcuts();
+
   return (
     <div className="flex flex-col min-h-screen">
       <Navbar />

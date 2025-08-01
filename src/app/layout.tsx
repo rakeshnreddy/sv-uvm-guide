@@ -43,6 +43,8 @@ import "./globals.css";
 import MainLayout from "@/components/layout/MainLayout"; // Corrected Import MainLayout path
 import { SessionProvider } from '@/components/providers/SessionProvider';
 import { AuthProvider } from '@/contexts/AuthContext';
+import { NavigationProvider } from '@/contexts/NavigationContext';
+import Sidebar from '@/components/layout/Sidebar';
 // The AIAssistant (full chat) is removed from global layout for now.
 // The PersistentAITutorButton will be the global widget.
 // import AIAssistant from "@/components/ai/AIAssistant";
@@ -81,8 +83,11 @@ export default function RootLayout({ children }: RootLayoutProps) {
         <ThemeProvider attribute="data-theme" defaultTheme="default-dark" disableTransitionOnChange>
           <SessionProvider>
             <AuthProvider>
-              <MainLayout>{children}</MainLayout>
-              <AIAssistantWidget />
+              <NavigationProvider>
+                <Sidebar />
+                <MainLayout>{children}</MainLayout>
+                <AIAssistantWidget />
+              </NavigationProvider>
             </AuthProvider>
           </SessionProvider>
         </ThemeProvider>
