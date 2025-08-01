@@ -1,5 +1,5 @@
 import React from 'react';
-import { Tier } from '@/lib/curriculum-data';
+import { Tier, getModules } from '@/lib/curriculum-data';
 import { ModuleCard } from './ModuleCard';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Lock, ChevronDown } from 'lucide-react';
@@ -39,7 +39,7 @@ export const TierSection: React.FC<TierSectionProps> = ({
     <div className={cn("relative mb-4 border rounded-lg overflow-hidden", !isTierUnlocked && "opacity-60 cursor-not-allowed", isOpen && "shadow-lg")}>
         <button onClick={onToggle} disabled={!isTierUnlocked} className="w-full p-6 text-left hover:bg-muted/50 transition-colors">
             <div className="flex justify-between items-center mb-2">
-                <h2 className="text-2xl md:text-3xl font-bold font-sans" style={{ color: tier.color }}>
+                <h2 className="text-2xl md:text-3xl font-bold font-sans">
                     {tier.title}
                 </h2>
                 <div className="flex items-center gap-4">
@@ -47,10 +47,7 @@ export const TierSection: React.FC<TierSectionProps> = ({
                   <ChevronDown className={cn("w-6 h-6 transition-transform", isOpen && "rotate-180")} />
                 </div>
             </div>
-            <p className="text-md text-muted-foreground mt-1 mb-4 max-w-4xl">
-                {tier.description}
-            </p>
-            <TierProgressBar progress={tierProgress} color={tier.color} />
+            <TierProgressBar progress={tierProgress} color="#0ea5e9" />
         </button>
         <AnimatePresence initial={false}>
             {isOpen && (
@@ -68,7 +65,7 @@ export const TierSection: React.FC<TierSectionProps> = ({
                 >
                     <div className="p-6 pt-2">
                       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                        {tier.modules.map(module => (
+                        {getModules(tier).map(module => (
                           <ModuleCard
                             key={module.id}
                             module={module}
