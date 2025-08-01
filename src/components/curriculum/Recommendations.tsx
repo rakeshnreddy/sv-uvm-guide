@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { tiers } from '@/lib/curriculum-data';
+import { curriculumData, getModules } from '@/lib/curriculum-data';
 import { useCurriculumProgress } from '@/hooks/useCurriculumProgress';
 import { ModuleCard } from './ModuleCard';
 import { ArrowRight } from 'lucide-react';
@@ -14,11 +14,11 @@ export const Recommendations = () => {
   }
 
   const recommendedModules = [];
-  for (const tier of tiers) {
-    if (isTierUnlocked(tier.id)) {
-      for (const module of tier.modules) {
-        if (recommendedModules.length < 3 && !isModuleLocked(module.id, tier.id) && getModuleProgress(module.id) === 0) {
-          recommendedModules.push({ ...module, tierId: tier.id });
+  for (const tier of curriculumData) {
+    if (isTierUnlocked(tier.slug)) {
+      for (const mod of getModules(tier)) {
+        if (recommendedModules.length < 3 && !isModuleLocked(mod.id, tier.slug) && getModuleProgress(mod.id) === 0) {
+          recommendedModules.push({ ...mod, tierId: tier.slug });
         }
       }
     }

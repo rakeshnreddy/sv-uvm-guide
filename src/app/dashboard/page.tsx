@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { useCurriculumProgress } from '@/hooks/useCurriculumProgress';
-import { tiers } from '@/lib/curriculum-data';
+import { curriculumData, getModules } from '@/lib/curriculum-data';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Progress } from '@/components/ui/Progress';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -15,10 +15,10 @@ const DashboardPage = () => {
     return <DashboardSkeleton />;
   }
 
-  const completedModules = tiers.flatMap(t => t.modules).filter(m => getModuleProgress(m.id) === 100).length;
-  const totalModules = tiers.flatMap(t => t.modules).length;
+  const completedModules = curriculumData.flatMap(t => getModules(t)).filter(m => getModuleProgress(m.id) === 100).length;
+  const totalModules = curriculumData.flatMap(t => getModules(t)).length;
   const overallProgress = totalModules > 0 ? Math.round((completedModules / totalModules) * 100) : 0;
-  const unlockedTiers = tiers.filter(t => isTierUnlocked(t.id)).length;
+  const unlockedTiers = curriculumData.filter(t => isTierUnlocked(t.slug)).length;
 
   return (
     <div className="container mx-auto p-4 md:p-8">
@@ -45,7 +45,7 @@ const DashboardPage = () => {
           </CardHeader>
           <CardContent>
              <div className="text-2xl font-bold">
-                {unlockedTiers} / {tiers.length}
+                {unlockedTiers} / {curriculumData.length}
              </div>
              <p className="text-xs text-muted-foreground">Keep going to unlock more!</p>
           </CardContent>
@@ -67,7 +67,7 @@ const DashboardPage = () => {
       <div>
         <h2 className="text-2xl font-bold mb-4">Progress by Tier</h2>
         <div className="space-y-6">
-          {tiers.map(tier => (
+          {curriculumData.map(tier => (
             <Card key={tier.id}>
               <CardHeader>
                 <CardTitle>{tier.title}</CardTitle>
@@ -75,12 +75,12 @@ const DashboardPage = () => {
               <CardContent>
                 <div className="mb-2 flex justify-between items-center">
                   <span className="text-sm text-muted-foreground">Tier Progress</span>
-                  <span className="font-semibold">{getTierProgress(tier.id)}%</span>
+                  <span className="font-semibold">{getTierProgress(tier.slug)}%</span>
                 </div>
-                <Progress value={getTierProgress(tier.id)} />
+                <Progress value={getTierProgress(tier.slug)} />
                 <div className="mt-4 space-y-2">
                     <h4 className="font-semibold">Modules:</h4>
-                    {tier.modules.map(module => (
+                    {getModules(tier).map(module => (
                         <div key={module.id} className="flex justify-between items-center text-sm">
                             <span>{module.title}</span>
                             <span className={getModuleProgress(module.id) === 100 ? 'text-green-500' : ''}>{getModuleProgress(module.id)}%</span>
