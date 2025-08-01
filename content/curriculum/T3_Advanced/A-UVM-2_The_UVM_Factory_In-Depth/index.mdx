@@ -43,6 +43,50 @@ factory.set_type_override_by_name("my_driver", "error_driver");
 ```
 </InteractiveCode>
 
+### Architectural Pattern: The Configurable Agent
+
+A powerful use of the factory is to create an agent that can be easily configured to be active or passive. This is a cornerstone of vertical reuse, allowing you to reuse the same agent at the block level (as an active driver) and at the SoC level (as a passive monitor).
+
+<InteractiveCode
+  language="systemverilog"
+  fileName="configurable_agent.sv"
+  code={`
+// The agent's build_phase
+function void my_agent::build_phase(uvm_phase phase);
+  super.build_phase(phase);
+  // By default, create a passive monitor
+  m_monitor = my_monitor::type_id::create("m_monitor", this);
+
+  if (is_active == UVM_ACTIVE) begin
+    // If the agent is active, also create the driver and sequencer
+    m_driver    = my_driver::type_id::create("m_driver", this);
+    m_sequencer = my_sequencer::type_id::create("m_sequencer", this);
+  end
+endfunction
+
+// In a base test (passive monitoring)
+// No overrides needed, the agent is passive by default.
+
+// In a block-level test (active stimulus)
+class block_test extends base_test;
+  `uvm_component_utils(block_test)
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    // Override the agent to be active
+    factory.set_type_override_by_name("my_agent", "my_active_agent");
+  endfunction
+endclass
+
+// Where `my_active_agent` is just an extension of `my_agent`
+// that sets `is_active = UVM_ACTIVE` in its constructor.
+  `}
+  explanationSteps={[
+    { target: "2-11", title: "The Configurable Agent", explanation: "The agent's `build_phase` first creates the monitor, which is always needed. It then checks the `is_active` flag. Only if the agent is `UVM_ACTIVE` does it create the driver and sequencer. This is the key pattern." },
+    { target: "19-26", title: "The Active Test", explanation: "In a test where we need the agent to be active, we don't change the agent's code. Instead, we use a factory override to replace the default `my_agent` with an `my_active_agent`." },
+    { target: "28-29", title: "The Active Agent Wrapper", explanation: "`my_active_agent` is an empty wrapper around `my_agent`. Its only purpose is to call its parent constructor and set the `is_active` flag to `UVM_ACTIVE`. The factory override swaps in this version, which then builds the driver and sequencer. This is a clean, non-intrusive way to control the agent's topology." }
+  ]}
+/>
+
 ### Debugging the Factory
 
 When an override doesn't work as expected, the `print()` method is your best friend.
@@ -56,13 +100,62 @@ factory.print();
 
 This will print a detailed report of all the factory's registered types, overrides, and instance overrides.
 
-## Level 3: Expert Insights
+## Level 3: Methodology & Strategy
 
-**Factory Verbosity:** You can control the amount of information the factory prints using `uvm_top.set_report_verbosity_level_hier(UVM_FULL)`.
+### Methodology Customization with the Factory
 
-**Parameterized Classes:** The factory has limited support for parameterized classes. It's often better to use a wrapper class or a different approach when dealing with parameterized classes and factory overrides.
+The factory is the primary mechanism for customizing and extending a verification methodology without modifying the original source code.
 
-**Memory & Retention Tip:** Remember: **Instance Override = Specific Target.** **String Override = Flexible but Risky.** **`factory.print()` = Your Debugging Superpower.**
+- **Creating Custom Component Base Classes:** A common practice in large companies is to create a custom base class for all components (e.g., `my_company_driver extends uvm_driver`). This custom class can contain company-specific additions, such as hooks for a proprietary reporting or debug system. To ensure all drivers in the environment use this new base class, you can set a global factory override in your base test:
+  `factory.set_type_override_by_name("uvm_driver", "my_company_driver");`
+
+- **Swapping in Protocol-Specific Checkers:** Imagine a generic bus scoreboard. For an AHB bus, you want it to use an `ahb_checker`. For an AXI bus, you want an `axi_checker`. You can create your scoreboard to contain a generic `uvm_component` called `m_checker`. Then, in your AHB environment, you use the factory to override `m_checker` with the `ahb_checker`. In the AXI environment, you override it with the `axi_checker`. This makes the scoreboard highly reusable.
+
+### Leadership: Planning a Factory Strategy
+
+As a verification lead or architect, how you manage the factory is a critical policy decision.
+- **Centralized vs. Decentralized Overrides:** Do you allow every test writer to set their own overrides, or do you have a centralized file or base test that controls all overrides?
+  - **Centralized (Recommended):** A centralized approach (e.g., in a `test_library`'s `build_phase`) is more maintainable and predictable. It provides a single place to look to understand the environment's configuration.
+  - **Decentralized:** Allowing overrides in individual tests can lead to chaos. A test might pass or fail depending on a "hidden" override deep in the test file, making regression debug very difficult.
+
+- **Policy on String-Based Overrides:** Do you allow them? A good policy is to **ban string-based overrides in all RTL-level testbenches**. They are acceptable for scripting or top-level testbenches where flexibility is key, but for reusable VIP, the compile-time safety of `get_type()` overrides is essential.
+
+## Level 4: Architect's Corner
+
+### Advanced Factory Usage: The "Abstract Agent" Pattern
+
+**The Challenge:** You need to create a piece of Verification IP (VIP) for a standard bus protocol, like AXI. This VIP will be used by many different teams in your company, and each team might have slightly different needs. Team A needs a simple AXI4-Lite agent. Team B needs a full AXI4 agent with burst support. Team C needs an AXI-Stream agent.
+
+**The Anti-Pattern:** Creating three separate, monolithic agents (`axi_lite_agent`, `axi4_agent`, `axi_stream_agent`). This leads to massive code duplication and a maintenance nightmare.
+
+**The Architectural Pattern:**
+
+1.  **Create an Abstract Base Agent (`axi_base_agent`):** This agent contains all the common elements: a virtual interface handle, an `is_active` flag, and a `uvm_analysis_port`. However, its `build_phase` and `connect_phase` are **empty virtual methods**. It cannot be constructed directly.
+
+2.  **Create Concrete Component Classes:** Create different driver and monitor classes for each protocol variant (e.g., `axi_lite_driver`, `axi4_driver`, `axi_stream_driver`).
+
+3.  **Create Concrete Agent Implementations:** Create specific agent classes that extend the abstract base agent (e.g., `class axi4_agent extends axi_base_agent`). In the `build_phase` of this concrete agent, you use the factory to construct the specific components you need (`m_driver = axi4_driver::type_id::create(...)`).
+
+4.  **Use the Factory in the Environment:** The environment is built to contain the *abstract* `axi_base_agent`.
+    ```systemverilog
+    class my_env extends uvm_env;
+      axi_base_agent m_agent; // Contains the abstract agent
+      //...
+      function void build_phase(uvm_phase phase);
+        // The factory creates the agent
+        m_agent = axi_base_agent::type_id::create("m_agent", this);
+      endfunction
+    endclass
+    ```
+
+5.  **Control Everything from the Test:** In a test, you use a single factory override to select the desired agent "personality":
+    ```systemverilog
+    // Test for AXI4-Lite
+    factory.set_type_override_by_type(axi_base_agent::get_type(), axi_lite_agent::get_type());
+    ```
+    This single line of code tells the factory, "Whenever someone tries to create an `axi_base_agent`, create an `axi_lite_agent` instead." The `axi_lite_agent` then populates itself with the correct driver and monitor.
+
+**The Outcome:** This pattern provides the ultimate in reusability and configurability. The environment is completely generic. All the protocol-specific details are encapsulated in the concrete agent classes, and the choice of which protocol to use is controlled by a single, clean factory override in the test. This is a hallmark of a professional, architect-level UVM environment.
 
 ## Check Your Understanding
 
