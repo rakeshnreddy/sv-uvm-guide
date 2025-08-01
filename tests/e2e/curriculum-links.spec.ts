@@ -1,26 +1,21 @@
+
 import { test, expect } from '@playwright/test';
-import { tiers } from '../../src/lib/curriculum-data';
+import { curriculumData } from '../../src/lib/curriculum-data';
 
-test.describe('Curriculum Page Title Integrity', () => {
-  // Increase timeout as this test visits many pages
-  test.setTimeout(240000); // 4 minutes
+test('should successfully load all curriculum pages and have correct titles', async ({ page }) => {
+  for (const courseModule of curriculumData) {
+    for (const section of courseModule.sections) {
+      for (const topic of section.topics) {
+        const url = `/curriculum/${courseModule.slug}/${section.slug}/${topic.slug}`;
 
-  for (const tier of tiers) {
-    for (const module of tier.modules) {
-      for (const topic of module.lessons) {
-        const url = `/curriculum/${tier.slug}/${module.slug}/${topic.slug}`;
+        await test.step(`checking ${url}`, async () => {
+          await page.goto(url);
 
-        test(`page ${url} should have the correct title`, async ({ page }) => {
-          await page.goto(url, { waitUntil: 'domcontentloaded' });
-
-          const response = await page.waitForResponse(response => response.url().endsWith(url) && response.status() === 200);
+          const response = await page.waitForResponse(url);
           expect(response.status()).toBe(200);
 
           const heading = page.locator('h1');
-          await expect(heading).toBeVisible();
-
-          // Use a flexible check for the title, as it might be decorated
-          await expect(heading).toContainText(topic.title);
+          await expect(heading).toHaveText(topic.title);
         });
       }
     }
