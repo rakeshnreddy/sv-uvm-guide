@@ -6,11 +6,11 @@ const InteractiveUvmDiagram = () => {
     <svg className="w-full h-auto" viewBox="0 0 850 650" xmlns="http://www.w3.org/2000/svg" fontFamily="Arial, sans-serif" fontSize="14px" role="img" aria-label="UVM component interactions diagram">
       <style>
         {`
-          .block { stroke: hsl(var(--primary)); stroke-width: 1.5; fill: hsl(var(--primary-foreground)); }
+          .block { stroke: hsl(var(--primary)); strokeWidth: 1.5; fill: hsl(var(--primary-foreground)); }
           .dark .block { stroke: hsl(var(--primary)); fill: hsl(var(--background)); }
           .label { text-anchor: middle; fill: hsl(var(--foreground)); }
-          .line { stroke: hsl(var(--foreground)); stroke-width: 1; marker-end: url(#arrowhead); }
-          .data-flow { stroke: hsl(var(--accent)); stroke-width: 1.5; marker-end: url(#arrowhead-data); }
+          .line { stroke: hsl(var(--foreground)); strokeWidth: 1; marker-end: url(#arrowhead); }
+          .data-flow { stroke: hsl(var(--accent)); strokeWidth: 1.5; marker-end: url(#arrowhead-data); }
           .passive { stroke-dasharray: 4 2; }
         `}
       </style>
