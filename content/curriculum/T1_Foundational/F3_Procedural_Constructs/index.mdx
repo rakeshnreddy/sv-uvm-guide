@@ -22,198 +22,42 @@ import { DiagramPlaceholder } from '@/components/templates/InfoPage';
 - **`always` blocks** are executed continuously throughout a simulation.
 - **`final` blocks** are executed only once at the end of a simulation.
 
-### Blocking vs. Non-blocking Assignments: The #1 Source of Bugs
+### Blocking vs. Non-blocking Assignments
 
-This is arguably the most critical concept for new RTL designers and verification engineers to master. Misusing these assignment operators can lead to simulation-synthesis mismatches, race conditions, and bugs that are incredibly hard to find.
+A critical concept in procedural blocks is the difference between blocking (`=`) and non-blocking (`<=`) assignments.
 
-- **Blocking assignments (`=`)**: The simulator executes this statement before moving to the next. It "blocks" subsequent statements. Use this for modeling **combinational logic** within an `always_comb` block or for typical software-like operations in a testbench.
+- **Blocking assignments (`=`)** are executed in the order they appear in the code.
+- **Non-blocking assignments (`<=`)** are scheduled to occur at the end of the current time step.
 
-- **Non-blocking assignments (`<=`)**: The simulator evaluates the right-hand side immediately but "schedules" the update to the left-hand side to occur at the very end of the current time step, after all other processing is done. Use this for modeling **sequential logic** (flip-flops) inside an `always_ff` block.
-
-#### Interactive Example: Seeing the Difference
-
-Let's see what happens when we use both types of assignments to model a simple 2-stage shift register.
-
-<InteractiveCode
-  language="systemverilog"
-  fileName="assignments_example.sv"
-  code={`
-module assignment_demo;
-  logic clk, reset;
-  logic d_in;
-
-  // Correctly modeled shift register
-  logic q1_good, q2_good;
-  always_ff @(posedge clk) begin
-    q1_good <= d_in;
-    q2_good <= q1_good; // Uses non-blocking
+<InteractiveCode>
+```systemverilog
+// Example of always_ff for a simple flip-flop
+logic clk, reset, d_in, q_out;
+always_ff @(posedge clk or posedge reset) begin
+  if (reset) begin
+    q_out <= 1'b0; // Use non-blocking for state elements
+  end else begin
+    q_out <= d_in;
   end
+end
 
-  // INCORRECTLY modeled shift register
-  logic q1_bad, q2_bad;
-  always_ff @(posedge clk) begin
-    q1_bad = d_in;
-    q2_bad = q1_bad; // Uses blocking
-  end
+// Example of always_comb for combinational logic
+logic a, b, c, y_comb;
+always_comb begin
+  y_comb = a & b | c; // Use blocking for combinational logic
+end
+```
+</InteractiveCode>
 
-  // Stimulus
-  initial begin
-    clk = 0; forever #5 clk = ~clk;
-  end
-
-  initial begin
-    reset = 1; d_in = 0; #12;
-    reset = 0;
-    d_in = 1; #10;
-    d_in = 0; #10;
-    $finish;
-  end
-endmodule
-  `}
-  explanationSteps={[
-    { target: "7-10", title: "The Correct Way: Non-Blocking", explanation: "Inside this `always_ff`, we use non-blocking (`<=`). At the clock edge, both statements are evaluated *in parallel*. `q1_good` gets the current value of `d_in`, and `q2_good` gets the *old* value of `q1_good`. This correctly models how two flip-flops would behave in hardware." },
-    { target: "13-16", title: "The Wrong Way: Blocking", explanation: "Here, we use blocking (`=`). At the clock edge, the first statement executes completely: `q1_bad` gets the value of `d_in`. THEN, the second statement executes: `q2_bad` gets the *new* value of `q1_bad`. Both registers get updated with the same data in the same clock cycle. This models a wire, not a shift register, and is a classic synthesis mismatch bug." },
-    { target: "24-26", title: "Simulation Output", explanation: "If you were to run this, you'd see `q2_good` lag `q1_good` by one cycle, as expected. However, `q2_bad` would change at the exact same time as `q1_bad`, which is not what the hardware will do. This is a critical bug found by understanding assignment types." },
-  ]}
-/>
+<DiagramPlaceholder title="Blocking vs. Non-blocking Assignment Timing" />
 
 ## Level 3: Expert Insights
 
-### Fork-Join: The Key to Parallelism
+**Race Conditions:** A common source of bugs in procedural code is race conditions. This is when the order of execution of two or more concurrent processes is not guaranteed. Using non-blocking assignments in sequential logic helps to avoid race conditions.
 
-In a testbench, you often need to do multiple things at the same time. For example, you might want to drive stimulus, watch for error conditions, and check scoreboard results simultaneously. `fork-join` is SystemVerilog's mechanism for managing parallel threads of execution.
+**Simulation vs. Synthesis:** Not all procedural constructs are synthesizable. For example, `initial` blocks are generally not synthesizable, and `final` blocks are never synthesizable.
 
-- **`fork...join`**: The parent process blocks until all the forked processes have completed.
-- **`fork...join_any`**: The parent process blocks until just *one* of the forked processes has completed. The rest are killed.
-- **`fork...join_none`**: The parent process continues immediately. The forked processes are left running in the background. This is the most common form used in testbenches.
-
-```systemverilog
-// Example: Driving stimulus and watching for a timeout error
-initial begin
-  fork
-    // Thread 1: Drive the main stimulus
-    begin
-      drive_transactions();
-      $display("Stimulus finished.");
-    end
-
-    // Thread 2: Watch for a timeout error
-    begin
-      #1000ns;
-      $fatal(1, "Test timed out!");
-    end
-  join_any // Continue as soon as one of these finishes
-  $display("Test finished or timed out.");
-end
-```
-
-### War Story: The Unkillable Fork
-
-A junior engineer on my team was writing a test for a DMA engine. He used `fork...join_none` to start a background process that would wiggle a sideband signal randomly throughout the test. The test ran, it passed, and everything seemed fine. However, when the next test in the regression started, it failed immediately with a weird error. What happened? The `fork...join_none` process from the *first test* was never killed. It was still running in the background, corrupting the state for the *second test*. **The lesson:** `fork...join_none` is powerful, but dangerous. You must have a mechanism to kill the background threads at the end of your test, usually by using `disable fork` or by having the threads themselves terminate when a global "test_done" event is triggered.
-
-### Synthesis vs. Simulation
-
-A golden rule: **Procedural constructs are for verification and high-level behavioral modeling. They are not all synthesizable.**
-- **Synthesizable:** `always_ff`, `always_comb`, `always_latch`. `if/else`, `case`. For loops (with constant bounds). Functions and tasks (with restrictions).
-- **Not Synthesizable:** `initial`, `final`, `fork-join`, `repeat`, `forever`, `#` delays, events. These are the lifeblood of a testbench but have no meaning in hardware. A synthesis tool will ignore or error out on them.
-
-## Industry Connection
-
-### Procedural Code in UVM
-
-Procedural constructs are the engine of a UVM testbench.
-*   **Drivers:** A UVM driver (`uvm_driver`) contains a `run_phase` task, which is a procedural block, typically with a `forever` loop. Inside this loop, it calls `seq_item_port.get_next_item(req)`, which is a blocking task. Once a sequence item arrives, the driver executes procedural code to wiggle the DUT's pins according to the protocol.
-*   **Monitors:** A UVM monitor (`uvm_monitor`) also uses a `run_phase` with a `forever` loop. It procedurally samples interface signals, assembles transactions, and writes them to an analysis port.
-*   **Sequences:** A UVM sequence (`uvm_sequence`) has a `body` task. This is where you write procedural code to define the stimulus scenario, generating transactions and sending them to the driver.
-
----
-
-## Historical Context
-
-### The Evolution of `always`
-
-In classic Verilog (1995), there was only one `always` block. You had to manually code the sensitivity list (the `@(...)` part) and be very careful to ensure it correctly described combinational or sequential logic. This was a major source of bugs.
-
-SystemVerilog (2005) introduced specialized `always` blocks to solve this:
-*   **`always_comb`**: The simulator infers the sensitivity list for you. It automatically triggers whenever any signal on the right-hand side of an assignment changes. It also checks to make sure you are not modeling a latch, which is a common mistake.
-*   **`always_ff`**: This explicitly declares your intent to model a flip-flop. The simulator enforces rules, for example, it will warn you if you use blocking assignments inside.
-*   **`always_latch`**: This explicitly declares your intent to model a latch, which is generally discouraged in design but sometimes necessary.
-
-These specialized forms make the designer's intent clear and allow tools to catch far more errors automatically.
-
----
-
-## Practical Application
-
-### Writing a Simple Driver
-
-Let's say you have an `interface` with `req` and `data` signals. Here’s how you could write a simple procedural task to drive a transaction.
-
-```systemverilog
-task drive_one_packet(logic [7:0] p_data);
-  // Step 1: Wait for request to be low
-  @(posedge clk iff !vif.req);
-
-  // Step 2: Drive data and raise request
-  vif.req <= 1'b1;
-  vif.data <= p_data;
-  @(posedge clk);
-
-  // Step 3: Wait for grant, then lower request
-  @(posedge clk iff vif.gnt);
-  vif.req <= 1'b0;
-endtask
-```
-This task demonstrates a state machine implemented with procedural code. It waits for events (`@`), drives values (`<=`), and follows a specific sequence—the core of protocol-based verification.
-
----
-
-## Debugging Tips
-
-When your procedural code isn't working, here are the go-to debug techniques:
-*   **`$display`:** Your best friend. Sprinkle `$display("Timestamp: %0t, state: %s, data: %h", $time, my_state.name(), my_data);` throughout your code to trace execution flow and variable values.
-*   **Waveform Viewer:** In your waveform tool, find the procedural block. Most tools will show you which line of code is currently executing. You can step forward and backward by clock cycles to see how signals change as the code executes.
-*   **Breakpoints:** Set a breakpoint on a specific line in your procedural code. The simulation will stop when it hits that line, and you can inspect all variables in the simulation to understand the current state.
-*   **`$monitor`:** While `$display` prints every time it's hit, `$monitor` prints only when one of its arguments changes value. It's great for watching signals without cluttering the log file.
-
----
-
-## Self-Assessment
-
-### Debugging Exercise
-
-You've written the following code to model a two-stage pipeline register. When you simulate it, `q2` gets updated with the value of `d_in` in the same cycle that `q1` does. It's not behaving like a two-stage pipeline.
-
-```systemverilog
-// What's wrong with this code?
-always_ff @(posedge clk) begin
-  q1 = d_in;
-  q2 = q1;
-end
-```
-**Find the Bug:** What is the one-character change that will fix this module?
-> **Answer:** The blocking assignments (`=`) should be changed to non-blocking assignments (`<=`). The `=` causes `q1` to be updated first, and then the *new* value of `q1` is immediately assigned to `q2`. Using `<=` schedules both assignments to happen "at the same time" at the end of the time step, correctly using the *old* value of `q1`.
-
-### Code Challenge
-
-Write a procedural block that does the following:
-1.  Uses `fork...join_none` to start two background threads.
-2.  Thread 1 toggles a `heartbeat` signal every 3 clock cycles.
-3.  Thread 2 waits for a global `error_event` to be triggered. If it sees it, it prints a fatal error message.
-4.  The main thread continues execution without waiting for these threads.
-
----
-
-## Common Interview Questions
-
-**Q1: Explain the difference between blocking and non-blocking assignments. When should you use each?**
-> **A1:** Blocking (`=`) assignments execute sequentially. The simulator waits for the statement to complete before moving to the next line. Use them for combinational logic (`always_comb`) and procedural testbench code. Non-blocking (`<=`) assignments execute in parallel. The simulator evaluates all right-hand sides in a block and schedules the assignments to occur at the end of the time step. Use them for sequential logic (`always_ff`) to avoid race conditions and correctly model flip-flops.
-
-**Q2: What is a race condition in SystemVerilog?**
-> **A2:** A race condition occurs when the final result of a simulation depends on the unpredictable order in which the simulator executes concurrent processes. A classic example is having two `always` blocks that read and write the same variable. If it's not clear which block should execute first, you have a race. Using non-blocking assignments for sequential logic is the primary way to prevent race conditions.
-
-**Q3: What is the difference between `fork...join`, `fork...join_any`, and `fork...join_none`?**
-> **A3:** They are all used to manage parallel threads. `fork...join` waits for ALL forked threads to finish. `fork...join_any` waits for just ONE of the threads to finish, then kills the others. `fork...join_none` doesn't wait at all; the forked threads are left running in the background, and the parent thread continues immediately.
+**Memory & Retention Tip:** Remember: **Non-blocking for sequential logic (`always_ff`), blocking for combinational logic (`always_comb`) and testbench procedural code.**
 
 ## Check Your Understanding
 
