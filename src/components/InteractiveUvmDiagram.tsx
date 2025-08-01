@@ -116,9 +116,9 @@ const InteractiveUvmDiagram = () => {
       <line x1="600" y1="270" x2="600" y2="300" className="data-flow passive" />
       <text x="610" y="295" fontSize="12px" fill="hsl(var(--accent))" className="font-mono">DUT I/F</text>
       <line x1="600" y1="300" x2="425" y2="400" className="data-flow" />
-      <path d="M 425 165 Q 250 160 250 180" stroke="hsl(var(--foreground))" stroke-width="1" fill="none" />
-      <path d="M 425 165 Q 600 160 600 180" stroke="hsl(var(--foreground))" stroke-width="1" fill="none" />
-      <path d="M 425 380 Q 425 390 425 400" stroke="hsl(var(--foreground))" stroke-width="1" fill="none" />
+      <path d="M 425 165 Q 250 160 250 180" stroke="hsl(var(--foreground))" strokeWidth="1" fill="none" />
+      <path d="M 425 165 Q 600 160 600 180" stroke="hsl(var(--foreground))" strokeWidth="1" fill="none" />
+      <path d="M 425 380 Q 425 390 425 400" stroke="hsl(var(--foreground))" strokeWidth="1" fill="none" />
     </svg>
   );
 };
