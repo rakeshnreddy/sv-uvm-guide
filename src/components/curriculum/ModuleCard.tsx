@@ -53,7 +53,7 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
               <div className="space-y-2 text-sm text-muted-foreground">
                 <div className="flex items-center gap-2">
                     <Star className="w-4 h-4" />
-                    <span>{module.topics.length} Lessons</span>
+                    <span>{module.lessons?.length ?? 0} Lessons</span>
                 </div>
               </div>
             </CardContent>
