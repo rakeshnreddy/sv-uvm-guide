@@ -438,3 +438,31 @@ export function findPrevNextTopics(slug: string[]): { prev: Topic | undefined, n
 
   return { prev, next };
 }
+
+// ---- Derived convenience types for the application UI ----
+
+// The curriculumData array represents the high level tiers of the course. The
+// UI components expect a `Tier` type with a list of `modules`.  Each module in
+// turn contains a list of lessons.  The existing data maps cleanly onto this
+// structure where a "Module" is a tier and each "Section" is a module.  The
+// topics within a section represent the lessons.
+
+export type Tier = Module;
+export type Lesson = Topic;
+export interface ModuleEntry {
+  id: string;
+  title: string;
+  slug: string;
+  lessons: Lesson[];
+}
+
+export const tiers: Tier[] = curriculumData;
+
+export function getModules(tier: Tier): ModuleEntry[] {
+  return tier.sections.map(section => ({
+    id: section.slug,
+    title: section.title,
+    slug: section.slug,
+    lessons: section.topics,
+  }));
+}

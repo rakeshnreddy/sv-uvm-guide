@@ -1,13 +1,13 @@
 import React from 'react';
 import Link from 'next/link';
-import { Module, Tier } from '@/lib/curriculum-data';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/Card";
+import { ModuleEntry, Tier } from '@/lib/curriculum-data';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/utils';
-import { Clock, BarChart, CheckCircle, Lock, PlayCircle, Star } from 'lucide-react';
+import { CheckCircle, Lock, PlayCircle, Star, Book } from 'lucide-react';
 
 interface ModuleCardProps {
-  module: Module;
+  module: ModuleEntry;
   tier: Tier;
   isLocked?: boolean;
   progress?: number;
@@ -19,8 +19,8 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
   isLocked = false, // Default to unlocked for now
   progress = 0,     // Default to 0 progress
 }) => {
-  const Icon = module.icon;
-  const tierColor = tier.color;
+  const Icon = Book;
+  const tierColor = '#0ea5e9';
 
   const firstTopicSlug = module.lessons[0]?.slug || 'index';
   const startLink = `/curriculum/${tier.slug}/${module.slug}/${firstTopicSlug}`;
@@ -45,19 +45,10 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
                 {isCompleted && <CheckCircle className="w-5 h-5 text-green-500" />}
               </div>
               <CardTitle className="text-lg font-semibold leading-tight">{module.title}</CardTitle>
-              <CardDescription className="text-sm text-muted-foreground line-clamp-2">{module.description}</CardDescription>
             </CardHeader>
             <CardContent className="flex-grow p-4 pt-0">
               {/* Progress Bar can go here */}
               <div className="space-y-2 text-sm text-muted-foreground">
-                <div className="flex items-center gap-2">
-                    <BarChart className="w-4 h-4" />
-                    <span>{module.difficulty}</span>
-                </div>
-                <div className="flex items-center gap-2">
-                    <Clock className="w-4 h-4" />
-                    <span>{module.timeEstimate}</span>
-                </div>
                 <div className="flex items-center gap-2">
                     <Star className="w-4 h-4" />
                     <span>{module.lessons.length} Lessons</span>
