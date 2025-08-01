@@ -47,13 +47,13 @@ typedef struct packed { // Packed struct
 memory_transaction_s transaction_q[$]; // Queue of memory_transaction_s structs
   `}
   explanationSteps={[
-    { target: "2", title: "Logic Type", explanation: "`logic my_logic_var;` declares a 4-state variable (0, 1, X for unknown, Z for high-impedance). It's a general-purpose type for single-driver signals in SystemVerilog." },
-    { target: "3", title: "Bit Type", explanation: "`bit my_bit_var;` declares a 2-state variable (0, 1). Use `bit` for memory efficiency and faster simulation when X or Z states are not needed, like software variables or testbench counters." },
-    { target: "6", title: "Fixed-Size Unpacked Array", explanation: "`logic [7:0] data_bus [3:0];` declares a fixed-size unpacked array named `data_bus`. It has 4 elements (indexed 0 to 3). Each element is an 8-bit packed array (vector) of `logic`." },
-    { target: "7", title: "Dynamic Array", explanation: "`int dynamic_array[];` declares a dynamic array. Its size is not fixed at compile time and can be changed during simulation using methods like `new[]` or by assignment." },
-    { target: "8", title: "Associative Array", explanation: "`string assoc_array[string];` declares an associative array indexed by strings. Useful for sparse collections or when a non-integer index is needed, like a lookup table." },
-    { target: "11-15", title: "Struct Definition", explanation: "`typedef struct packed { ... } memory_transaction_s;` defines a user-defined `struct`. `packed` means its members are stored contiguously, allowing it to be treated as a single vector. This `memory_transaction_s` groups related signals." },
-    { target: "17", title: "Queue", explanation: "`memory_transaction_s transaction_q[$];` declares a queue named `transaction_q`. A queue is a dynamic, unpacked array that allows efficient addition/removal of elements from both ends (FIFO-like behavior). `[$]` denotes a queue." },
+    { target: "2", title: "Logic Type: The Workhorse", explanation: "`logic` is your default choice for any signal connected to the DUT. As a 4-state type (0, 1, X, Z), it accurately models the behavior of real hardware, catching potential issues with uninitialized signals (`X`) or bus contention." },
+    { target: "3", title: "Bit Type: The Accelerator", explanation: "`bit` is a 2-state type (0, 1) used for internal testbench variables like loop counters, array indexes, or configuration flags. Using `bit` instead of `logic` where possible tells the simulator it doesn't need to track X/Z, resulting in faster simulations and lower memory usage." },
+    { target: "6", title: "Fixed-Size Unpacked Array", explanation: "`logic [7:0] data_bus [3:0];` declares a fixed-size array, perfect for modeling things like a small memory or a set of registers. The first dimension `[7:0]` is the 'packed' dimension (the vector width), and the second `[3:0]` is the 'unpacked' dimension (the number of elements)." },
+    { target: "7", title: "Dynamic Array: Flexible Storage", explanation: "`int dynamic_array[];` declares a dynamic array. It's ideal when you don't know the size of the array beforehand, like when collecting coverage information or storing a variable number of transaction items. Its size can be changed with `new[]`." },
+    { target: "8", title: "Associative Array: Smart Lookup", explanation: "`string assoc_array[string];` declares an associative array, which acts like a hash map or dictionary. It's extremely useful for creating sparse memories or lookup tables where the index isn't a simple integer, such as mapping a transaction ID to a specific data object." },
+    { target: "11-15", title: "Packed Struct: The Transaction", explanation: "`typedef struct packed { ... } memory_transaction_s;` defines a packed struct. 'Packed' is critical here; it means all the elements are stored as a contiguous block of bits. This allows you to easily copy the entire struct to a bus interface or a register, which is fundamental for creating UVM sequence items." },
+    { target: "17", title: "Queue: The FIFO Buffer", explanation: "`memory_transaction_s transaction_q[$];` declares a queue. Queues are the go-to data structure for modeling FIFOs or collecting items that need to be processed in order. They provide built-in methods like `push_back()` and `pop_front()` that make them incredibly easy to use for scoreboards and analysis ports." },
   ]}
 />
 
@@ -65,13 +65,139 @@ The chart below compares key characteristics of `logic`, `wire`, `reg`, and `bit
   <DataTypeComparisonChart />
 </div>
 
+### `logic` vs. `wire`: The Multi-Driver Rule
+
+The most important difference between `logic` and `wire` is that a `wire` can have multiple drivers, while `logic` cannot. This is not a syntax error; it's a fundamental concept for modeling hardware.
+
+<InteractiveCode
+  language="systemverilog"
+  fileName="logic_vs_wire.sv"
+  code={`
+module multi_driver_example;
+  wire w_bus; // A wire can have multiple drivers
+  logic l_sig; // A logic signal can only have one
+
+  // Driver 1 for the wire
+  assign w_bus = 1'b1;
+
+  // Driver 2 for the wire
+  assign w_bus = 1'b0; // This will result in 'X' on w_bus
+
+  // Driver 1 for the logic
+  assign l_sig = 1'b1;
+
+  // Driver 2 for the logic
+  // assign l_sig = 1'b0; // ILLEGAL! This would cause a compile-time error.
+
+  initial begin
+    #1;
+    $display("Wire value (w_bus): %b", w_bus);
+    $display("Logic value (l_sig): %b", l_sig);
+  end
+endmodule
+  `}
+  explanationSteps={[
+    { target: "2", title: "The Wire", explanation: "`wire w_bus;` declares a net. Nets are used to connect components. The key property of a `wire` is that it can be driven by multiple sources. The hardware resolves the final value based on a resolution function (e.g., if one driver is 0 and another is 1, the result is X)." },
+    { target: "3", title: "The Logic", explanation: "`logic l_sig;` declares a variable. A variable can only have one continuous driver (like an `assign` statement) or be assigned values in procedural blocks. SystemVerilog enforces this single-driver rule at compile time, preventing a common source of design errors." },
+    { target: "6-9", title: "Multiple Wire Drivers", explanation: "Here, we have two `assign` statements driving `w_bus`. This is legal for a `wire`. The simulator will see both a '1' and a '0' driving the net at the same time and resolve the value to 'X' (unknown), correctly modeling the bus contention that would occur in real hardware." },
+    { target: "12-15", title: "Single Logic Driver", explanation: "The signal `l_sig` has one legal driver. If you were to uncomment line 15, the compiler would immediately flag it as an error: 'Variable l_sig is driven by more than one continuous assignment.' This strictness is a major advantage of using `logic` over legacy `reg` types." },
+  ]}
+/>
+
 ## Level 3: Expert Insights
 
-**4-state vs. 2-state Philosophy:** A senior engineer uses 4-state types (`logic`) for any signal connected to the DUT to accurately model hardware behavior, including potential `X` propagation from uninitialized registers. They use 2-state types (`bit`, `int`) for internal testbench variables (counters, loop variables, configuration objects) to improve simulation performance and memory usage. This discipline prevents bugs and speeds up regressions.
+### War Story: The 2-State Reset Bug
 
-**Packed vs. Unpacked Arrays:** A common mistake is not understanding the memory layout. `packed` arrays are contiguous bits, treated as a single vector. `unpacked` arrays are more like arrays in software. You can't directly assign an unpacked array to a packed one. This is crucial for interfaces and when casting to/from other types.
+On a complex GPU project, a test was failing intermittently, but only in very long, overnight regressions. The design would get into a weird state and hang. The bug was traced to a FIFO controller that wasn't being reset properly. The verification engineer had used a `bit` for the internal testbench variable that tracked the reset state. During a complex reset sequence, the DUT's reset signal briefly went to `X` because of a timing issue. However, when this `X` value was assigned to the testbench's `bit` variable, it was implicitly converted to `0`. The testbench therefore thought the reset was de-asserted, while in reality, it was unknown. The test continued, masking the real hardware problem. **The lesson:** Any variable in your testbench that samples a signal directly from the DUT *must* be a 4-state type (`logic`). Using 2-state types is an optimization that can only be applied to purely internal, software-like variables.
 
-**Memory & Retention Tip:** Relate **4-state `logic`** to the *physical hardware world* where uncertainty (`X`, `Z`) is real. Relate **2-state `bit`** to the *idealized software world* of your testbench where variables are always well-defined.
+### Performance Implications: Packed vs. Unpacked
+
+The way you structure your data can have a massive impact on simulation speed. Consider a packet object:
+*   **Packed Struct:** If you define a packet as a `struct packed`, all its members (address, data, parity) are a single, contiguous vector. When the driver needs to put this on the bus, it's a single, fast assignment.
+*   **Unpacked Struct or Class:** If you use an unpacked struct or a class, the members are stored separately in memory. Driving them to the bus requires multiple, individual assignments (e.g., `intf.addr = pkt.addr; intf.data = pkt.data; ...`). This is significantly slower.
+**Best Practice:** Define transaction items as `uvm_sequence_item`s containing a `struct packed`. The high-level randomization and constraints operate on the class object, but when it's time to drive the pins, the driver can grab the packed struct and send it to the interface in one efficient operation.
+
+### Memory & Retention Tip
+
+Think of data types with this hierarchy:
+1.  **Is it connecting things?** -> Use a `wire`.
+2.  **Is it a signal in my design or testbench interface?** -> Use `logic`.
+3.  **Is it a purely internal variable for counting/control inside my testbench?** -> Use `bit` or `int` for speed.
+
+## Industry Connection
+
+### Data Types in the Verification Plan
+
+A verification plan (V-Plan) will often have a dedicated section specifying the data types for key interfaces and transaction items. For example, it might state:
+*   "The AXI transaction item (`axi_item`) shall be defined as a `uvm_sequence_item`."
+*   "The `axi_item` shall contain a `struct packed` named `data_channel_struct` that matches the bit-level layout of the AXI data channel signals."
+*   "All signals on the AXI interface bundle shall be of type `logic`."
+This rigor ensures that the testbench's view of the world perfectly matches the DUT's, and that transaction objects are optimized for performance.
+
+### Job Roles and Data Types
+
+*   **Design Engineers** live in the world of `logic` and `wire`. They use these to build the synthesizable hardware.
+*   **Verification Engineers** use the full spectrum: `logic` for interfaces, `bit`/`int` for the testbench "software", and complex types like queues, dynamic arrays, and associative arrays to build powerful data structures for stimulus generation and checking.
+*   **Firmware Engineers** often work with memory maps and register definitions. The verification team provides them with C header files generated directly from the SystemVerilog `struct` definitions to ensure consistency.
+
+---
+
+## Practical Application
+
+### Choosing the Right Array Type
+
+SystemVerilog gives you several array types. Here's a guide on when to use each:
+
+| Scenario                               | Best Choice         | Why?                                                                                             |
+| -------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------ |
+| I need to model a 256-entry memory.    | `logic [7:0] mem [255:0];` (Fixed-size) | The size is known and constant. This is the most memory-efficient and fastest option.            |
+| I need to collect all transactions of a certain type. | `my_txn_c q[$];` (Queue) | You don't know how many you'll find. A queue lets you easily add items one by one.        |
+| I need to allocate a large buffer, but only if a certain test is running. | `int buffer[];` (Dynamic) | You can allocate the memory (`buffer = new[1024];`) only when needed, saving memory in other tests. |
+| I need to look up a scoreboard entry based on a non-sequential transaction ID. | `scoreboard_entry_c sb[int];` (Associative) | The transaction ID is the perfect index for an associative array, giving you instant lookup. |
+
+---
+
+## Tool Integration
+
+### Waveform Debugging
+
+Understanding data types is critical when you're debugging in a waveform viewer like **Verdi**, **Simvision**, or **QuestaSim**.
+*   **4-State vs. 2-State:** In the waveform, a `logic` variable can show up as a a red `X` or a blue `Z`. If you see an `X`, it's a huge clue that a register wasn't initialized or there's a driver conflict. A `bit` variable can *never* be `X`, which can hide these bugs if used incorrectly.
+*   **Structs and Classes:** Modern debuggers allow you to expand a `struct` or `class` variable in the waveform, showing you the values of all its members. You can even view dynamic arrays and queues, watching elements get added and removed over time.
+*   **Packed Data:** You can display a `struct packed` as a single hexadecimal value or expand it to see the individual members. This is incredibly useful for comparing the value on a bus to the high-level transaction object that generated it.
+
+---
+
+## Self-Assessment
+
+### Code Challenge
+
+1.  **Define a `struct packed`** named `uart_frame_s`. It should contain:
+    *   A 1-bit `start_bit`.
+    *   An 8-bit `logic` vector for `data`.
+    *   A 1-bit `parity_bit`.
+    *   A 1-bit `stop_bit`.
+2.  **Declare a queue** of these structs.
+3.  **Write an `initial` block** that creates a single `uart_frame_s` variable, populates it with some data, and then pushes it into the queue.
+4.  **Use an associative array** to store a "lookup table" for parity. The array should be indexed by an 8-bit `logic` vector and return a single `bit` (the calculated parity).
+
+### Debugging Exercise
+
+You see a signal `dut_status` in your testbench that has a value of `0`. However, you know the DUT is in an error state and should be driving `X`. What is the most likely data type of `dut_status` in the testbench, and what should it be changed to?
+> **Answer:** The variable is likely a 2-state type like `bit` or `int`. It should be changed to `logic` to correctly capture the `X` from the DUT.
+
+---
+
+## Common Interview Questions
+
+**Q1: Why does SystemVerilog have both `logic` and `wire`? When would you have to use `wire`?**
+> **A1:** `logic` is a variable type that enforces a single-driver rule at compile time. `wire` is a net type that allows multiple drivers. You *must* use a `wire` (or another net type like `wand`/`wor`) when you are modeling a bus where multiple components can drive it, such as a tri-state bus or the output of multiple AND gates connected together. For all other signals (driven by a single process, `always` block, or continuous assignment), `logic` is preferred because it's stricter and catches bugs earlier.
+
+**Q2: What is a "packed" struct and why is it important for verification?**
+> **A2:** A `packed` struct represents its members as a contiguous block of bits, like a single vector. An `unpacked` struct stores its members separately. Packed structs are critical for verification because they allow you to create a high-level, object-oriented representation of a transaction (like a class member) that can be easily cast to and from a vector. This means you can randomize the high-level object and then efficiently drive the corresponding bits onto the DUT's bus interface in a single assignment.
+
+**Q3: When would you use a dynamic array vs. a queue?**
+> **A3:** Both are dynamically sized. The key difference is their intended use case. Use a **queue** when you need FIFO-like behavior: adding and removing elements from the ends (e.g., a scoreboard collecting transactions). Use a **dynamic array** when you need to allocate a block of memory whose size isn't known at compile-time, but you'll still access it like a regular array using an index (e.g., a memory buffer). Queues have optimized methods like `pop_front()` and `push_back()`, while dynamic arrays do not.
 
 ## Check Your Understanding
 
