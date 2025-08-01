@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { tiers } from '@/lib/curriculum-data';
+import { curriculumData, getModules } from '@/lib/curriculum-data';
 import { TierSection } from '@/components/curriculum/TierSection';
 import { useCurriculumProgress } from '@/hooks/useCurriculumProgress';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -27,29 +27,26 @@ export default function CurriculumPage() {
   useEffect(() => {
     // On load, find the first unlocked, incomplete tier and open it.
     if (isLoaded) {
-      const firstUnlockedIncompleteTier = tiers.find(tier =>
-        isTierUnlocked(tier.id) && getTierProgress(tier.id) < 100
+      const firstUnlockedIncompleteTier = curriculumData.find(tier =>
+        isTierUnlocked(tier.slug) && getTierProgress(tier.slug) < 100
       );
       if (firstUnlockedIncompleteTier) {
-        setActiveTier(firstUnlockedIncompleteTier.id);
+        setActiveTier(firstUnlockedIncompleteTier.slug);
       } else {
         // If all unlocked are complete, open the last unlocked one
-        const lastUnlocked = [...tiers].reverse().find(tier => isTierUnlocked(tier.id));
-        setActiveTier(lastUnlocked?.id || null);
+        const lastUnlocked = [...curriculumData].reverse().find(tier => isTierUnlocked(tier.slug));
+        setActiveTier(lastUnlocked?.slug || null);
       }
     }
   }, [isLoaded, getTierProgress, isTierUnlocked]);
 
   const filteredTiers = useMemo(() => {
-    return tiers.map(tier => {
-      const filteredModules = tier.modules.filter(module => {
-        // Search filter
+    return curriculumData.map(tier => {
+      const filteredModules = getModules(tier).filter(module => {
         const searchMatch = searchTerm === '' ||
-          module.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          module.description.toLowerCase().includes(searchTerm.toLowerCase());
+          module.title.toLowerCase().includes(searchTerm.toLowerCase());
 
-        // Difficulty filter
-        const difficultyMatch = difficultyFilter === 'all' || module.difficulty === difficultyFilter;
+        const difficultyMatch = true;
 
         // Status filter
         const progress = getModuleProgress(module.id);
@@ -62,7 +59,7 @@ export default function CurriculumPage() {
       });
       return { ...tier, modules: filteredModules };
     }).filter(tier => tier.modules.length > 0);
-  }, [searchTerm, difficultyFilter, statusFilter, getModuleProgress]);
+  }, [searchTerm, statusFilter, getModuleProgress]);
 
 
   if (!isLoaded) {
@@ -139,14 +136,14 @@ export default function CurriculumPage() {
           filteredTiers.length > 0 ? (
               filteredTiers.map(tier => (
                 <TierSection
-                  key={tier.id}
+                  key={tier.slug}
                   tier={tier}
-                  tierProgress={getTierProgress(tier.id)}
-                  isTierUnlocked={isTierUnlocked(tier.id)}
+                  tierProgress={getTierProgress(tier.slug)}
+                  isTierUnlocked={isTierUnlocked(tier.slug)}
                   getModuleProgress={getModuleProgress}
-                  isModuleLocked={(moduleId) => isModuleLocked(moduleId, tier.id)}
-                  isOpen={activeTier === tier.id}
-                  onToggle={() => setActiveTier(activeTier === tier.id ? null : tier.id)}
+                  isModuleLocked={(moduleId) => isModuleLocked(moduleId, tier.slug)}
+                  isOpen={activeTier === tier.slug}
+                  onToggle={() => setActiveTier(activeTier === tier.slug ? null : tier.slug)}
                 />
               ))
           ) : (
