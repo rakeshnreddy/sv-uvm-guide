@@ -1,13 +1,13 @@
 import React from 'react';
 import Link from 'next/link';
-import { Section, Tier } from '@/lib/curriculum-data';
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/Card";
+import { ModuleEntry, Tier } from '@/lib/curriculum-data';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from '@/components/ui/Button';
 import { cn } from '@/lib/utils';
 import { CheckCircle, Lock, PlayCircle, Star, Book } from 'lucide-react';
 
 interface ModuleCardProps {
-  module: Section;
+  module: ModuleEntry;
   tier: Tier;
   isLocked?: boolean;
   progress?: number;
@@ -22,7 +22,7 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
   const Icon = Book;
   const tierColor = '#0ea5e9';
 
-  const firstTopicSlug = module.topics[0]?.slug || 'index';
+  const firstTopicSlug = module.lessons[0]?.slug || 'index';
   const startLink = `/curriculum/${tier.slug}/${module.slug}/${firstTopicSlug}`;
 
   const isCompleted = progress === 100;
@@ -51,7 +51,7 @@ export const ModuleCard: React.FC<ModuleCardProps> = ({
               <div className="space-y-2 text-sm text-muted-foreground">
                 <div className="flex items-center gap-2">
                     <Star className="w-4 h-4" />
-                    <span>{module.topics.length} Lessons</span>
+                    <span>{module.lessons.length} Lessons</span>
                 </div>
               </div>
             </CardContent>

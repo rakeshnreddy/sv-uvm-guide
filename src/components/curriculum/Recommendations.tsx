@@ -43,7 +43,6 @@ export const Recommendations = () => {
           <ModuleCard
             key={module.id}
             module={module}
-            tierColor="hsl(var(--primary))"
             progress={getModuleProgress(module.id)}
             isLocked={false} // We already filtered for unlocked modules
           />
