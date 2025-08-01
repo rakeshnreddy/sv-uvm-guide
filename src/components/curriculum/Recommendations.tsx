@@ -2,7 +2,11 @@
 
 import React from 'react';
 import { curriculumData, getModules } from '@/lib/curriculum-data';
+<<<<<<< HEAD
 import { useCurriculumProgress } from '../../hooks/useCurriculumProgress';
+=======
+import { useCurriculumProgress } from '@/hooks/useCurriculumProgress';
+>>>>>>> 4880f079 (fix recommended modules prop)
 import { ModuleCard } from './ModuleCard';
 import { ArrowRight } from 'lucide-react';
 
