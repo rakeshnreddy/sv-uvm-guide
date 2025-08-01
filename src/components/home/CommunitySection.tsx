@@ -4,7 +4,6 @@ import React from 'react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/Button';
 import { MessageSquare, Star, Twitter, Linkedin, Github } from 'lucide-react';
-import Image from 'next/image';
 import Link from 'next/link';
 
 const forumDiscussions = [
@@ -75,7 +74,7 @@ const CommunitySection = () => {
               {topContributors.map((c, i) => (
                 <li key={c.id} className="flex items-center">
                   <span className="text-lg font-bold w-6 mr-2 text-muted-foreground">{i+1}.</span>
-                  <Image src={c.avatar} alt={c.name} width={40} height={40} className="rounded-full mr-3" />
+                  <div className="w-10 h-10 rounded-full mr-3 bg-primary/20" />
                   <div>
                     <p className="font-semibold text-foreground">{c.name}</p>
                     <p className="text-sm text-muted-foreground">{c.points.toLocaleString()} points</p>
