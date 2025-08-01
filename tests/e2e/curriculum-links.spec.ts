@@ -12,7 +12,7 @@ test('should successfully load all curriculum pages and have correct titles', as
           const response = await page.goto(url);
           expect(response?.status()).toBe(200);
 
-          const heading = page.locator('h1');
+          const heading = page.locator('h1').first();
           await expect(heading).toHaveText(topic.title);
         });
       }
