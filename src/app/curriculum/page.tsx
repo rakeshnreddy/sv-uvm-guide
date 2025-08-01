@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { curriculumData, getModules } from '@/lib/curriculum-data';
 import { TierSection } from '@/components/curriculum/TierSection';
-import { useCurriculumProgress } from '@/hooks/useCurriculumProgress';
+import { useCurriculumProgress } from '../../hooks/useCurriculumProgress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Search, List, GitMerge } from 'lucide-react';
 import LearningPathDiagram from '@/components/curriculum/LearningPathDiagram';
