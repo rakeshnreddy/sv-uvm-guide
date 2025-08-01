@@ -69,6 +69,7 @@ export function useCurriculumProgress() {
     return true;
   }, []);
 
+
   // This function would be called from a topic page to mark a lesson as complete
   const completeLesson = useCallback((moduleId: string, lessonSlug: string) => {
     setProgress(prev => {
@@ -92,6 +93,7 @@ export function useCurriculumProgress() {
     },
     []
   );
+
 
 
   return {
