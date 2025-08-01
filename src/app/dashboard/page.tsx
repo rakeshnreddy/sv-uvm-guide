@@ -1,7 +1,7 @@
 'use client';
 
 import React from 'react';
-import { useCurriculumProgress } from '@/hooks/useCurriculumProgress';
+import { useCurriculumProgress } from '../../hooks/useCurriculumProgress';
 import { curriculumData, getModules } from '@/lib/curriculum-data';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Progress } from '@/components/ui/Progress';

@@ -2,7 +2,7 @@
 
 import React from 'react';
 import { curriculumData, getModules } from '@/lib/curriculum-data';
-import { useCurriculumProgress } from '@/hooks/useCurriculumProgress';
+import { useCurriculumProgress } from '../../hooks/useCurriculumProgress';
 import { ModuleCard } from './ModuleCard';
 import { ArrowRight } from 'lucide-react';
 
