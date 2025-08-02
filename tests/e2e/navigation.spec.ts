@@ -36,7 +36,7 @@ test.describe('Advanced Navigation Features', () => {
     const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
     await page.locator('body').focus();
     await page.keyboard.press(`${modifier}+K`);
-    const searchInput = page.locator('input[placeholder*="Search"]');
+    const searchInput = page.getByTestId('main-search-input');
     await expect(searchInput).toBeFocused();
   });
 

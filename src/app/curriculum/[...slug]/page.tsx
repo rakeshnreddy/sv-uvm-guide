@@ -14,15 +14,21 @@ import { InfoPage } from '@/components/templates/InfoPage';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/Accordion';
 import { Card } from '@/components/ui/Card';
 import { CodeBlock } from '@/components/ui/CodeBlock';
-import { AnimatedUvmSequenceDriverHandshakeDiagram } from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram';
-import DataTypeComparisonChart from '@/components/charts/DataTypeComparisonChart';
-import UvmHierarchySunburstChart from '@/components/charts/UvmHierarchySunburstChart';
-import UvmPhasingDiagram from '@/components/diagrams/UvmPhasingDiagram';
 import { DiagramPlaceholder, InteractiveChartPlaceholder } from '@/components/templates/InfoPage';
-import AnimatedUvmTestbenchDiagram from '@/components/diagrams/AnimatedUvmTestbenchDiagram';
 import { Alert } from '@/components/ui/Alert';
-import UvmVirtualSequencerDiagram from '@/components/diagrams/UvmVirtualSequencerDiagram';
-import UvmTestbenchVisualizer from '@/components/diagrams/UvmTestbenchVisualizer';
+import dynamic from 'next/dynamic';
+
+const AnimatedUvmSequenceDriverHandshakeDiagram = dynamic(() => import('@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram').then(mod => mod.AnimatedUvmSequenceDriverHandshakeDiagram));
+const DataTypeComparisonChart = dynamic(() => import('@/components/charts/DataTypeComparisonChart'));
+const UvmHierarchySunburstChart = dynamic(() => import('@/components/charts/UvmHierarchySunburstChart'));
+const UvmPhasingDiagram = dynamic(() => import('@/components/diagrams/UvmPhasingDiagram'));
+const AnimatedUvmTestbenchDiagram = dynamic(() => import('@/components/diagrams/AnimatedUvmTestbenchDiagram'));
+const UvmVirtualSequencerDiagram = dynamic(() => import('@/components/diagrams/UvmVirtualSequencerDiagram'));
+const UvmTestbenchVisualizer = dynamic(() => import('@/components/diagrams/UvmTestbenchVisualizer'));
+const InteractiveUvmArchitectureDiagram = dynamic(() => import('@/components/diagrams/InteractiveUvmArchitectureDiagram'));
+const UvmComponentRelationshipVisualizer = dynamic(() => import('@/components/diagrams/UvmComponentRelationshipVisualizer'));
+const UvmPhasingInteractiveTimeline = dynamic(() => import('@/components/diagrams/UvmPhasingInteractiveTimeline'));
+const SystemVerilogDataTypesAnimation = dynamic(() => import('@/components/animations/SystemVerilogDataTypesAnimation'));
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -48,6 +54,7 @@ const components = {
   UvmVirtualSequencerDiagram,
   InteractiveChartPlaceholder,
   UvmTestbenchVisualizer,
+  InteractiveUvmArchitectureDiagram,
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {
