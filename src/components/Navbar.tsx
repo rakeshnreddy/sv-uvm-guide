@@ -128,7 +128,7 @@ const Navbar = () => {
           <div className="hidden md:flex flex-grow justify-center items-center px-8">
             <div className="relative w-full max-w-md">
                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-5 w-5 text-muted-foreground" />
-                <input type="text" placeholder="Search... (Ctrl+K)" className="w-full pl-11 pr-4 py-2 border text-sm border-border/40 rounded-lg bg-background focus:ring-2 focus:ring-primary/50 focus:outline-none transition-all"/>
+                <input type="text" placeholder="Search... (Ctrl+K)" className="w-full pl-11 pr-4 py-2 border text-sm border-border/40 rounded-lg bg-background focus:ring-2 focus:ring-primary/50 focus:outline-none transition-all" data-testid="main-search-input"/>
             </div>
           </div>
 

@@ -3,7 +3,7 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Button } from '@/components/ui/Button';
-import InteractiveUvmDiagram from '@/components/InteractiveUvmDiagram';
+import InteractiveUvmArchitectureDiagram from '@/components/diagrams/InteractiveUvmArchitectureDiagram';
 import TestimonialsCarousel from './TestimonialsCarousel';
 import StatsDisplay from './StatsDisplay';
 import { ArrowRight } from 'lucide-react';
@@ -73,7 +73,7 @@ const HeroSection = () => {
           transition={{ duration: 0.8, delay: 0.6 }}
         >
           <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 shadow-2xl border border-white/20">
-            <InteractiveUvmDiagram />
+            <InteractiveUvmArchitectureDiagram />
           </div>
         </motion.div>
 
