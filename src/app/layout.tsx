@@ -45,6 +45,7 @@ import { SessionProvider } from '@/components/providers/SessionProvider';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { NavigationProvider } from '@/contexts/NavigationContext';
 import Sidebar from '@/components/layout/Sidebar';
+import KeyboardShortcuts from '@/components/layout/KeyboardShortcuts';
 // The AIAssistant (full chat) is removed from global layout for now.
 // The PersistentAITutorButton will be the global widget.
 // import AIAssistant from "@/components/ai/AIAssistant";
@@ -87,6 +88,7 @@ export default function RootLayout({ children }: RootLayoutProps) {
                 <Sidebar />
                 <MainLayout>{children}</MainLayout>
                 <AIAssistantWidget />
+                <KeyboardShortcuts />
               </NavigationProvider>
             </AuthProvider>
           </SessionProvider>

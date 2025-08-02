@@ -28,7 +28,7 @@ export const useKeyboardShortcuts = () => {
       // Focus search bar with Ctrl+K
       if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
         event.preventDefault();
-        const searchInput = document.querySelector('input[placeholder*="Search"]') as HTMLInputElement;
+        const searchInput = document.querySelector('input[placeholder*="Search... (Ctrl+K)"]') as HTMLInputElement;
         if (searchInput) {
           searchInput.focus();
         }

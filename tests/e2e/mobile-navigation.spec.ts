@@ -9,7 +9,7 @@ test.describe('Mobile Navigation', () => {
     await page.goto('/');
 
     // Test mobile menu
-    await page.getByLabel('Open main menu').click();
+    await page.getByRole('button', { name: 'Open main menu' }).click();
     await expect(page.locator('h2:has-text("Menu")')).toBeVisible();
     await expect(page.getByRole('link', { name: 'Curriculum' })).toBeVisible();
     await page.locator('h2:has-text("Menu") + button').click();

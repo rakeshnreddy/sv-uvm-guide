@@ -87,48 +87,7 @@ endtask
 
 The adapter is the most critical, and often most complex, part of integrating RAL. It's a class you, the verification engineer, must write. It acts as a translator between the generic `uvm_reg_bus_op` (which just knows about read/write, address, and data) and the specific sequence item of your physical bus protocol (e.g., an `axi_item`).
 
-<InteractiveCode
-  language="systemverilog"
-  fileName="ral_adapter.sv"
-  code={`
-class my_bus_adapter extends uvm_reg_adapter;
-  `uvm_object_utils(my_bus_adapter)
 
-  function new(string name = "my_bus_adapter");
-    super.new(name);
-  endfunction
-
-  // This task converts a generic RAL operation into a specific bus item
-  virtual function uvm_sequence_item reg2bus(const ref uvm_reg_bus_op rw);
-    my_bus_item item = my_bus_item::type_id::create("item");
-    item.addr = rw.addr;
-    item.is_read = (rw.kind == UVM_READ);
-    if (rw.kind == UVM_WRITE) begin
-      item.data = rw.data;
-    end
-    return item;
-  endfunction
-
-  // This task converts a completed bus item back into a generic RAL operation
-  virtual function void bus2reg(uvm_sequence_item bus_item,
-                                ref uvm_reg_bus_op rw);
-    my_bus_item item;
-    if (!$cast(item, bus_item)) begin
-      `uvm_fatal("ADAPTER", "Failed to cast bus_item to my_bus_item")
-    end
-    rw.kind = item.is_read ? UVM_READ : UVM_WRITE;
-    rw.addr = item.addr;
-    rw.data = item.data;
-    rw.status = UVM_IS_OK;
-  endfunction
-endclass
-  `}
-  explanationSteps={[
-    { target: "1-5", title: "Adapter Class Definition", explanation: "The adapter class must extend `uvm_reg_adapter`. It's a standard UVM object, so it includes the utils macro and a constructor." },
-    { target: "8-17", title: "reg2bus: The Outgoing Path", explanation: "The `reg2bus` function is called by RAL for frontdoor access. It takes the generic `uvm_reg_bus_op` and 'translates' it into a protocol-specific `my_bus_item`. This `my_bus_item` is what will be sent to your bus driver." },
-    { target: "20-29", title: "bus2reg: The Incoming Path", explanation: "After the bus driver has executed a transaction and received a response, it returns the completed item. The `bus2reg` function is then called to translate the data from the protocol-specific item back into the generic `rw` struct, which RAL uses to update its internal model." }
-  ]}
-/>
 
 ### Visualizing the RAL Connection
 
