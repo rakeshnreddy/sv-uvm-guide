@@ -6,9 +6,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 
-const TwoStateValues = ['0', '1'];
-const FourStateValues = ['0', '1', 'X', 'Z'];
-
 const stateColor = {
   '0': 'bg-green-500',
   '1': 'bg-blue-500',
@@ -16,13 +13,18 @@ const stateColor = {
   'Z': 'bg-gray-500',
 };
 
+type StateColorKey = keyof typeof stateColor;
+
+const TwoStateValues: StateColorKey[] = ['0', '1'];
+const FourStateValues: StateColorKey[] = ['0', '1', 'X', 'Z'];
+
 const SystemVerilogDataTypesAnimation = () => {
-  const [twoStateValue, setTwoStateValue] = useState('0');
-  const [fourStateValue, setFourStateValue] = useState('0');
+  const [twoStateValue, setTwoStateValue] = useState<StateColorKey>('0');
+  const [fourStateValue, setFourStateValue] = useState<StateColorKey>('0');
   const [packedDim, setPackedDim] = useState(4);
   const [unpackedDim, setUnpackedDim] = useState(3);
 
-  const cycleState = (currentValue: string, values: string[]) => {
+  const cycleState = (currentValue: StateColorKey, values: StateColorKey[]) => {
     const currentIndex = values.indexOf(currentValue);
     return values[(currentIndex + 1) % values.length];
   };

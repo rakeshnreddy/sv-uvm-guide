@@ -20,7 +20,7 @@ const UvmComponentRelationshipVisualizer = () => {
       .attr('viewBox', `0 0 ${width} ${height}`)
       .html(''); // Clear previous contents
 
-    const nodes = uvmComponents.map(c => ({ ...c }));
+    const nodes: (d3.SimulationNodeDatum & { id: string; name: string; type: string; })[] = uvmComponents.map(c => ({ ...c }));
     const filteredLinks = uvmConnections.filter(c => activeFilters.includes(c.type));
 
     const simulation = d3.forceSimulation(nodes)
@@ -32,7 +32,7 @@ const UvmComponentRelationshipVisualizer = () => {
       .attr('stroke', '#999')
       .attr('stroke-opacity', 0.6)
       .selectAll('line')
-      .data(links)
+      .data(filteredLinks)
       .join('line')
       .attr('stroke-width', d => Math.sqrt(d.type === 'parent_child' ? 3 : 1));
 
