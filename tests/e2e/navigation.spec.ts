@@ -25,8 +25,10 @@ test.describe('Advanced Navigation Features', () => {
   test('should toggle sidebar with keyboard shortcut (Ctrl+B)', async ({ page }) => {
     await expect(page.getByText('Quick Access')).not.toBeVisible();
     const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
-    await page.locator('body').focus();
-    await page.keyboard.press(`${modifier}+B`);
+    await page.getByRole('main').first().focus();
+    await page.keyboard.down(modifier);
+    await page.keyboard.press('B');
+    await page.keyboard.up(modifier);
     await expect(page.getByText('Quick Access')).toBeVisible();
     await page.keyboard.press(`${modifier}+B`);
     await expect(page.getByText('Quick Access')).not.toBeVisible();
@@ -34,8 +36,10 @@ test.describe('Advanced Navigation Features', () => {
 
   test('should focus search bar with keyboard shortcut (Ctrl+K)', async ({ page }) => {
     const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
-    await page.locator('body').focus();
-    await page.keyboard.press(`${modifier}+K`);
+    await page.getByRole('main').first().focus();
+    await page.keyboard.down(modifier);
+    await page.keyboard.press('K');
+    await page.keyboard.up(modifier);
     const searchInput = page.getByTestId('main-search-input');
     await expect(searchInput).toBeFocused();
   });

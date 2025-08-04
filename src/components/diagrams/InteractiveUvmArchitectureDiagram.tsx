@@ -20,6 +20,8 @@ const componentColor = {
   default: 'hsl(var(--muted))',
 };
 
+type ComponentColorKey = keyof typeof componentColor;
+
 const InteractiveUvmArchitectureDiagram = () => {
   const svgRef = useRef<SVGSVGElement>(null);
   const [activeComponent, setActiveComponent] = useState<UvmComponent | null>(null);
@@ -54,7 +56,7 @@ const InteractiveUvmArchitectureDiagram = () => {
       .attr('class', 'link')
       .attr('d', d3.linkVertical()
         .x(d => (d as any).y)
-        .y(d => (d as any).x)
+        .y(d => (d as any).x) as any
       )
       .attr('stroke', 'hsl(var(--muted-foreground))')
       .attr('stroke-width', 1.5)
@@ -80,7 +82,10 @@ const InteractiveUvmArchitectureDiagram = () => {
       .attr('x', -75)
       .attr('y', -30)
       .attr('rx', 5)
-      .attr('fill', d => componentColor[d.data.type.split('_')[0]] || componentColor.default)
+      .attr('fill', d => {
+        const type = d.data.type.split('_')[0] as ComponentColorKey;
+        return componentColor[type] || componentColor.default;
+      })
       .attr('stroke', 'hsl(var(--primary))')
       .attr('stroke-width', 1)
       .style('opacity', d => {
