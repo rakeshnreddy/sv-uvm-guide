@@ -5,12 +5,15 @@ test('Module 5 InteractiveCode highlights lines', async ({ page }) => {
   const ic = page.getByTestId('interactive-code').first();
   console.log('Found interactive code element:', await ic.innerHTML());
   await expect(ic).toBeVisible();
-  const codeBlock = ic.locator('pre');
-  await expect(codeBlock).toHaveCSS('overflow-x', 'auto');
+  // Verify that the Monaco editor is now present instead of a simple <pre> tag
+  const codeBlock = ic.locator('.monaco-editor');
+  await expect(codeBlock).toBeVisible();
+
   const nextButton = ic.getByRole('button', { name: 'Next' });
   if (await nextButton.isEnabled()) {
     await nextButton.click();
   }
-  const highlighted = ic.locator('[style*="background-color"]');
-  await expect(highlighted).not.toHaveCount(0);
+  // The new implementation uses a class for highlighting, not an inline style
+  const highlighted = ic.locator('.monaco-highlighted-line');
+  await expect(highlighted).toHaveCount(1);
 });

@@ -1,16 +1,67 @@
 "use client";
 
-import React, { useState, useMemo } from 'react';
-import { CodeBlock } from './CodeBlock'; // Assuming CodeBlock is in the same directory
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import Editor, { type OnMount } from '@monaco-editor/react';
+import { useTheme } from 'next-themes';
 import { Button } from './Button';
-import { ArrowLeft, ArrowRight } from 'lucide-react'; // Corrected import
+import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import type * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
+
+// This is a placeholder for SystemVerilog language support.
+// A full implementation would require a Monarch tokenizer.
+const registerSystemVerilogLanguage = (monacoInstance: typeof monaco) => {
+    const langId = 'systemverilog';
+    if (monacoInstance.languages.getLanguages().some(lang => lang.id === langId)) {
+        return;
+    }
+    monacoInstance.languages.register({ id: langId });
+    // Basic keyword highlighting for demonstration
+    monacoInstance.languages.setMonarchTokensProvider(langId, {
+        keywords: [
+            'module', 'endmodule', 'logic', 'reg', 'wire', 'initial', 'always',
+            'begin', 'end', 'if', 'else', 'case', 'endcase', 'parameter',
+            'localparam', 'assign', 'always_ff', 'always_comb', 'function',
+            'task', 'class', 'extends', 'super', 'new', 'virtual', 'interface',
+            'modport', 'program', 'package', 'import', 'export', 'typedef',
+            'struct', 'union', 'enum', 'string', 'integer', 'bit', 'byte', 'int',
+            'shortint', 'longint', 'time', 'real', 'shortreal'
+        ],
+        operators: [
+            '=', '>', '<', '!', '~', '?', ':', '==', '<=', '>=', '!=',
+            '&&', '||', '++', '--', '+', '-', '*', '/', '&', '|', '^', '%',
+            '<<', '>>', '->', '<->'
+        ],
+        symbols:  /[=><!~?:&|+\-*/^%]+/,
+        tokenizer: {
+            root: [
+                [/[a-zA-Z_]\w*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
+                [/`[a-zA-Z_]\w*/, 'predefined'], // For `defines
+                [/\d+/, 'number'],
+                [/"/, { token: 'string.quote', bracket: '@open', next: '@string' }],
+                [/\/\//, 'comment'],
+                [/\/\*/, 'comment', '@comment' ],
+                [/[{}()\[\]]/, '@brackets'],
+                [/@symbols/, { cases: { '@operators': 'operator', '@default': '' } } ],
+            ],
+            comment: [
+                [/[^/*]+/, 'comment' ],
+                [/\*\//, 'comment', '@pop'  ],
+                [/./, 'comment'],
+            ],
+            string: [
+                [/[^\\"]+/, 'string'],
+                [/\\./, 'string.escape.invalid'],
+                [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' } ]
+            ],
+        },
+    });
+};
+
 
 export interface ExplanationStep {
-  // For line numbers, use a string like "5", "5-7", "5,7,10-12"
-  // Or a specific keyword like "ALL" for the whole block initially.
   target: string;
-  title?: string; // Optional title for the explanation step
+  title?: string;
   explanation: React.ReactNode;
 }
 
@@ -20,52 +71,52 @@ interface InteractiveCodeProps {
   fileName?: string;
   explanationSteps?: ExplanationStep[];
   initialStep?: number;
+  isEditable?: boolean;
 }
 
-// Helper to parse the target lines string (e.g., "1", "1-3", "1,3-5")
-const parseTargetLines = (target: string): Set<number> => { // Removed totalLines
-  const highlightedLines = new Set<number>();
-  if (!target || target.toLowerCase() === 'all') {
-    // If 'all' or empty, highlight nothing by default
-    return highlightedLines;
+const parseTargetLines = (target: string, monacoInstance: typeof monaco): monaco.IRange[] => {
+  if (!target || target.toLowerCase() === 'all' || !monacoInstance) {
+    return [];
   }
 
+  const ranges: monaco.IRange[] = [];
   const parts = target.split(',');
   parts.forEach(part => {
     if (part.includes('-')) {
       const [start, end] = part.split('-').map(Number);
       if (!isNaN(start) && !isNaN(end)) {
-        for (let i = start; i <= end; i++) {
-          highlightedLines.add(i);
-        }
+        ranges.push(new monacoInstance.Range(start, 1, end, 1));
       }
     } else {
       const lineNumber = Number(part);
       if (!isNaN(lineNumber)) {
-        highlightedLines.add(lineNumber);
+        ranges.push(new monacoInstance.Range(lineNumber, 1, lineNumber, 1));
       }
     }
   });
-  return highlightedLines;
+  return ranges;
 };
 
 export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   children,
-  language = "plaintext",
+  language = "systemverilog",
   fileName,
   explanationSteps = [],
   initialStep = 0,
+  isEditable = false,
 }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(initialStep);
-  // const totalLines = useMemo(() => code.split('\n').length, [code]); // Removed
+  const { theme } = useTheme();
+  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<typeof monaco | null>(null);
+  const [decorations, setDecorations] = useState<string[]>([]);
 
-  const code = React.useMemo(() => {
+  const code = useMemo(() => {
     let codeString = '';
     React.Children.forEach(children, (child) => {
       if (typeof child === 'string') {
         codeString += child;
       } else if (React.isValidElement(child) && child.props.children) {
-        // This handles the case where MDX wraps the code in a <pre><code> structure
         if (child.props.mdxType === 'pre') {
             const codeChild = React.Children.toArray(child.props.children).find(c => React.isValidElement(c) && c.props.mdxType === 'code');
             if(codeChild && React.isValidElement(codeChild)) {
@@ -81,11 +132,61 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
 
   const hasExplanations = explanationSteps.length > 0;
 
-  const currentStep = explanationSteps[currentStepIndex];
-  const highlightedLines = useMemo(
-    () => currentStep ? parseTargetLines(currentStep.target) : new Set<number>(), // Removed totalLines
-    [currentStep]
-  );
+  useEffect(() => {
+    if (editorRef.current && monacoRef.current && hasExplanations) {
+      const currentStep = explanationSteps[currentStepIndex];
+      const newDecorations = editorRef.current.deltaDecorations(
+        decorations,
+        currentStep ? parseTargetLines(currentStep.target, monacoRef.current).map(range => ({
+          range,
+          options: {
+            isWholeLine: true,
+            className: 'monaco-highlighted-line',
+            marginClassName: 'monaco-highlighted-line-margin',
+          }
+        })) : []
+      );
+      setDecorations(newDecorations);
+
+      if (currentStep) {
+        const ranges = parseTargetLines(currentStep.target, monacoRef.current);
+        if (ranges.length > 0) {
+          editorRef.current.revealLineInCenter(ranges[0].startLineNumber, monaco.editor.ScrollType.Smooth);
+        }
+      }
+    }
+  }, [currentStepIndex, hasExplanations, explanationSteps]);
+
+
+  const handleEditorDidMount: OnMount = (editor, monacoInstance) => {
+    editorRef.current = editor;
+    monacoRef.current = monacoInstance;
+    registerSystemVerilogLanguage(monacoInstance);
+
+    // Initial decoration update
+    if (hasExplanations) {
+        const currentStep = explanationSteps[currentStepIndex];
+        if (currentStep) {
+            const ranges = parseTargetLines(currentStep.target, monacoInstance);
+            const newDecorations = editor.deltaDecorations(
+                [],
+                ranges.map(range => ({
+                    range,
+                    options: {
+                        isWholeLine: true,
+                        className: 'monaco-highlighted-line',
+                        marginClassName: 'monaco-highlighted-line-margin',
+                    }
+                }))
+            );
+            setDecorations(newDecorations);
+            if (ranges.length > 0) {
+              editor.revealLineInCenter(ranges[0].startLineNumber);
+            }
+        }
+    }
+  };
+
 
   const handleNext = () => {
     setCurrentStepIndex((prev) => Math.min(prev + 1, explanationSteps.length - 1));
@@ -95,33 +196,27 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
     setCurrentStepIndex((prev) => Math.max(prev - 1, 0));
   };
 
-  React.useEffect(() => {
-    const element = document.querySelector('[data-testid="interactive-code"]');
-    if (element) {
-      const styles = getComputedStyle(element);
-      console.log('InteractiveCode background-color:', styles.backgroundColor);
-    }
-  }, []);
-
-  
-
   return (
     <div data-testid="interactive-code" className="interactive-code my-6 p-4 border border-white/20 rounded-lg shadow-md bg-white/10 backdrop-blur-lg">
-      <div className="code-section mb-4 relative bg-transparent">
-        <CodeBlock
-          code={code}
+      <div className="code-section mb-4 relative bg-transparent rounded-md overflow-hidden border border-white/20">
+        {fileName && (
+            <div className="bg-gray-700 text-white text-sm py-1 px-4">{fileName}</div>
+        )}
+        <Editor
+          height="400px"
           language={language}
-          fileName={fileName}
-          showLineNumbers={true}
-          lineProps={(lineNumber) => {
-            const style: React.CSSProperties = { display: 'block', width: '100%' };
-            if (highlightedLines.has(lineNumber)) {
-              style.backgroundColor = 'hsla(var(--primary), 0.2)';
-              style.borderLeft = '2px solid hsl(var(--primary))';
-              style.paddingLeft = '10px';
-              style.marginLeft = '-12px'; // Adjust to align with the border
-            }
-            return { style };
+          value={code}
+          onMount={handleEditorDidMount}
+          theme={theme === 'dark' ? 'vs-dark' : 'light'}
+          options={{
+            readOnly: !isEditable,
+            domReadOnly: !isEditable,
+            minimap: { enabled: true },
+            scrollBeyondLastLine: false,
+            fontSize: 14,
+            wordWrap: 'on',
+            automaticLayout: true,
+            glyphMargin: true,
           }}
         />
       </div>
@@ -137,8 +232,8 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
                 exit={{ opacity: 0, y: -10 }}
                 transition={{ duration: 0.3 }}
               >
-                {currentStep?.title && <h4 className="font-semibold text-lg mb-2 text-primary">{currentStep.title}</h4>}
-                <div className="text-sm text-foreground/90">{currentStep?.explanation || 'End of walkthrough.'}</div>
+                {explanationSteps[currentStepIndex]?.title && <h4 className="font-semibold text-lg mb-2 text-primary">{explanationSteps[currentStepIndex].title}</h4>}
+                <div className="text-sm text-foreground/90">{explanationSteps[currentStepIndex]?.explanation || 'End of walkthrough.'}</div>
               </motion.div>
             </AnimatePresence>
           </div>
