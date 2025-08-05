@@ -2,60 +2,67 @@
 
 import React, { useState } from 'react';
 import { Button } from './Button';
-import { Play } from 'lucide-react';
+import { Play, AlertTriangle } from 'lucide-react';
 
 interface CodeExecutionEnvironmentProps {
-  // In the future, this might take the code as a prop, e.g.
-  // code: string;
+  code: string;
 }
 
-export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> = () => {
+export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> = ({ code }) => {
   const [isRunning, setIsRunning] = useState(false);
   const [output, setOutput] = useState<string>('');
+  const [error, setError] = useState<string>('');
 
-  const handleRunCode = () => {
+  const handleRunCode = async () => {
     setIsRunning(true);
-    setOutput('Compiling and running simulation...');
+    setOutput('Sending code to server for simulation...');
+    setError('');
 
-    // Simulate a network request or a long-running process like a simulation
-    setTimeout(() => {
-      const mockOutput = [
-        'VCS-MX/MXI-2023.03-SP2-1  linux-64  Jul 26 15:00 2023',
-        'Copyright (c) 1991-2023.  ALL RIGHTS RESERVED.',
-        'info: Running test: base_test',
-        '-----------------------------------',
-        'UVM_INFO @ 0: uvm_test_top [RNTST] Starting test base_test',
-        'UVM_INFO @ 10: uvm_test_top.env.agent [AGENT] Got item: 5',
-        'UVM_INFO @ 20: uvm_test_top.env.agent [AGENT] Got item: 12',
-        'UVM_INFO @ 30: uvm_test_top.env.agent [AGENT] Got item: 8',
-        '--- UVM Report Summary ---',
-        '** Report counts by severity',
-        'UVM_INFO : 4',
-        'UVM_WARNING : 0',
-        'UVM_ERROR : 0',
-        'UVM_FATAL : 0',
-        '** Report counts by id',
-        '[AGENT] 3',
-        '[RNTST] 1',
-        '',
-        'Simulation PASSED',
-      ].join('\n');
+    try {
+      const response = await fetch('/api/simulate', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ code }),
+      });
 
-      setOutput(mockOutput);
+      const result = await response.json();
+
+      if (!response.ok || !result.success) {
+        setError(result.error || 'An unknown error occurred during simulation.');
+        setOutput(result.output || 'No output available.');
+      } else {
+        setOutput(result.output);
+      }
+    } catch (e) {
+      const fetchError = e instanceof Error ? e.message : 'A network error occurred.';
+      setError(`Failed to connect to the simulation service: ${fetchError}`);
+      setOutput('');
+    } finally {
       setIsRunning(false);
-    }, 2000);
+    }
   };
 
   return (
     <div className="code-execution-environment my-6 p-4 border border-white/20 rounded-lg shadow-md bg-white/10 backdrop-blur-lg">
       <div className="controls mb-4">
-        <Button onClick={handleRunCode} disabled={isRunning}>
+        <Button onClick={handleRunCode} disabled={isRunning || !code}>
           <Play className="w-4 h-4 mr-2" />
           {isRunning ? 'Running...' : 'Run Simulation'}
         </Button>
       </div>
       <div className="output-section">
         <h3 className="text-lg font-semibold mb-2 text-foreground/90">Simulation Output</h3>
+        {error && (
+            <div className="bg-red-900/50 text-white p-3 rounded-md mb-4 flex items-center">
+                <AlertTriangle className="w-5 h-5 mr-3 text-red-400" />
+                <div>
+                    <h4 className="font-bold">Simulation Error</h4>
+                    <p className="text-sm">{error}</p>
+                </div>
+            </div>
+        )}
         <pre className="bg-black text-white p-4 rounded-md text-sm whitespace-pre-wrap font-mono h-64 overflow-y-auto">
           {output || 'Click "Run Simulation" to see the output.'}
         </pre>

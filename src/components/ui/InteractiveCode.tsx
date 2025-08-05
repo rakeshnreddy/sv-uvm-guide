@@ -9,14 +9,12 @@ import { motion, AnimatePresence } from 'framer-motion';
 import type * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
 
 // This is a placeholder for SystemVerilog language support.
-// A full implementation would require a Monarch tokenizer.
 const registerSystemVerilogLanguage = (monacoInstance: typeof monaco) => {
     const langId = 'systemverilog';
     if (monacoInstance.languages.getLanguages().some(lang => lang.id === langId)) {
         return;
     }
     monacoInstance.languages.register({ id: langId });
-    // Basic keyword highlighting for demonstration
     monacoInstance.languages.setMonarchTokensProvider(langId, {
         keywords: [
             'module', 'endmodule', 'logic', 'reg', 'wire', 'initial', 'always',
@@ -36,7 +34,7 @@ const registerSystemVerilogLanguage = (monacoInstance: typeof monaco) => {
         tokenizer: {
             root: [
                 [/[a-zA-Z_]\w*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
-                [/`[a-zA-Z_]\w*/, 'predefined'], // For `defines
+                [/`[a-zA-Z_]\w*/, 'predefined'],
                 [/\d+/, 'number'],
                 [/"/, { token: 'string.quote', bracket: '@open', next: '@string' }],
                 [/\/\//, 'comment'],
@@ -58,7 +56,6 @@ const registerSystemVerilogLanguage = (monacoInstance: typeof monaco) => {
     });
 };
 
-
 export interface ExplanationStep {
   target: string;
   title?: string;
@@ -72,26 +69,19 @@ interface InteractiveCodeProps {
   explanationSteps?: ExplanationStep[];
   initialStep?: number;
   isEditable?: boolean;
+  onChange?: (value: string | undefined) => void;
 }
 
 const parseTargetLines = (target: string, monacoInstance: typeof monaco): monaco.IRange[] => {
-  if (!target || target.toLowerCase() === 'all' || !monacoInstance) {
-    return [];
-  }
-
+  if (!target || target.toLowerCase() === 'all' || !monacoInstance) return [];
   const ranges: monaco.IRange[] = [];
-  const parts = target.split(',');
-  parts.forEach(part => {
+  target.split(',').forEach(part => {
     if (part.includes('-')) {
       const [start, end] = part.split('-').map(Number);
-      if (!isNaN(start) && !isNaN(end)) {
-        ranges.push(new monacoInstance.Range(start, 1, end, 1));
-      }
+      if (!isNaN(start) && !isNaN(end)) ranges.push(new monacoInstance.Range(start, 1, end, 1));
     } else {
       const lineNumber = Number(part);
-      if (!isNaN(lineNumber)) {
-        ranges.push(new monacoInstance.Range(lineNumber, 1, lineNumber, 1));
-      }
+      if (!isNaN(lineNumber)) ranges.push(new monacoInstance.Range(lineNumber, 1, lineNumber, 1));
     }
   });
   return ranges;
@@ -104,6 +94,7 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   explanationSteps = [],
   initialStep = 0,
   isEditable = false,
+  onChange,
 }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(initialStep);
   const { theme } = useTheme();
@@ -111,7 +102,7 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   const monacoRef = useRef<typeof monaco | null>(null);
   const [decorations, setDecorations] = useState<string[]>([]);
 
-  const code = useMemo(() => {
+  const initialCode = useMemo(() => {
     let codeString = '';
     React.Children.forEach(children, (child) => {
       if (typeof child === 'string') {
@@ -133,17 +124,13 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   const hasExplanations = explanationSteps.length > 0;
 
   useEffect(() => {
-    if (editorRef.current && monacoRef.current && hasExplanations) {
+    if (editorRef.current && monacoRef.current && hasExplanations && !isEditable) {
       const currentStep = explanationSteps[currentStepIndex];
       const newDecorations = editorRef.current.deltaDecorations(
         decorations,
         currentStep ? parseTargetLines(currentStep.target, monacoRef.current).map(range => ({
           range,
-          options: {
-            isWholeLine: true,
-            className: 'monaco-highlighted-line',
-            marginClassName: 'monaco-highlighted-line-margin',
-          }
+          options: { isWholeLine: true, className: 'monaco-highlighted-line', marginClassName: 'monaco-highlighted-line-margin' }
         })) : []
       );
       setDecorations(newDecorations);
@@ -155,57 +142,44 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
         }
       }
     }
-  }, [currentStepIndex, hasExplanations, explanationSteps]);
-
+  }, [currentStepIndex, hasExplanations, explanationSteps, isEditable, decorations]);
 
   const handleEditorDidMount: OnMount = (editor, monacoInstance) => {
     editorRef.current = editor;
     monacoRef.current = monacoInstance;
     registerSystemVerilogLanguage(monacoInstance);
 
-    // Initial decoration update
-    if (hasExplanations) {
+    if (onChange) {
+        editor.onDidChangeModelContent(() => {
+            onChange(editor.getValue());
+        });
+    }
+
+    if (hasExplanations && !isEditable) {
         const currentStep = explanationSteps[currentStepIndex];
         if (currentStep) {
             const ranges = parseTargetLines(currentStep.target, monacoInstance);
-            const newDecorations = editor.deltaDecorations(
-                [],
-                ranges.map(range => ({
-                    range,
-                    options: {
-                        isWholeLine: true,
-                        className: 'monaco-highlighted-line',
-                        marginClassName: 'monaco-highlighted-line-margin',
-                    }
-                }))
-            );
+            const newDecorations = editor.deltaDecorations([], ranges.map(range => ({
+                range,
+                options: { isWholeLine: true, className: 'monaco-highlighted-line', marginClassName: 'monaco-highlighted-line-margin' }
+            })));
             setDecorations(newDecorations);
-            if (ranges.length > 0) {
-              editor.revealLineInCenter(ranges[0].startLineNumber);
-            }
+            if (ranges.length > 0) editor.revealLineInCenter(ranges[0].startLineNumber);
         }
     }
   };
 
-
-  const handleNext = () => {
-    setCurrentStepIndex((prev) => Math.min(prev + 1, explanationSteps.length - 1));
-  };
-
-  const handlePrevious = () => {
-    setCurrentStepIndex((prev) => Math.max(prev - 1, 0));
-  };
+  const handleNext = () => setCurrentStepIndex(prev => Math.min(prev + 1, explanationSteps.length - 1));
+  const handlePrevious = () => setCurrentStepIndex(prev => Math.max(prev - 1, 0));
 
   return (
     <div data-testid="interactive-code" className="interactive-code my-6 p-4 border border-white/20 rounded-lg shadow-md bg-white/10 backdrop-blur-lg">
       <div className="code-section mb-4 relative bg-transparent rounded-md overflow-hidden border border-white/20">
-        {fileName && (
-            <div className="bg-gray-700 text-white text-sm py-1 px-4">{fileName}</div>
-        )}
+        {fileName && <div className="bg-gray-700 text-white text-sm py-1 px-4">{fileName}</div>}
         <Editor
           height="400px"
           language={language}
-          value={code}
+          defaultValue={initialCode}
           onMount={handleEditorDidMount}
           theme={theme === 'dark' ? 'vs-dark' : 'light'}
           options={{
@@ -221,7 +195,7 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
         />
       </div>
 
-      {hasExplanations && (
+      {hasExplanations && !isEditable && (
         <>
           <div className="explanation-section p-4 bg-white/10 dark:bg-black/10 rounded min-h-[100px]">
             <AnimatePresence mode="wait">
@@ -237,17 +211,10 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
               </motion.div>
             </AnimatePresence>
           </div>
-
           <div className="navigation-controls flex justify-between items-center mt-4">
-            <Button onClick={handlePrevious} disabled={currentStepIndex === 0} variant="outline">
-              <ArrowLeft className="w-4 h-4 mr-2" /> Previous
-            </Button>
-            <span className="text-sm text-muted-foreground">
-              Step {currentStepIndex + 1} of {explanationSteps.length}
-            </span>
-            <Button onClick={handleNext} disabled={currentStepIndex === explanationSteps.length - 1} variant="outline">
-              Next <ArrowRight className="w-4 h-4 ml-2" />
-            </Button>
+            <Button onClick={handlePrevious} disabled={currentStepIndex === 0} variant="outline"><ArrowLeft className="w-4 h-4 mr-2" /> Previous</Button>
+            <span className="text-sm text-muted-foreground">Step {currentStepIndex + 1} of {explanationSteps.length}</span>
+            <Button onClick={handleNext} disabled={currentStepIndex === explanationSteps.length - 1} variant="outline">Next <ArrowRight className="w-4 h-4 ml-2" /></Button>
           </div>
         </>
       )}

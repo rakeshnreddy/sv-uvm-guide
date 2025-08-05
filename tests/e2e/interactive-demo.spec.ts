@@ -5,40 +5,46 @@ test.describe('Interactive Demo Page', () => {
     await page.goto('/practice/interactive-demo');
   });
 
-  test('should display the main title', async ({ page }) => {
-    // The page can be slow to load with the new components, so wait for a key element to be visible
-    await expect(page.locator('h2:has-text("Enhanced Interactive Code")')).toBeVisible({ timeout: 15000 });
-    await expect(page.locator('h1')).toContainText('Interactive Components Demo');
-  });
+  test('should display the interactive simulation environment and allow running a simulation', async ({ page }) => {
+    // Set a longer timeout for this test as it loads several heavy components
+    test.setTimeout(30000);
 
-  test('should display and interact with the InteractiveCode component', async ({ page }) => {
-    await expect(page.locator('h2:has-text("Enhanced Interactive Code")')).toBeVisible();
+    // Check for the main page title
+    await expect(page.locator('h1')).toContainText('Interactive Components Demo', { timeout: 10000 });
 
-    // Check for Monaco editor instance
-    await expect(page.locator('.monaco-editor')).toBeVisible();
+    // Check that the main container for the interactive environment is visible
+    const mainContainerTitle = page.locator('h2:has-text("Interactive Simulation Environment")');
+    await expect(mainContainerTitle).toBeVisible();
 
-    // Check initial explanation text
-    await expect(page.getByText('This section declares the SystemVerilog module and its signals.')).toBeVisible();
+    // Check for the Monaco editor instance
+    const editor = page.locator('.monaco-editor');
+    await expect(editor).toBeVisible();
 
-    // Click next and check for new explanation
-    await page.getByRole('button', { name: 'Next' }).click();
-    await expect(page.getByText('This `initial` block creates a free-running clock with a 10ns period.')).toBeVisible();
-    await expect(page.locator('span:has-text("Step 2 of 5")')).toBeVisible();
-  });
+    // Check that the initial code is loaded
+    await expect(editor).toContainText('Hello, World!');
 
-  test('should run the simulation in the CodeExecutionEnvironment', async ({ page }) => {
-    await expect(page.locator('h2:has-text("Code Execution Environment")')).toBeVisible();
-
+    // Get the run button and the output panel
+    const runButton = page.getByRole('button', { name: 'Run Simulation' });
     const outputPanel = page.locator('pre');
+
+    // Verify initial state
+    await expect(runButton).toBeEnabled();
     await expect(outputPanel).toContainText('Click "Run Simulation" to see the output.');
 
-    await page.getByRole('button', { name: 'Run Simulation' }).click();
+    // Click the run button and wait for the results
+    await runButton.click();
+    await expect(runButton).toBeDisabled();
 
-    // Wait for the simulation to "complete"
-    await expect(outputPanel).toContainText('Simulation PASSED', { timeout: 3000 });
+    // Check for the actual output from the simulation
+    await expect(outputPanel).toContainText('Hello, World! Welcome to the interactive simulation.', { timeout: 10000 });
+    await expect(outputPanel).toContainText('Simulation finished at time 10.');
+
+    // Check that the run button is enabled again
+    await expect(runButton).toBeEnabled();
   });
 
-  test('should display the placeholder components', async ({ page }) => {
+  test('should display the placeholder components for future features', async ({ page }) => {
+    await expect(page.locator('h2:has-text("Future Components")')).toBeVisible();
     await expect(page.locator('h2:has-text("Code Challenge System")')).toBeVisible();
     await expect(page.locator('h2:has-text("Debugging Simulator")')).toBeVisible();
     await expect(page.locator('h2:has-text("Code Review Assistant")')).toBeVisible();
