@@ -16,10 +16,6 @@ const navLinks = [
   {
     label: "Practice",
     href: "/practice",
-    dropdown: [
-      { href: "/exercises", label: "Exercises" },
-      { href: "/labs", label: "Labs" },
-    ],
   },
   { href: "/dashboard", label: "Dashboard" },
   { href: "/community", label: "Community" },
