@@ -6,7 +6,8 @@ import { useTheme } from 'next-themes';
 import { Button } from './Button';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import type * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
+import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
+import * as d3 from 'd3';
 
 // This is a placeholder for SystemVerilog language support.
 // A full implementation would require a Monarch tokenizer.
@@ -130,6 +131,75 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
     return codeString.trim();
   }, [children]);
 
+  const [codeContent, setCodeContent] = useState(code);
+  useEffect(() => setCodeContent(code), [code]);
+
+  interface AnalysisResult {
+    metrics: {
+      lines: number;
+      modules: number;
+      alwaysBlocks: number;
+      complexity: number;
+    };
+    suggestions: string[];
+    warnings: string[];
+    testCases: string[];
+  }
+
+  const analyzeSystemVerilog = (input: string): AnalysisResult => {
+    const lines = input.split(/\r?\n/);
+    const moduleRegex = /\bmodule\b/;
+    const alwaysRegex = /\balways(_ff|_comb)?\b/;
+    const metrics = {
+      lines: lines.length,
+      modules: lines.filter((l) => moduleRegex.test(l)).length,
+      alwaysBlocks: lines.filter((l) => alwaysRegex.test(l)).length,
+      complexity: lines.reduce((acc, l) => acc + ((l.match(/\b(if|case|for|while)\b/g) || []).length), 0),
+    };
+    const suggestions: string[] = [];
+    if (input.match(/\btodo\b/i)) {
+      suggestions.push('Remove TODO comments before final submission.');
+    }
+    if (input.includes('always_ff') && !input.includes('<=')) {
+      suggestions.push('Use non-blocking assignments (<=) in sequential logic.');
+    }
+    const warnings: string[] = [];
+    if (input.includes('#')) {
+      warnings.push('Avoid using # delays for synthesizable code.');
+    }
+    const testCases = ['// Test case generation not implemented'];
+    return { metrics, suggestions, warnings, testCases };
+  };
+
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  useEffect(() => {
+    setAnalysis(analyzeSystemVerilog(codeContent));
+  }, [codeContent]);
+
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  useEffect(() => {
+    if (!analysis || !svgRef.current) return;
+    const data = [
+      { label: 'Lines', value: analysis.metrics.lines },
+      { label: 'Modules', value: analysis.metrics.modules },
+      { label: 'Always', value: analysis.metrics.alwaysBlocks },
+    ];
+    const svg = d3.select(svgRef.current);
+    const width = Number(svg.attr('width')) || 300;
+    const height = Number(svg.attr('height')) || 120;
+    svg.selectAll('*').remove();
+    const x = d3.scaleBand().domain(data.map(d => d.label)).range([0, width]).padding(0.1);
+    const y = d3.scaleLinear().domain([0, d3.max(data, d => d.value) || 1]).range([height, 0]);
+    svg.append('g').selectAll('rect').data(data).enter().append('rect')
+      .attr('x', d => x(d.label) || 0)
+      .attr('y', d => y(d.value))
+      .attr('width', x.bandwidth())
+      .attr('height', d => height - y(d.value))
+      .attr('fill', '#3b82f6');
+    svg.append('g').attr('transform', `translate(0,${height})`).call(d3.axisBottom(x));
+    svg.append('g').call(d3.axisLeft(y).ticks(3));
+  }, [analysis]);
+
   const hasExplanations = explanationSteps.length > 0;
 
   useEffect(() => {
@@ -205,8 +275,9 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
         <Editor
           height="400px"
           language={language}
-          value={code}
+          value={codeContent}
           onMount={handleEditorDidMount}
+          onChange={(value) => setCodeContent(value || '')}
           theme={theme === 'dark' ? 'vs-dark' : 'light'}
           options={{
             readOnly: !isEditable,
@@ -219,6 +290,36 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
             glyphMargin: true,
           }}
         />
+      </div>
+      <div className="analysis-section grid grid-cols-1 gap-4 md:grid-cols-2">
+        <div className="text-sm">
+          <h4 className="font-semibold mb-2">Metrics</h4>
+          <ul className="list-disc ml-5">
+            <li>Lines: {analysis?.metrics.lines}</li>
+            <li>Modules: {analysis?.metrics.modules}</li>
+            <li>Always blocks: {analysis?.metrics.alwaysBlocks}</li>
+            <li>Complexity tokens: {analysis?.metrics.complexity}</li>
+          </ul>
+          <h4 className="font-semibold mt-4 mb-2">Suggestions</h4>
+          <ul className="list-disc ml-5">
+            {analysis?.suggestions.map((s, i) => (
+              <li key={i}>{s}</li>
+            ))}
+            {analysis?.suggestions.length === 0 && <li>No suggestions</li>}
+          </ul>
+          <h4 className="font-semibold mt-4 mb-2">Security Warnings</h4>
+          <ul className="list-disc ml-5">
+            {analysis?.warnings.map((w, i) => (
+              <li key={i}>{w}</li>
+            ))}
+            {analysis?.warnings.length === 0 && <li>None detected</li>}
+          </ul>
+          <h4 className="font-semibold mt-4 mb-2">Generated Tests</h4>
+          <pre className="bg-black/10 p-2 rounded">{analysis?.testCases.join('\n')}</pre>
+        </div>
+        <div className="flex justify-center items-center">
+          <svg ref={svgRef} width="300" height="120"></svg>
+        </div>
       </div>
 
       {hasExplanations && (
