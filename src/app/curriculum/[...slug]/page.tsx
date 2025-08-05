@@ -7,7 +7,6 @@ import { findTopicBySlug, getBreadcrumbs, findPrevNextTopics } from '@/lib';
 import { notFound } from 'next/navigation';
 import Breadcrumbs from '@/components/layout/Breadcrumbs';
 import FeynmanPromptWidget from '@/components/widgets/FeynmanPromptWidget';
-import { InteractiveCode } from '@/components/ui/InteractiveCode';
 import Quiz from '@/components/ui/Quiz';
 import Panel from '@/components/ui/Panel';
 import { InfoPage } from '@/components/templates/InfoPage';
@@ -29,6 +28,7 @@ const InteractiveUvmArchitectureDiagram = dynamic(() => import('@/components/dia
 const UvmComponentRelationshipVisualizer = dynamic(() => import('@/components/diagrams/UvmComponentRelationshipVisualizer'));
 const UvmPhasingInteractiveTimeline = dynamic(() => import('@/components/diagrams/UvmPhasingInteractiveTimeline'));
 const SystemVerilogDataTypesAnimation = dynamic(() => import('@/components/animations/SystemVerilogDataTypesAnimation'));
+const InteractiveCode = dynamic(() => import('@/components/ui/InteractiveCode').then(mod => mod.InteractiveCode), { ssr: false });
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;

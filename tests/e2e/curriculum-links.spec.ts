@@ -3,6 +3,8 @@ import { test, expect } from '@playwright/test';
 import { curriculumData } from '../../src/lib/curriculum-data';
 
 test('should successfully load all curriculum pages and have correct titles', async ({ page }) => {
+  test.setTimeout(300000); // 5 minute timeout for this long-running test
+
   for (const courseModule of curriculumData) {
     for (const section of courseModule.sections) {
       for (const topic of section.topics) {

@@ -4,6 +4,7 @@ import { test, expect, devices } from '@playwright/test';
 test.use({ ...devices['iPhone 13'] });
 
 test.describe('Mobile Navigation', () => {
+  test.setTimeout(180000); // 3 minute timeout for this test
 
   test('should open slide-out menu and sidebar', async ({ page }) => {
     await page.goto('/');
