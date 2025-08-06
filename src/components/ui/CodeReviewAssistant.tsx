@@ -6,59 +6,7 @@ import { CheckCircle, XCircle, Clock } from "lucide-react";
 import { Button } from "./Button";
 import { Input } from "./Input";
 import { Textarea } from "./Textarea";
-
-// ---------------------------------------------------------------------------
-// Hook and type definitions
-// ---------------------------------------------------------------------------
-
-type CheckResult = {
-  status: "pending" | "pass" | "fail";
-  details?: string;
-};
-
-export const useDocumentationCheck = (): CheckResult => {
-  const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setResult({ status: "pass", details: "All modules documented" });
-    }, 300);
-    return () => clearTimeout(timer);
-  }, []);
-  return result;
-};
-
-export const useTestCoverageCheck = (): CheckResult => {
-  const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setResult({ status: "pass", details: "Coverage at 85%" });
-    }, 400);
-    return () => clearTimeout(timer);
-  }, []);
-  return result;
-};
-
-export const useArchitectureCheck = (): CheckResult => {
-  const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setResult({ status: "pass", details: "Layers follow defined patterns" });
-    }, 500);
-    return () => clearTimeout(timer);
-  }, []);
-  return result;
-};
-
-export const useCodingStandardsCheck = (): CheckResult => {
-  const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setResult({ status: "pass", details: "Conforms to style guide" });
-    }, 600);
-    return () => clearTimeout(timer);
-  }, []);
-  return result;
-};
+import { useTimedCheck, CheckResult } from "./useTimedCheck";
 
 // ---------------------------------------------------------------------------
 // Component
@@ -98,10 +46,10 @@ export const CodeReviewAssistant = () => {
   }, []);
 
   // Hook-based verifications
-  const docs = useDocumentationCheck();
-  const tests = useTestCoverageCheck();
-  const architecture = useArchitectureCheck();
-  const standards = useCodingStandardsCheck();
+  const docs = useTimedCheck(300, "All modules documented");
+  const tests = useTimedCheck(400, "Coverage at 85%");
+  const architecture = useTimedCheck(500, "Layers follow defined patterns");
+  const standards = useTimedCheck(600, "Conforms to style guide");
 
   const checks = [
     { label: "Code Quality Metrics", result: quality },
