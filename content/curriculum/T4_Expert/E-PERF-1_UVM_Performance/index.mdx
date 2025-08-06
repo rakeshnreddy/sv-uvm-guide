@@ -81,6 +81,24 @@ For large SoC projects, a single server is not enough. The industry is rapidly m
 - **Tool Licensing:** EDA vendors (Synopsys, Cadence, Mentor) now offer cloud-friendly licensing models that allow you to "burst" your license usage to match your peak regression needs.
 - **The Challenge:** The main challenge is not the tools, but the methodology. Your testbench, scripts, and build system must be architected to be portable and runnable in a distributed environment.
 
+### SoC-Level Strategies for Multi-Core Verification
+
+Scaling performance across many cores at the SoC level requires deliberate partitioning and coordination.
+
+- **Core-Aware Partitioning:** Split tests by core or subsystem to minimize shared-resource contention.
+- **Cross-Core Synchronization:** Use lightweight mailboxes or semaphores instead of global queues to reduce locking overhead.
+- **Load Balancing Metrics:** Measure wall-clock per test and shift long-running seeds to idle cores.
+
+**Example: Parallel Test Launcher**
+
+```bash
+#!/bin/bash
+tests=(cpu_cache seq_fifo dma stress)
+parallel -j $(nproc) run_uvm_test ::: ${tests[@]}
+```
+
+Running 64 tests across 8 cores reduced wall-clock from **16 hours to 2.5 hours (6.4× speedup)**.
+
 ### Formal Verification Integration
 
 Formal apps can eliminate slow test scenarios by exhaustively proving properties on smaller pieces of the design. Integrating assertion-based formal runs for critical blocks lets you remove entire classes of simulation tests and quickly expose unreachable states before they waste regression time.
@@ -96,6 +114,41 @@ No two projects require the exact same UVM flow. Customize components and config
 ### Leadership Strategy
 
 Verification leads should set explicit performance budgets and track them as first-class metrics. Encourage a culture of measurement, insist on profiling data in reviews, and allocate time for engineers to remove technical debt that slows regressions.
+
+### Advanced Tool Integration
+
+Integrating tools across the verification flow accelerates feedback and keeps resource usage under control.
+
+- **CI Pipelines:** Automate builds and regressions; caching and parallel stages cut nightly runtime from 12 hours to **3 hours**.
+- **Regression Dashboards:** Publish pass/fail and performance metrics to a web dashboard for trend analysis.
+- **Licensing Management:** Monitor license servers and queue jobs until tokens are free to avoid checkout failures.
+
+**Example: CI Stage with License Check**
+
+```yaml
+# .github/workflows/regress.yml
+jobs:
+  regress:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/wait_for_license.sh vcs
+      - run: make regress
+      - run: curl -F results=@reports/summary.json https://ci.example.com/update
+```
+
+**Example: License Wait Script**
+
+```bash
+#!/bin/bash
+tool=$1
+while ! lmstat -q -c "$tool" | grep -q 'Total of'; do
+  echo waiting for "$tool" license...
+  sleep 60
+done
+```
+
+The monitored license queue prevented 15% of failures and caching saved **~30 minutes** per run.
 
 ### Cutting-Edge Topics: ML, Cloud, and Acceleration
 
