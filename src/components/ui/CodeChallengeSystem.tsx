@@ -72,6 +72,7 @@ export const CodeChallengeSystem = () => {
   const [achievements, setAchievements] = useState<string[]>([]);
   const [lastRuntime, setLastRuntime] = useState<number | null>(null);
   const [commentInputs, setCommentInputs] = useState<Record<number, string>>({});
+  const [commentErrors, setCommentErrors] = useState<Record<number, string>>({});
 
   useEffect(() => {
     setCode(challenge.starterCode);
@@ -170,15 +171,21 @@ export const CodeChallengeSystem = () => {
   };
 
   const addComment = (index: number) => {
-    const text = commentInputs[index];
-    if (!text) return;
+    const raw = commentInputs[index];
+    if (!raw) return;
+    const sanitized = raw.replace(/[\x00-\x1F\x7F]/g, "");
+    if (sanitized.length > 500) {
+      setCommentErrors({ ...commentErrors, [index]: "Comment must be 500 characters or less." });
+      return;
+    }
     const updated = [...peerSolutions];
-    updated[index].comments = [...(updated[index].comments || []), text];
+    updated[index].comments = [...(updated[index].comments || []), sanitized];
     setPeerSolutions(updated);
     const store = JSON.parse(localStorage.getItem("challengeSolutions") || "{}");
     store[challenge.id] = updated;
     localStorage.setItem("challengeSolutions", JSON.stringify(store));
     setCommentInputs({ ...commentInputs, [index]: "" });
+    setCommentErrors({ ...commentErrors, [index]: "" });
   };
 
   return (
@@ -240,6 +247,9 @@ export const CodeChallengeSystem = () => {
                 Comment
               </button>
             </div>
+            {commentErrors[i] && (
+              <p className="text-xs text-red-500 mt-1">{commentErrors[i]}</p>
+            )}
           </div>
         ))}
       </div>
