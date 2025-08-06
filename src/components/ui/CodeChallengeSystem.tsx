@@ -10,6 +10,8 @@ import type { Challenge } from "@/lib/challenges/types";
 interface PeerSolution {
   code: string;
   timestamp: number;
+  runtime: number;
+  comments: string[];
 }
 
 const FORBIDDEN = /(process|require|import|export|global|window)/;
@@ -21,18 +23,43 @@ function sanitize(code: string) {
   return code;
 }
 
+function lintCode(code: string) {
+  const issues: string[] = [];
+  if (/var\s+/.test(code)) issues.push("Avoid using var");
+  if (/console\.log/.test(code)) issues.push("Remove console.log statements");
+  return issues;
+}
+
+function validateStyle(code: string) {
+  const issues: string[] = [];
+  code.split("\n").forEach((line, i) => {
+    if (line.length > 80) issues.push(`Line ${i + 1} exceeds 80 chars`);
+    if (/^\t+/.test(line)) issues.push(`Line ${i + 1} uses tabs`);
+  });
+  return issues;
+}
+
+function securityScan(code: string) {
+  const issues: string[] = [];
+  if (/eval\(/.test(code)) issues.push("Avoid eval()");
+  if (/Function\(/.test(code)) issues.push("Avoid Function constructor");
+  return issues;
+}
+
 function runChallenge(challenge: Challenge, code: string) {
   const fn = new Function(`${code}; return solution;`)();
-  const start = performance.now();
   let pass = true;
-  for (const tc of challenge.testCases) {
-    const output = fn(...tc.input);
-    if (JSON.stringify(output) !== JSON.stringify(tc.expected)) {
-      pass = false;
-      break;
+  const runs = 30;
+  const start = performance.now();
+  for (let i = 0; i < runs; i++) {
+    for (const tc of challenge.testCases) {
+      const output = fn(...tc.input);
+      if (i === 0 && JSON.stringify(output) !== JSON.stringify(tc.expected)) {
+        pass = false;
+      }
     }
   }
-  const duration = performance.now() - start;
+  const duration = (performance.now() - start) / runs;
   return { pass, duration };
 }
 
@@ -43,13 +70,17 @@ export const CodeChallengeSystem = () => {
   const [peerSolutions, setPeerSolutions] = useState<PeerSolution[]>([]);
   const [points, setPoints] = useState<number>(0);
   const [achievements, setAchievements] = useState<string[]>([]);
+  const [lastRuntime, setLastRuntime] = useState<number | null>(null);
+  const [commentInputs, setCommentInputs] = useState<Record<number, string>>({});
 
   useEffect(() => {
     setCode(challenge.starterCode);
-    const stored = JSON.parse(
-      localStorage.getItem("challengeSolutions") || "{}"
-    )[challenge.id] || [];
-    setPeerSolutions(stored);
+    const stored = (
+      JSON.parse(localStorage.getItem("challengeSolutions") || "{}")[
+        challenge.id
+      ] || []
+    ) as PeerSolution[];
+    setPeerSolutions(stored.sort((a, b) => a.runtime - b.runtime));
   }, [challenge]);
 
   useEffect(() => {
@@ -67,6 +98,14 @@ export const CodeChallengeSystem = () => {
   }, []);
 
   const handleEvaluate = () => {
+    const lint = lintCode(code);
+    const style = validateStyle(code);
+    const security = securityScan(code);
+    if (security.length) {
+      setResult(`Security issues: ${security.join(", ")}`);
+      return;
+    }
+
     let evaluation;
     try {
       const safe = sanitize(code);
@@ -75,6 +114,12 @@ export const CodeChallengeSystem = () => {
       setResult(`Error: ${e.message}`);
       return;
     }
+
+    setLastRuntime(evaluation.duration);
+
+    let message = "";
+    if (lint.length) message += `Lint: ${lint.join("; ")}. `;
+    if (style.length) message += `Style: ${style.join("; ")}. `;
 
     if (evaluation.pass) {
       const newPoints = points + 10;
@@ -88,21 +133,52 @@ export const CodeChallengeSystem = () => {
       setPoints(newPoints);
       setAchievements(newAch);
       persistProgress(newPoints, newAch);
-      setResult(`All tests passed in ${evaluation.duration.toFixed(2)}ms`);
-      setChallenge(getNextChallenge(challenge, true));
+      setResult(
+        `${message}All tests passed in ${evaluation.duration.toFixed(2)}ms`
+      );
+      setChallenge(getNextChallenge(challenge, true, evaluation.duration));
     } else {
-      setResult(`Tests failed in ${evaluation.duration.toFixed(2)}ms`);
-      setChallenge(getNextChallenge(challenge, false));
+      setResult(
+        `${message}Tests failed in ${evaluation.duration.toFixed(2)}ms`
+      );
+      setChallenge(getNextChallenge(challenge, false, evaluation.duration));
     }
   };
 
   const handleShare = () => {
+    let evaluation;
+    try {
+      const safe = sanitize(code);
+      evaluation = runChallenge(challenge, safe);
+    } catch (e: any) {
+      setResult(`Error: ${e.message}`);
+      return;
+    }
+    setLastRuntime(evaluation.duration);
+
     const store = JSON.parse(localStorage.getItem("challengeSolutions") || "{}");
     const list: PeerSolution[] = store[challenge.id] || [];
-    list.push({ code, timestamp: Date.now() });
+    list.push({
+      code,
+      timestamp: Date.now(),
+      runtime: evaluation.duration,
+      comments: []
+    });
     store[challenge.id] = list;
     localStorage.setItem("challengeSolutions", JSON.stringify(store));
-    setPeerSolutions(list);
+    setPeerSolutions(list.sort((a, b) => a.runtime - b.runtime));
+  };
+
+  const addComment = (index: number) => {
+    const text = commentInputs[index];
+    if (!text) return;
+    const updated = [...peerSolutions];
+    updated[index].comments = [...(updated[index].comments || []), text];
+    setPeerSolutions(updated);
+    const store = JSON.parse(localStorage.getItem("challengeSolutions") || "{}");
+    store[challenge.id] = updated;
+    localStorage.setItem("challengeSolutions", JSON.stringify(store));
+    setCommentInputs({ ...commentInputs, [index]: "" });
   };
 
   return (
@@ -137,12 +213,34 @@ export const CodeChallengeSystem = () => {
           </p>
         )}
         {peerSolutions.map((s, i) => (
-          <pre
-            key={i}
-            className="bg-background/50 border rounded p-2 my-2 overflow-auto text-xs"
-          >
-            {s.code}
-          </pre>
+          <div key={i} className="my-2">
+            <pre className="bg-background/50 border rounded p-2 overflow-auto text-xs">
+              {s.code}
+            </pre>
+            <p className="text-xs mt-1">Runtime: {s.runtime.toFixed(2)}ms</p>
+            {s.comments.length > 0 && (
+              <ul className="list-disc list-inside text-xs ml-2">
+                {s.comments.map((c, j) => (
+                  <li key={j}>{c}</li>
+                ))}
+              </ul>
+            )}
+            <div className="flex gap-2 mt-1">
+              <input
+                value={commentInputs[i] || ""}
+                onChange={(e) =>
+                  setCommentInputs({ ...commentInputs, [i]: e.target.value })
+                }
+                className="border rounded p-1 flex-1 text-xs bg-background"
+              />
+              <button
+                onClick={() => addComment(i)}
+                className="px-2 py-1 rounded bg-secondary text-secondary-foreground text-xs"
+              >
+                Comment
+              </button>
+            </div>
+          </div>
         ))}
       </div>
       <div className="mt-4">

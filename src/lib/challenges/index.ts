@@ -46,10 +46,24 @@ export function getChallengeById(id: string): Challenge | undefined {
   return challenges.find((c) => c.id === id);
 }
 
-export function getNextChallenge(current: Challenge, success: boolean): Challenge {
+// Adapt challenge difficulty based on success and performance
+export function getNextChallenge(
+  current: Challenge,
+  success: boolean,
+  duration: number
+): Challenge {
   const index = challenges.findIndex((c) => c.id === current.id);
-  if (success) {
+
+  // If the user failed or the solution was very slow, step down a level
+  if (!success || duration > 100) {
+    return challenges[Math.max(index - 1, 0)];
+  }
+
+  // If the user solved the challenge quickly, advance to a harder one
+  if (duration < 50) {
     return challenges[Math.min(index + 1, challenges.length - 1)];
   }
-  return challenges[Math.max(index - 1, 0)];
+
+  // Otherwise, keep the current difficulty
+  return challenges[index];
 }
