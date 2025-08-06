@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 
+
 interface Review {
   commitId: string;
   comment?: string;
@@ -19,6 +20,7 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
+
 
   const { commitId, comment, approved } = data ?? {};
   if (!commitId || typeof commitId !== 'string') {
