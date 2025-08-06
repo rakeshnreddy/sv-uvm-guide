@@ -13,6 +13,14 @@ Each automated check is implemented as a custom React hook that returns a `Check
 
 All hooks take no arguments and are purely illustrative; they would typically accept configuration or data about the commit under review.
 
+## Expected Inputs
+
+The review form collects three pieces of information from reviewers:
+
+- **Commit ID** – A SHA string (7–40 hexadecimal characters) identifying the commit under review.
+- **Comment** – Free‑form feedback text. Multiple comments can be submitted.
+- **Approval Toggle** – A boolean flag indicating whether the review has been approved.
+
 ## Peer‑Review Workflow
 
 1. **Commit ID** – Reviewers supply the hash of the commit being inspected.

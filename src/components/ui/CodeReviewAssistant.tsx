@@ -9,13 +9,8 @@ import { Textarea } from "./Textarea";
 import { useTimedCheck, CheckResult } from "./useTimedCheck";
 
 // ---------------------------------------------------------------------------
-// Hook and type definitions
+// Hook definitions
 // ---------------------------------------------------------------------------
-
-type CheckResult = {
-  status: "pending" | "pass" | "fail";
-  details?: string;
-};
 
 /**
  * Simulates a documentation completeness check for the current commit.
@@ -82,8 +77,13 @@ export const useCodingStandardsCheck = (): CheckResult => {
 // ---------------------------------------------------------------------------
 
 /**
- * Aggregates automated code quality checks and a minimal peer-review interface.
- * The component has no props and maintains its own state for comments and approval.
+ * Aggregates automated code quality checks—documentation, tests, architecture,
+ * and coding standards—with a minimal peer-review interface.
+ * Reviewers provide a commit SHA, free-form comments, and an approval toggle.
+ * Each verification uses custom hooks returning a `{status, details}` object.
+ *
+ * @example
+ * <CodeReviewAssistant /> // see `src/app/practice/interactive-demo/page.tsx`
  */
 export const CodeReviewAssistant = () => {
   // Automated check results
