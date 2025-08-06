@@ -9,12 +9,18 @@ import { Textarea } from "./Textarea";
 import { useTimedCheck, CheckResult } from "./useTimedCheck";
 
 // ---------------------------------------------------------------------------
+
 // Component
 // ---------------------------------------------------------------------------
 
 /**
- * Aggregates automated code quality checks and a minimal peer-review interface.
- * The component has no props and maintains its own state for comments and approval.
+ * Aggregates automated code quality checks—documentation, tests, architecture,
+ * and coding standards—with a minimal peer-review interface.
+ * Reviewers provide a commit SHA, free-form comments, and an approval toggle.
+ * Each verification uses custom hooks returning a `{status, details}` object.
+ *
+ * @example
+ * <CodeReviewAssistant /> // see `src/app/practice/interactive-demo/page.tsx`
  */
 export const CodeReviewAssistant = () => {
   // Automated check results

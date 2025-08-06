@@ -8,6 +8,14 @@ Each check uses the generic `useTimedCheck(delay, details)` hook, which returns 
 
 The component invokes this hook to simulate checks for documentation, tests, architecture, and coding standards, but any additional timed verification could be added in the same way.
 
+## Expected Inputs
+
+The review form collects three pieces of information from reviewers:
+
+- **Commit ID** – A SHA string (7–40 hexadecimal characters) identifying the commit under review.
+- **Comment** – Free‑form feedback text. Multiple comments can be submitted.
+- **Approval Toggle** – A boolean flag indicating whether the review has been approved.
+
 ## Peer‑Review Workflow
 
 1. **Commit ID** – Reviewers supply the hash of the commit being inspected.
