@@ -3,7 +3,13 @@ export interface SimulationStats {
   runtimeMs: number;
   /** Resident set size in bytes */
   memoryBytes: number;
+  /** User CPU time in milliseconds */
+  cpuUserMs: number;
+  /** System CPU time in milliseconds */
+  cpuSystemMs: number;
 }
+
+export type SimulatorBackend = 'wasm' | 'icarus' | 'verilator';
 
 export interface SimulationResult {
   /** Combined stdout/stderr output from the simulator */
@@ -16,4 +22,6 @@ export interface SimulationResult {
   coverage: number;
   /** Any regression failures collected during execution */
   regressions: string[];
+  /** Backend used for the simulation */
+  backend: SimulatorBackend;
 }

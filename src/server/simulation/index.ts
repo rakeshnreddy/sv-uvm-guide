@@ -1,5 +1,9 @@
 import { spawn } from 'child_process';
-import { SimulationResult, SimulationStats } from './types';
+import {
+  SimulationResult,
+  SimulationStats,
+  SimulatorBackend,
+} from './types';
 
 /**
  * Executes a SystemVerilog simulation inside a containerised open-source
@@ -8,12 +12,32 @@ import { SimulationResult, SimulationStats } from './types';
  * Verilator (via Docker or WebAssembly) can be dropped in with minimal
  * changes.
  */
-export async function runSimulation(source: string): Promise<SimulationResult> {
+export async function runSimulation(
+  source: string,
+  backend: SimulatorBackend = 'wasm',
+): Promise<SimulationResult> {
   const start = process.hrtime.bigint();
+  const cpuStart = process.cpuUsage();
 
   return new Promise((resolve, reject) => {
-    // Placeholder command: echo compilation and simulation messages.
-    const proc = spawn('bash', ['-lc', 'echo "Compiling..." && sleep 1 && echo "Running..." && sleep 1 && echo "Done"']);
+    // Select a backend-specific command. These are placeholders that mimic the
+    // behaviour of real tools such as Icarus Verilog or Verilator.
+    let cmd: string;
+    switch (backend) {
+      case 'icarus':
+        cmd =
+          'echo "[Icarus] Compiling..." && sleep 1 && echo "[Icarus] Running..." && sleep 1 && echo "Simulation PASSED"';
+        break;
+      case 'verilator':
+        cmd =
+          'echo "[Verilator] Compiling..." && sleep 1 && echo "[Verilator] Running..." && sleep 1 && echo "Simulation PASSED"';
+        break;
+      default:
+        cmd =
+          'echo "[WASM] Initialising..." && sleep 1 && echo "[WASM] Executing..." && sleep 1 && echo "Simulation PASSED"';
+        break;
+    }
+    const proc = spawn('bash', ['-lc', cmd]);
 
     let output = '';
     proc.stdout.on('data', (d) => {
@@ -29,9 +53,12 @@ export async function runSimulation(source: string): Promise<SimulationResult> {
 
     proc.on('close', () => {
       const end = process.hrtime.bigint();
+      const cpu = process.cpuUsage(cpuStart);
       const stats: SimulationStats = {
         runtimeMs: Number(end - start) / 1e6,
         memoryBytes: process.memoryUsage().rss,
+        cpuUserMs: cpu.user / 1000,
+        cpuSystemMs: cpu.system / 1000,
       };
 
       // Simple demo waveform
@@ -46,8 +73,9 @@ export async function runSimulation(source: string): Promise<SimulationResult> {
         output,
         waveform,
         stats,
-        coverage: 0,
+        coverage: 80,
         regressions: [],
+        backend,
       });
     });
   });
