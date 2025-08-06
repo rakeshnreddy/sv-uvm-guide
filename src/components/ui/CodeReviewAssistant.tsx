@@ -9,81 +9,18 @@ import { Textarea } from "./Textarea";
 import { useTimedCheck, CheckResult } from "./useTimedCheck";
 
 // ---------------------------------------------------------------------------
-// Hook and type definitions
-// ---------------------------------------------------------------------------
 
-type CheckResult = {
-  status: "pending" | "pass" | "fail";
-  details?: string;
-};
-
-/**
- * Simulates a documentation completeness check for the current commit.
- * @returns {CheckResult} asynchronous status and optional details once the check resolves.
- */
-export const useDocumentationCheck = (): CheckResult => {
-  const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setResult({ status: "pass", details: "All modules documented" });
-    }, 300);
-    return () => clearTimeout(timer);
-  }, []);
-  return result;
-};
-
-/**
- * Simulates verifying the project's overall test coverage.
- * @returns {CheckResult} asynchronous status and optional coverage information.
- */
-export const useTestCoverageCheck = (): CheckResult => {
-  const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setResult({ status: "pass", details: "Coverage at 85%" });
-    }, 400);
-    return () => clearTimeout(timer);
-  }, []);
-  return result;
-};
-
-/**
- * Pretends to validate that architectural guidelines are followed in the codebase.
- * @returns {CheckResult} asynchronous status and optional architecture notes.
- */
-export const useArchitectureCheck = (): CheckResult => {
-  const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setResult({ status: "pass", details: "Layers follow defined patterns" });
-    }, 500);
-    return () => clearTimeout(timer);
-  }, []);
-  return result;
-};
-
-/**
- * Mimics a coding standards linter that ensures style guide adherence.
- * @returns {CheckResult} asynchronous status and optional lint details.
- */
-export const useCodingStandardsCheck = (): CheckResult => {
-  const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setResult({ status: "pass", details: "Conforms to style guide" });
-    }, 600);
-    return () => clearTimeout(timer);
-  }, []);
-  return result;
-};
-
-// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 /**
- * Aggregates automated code quality checks and a minimal peer-review interface.
- * The component has no props and maintains its own state for comments and approval.
+ * Aggregates automated code quality checks—documentation, tests, architecture,
+ * and coding standards—with a minimal peer-review interface.
+ * Reviewers provide a commit SHA, free-form comments, and an approval toggle.
+ * Each verification uses custom hooks returning a `{status, details}` object.
+ *
+ * @example
+ * <CodeReviewAssistant /> // see `src/app/practice/interactive-demo/page.tsx`
  */
 export const CodeReviewAssistant = () => {
   // Automated check results
@@ -140,6 +77,7 @@ export const CodeReviewAssistant = () => {
   const [commitError, setCommitError] = React.useState("");
   const [serverError, setServerError] = React.useState("");
   const [comment, setComment] = React.useState("");
+  const [commentError, setCommentError] = React.useState("");
   const [comments, setComments] = React.useState<string[]>([]);
   const [approved, setApproved] = React.useState(false);
 
@@ -157,17 +95,35 @@ export const CodeReviewAssistant = () => {
     }
   };
 
+  const handleCommentChange = (
+    e: React.ChangeEvent<HTMLTextAreaElement>,
+  ) => {
+    const value = e.target.value.replace(/[\x00-\x1F\x7F]/g, "");
+    setComment(value);
+    if (value.length > 500) {
+      setCommentError("Comment must be 500 characters or less.");
+    } else {
+      setCommentError("");
+    }
+  };
+
   const addComment = async () => {
-    if (comment.trim() && commitId && !commitError) {
-      const newComment = comment.trim();
-      setComments((c) => [...c, newComment]);
+    const sanitized = comment.replace(/[\x00-\x1F\x7F]/g, "").trim();
+    if (!sanitized) return;
+    if (sanitized.length > 500) {
+      setCommentError("Comment must be 500 characters or less.");
+      return;
+    }
+    if (commitId && !commitError) {
+      setComments((c) => [...c, sanitized]);
       setComment("");
+      setCommentError("");
       try {
         setServerError("");
         const res = await fetch("/api/reviews", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ commitId, comment: newComment }),
+          body: JSON.stringify({ commitId, comment: sanitized }),
         });
         if (!res.ok) {
           throw new Error(await res.text());
@@ -175,12 +131,16 @@ export const CodeReviewAssistant = () => {
       } catch (err) {
         setServerError((err as Error).message);
       }
+
     }
   };
 
   const toggleApproval = async () => {
+    if (!commitIdRegex.test(commitId)) {
+      setCommitError("Invalid commit SHA");
+      return;
+    }
     const newStatus = !approved;
-    setApproved(newStatus);
     try {
       setServerError("");
       const res = await fetch("/api/reviews", {
@@ -191,6 +151,7 @@ export const CodeReviewAssistant = () => {
       if (!res.ok) {
         throw new Error(await res.text());
       }
+      setApproved(newStatus);
     } catch (err) {
       setServerError((err as Error).message);
     }
@@ -240,9 +201,12 @@ export const CodeReviewAssistant = () => {
         <Textarea
           placeholder="Leave a comment"
           value={comment}
-          onChange={(e) => setComment(e.target.value)}
+          onChange={handleCommentChange}
           className="mb-2"
         />
+        {commentError && (
+          <p className="text-xs text-red-400 mb-2">{commentError}</p>
+        )}
         <Button variant="outline" onClick={addComment} className="mb-4">
           Add Comment
         </Button>
