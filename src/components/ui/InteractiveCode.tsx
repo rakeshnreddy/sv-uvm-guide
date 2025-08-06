@@ -8,6 +8,11 @@ import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
 import * as d3 from 'd3';
+import {
+  connectCollaboration,
+  broadcastEdit,
+  type UserEdit,
+} from '../../lib/collaboration';
 
 // This is a placeholder for SystemVerilog language support.
 // A full implementation would require a Monarch tokenizer.
@@ -73,6 +78,8 @@ interface InteractiveCodeProps {
   explanationSteps?: ExplanationStep[];
   initialStep?: number;
   isEditable?: boolean;
+  collabUrl?: string;
+  userId?: string;
 }
 
 const parseTargetLines = (target: string, monacoInstance: typeof monaco): monaco.IRange[] => {
@@ -105,6 +112,8 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   explanationSteps = [],
   initialStep = 0,
   isEditable = false,
+  collabUrl,
+  userId = 'local',
 }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(initialStep);
   const { theme } = useTheme();
@@ -133,6 +142,32 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
 
   const [codeContent, setCodeContent] = useState(code);
   useEffect(() => setCodeContent(code), [code]);
+
+  const socketRef = useRef<WebSocket | null>(null);
+  const lastRemoteEdit = useRef<number>(0);
+  const [reviewLog, setReviewLog] = useState<UserEdit[]>([]);
+
+  useEffect(() => {
+    if (!collabUrl) return;
+    const socket = connectCollaboration(collabUrl);
+    socketRef.current = socket;
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'edit') {
+          const incoming: UserEdit = data.edit;
+          if (incoming.user !== userId && incoming.timestamp > lastRemoteEdit.current) {
+            lastRemoteEdit.current = incoming.timestamp;
+            setCodeContent(incoming.content);
+            setReviewLog((log) => [...log, incoming]);
+          }
+        }
+      } catch (e) {
+        // ignore malformed messages
+      }
+    };
+    return () => socket.close();
+  }, [collabUrl, userId]);
 
   interface AnalysisResult {
     metrics: {
@@ -277,7 +312,18 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
           language={language}
           value={codeContent}
           onMount={handleEditorDidMount}
-          onChange={(value) => setCodeContent(value || '')}
+          onChange={(value) => {
+            const newValue = value || '';
+            setCodeContent(newValue);
+            if (socketRef.current) {
+              const edit: UserEdit = {
+                user: userId,
+                content: newValue,
+                timestamp: Date.now(),
+              };
+              broadcastEdit(socketRef.current, edit);
+            }
+          }}
           theme={theme === 'dark' ? 'vs-dark' : 'light'}
           options={{
             readOnly: !isEditable,
@@ -351,6 +397,16 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
             </Button>
           </div>
         </>
+      )}
+      {reviewLog.length > 0 && (
+        <div className="mt-4 text-xs">
+          <h4 className="font-semibold mb-1">Review Log</h4>
+          <ul className="list-disc ml-5 max-h-24 overflow-auto">
+            {reviewLog.map((e, i) => (
+              <li key={i}>{e.user} @ {new Date(e.timestamp).toLocaleTimeString()}</li>
+            ))}
+          </ul>
+        </div>
       )}
     </div>
   );
