@@ -18,9 +18,9 @@ The review form collects three pieces of information from reviewers:
 
 ## Peer‑Review Workflow
 
-1. **Commit ID** – Reviewers supply the hash of the commit being inspected.
-2. **Comments** – Reviewers can leave multiple textual comments which are listed below the form.
-3. **Approval Toggle** – Once satisfied, the reviewer can mark the review as approved. A confirmation message appears when approval is set.
+1. **Commit ID** – Reviewers supply the hash of the commit being inspected. The field validates input against a Git SHA regex and shows an error if the value is invalid.
+2. **Comments** – Reviewers can leave multiple textual comments which are listed below the form. Each comment is sent to `/api/reviews`, and any server response errors are displayed.
+3. **Approval Toggle** – Once satisfied, the reviewer can mark the review as approved. The approval state is also posted to `/api/reviews`, and failures are surfaced to the user. A confirmation message appears when approval is set.
 
 ## Usage Example
 

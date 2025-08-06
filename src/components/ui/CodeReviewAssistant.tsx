@@ -95,29 +95,35 @@ export const CodeReviewAssistant = () => {
   };
 
   const addComment = async () => {
-    if (comment.trim() && commitId && !commitError) {
-      const newComment = comment.trim();
+    const newComment = comment.trim();
+    if (!commitIdRegex.test(commitId)) {
+      setCommitError("Invalid commit SHA");
+      return;
+    }
+    if (!newComment) return;
+    try {
+      setServerError("");
+      const res = await fetch("/api/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ commitId, comment: newComment }),
+      });
+      if (!res.ok) {
+        throw new Error(await res.text());
+      }
       setComments((c) => [...c, newComment]);
       setComment("");
-      try {
-        setServerError("");
-        const res = await fetch("/api/reviews", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ commitId, comment: newComment }),
-        });
-        if (!res.ok) {
-          throw new Error(await res.text());
-        }
-      } catch (err) {
-        setServerError((err as Error).message);
-      }
+    } catch (err) {
+      setServerError((err as Error).message);
     }
   };
 
   const toggleApproval = async () => {
+    if (!commitIdRegex.test(commitId)) {
+      setCommitError("Invalid commit SHA");
+      return;
+    }
     const newStatus = !approved;
-    setApproved(newStatus);
     try {
       setServerError("");
       const res = await fetch("/api/reviews", {
@@ -128,6 +134,7 @@ export const CodeReviewAssistant = () => {
       if (!res.ok) {
         throw new Error(await res.text());
       }
+      setApproved(newStatus);
     } catch (err) {
       setServerError((err as Error).message);
     }
