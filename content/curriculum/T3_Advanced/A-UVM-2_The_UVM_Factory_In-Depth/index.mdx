@@ -82,6 +82,30 @@ As a verification lead or architect, how you manage the factory is a critical po
 
 - **Policy on String-Based Overrides:** Do you allow them? A good policy is to **ban string-based overrides in all RTL-level testbenches**. They are acceptable for scripting or top-level testbenches where flexibility is key, but for reusable VIP, the compile-time safety of `get_type()` overrides is essential.
 
+### Real-World Case Study
+
+During verification of a multi-port Ethernet switch, the team needed to inject malformed packets on only one port while the other ports used the standard driver. The original environment created the default driver for every port agent:
+
+<InteractiveCode>
+```systemverilog
+// build_phase before override
+m_port_driver = eth_driver::type_id::create("m_port_driver", this);
+```
+</InteractiveCode>
+
+Instead of modifying the reusable agent, the test applied an instance override to swap in a fault-injecting driver solely for the stressed port:
+
+<InteractiveCode>
+```systemverilog
+// In the test's build_phase
+factory.set_inst_override_by_type("env.port3.m_port_driver",
+                                  eth_driver::get_type(),
+                                  eth_err_driver::get_type());
+```
+</InteractiveCode>
+
+**Lessons Learned:** Centralizing overrides in the test kept the agent reusable and prevented accidental propagation of the error driver. Using `get_type()` avoided the string typos that previously caused silent misconfigurations.
+
 ## Level 4: Architect's Corner
 
 ### Advanced Factory Usage: The "Abstract Agent" Pattern
@@ -118,6 +142,32 @@ As a verification lead or architect, how you manage the factory is a critical po
     This single line of code tells the factory, "Whenever someone tries to create an `axi_base_agent`, create an `axi_lite_agent` instead." The `axi_lite_agent` then populates itself with the correct driver and monitor.
 
 **The Outcome:** This pattern provides the ultimate in reusability and configurability. The environment is completely generic. All the protocol-specific details are encapsulated in the concrete agent classes, and the choice of which protocol to use is controlled by a single, clean factory override in the test. This is a hallmark of a professional, architect-level UVM environment.
+
+## Level 5: Scaling & Optimization
+
+### Performance Optimization
+
+Large regressions can create tens of thousands of factory lookups.  Cache expensive type calculations, prefer `get_type()` handles over strings, and avoid creating temporary objects in tight loops.  Profiling the factory during early bring-up prevents late-cycle surprises.
+
+### SoC-Level Strategies
+
+At the SoC level, aggressive vertical reuse means most agents run passively.  Use the factory to spin up lightweight monitors across subsystems and reserve heavy active components for block-level verification.  Centralized overrides ensure consistent policy across a sprawling hierarchy.
+
+### Formal Verification Integration
+
+Formal harnesses often require simplified drivers and checkers.  Swap in formal-specific components via the factory so you can reuse the same environment for simulation and formal analysis without duplicating code.
+
+### Advanced Tool Integration
+
+Modern verification flows pair the factory with CI dashboards, coverage databases, and waveform triage tools.  Exposing factory settings to these tools enables automated regression configuration and environment introspection.
+
+### Cutting-Edge Topics
+
+Vendors are experimenting with AI-guided factories that learn optimal overrides from regression history.  Keep an eye on standards work around plug-in factories and metadata-driven configuration.
+
+### Leadership for Large Teams
+
+For multi-site projects, establish a factory governance board.  Define override naming conventions, review policies, and training so new team members know where configuration decisions live.  A clear strategy avoids configuration drift across dozens of contributors.
 
 ## Check Your Understanding
 
