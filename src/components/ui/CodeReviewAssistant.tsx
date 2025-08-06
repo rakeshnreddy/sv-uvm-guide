@@ -77,6 +77,7 @@ export const CodeReviewAssistant = () => {
   const [commitError, setCommitError] = React.useState("");
   const [serverError, setServerError] = React.useState("");
   const [comment, setComment] = React.useState("");
+  const [commentError, setCommentError] = React.useState("");
   const [comments, setComments] = React.useState<string[]>([]);
   const [approved, setApproved] = React.useState(false);
 
@@ -94,27 +95,43 @@ export const CodeReviewAssistant = () => {
     }
   };
 
+  const handleCommentChange = (
+    e: React.ChangeEvent<HTMLTextAreaElement>,
+  ) => {
+    const value = e.target.value.replace(/[\x00-\x1F\x7F]/g, "");
+    setComment(value);
+    if (value.length > 500) {
+      setCommentError("Comment must be 500 characters or less.");
+    } else {
+      setCommentError("");
+    }
+  };
+
   const addComment = async () => {
-    const newComment = comment.trim();
-    if (!commitIdRegex.test(commitId)) {
-      setCommitError("Invalid commit SHA");
+    const sanitized = comment.replace(/[\x00-\x1F\x7F]/g, "").trim();
+    if (!sanitized) return;
+    if (sanitized.length > 500) {
+      setCommentError("Comment must be 500 characters or less.");
       return;
     }
-    if (!newComment) return;
-    try {
-      setServerError("");
-      const res = await fetch("/api/reviews", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ commitId, comment: newComment }),
-      });
-      if (!res.ok) {
-        throw new Error(await res.text());
-      }
-      setComments((c) => [...c, newComment]);
+    if (commitId && !commitError) {
+      setComments((c) => [...c, sanitized]);
       setComment("");
-    } catch (err) {
-      setServerError((err as Error).message);
+      setCommentError("");
+      try {
+        setServerError("");
+        const res = await fetch("/api/reviews", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ commitId, comment: sanitized }),
+        });
+        if (!res.ok) {
+          throw new Error(await res.text());
+        }
+      } catch (err) {
+        setServerError((err as Error).message);
+      }
+
     }
   };
 
@@ -184,9 +201,12 @@ export const CodeReviewAssistant = () => {
         <Textarea
           placeholder="Leave a comment"
           value={comment}
-          onChange={(e) => setComment(e.target.value)}
+          onChange={handleCommentChange}
           className="mb-2"
         />
+        {commentError && (
+          <p className="text-xs text-red-400 mb-2">{commentError}</p>
+        )}
         <Button variant="outline" onClick={addComment} className="mb-4">
           Add Comment
         </Button>
