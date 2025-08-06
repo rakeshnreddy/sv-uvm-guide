@@ -137,14 +137,62 @@ export const CodeReviewAssistant = () => {
 
   // Peer review workflow state
   const [commitId, setCommitId] = React.useState("");
+  const [commitError, setCommitError] = React.useState("");
+  const [serverError, setServerError] = React.useState("");
   const [comment, setComment] = React.useState("");
   const [comments, setComments] = React.useState<string[]>([]);
   const [approved, setApproved] = React.useState(false);
 
-  const addComment = () => {
-    if (comment.trim()) {
-      setComments((c) => [...c, comment.trim()]);
+  const commitIdRegex = /^[0-9a-f]{7,40}$/i;
+
+  const handleCommitChange = (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const value = e.target.value.trim();
+    setCommitId(value);
+    if (value && !commitIdRegex.test(value)) {
+      setCommitError("Invalid commit SHA");
+    } else {
+      setCommitError("");
+    }
+  };
+
+  const addComment = async () => {
+    if (comment.trim() && commitId && !commitError) {
+      const newComment = comment.trim();
+      setComments((c) => [...c, newComment]);
       setComment("");
+      try {
+        setServerError("");
+        const res = await fetch("/api/reviews", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ commitId, comment: newComment }),
+        });
+        if (!res.ok) {
+          throw new Error(await res.text());
+        }
+      } catch (err) {
+        setServerError((err as Error).message);
+      }
+    }
+  };
+
+  const toggleApproval = async () => {
+    const newStatus = !approved;
+    setApproved(newStatus);
+    try {
+      setServerError("");
+      const res = await fetch("/api/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ commitId, approved: newStatus }),
+      });
+      if (!res.ok) {
+        throw new Error(await res.text());
+      }
+    } catch (err) {
+      setServerError((err as Error).message);
     }
   };
 
@@ -177,9 +225,12 @@ export const CodeReviewAssistant = () => {
         <Input
           placeholder="Commit ID"
           value={commitId}
-          onChange={(e) => setCommitId(e.target.value)}
+          onChange={handleCommitChange}
           className="mb-2"
         />
+        {commitError && (
+          <p className="text-xs text-red-400 mb-2">{commitError}</p>
+        )}
         {commitId && (
           <p className="text-xs text-foreground/60 mb-2">
             Reviewing commit <span className="font-mono">{commitId}</span>
@@ -195,6 +246,9 @@ export const CodeReviewAssistant = () => {
         <Button variant="outline" onClick={addComment} className="mb-4">
           Add Comment
         </Button>
+        {serverError && (
+          <p className="text-xs text-red-400 mb-2">{serverError}</p>
+        )}
 
         {comments.length > 0 && (
           <ul className="list-disc list-inside text-foreground/70 mb-4">
@@ -204,7 +258,7 @@ export const CodeReviewAssistant = () => {
           </ul>
         )}
 
-        <Button onClick={() => setApproved((a) => !a)} variant="secondary">
+        <Button onClick={toggleApproval} variant="secondary">
           {approved ? "Approved" : "Approve"}
         </Button>
         {approved && (
