@@ -9,81 +9,18 @@ import { Textarea } from "./Textarea";
 import { useTimedCheck, CheckResult } from "./useTimedCheck";
 
 // ---------------------------------------------------------------------------
-// Hook and type definitions
-// ---------------------------------------------------------------------------
 
-type CheckResult = {
-  status: "pending" | "pass" | "fail";
-  details?: string;
-};
-
-/**
- * Simulates a documentation completeness check for the current commit.
- * @returns {CheckResult} asynchronous status and optional details once the check resolves.
- */
-export const useDocumentationCheck = (): CheckResult => {
-  const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setResult({ status: "pass", details: "All modules documented" });
-    }, 300);
-    return () => clearTimeout(timer);
-  }, []);
-  return result;
-};
-
-/**
- * Simulates verifying the project's overall test coverage.
- * @returns {CheckResult} asynchronous status and optional coverage information.
- */
-export const useTestCoverageCheck = (): CheckResult => {
-  const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setResult({ status: "pass", details: "Coverage at 85%" });
-    }, 400);
-    return () => clearTimeout(timer);
-  }, []);
-  return result;
-};
-
-/**
- * Pretends to validate that architectural guidelines are followed in the codebase.
- * @returns {CheckResult} asynchronous status and optional architecture notes.
- */
-export const useArchitectureCheck = (): CheckResult => {
-  const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setResult({ status: "pass", details: "Layers follow defined patterns" });
-    }, 500);
-    return () => clearTimeout(timer);
-  }, []);
-  return result;
-};
-
-/**
- * Mimics a coding standards linter that ensures style guide adherence.
- * @returns {CheckResult} asynchronous status and optional lint details.
- */
-export const useCodingStandardsCheck = (): CheckResult => {
-  const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setResult({ status: "pass", details: "Conforms to style guide" });
-    }, 600);
-    return () => clearTimeout(timer);
-  }, []);
-  return result;
-};
-
-// ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 
 /**
- * Aggregates automated code quality checks and a minimal peer-review interface.
- * The component has no props and maintains its own state for comments and approval.
+ * Aggregates automated code quality checks—documentation, tests, architecture,
+ * and coding standards—with a minimal peer-review interface.
+ * Reviewers provide a commit SHA, free-form comments, and an approval toggle.
+ * Each verification uses custom hooks returning a `{status, details}` object.
+ *
+ * @example
+ * <CodeReviewAssistant /> // see `src/app/practice/interactive-demo/page.tsx`
  */
 export const CodeReviewAssistant = () => {
   // Automated check results

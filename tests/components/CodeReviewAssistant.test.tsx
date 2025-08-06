@@ -6,6 +6,15 @@ import { describe, it, expect, vi } from 'vitest';
 import CodeReviewAssistant from '../../src/components/ui/CodeReviewAssistant';
 
 describe('CodeReviewAssistant component', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(() =>
+      Promise.resolve({ ok: true, text: () => Promise.resolve('') }) as any,
+    ));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
   it('shows commit id after typing', async () => {
     render(<CodeReviewAssistant />);
     const input = screen.getByPlaceholderText(/commit id/i);
@@ -24,6 +33,7 @@ describe('CodeReviewAssistant component', () => {
     render(<CodeReviewAssistant />);
 
     const input = screen.getByPlaceholderText(/commit id/i);
+
     const textarea = screen.getByPlaceholderText(/leave a comment/i);
     const addButton = screen.getByRole('button', { name: /add comment/i });
 
@@ -82,6 +92,7 @@ describe('CodeReviewAssistant component', () => {
     expect(await screen.findByText('Server error')).toBeInTheDocument();
 
     vi.restoreAllMocks();
+
   });
 });
 

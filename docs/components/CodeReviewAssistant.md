@@ -2,16 +2,19 @@
 
 The `CodeReviewAssistant` component provides a lightweight, client-side simulation of a typical peer-review workflow. It bundles automated checks for documentation, tests, architecture, and coding standards while allowing reviewers to leave comments and approve a commit.
 
-## Custom Hooks
+## Automated Checks
 
-Each automated check is implemented as a custom React hook that returns a `CheckResult` object containing a `status` (`"pending" | "pass" | "fail"`) and optional `details` text.
+Each check uses the generic `useTimedCheck(delay, details)` hook, which returns a `CheckResult` object with a `status` (`"pending" | "pass" | "fail"`) and optional `details` message. The hook simply resolves after the provided delay with the supplied details.
 
-- **`useDocumentationCheck()`** – Resolves after a short delay to report whether modules are documented.
-- **`useTestCoverageCheck()`** – Simulates a test coverage verification.
-- **`useArchitectureCheck()`** – Confirms that architectural patterns are followed.
-- **`useCodingStandardsCheck()`** – Verifies adherence to the project's style guide.
+The component invokes this hook to simulate checks for documentation, tests, architecture, and coding standards, but any additional timed verification could be added in the same way.
 
-All hooks take no arguments and are purely illustrative; they would typically accept configuration or data about the commit under review.
+## Expected Inputs
+
+The review form collects three pieces of information from reviewers:
+
+- **Commit ID** – A SHA string (7–40 hexadecimal characters) identifying the commit under review.
+- **Comment** – Free‑form feedback text. Multiple comments can be submitted.
+- **Approval Toggle** – A boolean flag indicating whether the review has been approved.
 
 ## Peer‑Review Workflow
 
