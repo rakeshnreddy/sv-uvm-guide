@@ -31,25 +31,53 @@ A critical concept in procedural blocks is the difference between blocking (`=`)
 
 <InteractiveCode>
 ```systemverilog
-// Example of always_ff for a simple flip-flop
+// Preferred approach: always_ff for a simple flip-flop
 logic clk, reset, d_in, q_out;
 always_ff @(posedge clk or posedge reset) begin
   if (reset) begin
-    q_out <= 1'b0; // Use non-blocking for state elements
+    q_out <= 1'b0; // Non-blocking assignment for sequential logic
   end else begin
-    q_out <= d_in;
+    q_out <= d_in; // Update on each clock edge
   end
 end
 
-// Example of always_comb for combinational logic
-logic a, b, c, y_comb;
-always_comb begin
-  y_comb = a & b | c; // Use blocking for combinational logic
+// Alternative approach using always @ (for reference)
+// SystemVerilog allows always_ff to be replaced with always
+// but always_ff provides better synthesis/simulation checking
+always @(posedge clk or posedge reset) begin
+  if (reset)
+    q_out <= 1'b0;
+  else
+    q_out <= d_in;
 end
+
+// Preferred approach: always_comb for combinational logic
+logic a, b, c, y_comb, y_comb_alt;
+always_comb begin
+  y_comb = (a & b) | c; // Blocking assignment for combinational logic
+end
+
+// Alternative continuous assignment
+assign y_comb_alt = (a & b) | c;
 ```
 </InteractiveCode>
 
 <DiagramPlaceholder title="Blocking vs. Non-blocking Assignment Timing" />
+
+### Practical Application: Running a Simple Simulation
+
+1. **Save the Files:** Put the flip-flop example in `dff.sv` and the testbench in `tb_dff.sv`.
+2. **Compile and Run:**
+   ```bash
+   # Synopsys VCS
+   vcs -sverilog tb_dff.sv dff.sv -o simv
+   ./simv
+
+   # Mentor Questa/ModelSim
+   vlog dff.sv tb_dff.sv
+   vsim -c tb_dff -do "run -all; quit"
+   ```
+3. **Inspect the Output:** Use `$display` or a waveform viewer to confirm `q_out` follows `d_in` on each clock.
 
 ## Level 3: Expert Insights
 
@@ -58,6 +86,53 @@ end
 **Simulation vs. Synthesis:** Not all procedural constructs are synthesizable. For example, `initial` blocks are generally not synthesizable, and `final` blocks are never synthesizable.
 
 **Memory & Retention Tip:** Remember: **Non-blocking for sequential logic (`always_ff`), blocking for combinational logic (`always_comb`) and testbench procedural code.**
+
+## Industry Connection
+
+Procedural constructs show up everywhere in real verification environments. Sequences, scoreboards, and monitors all rely on `initial` and `always` blocks to generate and check traffic. Companies building CPUs, GPUs, or networking ASICs depend on engineers who can wield these constructs to create reusable, scalable testbenches.
+
+## Historical Context
+
+Early Verilog used a generic `always` block for everything. SystemVerilog introduced `always_ff`, `always_comb`, and `always_latch` to express intent and catch bugs earlier. This evolution was driven by decades of debugging race conditions and mismatched sensitivity lists in large projects.
+
+## Career Impact
+
+Mastering procedural code is table stakes for a verification engineer. Interviews often probe your understanding of timing and concurrency, and on the job you will review others' code for correct use of blocking and non-blocking assignments. Strong fundamentals translate directly into faster debugging and higher-quality silicon.
+
+## Tool Integration
+
+Simulators such as VCS, Questa, and Xcelium provide warnings when `always_ff` and `always_comb` are misused. Lint tools (Verilator, SpyGlass) flag blocking assignments in sequential logic, while waveform viewers help you observe the effect of scheduling. Knowing how these tools interpret procedural constructs lets you diagnose issues quickly.
+
+## Common Interview Questions
+
+**Q1: Why would you use `always_ff` instead of a generic `always @`?**
+> **A1:** `always_ff` clearly communicates intent, restricts the sensitivity list to clock and reset, and enables tools to check for improper blocking assignments.
+
+**Q2: What happens if you mix blocking and non-blocking assignments to the same signal?**
+> **A2:** It can create unpredictable race conditions because the assignments execute at different times. Most simulators warn about this, but it's best to avoid the mix altogether.
+
+**Q3: When is it appropriate to use a `final` block?**
+> **A3:** Use `final` for cleanup code or summary reports that should run once when simulation ends.
+
+## Self-Assessment Exercises
+
+- Write a small module that uses a `for` loop inside an `initial` block to generate a ramp on a signal.
+- Convert a sequential block that uses blocking assignments to the correct non-blocking style.
+- Explain what happens if an `always_comb` block forgets a signal in the expression. How would a simulator behave?
+
+## Code Review Challenge
+
+Identify the bug in the sequential logic below and fix it.
+
+<InteractiveCode>
+```systemverilog
+module flop_bug(input logic clk, d, output logic q);
+  always @(posedge clk) begin
+    q = d; // Is this assignment style correct?
+  end
+endmodule
+```
+</InteractiveCode>
 
 ## Check Your Understanding
 
