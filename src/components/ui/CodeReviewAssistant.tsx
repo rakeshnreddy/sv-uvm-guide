@@ -6,6 +6,7 @@ import { CheckCircle, XCircle, Clock } from "lucide-react";
 import { Button } from "./Button";
 import { Input } from "./Input";
 import { Textarea } from "./Textarea";
+import { useTimedCheck, CheckResult } from "./useTimedCheck";
 
 // ---------------------------------------------------------------------------
 // Hook and type definitions
@@ -118,10 +119,10 @@ export const CodeReviewAssistant = () => {
   }, []);
 
   // Hook-based verifications
-  const docs = useDocumentationCheck();
-  const tests = useTestCoverageCheck();
-  const architecture = useArchitectureCheck();
-  const standards = useCodingStandardsCheck();
+  const docs = useTimedCheck(300, "All modules documented");
+  const tests = useTimedCheck(400, "Coverage at 85%");
+  const architecture = useTimedCheck(500, "Layers follow defined patterns");
+  const standards = useTimedCheck(600, "Conforms to style guide");
 
   const checks = [
     { label: "Code Quality Metrics", result: quality },
