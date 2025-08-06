@@ -69,6 +69,29 @@ const detectMemoryLeaks = (logs: string[]) =>
 const detectTimingViolations = (logs: string[]) =>
   logs.filter((log) => /timing violation|setup|hold/i.test(log));
 
+// Determine how each log line should be highlighted
+const classifyLog = (log: string) => {
+  if (/memory leak|out of memory|heap/i.test(log)) return 'memory';
+  if (/timing violation|setup|hold/i.test(log)) return 'timing';
+  if (/latency|slow|timeout|performance/i.test(log)) return 'performance';
+  return null;
+};
+
+interface WaveformLine {
+  signal: string;
+  values: string[];
+}
+
+// Simple parser to convert waveform strings into signal/value arrays
+const parseWaveform = (waveform: string): WaveformLine[] =>
+  waveform.split('\n').map((line) => {
+    const [name, rest] = line.split(':');
+    return {
+      signal: name.trim(),
+      values: rest.trim().split(/\s+/),
+    };
+  });
+
 const Section = ({ title, items }: { title: string; items: string[] }) =>
   items.length ? (
     <div className="mb-2">
@@ -96,12 +119,49 @@ export const DebuggingSimulator = () => {
     timing: string[];
   } | null>(null);
 
+  // waveform/log step tracking
+  const [step, setStep] = React.useState(0);
+
+  // workflow automation progress
+  const [workflowIndex, setWorkflowIndex] = React.useState(0);
+  const [completed, setCompleted] = React.useState<string[]>([]);
+
+  // Reset state when scenario changes
+  React.useEffect(() => {
+    setAnalysis(null);
+    setStep(0);
+    setWorkflowIndex(0);
+    setCompleted([]);
+  }, [scenarioId]);
+
   const analyzeScenario = () => {
     if (!selectedScenario) return;
     const performance = detectPerformanceIssues(selectedScenario.logs);
     const memoryLeaks = detectMemoryLeaks(selectedScenario.logs);
     const timing = detectTimingViolations(selectedScenario.logs);
     setAnalysis({ performance, memoryLeaks, timing });
+  };
+
+  const waveformData = React.useMemo(
+    () => (selectedScenario ? parseWaveform(selectedScenario.waveform) : []),
+    [selectedScenario]
+  );
+  const maxSteps = React.useMemo(() => {
+    const wfSteps = waveformData[0]?.values.length || 0;
+    const logSteps = selectedScenario?.logs.length || 0;
+    return Math.max(wfSteps, logSteps);
+  }, [waveformData, selectedScenario]);
+
+  const nextStep = () => setStep((s) => Math.min(s + 1, maxSteps - 1));
+  const prevStep = () => setStep((s) => Math.max(s - 1, 0));
+
+  const completeCurrentStep = () => {
+    if (!selectedScenario) return;
+    const stepDesc = selectedScenario.automationSteps[workflowIndex];
+    if (stepDesc) {
+      setCompleted([...completed, stepDesc]);
+      setWorkflowIndex((i) => i + 1);
+    }
   };
 
   return (
@@ -129,14 +189,72 @@ export const DebuggingSimulator = () => {
           <p className="text-foreground/80 mb-2">{selectedScenario.description}</p>
           <h3 className="font-semibold text-primary">Bug Pattern</h3>
           <p className="text-foreground/70 mb-2">{selectedScenario.bugPattern}</p>
+
+          {/* Log Viewer */}
           <h3 className="font-semibold text-primary">Logs</h3>
           <pre className="bg-black/20 p-2 rounded mb-2 overflow-x-auto text-xs">
-            {selectedScenario.logs.join("\n")}
+            {selectedScenario.logs.map((log, idx) => {
+              const type = classifyLog(log);
+              let cls = '';
+              if (type === 'memory') cls = 'text-purple-400';
+              else if (type === 'timing') cls = 'text-red-400';
+              else if (type === 'performance') cls = 'text-yellow-400';
+              if (idx === step) cls += ' font-bold';
+              if (idx > step) cls += ' opacity-50';
+              return (
+                <span key={idx} className={cls}>
+                  {log}
+                  {'\n'}
+                </span>
+              );
+            })}
           </pre>
+
+          {/* Waveform Viewer */}
           <h3 className="font-semibold text-primary">Waveform</h3>
-          <pre className="bg-black/20 p-2 rounded mb-2 overflow-x-auto text-xs">
-            {selectedScenario.waveform}
-          </pre>
+          <div className="bg-black/20 p-2 rounded mb-2 overflow-x-auto text-xs">
+            <table>
+              <tbody>
+                {waveformData.map((line) => (
+                  <tr key={line.signal}>
+                    <td className="pr-2 text-primary">{line.signal}</td>
+                    {line.values.map((v, i) => {
+                      let cellCls = 'px-1';
+                      if (i === step) cellCls += ' bg-primary/50';
+                      if (/x/i.test(v)) cellCls += ' text-red-400';
+                      return (
+                        <td key={i} className={cellCls}>
+                          {v}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {/* Step controls */}
+          <div className="flex items-center gap-2 mb-4">
+            <button
+              onClick={prevStep}
+              disabled={step === 0}
+              className="px-2 py-1 bg-primary text-primary-foreground rounded disabled:opacity-50"
+            >
+              Prev
+            </button>
+            <span className="text-foreground/70">
+              Step {Math.min(step + 1, maxSteps)}/{maxSteps}
+            </span>
+            <button
+              onClick={nextStep}
+              disabled={step >= maxSteps - 1}
+              className="px-2 py-1 bg-primary text-primary-foreground rounded disabled:opacity-50"
+            >
+              Next
+            </button>
+          </div>
+
           <button
             onClick={analyzeScenario}
             className="mt-2 px-3 py-1 bg-primary text-primary-foreground rounded"
@@ -151,14 +269,32 @@ export const DebuggingSimulator = () => {
               <Section title="Timing Violations" items={analysis.timing} />
               <h3 className="font-semibold text-primary mt-4">Recommended Strategy</h3>
               <p className="text-foreground/70">{selectedScenario.strategy}</p>
-              <h3 className="font-semibold text-primary mt-4">
-                Workflow Automation
-              </h3>
-              <ul className="list-disc list-inside text-foreground/70">
-                {selectedScenario.automationSteps.map((step) => (
-                  <li key={step}>{step}</li>
-                ))}
-              </ul>
+              <h3 className="font-semibold text-primary mt-4">Automated Workflow</h3>
+              {workflowIndex < selectedScenario.automationSteps.length ? (
+                <div className="mb-2">
+                  <p className="text-foreground/70">
+                    Current Step: {selectedScenario.automationSteps[workflowIndex]}
+                  </p>
+                  <button
+                    onClick={completeCurrentStep}
+                    className="mt-1 px-2 py-1 bg-primary text-primary-foreground rounded"
+                  >
+                    Mark Step Complete
+                  </button>
+                </div>
+              ) : (
+                <p className="text-foreground/70 mb-2">All steps completed.</p>
+              )}
+              {completed.length > 0 && (
+                <div>
+                  <h4 className="text-foreground/80">Progress Log</h4>
+                  <ul className="list-disc list-inside text-foreground/70">
+                    {completed.map((c) => (
+                      <li key={c}>{c}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
         </div>
