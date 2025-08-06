@@ -1,19 +1,43 @@
 import { NextResponse } from 'next/server';
-import { addReview, Review } from '@/server/reviews';
+
+
+interface Review {
+  commitId: string;
+  comment?: string;
+  approved?: boolean;
+}
+
+const reviews: Review[] = [];
+
+export function getReviews() {
+  return reviews;
+}
 
 export async function POST(request: Request) {
-  let body: Partial<Review>;
+  let data: any;
   try {
-    body = await request.json();
+    data = await request.json();
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
 
-  const { commitId, comment, approved } = body;
+
+  const { commitId, comment, approved } = data ?? {};
   if (!commitId || typeof commitId !== 'string') {
     return NextResponse.json({ error: 'commitId is required' }, { status: 400 });
   }
+  const shaRegex = /^[0-9a-f]{7,40}$/i;
+  if (!shaRegex.test(commitId)) {
+    return NextResponse.json({ error: 'Invalid commitId' }, { status: 400 });
+  }
 
-  addReview({ commitId, comment, approved });
-  return NextResponse.json({ message: 'Review stored' }, { status: 201 });
+  const record: Review = { commitId };
+  if (typeof comment === 'string') {
+    record.comment = comment;
+  }
+  if (typeof approved === 'boolean') {
+    record.approved = approved;
+  }
+  reviews.push(record);
+  return NextResponse.json({ message: 'Review recorded' }, { status: 201 });
 }
