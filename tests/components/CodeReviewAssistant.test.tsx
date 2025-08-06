@@ -31,15 +31,12 @@ describe('CodeReviewAssistant component', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     render(<CodeReviewAssistant />);
-    const commitInput = screen.getByPlaceholderText(/commit id/i);
-    await userEvent.type(commitInput, 'abc1234');
-
     const input = screen.getByPlaceholderText(/commit id/i);
+    await userEvent.type(input, 'abcdef1');
 
     const textarea = screen.getByPlaceholderText(/leave a comment/i);
     const addButton = screen.getByRole('button', { name: /add comment/i });
 
-    await userEvent.type(input, 'abcdef1');
     await userEvent.type(textarea, '  first comment  ');
     await userEvent.click(addButton);
     await screen.findByText('first comment');
