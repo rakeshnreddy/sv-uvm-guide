@@ -32,10 +32,14 @@ test.describe('Interactive Demo Page', () => {
     const outputPanel = page.locator('pre');
     await expect(outputPanel).toContainText('Click "Run Simulation" to see the output.');
 
+    // Run with default backend
     await page.getByRole('button', { name: 'Run Simulation' }).click();
-
-    // Wait for the simulation to "complete"
     await expect(outputPanel).toContainText('Simulation PASSED', { timeout: 3000 });
+
+    // Switch backend and run again to ensure selection works
+    await page.locator('select').selectOption('verilator');
+    await page.getByRole('button', { name: 'Run Simulation' }).click();
+    await expect(outputPanel).toContainText('[Verilator] Running', { timeout: 3000 });
   });
 
   test('should display the placeholder components', async ({ page }) => {

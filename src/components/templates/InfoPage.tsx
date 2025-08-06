@@ -22,6 +22,7 @@ const DiagramPlaceholder = ({ title = "Diagram" }: { title?: string }) => (
 
 interface InfoPageProps {
   title?: string;
+  description?: string;
   children: ReactNode; // Main content of the page
   // Optional slots for specific types of content
   charts?: ReactNode[];
@@ -30,6 +31,7 @@ interface InfoPageProps {
 
 export const InfoPage: React.FC<InfoPageProps> = ({
   title,
+  description,
   children,
   charts,
   diagrams,
@@ -38,12 +40,15 @@ export const InfoPage: React.FC<InfoPageProps> = ({
     <div className="container mx-auto py-8 px-4">
       <div className="p-4 md:p-6 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
         <article className="prose dark:prose-invert lg:prose-xl max-w-none">
-          {/*
-          Using Tailwind Typography (prose classes) for rich text formatting.
-          Ensure @tailwindcss/typography plugin is installed if not already.
-          The 'max-w-none' removes the default max-width from prose for full container width.
-          Adjust 'lg:prose-xl' for desired text size.
-        */}
+          {title && (
+            <header className="mb-8">
+              <h1 className="text-4xl font-bold mb-2">{title}</h1>
+              {description && (
+                <p className="text-foreground/80 text-lg">{description}</p>
+              )}
+            </header>
+          )}
+
           <section className="mb-8">
             {children}
           </section>

@@ -4,6 +4,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Button } from './Button';
 import { Play, Pause, RotateCcw, StepForward } from 'lucide-react';
 import * as WaveDrom from 'wavedrom';
+import type {
+  SimulationStats,
+  SimulatorBackend,
+} from '@/server/simulation/types';
 
 interface CodeExecutionEnvironmentProps {
   // In the future, this might take the code as a prop, e.g.
@@ -13,11 +17,12 @@ interface CodeExecutionEnvironmentProps {
 export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> = () => {
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
+  const [backend, setBackend] = useState<SimulatorBackend>('wasm');
   const [output, setOutput] = useState<string>('');
   const [coverage, setCoverage] = useState<number | null>(null);
   const [regressions, setRegressions] = useState<string[]>([]);
   const [waveform, setWaveform] = useState<any>(null);
-  const [stats, setStats] = useState<{ runtimeMs: number; memoryBytes: number } | null>(null);
+  const [stats, setStats] = useState<SimulationStats | null>(null);
   const waveRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -35,7 +40,7 @@ export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> =
       const res = await fetch('/api/simulate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: '' }),
+        body: JSON.stringify({ code: '', backend }),
       });
       const data = await res.json();
       setOutput(data.output);
@@ -70,10 +75,20 @@ export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> =
 
   return (
     <div className="code-execution-environment my-6 p-4 border border-white/20 rounded-lg shadow-md bg-white/10 backdrop-blur-lg">
-      <div className="controls mb-4 flex gap-2">
+      <div className="controls mb-4 flex gap-2 items-center">
+        <select
+          className="border rounded-md p-1 bg-background text-foreground"
+          value={backend}
+          onChange={(e) => setBackend(e.target.value as SimulatorBackend)}
+          disabled={isRunning}
+        >
+          <option value="wasm">WebAssembly</option>
+          <option value="icarus">Icarus</option>
+          <option value="verilator">Verilator</option>
+        </select>
         <Button onClick={handleRunCode} disabled={isRunning}>
           <Play className="w-4 h-4 mr-2" />
-          {isRunning ? 'Running...' : 'Run'}
+          {isRunning ? 'Running...' : 'Run Simulation'}
         </Button>
         <Button onClick={handlePause} disabled={!isRunning} variant="secondary">
           <Pause className="w-4 h-4 mr-2" />
@@ -89,7 +104,7 @@ export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> =
       <div className="output-section mb-4">
         <h3 className="text-lg font-semibold mb-2 text-foreground/90">Simulation Output</h3>
         <pre className="bg-black text-white p-4 rounded-md text-sm whitespace-pre-wrap font-mono h-64 overflow-y-auto">
-          {output || 'Click "Run" to see the output.'}
+          {output || 'Click "Run Simulation" to see the output.'}
         </pre>
       </div>
       {waveform && (
@@ -103,6 +118,10 @@ export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> =
           <h3 className="text-lg font-semibold mb-2 text-foreground/90">Performance</h3>
           <p>Runtime: {stats.runtimeMs.toFixed(2)} ms</p>
           <p>Memory: {Math.round(stats.memoryBytes / 1024)} kB</p>
+          <p>
+            CPU: user {stats.cpuUserMs.toFixed(2)} ms / system{' '}
+            {stats.cpuSystemMs.toFixed(2)} ms
+          </p>
         </div>
       )}
       {coverage !== null && (
