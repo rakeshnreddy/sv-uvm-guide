@@ -2,10 +2,19 @@ import React from 'react';
 import '@testing-library/jest-dom';
 import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import CodeReviewAssistant from '../../src/components/ui/CodeReviewAssistant';
 
 describe('CodeReviewAssistant component', () => {
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(() =>
+      Promise.resolve({ ok: true, text: () => Promise.resolve('') }) as any,
+    ));
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
   it('shows commit id after typing', async () => {
     render(<CodeReviewAssistant />);
     const input = screen.getByPlaceholderText(/commit id/i);
@@ -16,6 +25,9 @@ describe('CodeReviewAssistant component', () => {
 
   it('adds trimmed comments and toggles approval', async () => {
     render(<CodeReviewAssistant />);
+
+    const commitInput = screen.getByPlaceholderText(/commit id/i);
+    await userEvent.type(commitInput, 'abc1234');
 
     const textarea = screen.getByPlaceholderText(/leave a comment/i);
     const addButton = screen.getByRole('button', { name: /add comment/i });
@@ -34,5 +46,6 @@ describe('CodeReviewAssistant component', () => {
     await userEvent.click(approveButton);
     expect(approveButton).toHaveTextContent('Approved');
     expect(screen.getByText(/review approved/i)).toBeInTheDocument();
+    expect(fetch).toHaveBeenCalledTimes(3);
   });
 });
