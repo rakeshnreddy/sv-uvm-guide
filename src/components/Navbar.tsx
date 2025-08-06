@@ -8,7 +8,13 @@ import Logo from "@/components/ui/Logo";
 import { ThemeSwitcher } from "@/components/ui/ThemeSwitcher";
 import { useNavigation } from "@/contexts/NavigationContext";
 
-const navLinks = [
+interface NavLink {
+  label: string;
+  href: string;
+  dropdown?: { label: string; href: string }[];
+}
+
+const navLinks: NavLink[] = [
   {
     label: "Curriculum",
     href: "/curriculum",
