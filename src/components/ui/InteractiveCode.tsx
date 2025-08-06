@@ -134,7 +134,15 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   const [codeContent, setCodeContent] = useState(code);
   useEffect(() => setCodeContent(code), [code]);
 
+  interface ASTNode {
+    type: string;
+    name?: string;
+    children?: ASTNode[];
+    details?: Record<string, any>;
+  }
+
   interface AnalysisResult {
+    ast: ASTNode[];
     metrics: {
       lines: number;
       modules: number;
@@ -143,32 +151,129 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
     };
     suggestions: string[];
     warnings: string[];
+    refactorSuggestions: string[];
+    performance: {
+      speed: string;
+      memory: number;
+      timing: string;
+    };
     testCases: string[];
   }
 
+  const parseSystemVerilogAST = (input: string): ASTNode[] => {
+    const lines = input.split(/\r?\n/);
+    const root: ASTNode[] = [];
+    let currentModule: ASTNode | null = null;
+    const stack: ASTNode[] = [];
+
+    lines.forEach((line) => {
+      const moduleMatch = line.match(/^\s*module\s+(\w+)/);
+      if (moduleMatch) {
+        const moduleNode: ASTNode = { type: 'module', name: moduleMatch[1], children: [] };
+        root.push(moduleNode);
+        currentModule = moduleNode;
+        stack.length = 0;
+        return;
+      }
+      if (/^\s*endmodule/.test(line)) {
+        currentModule = null;
+        stack.length = 0;
+        return;
+      }
+      if (!currentModule) return;
+
+      const alwaysMatch = line.match(/^\s*always(_ff|_comb)?/);
+      if (alwaysMatch) {
+        const alwaysNode: ASTNode = {
+          type: 'always',
+          name: alwaysMatch[0],
+          children: [],
+        };
+        currentModule.children!.push(alwaysNode);
+        stack.push(alwaysNode);
+        return;
+      }
+      if (/^\s*begin\b/.test(line)) {
+        const blockNode: ASTNode = { type: 'block', children: [] };
+        const parent = stack[stack.length - 1] || currentModule;
+        parent.children!.push(blockNode);
+        stack.push(blockNode);
+        return;
+      }
+      if (/^\s*end\b/.test(line)) {
+        stack.pop();
+        return;
+      }
+      const parent = stack[stack.length - 1] || currentModule;
+      parent.children!.push({ type: 'statement', details: { line: line.trim() } });
+    });
+    return root;
+  };
+
   const analyzeSystemVerilog = (input: string): AnalysisResult => {
     const lines = input.split(/\r?\n/);
-    const moduleRegex = /\bmodule\b/;
-    const alwaysRegex = /\balways(_ff|_comb)?\b/;
+    const ast = parseSystemVerilogAST(input);
+    const modules = ast.length;
+    let alwaysBlocks = 0;
+    ast.forEach((m) => {
+      alwaysBlocks += m.children?.filter((c) => c.type === 'always').length || 0;
+    });
+    const complexity = lines.reduce(
+      (acc, l) => acc + ((l.match(/\b(if|case|for|while)\b/g) || []).length),
+      0
+    );
+
     const metrics = {
       lines: lines.length,
-      modules: lines.filter((l) => moduleRegex.test(l)).length,
-      alwaysBlocks: lines.filter((l) => alwaysRegex.test(l)).length,
-      complexity: lines.reduce((acc, l) => acc + ((l.match(/\b(if|case|for|while)\b/g) || []).length), 0),
+      modules,
+      alwaysBlocks,
+      complexity,
     };
+
     const suggestions: string[] = [];
+    const refactorSuggestions: string[] = [];
+
     if (input.match(/\btodo\b/i)) {
       suggestions.push('Remove TODO comments before final submission.');
     }
     if (input.includes('always_ff') && !input.includes('<=')) {
       suggestions.push('Use non-blocking assignments (<=) in sequential logic.');
     }
+    if (complexity > 10) {
+      refactorSuggestions.push('Consider simplifying complex conditional logic.');
+    }
+    if (lines.some((l) => l.length > 120)) {
+      refactorSuggestions.push('Split long lines to improve readability.');
+    }
+
     const warnings: string[] = [];
     if (input.includes('#')) {
       warnings.push('Avoid using # delays for synthesizable code.');
     }
-    const testCases = ['// Test case generation not implemented'];
-    return { metrics, suggestions, warnings, testCases };
+    if (input.match(/\bfork\b/)) {
+      warnings.push('fork...join detected; ensure this is safe for your design.');
+    }
+
+    const memory = lines.filter((l) => l.match(/\b(reg|logic|byte|int|bit|shortint|longint)\b/)).length * 4;
+    const performance = {
+      speed: complexity > 20 ? 'Slow' : complexity > 5 ? 'Moderate' : 'Fast',
+      memory,
+      timing: `${alwaysBlocks * 10 + complexity} ns estimated latency`,
+    };
+
+    const testCases = ast.map(
+      (m) => `module tb_${m.name};\n  ${m.name} uut();\n  initial begin\n    // Add test sequences here\n  end\nendmodule`
+    );
+
+    return {
+      ast,
+      metrics,
+      suggestions,
+      warnings,
+      refactorSuggestions,
+      performance,
+      testCases,
+    };
   };
 
   const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
@@ -177,6 +282,8 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   }, [codeContent]);
 
   const svgRef = useRef<SVGSVGElement | null>(null);
+  const flowRef = useRef<SVGSVGElement | null>(null);
+
   useEffect(() => {
     if (!analysis || !svgRef.current) return;
     const data = [
@@ -198,6 +305,39 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
       .attr('fill', '#3b82f6');
     svg.append('g').attr('transform', `translate(0,${height})`).call(d3.axisBottom(x));
     svg.append('g').call(d3.axisLeft(y).ticks(3));
+  }, [analysis]);
+
+  useEffect(() => {
+    if (!analysis || !flowRef.current) return;
+    const svg = d3.select(flowRef.current);
+    const width = Number(svg.attr('width')) || 300;
+    const height = Number(svg.attr('height')) || 200;
+    svg.selectAll('*').remove();
+    let y = 20;
+    analysis.ast.forEach(mod => {
+      svg.append('text')
+        .attr('x', width / 2)
+        .attr('y', y)
+        .attr('text-anchor', 'middle')
+        .text(mod.name || 'module');
+      const startY = y;
+      y += 20;
+      mod.children?.filter(c => c.type === 'always').forEach((al, idx) => {
+        svg.append('line')
+          .attr('x1', width / 2)
+          .attr('y1', startY + 5)
+          .attr('x2', width / 2)
+          .attr('y2', y - 10)
+          .attr('stroke', '#555');
+        svg.append('text')
+          .attr('x', width / 2)
+          .attr('y', y)
+          .attr('text-anchor', 'middle')
+          .text(al.name || `always_${idx}`);
+        y += 20;
+      });
+      y += 10;
+    });
   }, [analysis]);
 
   const hasExplanations = explanationSteps.length > 0;
@@ -300,12 +440,25 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
             <li>Always blocks: {analysis?.metrics.alwaysBlocks}</li>
             <li>Complexity tokens: {analysis?.metrics.complexity}</li>
           </ul>
+          <h4 className="font-semibold mt-4 mb-2">Performance</h4>
+          <ul className="list-disc ml-5">
+            <li>Speed: {analysis?.performance.speed}</li>
+            <li>Memory estimate: {analysis?.performance.memory} bytes</li>
+            <li>Timing: {analysis?.performance.timing}</li>
+          </ul>
           <h4 className="font-semibold mt-4 mb-2">Suggestions</h4>
           <ul className="list-disc ml-5">
             {analysis?.suggestions.map((s, i) => (
               <li key={i}>{s}</li>
             ))}
             {analysis?.suggestions.length === 0 && <li>No suggestions</li>}
+          </ul>
+          <h4 className="font-semibold mt-4 mb-2">Refactor Suggestions</h4>
+          <ul className="list-disc ml-5">
+            {analysis?.refactorSuggestions.map((r, i) => (
+              <li key={i}>{r}</li>
+            ))}
+            {analysis?.refactorSuggestions.length === 0 && <li>None</li>}
           </ul>
           <h4 className="font-semibold mt-4 mb-2">Security Warnings</h4>
           <ul className="list-disc ml-5">
@@ -317,8 +470,9 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
           <h4 className="font-semibold mt-4 mb-2">Generated Tests</h4>
           <pre className="bg-black/10 p-2 rounded">{analysis?.testCases.join('\n')}</pre>
         </div>
-        <div className="flex justify-center items-center">
+        <div className="flex flex-col justify-center items-center space-y-4">
           <svg ref={svgRef} width="300" height="120"></svg>
+          <svg ref={flowRef} width="300" height="200"></svg>
         </div>
       </div>
 
