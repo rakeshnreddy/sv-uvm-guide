@@ -16,6 +16,10 @@ type CheckResult = {
   details?: string;
 };
 
+/**
+ * Simulates a documentation completeness check for the current commit.
+ * @returns {CheckResult} asynchronous status and optional details once the check resolves.
+ */
 export const useDocumentationCheck = (): CheckResult => {
   const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
   React.useEffect(() => {
@@ -27,6 +31,10 @@ export const useDocumentationCheck = (): CheckResult => {
   return result;
 };
 
+/**
+ * Simulates verifying the project's overall test coverage.
+ * @returns {CheckResult} asynchronous status and optional coverage information.
+ */
 export const useTestCoverageCheck = (): CheckResult => {
   const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
   React.useEffect(() => {
@@ -38,6 +46,10 @@ export const useTestCoverageCheck = (): CheckResult => {
   return result;
 };
 
+/**
+ * Pretends to validate that architectural guidelines are followed in the codebase.
+ * @returns {CheckResult} asynchronous status and optional architecture notes.
+ */
 export const useArchitectureCheck = (): CheckResult => {
   const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
   React.useEffect(() => {
@@ -49,6 +61,10 @@ export const useArchitectureCheck = (): CheckResult => {
   return result;
 };
 
+/**
+ * Mimics a coding standards linter that ensures style guide adherence.
+ * @returns {CheckResult} asynchronous status and optional lint details.
+ */
 export const useCodingStandardsCheck = (): CheckResult => {
   const [result, setResult] = React.useState<CheckResult>({ status: "pending" });
   React.useEffect(() => {
@@ -64,6 +80,10 @@ export const useCodingStandardsCheck = (): CheckResult => {
 // Component
 // ---------------------------------------------------------------------------
 
+/**
+ * Aggregates automated code quality checks and a minimal peer-review interface.
+ * The component has no props and maintains its own state for comments and approval.
+ */
 export const CodeReviewAssistant = () => {
   // Automated check results
   const [quality, setQuality] = React.useState<CheckResult>({ status: "pending" });
