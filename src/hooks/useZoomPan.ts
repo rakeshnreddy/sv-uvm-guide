@@ -15,7 +15,7 @@ export const useZoomPan = (svgRef: React.RefObject<SVGSVGElement>) => {
         svg.select("g").attr("transform", event.transform);
       });
 
-    svg.call(zoom as any);
+    svg.style("touch-action", "none").call(zoom as any);
 
     const handleKey = (e: KeyboardEvent) => {
       if (e.key === "+" || e.key === "=") {

@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { coverageData } from './coverage-data';
 import { Button } from '@/components/ui/Button';
@@ -52,6 +52,140 @@ const CoverageAnalyzer = () => {
     setExampleIndex(parseInt(index));
   };
 
+  const parseBinName = (name: string) => {
+    const regex = /(\w+)=(\d+)/g;
+    const result: Record<string, number> = {};
+    let match;
+    while ((match = regex.exec(name))) {
+      result[match[1]] = parseInt(match[2]);
+    }
+    return result;
+  };
+
+  const renderMatrix = (
+    cp: (typeof currentExample.coverpoints)[number],
+    binsState: boolean[],
+    xVar: string,
+    yVar: string,
+    xVals: number[],
+    yVals: number[],
+    filter?: (vals: Record<string, number>) => boolean
+  ) => (
+    <table className="border-collapse">
+      <thead>
+        <tr>
+          <th className="p-1"></th>
+          {xVals.map(x => (
+            <th key={x} className="p-1 text-sm">{`${xVar}=${x}`}</th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {yVals.map(y => (
+          <tr key={y}>
+            <th className="p-1 text-sm text-left">{`${yVar}=${y}`}</th>
+            {xVals.map(x => {
+              const idx = cp.bins.findIndex(bin => {
+                const parsed = parseBinName(bin.name);
+                return (
+                  parsed[xVar] === x &&
+                  parsed[yVar] === y &&
+                  (!filter || filter(parsed))
+                );
+              });
+              const covered = binsState[idx];
+              return (
+                <td key={x} className="p-1">
+                  <motion.div
+                    initial={{ scale: 0.8 }}
+                    animate={{
+                      scale: 1,
+                      backgroundColor: covered ? '#22c55e' : '#d1d5db'
+                    }}
+                    className="w-8 h-8 rounded"
+                  />
+                </td>
+              );
+            })}
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+
+  const coverageHoles = useMemo(() => {
+    const holes: { cp: string; bin: string; suggestion: string }[] = [];
+    currentExample.coverpoints.forEach(cp => {
+      const binsState = coverageState[cp.name] || [];
+      cp.bins.forEach((bin, idx) => {
+        if (!binsState[idx]) {
+          holes.push({
+            cp: cp.name,
+            bin: bin.name,
+            suggestion: `Add tests to cover ${bin.name}`
+          });
+        }
+      });
+    });
+    return holes;
+  }, [coverageState, currentExample]);
+
+  const generateReport = () => {
+    return {
+      example: currentExample.name,
+      coverpoints: currentExample.coverpoints.map(cp => {
+        const binsState = coverageState[cp.name] || [];
+        const total = cp.bins.length;
+        const covered = binsState.filter(Boolean).length;
+        const percent = total ? Math.round((covered / total) * 100) : 0;
+        const holes = cp.bins
+          .filter((_, idx) => !binsState[idx])
+          .map(bin => bin.name);
+        return {
+          name: cp.name,
+          requirementId: cp.requirementId,
+          goal: cp.goal,
+          total,
+          covered,
+          percent,
+          holes
+        };
+      })
+    };
+  };
+
+  const downloadJSON = () => {
+    const report = generateReport();
+    const blob = new Blob([JSON.stringify(report, null, 2)], {
+      type: 'application/json'
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'coverage-report.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const downloadHTML = () => {
+    const report = generateReport();
+    const html = `<html><body><h1>Coverage Report - ${report.example}</h1>${report.coverpoints
+      .map(
+        cp =>
+          `<h2>${cp.name} (${cp.requirementId})</h2><p>${cp.percent}% coverage</p><ul>${cp.holes
+            .map(h => `<li>${h}</li>`)
+            .join('')}</ul>`
+      )
+      .join('')}</body></html>`;
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'coverage-report.html';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <Card className="w-full">
       <CardHeader>
@@ -79,56 +213,72 @@ const CoverageAnalyzer = () => {
                 const binsState = coverageState[cp.name] || [];
                 const isCross = cp.name.startsWith('cross');
                 if (isCross) {
-                  const aVals = Array.from(new Set(
-                    cp.bins.map(b => parseInt(b.name.match(/a=(\d+)/)?.[1] || '0'))
-                  )).sort((a, b) => a - b);
-                  const bVals = Array.from(new Set(
-                    cp.bins.map(b => parseInt(b.name.match(/b=(\d+)/)?.[1] || '0'))
-                  )).sort((a, b) => a - b);
+                  const binValues = cp.bins.map(b => parseBinName(b.name));
+                  const variables = Object.keys(binValues[0] || {});
+                  const valueSets: Record<string, number[]> = {};
+                  variables.forEach(v => {
+                    valueSets[v] = Array.from(new Set(binValues.map(b => b[v]))).sort(
+                      (a, b) => a - b
+                    );
+                  });
+                  if (variables.length === 2) {
+                    const [xVar, yVar] = variables;
+                    return (
+                      <div key={cp.name} className="mb-4">
+                        <h4 className="font-semibold mb-2">
+                          {cp.name} ({cp.requirementId})
+                        </h4>
+                        {renderMatrix(
+                          cp,
+                          binsState,
+                          xVar,
+                          yVar,
+                          valueSets[xVar],
+                          valueSets[yVar]
+                        )}
+                      </div>
+                    );
+                  }
+                  if (variables.length === 3) {
+                    const [xVar, yVar, zVar] = variables;
+                    return (
+                      <div key={cp.name} className="mb-4">
+                        <h4 className="font-semibold mb-2">
+                          {cp.name} ({cp.requirementId})
+                        </h4>
+                        {valueSets[zVar].map(z => (
+                          <div key={z} className="mb-2">
+                            <h5 className="text-sm font-medium mb-1">{`${zVar}=${z}`}</h5>
+                            {renderMatrix(
+                              cp,
+                              binsState,
+                              xVar,
+                              yVar,
+                              valueSets[xVar],
+                              valueSets[yVar],
+                              vals => vals[zVar] === z
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  }
                   return (
                     <div key={cp.name} className="mb-4">
-                      <h4 className="font-semibold mb-2">{cp.name}</h4>
-                      <table className="border-collapse">
-                        <thead>
-                          <tr>
-                            <th className="p-1"></th>
-                            {bVals.map(b => (
-                              <th key={b} className="p-1 text-sm">b={b}</th>
-                            ))}
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {aVals.map(a => (
-                            <tr key={a}>
-                              <th className="p-1 text-sm text-left">a={a}</th>
-                              {bVals.map(b => {
-                                const idx = cp.bins.findIndex(
-                                  bin => bin.name.includes(`a=${a}`) && bin.name.includes(`b=${b}`)
-                                );
-                                const covered = binsState[idx];
-                                return (
-                                  <td key={b} className="p-1">
-                                    <motion.div
-                                      initial={{ scale: 0.8 }}
-                                      animate={{
-                                        scale: 1,
-                                        backgroundColor: covered ? '#22c55e' : '#d1d5db'
-                                      }}
-                                      className="w-8 h-8 rounded"
-                                    />
-                                  </td>
-                                );
-                              })}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                      <h4 className="font-semibold mb-2">
+                        {cp.name} ({cp.requirementId})
+                      </h4>
+                      <p className="text-sm">
+                        Cross coverage with more than 3 variables not supported.
+                      </p>
                     </div>
                   );
                 }
                 return (
                   <div key={cp.name} className="mb-4">
-                    <h4 className="font-semibold">{cp.name}</h4>
+                    <h4 className="font-semibold">
+                      {cp.name} ({cp.requirementId})
+                    </h4>
                     <div className="flex flex-wrap gap-2 mt-2">
                       {cp.bins.map((bin, idx) => (
                         <motion.div
@@ -158,18 +308,23 @@ const CoverageAnalyzer = () => {
             const binsState = coverageState[cp.name] || [];
             const total = cp.bins.length;
             const covered = binsState.filter(Boolean).length;
-            const percent = Math.round((covered / total) * 100);
+            const percent = total ? Math.round((covered / total) * 100) : 0;
+            const barColor = percent >= cp.goal ? 'bg-green-500' : 'bg-primary';
             return (
               <div key={cp.name} className="mb-2">
                 <div className="flex justify-between text-sm mb-1">
-                  <span>{cp.name}</span>
-                  <span>{percent}%</span>
+                  <a href={`#${cp.requirementId}`} className="underline">
+                    {cp.name} ({cp.requirementId})
+                  </a>
+                  <span>
+                    {percent}% / {cp.goal}%
+                  </span>
                 </div>
                 <div className="w-full bg-gray-200 rounded h-2">
                   <motion.div
                     initial={{ width: 0 }}
-                    animate={{ width: `${percent}%` }}
-                    className="h-2 bg-primary rounded"
+                    animate={{ width: `${Math.min(percent, 100)}%` }}
+                    className={`h-2 ${barColor} rounded`}
                   />
                 </div>
               </div>
@@ -201,6 +356,24 @@ const CoverageAnalyzer = () => {
               </div>
             );
           })()}
+        </div>
+
+        {coverageHoles.length > 0 && (
+          <div className="mt-6">
+            <h4 className="font-semibold mb-2">Coverage Holes & Suggestions</h4>
+            <ul className="list-disc ml-6 text-sm">
+              {coverageHoles.map((hole, idx) => (
+                <li key={idx}>
+                  {hole.cp}: {hole.bin} - {hole.suggestion}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        <div className="flex gap-2 mt-4">
+          <Button onClick={downloadJSON}>Download JSON</Button>
+          <Button onClick={downloadHTML}>Download HTML</Button>
         </div>
 
         <AnimatePresence mode="wait">

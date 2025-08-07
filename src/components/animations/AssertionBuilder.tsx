@@ -1,9 +1,10 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, useDraggable } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { svaOperators, SvaOperator } from './sva-data';
+import { assertionPatterns, AssertionPattern } from './assertion-patterns-data';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import Editor from '@monaco-editor/react';
@@ -22,37 +23,120 @@ const SortableOperator = ({ id, operator }: { id: string; operator: SvaOperator 
   );
 };
 
+const DraggablePattern = ({ pattern }: { pattern: AssertionPattern }) => {
+  const { attributes, listeners, setNodeRef, transform } = useDraggable({
+    id: `pattern-${pattern.id}`,
+    data: { type: 'pattern', pattern },
+  });
+  const style = {
+    transform: CSS.Translate.toString(transform),
+  };
+  return (
+    <div ref={setNodeRef} style={style} {...attributes} {...listeners} className="p-2 bg-accent rounded-lg m-1 cursor-grab">
+      {pattern.name}
+    </div>
+  );
+};
+
+const sampleWaveforms: Record<string, number[]> = {
+  req: [0, 1, 1, 0, 0],
+  gnt: [0, 0, 1, 1, 0],
+};
+
+interface TimelineStep {
+  cycle: number;
+  signals: Record<string, number>;
+  assertionStatus: 'pass' | 'fail' | 'untested';
+}
+
+interface SimulationResult {
+  pass: boolean;
+  failCycle?: number;
+  coverage: number;
+  trace: TimelineStep[];
+}
+
+const evaluateProperty = (code: string): SimulationResult => {
+  const tokens = code.trim().split(/\s+/);
+  const length = sampleWaveforms.req.length;
+  const trace: TimelineStep[] = [];
+  let pass = true;
+  let failCycle: number | undefined;
+  let triggered = 0;
+
+  if (tokens.length === 4 && tokens[1] === '|->' && tokens[2].startsWith('##')) {
+    const ante = tokens[0];
+    const cons = tokens[3];
+    const delay = parseInt(tokens[2].replace('##', '')) || 0;
+    for (let i = 0; i < length; i++) {
+      const signals: Record<string, number> = {};
+      Object.keys(sampleWaveforms).forEach(sig => (signals[sig] = sampleWaveforms[sig][i]));
+      let assertionStatus: 'pass' | 'fail' | 'untested' = 'untested';
+      if (sampleWaveforms[ante] && sampleWaveforms[ante][i]) {
+        triggered++;
+        if (i + delay < length && sampleWaveforms[cons] && sampleWaveforms[cons][i + delay]) {
+          assertionStatus = 'pass';
+        } else {
+          assertionStatus = 'fail';
+          if (failCycle === undefined) {
+            failCycle = i + delay;
+          }
+          pass = false;
+        }
+      }
+      trace.push({ cycle: i, signals, assertionStatus });
+    }
+  } else {
+    for (let i = 0; i < length; i++) {
+      const signals: Record<string, number> = {};
+      Object.keys(sampleWaveforms).forEach(sig => (signals[sig] = sampleWaveforms[sig][i]));
+      trace.push({ cycle: i, signals, assertionStatus: 'untested' });
+    }
+  }
+  const coverage = triggered / length;
+  return { pass, failCycle, coverage, trace };
+};
+
+const tokenToOperator = (token: string): SvaOperator => {
+  const existing = svaOperators.find(op => op.symbol === token);
+  if (existing) return existing;
+  return {
+    id: `sig-${token}-${Math.random()}`,
+    name: token,
+    symbol: token,
+    type: 'signal',
+    description: `${token} signal`,
+  };
+};
+
 const AssertionBuilder = () => {
-  const [operators, setOperators] = useState(svaOperators);
+  const [operators] = useState(svaOperators);
   const [property, setProperty] = useState<SvaOperator[]>([]);
   const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const { theme } = useTheme();
   const [code, setCode] = useState('');
-  const [simulation, setSimulation] = useState<{ operator: SvaOperator; status: 'pass' | 'fail' }[]>([]);
-  const [currentStep, setCurrentStep] = useState(0);
+  const [result, setResult] = useState<SimulationResult | null>(null);
 
   useEffect(() => {
     setCode(property.map(op => op.symbol).join(' '));
   }, [property]);
 
   const runSimulation = () => {
-    const results = property.map((op, idx) => ({
-      operator: op,
-      status: op.type === 'temporal' && idx === property.length - 1 ? 'fail' : 'pass',
-    }));
-    setSimulation(results);
-    setCurrentStep(0);
-  };
+    const sim = evaluateProperty(code);
+    setResult(sim);
 
-  const nextStep = () => setCurrentStep(prev => Math.min(prev + 1, simulation.length - 1));
-  const prevStep = () => setCurrentStep(prev => Math.max(prev - 1, 0));
+  };
 
   const handleDragEnd = (event: any) => {
     const { active, over } = event;
     if (!over) return;
 
     if (active.id !== over.id) {
-      if (over.id === 'property-dropzone') {
+      if (active.data.current?.type === 'pattern' && over.id === 'property-dropzone') {
+        const pattern: AssertionPattern = active.data.current.pattern;
+        const tokens = pattern.code.split(/\s+/).map(tokenToOperator);
+        setProperty(prev => [...prev, ...tokens]);
+      } else if (over.id === 'property-dropzone') {
         const activeOperator = operators.find(op => op.id === active.id);
         if (activeOperator) {
           setProperty(prev => [...prev, activeOperator]);
@@ -82,6 +166,12 @@ const AssertionBuilder = () => {
                   {operators.map(op => <SortableOperator key={op.id} id={op.id} operator={op} />)}
                 </SortableContext>
               </div>
+              <h3 className="font-semibold mt-4 mb-2">Common Patterns</h3>
+              <div className="p-2 border rounded-lg bg-background/50 min-h-[150px]">
+                {assertionPatterns.map(pattern => (
+                  <DraggablePattern key={pattern.id} pattern={pattern} />
+                ))}
+              </div>
             </div>
             <div className="col-span-2">
               <h3 className="font-semibold mb-2">Property</h3>
@@ -99,27 +189,43 @@ const AssertionBuilder = () => {
                   onChange={value => setCode(value ?? '')}
                 />
                 <Button className="mt-2" onClick={runSimulation} disabled={property.length === 0}>Simulate</Button>
-
-                {simulation.length > 0 && (
+                {result && (
                   <div className="mt-4">
-                    <div className="flex items-center space-x-2 mb-2">
-                      {simulation.map((step, idx) => (
-                        <div
-                          key={idx}
-                          className={`flex-1 text-center p-2 rounded text-white ${step.status === 'fail' ? 'bg-red-500' : 'bg-green-600'} ${idx === currentStep ? 'ring-2 ring-offset-2 ring-offset-background ring-yellow-400' : ''}`}
-                        >
-                          {step.operator.symbol}
+                    <h4 className="font-semibold mb-2">Simulation Timeline</h4>
+                    {Object.keys(sampleWaveforms).map(sig => (
+                      <div key={sig} className="flex items-center mb-1">
+                        <span className="w-16 text-sm">{sig}</span>
+                        <div className="flex">
+                          {sampleWaveforms[sig].map((v, idx) => (
+                            <div key={idx} className={`w-6 h-6 border ${v ? 'bg-green-500' : 'bg-red-500'}`}></div>
+                          ))}
                         </div>
-                      ))}
-                    </div>
-                    <div className="flex justify-between">
-                      <Button onClick={prevStep} disabled={currentStep === 0}>Prev</Button>
-                      <Button onClick={nextStep} disabled={currentStep === simulation.length - 1}>Next</Button>
+                      </div>
+                    ))}
+                    <div className="flex items-center mt-2">
+                      <span className="w-16 text-sm">assert</span>
+                      <div className="flex">
+                        {result.trace.map((step, idx) => (
+                          <div
+                            key={idx}
+                            className={`w-6 h-6 border ${
+                              step.assertionStatus === 'pass'
+                                ? 'bg-green-500'
+                                : step.assertionStatus === 'fail'
+                                ? 'bg-red-500'
+                                : 'bg-gray-300'
+                            }`}
+                          ></div>
+                        ))}
+                      </div>
                     </div>
                     <p className="mt-2 text-sm">
-                      {simulation[currentStep].operator.description}
-                      {simulation[currentStep].status === 'fail' && ' - Failed'}
+                      {result.pass ? 'Assertion passed' : `Assertion failed at cycle ${result.failCycle}`}
                     </p>
+                    {!result.pass && result.failCycle !== undefined && (
+                      <p className="text-sm">Counterexample at cycle {result.failCycle}</p>
+                    )}
+                    <p className="text-sm">Coverage: {(result.coverage * 100).toFixed(0)}%</p>
                   </div>
                 )}
               </div>
