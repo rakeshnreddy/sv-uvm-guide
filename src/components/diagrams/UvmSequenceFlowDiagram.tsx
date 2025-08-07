@@ -49,6 +49,38 @@ const UvmSequenceFlowDiagram = () => {
   );
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
 
+  const sequenceState =
+    currentStepIndex === 0
+      ? 'WAIT'
+      : currentStepIndex < currentSequence.steps.length - 1
+      ? 'RUN'
+      : 'DONE';
+  const stateColor: Record<string, string> = {
+    WAIT: '#bdc3c7',
+    RUN: '#f1c40f',
+    DONE: '#2ecc71',
+  };
+
+  const ackMap = useMemo(() => {
+    const map = new Map<string, number>();
+    currentSequence.steps.forEach((s, idx) => {
+      if (s.ackFor) {
+        map.set(s.ackFor, idx);
+      }
+    });
+    return map;
+  }, [currentSequence]);
+
+  const hasVirtual = useMemo(
+    () =>
+      currentSequence.steps.some(
+        (s) =>
+          s.source.toLowerCase().includes('virtual') ||
+          s.target.toLowerCase().includes('virtual')
+      ),
+    [currentSequence]
+  );
+
   const sensors = useSensors(useSensor(PointerSensor));
   const { setNodeRef: setDropRef } = useDroppable({ id: 'diagram-drop' });
 
@@ -92,12 +124,37 @@ const UvmSequenceFlowDiagram = () => {
 
   const width = 200 + (participants.length - 1) * 150;
   const currentStep: SequenceFlowStep = currentSequence.steps[currentStepIndex];
+  const arbitrationLog = useMemo(
+    () =>
+      currentSequence.steps
+        .slice(0, currentStepIndex + 1)
+        .filter((s) => s.name.startsWith('grant'))
+        .map((s) => s.name),
+    [currentSequence, currentStepIndex]
+  );
 
   return (
     <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
       <div className="flex">
         <div className="w-56 p-4 border-r">
           <h3 className="font-bold mb-2">Sequence Library</h3>
+          <select
+            value={currentSequence.id}
+            onChange={(e) => {
+              const seq = sequenceLibrary.find((s) => s.id === e.target.value);
+              if (seq) {
+                setCurrentSequence(seq);
+                setCurrentStepIndex(0);
+              }
+            }}
+            className="w-full mb-4 p-2 border rounded"
+          >
+            {sequenceLibrary.map((seq) => (
+              <option key={seq.id} value={seq.id}>
+                {seq.name}
+              </option>
+            ))}
+          </select>
           {sequenceLibrary.map((seq) => (
             <DraggableSequence key={seq.id} seq={seq} />
           ))}
@@ -109,80 +166,141 @@ const UvmSequenceFlowDiagram = () => {
         <div className="flex-1 p-4" ref={setDropRef}>
           <Card className="w-full">
             <CardHeader>
-              <CardTitle>
+              <CardTitle className="flex items-center gap-2">
                 {currentSequence.name} – UVM Sequence Execution Flow
+                <span className="flex items-center gap-1 text-sm">
+                  <svg width="16" height="16">
+                    <circle cx="8" cy="8" r="8" fill={stateColor[sequenceState]} />
+                  </svg>
+                  {sequenceState}
+                </span>
               </CardTitle>
             </CardHeader>
             <CardContent>
-              <svg
-                className="w-full h-auto"
-                height={lifelineHeight + 100}
-                viewBox={`0 0 ${width} ${lifelineHeight + 100}`}
-              >
-                {participants.map((p) => (
-                  <g key={p.id}>
-                    <text
-                      x={p.x}
-                      y="30"
-                      textAnchor="middle"
-                      fontWeight="bold"
-                    >
-                      {p.name}
-                    </text>
-                    <line
-                      x1={p.x}
-                      y1="50"
-                      x2={p.x}
-                      y2={lifelineHeight}
-                      stroke="#aaa"
-                      strokeDasharray="5,5"
+              <div className="flex">
+                <svg
+                  className="w-full h-auto"
+                  height={lifelineHeight + 100}
+                  viewBox={`0 0 ${width} ${lifelineHeight + 100}`}
+                >
+                  {hasVirtual && (
+                    <rect
+                      x="0"
+                      y="0"
+                      width={width}
+                      height="60"
+                      fill="rgba(52,152,219,0.08)"
                     />
-                  </g>
-                ))}
+                  )}
+                  {participants.map((p) => (
+                    <g key={p.id}>
+                      <text
+                        x={p.x}
+                        y="30"
+                        textAnchor="middle"
+                        fontWeight="bold"
+                      >
+                        {p.name}
+                      </text>
+                      <line
+                        x1={p.x}
+                        y1="50"
+                        x2={p.x}
+                        y2={lifelineHeight}
+                        stroke="#aaa"
+                        strokeDasharray="5,5"
+                      />
+                    </g>
+                  ))}
 
-                <AnimatePresence>
-                  {currentSequence.steps
-                    .slice(0, currentStepIndex + 1)
-                    .map((step, index) => {
-                      const from = participants.find(
-                        (p) => p.id === step.source
-                      );
-                      const to = participants.find((p) => p.id === step.target);
-                      if (!from || !to) return null;
-
-                      const yPos = 70 + index * messageSpacing;
-                      const elements = [] as React.ReactNode[];
-
-                      elements.push(
-                        <line
-                          key={`line-${index}`}
-                          x1={from.x}
-                          y1={yPos}
-                          x2={to.x}
-                          y2={yPos}
-                          stroke="#3498db"
-                          strokeWidth="2"
-                          markerEnd="url(#arrowhead-seq-flow)"
-                        />
-                      );
-
-                      elements.push(
-                        <text
-                          key={`text-${index}`}
-                          x={(from.x + to.x) / 2}
-                          y={yPos - 10}
-                          textAnchor="middle"
-                          fontSize="12"
-                        >
-                          {step.name}
-                        </text>
-                      );
-
-                      if (step.ackFor) {
-                        const reqIndex = currentSequence.steps.findIndex(
-                          (s) => s.name === step.ackFor
+                  <AnimatePresence>
+                    {currentSequence.steps
+                      .slice(0, currentStepIndex + 1)
+                      .map((step, index) => {
+                        const from = participants.find(
+                          (p) => p.id === step.source
                         );
-                        if (reqIndex >= 0) {
+                        const to = participants.find(
+                          (p) => p.id === step.target
+                        );
+                        if (!from || !to) return null;
+
+                        const yPos = 70 + index * messageSpacing;
+                        const elements = [] as React.ReactNode[];
+
+                        const color = step.ackFor
+                          ? '#2ecc71'
+                          : step.source === 'DUT' || step.target === 'DUT'
+                          ? '#9b59b6'
+                          : '#3498db';
+
+                        const reqIndex = step.ackFor
+                          ? currentSequence.steps.findIndex(
+                              (s) => s.name === step.ackFor
+                            )
+                          : -1;
+                        const hasMismatch =
+                          step.ackFor && (reqIndex === -1 || reqIndex > index);
+                        const isStalled =
+                          !step.ackFor &&
+                          !ackMap.has(step.name) &&
+                          step.name.toLowerCase().includes('request');
+
+                        if (hasMismatch || isStalled) {
+                          elements.push(
+                            <rect
+                              key={`debug-${index}`}
+                              x={Math.min(from.x, to.x) - 40}
+                              y={yPos - 20}
+                              width={Math.abs(to.x - from.x) + 80}
+                              height={30}
+                              fill="rgba(231,76,60,0.2)"
+                            />
+                          );
+                        }
+
+                        elements.push(
+                          <motion.line
+                            key={`line-${index}`}
+                            x1={from.x}
+                            y1={yPos}
+                            x2={to.x}
+                            y2={yPos}
+                            stroke={color}
+                            strokeWidth="2"
+                            markerEnd="url(#arrowhead-seq-flow)"
+                            initial={{ x2: from.x }}
+                            animate={{ x2: to.x }}
+                            transition={{ duration: 0.6 }}
+                          />
+                        );
+
+                        elements.push(
+                          <motion.circle
+                            key={`dot-${index}`}
+                            cx={from.x}
+                            cy={yPos}
+                            r="4"
+                            fill={color}
+                            initial={{ cx: from.x }}
+                            animate={{ cx: to.x }}
+                            transition={{ duration: 0.6 }}
+                          />
+                        );
+
+                        elements.push(
+                          <text
+                            key={`text-${index}`}
+                            x={(from.x + to.x) / 2}
+                            y={yPos - 10}
+                            textAnchor="middle"
+                            fontSize="12"
+                          >
+                            {step.name}
+                          </text>
+                        );
+
+                        if (step.ackFor && reqIndex >= 0) {
                           const yReq = 70 + reqIndex * messageSpacing;
                           const ackParticipant = participants.find(
                             (p) => p.id === step.target
@@ -202,22 +320,31 @@ const UvmSequenceFlowDiagram = () => {
                             );
                           }
                         }
-                      }
 
-                      return (
-                        <motion.g
-                          key={index}
-                          initial={{ opacity: 0 }}
-                          animate={{ opacity: 1 }}
-                          exit={{ opacity: 0 }}
-                        >
-                          {elements}
-                        </motion.g>
-                      );
-                    })}
-                </AnimatePresence>
-              </svg>
-
+                        return (
+                          <motion.g
+                            key={index}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                          >
+                            {elements}
+                          </motion.g>
+                        );
+                      })}
+                  </AnimatePresence>
+                </svg>
+                {hasVirtual && (
+                  <div className="ml-4 w-48 p-2 border rounded bg-muted/50">
+                    <h4 className="font-bold mb-2">Arbitration Panel</h4>
+                    <ul className="text-sm list-disc pl-4">
+                      {arbitrationLog.map((a, i) => (
+                        <li key={i}>{a.replace(/_/g, ' ')}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
               <AnimatePresence mode="wait">
                 <motion.div
                   key={currentStep.name}
