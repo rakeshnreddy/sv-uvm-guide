@@ -1,5 +1,5 @@
 "use client";
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   sequenceLibrary,
@@ -48,6 +48,7 @@ const UvmSequenceFlowDiagram = () => {
     sequenceLibrary[0]
   );
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const svgRef = useRef<SVGSVGElement>(null);
 
   const sequenceState =
     currentStepIndex === 0
@@ -105,6 +106,21 @@ const UvmSequenceFlowDiagram = () => {
     setCurrentStepIndex((prev) => (prev > 0 ? prev - 1 : prev));
   };
 
+  const handleExport = () => {
+    if (svgRef.current) {
+      const data = new XMLSerializer().serializeToString(svgRef.current);
+      const blob = new Blob([data], { type: 'image/svg+xml;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${currentSequence.id}.svg`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+  };
+
   const lifelineHeight = 400;
   const messageSpacing = 40;
 
@@ -121,6 +137,16 @@ const UvmSequenceFlowDiagram = () => {
       x: 100 + idx * spacing,
     }));
   }, [currentSequence]);
+
+  const getLayerColor = (name: string) => {
+    const lower = name.toLowerCase();
+    if (lower.includes('virtual')) return 'rgba(52,152,219,0.1)';
+    if (lower.includes('sequence')) return 'rgba(155,89,182,0.1)';
+    if (lower.includes('sequencer')) return 'rgba(46,204,113,0.1)';
+    if (lower.includes('driver')) return 'rgba(241,196,15,0.1)';
+    if (lower.includes('dut')) return 'rgba(231,76,60,0.1)';
+    return 'rgba(189,195,199,0.1)';
+  };
 
   const width = 200 + (participants.length - 1) * 150;
   const currentStep: SequenceFlowStep = currentSequence.steps[currentStepIndex];
@@ -163,7 +189,7 @@ const UvmSequenceFlowDiagram = () => {
           </p>
         </div>
 
-        <div className="flex-1 p-4" ref={setDropRef}>
+        <div className="flex-1 p-4 overflow-x-auto" ref={setDropRef}>
           <Card className="w-full">
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
@@ -179,9 +205,11 @@ const UvmSequenceFlowDiagram = () => {
             <CardContent>
               <div className="flex">
                 <svg
+                  ref={svgRef}
                   className="w-full h-auto"
                   height={lifelineHeight + 100}
                   viewBox={`0 0 ${width} ${lifelineHeight + 100}`}
+                  preserveAspectRatio="xMidYMid meet"
                 >
                   {hasVirtual && (
                     <rect
@@ -194,6 +222,13 @@ const UvmSequenceFlowDiagram = () => {
                   )}
                   {participants.map((p) => (
                     <g key={p.id}>
+                      <rect
+                        x={p.x - 75}
+                        y={50}
+                        width={150}
+                        height={lifelineHeight}
+                        fill={getLayerColor(p.name)}
+                      />
                       <text
                         x={p.x}
                         y="30"
@@ -227,6 +262,30 @@ const UvmSequenceFlowDiagram = () => {
 
                         const yPos = 70 + index * messageSpacing;
                         const elements = [] as React.ReactNode[];
+
+                        if (step.name.toLowerCase().includes('barrier')) {
+                          elements.push(
+                            <line
+                              key={`barrier-${index}`}
+                              x1={0}
+                              y1={yPos}
+                              x2={width}
+                              y2={yPos}
+                              stroke="#e67e22"
+                              strokeDasharray="8,4"
+                            />,
+                            <text
+                              key={`barrier-text-${index}`}
+                              x={width - 4}
+                              y={yPos - 4}
+                              textAnchor="end"
+                              fontSize="10"
+                              fill="#e67e22"
+                            >
+                              barrier
+                            </text>
+                          );
+                        }
 
                         const color = step.ackFor
                           ? '#2ecc71'
@@ -328,6 +387,7 @@ const UvmSequenceFlowDiagram = () => {
                             animate={{ opacity: 1 }}
                             exit={{ opacity: 0 }}
                           >
+                            <title>{step.description}</title>
                             {elements}
                           </motion.g>
                         );
@@ -365,14 +425,17 @@ const UvmSequenceFlowDiagram = () => {
                 <Button onClick={handlePrev} disabled={currentStepIndex === 0}>
                   Previous
                 </Button>
-                <Button
-                  onClick={handleNext}
-                  disabled={
-                    currentStepIndex === currentSequence.steps.length - 1
-                  }
-                >
-                  Next
-                </Button>
+                <div className="flex gap-2">
+                  <Button onClick={handleExport}>Export SVG</Button>
+                  <Button
+                    onClick={handleNext}
+                    disabled={
+                      currentStepIndex === currentSequence.steps.length - 1
+                    }
+                  >
+                    Next
+                  </Button>
+                </div>
               </div>
 
               <defs>
