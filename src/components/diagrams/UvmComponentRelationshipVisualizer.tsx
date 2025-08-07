@@ -11,14 +11,42 @@ const UvmComponentRelationshipVisualizer = () => {
   const [activeFilters, setActiveFilters] = useState<string[]>(connectionTypes);
   const [selectedNodes, setSelectedNodes] = useState<string[]>([]);
   const [path, setPath] = useState<string[]>([]);
+  const [isolatedNode, setIsolatedNode] = useState<string | null>(null);
 
+  const baseLinks = uvmConnections.filter(c => activeFilters.includes(c.type));
+  let nodesFiltered = uvmComponents;
+  let linksFiltered = baseLinks;
+  if (isolatedNode) {
+    const neighborIds = new Set<string>([isolatedNode]);
+    baseLinks.forEach(l => {
+      if (l.source === isolatedNode) neighborIds.add(l.target);
+      if (l.target === isolatedNode) neighborIds.add(l.source);
+    });
+    nodesFiltered = uvmComponents.filter(n => neighborIds.has(n.id));
+    linksFiltered = baseLinks.filter(l => neighborIds.has(l.source) && neighborIds.has(l.target));
+  }
 
-  const filteredLinks = uvmConnections.filter(c => activeFilters.includes(c.type));
-  const degreeMap = new Map<string, number>();
-  filteredLinks.forEach(l => {
-    degreeMap.set(l.source, (degreeMap.get(l.source) || 0) + 1);
-    degreeMap.set(l.target, (degreeMap.get(l.target) || 0) + 1);
+  const nodeMetrics = new Map<string, { in: number; out: number; types: Record<string, number> }>();
+  linksFiltered.forEach(l => {
+    const src = nodeMetrics.get(l.source) || { in: 0, out: 0, types: {} as Record<string, number> };
+    src.out++;
+    src.types[l.type] = (src.types[l.type] || 0) + 1;
+    nodeMetrics.set(l.source, src);
+    const tgt = nodeMetrics.get(l.target) || { in: 0, out: 0, types: {} as Record<string, number> };
+    tgt.in++;
+    tgt.types[l.type] = (tgt.types[l.type] || 0) + 1;
+    nodeMetrics.set(l.target, tgt);
   });
+
+  const nodes: (d3.SimulationNodeDatum & {
+    id: string;
+    name: string;
+    type: string;
+    description: string;
+    parent?: string;
+    children?: string[];
+  })[] = nodesFiltered.map(c => ({ ...c }));
+  const links = linksFiltered.map(l => ({ ...l }));
 
   const findPath = (start: string, end: string): string[] => {
     const queue: string[] = [start];
@@ -26,7 +54,7 @@ const UvmComponentRelationshipVisualizer = () => {
     const parent = new Map<string, string>();
 
     const adj = new Map<string, string[]>();
-    filteredLinks.forEach(l => {
+    linksFiltered.forEach(l => {
       adj.set(l.source, [...(adj.get(l.source) || []), l.target]);
       adj.set(l.target, [...(adj.get(l.target) || []), l.source]);
     });
@@ -55,7 +83,6 @@ const UvmComponentRelationshipVisualizer = () => {
     return result;
   };
 
-
   useEffect(() => {
     if (!svgRef.current) return;
 
@@ -64,29 +91,29 @@ const UvmComponentRelationshipVisualizer = () => {
 
     const svg = d3.select(svgRef.current)
       .attr('viewBox', `0 0 ${width} ${height}`)
-      .html(''); // Clear previous contents
-
-    const nodes: (d3.SimulationNodeDatum & { id: string; name: string; type: string; })[] = uvmComponents.map(c => ({ ...c }));
+      .html('');
 
     const simulation = d3.forceSimulation(nodes)
-      .force('link', d3.forceLink(filteredLinks).id((d: any) => d.id).distance(100))
+      .force('link', d3.forceLink(links).id((d: any) => d.id).distance(100))
       .force('charge', d3.forceManyBody().strength(-150))
       .force('center', d3.forceCenter(width / 2, height / 2));
 
     const link = svg.append('g')
-      .attr('stroke', '#999')
       .attr('stroke-opacity', 0.6)
       .selectAll('line')
-      .data(filteredLinks)
+      .data(links)
       .join('line')
-      .attr('stroke-width', d => Math.sqrt(d.type === 'parent_child' ? 3 : 1))
+      .attr('stroke-width', d => (d.type === 'composition' ? 3 : 1))
+      .attr('stroke-dasharray', d => d.type === 'inheritance' ? '4 2' : null)
       .attr('stroke', d => {
         const sid = (d.source as any).id;
         const tid = (d.target as any).id;
         const inPath = path.includes(sid) && path.includes(tid) && Math.abs(path.indexOf(sid) - path.indexOf(tid)) === 1;
         const selected = selectedNodes.includes(sid) || selectedNodes.includes(tid);
-        if (inPath) return 'hsl(var(--info))';
-        if (selected) return 'hsl(var(--info))';
+        if (inPath || selected) return 'hsl(var(--info))';
+        if (d.type === 'analysis') return 'hsl(var(--warning))';
+        if (d.type === 'seq_item') return 'hsl(var(--muted))';
+        if (d.type === 'inheritance') return '#555';
         return '#999';
       })
       .attr('class', d => {
@@ -95,7 +122,6 @@ const UvmComponentRelationshipVisualizer = () => {
         const inPath = path.includes(sid) && path.includes(tid) && Math.abs(path.indexOf(sid) - path.indexOf(tid)) === 1;
         return inPath ? 'message-path' : null;
       });
-
 
     const node = svg.append('g')
       .attr('stroke', '#fff')
@@ -117,16 +143,22 @@ const UvmComponentRelationshipVisualizer = () => {
           return [d.id];
         });
       })
-
       .call(drag(simulation) as any);
 
-    const labels = svg.append("g")
-      .attr("class", "labels")
-      .selectAll("text")
+    node.append('title')
+      .text(d => {
+        const m = nodeMetrics.get(d.id) || { in: 0, out: 0, types: {} };
+        const types = Object.entries(m.types).map(([t, c]) => `${t}:${c}`).join(', ');
+        return `${d.name}\nIn: ${m.in} Out: ${m.out}\n${types}`;
+      });
+
+    const labels = svg.append('g')
+      .attr('class', 'labels')
+      .selectAll('text')
       .data(nodes)
-      .enter().append("text")
-      .attr("text-anchor", "middle")
-      .attr("dominant-baseline", "central")
+      .enter().append('text')
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'central')
       .style('fill', 'hsl(var(--primary-foreground))')
       .style('font-size', '10px')
       .text(d => d.name)
@@ -172,14 +204,25 @@ const UvmComponentRelationshipVisualizer = () => {
         .on('end', dragended);
     }
 
-  }, [filteredLinks, selectedNodes, path]);
+  }, [links, nodes, selectedNodes, path, nodeMetrics]);
 
+  useEffect(() => {
+    if (selectedNodes.length !== 1) setIsolatedNode(null);
+  }, [selectedNodes]);
 
   const handleFilterChange = (type: string) => {
     setActiveFilters(prev =>
       prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
     );
   };
+
+  const toggleIsolation = () => {
+    if (selectedNodes.length === 1) {
+      setIsolatedNode(prev => prev === selectedNodes[0] ? null : selectedNodes[0]);
+    }
+  };
+
+  const selectedMetrics = selectedNodes.length === 1 ? nodeMetrics.get(selectedNodes[0]) : null;
 
   return (
     <div className="p-4 border rounded-lg">
@@ -195,12 +238,24 @@ const UvmComponentRelationshipVisualizer = () => {
             {type}
           </Button>
         ))}
+        {selectedNodes.length === 1 && (
+          <Button
+            variant={isolatedNode ? 'destructive' : 'secondary'}
+            size="sm"
+            onClick={toggleIsolation}
+          >
+            {isolatedNode ? 'Show All' : 'Isolate'}
+          </Button>
+        )}
       </div>
       <p className="text-sm mb-2">
-        Nodes: {uvmComponents.length} | Relationships: {filteredLinks.length}
-        {selectedNodes.length === 1 && ` | ${selectedNodes[0]} connections: ${degreeMap.get(selectedNodes[0]) || 0}`}
+        Nodes: {nodes.length} | Relationships: {links.length}
+        {selectedMetrics && (
+          <> | In: {selectedMetrics.in} Out: {selectedMetrics.out} | {
+            Object.entries(selectedMetrics.types).map(([t, c]) => `${t}:${c}`).join(', ')
+          }</>
+        )}
         {selectedNodes.length === 2 && path.length > 0 && ` | Path length: ${path.length - 1}`}
-
       </p>
       <svg ref={svgRef} className="w-full h-auto" />
       <style>{`

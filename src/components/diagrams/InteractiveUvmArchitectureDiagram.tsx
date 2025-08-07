@@ -214,13 +214,8 @@ const InteractiveUvmArchitectureDiagram = () => {
         .attr('d', 'M0,-5L10,0L0,5')
         .attr('fill', 'hsl(var(--muted-foreground))');
 
-      const flows = uvmConnections
-        .filter(c => c.type !== 'parent_child')
-        .filter(c => {
-          const s = uvmComponents.find(x => x.id === c.source)?.type.split('_')[0] as keyof typeof layers;
-          const t = uvmComponents.find(x => x.id === c.target)?.type.split('_')[0] as keyof typeof layers;
-          return s && t && layers[s] && layers[t];
-        });
+      const flows = uvmConnections.filter(c => c.type !== 'composition');
+
       g.selectAll('.flow')
         .data(flows)
         .enter()
