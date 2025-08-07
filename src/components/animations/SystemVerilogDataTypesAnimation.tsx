@@ -5,13 +5,12 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
+import { Gauge, HardDrive, Zap } from 'lucide-react';
 import {
   ResponsiveContainer,
   BarChart,
   Bar,
   XAxis,
-  YAxis,
-  Tooltip,
 } from 'recharts';
 
 const stateColor = {
@@ -39,7 +38,9 @@ const SystemVerilogDataTypesAnimation = () => {
   const [assocKey, setAssocKey] = useState('');
   const [assocVal, setAssocVal] = useState(0);
   const [isStruct, setIsStruct] = useState(true);
+  const [isPacked, setIsPacked] = useState(true);
   const [logicValue, setLogicValue] = useState<StateColorKey>('0');
+  const [logicBitValue, setLogicBitValue] = useState<StateColorKey>('0');
 
 
   const cycleState = (currentValue: StateColorKey, values: StateColorKey[]) => {
@@ -55,15 +56,13 @@ const SystemVerilogDataTypesAnimation = () => {
 
   const andOutput = computeAnd(inputA, inputB);
   const logicToInt = (val: StateColorKey): number => (val === '1' ? 1 : 0);
-  const structUnionData = [
-    { name: 'Struct', memory: 16 },
-    { name: 'Union', memory: 8 },
-  ];
-  const conversionData = [
-    { name: 'logic→int', time: 3 },
-    { name: 'int', time: 1 },
-  ];
+  const logicToBit = (val: StateColorKey): StateColorKey => (val === '1' ? '1' : '0');
   const intValue = logicToInt(logicValue);
+  const bitValue = logicToBit(logicBitValue);
+  const logicBitPerfData = [
+    { name: 'logic', memory: 2, speed: 1 },
+    { name: 'bit', memory: 1, speed: 2 },
+  ];
 
   return (
     <Card className="w-full">
@@ -71,7 +70,9 @@ const SystemVerilogDataTypesAnimation = () => {
         <CardTitle>SystemVerilog Data Types</CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="grid md:grid-cols-2 gap-8 mb-8">
+        <div className="md:flex gap-6">
+          <div className="flex-1">
+            <div className="grid md:grid-cols-2 gap-8 mb-8">
           {/* 2-State Visualization */}
           <div>
             <h3 className="text-lg font-bold mb-2">2-State Data Types (e.g., bit, int)</h3>
@@ -215,29 +216,54 @@ const SystemVerilogDataTypesAnimation = () => {
             <Button size="sm" variant={!isStruct ? 'default' : 'outline'} onClick={() => setIsStruct(false)}>
               Union
             </Button>
+            <Button size="sm" variant={isPacked ? 'default' : 'outline'} onClick={() => setIsPacked(true)}>
+              Packed
+            </Button>
+            <Button size="sm" variant={!isPacked ? 'default' : 'outline'} onClick={() => setIsPacked(false)}>
+              Unpacked
+            </Button>
           </div>
           <div className="w-64 h-16 border-2 border-primary rounded-lg overflow-hidden relative">
             {isStruct ? (
-              <div className="flex w-full h-full">
-                <motion.div
-                  className="flex-1 bg-blue-200 border-r border-primary flex items-center justify-center text-xs"
-                  initial={{ x: -40, opacity: 0 }}
-                  animate={{ x: 0, opacity: 1 }}
-                >
-                  a
-                </motion.div>
-                <motion.div
-                  className="flex-1 bg-green-200 flex items-center justify-center text-xs"
-                  initial={{ x: 40, opacity: 0 }}
-                  animate={{ x: 0, opacity: 1 }}
-                >
-                  b
-                </motion.div>
-              </div>
-            ) : (
+              isPacked ? (
+                <div className="flex w-full h-full">
+                  <motion.div
+                    className="flex-1 bg-blue-200 border-r border-primary flex items-center justify-center text-xs"
+                    initial={{ x: -40, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                  >
+                    a
+                  </motion.div>
+                  <motion.div
+                    className="flex-1 bg-green-200 flex items-center justify-center text-xs"
+                    initial={{ x: 40, opacity: 0 }}
+                    animate={{ x: 0, opacity: 1 }}
+                  >
+                    b
+                  </motion.div>
+                </div>
+              ) : (
+                <div className="flex flex-col w-full h-full">
+                  <motion.div
+                    className="flex-1 bg-blue-200 border-b border-primary flex items-center justify-center text-xs"
+                    initial={{ y: -40, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                  >
+                    a
+                  </motion.div>
+                  <motion.div
+                    className="flex-1 bg-green-200 flex items-center justify-center text-xs"
+                    initial={{ y: 40, opacity: 0 }}
+                    animate={{ y: 0, opacity: 1 }}
+                  >
+                    b
+                  </motion.div>
+                </div>
+              )
+            ) : isPacked ? (
               <div className="relative w-full h-full">
                 <motion.div
-                  className="absolute inset-0 bg-blue-200 flex items-center justify-center text-xs"
+                  className="absolute inset-y-0 left-0 w-1/2 bg-blue-200 flex items-center justify-center text-xs"
                   initial={{ opacity: 0 }}
                   animate={{ opacity: 0.7 }}
                 >
@@ -251,16 +277,40 @@ const SystemVerilogDataTypesAnimation = () => {
                   b
                 </motion.div>
               </div>
+            ) : (
+              <div className="flex flex-col w-full h-full relative">
+                <motion.div
+                  className="flex-1 bg-blue-200 flex items-center justify-center text-xs"
+                  initial={{ y: -40, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                >
+                  a
+                </motion.div>
+                <motion.div
+                  className="flex-1 bg-green-200 flex items-center justify-center text-xs"
+                  initial={{ y: 40, opacity: 0 }}
+                  animate={{ y: 0, opacity: 1 }}
+                >
+                  b
+                </motion.div>
+                <div className="absolute inset-0 border-2 border-primary pointer-events-none" />
+              </div>
             )}
           </div>
           <p className="text-sm text-muted-foreground mt-2">
-            {isStruct ? 'Fields occupy distinct memory regions.' : 'All fields share the same memory.'}
+            {isStruct
+              ? isPacked
+                ? 'Fields packed into contiguous bits.'
+                : 'Fields stored separately.'
+              : isPacked
+              ? 'Members overlay within shared packed bits.'
+              : 'Members share the same word but are accessed separately.'}
           </p>
         </div>
 
         <hr className="my-8" />
 
-        {/* Type Conversion */}
+        {/* Type Conversion (logic → int) */}
         <div className="mb-8">
           <h3 className="text-lg font-bold mb-2">Type Conversion (logic → int)</h3>
           <p className="text-sm text-muted-foreground mb-4">X and Z convert to 0.</p>
@@ -286,34 +336,29 @@ const SystemVerilogDataTypesAnimation = () => {
           </div>
         </div>
 
-        <hr className="my-8" />
-
-        {/* Performance Implications */}
+        {/* Type Conversion (logic → bit) */}
         <div className="mb-8">
-          <h3 className="text-lg font-bold mb-4">Performance Implications</h3>
-          <div className="grid md:grid-cols-2 gap-4">
-            <div>
-              <h4 className="font-semibold text-center mb-2">Memory (bytes)</h4>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={structUnionData}>
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="memory" fill="#8884d8" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-            <div>
-              <h4 className="font-semibold text-center mb-2">Conversion Cost</h4>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={conversionData}>
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip />
-                  <Bar dataKey="time" fill="#82ca9d" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
+          <h3 className="text-lg font-bold mb-2">Type Conversion (logic → bit)</h3>
+          <p className="text-sm text-muted-foreground mb-4">X and Z convert to 0.</p>
+          <div className="flex items-center gap-4">
+            <motion.div
+              key={logicBitValue}
+              className={`w-16 h-16 flex items-center justify-center text-white font-bold rounded-lg ${stateColor[logicBitValue]}`}
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+            >
+              {logicBitValue}
+            </motion.div>
+            <span className="font-mono text-xl">&rarr;</span>
+            <motion.div
+              key={bitValue}
+              className={`w-16 h-16 flex items-center justify-center text-white font-bold rounded-lg ${stateColor[bitValue]}`}
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+            >
+              {bitValue}
+            </motion.div>
+            <Button onClick={() => setLogicBitValue(cycleState(logicBitValue, FourStateValues))}>Cycle</Button>
           </div>
         </div>
 
@@ -423,8 +468,39 @@ const SystemVerilogDataTypesAnimation = () => {
             ))}
           </div>
         </div>
-
-      </CardContent>
+      </div>
+      <aside className="md:w-64 mt-8 md:mt-0">
+        <h3 className="text-lg font-bold mb-4 flex items-center">
+          <Gauge className="w-4 h-4 mr-2" />
+          Performance
+        </h3>
+        <div className="mb-6">
+          <div className="flex items-center mb-2 text-sm font-medium">
+            <HardDrive className="w-4 h-4 mr-2" />
+            Memory
+          </div>
+          <ResponsiveContainer width="100%" height={80}>
+            <BarChart data={logicBitPerfData}>
+              <XAxis dataKey="name" hide />
+              <Bar dataKey="memory" fill="#8884d8" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+        <div>
+          <div className="flex items-center mb-2 text-sm font-medium">
+            <Zap className="w-4 h-4 mr-2" />
+            Speed
+          </div>
+          <ResponsiveContainer width="100%" height={80}>
+            <BarChart data={logicBitPerfData}>
+              <XAxis dataKey="name" hide />
+              <Bar dataKey="speed" fill="#82ca9d" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </aside>
+    </div>
+  </CardContent>
     </Card>
   );
 };
