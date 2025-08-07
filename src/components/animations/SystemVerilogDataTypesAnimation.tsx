@@ -5,6 +5,14 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+} from 'recharts';
 
 const stateColor = {
   '0': 'bg-green-500',
@@ -30,6 +38,8 @@ const SystemVerilogDataTypesAnimation = () => {
   const [assocArray, setAssocArray] = useState<Record<string, number>>({});
   const [assocKey, setAssocKey] = useState('');
   const [assocVal, setAssocVal] = useState(0);
+  const [isStruct, setIsStruct] = useState(true);
+  const [logicValue, setLogicValue] = useState<StateColorKey>('0');
 
 
   const cycleState = (currentValue: StateColorKey, values: StateColorKey[]) => {
@@ -44,6 +54,16 @@ const SystemVerilogDataTypesAnimation = () => {
   };
 
   const andOutput = computeAnd(inputA, inputB);
+  const logicToInt = (val: StateColorKey): number => (val === '1' ? 1 : 0);
+  const structUnionData = [
+    { name: 'Struct', memory: 16 },
+    { name: 'Union', memory: 8 },
+  ];
+  const conversionData = [
+    { name: 'logic→int', time: 3 },
+    { name: 'int', time: 1 },
+  ];
+  const intValue = logicToInt(logicValue);
 
   return (
     <Card className="w-full">
@@ -179,6 +199,120 @@ const SystemVerilogDataTypesAnimation = () => {
                    </motion.div>
                 ))}
               </div>
+            </div>
+          </div>
+        </div>
+
+        <hr className="my-8" />
+
+        {/* Struct vs Union Memory Layout */}
+        <div className="mb-8">
+          <h3 className="text-lg font-bold mb-2">Struct vs Union Memory Layout</h3>
+          <div className="flex gap-2 mb-4">
+            <Button size="sm" variant={isStruct ? 'default' : 'outline'} onClick={() => setIsStruct(true)}>
+              Struct
+            </Button>
+            <Button size="sm" variant={!isStruct ? 'default' : 'outline'} onClick={() => setIsStruct(false)}>
+              Union
+            </Button>
+          </div>
+          <div className="w-64 h-16 border-2 border-primary rounded-lg overflow-hidden relative">
+            {isStruct ? (
+              <div className="flex w-full h-full">
+                <motion.div
+                  className="flex-1 bg-blue-200 border-r border-primary flex items-center justify-center text-xs"
+                  initial={{ x: -40, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                >
+                  a
+                </motion.div>
+                <motion.div
+                  className="flex-1 bg-green-200 flex items-center justify-center text-xs"
+                  initial={{ x: 40, opacity: 0 }}
+                  animate={{ x: 0, opacity: 1 }}
+                >
+                  b
+                </motion.div>
+              </div>
+            ) : (
+              <div className="relative w-full h-full">
+                <motion.div
+                  className="absolute inset-0 bg-blue-200 flex items-center justify-center text-xs"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 0.7 }}
+                >
+                  a
+                </motion.div>
+                <motion.div
+                  className="absolute inset-0 bg-green-200 flex items-center justify-center text-xs"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 0.7 }}
+                >
+                  b
+                </motion.div>
+              </div>
+            )}
+          </div>
+          <p className="text-sm text-muted-foreground mt-2">
+            {isStruct ? 'Fields occupy distinct memory regions.' : 'All fields share the same memory.'}
+          </p>
+        </div>
+
+        <hr className="my-8" />
+
+        {/* Type Conversion */}
+        <div className="mb-8">
+          <h3 className="text-lg font-bold mb-2">Type Conversion (logic → int)</h3>
+          <p className="text-sm text-muted-foreground mb-4">X and Z convert to 0.</p>
+          <div className="flex items-center gap-4">
+            <motion.div
+              key={logicValue}
+              className={`w-16 h-16 flex items-center justify-center text-white font-bold rounded-lg ${stateColor[logicValue]}`}
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+            >
+              {logicValue}
+            </motion.div>
+            <span className="font-mono text-xl">&rarr;</span>
+            <motion.div
+              key={intValue}
+              className="w-16 h-16 flex items-center justify-center bg-gray-200 rounded-lg font-bold text-xl"
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+            >
+              {intValue}
+            </motion.div>
+            <Button onClick={() => setLogicValue(cycleState(logicValue, FourStateValues))}>Cycle</Button>
+          </div>
+        </div>
+
+        <hr className="my-8" />
+
+        {/* Performance Implications */}
+        <div className="mb-8">
+          <h3 className="text-lg font-bold mb-4">Performance Implications</h3>
+          <div className="grid md:grid-cols-2 gap-4">
+            <div>
+              <h4 className="font-semibold text-center mb-2">Memory (bytes)</h4>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={structUnionData}>
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="memory" fill="#8884d8" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+            <div>
+              <h4 className="font-semibold text-center mb-2">Conversion Cost</h4>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={conversionData}>
+                  <XAxis dataKey="name" />
+                  <YAxis />
+                  <Tooltip />
+                  <Bar dataKey="time" fill="#82ca9d" />
+                </BarChart>
+              </ResponsiveContainer>
             </div>
           </div>
         </div>
