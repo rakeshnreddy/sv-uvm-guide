@@ -5,13 +5,30 @@ import { uvmPhases, UvmPhase, addUvmPhase } from './uvm-phasing-data';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/Select';
 import { ArrowUpCircle, ArrowDownCircle, Download, Share2 } from 'lucide-react';
 
 const UvmPhasingInteractiveTimeline = () => {
   const [phases, setPhases] = useState<UvmPhase[]>(uvmPhases);
   const [currentPhaseIndex, setCurrentPhaseIndex] = useState(0);
-  const [newPhase, setNewPhase] = useState({ name: '', start: '', end: '', dependencies: '' });
+  const [newPhase, setNewPhase] = useState({
+    name: '',
+    start: '',
+    end: '',
+    dependencies: '',
+    objection: '',
+    activities: '',
+    commonIssues: '',
+  });
   const [showModal, setShowModal] = useState(false);
+  const [syncMarkers, setSyncMarkers] = useState<number[]>([]);
+  const [newMarker, setNewMarker] = useState('');
 
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -38,14 +55,36 @@ const UvmPhasingInteractiveTimeline = () => {
       dependencies: newPhase.dependencies
         ? newPhase.dependencies.split(',').map(d => d.trim()).filter(Boolean)
         : undefined,
+      objection: newPhase.objection || undefined,
+      activities: newPhase.activities
+        ? newPhase.activities.split(',').map(a => a.trim()).filter(Boolean)
+        : undefined,
+      commonIssues: newPhase.commonIssues
+        ? newPhase.commonIssues.split(',').map(i => i.trim()).filter(Boolean)
+        : undefined,
       timing: { start, end },
     };
 
     addUvmPhase(phase);
     setPhases(prev => [...prev, phase]);
     setCurrentPhaseIndex(phases.length);
-    setNewPhase({ name: '', start: '', end: '', dependencies: '' });
+    setNewPhase({
+      name: '',
+      start: '',
+      end: '',
+      dependencies: '',
+      objection: '',
+      activities: '',
+      commonIssues: '',
+    });
     setShowModal(false);
+  };
+
+  const handleAddSyncMarker = () => {
+    const t = Number(newMarker);
+    if (isNaN(t)) return;
+    setSyncMarkers(prev => [...prev, t]);
+    setNewMarker('');
   };
 
   useEffect(() => {
@@ -103,6 +142,7 @@ const UvmPhasingInteractiveTimeline = () => {
               const barHeight = 6;
               return (
                 <g key={phase.name} onClick={() => setCurrentPhaseIndex(idx)} className="cursor-pointer">
+                  <title>{`Type: ${phase.type}\nTiming: ${phase.timing.start}-${phase.timing.end}\nDependencies: ${phase.dependencies?.join(', ') || 'None'}\nObjection: ${phase.objection || 'None'}\nActivities: ${phase.activities?.join(', ') || 'None'}\nCommon Issues: ${phase.commonIssues?.join(', ') || 'None'}`}</title>
                   <rect
                     x={x}
                     y={y}
@@ -129,8 +169,8 @@ const UvmPhasingInteractiveTimeline = () => {
                     </g>
                   )}
                 </g>
-              );
-            })}
+                );
+              })}
             {phases.map(phase =>
               phase.dependencies?.map(dep => {
                 const depPhase = phases.find(p => p.name === dep);
@@ -152,6 +192,21 @@ const UvmPhasingInteractiveTimeline = () => {
                 );
               })
             )}
+            {syncMarkers.map((t, i) => {
+              const x = (t / totalTime) * 100;
+              return (
+                <line
+                  key={`marker-${i}`}
+                  x1={x}
+                  y1={0}
+                  x2={x}
+                  y2={40}
+                  stroke="gray"
+                  strokeWidth={0.5}
+                  strokeDasharray="2 2"
+                />
+              );
+            })}
             <motion.g
               initial={{ x: 0 }}
               animate={{ x: 100 }}
@@ -161,6 +216,37 @@ const UvmPhasingInteractiveTimeline = () => {
               <circle cx={0} cy={15} r={1.2} fill="hsl(var(--primary))" />
             </motion.g>
           </svg>
+        </div>
+        <div className="flex items-center gap-4 mb-4 flex-wrap">
+          <div className="w-48">
+            <Select
+              onValueChange={value => {
+                const idx = phases.findIndex(p => p.name === value);
+                if (idx !== -1) setCurrentPhaseIndex(idx);
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Jump to phase" />
+              </SelectTrigger>
+              <SelectContent>
+                {phases.map(p => (
+                  <SelectItem key={p.name} value={p.name}>
+                    {p.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center gap-2">
+            <Input
+              type="number"
+              placeholder="Marker time"
+              value={newMarker}
+              onChange={e => setNewMarker(e.target.value)}
+              className="w-32"
+            />
+            <Button onClick={handleAddSyncMarker}>Add Marker</Button>
+          </div>
         </div>
 
         <div className="flex overflow-x-auto pb-4 mb-4 space-x-2">
@@ -193,11 +279,24 @@ const UvmPhasingInteractiveTimeline = () => {
               <p className="text-sm mb-1">Depends on: {currentPhase.dependencies.join(', ')}</p>
             )}
             {currentPhase.activities && (
-              <ul className="list-disc list-inside text-sm mb-1">
-                {currentPhase.activities.map((act, i) => (
-                  <li key={i}>{act}</li>
-                ))}
-              </ul>
+              <>
+                <p className="text-sm mb-1">Activities:</p>
+                <ul className="list-disc list-inside text-sm mb-1">
+                  {currentPhase.activities.map((act, i) => (
+                    <li key={i}>{act}</li>
+                  ))}
+                </ul>
+              </>
+            )}
+            {currentPhase.commonIssues && (
+              <>
+                <p className="text-sm mb-1">Common Issues:</p>
+                <ul className="list-disc list-inside text-sm mb-1">
+                  {currentPhase.commonIssues.map((issue, i) => (
+                    <li key={i}>{issue}</li>
+                  ))}
+                </ul>
+              </>
             )}
 
             {currentPhase.objection && (
@@ -269,6 +368,21 @@ const UvmPhasingInteractiveTimeline = () => {
                   placeholder="Deps"
                   value={newPhase.dependencies}
                   onChange={e => setNewPhase({ ...newPhase, dependencies: e.target.value })}
+                />
+                <Input
+                  placeholder="Objection"
+                  value={newPhase.objection}
+                  onChange={e => setNewPhase({ ...newPhase, objection: e.target.value })}
+                />
+                <Input
+                  placeholder="Activities"
+                  value={newPhase.activities}
+                  onChange={e => setNewPhase({ ...newPhase, activities: e.target.value })}
+                />
+                <Input
+                  placeholder="Common Issues"
+                  value={newPhase.commonIssues}
+                  onChange={e => setNewPhase({ ...newPhase, commonIssues: e.target.value })}
                 />
               </div>
               <div className="flex justify-end gap-2">

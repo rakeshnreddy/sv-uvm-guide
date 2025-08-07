@@ -33,33 +33,6 @@ const RandomizationExplorer = () => {
 
   const currentExample = randomizationData[exampleIndex];
 
-  const randomize = useCallback(
-    (w = weight) => {
-      const iterations: string[] = [];
-      let newValues: { [key: string]: number } = {};
-      for (let attempt = 1; attempt <= 20; attempt++) {
-        const attemptValues: { [key: string]: number } = {};
-        currentExample.variables.forEach(v => {
-          attemptValues[v] = Math.floor(Math.random() * 256);
-        });
-        const result = checkConstraints(exampleIndex, attemptValues, w);
-        if (result.ok) {
-          newValues = attemptValues;
-          iterations.push(`Iteration ${attempt}: success`);
-          if (attemptValues.data !== undefined) {
-            updateDistribution(attemptValues.data);
-          }
-          break;
-        } else {
-          iterations.push(`Iteration ${attempt}: ${result.reason}`);
-        }
-      }
-      setRandomValues(newValues);
-      setIterationLog(iterations);
-    },
-    [exampleIndex, currentExample, weight]
-  );
-
   useEffect(() => {
     const initialActive = currentExample.constraints.reduce(
       (acc, c) => ({ ...acc, [c.name]: true }),
@@ -73,10 +46,6 @@ const RandomizationExplorer = () => {
     setCallbackLog([]);
     setConflictingConstraint(null);
   }, [currentExample]);
-
-  useEffect(() => {
-    randomize(50);
-  }, [currentExample, activeConstraints, randomize]);
 
   const updateDistribution = useCallback((value: number) => {
     const bin = Math.floor(value / 16);
@@ -136,6 +105,10 @@ const RandomizationExplorer = () => {
     },
     [currentExample, weight, activeConstraints, updateDistribution]
   );
+
+  useEffect(() => {
+    randomize(50);
+  }, [currentExample, activeConstraints, randomize]);
 
 
   const distributionChartData = useMemo(
