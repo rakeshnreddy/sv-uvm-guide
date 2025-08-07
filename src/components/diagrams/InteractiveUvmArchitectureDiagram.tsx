@@ -5,12 +5,11 @@ import { motion } from 'framer-motion';
 import type { UvmComponent } from './uvm-data-model';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { useAccessibility } from '@/hooks/useAccessibility';
-import { useLazyRender } from '@/hooks/useLazyRender';
-import { useAsync } from '@/hooks/useAsync';
-import { useLocale } from '@/hooks/useLocale';
-import { useTheme } from '@/hooks/useTheme';
-import { exportSvg } from '@/lib/exportUtils';
+import { useZoomPan } from '@/hooks/useZoomPan';
+import { useKeyboardNavigation } from '@/hooks/useKeyboardNavigation';
+import { exportSvgAsPng, exportSvgAsPdf } from '@/lib/exportUtils';
+import { useTheme } from 'next-themes';
+
 
 const componentColor = {
   test: 'hsl(var(--primary))',
@@ -31,6 +30,7 @@ const InteractiveUvmArchitectureDiagram = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const { theme, setTheme } = useTheme();
   const [activeComponent, setActiveComponent] = useState<UvmComponent | null>(null);
   const [highlightedType, setHighlightedType] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -112,22 +112,41 @@ const InteractiveUvmArchitectureDiagram = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleExport = useCallback(() => {
+  const handleExportPng = useCallback(() => {
     if (svgRef.current) {
-      exportSvg(svgRef.current, 'uvm-architecture');
+      exportSvgAsPng(svgRef.current, 'uvm-architecture');
     }
   }, []);
+
+  const handleExportPdf = useCallback(() => {
+    if (svgRef.current) {
+      exportSvgAsPdf(svgRef.current, 'uvm-architecture');
+    }
+  }, []);
+
+  const toggleTheme = () => {
+    if (!theme) return;
+    if (theme.endsWith('dark')) {
+      setTheme(theme.replace('dark', 'light'));
+    } else {
+      setTheme(theme.replace('light', 'dark'));
+    }
+  };
+
+  useZoomPan(svgRef, zoomRef);
+  useKeyboardNavigation(svgRef as unknown as React.RefObject<HTMLElement | SVGSVGElement>);
+
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e') {
         e.preventDefault();
-        handleExport();
+        handleExportPng();
       }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [handleExport]);
+  }, [handleExportPng]);
 
   useEffect(() => {
     if (!visible || !svgRef.current) return;
@@ -323,8 +342,14 @@ const InteractiveUvmArchitectureDiagram = () => {
         >
           Control Flow
         </Button>
-        <Button variant="outline" size="sm" onClick={handleExport}>
-          Export
+        <Button variant="outline" size="sm" onClick={handleExportPng}>
+          Export PNG
+        </Button>
+        <Button variant="outline" size="sm" onClick={handleExportPdf}>
+          Export PDF
+        </Button>
+        <Button variant="outline" size="sm" onClick={toggleTheme}>
+          Toggle Theme
         </Button>
       </div>
       <svg ref={svgRef} className="w-full h-auto touch-none" />

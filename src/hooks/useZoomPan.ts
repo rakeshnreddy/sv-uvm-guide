@@ -3,10 +3,16 @@
 import { useEffect } from "react";
 import * as d3 from "d3";
 
-export const useZoomPan = (svgRef: React.RefObject<SVGSVGElement>) => {
+export const useZoomPan = (
+  svgRef: React.RefObject<SVGSVGElement>,
+  zoomRef?: React.MutableRefObject<
+    d3.ZoomBehavior<SVGSVGElement, unknown> | null
+  >
+) => {
   useEffect(() => {
-    const svg = svgRef.current ? d3.select(svgRef.current) : null;
-    if (!svg) return;
+    const svgElement = svgRef.current;
+    if (!svgElement) return;
+    const svg = d3.select(svgElement);
 
     const zoom = d3
       .zoom<SVGSVGElement, unknown>()
@@ -15,27 +21,41 @@ export const useZoomPan = (svgRef: React.RefObject<SVGSVGElement>) => {
         svg.select("g").attr("transform", event.transform);
       });
 
-    svg.style("touch-action", "none").call(zoom as any);
+    svg.call(zoom as any);
+    if (zoomRef) {
+      zoomRef.current = zoom;
+    }
+
 
     const handleKey = (e: KeyboardEvent) => {
+      const step = 40;
       if (e.key === "+" || e.key === "=") {
         e.preventDefault();
         svg.transition().call(zoom.scaleBy as any, 1.2);
       } else if (e.key === "-") {
         e.preventDefault();
         svg.transition().call(zoom.scaleBy as any, 0.8);
-      } else if (e.key === "0") {
+      } else if (e.key === "ArrowUp") {
         e.preventDefault();
-        svg.transition().call(zoom.scaleTo as any, 1);
+        svg.transition().call(zoom.translateBy as any, 0, -step);
+      } else if (e.key === "ArrowDown") {
+        e.preventDefault();
+        svg.transition().call(zoom.translateBy as any, 0, step);
+      } else if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        svg.transition().call(zoom.translateBy as any, -step, 0);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        svg.transition().call(zoom.translateBy as any, step, 0);
       }
     };
 
-    window.addEventListener("keydown", handleKey);
+    svgElement.addEventListener("keydown", handleKey);
     return () => {
-      window.removeEventListener("keydown", handleKey);
+      svgElement.removeEventListener("keydown", handleKey);
       svg.on(".zoom", null);
     };
-  }, [svgRef]);
+  }, [svgRef, zoomRef]);
 };
 
 export default useZoomPan;
