@@ -15,6 +15,8 @@ import {
   XAxis,
   YAxis,
   Tooltip,
+  LineChart,
+  Line,
 } from 'recharts';
 
 const RandomizationExplorer = () => {
@@ -24,70 +26,67 @@ const RandomizationExplorer = () => {
   const [iterationLog, setIterationLog] = useState<string[]>([]);
   const [distribution, setDistribution] = useState<number[]>(Array(16).fill(0));
   const [weight, setWeight] = useState(50);
+  const [activeConstraints, setActiveConstraints] = useState<{ [key: string]: boolean }>({});
+  const [conflictingConstraint, setConflictingConstraint] = useState<string | null>(null);
+  const [callbackLog, setCallbackLog] = useState<string[]>([]);
+  const [solveTimes, setSolveTimes] = useState<number[]>([]);
 
   const currentExample = randomizationData[exampleIndex];
 
   useEffect(() => {
+    const initialActive = currentExample.constraints.reduce(
+      (acc, c) => ({ ...acc, [c.name]: true }),
+      {}
+    );
+    setActiveConstraints(initialActive);
     setDistribution(Array(16).fill(0));
     setIterationLog([]);
     setWeight(50);
-    randomize(50);
-  }, [exampleIndex, randomize]);
+    setSolveTimes([]);
+    setCallbackLog([]);
+    setConflictingConstraint(null);
+  }, [currentExample]);
 
-  const updateDistribution = (value: number) => {
+  useEffect(() => {
+    randomize(50);
+  }, [currentExample, activeConstraints, randomize]);
+
+  const updateDistribution = useCallback((value: number) => {
     const bin = Math.floor(value / 16);
     setDistribution(prev => {
       const next = [...prev];
       next[bin] += 1;
       return next;
     });
-  };
-
-  const checkConstraints = (
-    exampleIdx: number,
-    values: { [key: string]: number },
-    w: number
-  ): { ok: boolean; reason?: string } => {
-    switch (exampleIdx) {
-      case 1: {
-        const useOverride = Math.random() * 100 < w;
-        const threshold = useOverride ? 200 : 100;
-        if (values.data <= threshold) {
-          return {
-            ok: false,
-            reason: `data (${values.data}) <= ${threshold} (${useOverride ? 'override' : 'base'})`,
-          };
-        }
-        return { ok: true };
-      }
-      case 2: {
-        if (values.len >= 5) {
-          return { ok: false, reason: `len (${values.len}) >= 5` };
-        }
-        if (values.data >= values.len * 10) {
-          return {
-            ok: false,
-            reason: `data (${values.data}) >= len*10 (${values.len * 10})`,
-          };
-        }
-        return { ok: true };
-      }
-      default:
-        return { ok: true };
-    }
-  };
+  }, []);
 
   const randomize = useCallback(
     (w = weight) => {
       const iterations: string[] = [];
+      const cbMessages: string[] = [];
+      if (currentExample.preRandomize) {
+        cbMessages.push(currentExample.preRandomize());
+      }
       let newValues: { [key: string]: number } = {};
+      let conflictName: string | null = null;
+      const start = performance.now();
       for (let attempt = 1; attempt <= 20; attempt++) {
         const attemptValues: { [key: string]: number } = {};
         currentExample.variables.forEach(v => {
           attemptValues[v] = Math.floor(Math.random() * 256);
         });
-        const result = checkConstraints(exampleIndex, attemptValues, w);
-        if (result.ok) {
+        conflictName = null;
+        let conflictReason = '';
+        for (const c of currentExample.constraints) {
+          if (!activeConstraints[c.name]) continue;
+          const res = c.check(attemptValues, w);
+          if (!res.ok) {
+            conflictName = c.name;
+            conflictReason = res.reason || 'failed';
+            break;
+          }
+        }
+        if (!conflictName) {
           newValues = attemptValues;
           iterations.push(`Iteration ${attempt}: success`);
           if (attemptValues.data !== undefined) {
@@ -95,13 +94,20 @@ const RandomizationExplorer = () => {
           }
           break;
         } else {
-          iterations.push(`Iteration ${attempt}: ${result.reason}`);
+          iterations.push(`Iteration ${attempt}: ${conflictName} - ${conflictReason}`);
         }
+      }
+      const end = performance.now();
+      if (currentExample.postRandomize) {
+        cbMessages.push(currentExample.postRandomize(newValues));
       }
       setRandomValues(newValues);
       setIterationLog(iterations);
+      setConflictingConstraint(conflictName);
+      setCallbackLog(cbMessages);
+      setSolveTimes(prev => [...prev, end - start]);
     },
-    [exampleIndex, currentExample, weight]
+    [currentExample, weight, activeConstraints, updateDistribution]
   );
 
   const distributionChartData = useMemo(
@@ -112,6 +118,37 @@ const RandomizationExplorer = () => {
       })),
     [distribution]
   );
+
+  const solveTimeChartData = useMemo(
+    () => solveTimes.map((time, index) => ({ run: index + 1, time })),
+    [solveTimes]
+  );
+
+  const graph = useMemo(() => {
+    const width = 400;
+    const varSpacing = width / (currentExample.variables.length + 1);
+    const conSpacing = width / (currentExample.constraints.length + 1);
+    const varNodes = currentExample.variables.map((v, i) => ({
+      id: v,
+      x: (i + 1) * varSpacing,
+      y: 20,
+    }));
+    const conNodes = currentExample.constraints.map((c, i) => ({
+      id: c.name,
+      x: (i + 1) * conSpacing,
+      y: 120,
+      dependsOn: c.dependsOn,
+      enabled: activeConstraints[c.name],
+      conflict: conflictingConstraint === c.name,
+    }));
+    const edges = conNodes.flatMap(c =>
+      c.dependsOn.map(v => ({
+        from: varNodes.find(vn => vn.id === v)!,
+        to: c,
+      }))
+    );
+    return { varNodes, conNodes, edges };
+  }, [currentExample, activeConstraints, conflictingConstraint]);
 
   const handleNext = () => {
     if (currentStepIndex === currentExample.steps.length - 1) {
@@ -186,10 +223,38 @@ const RandomizationExplorer = () => {
                   />
                 </div>
               )}
+              {currentExample.constraints.length > 0 && (
+                <div className="w-full mt-4">
+                  <h3 className="mb-2 font-semibold">Constraints</h3>
+                  {currentExample.constraints.map(c => (
+                    <div key={c.name} className="flex items-center mb-1">
+                      <input
+                        type="checkbox"
+                        className="mr-2"
+                        checked={activeConstraints[c.name]}
+                        onChange={(e) =>
+                          setActiveConstraints(prev => ({ ...prev, [c.name]: e.target.checked }))
+                        }
+                      />
+                      <span className={conflictingConstraint === c.name ? 'text-destructive' : ''}>
+                        {c.name}: {c.expression}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
               <div className="w-full mt-4">
                 <h3 className="mb-2 font-semibold">Solver Iterations</h3>
                 <ul className="text-sm list-disc pl-4 max-h-40 overflow-y-auto">
                   {iterationLog.map((log, i) => (
+                    <li key={i}>{log}</li>
+                  ))}
+                </ul>
+              </div>
+              <div className="w-full mt-4">
+                <h3 className="mb-2 font-semibold">Callbacks</h3>
+                <ul className="text-sm list-disc pl-4 max-h-40 overflow-y-auto">
+                  {callbackLog.map((log, i) => (
                     <li key={i}>{log}</li>
                   ))}
                 </ul>
@@ -203,6 +268,61 @@ const RandomizationExplorer = () => {
                     <Tooltip />
                     <Bar dataKey="count" fill="#8884d8" />
                   </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="w-full mt-4">
+                <h3 className="mb-2 font-semibold">Constraint Graph</h3>
+                {graph.conNodes.length === 0 ? (
+                  <p className="text-sm">No constraints</p>
+                ) : (
+                  <svg width={400} height={160} className="border rounded">
+                    {graph.edges.map((e, i) => (
+                      <line
+                        key={i}
+                        x1={e.from.x}
+                        y1={e.from.y + 10}
+                        x2={e.to.x}
+                        y2={e.to.y - 10}
+                        stroke="#888"
+                      />
+                    ))}
+                    {graph.varNodes.map(v => (
+                      <g key={v.id}>
+                        <circle cx={v.x} cy={v.y} r={10} fill="#8884d8" />
+                        <text x={v.x} y={v.y + 4} textAnchor="middle" fontSize="10" fill="white">
+                          {v.id}
+                        </text>
+                      </g>
+                    ))}
+                    {graph.conNodes.map(c => (
+                      <g key={c.id}>
+                        <rect
+                          x={c.x - 20}
+                          y={c.y - 10}
+                          width={40}
+                          height={20}
+                          fill={c.conflict ? '#f87171' : c.enabled ? '#82ca9d' : '#d1d5db'}
+                        />
+                        <text x={c.x} y={c.y + 4} textAnchor="middle" fontSize="10" fill="white">
+                          {c.id}
+                        </text>
+                      </g>
+                    ))}
+                  </svg>
+                )}
+              </div>
+              <div className="w-full mt-4">
+                <h3 className="mb-2 font-semibold">Performance Metrics</h3>
+                <p className="text-sm mb-2">
+                  Last solve time: {solveTimes[solveTimes.length - 1]?.toFixed(2) ?? '0'} ms
+                </p>
+                <ResponsiveContainer width="100%" height={200}>
+                  <LineChart data={solveTimeChartData}>
+                    <XAxis dataKey="run" />
+                    <YAxis />
+                    <Tooltip />
+                    <Line type="monotone" dataKey="time" stroke="#82ca9d" />
+                  </LineChart>
                 </ResponsiveContainer>
               </div>
             </div>
