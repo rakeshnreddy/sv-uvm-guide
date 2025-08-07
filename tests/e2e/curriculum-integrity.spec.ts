@@ -19,7 +19,7 @@ test.describe('Curriculum Links Integrity', () => {
 
     console.log(`Found ${uniqueLinks.length} unique curriculum links to check.`);
 
-    for (const link of uniqueLinks) {
+    for (const link of Array.from(uniqueLinks)) {
       console.log(`Checking link: ${link}`);
       const response = await page.goto(link, { waitUntil: 'domcontentloaded' });
 

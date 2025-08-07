@@ -7,7 +7,11 @@ interface Review {
   approved?: boolean;
 }
 
-const reviews: Review[] = [];
+export const reviews: Review[] = [];
+
+export function clearReviews() {
+  reviews.length = 0;
+}
 
 export async function GET() {
   return NextResponse.json(reviews);
@@ -41,3 +45,5 @@ export async function POST(request: Request) {
   reviews.push(record);
   return NextResponse.json({ message: 'Review recorded' }, { status: 201 });
 }
+
+export { GET as getReviews };

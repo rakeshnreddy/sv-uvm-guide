@@ -124,6 +124,7 @@ const AssertionBuilder = () => {
   const runSimulation = () => {
     const sim = evaluateProperty(code);
     setResult(sim);
+
   };
 
   const handleDragEnd = (event: any) => {

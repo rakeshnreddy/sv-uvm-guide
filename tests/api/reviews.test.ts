@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { POST, getReviews } from '../../src/app/api/reviews/route';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { POST, getReviews, clearReviews, reviews } from '../../src/app/api/reviews/route';
 
 function makeRequest(body: any) {
   return new Request('http://localhost/api/reviews', {
@@ -10,12 +10,18 @@ function makeRequest(body: any) {
 }
 
 describe('POST /api/reviews', () => {
+  beforeEach(() => {
+    clearReviews();
+  });
+
   it('stores reviews and returns 201', async () => {
     const res = await POST(makeRequest({ commitId: 'abcdef1', comment: 'good' }));
     expect(res.status).toBe(201);
     const json = await res.json();
     expect(json).toEqual({ message: 'Review recorded' });
-    expect(getReviews()).toContainEqual({ commitId: 'abcdef1', comment: 'good' });
+    const reviewsRes = await getReviews();
+    const reviewsJson = await reviewsRes.json();
+    expect(reviewsJson).toContainEqual({ commitId: 'abcdef1', comment: 'good' });
   });
 
   it('rejects requests without commitId', async () => {
