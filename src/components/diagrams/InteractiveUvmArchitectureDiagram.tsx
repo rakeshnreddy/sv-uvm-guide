@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import * as d3 from 'd3';
 import { motion } from 'framer-motion';
 import type { UvmComponent } from './uvm-data-model';
@@ -7,12 +7,16 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useZoomPan } from '@/hooks/useZoomPan';
 import { useKeyboardNavigation } from '@/hooks/useKeyboardNavigation';
+import useAsync from '@/hooks/useAsync';
+import useLazyRender from '@/hooks/useLazyRender';
+import useAccessibility from '@/hooks/useAccessibility';
 import { exportSvgAsPng, exportSvgAsPdf } from '@/lib/exportUtils';
 import { useTheme } from 'next-themes';
 import { useLocale } from '@/hooks/useLocale';
 import { useAsync } from '@/hooks/useAsync';
 import { useLazyRender } from '@/hooks/useLazyRender';
 import { useAccessibility } from '@/hooks/useAccessibility';
+
 
 
 const componentColor = {
@@ -34,11 +38,13 @@ const InteractiveUvmArchitectureDiagram = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const nodePositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const { theme, setTheme } = useTheme();
   const [activeComponent, setActiveComponent] = useState<UvmComponent | null>(null);
   const [highlightedType, setHighlightedType] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [suggestions, setSuggestions] = useState<UvmComponent[]>([]);
+  const [highlightIndex, setHighlightIndex] = useState(0);
   const [selectedComponent, setSelectedComponent] = useState<UvmComponent | null>(null);
   const [showDataFlow, setShowDataFlow] = useState(true);
   const [showControlFlow, setShowControlFlow] = useState(true);
@@ -52,21 +58,21 @@ const InteractiveUvmArchitectureDiagram = () => {
 
   const { locale } = useLocale();
 
+
   const { data: model, loading, error } = useAsync(() => import('./uvm-data-model'));
   const visible = useLazyRender(containerRef);
+  useAccessibility(svgRef, 'Interactive UVM architecture diagram', { svg: false });
 
-  useAccessibility(svgRef, 'Interactive UVM architecture diagram');
-
-  if (loading || !visible) {
-    return <div ref={containerRef}>Loading diagram...</div>;
-  }
-
-  if (error || !model) {
-    return <div ref={containerRef}>Error loading diagram</div>;
-  }
-
-  const { uvmComponents, uvmConnections } = model;
-  const componentTypes = [...new Set(uvmComponents.map(c => c.type.split('_')[0]))];
+    const uvmComponentsList = useMemo(() => model?.uvmComponents ?? [], [model]);
+    const uvmConnectionsList = useMemo(() => model?.uvmConnections ?? [], [model]);
+    const compositionalComponents = useMemo(
+      () => uvmComponentsList.filter(c => c.type !== 'uvm_class'),
+      [uvmComponentsList]
+    );
+    const componentTypes = useMemo(
+      () => [...new Set(compositionalComponents.map(c => c.type.split('_')[0]))],
+      [compositionalComponents]
+    );
 
   const toggleLayer = (layer: keyof typeof layers) => {
     setLayers(prev => ({ ...prev, [layer]: !prev[layer] }));
@@ -81,7 +87,21 @@ const InteractiveUvmArchitectureDiagram = () => {
     } else {
       const matches = compositionalComponents.filter(c => c.name.toLowerCase().includes(value.toLowerCase()));
       setSuggestions(matches);
+      setHighlightIndex(0);
       setSelectedComponent(null);
+    }
+  };
+
+  const handleSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowDown' && suggestions.length > 0) {
+      e.preventDefault();
+      setHighlightIndex(i => (i + 1) % suggestions.length);
+    } else if (e.key === 'ArrowUp' && suggestions.length > 0) {
+      e.preventDefault();
+      setHighlightIndex(i => (i - 1 + suggestions.length) % suggestions.length);
+    } else if (e.key === 'Enter' && suggestions.length > 0) {
+      e.preventDefault();
+      handleSelect(suggestions[highlightIndex]);
     }
   };
 
@@ -89,6 +109,7 @@ const InteractiveUvmArchitectureDiagram = () => {
     setSearchTerm(component.name);
     setSuggestions([]);
     setSelectedComponent(component);
+    zoomToComponent(component.id);
   };
 
   const resetZoom = () => {
@@ -100,13 +121,34 @@ const InteractiveUvmArchitectureDiagram = () => {
     }
   };
 
+  const zoomToComponent = useCallback((id: string) => {
+    if (!svgRef.current || !zoomRef.current) return;
+    const pos = nodePositionsRef.current.get(id);
+    if (!pos) return;
+    const width = 850;
+    const height = 650;
+    const scale = 1.5;
+    const transform = d3.zoomIdentity
+      .translate(width / 2 - pos.y * scale, height / 2 - pos.x * scale)
+      .scale(scale);
+    d3.select(svgRef.current)
+      .transition()
+      .duration(750)
+      .call(zoomRef.current.transform, transform);
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
+      const key = e.key.toLowerCase();
+      if (key === '/' && !e.ctrlKey && !e.metaKey) {
         e.preventDefault();
         searchInputRef.current?.focus();
       }
-      if (e.key === '0' && (e.ctrlKey || e.metaKey)) {
+      if ((e.ctrlKey || e.metaKey) && key === 'k') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+      if (key === '0' && (e.ctrlKey || e.metaKey)) {
         e.preventDefault();
         resetZoom();
       }
@@ -129,30 +171,30 @@ const InteractiveUvmArchitectureDiagram = () => {
 
   const toggleTheme = () => {
     if (!theme) return;
-    if (theme.endsWith('dark')) {
-      setTheme(theme.replace('dark', 'light'));
-    } else {
-      setTheme(theme.replace('light', 'dark'));
-    }
+    setTheme(theme === 'dark' ? 'light' : 'dark');
   };
 
   useZoomPan(svgRef, zoomRef);
-  useKeyboardNavigation(svgRef as unknown as React.RefObject<HTMLElement | SVGSVGElement>);
 
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e') {
+      const key = e.key.toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && key === 'e') {
         e.preventDefault();
         handleExportPng();
+      }
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && key === 'e') {
+        e.preventDefault();
+        handleExportPdf();
       }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [handleExportPng]);
+  }, [handleExportPng, handleExportPdf]);
 
   useEffect(() => {
-    if (!visible || !svgRef.current) return;
+    if (!visible || !svgRef.current || !model) return;
 
     const width = 850;
     const height = 650;
@@ -172,16 +214,20 @@ const InteractiveUvmArchitectureDiagram = () => {
 
     const g = svg.append('g').attr('transform', 'translate(125, 50)');
 
-    const nodePositions = new Map<string, { x: number; y: number }>();
+    nodePositionsRef.current.clear();
+    const nodePositions = nodePositionsRef.current;
 
-    // Control Flow Links
+    const controlLayer = g.append('g').attr('class', 'control-layer');
+    const nodeLayer = g.append('g').attr('class', 'node-layer');
+    const dataLayer = g.append('g').attr('class', 'data-flow-layer');
+
     if (showControlFlow) {
       const links = treeData.links().filter(l => {
         const s = l.source.data.type.split('_')[0] as keyof typeof layers;
         const t = l.target.data.type.split('_')[0] as keyof typeof layers;
         return layers[s] && layers[t];
       });
-      g.selectAll('.link')
+      controlLayer.selectAll('.link')
         .data(links)
         .enter()
         .append('path')
@@ -192,11 +238,14 @@ const InteractiveUvmArchitectureDiagram = () => {
         )
         .attr('stroke', 'hsl(var(--muted-foreground))')
         .attr('stroke-width', 1.5)
-        .attr('fill', 'none');
+        .attr('stroke-dasharray', '4 2')
+        .attr('fill', 'none')
+        .attr('pointer-events', 'none')
+        .append('title')
+        .text(d => `${(d.source as any).data.name} → ${(d.target as any).data.name}`);
     }
 
-    // Nodes
-    const nodes = g.selectAll('.node')
+    const nodes = nodeLayer.selectAll('.node')
       .data(treeData.descendants())
       .enter()
       .append('g')
@@ -209,18 +258,10 @@ const InteractiveUvmArchitectureDiagram = () => {
         return `translate(${d.y},${d.x})`;
       })
       .style('display', d => layers[d.data.type.split('_')[0] as keyof typeof layers] ? null : 'none')
-      .on('mouseover', (event, d) => {
-        setActiveComponent(d.data);
-      })
-      .on('mouseout', () => {
-        setActiveComponent(null);
-      })
-      .on('focus', (_, d) => {
-        setActiveComponent(d.data);
-      })
-      .on('blur', () => {
-        setActiveComponent(null);
-      });
+      .on('mouseover', (_, d) => setActiveComponent(d.data))
+      .on('mouseout', () => setActiveComponent(null))
+      .on('focus', (_, d) => setActiveComponent(d.data))
+      .on('blur', () => setActiveComponent(null));
 
     nodes.append('rect')
       .attr('width', 150)
@@ -239,7 +280,9 @@ const InteractiveUvmArchitectureDiagram = () => {
         const searchMatch = searchTerm === '' || d.data.name.toLowerCase().includes(searchTerm.toLowerCase());
         const selectedMatch = !selectedComponent || d.data.id === selectedComponent.id;
         return typeMatch && searchMatch && selectedMatch ? 1 : 0.2;
-      });
+      })
+      .append('title')
+      .text(d => d.data.description);
 
     nodes.append('text')
       .attr('dy', '.35em')
@@ -247,7 +290,6 @@ const InteractiveUvmArchitectureDiagram = () => {
       .style('fill', 'hsl(var(--primary-foreground))')
       .text(d => d.data.name);
 
-    // Data flow connections
     if (showDataFlow) {
       const defs = svg.append('defs');
       defs.append('marker')
@@ -262,9 +304,16 @@ const InteractiveUvmArchitectureDiagram = () => {
         .attr('d', 'M0,-5L10,0L0,5')
         .attr('fill', 'hsl(var(--muted-foreground))');
 
-      const flows = uvmConnections.filter(c => c.type !== 'composition' && nodePositions.has(c.source) && nodePositions.has(c.target));
+        const flows = uvmConnectionsList.filter(c => {
+          if (c.type === 'composition') return false;
+          const s = uvmComponentsList.find(x => x.id === c.source)!;
+          const t = uvmComponentsList.find(x => x.id === c.target)!;
+        const sType = s.type.split('_')[0] as keyof typeof layers;
+        const tType = t.type.split('_')[0] as keyof typeof layers;
+        return layers[sType] && layers[tType] && nodePositions.has(c.source) && nodePositions.has(c.target);
+      });
 
-      g.selectAll('.flow')
+      dataLayer.selectAll('.flow')
         .data(flows)
         .enter()
         .append('path')
@@ -278,12 +327,22 @@ const InteractiveUvmArchitectureDiagram = () => {
         .attr('stroke', d => d.type === 'analysis' ? 'hsl(var(--warning))' : 'hsl(var(--info))')
         .attr('stroke-width', 2)
         .attr('fill', 'none')
-        .attr('marker-end', 'url(#arrow)');
+        .attr('marker-end', 'url(#arrow)')
+        .attr('pointer-events', 'none')
+        .append('title')
+        .text(d => d.description);
     }
 
 
-  }, [highlightedType, searchTerm, showDataFlow, showControlFlow, layers, selectedComponent, visible]);
+  }, [highlightedType, searchTerm, showDataFlow, showControlFlow, layers, selectedComponent, visible, model, compositionalComponents, uvmConnectionsList, uvmComponentsList]);
 
+  if (loading || !visible) {
+    return <div ref={containerRef}>Loading diagram...</div>;
+  }
+
+  if (error || !model) {
+    return <div ref={containerRef}>Error loading diagram</div>;
+  }
 
   return (
     <div className="relative" ref={containerRef}>
@@ -296,14 +355,15 @@ const InteractiveUvmArchitectureDiagram = () => {
             className="w-48"
             value={searchTerm}
             onChange={handleSearchChange}
+            onKeyDown={handleSearchKey}
           />
           {suggestions.length > 0 && (
             <ul className="absolute top-full left-0 mt-1 w-48 bg-background border rounded-md shadow z-10 max-h-40 overflow-auto">
-              {suggestions.map(s => (
+              {suggestions.map((s, idx) => (
                 <li
                   key={s.id}
-                  className="p-1 cursor-pointer hover:bg-muted"
-                  onClick={() => handleSelect(s)}
+                  className={`p-1 cursor-pointer ${idx === highlightIndex ? 'bg-muted' : 'hover:bg-muted'}`}
+                  onMouseDown={() => handleSelect(s)}
                 >
                   {s.name}
                 </li>
@@ -345,13 +405,13 @@ const InteractiveUvmArchitectureDiagram = () => {
         >
           Control Flow
         </Button>
-        <Button variant="outline" size="sm" onClick={handleExportPng}>
+        <Button variant="outline" size="sm" onClick={handleExportPng} aria-label="Export as PNG">
           Export PNG
         </Button>
-        <Button variant="outline" size="sm" onClick={handleExportPdf}>
+        <Button variant="outline" size="sm" onClick={handleExportPdf} aria-label="Export as PDF">
           Export PDF
         </Button>
-        <Button variant="outline" size="sm" onClick={toggleTheme}>
+        <Button variant="outline" size="sm" onClick={toggleTheme} aria-label="Toggle theme">
           Toggle Theme
         </Button>
       </div>

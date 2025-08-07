@@ -30,4 +30,32 @@ export const stateMachineData: StateMachineExample[] = [
       { source: 's3', target: 's1' },
     ],
   },
+  {
+    name: 'Traffic Light',
+    states: [
+      { id: 't1', name: 'RED', x: 100, y: 100 },
+      { id: 't2', name: 'GREEN', x: 300, y: 100 },
+      { id: 't3', name: 'YELLOW', x: 200, y: 300 },
+    ],
+    transitions: [
+      { source: 't1', target: 't2' },
+      { source: 't2', target: 't3' },
+      { source: 't3', target: 't1' },
+    ],
+  },
+  {
+    name: 'Sequence Detector',
+    states: [
+      { id: 'q0', name: 'IDLE', x: 100, y: 100 },
+      { id: 'q1', name: 'S1', x: 300, y: 100 },
+      { id: 'q2', name: 'S10', x: 300, y: 300 },
+      { id: 'q3', name: 'FOUND', x: 100, y: 300 },
+    ],
+    transitions: [
+      { source: 'q0', target: 'q1' },
+      { source: 'q1', target: 'q2' },
+      { source: 'q2', target: 'q3' },
+      { source: 'q3', target: 'q0' },
+    ],
+  },
 ];
