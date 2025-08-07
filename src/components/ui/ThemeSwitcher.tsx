@@ -1,11 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 
 import { Button } from "@/components/ui/Button";
+import { useLocale } from "@/hooks/useLocale";
+import { getString } from "@/lib/strings";
 
 const themeOptions = [
   { key: "default", label: "Default" },
@@ -17,8 +19,14 @@ const themeOptions = [
 
 export function ThemeSwitcher() {
   const { theme, setTheme } = useTheme();
+  const { locale } = useLocale();
   const [currentTheme, setCurrentTheme] = useState("default");
   const [mode, setMode] = useState<"light" | "dark">("dark");
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!theme) return;
@@ -36,11 +44,28 @@ export function ThemeSwitcher() {
     setTheme(`${newTheme}-${mode}`);
   };
 
-  const toggleMode = () => {
+  const toggleMode = useCallback(() => {
     const newMode = mode === "light" ? "dark" : "light";
     setMode(newMode);
     setTheme(`${currentTheme}-${newMode}`);
-  };
+  }, [mode, currentTheme, setTheme]);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.altKey && e.key.toLowerCase() === "t") {
+        e.preventDefault();
+        toggleMode();
+      }
+    };
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, [toggleMode]);
+
+  const label = getString(locale as any, "toggleTheme");
+
+  if (!mounted) {
+    return <span>{getString(locale as any, "loading")}</span>;
+  }
 
   return (
     <div className="flex items-center space-x-2">
@@ -55,10 +80,17 @@ export function ThemeSwitcher() {
           </option>
         ))}
       </select>
-      <Button variant="ghost" size="icon" onClick={toggleMode}>
+      <Button
+        variant="ghost"
+        size="icon"
+        onClick={toggleMode}
+        aria-label={label}
+        title={label}
+        aria-pressed={mode === "dark"}
+      >
         <Sun className="h-[1.2rem] w-[1.2rem] rotate-0 scale-100 transition-all dark:-rotate-90 dark:scale-0" />
         <Moon className="absolute h-[1.2rem] w-[1.2rem] rotate-90 scale-0 transition-all dark:rotate-0 dark:scale-100" />
-        <span className="sr-only">Toggle theme</span>
+        <span className="sr-only">{label}</span>
       </Button>
     </div>
   );
