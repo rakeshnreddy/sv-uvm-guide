@@ -1,8 +1,20 @@
+export interface CoverageBin {
+  name: string;
+  isCovered: boolean;
+}
+
+export interface Coverpoint {
+  name: string;
+  requirementId: string;
+  goal: number; // coverage goal in percent
+  bins: CoverageBin[];
+}
+
 export interface CoverageExample {
   name: string;
   code: string;
   steps: string[];
-  coverpoints: { name: string; bins: { name: string; isCovered: boolean }[] }[];
+  coverpoints: Coverpoint[];
 }
 
 export const coverageData: CoverageExample[] = [
@@ -17,6 +29,8 @@ export const coverageData: CoverageExample[] = [
     coverpoints: [
       {
         name: 'cp_data',
+        requirementId: 'REQ-CP1',
+        goal: 100,
         bins: [
           { name: 'auto[0]', isCovered: false },
           { name: 'auto[1]', isCovered: true },
@@ -36,6 +50,8 @@ export const coverageData: CoverageExample[] = [
     coverpoints: [
       {
         name: 'cp_data',
+        requirementId: 'REQ-CP2',
+        goal: 100,
         bins: [
           { name: 'low', isCovered: true },
           { name: 'high', isCovered: false },
@@ -54,6 +70,8 @@ export const coverageData: CoverageExample[] = [
     coverpoints: [
       {
         name: 'cross cp_a, cp_b',
+        requirementId: 'REQ-CROSS1',
+        goal: 100,
         bins: [
           { name: '(a=0,b=0)', isCovered: true },
           { name: '(a=0,b=1)', isCovered: false },
