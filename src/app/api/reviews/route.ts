@@ -9,8 +9,8 @@ interface Review {
 
 const reviews: Review[] = [];
 
-export function getReviews() {
-  return reviews;
+export async function GET() {
+  return NextResponse.json(reviews);
 }
 
 export async function POST(request: Request) {
