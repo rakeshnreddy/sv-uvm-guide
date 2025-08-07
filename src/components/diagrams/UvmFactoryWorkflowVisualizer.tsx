@@ -23,12 +23,17 @@ const steps: StepInfo[] = [
   {
     name: "Instance Override",
     description:
-      "Instance-specific overrides are checked and take priority over type overrides.",
+      "Factory checks instance-specific overrides using configuration paths. These take priority over type overrides.",
+  },
+  {
+    name: "Conflict Resolution",
+    description:
+      "Conflicting overrides are resolved with instance overrides taking precedence and errors reported when multiple matches occur.",
   },
   {
     name: "Inheritance Resolution",
     description:
-      "Factory resolves final type, applying overrides and reporting conflicts if multiple overrides match.",
+      "Factory resolves the final type after overrides and conflicts are handled.",
   },
 ];
 
@@ -78,23 +83,25 @@ const nodeData: NodeInfo[] = [
   { id: "reg", label: "Register", x: 80, y: 100, step: 0 },
   { id: "type", label: "Type Override", x: 260, y: 100, step: 1 },
   { id: "inst", label: "Instance Override", x: 440, y: 100, step: 2 },
+  { id: "cfg", label: "Config\nPath", x: 440, y: 180, step: 2 },
+  { id: "conflict", label: "Conflict", x: 360, y: 180, step: 3 },
   {
     id: "inherit",
     label: "Inheritance\nResolution",
     x: 620,
     y: 100,
-    step: 3,
+    step: 4,
   },
-  { id: "conflict", label: "Conflict", x: 360, y: 180, step: 2 },
 ];
 
 const edges: EdgeInfo[] = [
   { from: "reg", to: "type", step: 0 },
   { from: "type", to: "inst", step: 1 },
-  { from: "type", to: "inherit", step: 2, dashed: true },
-  { from: "inst", to: "inherit", step: 2 },
-  { from: "type", to: "conflict", step: 2, conflict: true },
-  { from: "inst", to: "conflict", step: 2, conflict: true },
+  { from: "cfg", to: "inst", step: 2, dashed: true },
+  { from: "type", to: "conflict", step: 3, conflict: true },
+  { from: "inst", to: "conflict", step: 3, conflict: true },
+  { from: "type", to: "inherit", step: 4, dashed: true },
+  { from: "inst", to: "inherit", step: 4 },
 ];
 
 const UvmFactoryWorkflowVisualizer: React.FC = () => {
@@ -104,7 +111,7 @@ const UvmFactoryWorkflowVisualizer: React.FC = () => {
   const handleNext = () => setCurrentStep((s) => Math.min(s + 1, steps.length - 1));
   const handlePrev = () => setCurrentStep((s) => Math.max(s - 1, 0));
 
-  const exportImage = async () => {
+  const exportPng = async () => {
     if (!diagramRef.current) return;
     const svg = diagramRef.current.querySelector("svg");
     if (!svg) return;
@@ -131,21 +138,49 @@ const UvmFactoryWorkflowVisualizer: React.FC = () => {
     img.src = url;
   };
 
+  const exportSvg = () => {
+    if (!diagramRef.current) return;
+    const svg = diagramRef.current.querySelector("svg");
+    if (!svg) return;
+    const serializer = new XMLSerializer();
+    const source = serializer.serializeToString(svg);
+    const blob = new Blob([source], { type: "image/svg+xml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.download = "uvm-factory-workflow.svg";
+    link.href = url;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <Card className="w-full">
       <CardHeader className="flex justify-between items-center">
         <CardTitle>UVM Factory Workflow</CardTitle>
-        <Button variant="outline" onClick={exportImage}>
-          Export Image
-        </Button>
+        <div className="space-x-2">
+          <Button
+            variant="outline"
+            onClick={exportPng}
+            aria-label="Export diagram as PNG"
+          >
+            Export PNG
+          </Button>
+          <Button
+            variant="outline"
+            onClick={exportSvg}
+            aria-label="Export diagram as SVG"
+          >
+            Export SVG
+          </Button>
+        </div>
       </CardHeader>
       <CardContent>
         <div className="flex flex-col gap-6 lg:flex-row">
           <div ref={diagramRef} className="flex-1">
             <svg
               width={700}
-              height={220}
-              viewBox="0 0 700 220"
+              height={260}
+              viewBox="0 0 700 260"
               className="mx-auto"
               role="img"
               aria-label="UVM factory workflow diagram"
@@ -217,11 +252,11 @@ const UvmFactoryWorkflowVisualizer: React.FC = () => {
 
               <text
                 x={350}
-                y={180}
+                y={220}
                 textAnchor="middle"
                 className="text-xs fill-muted-foreground"
               >
-                Instance overrides take priority over type overrides
+                Instance overrides use configuration paths and take priority over type overrides
               </text>
 
               <defs>
@@ -258,7 +293,12 @@ const UvmFactoryWorkflowVisualizer: React.FC = () => {
               </defs>
             </svg>
 
-            <p className="mb-4 mt-4 text-sm text-center">{steps[currentStep].description}</p>
+            <p
+              className="mb-4 mt-4 text-sm text-center"
+              aria-live="polite"
+            >
+              {steps[currentStep].description}
+            </p>
 
             <div className="flex justify-between mb-6">
               <Button onClick={handlePrev} disabled={currentStep === 0}>
