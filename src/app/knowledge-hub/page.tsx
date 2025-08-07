@@ -1,4 +1,6 @@
-import React from 'react';
+'use client';
+
+import React, { useState } from 'react';
 import KnowledgeGraphVisualizer from '@/components/knowledge/KnowledgeGraphVisualizer';
 import ConceptRelationshipMapper from '@/components/knowledge/ConceptRelationshipMapper';
 import IntelligentCrossReference from '@/components/knowledge/IntelligentCrossReference';
@@ -6,6 +8,8 @@ import LearningPathGenerator from '@/components/knowledge/LearningPathGenerator'
 import ConceptDependencyAnalyzer from '@/components/knowledge/ConceptDependencyAnalyzer';
 
 const KnowledgeHubPage = () => {
+  const [highlightedPath, setHighlightedPath] = useState<string[]>([]);
+
   return (
     <div className="container mx-auto p-4">
       <header className="mb-10 text-center">
@@ -17,7 +21,7 @@ const KnowledgeHubPage = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="lg:col-span-2">
-          <KnowledgeGraphVisualizer />
+          <KnowledgeGraphVisualizer highlightedPath={highlightedPath} />
         </div>
         <div className="bg-white shadow-md rounded-lg p-6">
           <ConceptRelationshipMapper />
@@ -26,7 +30,7 @@ const KnowledgeHubPage = () => {
           <IntelligentCrossReference />
         </div>
         <div className="bg-white shadow-md rounded-lg p-6">
-          <LearningPathGenerator />
+          <LearningPathGenerator onPathGenerated={setHighlightedPath} />
         </div>
         <div className="bg-white shadow-md rounded-lg p-6">
           <ConceptDependencyAnalyzer />
