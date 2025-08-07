@@ -2,7 +2,7 @@ export interface SvaOperator {
   id: string;
   name: string;
   symbol: string;
-  type: 'temporal' | 'logical' | 'repetition';
+  type: 'temporal' | 'logical' | 'repetition' | 'signal';
   description: string;
 }
 
