@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as d3 from 'd3';
 import { motion } from 'framer-motion';
-import { uvmComponents, uvmConnections, UvmComponent } from './uvm-data-model';
+import type { UvmComponent } from './uvm-data-model';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useZoomPan } from '@/hooks/useZoomPan';
@@ -10,7 +10,6 @@ import { useKeyboardNavigation } from '@/hooks/useKeyboardNavigation';
 import { exportSvgAsPng, exportSvgAsPdf } from '@/lib/exportUtils';
 import { useTheme } from 'next-themes';
 
-const componentTypes = [...new Set(uvmComponents.map(c => c.type.split('_')[0]))];
 
 const componentColor = {
   test: 'hsl(var(--primary))',
@@ -28,6 +27,7 @@ type ComponentColorKey = keyof typeof componentColor;
 
 const InteractiveUvmArchitectureDiagram = () => {
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const { theme, setTheme } = useTheme();
@@ -46,6 +46,25 @@ const InteractiveUvmArchitectureDiagram = () => {
     monitor: true,
   });
 
+  const { locale } = useLocale();
+  const { theme } = useTheme();
+
+  const { data: model, loading, error } = useAsync(() => import('./uvm-data-model'));
+  const visible = useLazyRender(containerRef);
+
+  useAccessibility(svgRef, 'Interactive UVM architecture diagram');
+
+  if (loading || !visible) {
+    return <div ref={containerRef}>Loading diagram...</div>;
+  }
+
+  if (error || !model) {
+    return <div ref={containerRef}>Error loading diagram</div>;
+  }
+
+  const { uvmComponents, uvmConnections } = model;
+  const componentTypes = [...new Set(uvmComponents.map(c => c.type.split('_')[0]))];
+
   const toggleLayer = (layer: keyof typeof layers) => {
     setLayers(prev => ({ ...prev, [layer]: !prev[layer] }));
   };
@@ -57,7 +76,7 @@ const InteractiveUvmArchitectureDiagram = () => {
       setSuggestions([]);
       setSelectedComponent(null);
     } else {
-      const matches = uvmComponents.filter(c => c.name.toLowerCase().includes(value.toLowerCase()));
+      const matches = compositionalComponents.filter(c => c.name.toLowerCase().includes(value.toLowerCase()));
       setSuggestions(matches);
       setSelectedComponent(null);
     }
@@ -117,6 +136,7 @@ const InteractiveUvmArchitectureDiagram = () => {
   useZoomPan(svgRef, zoomRef);
   useKeyboardNavigation(svgRef as unknown as React.RefObject<HTMLElement | SVGSVGElement>);
 
+
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e') {
@@ -129,7 +149,7 @@ const InteractiveUvmArchitectureDiagram = () => {
   }, [handleExportPng]);
 
   useEffect(() => {
-    if (!svgRef.current) return;
+    if (!visible || !svgRef.current) return;
 
     const width = 850;
     const height = 650;
@@ -137,15 +157,12 @@ const InteractiveUvmArchitectureDiagram = () => {
     const svg = d3
       .select(svgRef.current)
       .attr('viewBox', `0 0 ${width} ${height}`)
-      .attr('role', 'img')
-      .attr('tabindex', 0)
-      .attr('aria-label', 'Interactive UVM architecture diagram')
       .html(''); // Clear previous contents
 
     const root = d3.stratify<UvmComponent>()
       .id(d => d.id)
-      .parentId(d => uvmComponents.find(c => c.id === d.id)?.parent)
-      (uvmComponents);
+      .parentId(d => d.parent)
+      (compositionalComponents);
 
     const treeLayout = d3.tree<UvmComponent>().size([height - 100, width - 250]);
     const treeData = treeLayout(root);
@@ -242,7 +259,7 @@ const InteractiveUvmArchitectureDiagram = () => {
         .attr('d', 'M0,-5L10,0L0,5')
         .attr('fill', 'hsl(var(--muted-foreground))');
 
-      const flows = uvmConnections.filter(c => c.type !== 'composition');
+      const flows = uvmConnections.filter(c => c.type !== 'composition' && nodePositions.has(c.source) && nodePositions.has(c.target));
 
       g.selectAll('.flow')
         .data(flows)
@@ -262,11 +279,11 @@ const InteractiveUvmArchitectureDiagram = () => {
     }
 
 
-  }, [highlightedType, searchTerm, showDataFlow, showControlFlow]);
+  }, [highlightedType, searchTerm, showDataFlow, showControlFlow, layers, selectedComponent, visible]);
 
 
   return (
-    <div className="relative">
+    <div className="relative" ref={containerRef}>
       <div className="absolute top-2 left-2 flex flex-wrap gap-2 p-2 bg-background/80 backdrop-blur-sm rounded-lg">
         <div className="relative">
           <Input
@@ -335,13 +352,7 @@ const InteractiveUvmArchitectureDiagram = () => {
           Toggle Theme
         </Button>
       </div>
-      <svg
-        ref={svgRef}
-        className="w-full h-auto touch-none"
-        tabIndex={0}
-        aria-label="Interactive UVM architecture diagram"
-        role="img"
-      />
+      <svg ref={svgRef} className="w-full h-auto touch-none" />
       {activeComponent && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}

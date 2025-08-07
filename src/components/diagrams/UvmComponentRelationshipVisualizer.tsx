@@ -4,16 +4,27 @@ import * as d3 from 'd3';
 import { uvmComponents, uvmConnections } from './uvm-data-model';
 import { Button } from '@/components/ui/Button';
 
-const connectionTypes = [...new Set(uvmConnections.map(c => c.type))];
+const portTypes = ['analysis', 'seq_item'];
+const phaseColors: Record<string, string> = {
+  build_phase: '#22c55e',
+  run_phase: '#f59e0b',
+  compile: '#6b7280',
+};
 
 const UvmComponentRelationshipVisualizer = () => {
   const svgRef = useRef<SVGSVGElement>(null);
-  const [activeFilters, setActiveFilters] = useState<string[]>(connectionTypes);
+  const [showComposition, setShowComposition] = useState(true);
+  const [showInheritance, setShowInheritance] = useState(true);
+  const [showPorts, setShowPorts] = useState(true);
   const [selectedNodes, setSelectedNodes] = useState<string[]>([]);
   const [path, setPath] = useState<string[]>([]);
   const [isolatedNode, setIsolatedNode] = useState<string | null>(null);
 
-  const baseLinks = uvmConnections.filter(c => activeFilters.includes(c.type));
+  const baseLinks = uvmConnections.filter(c =>
+    (showComposition && c.type === 'composition') ||
+    (showInheritance && c.type === 'inheritance') ||
+    (showPorts && portTypes.includes(c.type))
+  );
   let nodesFiltered = uvmComponents;
   let linksFiltered = baseLinks;
   if (isolatedNode) {
@@ -25,17 +36,38 @@ const UvmComponentRelationshipVisualizer = () => {
     nodesFiltered = uvmComponents.filter(n => neighborIds.has(n.id));
     linksFiltered = baseLinks.filter(l => neighborIds.has(l.source) && neighborIds.has(l.target));
   }
-
-  const nodeMetrics = new Map<string, { in: number; out: number; types: Record<string, number> }>();
+  const nodeMetrics = new Map<string, { in: number; out: number; types: Record<string, number>; clustering: number }>();
+  const adjacency = new Map<string, Set<string>>();
   linksFiltered.forEach(l => {
-    const src = nodeMetrics.get(l.source) || { in: 0, out: 0, types: {} as Record<string, number> };
+    const src = nodeMetrics.get(l.source) || { in: 0, out: 0, types: {} as Record<string, number>, clustering: 0 };
     src.out++;
     src.types[l.type] = (src.types[l.type] || 0) + 1;
     nodeMetrics.set(l.source, src);
-    const tgt = nodeMetrics.get(l.target) || { in: 0, out: 0, types: {} as Record<string, number> };
+    const tgt = nodeMetrics.get(l.target) || { in: 0, out: 0, types: {} as Record<string, number>, clustering: 0 };
     tgt.in++;
     tgt.types[l.type] = (tgt.types[l.type] || 0) + 1;
     nodeMetrics.set(l.target, tgt);
+    if (!adjacency.has(l.source)) adjacency.set(l.source, new Set());
+    if (!adjacency.has(l.target)) adjacency.set(l.target, new Set());
+    adjacency.get(l.source)!.add(l.target);
+    adjacency.get(l.target)!.add(l.source);
+  });
+  adjacency.forEach((neighbors, node) => {
+    const k = neighbors.size;
+    let clustering = 0;
+    if (k > 1) {
+      let linksBetween = 0;
+      const arr = Array.from(neighbors);
+      for (let i = 0; i < arr.length; i++) {
+        for (let j = i + 1; j < arr.length; j++) {
+          if (adjacency.get(arr[i])?.has(arr[j])) linksBetween++;
+        }
+      }
+      clustering = linksBetween / (k * (k - 1) / 2);
+    }
+    const m = nodeMetrics.get(node) || { in: 0, out: 0, types: {}, clustering: 0 };
+    m.clustering = clustering;
+    nodeMetrics.set(node, m);
   });
 
   const nodes: (d3.SimulationNodeDatum & {
@@ -62,7 +94,7 @@ const UvmComponentRelationshipVisualizer = () => {
     while (queue.length) {
       const node = queue.shift()!;
       if (node === end) break;
-      for (const n of adj.get(node) || []) {
+      for (const n of Array.from(adj.get(node) || [])) {
         if (!visited.has(n)) {
           visited.add(n);
           parent.set(n, node);
@@ -111,6 +143,7 @@ const UvmComponentRelationshipVisualizer = () => {
         const inPath = path.includes(sid) && path.includes(tid) && Math.abs(path.indexOf(sid) - path.indexOf(tid)) === 1;
         const selected = selectedNodes.includes(sid) || selectedNodes.includes(tid);
         if (inPath || selected) return 'hsl(var(--info))';
+        if (d.phase && phaseColors[d.phase]) return phaseColors[d.phase];
         if (d.type === 'analysis') return 'hsl(var(--warning))';
         if (d.type === 'seq_item') return 'hsl(var(--muted))';
         if (d.type === 'inheritance') return '#555';
@@ -122,6 +155,16 @@ const UvmComponentRelationshipVisualizer = () => {
         const inPath = path.includes(sid) && path.includes(tid) && Math.abs(path.indexOf(sid) - path.indexOf(tid)) === 1;
         return inPath ? 'message-path' : null;
       });
+
+    const phaseLabels = svg.append('g')
+      .selectAll('text')
+      .data(links.filter(l => l.phase))
+      .join('text')
+      .attr('text-anchor', 'middle')
+      .attr('dominant-baseline', 'central')
+      .style('fill', '#000')
+      .style('font-size', '8px')
+      .text(d => d.phase!);
 
     const node = svg.append('g')
       .attr('stroke', '#fff')
@@ -143,13 +186,17 @@ const UvmComponentRelationshipVisualizer = () => {
           return [d.id];
         });
       })
+      .on('dblclick', (_, d) => {
+        setIsolatedNode(prev => prev === d.id ? null : d.id);
+        setSelectedNodes([d.id]);
+      })
       .call(drag(simulation) as any);
 
     node.append('title')
       .text(d => {
-        const m = nodeMetrics.get(d.id) || { in: 0, out: 0, types: {} };
+        const m = nodeMetrics.get(d.id) || { in: 0, out: 0, types: {}, clustering: 0 };
         const types = Object.entries(m.types).map(([t, c]) => `${t}:${c}`).join(', ');
-        return `${d.name}\nIn: ${m.in} Out: ${m.out}\n${types}`;
+        return `${d.name}\nIn: ${m.in} Out: ${m.out} CC: ${m.clustering.toFixed(2)}\n${types}`;
       });
 
     const labels = svg.append('g')
@@ -178,6 +225,10 @@ const UvmComponentRelationshipVisualizer = () => {
       labels
         .attr('x', d => d.x!)
         .attr('y', d => d.y!);
+
+      phaseLabels
+        .attr('x', d => ((d.source as any).x + (d.target as any).x) / 2)
+        .attr('y', d => ((d.source as any).y + (d.target as any).y) / 2);
     });
 
     function drag(simulation: d3.Simulation<any, any>) {
@@ -204,60 +255,56 @@ const UvmComponentRelationshipVisualizer = () => {
         .on('end', dragended);
     }
 
-  }, [links, nodes, selectedNodes, path, nodeMetrics]);
+  }, [links, nodes, selectedNodes, path, nodeMetrics, findPath]);
 
   useEffect(() => {
     if (selectedNodes.length !== 1) setIsolatedNode(null);
   }, [selectedNodes]);
 
-  const handleFilterChange = (type: string) => {
-    setActiveFilters(prev =>
-      prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
-    );
-  };
-
-  const toggleIsolation = () => {
-    if (selectedNodes.length === 1) {
-      setIsolatedNode(prev => prev === selectedNodes[0] ? null : selectedNodes[0]);
-    }
-  };
-
-  const selectedMetrics = selectedNodes.length === 1 ? nodeMetrics.get(selectedNodes[0]) : null;
-
   return (
     <div className="p-4 border rounded-lg">
       <h2 className="text-lg font-bold mb-2">UVM Component Relationship Visualizer</h2>
       <div className="flex flex-wrap gap-2 mb-2">
-        {connectionTypes.map(type => (
-          <Button
-            key={type}
-            variant={activeFilters.includes(type) ? 'default' : 'outline'}
-            size="sm"
-            onClick={() => handleFilterChange(type)}
-          >
-            {type}
-          </Button>
-        ))}
-        {selectedNodes.length === 1 && (
-          <Button
-            variant={isolatedNode ? 'destructive' : 'secondary'}
-            size="sm"
-            onClick={toggleIsolation}
-          >
-            {isolatedNode ? 'Show All' : 'Isolate'}
-          </Button>
-        )}
+        <Button variant={showComposition ? 'default' : 'outline'} size="sm" onClick={() => setShowComposition(v => !v)}>
+          Composition
+        </Button>
+        <Button variant={showInheritance ? 'default' : 'outline'} size="sm" onClick={() => setShowInheritance(v => !v)}>
+          Inheritance
+        </Button>
+        <Button variant={showPorts ? 'default' : 'outline'} size="sm" onClick={() => setShowPorts(v => !v)}>
+          Ports
+        </Button>
       </div>
       <p className="text-sm mb-2">
         Nodes: {nodes.length} | Relationships: {links.length}
-        {selectedMetrics && (
-          <> | In: {selectedMetrics.in} Out: {selectedMetrics.out} | {
-            Object.entries(selectedMetrics.types).map(([t, c]) => `${t}:${c}`).join(', ')
-          }</>
-        )}
         {selectedNodes.length === 2 && path.length > 0 && ` | Path length: ${path.length - 1}`}
       </p>
       <svg ref={svgRef} className="w-full h-auto" />
+      <div className="overflow-x-auto mt-2">
+        <table className="text-xs w-full border-collapse">
+          <thead>
+            <tr>
+              <th className="text-left pr-2">Node</th>
+              <th className="text-left pr-2">In</th>
+              <th className="text-left pr-2">Out</th>
+              <th className="text-left pr-2">CC</th>
+            </tr>
+          </thead>
+          <tbody>
+            {nodes.map(n => {
+              const m = nodeMetrics.get(n.id) || { in: 0, out: 0, clustering: 0 };
+              return (
+                <tr key={n.id}>
+                  <td className="pr-2">{n.name}</td>
+                  <td className="pr-2">{m.in}</td>
+                  <td className="pr-2">{m.out}</td>
+                  <td className="pr-2">{m.clustering.toFixed(2)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
       <style>{`
         .message-path {
           stroke-dasharray: 5 5;

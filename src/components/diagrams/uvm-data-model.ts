@@ -11,6 +11,7 @@ export interface UvmConnection {
   source: string; // ID of the source component
   target: string;   // ID of the target component
   type: 'seq_item' | 'analysis' | 'composition' | 'inheritance'; // Type of connection
+  phase?: string; // Optional phase information for overlaying execution order
   description: string; // Tooltip text for the connection
 }
 
@@ -101,37 +102,39 @@ export const uvmComponents: UvmComponent[] = [
 ];
 
 export const uvmConnections: UvmConnection[] = [
-  { source: 'test', target: 'env', type: 'composition', description: 'Test instantiates the Environment.' },
-  { source: 'env', target: 'agent_active', type: 'composition', description: 'Environment instantiates the Active Agent.' },
-  { source: 'env', target: 'agent_passive', type: 'composition', description: 'Environment instantiates the Passive Agent.' },
-  { source: 'env', target: 'scoreboard', type: 'composition', description: 'Environment instantiates the Scoreboard.' },
-  { source: 'env', target: 'coverage_collector', type: 'composition', description: 'Environment instantiates the Coverage Collector.' },
-  { source: 'agent_active', target: 'sequencer_active', type: 'composition', description: 'Active Agent instantiates the Sequencer.' },
-  { source: 'agent_active', target: 'driver_active', type: 'composition', description: 'Active Agent instantiates the Driver.' },
-  { source: 'agent_active', target: 'monitor_active', type: 'composition', description: 'Active Agent instantiates the Monitor.' },
-  { source: 'agent_passive', target: 'monitor_passive', type: 'composition', description: 'Passive Agent instantiates the Monitor.' },
-  { source: 'sequencer_active', target: 'driver_active', type: 'seq_item', description: 'Sequencer sends transaction items to the Driver for execution.' },
-  { source: 'monitor_active', target: 'scoreboard', type: 'analysis', description: 'Active Monitor sends observed transactions to the Scoreboard for checking.' },
-  { source: 'monitor_passive', target: 'scoreboard', type: 'analysis', description: 'Passive Monitor sends observed transactions to the Scoreboard for checking.' },
-  { source: 'monitor_active', target: 'coverage_collector', type: 'analysis', description: 'Active Monitor sends observed transactions to the Functional Coverage collector.' },
-  { source: 'monitor_passive', target: 'coverage_collector', type: 'analysis', description: 'Passive Monitor sends observed transactions to the Functional Coverage collector.' },
-  // Inheritance relationships
-  { source: 'test', target: 'uvm_test', type: 'inheritance', description: 'Test extends uvm_test.' },
-  { source: 'env', target: 'uvm_env', type: 'inheritance', description: 'Environment extends uvm_env.' },
-  { source: 'agent_active', target: 'uvm_agent', type: 'inheritance', description: 'Active Agent extends uvm_agent.' },
-  { source: 'agent_passive', target: 'uvm_agent', type: 'inheritance', description: 'Passive Agent extends uvm_agent.' },
-  { source: 'sequencer_active', target: 'uvm_sequencer', type: 'inheritance', description: 'Sequencer extends uvm_sequencer.' },
-  { source: 'driver_active', target: 'uvm_driver', type: 'inheritance', description: 'Driver extends uvm_driver.' },
-  { source: 'monitor_active', target: 'uvm_monitor', type: 'inheritance', description: 'Active Monitor extends uvm_monitor.' },
-  { source: 'monitor_passive', target: 'uvm_monitor', type: 'inheritance', description: 'Passive Monitor extends uvm_monitor.' },
-  { source: 'scoreboard', target: 'uvm_scoreboard', type: 'inheritance', description: 'Scoreboard extends uvm_scoreboard.' },
-  { source: 'coverage_collector', target: 'uvm_subscriber', type: 'inheritance', description: 'Functional Coverage extends uvm_subscriber.' },
-  { source: 'uvm_test', target: 'uvm_component', type: 'inheritance', description: 'uvm_test extends uvm_component.' },
-  { source: 'uvm_env', target: 'uvm_component', type: 'inheritance', description: 'uvm_env extends uvm_component.' },
-  { source: 'uvm_agent', target: 'uvm_component', type: 'inheritance', description: 'uvm_agent extends uvm_component.' },
-  { source: 'uvm_sequencer', target: 'uvm_component', type: 'inheritance', description: 'uvm_sequencer extends uvm_component.' },
-  { source: 'uvm_driver', target: 'uvm_component', type: 'inheritance', description: 'uvm_driver extends uvm_component.' },
-  { source: 'uvm_monitor', target: 'uvm_component', type: 'inheritance', description: 'uvm_monitor extends uvm_component.' },
-  { source: 'uvm_scoreboard', target: 'uvm_component', type: 'inheritance', description: 'uvm_scoreboard extends uvm_component.' },
-  { source: 'uvm_subscriber', target: 'uvm_component', type: 'inheritance', description: 'uvm_subscriber extends uvm_component.' }
+  // Composition relationships happen during build_phase
+  { source: 'test', target: 'env', type: 'composition', phase: 'build_phase', description: 'Test instantiates the Environment.' },
+  { source: 'env', target: 'agent_active', type: 'composition', phase: 'build_phase', description: 'Environment instantiates the Active Agent.' },
+  { source: 'env', target: 'agent_passive', type: 'composition', phase: 'build_phase', description: 'Environment instantiates the Passive Agent.' },
+  { source: 'env', target: 'scoreboard', type: 'composition', phase: 'build_phase', description: 'Environment instantiates the Scoreboard.' },
+  { source: 'env', target: 'coverage_collector', type: 'composition', phase: 'build_phase', description: 'Environment instantiates the Coverage Collector.' },
+  { source: 'agent_active', target: 'sequencer_active', type: 'composition', phase: 'build_phase', description: 'Active Agent instantiates the Sequencer.' },
+  { source: 'agent_active', target: 'driver_active', type: 'composition', phase: 'build_phase', description: 'Active Agent instantiates the Driver.' },
+  { source: 'agent_active', target: 'monitor_active', type: 'composition', phase: 'build_phase', description: 'Active Agent instantiates the Monitor.' },
+  { source: 'agent_passive', target: 'monitor_passive', type: 'composition', phase: 'build_phase', description: 'Passive Agent instantiates the Monitor.' },
+  // Port connections occur during the run_phase
+  { source: 'sequencer_active', target: 'driver_active', type: 'seq_item', phase: 'run_phase', description: 'Sequencer sends transaction items to the Driver for execution.' },
+  { source: 'monitor_active', target: 'scoreboard', type: 'analysis', phase: 'run_phase', description: 'Active Monitor sends observed transactions to the Scoreboard for checking.' },
+  { source: 'monitor_passive', target: 'scoreboard', type: 'analysis', phase: 'run_phase', description: 'Passive Monitor sends observed transactions to the Scoreboard for checking.' },
+  { source: 'monitor_active', target: 'coverage_collector', type: 'analysis', phase: 'run_phase', description: 'Active Monitor sends observed transactions to the Functional Coverage collector.' },
+  { source: 'monitor_passive', target: 'coverage_collector', type: 'analysis', phase: 'run_phase', description: 'Passive Monitor sends observed transactions to the Functional Coverage collector.' },
+  // Inheritance relationships are compile-time
+  { source: 'test', target: 'uvm_test', type: 'inheritance', phase: 'compile', description: 'Test extends uvm_test.' },
+  { source: 'env', target: 'uvm_env', type: 'inheritance', phase: 'compile', description: 'Environment extends uvm_env.' },
+  { source: 'agent_active', target: 'uvm_agent', type: 'inheritance', phase: 'compile', description: 'Active Agent extends uvm_agent.' },
+  { source: 'agent_passive', target: 'uvm_agent', type: 'inheritance', phase: 'compile', description: 'Passive Agent extends uvm_agent.' },
+  { source: 'sequencer_active', target: 'uvm_sequencer', type: 'inheritance', phase: 'compile', description: 'Sequencer extends uvm_sequencer.' },
+  { source: 'driver_active', target: 'uvm_driver', type: 'inheritance', phase: 'compile', description: 'Driver extends uvm_driver.' },
+  { source: 'monitor_active', target: 'uvm_monitor', type: 'inheritance', phase: 'compile', description: 'Active Monitor extends uvm_monitor.' },
+  { source: 'monitor_passive', target: 'uvm_monitor', type: 'inheritance', phase: 'compile', description: 'Passive Monitor extends uvm_monitor.' },
+  { source: 'scoreboard', target: 'uvm_scoreboard', type: 'inheritance', phase: 'compile', description: 'Scoreboard extends uvm_scoreboard.' },
+  { source: 'coverage_collector', target: 'uvm_subscriber', type: 'inheritance', phase: 'compile', description: 'Functional Coverage extends uvm_subscriber.' },
+  { source: 'uvm_test', target: 'uvm_component', type: 'inheritance', phase: 'compile', description: 'uvm_test extends uvm_component.' },
+  { source: 'uvm_env', target: 'uvm_component', type: 'inheritance', phase: 'compile', description: 'uvm_env extends uvm_component.' },
+  { source: 'uvm_agent', target: 'uvm_component', type: 'inheritance', phase: 'compile', description: 'uvm_agent extends uvm_component.' },
+  { source: 'uvm_sequencer', target: 'uvm_component', type: 'inheritance', phase: 'compile', description: 'uvm_sequencer extends uvm_component.' },
+  { source: 'uvm_driver', target: 'uvm_component', type: 'inheritance', phase: 'compile', description: 'uvm_driver extends uvm_component.' },
+  { source: 'uvm_monitor', target: 'uvm_component', type: 'inheritance', phase: 'compile', description: 'uvm_monitor extends uvm_component.' },
+  { source: 'uvm_scoreboard', target: 'uvm_component', type: 'inheritance', phase: 'compile', description: 'uvm_scoreboard extends uvm_component.' },
+  { source: 'uvm_subscriber', target: 'uvm_component', type: 'inheritance', phase: 'compile', description: 'uvm_subscriber extends uvm_component.' }
 ];

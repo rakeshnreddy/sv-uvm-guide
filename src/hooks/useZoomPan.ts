@@ -26,6 +26,7 @@ export const useZoomPan = (
       zoomRef.current = zoom;
     }
 
+
     const handleKey = (e: KeyboardEvent) => {
       const step = 40;
       if (e.key === "+" || e.key === "=") {

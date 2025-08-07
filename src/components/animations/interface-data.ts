@@ -2,7 +2,22 @@ export interface InterfaceExample {
   name: string;
   code: string;
   steps: string[];
-  signals: { name: string; direction: 'in' | 'out' | 'inout' }[];
+  signals: {
+    name: string;
+    direction: 'in' | 'out' | 'inout';
+    /** Marks signals the current modport cannot drive */
+    restricted?: boolean;
+    /** Timing markers for clocking block sample/drive phases */
+    timing?: { sample?: number; drive?: number };
+    /** Visual indicator for signal glitches */
+    glitch?: boolean;
+    /** Adds a propagation delay to the signal animation */
+    delay?: boolean;
+  }[];
+  /** Number of interface instances when demonstrating arrayed interfaces */
+  arraySize?: number;
+  /** Parameter values used when the interface is parameterized */
+  parameters?: Record<string, number | string>;
 }
 
 export const interfaceData: InterfaceExample[] = [
@@ -30,7 +45,7 @@ export const interfaceData: InterfaceExample[] = [
       'Modport restrictions prevent the testbench from driving `clk`.',
     ],
     signals: [
-      { name: 'clk', direction: 'in' },
+      { name: 'clk', direction: 'in', restricted: true },
       { name: 'rw', direction: 'out' },
       { name: 'data', direction: 'inout' },
     ],
@@ -48,5 +63,34 @@ export const interfaceData: InterfaceExample[] = [
       { name: 'rw', direction: 'out' },
       { name: 'data', direction: 'inout' },
     ],
+  },
+  {
+    name: 'Clocking Block',
+    code: 'interface simple_bus(input logic clk);\n  logic rw;\n  logic [7:0] data;\n  clocking cb @(posedge clk);\n    input rw;\n    output #1 data;\n  endclocking\nendinterface',
+    steps: [
+      'A clocking block synchronizes sampling and driving with the clock.',
+      'Timing markers show when `rw` is sampled and `data` is driven.',
+    ],
+    signals: [
+      { name: 'clk', direction: 'in' },
+      { name: 'rw', direction: 'in', timing: { sample: 0.2 } },
+      { name: 'data', direction: 'out', timing: { drive: 0.7 } },
+    ],
+  },
+  {
+    name: 'Parameterized & Arrayed Interface',
+    code: 'interface param_bus #(parameter WIDTH = 8) (input logic clk);\n  logic rw;\n  logic [WIDTH-1:0] data;\nendinterface\n\nmodule top;\n  param_bus #(.WIDTH(16)) bus[3] (.*);\nendmodule',
+    steps: [
+      'The interface `param_bus` is parameterized with a width.',
+      'Three instances form an arrayed interface accessed via indexing.',
+      'Glitches on `rw` and delays on `data` highlight signal integrity.',
+    ],
+    signals: [
+      { name: 'clk', direction: 'in' },
+      { name: 'rw', direction: 'in', glitch: true },
+      { name: 'data', direction: 'inout', delay: true },
+    ],
+    arraySize: 3,
+    parameters: { WIDTH: 16 },
   },
 ];
