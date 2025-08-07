@@ -9,7 +9,9 @@ const connectionTypes = [...new Set(uvmConnections.map(c => c.type))];
 const UvmComponentRelationshipVisualizer = () => {
   const svgRef = useRef<SVGSVGElement>(null);
   const [activeFilters, setActiveFilters] = useState<string[]>(connectionTypes);
-  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+  const [selectedNodes, setSelectedNodes] = useState<string[]>([]);
+  const [path, setPath] = useState<string[]>([]);
+
 
   const filteredLinks = uvmConnections.filter(c => activeFilters.includes(c.type));
   const degreeMap = new Map<string, number>();
@@ -17,6 +19,42 @@ const UvmComponentRelationshipVisualizer = () => {
     degreeMap.set(l.source, (degreeMap.get(l.source) || 0) + 1);
     degreeMap.set(l.target, (degreeMap.get(l.target) || 0) + 1);
   });
+
+  const findPath = (start: string, end: string): string[] => {
+    const queue: string[] = [start];
+    const visited = new Set<string>([start]);
+    const parent = new Map<string, string>();
+
+    const adj = new Map<string, string[]>();
+    filteredLinks.forEach(l => {
+      adj.set(l.source, [...(adj.get(l.source) || []), l.target]);
+      adj.set(l.target, [...(adj.get(l.target) || []), l.source]);
+    });
+
+    while (queue.length) {
+      const node = queue.shift()!;
+      if (node === end) break;
+      for (const n of adj.get(node) || []) {
+        if (!visited.has(n)) {
+          visited.add(n);
+          parent.set(n, node);
+          queue.push(n);
+        }
+      }
+    }
+
+    if (start !== end && !parent.has(end)) return [];
+    const result = [end];
+    let cur = end;
+    while (cur !== start) {
+      const p = parent.get(cur);
+      if (!p) break;
+      result.unshift(p);
+      cur = p;
+    }
+    return result;
+  };
+
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -42,7 +80,22 @@ const UvmComponentRelationshipVisualizer = () => {
       .data(filteredLinks)
       .join('line')
       .attr('stroke-width', d => Math.sqrt(d.type === 'parent_child' ? 3 : 1))
-      .attr('stroke', d => (selectedNode && ((d.source as any).id === selectedNode || (d.target as any).id === selectedNode)) ? 'hsl(var(--info))' : '#999');
+      .attr('stroke', d => {
+        const sid = (d.source as any).id;
+        const tid = (d.target as any).id;
+        const inPath = path.includes(sid) && path.includes(tid) && Math.abs(path.indexOf(sid) - path.indexOf(tid)) === 1;
+        const selected = selectedNodes.includes(sid) || selectedNodes.includes(tid);
+        if (inPath) return 'hsl(var(--info))';
+        if (selected) return 'hsl(var(--info))';
+        return '#999';
+      })
+      .attr('class', d => {
+        const sid = (d.source as any).id;
+        const tid = (d.target as any).id;
+        const inPath = path.includes(sid) && path.includes(tid) && Math.abs(path.indexOf(sid) - path.indexOf(tid)) === 1;
+        return inPath ? 'message-path' : null;
+      });
+
 
     const node = svg.append('g')
       .attr('stroke', '#fff')
@@ -51,8 +104,20 @@ const UvmComponentRelationshipVisualizer = () => {
       .data(nodes)
       .join('circle')
       .attr('r', 20)
-      .attr('fill', d => d.id === selectedNode ? 'hsl(var(--info))' : 'hsl(var(--primary))')
-      .on('click', (_, d) => setSelectedNode(selectedNode === d.id ? null : d.id))
+      .attr('fill', d => selectedNodes.includes(d.id) ? 'hsl(var(--info))' : 'hsl(var(--primary))')
+      .on('click', (_, d) => {
+        setSelectedNodes(prev => {
+          if (prev.length === 0) return [d.id];
+          if (prev.length === 1) {
+            if (prev[0] === d.id) return [];
+            const newSel = [prev[0], d.id];
+            setPath(findPath(newSel[0], newSel[1]));
+            return newSel;
+          }
+          return [d.id];
+        });
+      })
+
       .call(drag(simulation) as any);
 
     const labels = svg.append("g")
@@ -107,7 +172,8 @@ const UvmComponentRelationshipVisualizer = () => {
         .on('end', dragended);
     }
 
-  }, [filteredLinks, selectedNode]);
+  }, [filteredLinks, selectedNodes, path]);
+
 
   const handleFilterChange = (type: string) => {
     setActiveFilters(prev =>
@@ -132,9 +198,20 @@ const UvmComponentRelationshipVisualizer = () => {
       </div>
       <p className="text-sm mb-2">
         Nodes: {uvmComponents.length} | Relationships: {filteredLinks.length}
-        {selectedNode && ` | ${selectedNode} connections: ${degreeMap.get(selectedNode) || 0}`}
+        {selectedNodes.length === 1 && ` | ${selectedNodes[0]} connections: ${degreeMap.get(selectedNodes[0]) || 0}`}
+        {selectedNodes.length === 2 && path.length > 0 && ` | Path length: ${path.length - 1}`}
+
       </p>
       <svg ref={svgRef} className="w-full h-auto" />
+      <style>{`
+        .message-path {
+          stroke-dasharray: 5 5;
+          animation: dash 1s linear infinite;
+        }
+        @keyframes dash {
+          to { stroke-dashoffset: -10; }
+        }
+      `}</style>
     </div>
   );
 };

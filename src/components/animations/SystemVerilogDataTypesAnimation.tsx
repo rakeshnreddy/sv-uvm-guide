@@ -26,6 +26,11 @@ const SystemVerilogDataTypesAnimation = () => {
   const [inputA, setInputA] = useState<StateColorKey>('0');
   const [inputB, setInputB] = useState<StateColorKey>('0');
   const [dynArray, setDynArray] = useState<number[]>([]);
+  const [queue, setQueue] = useState<number[]>([]);
+  const [assocArray, setAssocArray] = useState<Record<string, number>>({});
+  const [assocKey, setAssocKey] = useState('');
+  const [assocVal, setAssocVal] = useState(0);
+
 
   const cycleState = (currentValue: StateColorKey, values: StateColorKey[]) => {
     const currentIndex = values.indexOf(currentValue);
@@ -200,6 +205,91 @@ const SystemVerilogDataTypesAnimation = () => {
             ))}
           </div>
         </div>
+
+        <hr className="my-8" />
+
+        {/* Queue Operations */}
+        <div>
+          <h3 className="text-lg font-bold mb-2">Queue Operations</h3>
+          <div className="flex gap-2 mb-2">
+            <Button size="sm" onClick={() => setQueue(q => [Math.floor(Math.random() * 10), ...q])}>push_front</Button>
+            <Button size="sm" onClick={() => setQueue(q => [...q, Math.floor(Math.random() * 10)])}>push_back</Button>
+            <Button size="sm" onClick={() => setQueue(q => q.slice(1))} disabled={queue.length === 0}>pop_front</Button>
+            <Button size="sm" onClick={() => setQueue(q => q.slice(0, -1))} disabled={queue.length === 0}>pop_back</Button>
+          </div>
+          <div className="flex gap-1">
+            {queue.map((v, i) => (
+              <motion.div
+                key={i}
+                className="w-8 h-8 bg-yellow-200 border border-yellow-400 flex items-center justify-center text-xs"
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+              >
+                {v}
+              </motion.div>
+            ))}
+          </div>
+        </div>
+
+        <hr className="my-8" />
+
+        {/* Associative Array Operations */}
+        <div>
+          <h3 className="text-lg font-bold mb-2">Associative Array</h3>
+          <div className="flex gap-2 mb-2">
+            <Input
+              placeholder="key"
+              value={assocKey}
+              onChange={e => setAssocKey(e.target.value)}
+              className="w-24"
+            />
+            <Input
+              placeholder="value"
+              type="number"
+              value={assocVal}
+              onChange={e => setAssocVal(parseInt(e.target.value))}
+              className="w-24"
+            />
+            <Button
+              size="sm"
+              onClick={() => {
+                if (assocKey === '') return;
+                setAssocArray(prev => ({ ...prev, [assocKey]: assocVal }));
+                setAssocKey('');
+              }}
+            >
+              Set
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                setAssocArray(prev => {
+                  const copy = { ...prev };
+                  delete copy[assocKey];
+                  return copy;
+                });
+                setAssocKey('');
+              }}
+              disabled={!assocArray[assocKey]}
+            >
+              Delete
+            </Button>
+          </div>
+          <div className="flex flex-col gap-1">
+            {Object.entries(assocArray).map(([k, v]) => (
+              <motion.div
+                key={k}
+                className="flex items-center gap-2"
+                initial={{ x: -20, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+              >
+                <span className="font-mono text-sm">{k}:</span>
+                <span className="w-8 h-8 bg-pink-200 border border-pink-400 flex items-center justify-center text-xs">{v}</span>
+              </motion.div>
+            ))}
+          </div>
+        </div>
+
       </CardContent>
     </Card>
   );

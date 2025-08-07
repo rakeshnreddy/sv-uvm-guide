@@ -52,6 +52,14 @@ const UvmPhasingInteractiveTimeline = () => {
             {currentPhase.dependencies && (
               <p className="text-sm mb-1">Depends on: {currentPhase.dependencies.join(', ')}</p>
             )}
+            {currentPhase.activities && (
+              <ul className="list-disc list-inside text-sm mb-1">
+                {currentPhase.activities.map((act, i) => (
+                  <li key={i}>{act}</li>
+                ))}
+              </ul>
+            )}
+
             {currentPhase.objection && (
               <p className="text-sm text-muted-foreground">Objections: {currentPhase.objection}</p>
             )}
