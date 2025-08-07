@@ -12,6 +12,8 @@ const InterfaceSignalFlow = () => {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [clock, setClock] = useState(0);
   const [signalValues, setSignalValues] = useState<number[]>([]);
+  const [phase, setPhase] = useState<'sample' | 'drive'>('sample');
+  const [arrayIndex, setArrayIndex] = useState(0);
 
   const handleNext = () => {
     setCurrentStepIndex(prev => (prev < interfaceData[exampleIndex].steps.length - 1 ? prev + 1 : prev));
@@ -24,6 +26,8 @@ const InterfaceSignalFlow = () => {
   const handleExampleChange = (index: string) => {
     setExampleIndex(parseInt(index));
     setCurrentStepIndex(0);
+    setPhase('sample');
+    setArrayIndex(0);
   };
 
   const currentExample = interfaceData[exampleIndex];
@@ -33,12 +37,18 @@ const InterfaceSignalFlow = () => {
   useEffect(() => {
     setSignalValues(dataSignals.map(() => 0));
     setClock(0);
+    setPhase('sample');
+    setArrayIndex(0);
   }, [currentExample, dataSignals]);
 
   useEffect(() => {
     const id = setInterval(() => {
       setClock(prev => 1 - prev);
       setSignalValues(prev => prev.map(v => (v ? 0 : 1)));
+      setPhase(prev => (prev === 'sample' ? 'drive' : 'sample'));
+      if (currentExample.arraySize) {
+        setArrayIndex(prev => (prev + 1) % currentExample.arraySize);
+      }
     }, 1000);
     return () => clearInterval(id);
   }, [currentExample]);
@@ -66,6 +76,16 @@ const InterfaceSignalFlow = () => {
           </div>
           <div className="flex flex-col justify-center items-center">
             <div className="w-full h-48 bg-muted rounded-lg p-4 flex flex-col justify-around">
+              {currentExample.parameters && (
+                <div className="mb-2 text-sm font-mono">
+                  {Object.entries(currentExample.parameters).map(([p, v]) => (
+                    <span key={p} className="mr-2">{`${p}=${v}`}</span>
+                  ))}
+                </div>
+              )}
+              {currentExample.arraySize && (
+                <div className="mb-2 font-mono">Index: {arrayIndex}</div>
+              )}
               <div className="flex items-center justify-between mb-2">
                 <span className="font-mono text-lg">clk</span>
                 <motion.div
@@ -73,49 +93,108 @@ const InterfaceSignalFlow = () => {
                   className="w-16 h-2 rounded"
                 />
               </div>
-              {dataSignals.map((signal, index) => (
-                <motion.div
-                  key={signal.name + clock}
-                  initial={{ opacity: 0, x: signal.direction === 'out' ? 50 : -50 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.5 }}
-                  className="flex items-center justify-between"
-                >
-                  <span className="font-mono text-lg">{signal.name}</span>
-                  <div className="flex items-center">
-                    <motion.span
-                      key={clock}
-                      initial={{ opacity: 0, y: -5 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.3 }}
-                      className="text-sm mr-2"
-                    >
-                      {signal.direction === 'in'
-                        ? 'sample'
-                        : signal.direction === 'out'
-                        ? 'drive'
-                        : 'bidirectional'}
-                    </motion.span>
-                    <motion.div
-                      key={signalValues[index] + clock}
-                      initial={{ width: 0 }}
-                      animate={{ width: 64 }}
-                      transition={{ duration: 0.5 }}
-                      className={`h-2 rounded ${signal.direction === 'in' ? 'bg-green-500' : signal.direction === 'out' ? 'bg-blue-500' : 'bg-yellow-500'}`}
-                    />
-                  </div>
-                </motion.div>
-              ))}
+              {dataSignals.map((signal, index) => {
+                const showPhaseLabel =
+                  !!signal.timing &&
+                  ((phase === 'sample' && signal.timing.sample !== undefined) ||
+                    (phase === 'drive' && signal.timing.drive !== undefined));
+                return (
+                  <motion.div
+                    key={`${signal.name}-${clock}-${arrayIndex}`}
+                    initial={{ opacity: 0, x: signal.direction === 'out' ? 50 : -50 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    transition={{ duration: 0.5 }}
+                    className="flex items-center justify-between"
+                  >
+                    <span className="font-mono text-lg">
+                      {signal.name}
+                      {signal.restricted && (
+                        <span className="text-red-500 text-xs ml-1">(restricted)</span>
+                      )}
+                    </span>
+                    <div className="flex items-center">
+                      {signal.timing ? (
+                        showPhaseLabel && (
+                          <motion.span
+                            key={`${signal.name}-label-${phase}-${clock}`}
+                            initial={{ opacity: 0, y: -5 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.3 }}
+                            className="text-sm mr-2"
+                          >
+                            {phase}
+                          </motion.span>
+                        )
+                      ) : (
+                        <motion.span
+                          key={`${signal.name}-label-${clock}`}
+                          initial={{ opacity: 0, y: -5 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ duration: 0.3 }}
+                          className="text-sm mr-2"
+                        >
+                          {signal.direction === 'in'
+                            ? 'sample'
+                            : signal.direction === 'out'
+                            ? 'drive'
+                            : 'bidirectional'}
+                        </motion.span>
+                      )}
+                      <div className="relative">
+                        <motion.div
+                          key={`${signalValues[index]}-${clock}`}
+                          initial={{ width: 0 }}
+                          animate={{ width: 64 }}
+                          transition={{ duration: 0.5, delay: signal.delay ? 0.3 : 0 }}
+                          className={`h-2 rounded ${
+                            signal.direction === 'in'
+                              ? 'bg-green-500'
+                              : signal.direction === 'out'
+                              ? 'bg-blue-500'
+                              : 'bg-yellow-500'
+                          }`}
+                        />
+                        {signal.glitch && (
+                          <motion.div
+                            key={`glitch-${clock}`}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: [0, 1, 0] }}
+                            transition={{ duration: 0.2, delay: 0.2 }}
+                            className="absolute inset-0 bg-red-500 rounded"
+                          />
+                        )}
+                        {signal.timing && showPhaseLabel && (
+                          <motion.div
+                            key={`${signal.name}-marker-${phase}-${clock}`}
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            transition={{ duration: 0.2 }}
+                            style={{
+                              left: `${
+                                (phase === 'sample'
+                                  ? signal.timing.sample!
+                                  : signal.timing.drive!) * 100
+                              }%`,
+                            }}
+                            className="absolute -top-1 w-1 h-4 bg-black"
+                          />
+                        )}
+                      </div>
+                    </div>
+                  </motion.div>
+                );
+              })}
             </div>
             {currentExample.name === 'Virtual Interface Binding' && (
               <div className="flex items-center justify-center mt-4">
                 <div className="p-2 border rounded mr-2">Driver</div>
-                <motion.div
-                  initial={{ width: 0 }}
-                  animate={{ width: '4rem' }}
-                  transition={{ duration: 1, repeat: Infinity, repeatType: 'reverse' }}
-                  className="h-0.5 bg-blue-500"
-                />
+                <div className="relative w-16 h-0.5 bg-blue-500 mx-2 overflow-hidden">
+                  <motion.div
+                    className="absolute top-0 left-0 h-full w-4 bg-blue-300"
+                    animate={{ x: ['0%', '100%'] }}
+                    transition={{ duration: 1, repeat: Infinity }}
+                  />
+                </div>
                 <div className="p-2 border rounded ml-2">Interface</div>
               </div>
             )}
