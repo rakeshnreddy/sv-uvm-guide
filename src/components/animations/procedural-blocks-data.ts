@@ -7,10 +7,10 @@ export interface ProceduralBlockExample {
 export const proceduralBlocksData: ProceduralBlockExample[] = [
   {
     name: 'Blocking vs. Non-blocking',
-    code: 'always @(posedge clk) begin\n  a = b;\n  b = a;\nend\n\nalways @(posedge clk) begin\n  a <= b;\n  b <= a;\nend',
+    code: 'initial begin\n  a = b;\n  b = a;\nend\n\nalways @(posedge clk) begin\n  a <= b;\n  b <= a;\nend',
     steps: [
-      't0: a = 1, b = 2',
-      't1: blocking assignments update immediately; non-blocking assignments are scheduled',
+      't0: initial block executes with blocking assignments',
+      't1: always block schedules non-blocking assignments',
       't2: non-blocking assignments take effect'
     ],
   },
@@ -29,6 +29,15 @@ export const proceduralBlocksData: ProceduralBlockExample[] = [
       't8',
       't9',
       't10: thread 2 assigns b and join completes',
+    ],
+  },
+  {
+    name: 'Event Control',
+    code: 'initial begin\n  @(posedge clk);\n  a = 1;\nend',
+    steps: [
+      'Waiting for posedge clk',
+      'posedge clk detected',
+      'a assigned'
     ],
   },
   {
@@ -57,6 +66,16 @@ export const proceduralBlocksData: ProceduralBlockExample[] = [
       'iteration 2',
       'iteration 3',
       'loop complete'
+    ],
+  },
+  {
+    name: 'Task vs Function',
+    code: 'task automatic t;\n  #1 a = a + 1;\nendtask\n\nfunction automatic int f;\n  return a + 1;\nendfunction\n\ninitial begin\n  a = f();\n  t();\nend',
+    steps: [
+      'Initial state',
+      'Function f executes immediately',
+      'Task t executes with delay',
+      'Task t completed'
     ],
   },
 ];
