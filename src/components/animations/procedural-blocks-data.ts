@@ -34,4 +34,14 @@ export const proceduralBlocksData: ProceduralBlockExample[] = [
       'The second always block uses non-blocking assignments (`<=`). The assignments are scheduled to happen at the end of the time step. `a` and `b` are swapped correctly.',
     ],
   },
+  {
+    name: 'Fork/Join',
+    code: 'initial begin\n  fork\n    #5 a = 1;\n    #10 b = 2;\n  join\nend',
+    steps: [
+      'Two parallel threads are launched with `fork`.',
+      'Thread 1 waits 5 time units then assigns `a`.',
+      'Thread 2 waits 10 time units then assigns `b`.',
+      'The `join` waits for both threads to complete before continuing.',
+    ],
+  },
 ];
