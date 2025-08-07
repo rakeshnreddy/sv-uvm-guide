@@ -59,6 +59,7 @@ const UvmPhasingInteractiveTimeline = () => {
                 ))}
               </ul>
             )}
+
             {currentPhase.objection && (
               <p className="text-sm text-muted-foreground">Objections: {currentPhase.objection}</p>
             )}

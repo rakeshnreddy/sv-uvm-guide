@@ -6,6 +6,7 @@ export interface UvmPhase {
   dependencies?: string[];
   objection?: string;
   activities?: string[];
+
 }
 
 export const uvmPhases: UvmPhase[] = [
@@ -13,6 +14,7 @@ export const uvmPhases: UvmPhase[] = [
   { name: 'build', type: 'build', description: 'Constructs component hierarchy. New components are created here.', isTask: false, activities: ['create components', 'configure defaults'] },
   { name: 'connect', type: 'connect', description: 'Connects TLM ports and exports. Establishes communication paths.', isTask: false, dependencies: ['build'], activities: ['connect ports', 'set up analysis connections'] },
   { name: 'end_of_elaboration', type: 'connect', description: 'Final checks before simulation starts. Final adjustments to component settings.', isTask: false, dependencies: ['connect'], activities: ['final configuration review'] },
+
 
   // Run-Time Phases (run in parallel)
   { name: 'start_of_simulation', type: 'run', description: 'Prepare for the main simulation. Display banners, set up initial state.', isTask: false, dependencies: ['end_of_elaboration'] },
@@ -27,6 +29,7 @@ export const uvmPhases: UvmPhase[] = [
   { name: 'post_main', type: 'run', description: 'Stimulus is complete, wait for DUT to settle.', isTask: true, dependencies: ['main'] },
   { name: 'pre_shutdown', type: 'run', description: 'Prepare for the end of the test.', isTask: true, dependencies: ['post_main'] },
   { name: 'shutdown', type: 'run', description: 'Final stimulus, e.g., read out status registers.', isTask: true, dependencies: ['pre_shutdown'], objection: 'Drop objections once shutdown tasks finish.', activities: ['flush FIFOs', 'read status registers'] },
+
   { name: 'post_shutdown', type: 'run', description: 'Wait for all shutdown activity to complete.', isTask: true, dependencies: ['shutdown'] },
 
   // Cleanup Phases (run in order, bottom-up)
