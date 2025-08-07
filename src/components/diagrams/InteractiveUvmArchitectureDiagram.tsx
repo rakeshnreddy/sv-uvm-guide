@@ -1,10 +1,13 @@
 "use client";
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as d3 from 'd3';
 import { motion } from 'framer-motion';
 import { uvmComponents, uvmConnections, UvmComponent } from './uvm-data-model';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
+import { useZoomPan } from '@/hooks/useZoomPan';
+import { useKeyboardNavigation } from '@/hooks/useKeyboardNavigation';
+import { exportSvg } from '@/lib/exportUtils';
 
 const componentTypes = [...new Set(uvmComponents.map(c => c.type.split('_')[0]))];
 
@@ -30,30 +33,25 @@ const InteractiveUvmArchitectureDiagram = () => {
   const [showDataFlow, setShowDataFlow] = useState(true);
   const [showControlFlow, setShowControlFlow] = useState(true);
 
-  const handleExport = () => {
-    if (!svgRef.current) return;
-    const svgElement = svgRef.current;
-    const serializer = new XMLSerializer();
-    const source = serializer.serializeToString(svgElement);
-    const blob = new Blob([source], { type: 'image/svg+xml;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const image = new Image();
-    image.onload = () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = svgElement.clientWidth;
-      canvas.height = svgElement.clientHeight;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return;
-      ctx.drawImage(image, 0, 0);
-      const png = canvas.toDataURL('image/png');
-      const a = document.createElement('a');
-      a.href = png;
-      a.download = 'uvm-architecture.png';
-      a.click();
-      URL.revokeObjectURL(url);
+  const handleExport = useCallback(() => {
+    if (svgRef.current) {
+      exportSvg(svgRef.current, 'uvm-architecture');
+    }
+  }, []);
+
+  useZoomPan(svgRef);
+  useKeyboardNavigation(svgRef as unknown as React.RefObject<HTMLElement | SVGSVGElement>);
+
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e') {
+        e.preventDefault();
+        handleExport();
+      }
     };
-    image.src = url;
-  };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, [handleExport]);
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -61,8 +59,12 @@ const InteractiveUvmArchitectureDiagram = () => {
     const width = 850;
     const height = 650;
 
-    const svg = d3.select(svgRef.current)
+    const svg = d3
+      .select(svgRef.current)
       .attr('viewBox', `0 0 ${width} ${height}`)
+      .attr('role', 'img')
+      .attr('tabindex', 0)
+      .attr('aria-label', 'Interactive UVM architecture diagram')
       .html(''); // Clear previous contents
 
     const root = d3.stratify<UvmComponent>()
@@ -99,6 +101,9 @@ const InteractiveUvmArchitectureDiagram = () => {
       .enter()
       .append('g')
       .attr('class', 'node')
+      .attr('tabindex', 0)
+      .attr('data-focusable', true)
+      .attr('aria-label', d => d.data.name)
       .attr('transform', d => {
         nodePositions.set(d.data.id, { x: d.x, y: d.y });
         return `translate(${d.y},${d.x})`;
@@ -107,6 +112,12 @@ const InteractiveUvmArchitectureDiagram = () => {
         setActiveComponent(d.data);
       })
       .on('mouseout', () => {
+        setActiveComponent(null);
+      })
+      .on('focus', (_, d) => {
+        setActiveComponent(d.data);
+      })
+      .on('blur', () => {
         setActiveComponent(null);
       });
 
@@ -167,23 +178,6 @@ const InteractiveUvmArchitectureDiagram = () => {
         .attr('marker-end', 'url(#arrow)');
     }
 
-    // Zoom functionality
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.5, 3])
-      .on('zoom', (event) => {
-        g.attr('transform', event.transform);
-      });
-
-    svg.call(zoom);
-
-    if (searchTerm !== '') {
-      const match = treeData.descendants().find(d => d.data.name.toLowerCase().includes(searchTerm.toLowerCase()));
-      if (match) {
-        const transform = d3.zoomIdentity.translate(width / 2 - match.y, height / 2 - match.x);
-        svg.transition().duration(750).call(zoom.transform, transform);
-      }
-    }
-
   }, [highlightedType, searchTerm, showDataFlow, showControlFlow]);
 
   return (
@@ -224,7 +218,13 @@ const InteractiveUvmArchitectureDiagram = () => {
           Export
         </Button>
       </div>
-      <svg ref={svgRef} className="w-full h-auto" />
+      <svg
+        ref={svgRef}
+        className="w-full h-auto touch-none"
+        tabIndex={0}
+        aria-label="Interactive UVM architecture diagram"
+        role="img"
+      />
       {activeComponent && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}
