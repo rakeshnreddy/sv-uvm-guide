@@ -7,8 +7,12 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useZoomPan } from '@/hooks/useZoomPan';
 import { useKeyboardNavigation } from '@/hooks/useKeyboardNavigation';
+import useAsync from '@/hooks/useAsync';
+import useLazyRender from '@/hooks/useLazyRender';
+import useAccessibility from '@/hooks/useAccessibility';
 import { exportSvgAsPng, exportSvgAsPdf } from '@/lib/exportUtils';
 import { useTheme } from 'next-themes';
+import { useLocale } from '@/hooks/useLocale';
 
 
 const componentColor = {
@@ -47,7 +51,6 @@ const InteractiveUvmArchitectureDiagram = () => {
   });
 
   const { locale } = useLocale();
-  const { theme } = useTheme();
 
   const { data: model, loading, error } = useAsync(() => import('./uvm-data-model'));
   const visible = useLazyRender(containerRef);
