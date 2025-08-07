@@ -48,7 +48,20 @@ const UvmPhasingInteractiveTimeline = () => {
           >
             <h3 className="text-lg font-bold text-primary">{currentPhase.name}</h3>
             <p className="text-sm text-muted-foreground mb-2">Type: {currentPhase.type} | {currentPhase.isTask ? 'Task' : 'Function'}</p>
-            <p>{currentPhase.description}</p>
+            <p className="mb-2">{currentPhase.description}</p>
+            {currentPhase.dependencies && (
+              <p className="text-sm mb-1">Depends on: {currentPhase.dependencies.join(', ')}</p>
+            )}
+            {currentPhase.activities && (
+              <ul className="list-disc list-inside text-sm mb-1">
+                {currentPhase.activities.map((act, i) => (
+                  <li key={i}>{act}</li>
+                ))}
+              </ul>
+            )}
+            {currentPhase.objection && (
+              <p className="text-sm text-muted-foreground">Objections: {currentPhase.objection}</p>
+            )}
           </motion.div>
         </AnimatePresence>
 

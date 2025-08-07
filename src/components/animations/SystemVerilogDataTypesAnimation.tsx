@@ -23,11 +23,26 @@ const SystemVerilogDataTypesAnimation = () => {
   const [fourStateValue, setFourStateValue] = useState<StateColorKey>('0');
   const [packedDim, setPackedDim] = useState(4);
   const [unpackedDim, setUnpackedDim] = useState(3);
+  const [inputA, setInputA] = useState<StateColorKey>('0');
+  const [inputB, setInputB] = useState<StateColorKey>('0');
+  const [dynArray, setDynArray] = useState<number[]>([]);
+  const [queue, setQueue] = useState<number[]>([]);
+  const [assocArray, setAssocArray] = useState<Record<string, number>>({});
+  const [assocKey, setAssocKey] = useState('');
+  const [assocVal, setAssocVal] = useState(0);
 
   const cycleState = (currentValue: StateColorKey, values: StateColorKey[]) => {
     const currentIndex = values.indexOf(currentValue);
     return values[(currentIndex + 1) % values.length];
   };
+
+  const computeAnd = (a: StateColorKey, b: StateColorKey): StateColorKey => {
+    if (a === '0' || b === '0') return '0';
+    if (a === '1' && b === '1') return '1';
+    return 'X';
+  };
+
+  const andOutput = computeAnd(inputA, inputB);
 
   return (
     <Card className="w-full">
@@ -79,6 +94,43 @@ const SystemVerilogDataTypesAnimation = () => {
 
         <hr className="my-8" />
 
+        {/* X/Z Propagation */}
+        <div className="mb-8">
+          <h3 className="text-lg font-bold mb-2">X/Z Propagation (AND Gate)</h3>
+          <div className="flex items-center gap-4 mb-2">
+            <motion.div
+              key={inputA}
+              className={`w-14 h-14 flex items-center justify-center text-white font-bold rounded-lg ${stateColor[inputA]}`}
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+            >
+              {inputA}
+            </motion.div>
+            <span className="font-mono">AND</span>
+            <motion.div
+              key={inputB}
+              className={`w-14 h-14 flex items-center justify-center text-white font-bold rounded-lg ${stateColor[inputB]}`}
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+            >
+              {inputB}
+            </motion.div>
+            <span className="font-mono">=</span>
+            <motion.div
+              key={andOutput}
+              className={`w-14 h-14 flex items-center justify-center text-white font-bold rounded-lg ${stateColor[andOutput]}`}
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+            >
+              {andOutput}
+            </motion.div>
+          </div>
+          <div className="flex gap-2">
+            <Button size="sm" onClick={() => setInputA(cycleState(inputA, FourStateValues))}>A</Button>
+            <Button size="sm" onClick={() => setInputB(cycleState(inputB, FourStateValues))}>B</Button>
+          </div>
+        </div>
+
         {/* Array Visualization */}
         <div>
           <h3 className="text-lg font-bold mb-4">Packed vs. Unpacked Arrays</h3>
@@ -127,6 +179,113 @@ const SystemVerilogDataTypesAnimation = () => {
                 ))}
               </div>
             </div>
+          </div>
+        </div>
+
+        <hr className="my-8" />
+
+        {/* Dynamic Array Operations */}
+        <div>
+          <h3 className="text-lg font-bold mb-2">Dynamic Array Operations</h3>
+          <div className="flex gap-2 mb-2">
+            <Button size="sm" onClick={() => setDynArray(prev => [...prev, Math.floor(Math.random() * 10)])}>Push</Button>
+            <Button size="sm" onClick={() => setDynArray(prev => prev.slice(0, -1))} disabled={dynArray.length === 0}>Pop</Button>
+          </div>
+          <div className="flex gap-1">
+            {dynArray.map((v, i) => (
+              <motion.div
+                key={i}
+                className="w-8 h-8 bg-purple-200 border border-purple-400 flex items-center justify-center text-xs"
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+              >
+                {v}
+              </motion.div>
+            ))}
+          </div>
+        </div>
+
+        <hr className="my-8" />
+
+        {/* Queue Operations */}
+        <div>
+          <h3 className="text-lg font-bold mb-2">Queue Operations</h3>
+          <div className="flex gap-2 mb-2">
+            <Button size="sm" onClick={() => setQueue(q => [Math.floor(Math.random() * 10), ...q])}>push_front</Button>
+            <Button size="sm" onClick={() => setQueue(q => [...q, Math.floor(Math.random() * 10)])}>push_back</Button>
+            <Button size="sm" onClick={() => setQueue(q => q.slice(1))} disabled={queue.length === 0}>pop_front</Button>
+            <Button size="sm" onClick={() => setQueue(q => q.slice(0, -1))} disabled={queue.length === 0}>pop_back</Button>
+          </div>
+          <div className="flex gap-1">
+            {queue.map((v, i) => (
+              <motion.div
+                key={i}
+                className="w-8 h-8 bg-yellow-200 border border-yellow-400 flex items-center justify-center text-xs"
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+              >
+                {v}
+              </motion.div>
+            ))}
+          </div>
+        </div>
+
+        <hr className="my-8" />
+
+        {/* Associative Array Operations */}
+        <div>
+          <h3 className="text-lg font-bold mb-2">Associative Array</h3>
+          <div className="flex gap-2 mb-2">
+            <Input
+              placeholder="key"
+              value={assocKey}
+              onChange={e => setAssocKey(e.target.value)}
+              className="w-24"
+            />
+            <Input
+              placeholder="value"
+              type="number"
+              value={assocVal}
+              onChange={e => setAssocVal(parseInt(e.target.value))}
+              className="w-24"
+            />
+            <Button
+              size="sm"
+              onClick={() => {
+                if (assocKey === '') return;
+                setAssocArray(prev => ({ ...prev, [assocKey]: assocVal }));
+                setAssocKey('');
+              }}
+            >
+              Set
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => {
+                setAssocArray(prev => {
+                  const copy = { ...prev };
+                  delete copy[assocKey];
+                  return copy;
+                });
+                setAssocKey('');
+              }}
+              disabled={!assocArray[assocKey]}
+            >
+              Delete
+            </Button>
+          </div>
+          <div className="flex flex-col gap-1">
+            {Object.entries(assocArray).map(([k, v]) => (
+              <motion.div
+                key={k}
+                className="flex items-center gap-2"
+                initial={{ x: -20, opacity: 0 }}
+                animate={{ x: 0, opacity: 1 }}
+              >
+                <span className="font-mono text-sm">{k}:</span>
+                <span className="w-8 h-8 bg-pink-200 border border-pink-400 flex items-center justify-center text-xs">{v}</span>
+              </motion.div>
+            ))}
           </div>
         </div>
       </CardContent>
