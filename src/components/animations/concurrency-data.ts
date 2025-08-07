@@ -39,4 +39,34 @@ export const concurrencyData: ConcurrencyExample[] = [
     ],
     processes: ['process_a', 'process_b'],
   },
+  {
+    name: 'Race Condition',
+    code: 'initial_value = 0;\nfork\n  proc_a();\n  proc_b();\njoin',
+    steps: [
+      'Two processes update a shared variable without synchronization.',
+      'The final value depends on the interleaving of operations.',
+      'Use a mutex or semaphore to prevent the race condition.',
+    ],
+    processes: ['proc_a', 'proc_b'],
+  },
+  {
+    name: 'Deadlock',
+    code: 'fork\n  proc_a(); // waits for res_b\n  proc_b(); // waits for res_a\njoin',
+    steps: [
+      'Process A holds resource A and waits for resource B.',
+      'Process B holds resource B and waits for resource A.',
+      'Neither process can proceed, resulting in deadlock.',
+    ],
+    processes: ['proc_a', 'proc_b'],
+  },
+  {
+    name: 'Livelock',
+    code: 'fork\n  proc_a();\n  proc_b();\njoin',
+    steps: [
+      'Processes respond to each other and keep changing state.',
+      'They remain active but make no real progress (livelock).',
+      'Adjust priorities or coordination to resolve the livelock.',
+    ],
+    processes: ['proc_a', 'proc_b'],
+  },
 ];
