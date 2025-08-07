@@ -28,10 +28,14 @@ const ConcurrencyVisualizer = () => {
   const [mutexOwner, setMutexOwner] = useState<string | null>(null);
   const [conflict, setConflict] = useState<string[]>([]);
   const [deadlock, setDeadlock] = useState(false);
+  const [eventWaiters, setEventWaiters] = useState<string[]>([]);
+  const [overlay, setOverlay] = useState<string | null>(null);
+  const [showHelp, setShowHelp] = useState(false);
 
   const semaphoreRef = useRef<HTMLDivElement>(null);
   const mailboxRef = useRef<HTMLDivElement>(null);
   const mutexRef = useRef<HTMLDivElement>(null);
+  const eventRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const visible = useLazyRender(containerRef);
   const { locale } = useLocale();
@@ -82,6 +86,8 @@ const ConcurrencyVisualizer = () => {
     setMailboxMessage(null);
     setMutexOwner(null);
     setConflict([]);
+    setEventWaiters([]);
+    setOverlay(null);
   }, [exampleIndex]);
 
   useEffect(() => {
@@ -109,6 +115,15 @@ const ConcurrencyVisualizer = () => {
   const showDeadlock = deadlock;
   const showLivelock =
     conflict.length > 0 && !deadlock && processState.some(p => p.status === "waiting");
+  const overlayMessage =
+    overlay ??
+    (showRace
+      ? "Race condition detected"
+      : showDeadlock
+      ? "Deadlock detected"
+      : showLivelock
+      ? "Livelock detected"
+      : null);
 
   const isInside = (point: { x: number; y: number }, rect: DOMRect) => {
     return (
@@ -117,6 +132,22 @@ const ConcurrencyVisualizer = () => {
       point.y >= rect.top &&
       point.y <= rect.bottom
     );
+  };
+
+  const triggerEvent = () => {
+    if (eventWaiters.length === 0) return;
+    setProcessState(prev =>
+      recalcScheduling(
+        prev.map<ProcState>(p =>
+          p.resource === "event"
+            ? { ...p, status: "running" as const, resource: undefined }
+            : p
+        )
+      )
+    );
+    setEventWaiters([]);
+    setOverlay("Event triggered: processes resumed");
+    setTimeout(() => setOverlay(null), 2000);
   };
 
   const handleDragEnd = (
@@ -128,6 +159,7 @@ const ConcurrencyVisualizer = () => {
     const semRect = semaphoreRef.current?.getBoundingClientRect();
     const mailRect = mailboxRef.current?.getBoundingClientRect();
     const mtxRect = mutexRef.current?.getBoundingClientRect();
+    const evtRect = eventRef.current?.getBoundingClientRect();
 
     if (semRect && isInside(point, semRect)) {
       if (!semaphoreOwner) {
@@ -195,6 +227,18 @@ const ConcurrencyVisualizer = () => {
       return;
     }
 
+    if (evtRect && isInside(point, evtRect)) {
+      setEventWaiters(prev => [...prev, id]);
+      setProcessState(prev =>
+        recalcScheduling(
+          prev.map<ProcState>(p =>
+            p.id === id ? { ...p, status: "waiting" as const, resource: "event" } : p
+          )
+        )
+      );
+      return;
+    }
+
     if (semaphoreOwner === id) {
       setSemaphoreOwner(null);
       setConflict([]);
@@ -218,6 +262,17 @@ const ConcurrencyVisualizer = () => {
         )
       );
     }
+
+    if (eventWaiters.includes(id)) {
+      setEventWaiters(prev => prev.filter(p => p !== id));
+      setProcessState(prev =>
+        recalcScheduling(
+          prev.map<ProcState>(p =>
+            p.id === id ? { ...p, resource: undefined, status: "running" as const } : p
+          )
+        )
+      );
+    }
   };
 
   return (
@@ -237,6 +292,20 @@ const ConcurrencyVisualizer = () => {
             ))}
           </SelectContent>
         </Select>
+
+        <div className="flex space-x-2 mb-4">
+          <Button variant="outline" size="sm" onClick={() => setShowHelp(h => !h)}>
+            {showHelp ? "Hide" : "Show"} Explanations
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={triggerEvent}
+            disabled={eventWaiters.length === 0}
+          >
+            Trigger Event
+          </Button>
+        </div>
 
         <div className="grid md:grid-cols-2 gap-8">
           <div>
@@ -266,12 +335,29 @@ const ConcurrencyVisualizer = () => {
                 </motion.div>
               ))}
               <div
+                ref={eventRef}
+                className="absolute top-2 left-1/2 -translate-x-1/2 w-32 h-16 border-2 border-primary flex flex-col items-center justify-center text-xs"
+              >
+                <span>Event</span>
+                {eventWaiters.length > 0 && <span>{eventWaiters.length} waiting</span>}
+                {showHelp && (
+                  <span className="absolute -top-3 left-1/2 -translate-x-1/2 text-[10px]">
+                    Drop to wait for event
+                  </span>
+                )}
+              </div>
+              <div
                 ref={semaphoreRef}
                 className="absolute top-2 right-2 w-32 h-16 border-2 border-primary flex flex-col items-center justify-center text-xs"
               >
                 <span>Semaphore</span>
                 {semaphoreOwner && (
                   <span>locked by {semaphoreOwner}</span>
+                )}
+                {showHelp && (
+                  <span className="absolute -top-3 right-0 text-[10px]">
+                    Controls access to shared resource
+                  </span>
                 )}
               </div>
               <div
@@ -280,6 +366,11 @@ const ConcurrencyVisualizer = () => {
               >
                 <span>Mailbox</span>
                 {mailboxMessage && <span>msg from {mailboxMessage}</span>}
+                {showHelp && (
+                  <span className="absolute -top-3 right-0 text-[10px]">
+                    Send/receive messages
+                  </span>
+                )}
               </div>
               <div
                 ref={mutexRef}
@@ -287,18 +378,21 @@ const ConcurrencyVisualizer = () => {
               >
                 <span>Mutex</span>
                 {mutexOwner && <span>locked by {mutexOwner}</span>}
+                {showHelp && (
+                  <span className="absolute -top-3 left-0 text-[10px]">
+                    Exclusive lock
+                  </span>
+                )}
               </div>
               <AnimatePresence>
-                {(showRace || showDeadlock || showLivelock) && (
+                {overlayMessage && (
                   <motion.div
                     className="absolute inset-0 bg-background/80 flex items-center justify-center text-xs font-medium pointer-events-none"
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                   >
-                    {showRace && 'Race condition detected'}
-                    {showDeadlock && 'Deadlock detected'}
-                    {showLivelock && 'Livelock detected'}
+                    {overlayMessage}
                   </motion.div>
                 )}
               </AnimatePresence>
