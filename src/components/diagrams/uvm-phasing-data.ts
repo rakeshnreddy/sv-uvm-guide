@@ -6,6 +6,7 @@ export interface UvmPhase {
   dependencies?: string[];
   objection?: string;
   activities?: string[];
+  commonIssues?: string[];
   timing: { start: number; end: number };
   objectionTriggers?: { raise?: number; drop?: number };
 }
@@ -18,6 +19,7 @@ export let uvmPhases: UvmPhase[] = [
     description: 'Constructs component hierarchy. New components are created here.',
     isTask: false,
     activities: ['create components', 'configure defaults'],
+    commonIssues: ['misconfigured component hierarchy'],
     timing: { start: 0, end: 10 },
   },
   {
@@ -27,6 +29,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: false,
     dependencies: ['build'],
     activities: ['connect ports', 'set up analysis connections'],
+    commonIssues: ['unconnected ports'],
     timing: { start: 10, end: 20 },
   },
   {
@@ -36,6 +39,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: false,
     dependencies: ['connect'],
     activities: ['final configuration review'],
+    commonIssues: ['late configuration changes'],
     timing: { start: 20, end: 30 },
   },
 
@@ -47,6 +51,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: false,
     dependencies: ['end_of_elaboration'],
     activities: ['display banners', 'initialize DUT'],
+    commonIssues: ['missing initialization'],
     timing: { start: 30, end: 40 },
   },
   {
@@ -56,6 +61,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: true,
     dependencies: ['start_of_simulation'],
     activities: ['wait for power-good'],
+    commonIssues: ['power sequence errors'],
     timing: { start: 40, end: 50 },
   },
   {
@@ -65,6 +71,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: true,
     dependencies: ['pre_reset'],
     activities: ['toggle reset'],
+    commonIssues: ['reset not asserted properly'],
     timing: { start: 50, end: 60 },
   },
   {
@@ -74,6 +81,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: true,
     dependencies: ['reset'],
     activities: ['configure registers'],
+    commonIssues: ['register misconfiguration'],
     timing: { start: 60, end: 70 },
   },
   {
@@ -83,6 +91,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: true,
     dependencies: ['post_reset'],
     activities: ['load memories'],
+    commonIssues: ['memory load failures'],
     timing: { start: 70, end: 80 },
   },
   {
@@ -92,6 +101,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: true,
     dependencies: ['pre_configure'],
     activities: ['apply configs'],
+    commonIssues: ['invalid configuration data'],
     timing: { start: 80, end: 90 },
   },
   {
@@ -101,6 +111,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: true,
     dependencies: ['configure'],
     activities: ['wait for config settle'],
+    commonIssues: ['config not settling'],
     timing: { start: 90, end: 100 },
   },
   {
@@ -110,6 +121,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: true,
     dependencies: ['post_configure'],
     activities: ['final checks'],
+    commonIssues: ['missing final checks'],
     timing: { start: 100, end: 110 },
   },
   {
@@ -120,6 +132,7 @@ export let uvmPhases: UvmPhase[] = [
     dependencies: ['pre_main'],
     objection: 'Raise and drop objections to control test completion.',
     activities: ['generate sequences', 'collect coverage'],
+    commonIssues: ['coverage holes'],
     timing: { start: 110, end: 160 },
     objectionTriggers: { raise: 110, drop: 160 },
   },
@@ -130,6 +143,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: true,
     dependencies: ['main'],
     activities: ['drain DUT'],
+    commonIssues: ['hanging transactions'],
     timing: { start: 160, end: 170 },
   },
   {
@@ -139,6 +153,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: true,
     dependencies: ['post_main'],
     activities: ['prepare shutdown'],
+    commonIssues: ['unfinished cleanup'],
     timing: { start: 170, end: 180 },
   },
   {
@@ -149,6 +164,7 @@ export let uvmPhases: UvmPhase[] = [
     dependencies: ['pre_shutdown'],
     objection: 'Drop objections once shutdown tasks finish.',
     activities: ['flush FIFOs', 'read status registers'],
+    commonIssues: ['lingering objections'],
     timing: { start: 180, end: 200 },
     objectionTriggers: { raise: 180, drop: 200 },
   },
@@ -159,6 +175,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: true,
     dependencies: ['shutdown'],
     activities: ['wait for settling'],
+    commonIssues: ['timeout waiting for settle'],
     timing: { start: 200, end: 210 },
   },
 
@@ -170,6 +187,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: false,
     dependencies: ['post_shutdown'],
     activities: ['gather data'],
+    commonIssues: ['lost data'],
     timing: { start: 210, end: 220 },
   },
   {
@@ -179,6 +197,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: false,
     dependencies: ['extract'],
     activities: ['check errors'],
+    commonIssues: ['missed errors'],
     timing: { start: 220, end: 230 },
   },
   {
@@ -188,6 +207,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: false,
     dependencies: ['check'],
     activities: ['summarize results'],
+    commonIssues: ['incomplete reports'],
     timing: { start: 230, end: 240 },
   },
   {
@@ -197,6 +217,7 @@ export let uvmPhases: UvmPhase[] = [
     isTask: false,
     dependencies: ['report'],
     activities: ['cleanup'],
+    commonIssues: ['residual state'],
     timing: { start: 240, end: 250 },
   },
 ];
