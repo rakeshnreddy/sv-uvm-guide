@@ -14,6 +14,8 @@ const InterfaceSignalFlow = () => {
   const [signalValues, setSignalValues] = useState<number[]>([]);
   const [phase, setPhase] = useState<'sample' | 'drive'>('sample');
   const [arrayIndex, setArrayIndex] = useState(0);
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [speed, setSpeed] = useState(1000);
 
   const handleNext = () => {
     setCurrentStepIndex(prev => (prev < interfaceData[exampleIndex].steps.length - 1 ? prev + 1 : prev));
@@ -28,6 +30,7 @@ const InterfaceSignalFlow = () => {
     setCurrentStepIndex(0);
     setPhase('sample');
     setArrayIndex(0);
+    setIsPlaying(true);
   };
 
   const currentExample = interfaceData[exampleIndex];
@@ -42,6 +45,7 @@ const InterfaceSignalFlow = () => {
   }, [currentExample, dataSignals]);
 
   useEffect(() => {
+    if (!isPlaying) return;
     const id = setInterval(() => {
       setClock(prev => 1 - prev);
       setSignalValues(prev => prev.map(v => (v ? 0 : 1)));
@@ -49,9 +53,9 @@ const InterfaceSignalFlow = () => {
       if (currentExample.arraySize) {
         setArrayIndex(prev => (prev + 1) % currentExample.arraySize);
       }
-    }, 1000);
+    }, speed);
     return () => clearInterval(id);
-  }, [currentExample]);
+  }, [currentExample, isPlaying, speed]);
 
   return (
     <Card className="w-full">
@@ -70,7 +74,48 @@ const InterfaceSignalFlow = () => {
           </SelectContent>
         </Select>
 
-        <div className="grid md:grid-cols-2 gap-8">
+        <div className="flex flex-wrap items-center gap-2 mb-4">
+          <Button variant="outline" onClick={() => setIsPlaying(p => !p)}>
+            {isPlaying ? 'Pause' : 'Play'}
+          </Button>
+          <Select onValueChange={v => setSpeed(parseInt(v))} defaultValue={speed.toString()}>
+            <SelectTrigger className="w-24">
+              <SelectValue placeholder="Speed" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="2000">Slow</SelectItem>
+              <SelectItem value="1000">Normal</SelectItem>
+              <SelectItem value="500">Fast</SelectItem>
+            </SelectContent>
+          </Select>
+          {currentExample.arraySize && (
+            <div className="flex items-center gap-1">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setArrayIndex(prev =>
+                    (prev - 1 + currentExample.arraySize!) % currentExample.arraySize!
+                  )
+                }
+              >
+                -
+              </Button>
+              <span className="text-sm font-mono">{arrayIndex}</span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  setArrayIndex(prev => (prev + 1) % currentExample.arraySize!)
+                }
+              >
+                +
+              </Button>
+            </div>
+          )}
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           <div>
             <CodeBlock code={currentExample.code} language="systemverilog" />
           </div>
@@ -86,8 +131,39 @@ const InterfaceSignalFlow = () => {
               {currentExample.arraySize && (
                 <div className="mb-2 font-mono">Index: {arrayIndex}</div>
               )}
+              <div className="relative w-full h-2 bg-background rounded mb-2 overflow-hidden">
+                <motion.div
+                  key={clock}
+                  initial={{ width: 0 }}
+                  animate={{ width: '100%' }}
+                  transition={{ duration: speed / 1000, ease: 'linear' }}
+                  className="absolute top-0 left-0 h-full bg-blue-200"
+                />
+                {dataSignals.map(
+                  signal =>
+                    signal.timing?.sample !== undefined && (
+                      <div
+                        key={`${signal.name}-sample-marker`}
+                        title={`${signal.name} sample`}
+                        style={{ left: `${signal.timing.sample * 100}%` }}
+                        className="absolute top-0 bottom-0 w-0.5 bg-green-500"
+                      />
+                    )
+                )}
+                {dataSignals.map(
+                  signal =>
+                    signal.timing?.drive !== undefined && (
+                      <div
+                        key={`${signal.name}-drive-marker`}
+                        title={`${signal.name} drive`}
+                        style={{ left: `${signal.timing.drive * 100}%` }}
+                        className="absolute top-0 bottom-0 w-0.5 bg-blue-500"
+                      />
+                    )
+                )}
+              </div>
               <div className="flex items-center justify-between mb-2">
-                <span className="font-mono text-lg">clk</span>
+                <span className="font-mono text-lg" title="clock">clk</span>
                 <motion.div
                   animate={{ backgroundColor: clock ? '#22c55e' : '#ef4444' }}
                   className="w-16 h-2 rounded"
@@ -98,6 +174,12 @@ const InterfaceSignalFlow = () => {
                   !!signal.timing &&
                   ((phase === 'sample' && signal.timing.sample !== undefined) ||
                     (phase === 'drive' && signal.timing.drive !== undefined));
+                const tooltip = `${signal.direction} signal` +
+                  (signal.restricted ? ' - modport restricted' : '') +
+                  (signal.timing?.sample !== undefined ? ` - sample @${signal.timing.sample}` : '') +
+                  (signal.timing?.drive !== undefined ? ` - drive @${signal.timing.drive}` : '') +
+                  (signal.glitch ? ' - glitch' : '') +
+                  (signal.delay ? ' - delay' : '');
                 return (
                   <motion.div
                     key={`${signal.name}-${clock}-${arrayIndex}`}
@@ -105,6 +187,7 @@ const InterfaceSignalFlow = () => {
                     animate={{ opacity: 1, x: 0 }}
                     transition={{ duration: 0.5 }}
                     className="flex items-center justify-between"
+                    title={tooltip}
                   >
                     <span className="font-mono text-lg">
                       {signal.name}
