@@ -62,7 +62,7 @@ const UvmComponentRelationshipVisualizer = () => {
     while (queue.length) {
       const node = queue.shift()!;
       if (node === end) break;
-      for (const n of adj.get(node) || []) {
+      for (const n of Array.from(adj.get(node) || [])) {
         if (!visited.has(n)) {
           visited.add(n);
           parent.set(n, node);

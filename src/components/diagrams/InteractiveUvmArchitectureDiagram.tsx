@@ -76,7 +76,7 @@ const InteractiveUvmArchitectureDiagram = () => {
       setSuggestions([]);
       setSelectedComponent(null);
     } else {
-      const matches = uvmComponents.filter(c => c.name.toLowerCase().includes(value.toLowerCase()));
+      const matches = compositionalComponents.filter(c => c.name.toLowerCase().includes(value.toLowerCase()));
       setSuggestions(matches);
       setSelectedComponent(null);
     }
@@ -142,8 +142,8 @@ const InteractiveUvmArchitectureDiagram = () => {
 
     const root = d3.stratify<UvmComponent>()
       .id(d => d.id)
-      .parentId(d => uvmComponents.find(c => c.id === d.id)?.parent)
-      (uvmComponents);
+      .parentId(d => d.parent)
+      (compositionalComponents);
 
     const treeLayout = d3.tree<UvmComponent>().size([height - 100, width - 250]);
     const treeData = treeLayout(root);
@@ -240,7 +240,7 @@ const InteractiveUvmArchitectureDiagram = () => {
         .attr('d', 'M0,-5L10,0L0,5')
         .attr('fill', 'hsl(var(--muted-foreground))');
 
-      const flows = uvmConnections.filter(c => c.type !== 'composition');
+      const flows = uvmConnections.filter(c => c.type !== 'composition' && nodePositions.has(c.source) && nodePositions.has(c.target));
 
       g.selectAll('.flow')
         .data(flows)
