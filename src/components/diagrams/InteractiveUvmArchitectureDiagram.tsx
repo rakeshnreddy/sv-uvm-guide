@@ -149,7 +149,7 @@ const InteractiveUvmArchitectureDiagram = () => {
         .attr('d', 'M0,-5L10,0L0,5')
         .attr('fill', 'hsl(var(--muted-foreground))');
 
-      const flows = uvmConnections.filter(c => c.type !== 'parent_child');
+      const flows = uvmConnections.filter(c => c.type !== 'composition');
       g.selectAll('.flow')
         .data(flows)
         .enter()
