@@ -34,8 +34,8 @@ export const useKeyboardNavigation = (
       next?.focus();
     };
 
-    container.addEventListener("keydown", handleKey);
-    return () => container.removeEventListener("keydown", handleKey);
+    container.addEventListener("keydown", handleKey as EventListener);
+    return () => container.removeEventListener("keydown", handleKey as EventListener);
   }, [containerRef]);
 };
 

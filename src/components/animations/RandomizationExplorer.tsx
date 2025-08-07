@@ -27,6 +27,33 @@ const RandomizationExplorer = () => {
 
   const currentExample = randomizationData[exampleIndex];
 
+  const randomize = useCallback(
+    (w = weight) => {
+      const iterations: string[] = [];
+      let newValues: { [key: string]: number } = {};
+      for (let attempt = 1; attempt <= 20; attempt++) {
+        const attemptValues: { [key: string]: number } = {};
+        currentExample.variables.forEach(v => {
+          attemptValues[v] = Math.floor(Math.random() * 256);
+        });
+        const result = checkConstraints(exampleIndex, attemptValues, w);
+        if (result.ok) {
+          newValues = attemptValues;
+          iterations.push(`Iteration ${attempt}: success`);
+          if (attemptValues.data !== undefined) {
+            updateDistribution(attemptValues.data);
+          }
+          break;
+        } else {
+          iterations.push(`Iteration ${attempt}: ${result.reason}`);
+        }
+      }
+      setRandomValues(newValues);
+      setIterationLog(iterations);
+    },
+    [exampleIndex, currentExample, weight]
+  );
+
   useEffect(() => {
     setDistribution(Array(16).fill(0));
     setIterationLog([]);
@@ -76,33 +103,6 @@ const RandomizationExplorer = () => {
         return { ok: true };
     }
   };
-
-  const randomize = useCallback(
-    (w = weight) => {
-      const iterations: string[] = [];
-      let newValues: { [key: string]: number } = {};
-      for (let attempt = 1; attempt <= 20; attempt++) {
-        const attemptValues: { [key: string]: number } = {};
-        currentExample.variables.forEach(v => {
-          attemptValues[v] = Math.floor(Math.random() * 256);
-        });
-        const result = checkConstraints(exampleIndex, attemptValues, w);
-        if (result.ok) {
-          newValues = attemptValues;
-          iterations.push(`Iteration ${attempt}: success`);
-          if (attemptValues.data !== undefined) {
-            updateDistribution(attemptValues.data);
-          }
-          break;
-        } else {
-          iterations.push(`Iteration ${attempt}: ${result.reason}`);
-        }
-      }
-      setRandomValues(newValues);
-      setIterationLog(iterations);
-    },
-    [exampleIndex, currentExample, weight]
-  );
 
   const distributionChartData = useMemo(
     () =>
@@ -170,7 +170,7 @@ const RandomizationExplorer = () => {
                   </div>
                 ))}
               </div>
-              <Button onClick={randomize} className="mt-4">Randomize</Button>
+              <Button onClick={() => randomize()} className="mt-4">Randomize</Button>
               {exampleIndex === 1 && (
                 <div className="w-full mt-4">
                   <Label htmlFor="weight" className="mb-2 block">

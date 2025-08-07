@@ -38,7 +38,7 @@ const AssertionBuilder = () => {
   const runSimulation = () => {
     const results = property.map((op, idx) => ({
       operator: op,
-      status: op.type === 'temporal' && idx === property.length - 1 ? 'fail' : 'pass',
+      status: (op.type === 'temporal' && idx === property.length - 1 ? 'fail' : 'pass') as 'pass' | 'fail',
     }));
     setSimulation(results);
     setCurrentStep(0);
