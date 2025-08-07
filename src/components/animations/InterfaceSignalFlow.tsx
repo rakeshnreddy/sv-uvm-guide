@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { interfaceData } from './interface-data';
 import { Button } from '@/components/ui/Button';
@@ -10,6 +10,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 const InterfaceSignalFlow = () => {
   const [exampleIndex, setExampleIndex] = useState(0);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [clock, setClock] = useState(0);
+  const [signalValues, setSignalValues] = useState<number[]>([]);
 
   const handleNext = () => {
     setCurrentStepIndex(prev => (prev < interfaceData[exampleIndex].steps.length - 1 ? prev + 1 : prev));
@@ -26,6 +28,20 @@ const InterfaceSignalFlow = () => {
 
   const currentExample = interfaceData[exampleIndex];
   const currentStep = currentExample.steps[currentStepIndex];
+  const dataSignals = currentExample.signals.filter(s => s.name !== 'clk');
+
+  useEffect(() => {
+    setSignalValues(dataSignals.map(() => 0));
+    setClock(0);
+  }, [currentExample, dataSignals]);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setClock(prev => 1 - prev);
+      setSignalValues(prev => prev.map(v => (v ? 0 : 1)));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [currentExample]);
 
   return (
     <Card className="w-full">
@@ -50,22 +66,59 @@ const InterfaceSignalFlow = () => {
           </div>
           <div className="flex flex-col justify-center items-center">
             <div className="w-full h-48 bg-muted rounded-lg p-4 flex flex-col justify-around">
-              {currentExample.signals.map((signal, index) => (
+              <div className="flex items-center justify-between mb-2">
+                <span className="font-mono text-lg">clk</span>
                 <motion.div
-                  key={signal.name}
-                  initial={{ opacity: 0, x: -50 }}
+                  animate={{ backgroundColor: clock ? '#22c55e' : '#ef4444' }}
+                  className="w-16 h-2 rounded"
+                />
+              </div>
+              {dataSignals.map((signal, index) => (
+                <motion.div
+                  key={signal.name + clock}
+                  initial={{ opacity: 0, x: signal.direction === 'out' ? 50 : -50 }}
                   animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: index * 0.2 }}
+                  transition={{ duration: 0.5 }}
                   className="flex items-center justify-between"
                 >
                   <span className="font-mono text-lg">{signal.name}</span>
                   <div className="flex items-center">
-                    <span className="text-sm mr-2">{signal.direction}</span>
-                    <div className={`w-16 h-2 ${signal.direction === 'in' ? 'bg-green-500' : signal.direction === 'out' ? 'bg-blue-500' : 'bg-yellow-500'}`} />
+                    <motion.span
+                      key={clock}
+                      initial={{ opacity: 0, y: -5 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.3 }}
+                      className="text-sm mr-2"
+                    >
+                      {signal.direction === 'in'
+                        ? 'sample'
+                        : signal.direction === 'out'
+                        ? 'drive'
+                        : 'bidirectional'}
+                    </motion.span>
+                    <motion.div
+                      key={signalValues[index] + clock}
+                      initial={{ width: 0 }}
+                      animate={{ width: 64 }}
+                      transition={{ duration: 0.5 }}
+                      className={`h-2 rounded ${signal.direction === 'in' ? 'bg-green-500' : signal.direction === 'out' ? 'bg-blue-500' : 'bg-yellow-500'}`}
+                    />
                   </div>
                 </motion.div>
               ))}
             </div>
+            {currentExample.name === 'Virtual Interface Binding' && (
+              <div className="flex items-center justify-center mt-4">
+                <div className="p-2 border rounded mr-2">Driver</div>
+                <motion.div
+                  initial={{ width: 0 }}
+                  animate={{ width: '4rem' }}
+                  transition={{ duration: 1, repeat: Infinity, repeatType: 'reverse' }}
+                  className="h-0.5 bg-blue-500"
+                />
+                <div className="p-2 border rounded ml-2">Interface</div>
+              </div>
+            )}
           </div>
         </div>
 

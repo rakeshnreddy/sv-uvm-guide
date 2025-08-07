@@ -27,11 +27,69 @@ type ComponentColorKey = keyof typeof componentColor;
 
 const InteractiveUvmArchitectureDiagram = () => {
   const svgRef = useRef<SVGSVGElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [activeComponent, setActiveComponent] = useState<UvmComponent | null>(null);
   const [highlightedType, setHighlightedType] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [suggestions, setSuggestions] = useState<UvmComponent[]>([]);
+  const [selectedComponent, setSelectedComponent] = useState<UvmComponent | null>(null);
   const [showDataFlow, setShowDataFlow] = useState(true);
   const [showControlFlow, setShowControlFlow] = useState(true);
+  const [layers, setLayers] = useState({
+    test: true,
+    env: true,
+    agent: true,
+    driver: true,
+    monitor: true,
+  });
+
+  const toggleLayer = (layer: keyof typeof layers) => {
+    setLayers(prev => ({ ...prev, [layer]: !prev[layer] }));
+  };
+
+  const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setSearchTerm(value);
+    if (value === '') {
+      setSuggestions([]);
+      setSelectedComponent(null);
+    } else {
+      const matches = uvmComponents.filter(c => c.name.toLowerCase().includes(value.toLowerCase()));
+      setSuggestions(matches);
+      setSelectedComponent(null);
+    }
+  };
+
+  const handleSelect = (component: UvmComponent) => {
+    setSearchTerm(component.name);
+    setSuggestions([]);
+    setSelectedComponent(component);
+  };
+
+  const resetZoom = () => {
+    if (svgRef.current && zoomRef.current) {
+      d3.select(svgRef.current)
+        .transition()
+        .duration(750)
+        .call(zoomRef.current.transform, d3.zoomIdentity);
+    }
+  };
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === '/' && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+      if (e.key === '0' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        resetZoom();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleExport = useCallback(() => {
     if (svgRef.current) {
@@ -81,8 +139,13 @@ const InteractiveUvmArchitectureDiagram = () => {
 
     // Control Flow Links
     if (showControlFlow) {
+      const links = treeData.links().filter(l => {
+        const s = l.source.data.type.split('_')[0] as keyof typeof layers;
+        const t = l.target.data.type.split('_')[0] as keyof typeof layers;
+        return layers[s] && layers[t];
+      });
       g.selectAll('.link')
-        .data(treeData.links())
+        .data(links)
         .enter()
         .append('path')
         .attr('class', 'link')
@@ -108,6 +171,7 @@ const InteractiveUvmArchitectureDiagram = () => {
         nodePositions.set(d.data.id, { x: d.x, y: d.y });
         return `translate(${d.y},${d.x})`;
       })
+      .style('display', d => layers[d.data.type.split('_')[0] as keyof typeof layers] ? null : 'none')
       .on('mouseover', (event, d) => {
         setActiveComponent(d.data);
       })
@@ -132,11 +196,12 @@ const InteractiveUvmArchitectureDiagram = () => {
         return componentColor[type] || componentColor.default;
       })
       .attr('stroke', 'hsl(var(--primary))')
-      .attr('stroke-width', 1)
+      .attr('stroke-width', d => selectedComponent && d.data.id === selectedComponent.id ? 3 : 1)
       .style('opacity', d => {
         const typeMatch = highlightedType === null || d.data.type.startsWith(highlightedType);
         const searchMatch = searchTerm === '' || d.data.name.toLowerCase().includes(searchTerm.toLowerCase());
-        return typeMatch && searchMatch ? 1 : 0.2;
+        const selectedMatch = !selectedComponent || d.data.id === selectedComponent.id;
+        return typeMatch && searchMatch && selectedMatch ? 1 : 0.2;
       });
 
     nodes.append('text')
@@ -160,7 +225,8 @@ const InteractiveUvmArchitectureDiagram = () => {
         .attr('d', 'M0,-5L10,0L0,5')
         .attr('fill', 'hsl(var(--muted-foreground))');
 
-      const flows = uvmConnections.filter(c => c.type !== 'parent_child');
+      const flows = uvmConnections.filter(c => c.type !== 'composition');
+
       g.selectAll('.flow')
         .data(flows)
         .enter()
@@ -178,18 +244,36 @@ const InteractiveUvmArchitectureDiagram = () => {
         .attr('marker-end', 'url(#arrow)');
     }
 
+
   }, [highlightedType, searchTerm, showDataFlow, showControlFlow]);
+
 
   return (
     <div className="relative">
       <div className="absolute top-2 left-2 flex flex-wrap gap-2 p-2 bg-background/80 backdrop-blur-sm rounded-lg">
-        <Input
-          type="search"
-          placeholder="Search components..."
-          className="w-48"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-        />
+        <div className="relative">
+          <Input
+            ref={searchInputRef}
+            type="search"
+            placeholder="Search components... (press /)"
+            className="w-48"
+            value={searchTerm}
+            onChange={handleSearchChange}
+          />
+          {suggestions.length > 0 && (
+            <ul className="absolute top-full left-0 mt-1 w-48 bg-background border rounded-md shadow z-10 max-h-40 overflow-auto">
+              {suggestions.map(s => (
+                <li
+                  key={s.id}
+                  className="p-1 cursor-pointer hover:bg-muted"
+                  onClick={() => handleSelect(s)}
+                >
+                  {s.name}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
         {componentTypes.map(type => (
           <Button
             key={type}
@@ -198,6 +282,16 @@ const InteractiveUvmArchitectureDiagram = () => {
             onClick={() => setHighlightedType(highlightedType === type ? null : type)}
           >
             {type}
+          </Button>
+        ))}
+        {(['test','env','agent','driver','monitor'] as const).map(layer => (
+          <Button
+            key={layer}
+            variant={layers[layer] ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => toggleLayer(layer)}
+          >
+            {layer}
           </Button>
         ))}
         <Button
