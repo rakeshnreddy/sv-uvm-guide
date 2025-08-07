@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { useKnowledgeContext } from '@/contexts/KnowledgeContext';
 
 interface ConceptLinkProps {
   conceptId: string;
@@ -8,10 +9,15 @@ interface ConceptLinkProps {
 }
 
 const ConceptLink = ({ conceptId, children }: ConceptLinkProps) => {
+  const { setActiveConcept, getNodeById } = useKnowledgeContext();
+
   const handleClick = () => {
-    // In the future, this could open a modal or a side panel
-    // with a "just-in-time" explanation of the concept.
-    console.log(`Clicked concept: ${conceptId}`);
+    const conceptNode = getNodeById(conceptId);
+    if (conceptNode) {
+      setActiveConcept(conceptNode);
+    } else {
+      console.warn(`ConceptLink: Node with id "${conceptId}" not found.`);
+    }
   };
 
   return (
