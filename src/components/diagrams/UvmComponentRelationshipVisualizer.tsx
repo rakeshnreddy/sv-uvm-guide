@@ -12,6 +12,7 @@ const UvmComponentRelationshipVisualizer = () => {
   const [selectedNodes, setSelectedNodes] = useState<string[]>([]);
   const [path, setPath] = useState<string[]>([]);
 
+
   const filteredLinks = uvmConnections.filter(c => activeFilters.includes(c.type));
   const degreeMap = new Map<string, number>();
   filteredLinks.forEach(l => {
@@ -54,6 +55,7 @@ const UvmComponentRelationshipVisualizer = () => {
     return result;
   };
 
+
   useEffect(() => {
     if (!svgRef.current) return;
 
@@ -94,6 +96,7 @@ const UvmComponentRelationshipVisualizer = () => {
         return inPath ? 'message-path' : null;
       });
 
+
     const node = svg.append('g')
       .attr('stroke', '#fff')
       .attr('stroke-width', 1.5)
@@ -114,6 +117,7 @@ const UvmComponentRelationshipVisualizer = () => {
           return [d.id];
         });
       })
+
       .call(drag(simulation) as any);
 
     const labels = svg.append("g")
@@ -170,6 +174,7 @@ const UvmComponentRelationshipVisualizer = () => {
 
   }, [filteredLinks, selectedNodes, path]);
 
+
   const handleFilterChange = (type: string) => {
     setActiveFilters(prev =>
       prev.includes(type) ? prev.filter(t => t !== type) : [...prev, type]
@@ -195,6 +200,7 @@ const UvmComponentRelationshipVisualizer = () => {
         Nodes: {uvmComponents.length} | Relationships: {filteredLinks.length}
         {selectedNodes.length === 1 && ` | ${selectedNodes[0]} connections: ${degreeMap.get(selectedNodes[0]) || 0}`}
         {selectedNodes.length === 2 && path.length > 0 && ` | Path length: ${path.length - 1}`}
+
       </p>
       <svg ref={svgRef} className="w-full h-auto" />
       <style>{`

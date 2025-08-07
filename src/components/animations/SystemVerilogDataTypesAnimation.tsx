@@ -31,6 +31,7 @@ const SystemVerilogDataTypesAnimation = () => {
   const [assocKey, setAssocKey] = useState('');
   const [assocVal, setAssocVal] = useState(0);
 
+
   const cycleState = (currentValue: StateColorKey, values: StateColorKey[]) => {
     const currentIndex = values.indexOf(currentValue);
     return values[(currentIndex + 1) % values.length];
@@ -288,6 +289,7 @@ const SystemVerilogDataTypesAnimation = () => {
             ))}
           </div>
         </div>
+
       </CardContent>
     </Card>
   );
