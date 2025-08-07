@@ -4,8 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { proceduralBlocksData } from './procedural-blocks-data';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { CodeBlock } from '@/components/ui/CodeBlock';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
+import { InteractiveCode } from '@/components/ui/InteractiveCode';
 
 // Waveform data for blocking vs non-blocking assignments
 const waveformData = {
@@ -154,6 +154,49 @@ const WaitAnimation: React.FC<{ step: number }> = ({ step }) => {
   );
 };
 
+const EventControlAnimation: React.FC<{ step: number }> = ({ step }) => {
+  const clkHigh = step >= 1;
+  const assigned = step >= 2;
+  return (
+    <div className="flex items-center space-x-4 mt-4">
+      <div className="flex items-center space-x-2">
+        <span>clk</span>
+        <motion.div
+          className="w-4 h-4 rounded-full"
+          animate={{ backgroundColor: clkHigh ? '#22c55e' : '#6b7280' }}
+          transition={{ duration: 0.2 }}
+        />
+      </div>
+      <AnimatePresence>
+        {clkHigh && (
+          <motion.div
+            key="edge"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            className="px-2 py-1 bg-secondary text-secondary-foreground rounded"
+          >
+            posedge
+          </motion.div>
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {assigned && (
+          <motion.div
+            key="assigned"
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 10 }}
+            className="px-2 py-1 bg-primary text-primary-foreground rounded"
+          >
+            a = 1
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
+
 const DelayAnimation: React.FC<{ step: number }> = ({ step }) => {
   const progress = step === 0 ? 0 : step === 1 ? 50 : 100;
   return (
@@ -186,6 +229,33 @@ const LoopAnimation: React.FC<{ step: number }> = ({ step }) => {
   );
 };
 
+const TaskFunctionAnimation: React.FC<{ step: number }> = ({ step }) => {
+  const functionDone = step >= 1;
+  const taskProgress = step < 2 ? 0 : step === 2 ? 50 : 100;
+  return (
+    <div className="space-y-4 mt-4">
+      <div className="flex items-center space-x-2">
+        <span>f()</span>
+        <motion.div
+          className="w-4 h-4 rounded-full"
+          animate={{ backgroundColor: functionDone ? '#22c55e' : '#6b7280' }}
+          transition={{ duration: 0.2 }}
+        />
+      </div>
+      <div>
+        <div className="text-xs mb-1">t()</div>
+        <div className="relative w-full h-4 bg-muted rounded">
+          <motion.div
+            className="h-full bg-secondary"
+            animate={{ width: `${taskProgress}%` }}
+            transition={{ duration: 0.3 }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const ProceduralBlocksSimulator = () => {
   const [exampleIndex, setExampleIndex] = useState(0);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
@@ -211,6 +281,10 @@ const ProceduralBlocksSimulator = () => {
     setCurrentStepIndex(prev => (prev < proceduralBlocksData[exampleIndex].steps.length - 1 ? prev + 1 : prev));
   };
 
+  const handleStepBack = () => {
+    setCurrentStepIndex(prev => (prev > 0 ? prev - 1 : 0));
+  };
+
   const handleRewind = () => {
     setCurrentStepIndex(0);
     setIsPlaying(false);
@@ -231,12 +305,16 @@ const ProceduralBlocksSimulator = () => {
         return <BlockingNonBlockingTimeline step={currentStepIndex} />;
       case 'Fork/Join':
         return <ForkJoinAnimation step={currentStepIndex} />;
+      case 'Event Control':
+        return <EventControlAnimation step={currentStepIndex} />;
       case 'Wait Statement':
         return <WaitAnimation step={currentStepIndex} />;
       case '#Delay':
         return <DelayAnimation step={currentStepIndex} />;
       case 'Loop':
         return <LoopAnimation step={currentStepIndex} />;
+      case 'Task vs Function':
+        return <TaskFunctionAnimation step={currentStepIndex} />;
       default:
         return null;
     }
@@ -249,7 +327,7 @@ const ProceduralBlocksSimulator = () => {
       </CardHeader>
       <CardContent>
         <Select onValueChange={handleExampleChange} defaultValue={exampleIndex.toString()}>
-          <SelectTrigger className="w-[280px] mb-4">
+          <SelectTrigger className="w-[280px] mb-4" aria-label="Select example">
             <SelectValue placeholder="Select an example" />
           </SelectTrigger>
           <SelectContent>
@@ -259,7 +337,9 @@ const ProceduralBlocksSimulator = () => {
           </SelectContent>
         </Select>
 
-        <CodeBlock code={currentExample.code} language="systemverilog" />
+        <InteractiveCode language="systemverilog" isEditable>
+          {currentExample.code}
+        </InteractiveCode>
 
         {renderVisualization()}
 
@@ -271,6 +351,7 @@ const ProceduralBlocksSimulator = () => {
             exit={{ opacity: 0, y: -20 }}
             transition={{ duration: 0.3 }}
             className="p-4 border rounded-lg bg-background/50 mt-4"
+            aria-live="polite"
           >
             <p>{currentStep}</p>
           </motion.div>
@@ -278,9 +359,10 @@ const ProceduralBlocksSimulator = () => {
 
         <div className="flex items-center justify-between mt-4">
           <div className="flex space-x-2">
-            <Button onClick={handleRewind} disabled={currentStepIndex === 0}>Rewind</Button>
-            <Button onClick={() => setIsPlaying(p => !p)}>{isPlaying ? 'Pause' : 'Run'}</Button>
-            <Button onClick={handleStep} disabled={currentStepIndex === currentExample.steps.length - 1}>Step</Button>
+            <Button onClick={handleRewind} disabled={currentStepIndex === 0} aria-label="Rewind simulation">Rewind</Button>
+            <Button onClick={() => setIsPlaying(p => !p)} aria-label={isPlaying ? 'Pause simulation' : 'Run simulation'}>{isPlaying ? 'Pause' : 'Run'}</Button>
+            <Button onClick={handleStepBack} disabled={currentStepIndex === 0} aria-label="Step back">Step Back</Button>
+            <Button onClick={handleStep} disabled={currentStepIndex === currentExample.steps.length - 1} aria-label="Step forward">Step</Button>
           </div>
           <div className="flex items-center space-x-2">
             <span className="text-xs">Speed</span>
@@ -291,6 +373,7 @@ const ProceduralBlocksSimulator = () => {
               step={0.5}
               value={speed}
               onChange={e => setSpeed(parseFloat(e.target.value))}
+              aria-label="Speed control"
             />
             <span className="text-xs">{speed.toFixed(1)}x</span>
           </div>
