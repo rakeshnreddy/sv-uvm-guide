@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -41,12 +41,44 @@ const SystemVerilogDataTypesAnimation = () => {
   const [isPacked, setIsPacked] = useState(true);
   const [logicValue, setLogicValue] = useState<StateColorKey>('0');
   const [logicBitValue, setLogicBitValue] = useState<StateColorKey>('0');
-
-
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [stepIndex, setStepIndex] = useState(0);
   const cycleState = (currentValue: StateColorKey, values: StateColorKey[]) => {
     const currentIndex = values.indexOf(currentValue);
     return values[(currentIndex + 1) % values.length];
   };
+
+  const steps = [
+    () => {
+      setInputA('1');
+      setInputB('1');
+    },
+    () => setInputA('X'),
+    () => setInputB('Z'),
+    () => setIsStruct(s => !s),
+    () => setDynArray(prev => [...prev, Math.floor(Math.random() * 10)]),
+    () => setDynArray(prev => prev.slice(0, -1)),
+    () => setQueue(q => [...q, Math.floor(Math.random() * 10)]),
+    () => setQueue(q => q.slice(1)),
+    () => setAssocArray(prev => ({ ...prev, demo: Math.floor(Math.random() * 10) })),
+    () => setAssocArray(prev => {
+      const { demo, ...rest } = prev;
+      return rest;
+    }),
+    () => setLogicValue(v => cycleState(v, FourStateValues)),
+    () => setLogicBitValue(v => cycleState(v, FourStateValues)),
+  ];
+
+  useEffect(() => {
+    if (!isPlaying) return;
+    const id = setInterval(() => {
+      setStepIndex(i => {
+        steps[i]();
+        return (i + 1) % steps.length;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isPlaying, steps]);
 
   const computeAnd = (a: StateColorKey, b: StateColorKey): StateColorKey => {
     if (a === '0' || b === '0') return '0';
@@ -70,6 +102,26 @@ const SystemVerilogDataTypesAnimation = () => {
         <CardTitle>SystemVerilog Data Types</CardTitle>
       </CardHeader>
       <CardContent>
+        <div className="flex gap-2 mb-4">
+          <Button size="sm" onClick={() => setIsPlaying(true)} title="Play demo">
+            Play
+          </Button>
+          <Button size="sm" onClick={() => setIsPlaying(false)} title="Pause demo">
+            Pause
+          </Button>
+          <Button
+            size="sm"
+            onClick={() =>
+              setStepIndex(i => {
+                steps[i]();
+                return (i + 1) % steps.length;
+              })
+            }
+            title="Advance one step"
+          >
+            Step
+          </Button>
+        </div>
         <div className="md:flex gap-6">
           <div className="flex-1">
             <div className="grid md:grid-cols-2 gap-8 mb-8">
@@ -87,7 +139,10 @@ const SystemVerilogDataTypesAnimation = () => {
               >
                 {twoStateValue}
               </motion.div>
-              <Button onClick={() => setTwoStateValue(cycleState(twoStateValue, TwoStateValues))}>
+              <Button
+                onClick={() => setTwoStateValue(cycleState(twoStateValue, TwoStateValues))}
+                title="Cycle 2-state value"
+              >
                 Cycle State
               </Button>
             </div>
@@ -107,7 +162,10 @@ const SystemVerilogDataTypesAnimation = () => {
               >
                 {fourStateValue}
               </motion.div>
-              <Button onClick={() => setFourStateValue(cycleState(fourStateValue, FourStateValues))}>
+              <Button
+                onClick={() => setFourStateValue(cycleState(fourStateValue, FourStateValues))}
+                title="Cycle 4-state value"
+              >
                 Cycle State
               </Button>
             </div>
@@ -148,8 +206,20 @@ const SystemVerilogDataTypesAnimation = () => {
             </motion.div>
           </div>
           <div className="flex gap-2">
-            <Button size="sm" onClick={() => setInputA(cycleState(inputA, FourStateValues))}>A</Button>
-            <Button size="sm" onClick={() => setInputB(cycleState(inputB, FourStateValues))}>B</Button>
+            <Button
+              size="sm"
+              onClick={() => setInputA(cycleState(inputA, FourStateValues))}
+              title="Cycle input A"
+            >
+              A
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setInputB(cycleState(inputB, FourStateValues))}
+              title="Cycle input B"
+            >
+              B
+            </Button>
           </div>
         </div>
 
@@ -210,16 +280,36 @@ const SystemVerilogDataTypesAnimation = () => {
         <div className="mb-8">
           <h3 className="text-lg font-bold mb-2">Struct vs Union Memory Layout</h3>
           <div className="flex gap-2 mb-4">
-            <Button size="sm" variant={isStruct ? 'default' : 'outline'} onClick={() => setIsStruct(true)}>
+            <Button
+              size="sm"
+              variant={isStruct ? 'default' : 'outline'}
+              onClick={() => setIsStruct(true)}
+              title="Show struct layout"
+            >
               Struct
             </Button>
-            <Button size="sm" variant={!isStruct ? 'default' : 'outline'} onClick={() => setIsStruct(false)}>
+            <Button
+              size="sm"
+              variant={!isStruct ? 'default' : 'outline'}
+              onClick={() => setIsStruct(false)}
+              title="Show union layout"
+            >
               Union
             </Button>
-            <Button size="sm" variant={isPacked ? 'default' : 'outline'} onClick={() => setIsPacked(true)}>
+            <Button
+              size="sm"
+              variant={isPacked ? 'default' : 'outline'}
+              onClick={() => setIsPacked(true)}
+              title="Use packed layout"
+            >
               Packed
             </Button>
-            <Button size="sm" variant={!isPacked ? 'default' : 'outline'} onClick={() => setIsPacked(false)}>
+            <Button
+              size="sm"
+              variant={!isPacked ? 'default' : 'outline'}
+              onClick={() => setIsPacked(false)}
+              title="Use unpacked layout"
+            >
               Unpacked
             </Button>
           </div>
@@ -332,7 +422,12 @@ const SystemVerilogDataTypesAnimation = () => {
             >
               {intValue}
             </motion.div>
-            <Button onClick={() => setLogicValue(cycleState(logicValue, FourStateValues))}>Cycle</Button>
+            <Button
+              onClick={() => setLogicValue(cycleState(logicValue, FourStateValues))}
+              title="Cycle logic value"
+            >
+              Cycle
+            </Button>
           </div>
         </div>
 
@@ -358,7 +453,12 @@ const SystemVerilogDataTypesAnimation = () => {
             >
               {bitValue}
             </motion.div>
-            <Button onClick={() => setLogicBitValue(cycleState(logicBitValue, FourStateValues))}>Cycle</Button>
+            <Button
+              onClick={() => setLogicBitValue(cycleState(logicBitValue, FourStateValues))}
+              title="Cycle logic bit value"
+            >
+              Cycle
+            </Button>
           </div>
         </div>
 
@@ -368,8 +468,21 @@ const SystemVerilogDataTypesAnimation = () => {
         <div>
           <h3 className="text-lg font-bold mb-2">Dynamic Array Operations</h3>
           <div className="flex gap-2 mb-2">
-            <Button size="sm" onClick={() => setDynArray(prev => [...prev, Math.floor(Math.random() * 10)])}>Push</Button>
-            <Button size="sm" onClick={() => setDynArray(prev => prev.slice(0, -1))} disabled={dynArray.length === 0}>Pop</Button>
+            <Button
+              size="sm"
+              onClick={() => setDynArray(prev => [...prev, Math.floor(Math.random() * 10)])}
+              title="Push element"
+            >
+              Push
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setDynArray(prev => prev.slice(0, -1))}
+              disabled={dynArray.length === 0}
+              title="Pop element"
+            >
+              Pop
+            </Button>
           </div>
           <div className="flex gap-1">
             {dynArray.map((v, i) => (
@@ -391,10 +504,36 @@ const SystemVerilogDataTypesAnimation = () => {
         <div>
           <h3 className="text-lg font-bold mb-2">Queue Operations</h3>
           <div className="flex gap-2 mb-2">
-            <Button size="sm" onClick={() => setQueue(q => [Math.floor(Math.random() * 10), ...q])}>push_front</Button>
-            <Button size="sm" onClick={() => setQueue(q => [...q, Math.floor(Math.random() * 10)])}>push_back</Button>
-            <Button size="sm" onClick={() => setQueue(q => q.slice(1))} disabled={queue.length === 0}>pop_front</Button>
-            <Button size="sm" onClick={() => setQueue(q => q.slice(0, -1))} disabled={queue.length === 0}>pop_back</Button>
+            <Button
+              size="sm"
+              onClick={() => setQueue(q => [Math.floor(Math.random() * 10), ...q])}
+              title="Push to front"
+            >
+              push_front
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setQueue(q => [...q, Math.floor(Math.random() * 10)])}
+              title="Push to back"
+            >
+              push_back
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setQueue(q => q.slice(1))}
+              disabled={queue.length === 0}
+              title="Pop front"
+            >
+              pop_front
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setQueue(q => q.slice(0, -1))}
+              disabled={queue.length === 0}
+              title="Pop back"
+            >
+              pop_back
+            </Button>
           </div>
           <div className="flex gap-1">
             {queue.map((v, i) => (
@@ -436,6 +575,7 @@ const SystemVerilogDataTypesAnimation = () => {
                 setAssocArray(prev => ({ ...prev, [assocKey]: assocVal }));
                 setAssocKey('');
               }}
+              title="Set key-value pair"
             >
               Set
             </Button>
@@ -450,6 +590,7 @@ const SystemVerilogDataTypesAnimation = () => {
                 setAssocKey('');
               }}
               disabled={!assocArray[assocKey]}
+              title="Delete key"
             >
               Delete
             </Button>
