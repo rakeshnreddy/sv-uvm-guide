@@ -2,7 +2,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { motion } from 'framer-motion';
-import { uvmComponents, uvmConnections, UvmComponent, UvmConnection } from './uvm-data-model';
+import { uvmComponents, uvmConnections, UvmComponent } from './uvm-data-model';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 
@@ -27,6 +27,33 @@ const InteractiveUvmArchitectureDiagram = () => {
   const [activeComponent, setActiveComponent] = useState<UvmComponent | null>(null);
   const [highlightedType, setHighlightedType] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [showDataFlow, setShowDataFlow] = useState(true);
+  const [showControlFlow, setShowControlFlow] = useState(true);
+
+  const handleExport = () => {
+    if (!svgRef.current) return;
+    const svgElement = svgRef.current;
+    const serializer = new XMLSerializer();
+    const source = serializer.serializeToString(svgElement);
+    const blob = new Blob([source], { type: 'image/svg+xml;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const image = new Image();
+    image.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = svgElement.clientWidth;
+      canvas.height = svgElement.clientHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
+      ctx.drawImage(image, 0, 0);
+      const png = canvas.toDataURL('image/png');
+      const a = document.createElement('a');
+      a.href = png;
+      a.download = 'uvm-architecture.png';
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+    image.src = url;
+  };
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -48,19 +75,23 @@ const InteractiveUvmArchitectureDiagram = () => {
 
     const g = svg.append('g').attr('transform', 'translate(125, 50)');
 
-    // Links
-    g.selectAll('.link')
-      .data(treeData.links())
-      .enter()
-      .append('path')
-      .attr('class', 'link')
-      .attr('d', d3.linkVertical()
-        .x(d => (d as any).y)
-        .y(d => (d as any).x) as any
-      )
-      .attr('stroke', 'hsl(var(--muted-foreground))')
-      .attr('stroke-width', 1.5)
-      .attr('fill', 'none');
+    const nodePositions = new Map<string, { x: number; y: number }>();
+
+    // Control Flow Links
+    if (showControlFlow) {
+      g.selectAll('.link')
+        .data(treeData.links())
+        .enter()
+        .append('path')
+        .attr('class', 'link')
+        .attr('d', d3.linkVertical()
+          .x(d => (d as any).y)
+          .y(d => (d as any).x) as any
+        )
+        .attr('stroke', 'hsl(var(--muted-foreground))')
+        .attr('stroke-width', 1.5)
+        .attr('fill', 'none');
+    }
 
     // Nodes
     const nodes = g.selectAll('.node')
@@ -68,7 +99,10 @@ const InteractiveUvmArchitectureDiagram = () => {
       .enter()
       .append('g')
       .attr('class', 'node')
-      .attr('transform', d => `translate(${d.y},${d.x})`)
+      .attr('transform', d => {
+        nodePositions.set(d.data.id, { x: d.x, y: d.y });
+        return `translate(${d.y},${d.x})`;
+      })
       .on('mouseover', (event, d) => {
         setActiveComponent(d.data);
       })
@@ -100,6 +134,39 @@ const InteractiveUvmArchitectureDiagram = () => {
       .style('fill', 'hsl(var(--primary-foreground))')
       .text(d => d.data.name);
 
+    // Data flow connections
+    if (showDataFlow) {
+      const defs = svg.append('defs');
+      defs.append('marker')
+        .attr('id', 'arrow')
+        .attr('viewBox', '0 -5 10 10')
+        .attr('refX', 10)
+        .attr('refY', 0)
+        .attr('markerWidth', 6)
+        .attr('markerHeight', 6)
+        .attr('orient', 'auto')
+        .append('path')
+        .attr('d', 'M0,-5L10,0L0,5')
+        .attr('fill', 'hsl(var(--muted-foreground))');
+
+      const flows = uvmConnections.filter(c => c.type !== 'parent_child');
+      g.selectAll('.flow')
+        .data(flows)
+        .enter()
+        .append('path')
+        .attr('class', 'flow')
+        .attr('d', d => {
+          const s = nodePositions.get(d.source)!;
+          const t = nodePositions.get(d.target)!;
+          const midY = (s.y + t.y) / 2;
+          return `M${s.y},${s.x} C${midY},${s.x} ${midY},${t.x} ${t.y},${t.x}`;
+        })
+        .attr('stroke', d => d.type === 'analysis' ? 'hsl(var(--warning))' : 'hsl(var(--info))')
+        .attr('stroke-width', 2)
+        .attr('fill', 'none')
+        .attr('marker-end', 'url(#arrow)');
+    }
+
     // Zoom functionality
     const zoom = d3.zoom<SVGSVGElement, unknown>()
       .scaleExtent([0.5, 3])
@@ -109,7 +176,15 @@ const InteractiveUvmArchitectureDiagram = () => {
 
     svg.call(zoom);
 
-  }, [highlightedType, searchTerm]);
+    if (searchTerm !== '') {
+      const match = treeData.descendants().find(d => d.data.name.toLowerCase().includes(searchTerm.toLowerCase()));
+      if (match) {
+        const transform = d3.zoomIdentity.translate(width / 2 - match.y, height / 2 - match.x);
+        svg.transition().duration(750).call(zoom.transform, transform);
+      }
+    }
+
+  }, [highlightedType, searchTerm, showDataFlow, showControlFlow]);
 
   return (
     <div className="relative">
@@ -131,6 +206,23 @@ const InteractiveUvmArchitectureDiagram = () => {
             {type}
           </Button>
         ))}
+        <Button
+          variant={showDataFlow ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setShowDataFlow(!showDataFlow)}
+        >
+          Data Flow
+        </Button>
+        <Button
+          variant={showControlFlow ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setShowControlFlow(!showControlFlow)}
+        >
+          Control Flow
+        </Button>
+        <Button variant="outline" size="sm" onClick={handleExport}>
+          Export
+        </Button>
       </div>
       <svg ref={svgRef} className="w-full h-auto" />
       {activeComponent && (
