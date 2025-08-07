@@ -78,7 +78,13 @@ const UvmComponentRelationshipVisualizer = () => {
     parent?: string;
     children?: string[];
   })[] = nodesFiltered.map(c => ({ ...c }));
-  const links = linksFiltered.map(l => ({ ...l }));
+  const phaseCount: Record<string, number> = {};
+  const links = linksFiltered.map(l => ({
+    ...l,
+    order: l.phase
+      ? (phaseCount[l.phase] = (phaseCount[l.phase] || 0) + 1)
+      : undefined,
+  }));
 
   const findPath = (start: string, end: string): string[] => {
     const queue: string[] = [start];
@@ -121,11 +127,29 @@ const UvmComponentRelationshipVisualizer = () => {
     const width = 800;
     const height = 600;
 
-    const svg = d3.select(svgRef.current)
+    const svg = d3
+      .select(svgRef.current)
       .attr('viewBox', `0 0 ${width} ${height}`)
+      .attr('role', 'img')
+      .attr('aria-label', 'UVM component relationships')
       .html('');
 
-    const simulation = d3.forceSimulation(nodes)
+    const defs = svg.append('defs');
+    defs
+      .append('marker')
+      .attr('id', 'arrow')
+      .attr('viewBox', '0 -5 10 10')
+      .attr('refX', 15)
+      .attr('refY', 0)
+      .attr('markerWidth', 6)
+      .attr('markerHeight', 6)
+      .attr('orient', 'auto')
+      .append('path')
+      .attr('d', 'M0,-5L10,0L0,5')
+      .attr('fill', 'context-stroke');
+
+    const simulation = d3
+      .forceSimulation(nodes)
       .force('link', d3.forceLink(links).id((d: any) => d.id).distance(100))
       .force('charge', d3.forceManyBody().strength(-150))
       .force('center', d3.forceCenter(width / 2, height / 2));
@@ -149,12 +173,15 @@ const UvmComponentRelationshipVisualizer = () => {
         if (d.type === 'inheritance') return '#555';
         return '#999';
       })
+      .attr('marker-end', 'url(#arrow)')
       .attr('class', d => {
         const sid = (d.source as any).id;
         const tid = (d.target as any).id;
         const inPath = path.includes(sid) && path.includes(tid) && Math.abs(path.indexOf(sid) - path.indexOf(tid)) === 1;
         return inPath ? 'message-path' : null;
       });
+
+    link.append('title').text(d => d.description);
 
     const phaseLabels = svg.append('g')
       .selectAll('text')
@@ -164,16 +191,22 @@ const UvmComponentRelationshipVisualizer = () => {
       .attr('dominant-baseline', 'central')
       .style('fill', '#000')
       .style('font-size', '8px')
-      .text(d => d.phase!);
+      .text(d => `${d.phase}${d.order ? ' ' + d.order : ''}`);
 
-    const node = svg.append('g')
+    const node = svg
+      .append('g')
       .attr('stroke', '#fff')
       .attr('stroke-width', 1.5)
       .selectAll('circle')
       .data(nodes)
       .join('circle')
       .attr('r', 20)
-      .attr('fill', d => selectedNodes.includes(d.id) ? 'hsl(var(--info))' : 'hsl(var(--primary))')
+      .attr('fill', d =>
+        selectedNodes.includes(d.id) ? 'hsl(var(--info))' : 'hsl(var(--primary))'
+      )
+      .attr('tabindex', 0)
+      .attr('role', 'button')
+      .attr('aria-label', d => d.name)
       .on('click', (_, d) => {
         setSelectedNodes(prev => {
           if (prev.length === 0) return [d.id];
@@ -187,8 +220,28 @@ const UvmComponentRelationshipVisualizer = () => {
         });
       })
       .on('dblclick', (_, d) => {
-        setIsolatedNode(prev => prev === d.id ? null : d.id);
+        setIsolatedNode(prev => (prev === d.id ? null : d.id));
         setSelectedNodes([d.id]);
+      })
+      .on('keydown', (event, d) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          setSelectedNodes(prev => {
+            if (prev.length === 0) return [d.id];
+            if (prev.length === 1) {
+              if (prev[0] === d.id) return [];
+              const newSel = [prev[0], d.id];
+              setPath(findPath(newSel[0], newSel[1]));
+              return newSel;
+            }
+            return [d.id];
+          });
+        }
+        if (event.key === ' ') {
+          event.preventDefault();
+          setIsolatedNode(prev => (prev === d.id ? null : d.id));
+          setSelectedNodes([d.id]);
+        }
       })
       .call(drag(simulation) as any);
 
@@ -231,6 +284,35 @@ const UvmComponentRelationshipVisualizer = () => {
         .attr('y', d => ((d.source as any).y + (d.target as any).y) / 2);
     });
 
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches && path.length > 1) {
+      let i = 0;
+      const step = () => {
+        if (i >= path.length - 1) return;
+        const from = nodes.find(n => n.id === path[i]);
+        const to = nodes.find(n => n.id === path[i + 1]);
+        if (!from || !to) return;
+        const circle = svg
+          .append('circle')
+          .attr('class', 'message-circle')
+          .attr('r', 5)
+          .attr('fill', 'hsl(var(--info))')
+          .attr('cx', from.x || 0)
+          .attr('cy', from.y || 0);
+        circle
+          .transition()
+          .duration(800)
+          .ease(d3.easeLinear)
+          .attr('cx', to.x || 0)
+          .attr('cy', to.y || 0)
+          .on('end', () => {
+            circle.remove();
+            i++;
+            step();
+          });
+      };
+      step();
+    }
+
     function drag(simulation: d3.Simulation<any, any>) {
       function dragstarted(event: any) {
         if (!event.active) simulation.alphaTarget(0.3).restart();
@@ -265,13 +347,28 @@ const UvmComponentRelationshipVisualizer = () => {
     <div className="p-4 border rounded-lg">
       <h2 className="text-lg font-bold mb-2">UVM Component Relationship Visualizer</h2>
       <div className="flex flex-wrap gap-2 mb-2">
-        <Button variant={showComposition ? 'default' : 'outline'} size="sm" onClick={() => setShowComposition(v => !v)}>
+        <Button
+          variant={showComposition ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setShowComposition(v => !v)}
+          aria-pressed={showComposition}
+        >
           Composition
         </Button>
-        <Button variant={showInheritance ? 'default' : 'outline'} size="sm" onClick={() => setShowInheritance(v => !v)}>
+        <Button
+          variant={showInheritance ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setShowInheritance(v => !v)}
+          aria-pressed={showInheritance}
+        >
           Inheritance
         </Button>
-        <Button variant={showPorts ? 'default' : 'outline'} size="sm" onClick={() => setShowPorts(v => !v)}>
+        <Button
+          variant={showPorts ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setShowPorts(v => !v)}
+          aria-pressed={showPorts}
+        >
           Ports
         </Button>
       </div>
@@ -312,6 +409,11 @@ const UvmComponentRelationshipVisualizer = () => {
         }
         @keyframes dash {
           to { stroke-dashoffset: -10; }
+        }
+        @media (prefers-reduced-motion: reduce) {
+          .message-path {
+            animation: none;
+          }
         }
       `}</style>
     </div>
