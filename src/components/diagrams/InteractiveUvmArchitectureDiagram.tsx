@@ -2,14 +2,15 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import * as d3 from 'd3';
 import { motion } from 'framer-motion';
-import { uvmComponents, uvmConnections, UvmComponent } from './uvm-data-model';
+import type { UvmComponent } from './uvm-data-model';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
-import { useZoomPan } from '@/hooks/useZoomPan';
-import { useKeyboardNavigation } from '@/hooks/useKeyboardNavigation';
+import { useAccessibility } from '@/hooks/useAccessibility';
+import { useLazyRender } from '@/hooks/useLazyRender';
+import { useAsync } from '@/hooks/useAsync';
+import { useLocale } from '@/hooks/useLocale';
+import { useTheme } from '@/hooks/useTheme';
 import { exportSvg } from '@/lib/exportUtils';
-
-const componentTypes = [...new Set(uvmComponents.map(c => c.type.split('_')[0]))];
 
 const componentColor = {
   test: 'hsl(var(--primary))',
@@ -27,6 +28,7 @@ type ComponentColorKey = keyof typeof componentColor;
 
 const InteractiveUvmArchitectureDiagram = () => {
   const svgRef = useRef<SVGSVGElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const [activeComponent, setActiveComponent] = useState<UvmComponent | null>(null);
@@ -43,6 +45,25 @@ const InteractiveUvmArchitectureDiagram = () => {
     driver: true,
     monitor: true,
   });
+
+  const { locale } = useLocale();
+  const { theme } = useTheme();
+
+  const { data: model, loading, error } = useAsync(() => import('./uvm-data-model'));
+  const visible = useLazyRender(containerRef);
+
+  useAccessibility(svgRef, 'Interactive UVM architecture diagram');
+
+  if (loading || !visible) {
+    return <div ref={containerRef}>Loading diagram...</div>;
+  }
+
+  if (error || !model) {
+    return <div ref={containerRef}>Error loading diagram</div>;
+  }
+
+  const { uvmComponents, uvmConnections } = model;
+  const componentTypes = [...new Set(uvmComponents.map(c => c.type.split('_')[0]))];
 
   const toggleLayer = (layer: keyof typeof layers) => {
     setLayers(prev => ({ ...prev, [layer]: !prev[layer] }));
@@ -97,9 +118,6 @@ const InteractiveUvmArchitectureDiagram = () => {
     }
   }, []);
 
-  useZoomPan(svgRef);
-  useKeyboardNavigation(svgRef as unknown as React.RefObject<HTMLElement | SVGSVGElement>);
-
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e') {
@@ -112,7 +130,7 @@ const InteractiveUvmArchitectureDiagram = () => {
   }, [handleExport]);
 
   useEffect(() => {
-    if (!svgRef.current) return;
+    if (!visible || !svgRef.current) return;
 
     const width = 850;
     const height = 650;
@@ -120,9 +138,6 @@ const InteractiveUvmArchitectureDiagram = () => {
     const svg = d3
       .select(svgRef.current)
       .attr('viewBox', `0 0 ${width} ${height}`)
-      .attr('role', 'img')
-      .attr('tabindex', 0)
-      .attr('aria-label', 'Interactive UVM architecture diagram')
       .html(''); // Clear previous contents
 
     const root = d3.stratify<UvmComponent>()
@@ -245,11 +260,11 @@ const InteractiveUvmArchitectureDiagram = () => {
     }
 
 
-  }, [highlightedType, searchTerm, showDataFlow, showControlFlow]);
+  }, [highlightedType, searchTerm, showDataFlow, showControlFlow, layers, selectedComponent, visible]);
 
 
   return (
-    <div className="relative">
+    <div className="relative" ref={containerRef}>
       <div className="absolute top-2 left-2 flex flex-wrap gap-2 p-2 bg-background/80 backdrop-blur-sm rounded-lg">
         <div className="relative">
           <Input
@@ -312,13 +327,7 @@ const InteractiveUvmArchitectureDiagram = () => {
           Export
         </Button>
       </div>
-      <svg
-        ref={svgRef}
-        className="w-full h-auto touch-none"
-        tabIndex={0}
-        aria-label="Interactive UVM architecture diagram"
-        role="img"
-      />
+      <svg ref={svgRef} className="w-full h-auto touch-none" />
       {activeComponent && (
         <motion.div
           initial={{ opacity: 0, y: 20 }}

@@ -6,6 +6,10 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { CodeBlock } from '@/components/ui/CodeBlock';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
+import { useAccessibility } from '@/hooks/useAccessibility';
+import { useLazyRender } from '@/hooks/useLazyRender';
+import { useLocale } from '@/hooks/useLocale';
+import { useTheme } from '@/hooks/useTheme';
 
 const ConcurrencyVisualizer = () => {
   const [exampleIndex, setExampleIndex] = useState(0);
@@ -27,6 +31,15 @@ const ConcurrencyVisualizer = () => {
   const semaphoreRef = useRef<HTMLDivElement>(null);
   const mailboxRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const visible = useLazyRender(containerRef);
+  const { locale } = useLocale();
+  const { theme } = useTheme();
+
+  useAccessibility(containerRef, 'Concurrency visualizer', { svg: false });
+
+  if (!visible) {
+    return <div ref={containerRef}>Loading visualization...</div>;
+  }
 
   useEffect(() => {
     setProcessState(
@@ -122,7 +135,8 @@ const ConcurrencyVisualizer = () => {
   };
 
   return (
-    <Card className="w-full">
+    <div ref={containerRef} className="w-full">
+      <Card>
       <CardHeader>
         <CardTitle>Concurrency Visualizer</CardTitle>
       </CardHeader>
@@ -225,7 +239,8 @@ const ConcurrencyVisualizer = () => {
           <Button onClick={handleNext} disabled={currentStepIndex === currentExample.steps.length - 1}>Next</Button>
         </div>
       </CardContent>
-    </Card>
+      </Card>
+    </div>
   );
 };
 
