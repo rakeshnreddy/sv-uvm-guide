@@ -3,11 +3,24 @@ import React, { useState, useRef, useEffect } from 'react';
 import { DndContext } from '@dnd-kit/core';
 import { useDraggable } from '@dnd-kit/core';
 import * as d3 from 'd3';
+import { motion, AnimatePresence } from 'framer-motion';
 import { stateMachineData, State, Transition } from './state-machine-data';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Select, SelectTrigger, SelectContent, SelectItem, SelectValue } from '@/components/ui/Select';
 import { Label } from '@/components/ui/Label';
+
+export type VerificationHook = (
+  states: State[],
+  transitions: Transition[],
+  current: string | null
+) => void;
+
+const verificationHooks: VerificationHook[] = [];
+
+export const registerVerificationHook = (hook: VerificationHook) => {
+  verificationHooks.push(hook);
+};
 
 const DraggableState = ({
   id,
@@ -32,12 +45,18 @@ const DraggableState = ({
     : {};
 
   return (
-    <div
+    <motion.div
       ref={setNodeRef}
       style={{ ...style, position: 'absolute', left: state.x, top: state.y }}
       {...listeners}
       {...attributes}
       onClick={() => onClick(id)}
+      onKeyDown={(e) => e.key === 'Enter' && onClick(id)}
+      tabIndex={0}
+      aria-label={`State ${state.name} encoded as ${encodingValue}`}
+      initial={{ opacity: 0, scale: 0.8 }}
+      animate={{ opacity: 1, scale: 1 }}
+      exit={{ opacity: 0, scale: 0.8 }}
     >
       <div
         className={`relative w-24 h-16 rounded-lg flex items-center justify-center cursor-grab bg-primary text-primary-foreground ${selected ? 'ring-2 ring-secondary' : ''}`}
@@ -51,17 +70,19 @@ const DraggableState = ({
           onMouseDown={(e) => e.stopPropagation()}
           onTouchStart={(e) => e.stopPropagation()}
           onClick={() => onRemove(id)}
+          aria-label={`Remove ${state.name}`}
         >
           ×
         </button>
       </div>
-    </div>
+    </motion.div>
   );
 };
 
 const StateMachineDesigner = () => {
   const [states, setStates] = useState<State[]>(stateMachineData[0].states);
   const [transitions, setTransitions] = useState<Transition[]>(stateMachineData[0].transitions);
+  const [pattern, setPattern] = useState(stateMachineData[0].name);
   const [mode, setMode] = useState<'Moore' | 'Mealy'>('Moore');
   const [encoding, setEncoding] = useState('binary');
   const [reset, setReset] = useState('synchronous');
@@ -82,6 +103,39 @@ const StateMachineDesigner = () => {
   const [visitedTransitions, setVisitedTransitions] = useState<Set<number>>(new Set());
   const stateCounter = useRef(states.length + 1);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  const encodingBits = Math.max(1, Math.ceil(Math.log2(states.length)));
+  const optimizationHint =
+    encoding === 'onehot'
+      ? 'One-hot uses more flip-flops but simplifies logic.'
+      : encoding === 'gray'
+      ? 'Gray minimizes glitches.'
+      : 'Binary minimizes flip-flops.';
+
+  const exportJSON = () => {
+    const dataStr = JSON.stringify(
+      { states, transitions, mode, encoding, reset, timing },
+      null,
+      2
+    );
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'state-machine.json';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handlePatternChange = (value: string) => {
+    const example = stateMachineData.find((p) => p.name === value);
+    if (example) {
+      setPattern(example.name);
+      setStates(example.states);
+      setTransitions(example.transitions);
+      stateCounter.current = example.states.length + 1;
+    }
+  };
 
   const addState = () => {
     const id = `s${stateCounter.current++}`;
@@ -158,32 +212,55 @@ const StateMachineDesigner = () => {
     if (!svgRef.current) return;
 
     const svg = d3.select(svgRef.current);
-    svg.selectAll('*').remove();
-
     const lineGenerator = d3
       .line<{ x: number; y: number }>()
       .x((d) => d.x)
       .y((d) => d.y);
 
-    svg
-      .selectAll('path')
-      .data(transitions.map((t, i) => ({ ...t, i })))
-      .enter()
-      .append('path')
-      .attr('d', (d) => {
-        const sourceState = states.find((s) => s.id === d.source);
-        const targetState = states.find((s) => s.id === d.target);
-        if (!sourceState || !targetState) return '';
-        return lineGenerator([
-          { x: sourceState.x + 48, y: sourceState.y + 32 },
-          { x: targetState.x + 48, y: targetState.y + 32 },
-        ]);
-      })
-      .attr('stroke', 'hsl(var(--primary))')
-      .attr('stroke-width', 2)
-      .attr('fill', 'none')
-      .style('cursor', 'pointer')
-      .on('click', (_, d) => removeTransition(d.i));
+    const data = transitions.map((t, index) => ({ ...t, index }));
+    const paths = svg
+      .selectAll<SVGPathElement, typeof data[0]>('path')
+      .data(data, (d: any) => d.index);
+
+    paths
+      .join(
+        (enter) =>
+          enter
+            .append('path')
+            .attr('opacity', 0)
+            .attr('d', (d) => {
+              const s = states.find((st) => st.id === d.source);
+              const t = states.find((st) => st.id === d.target);
+              if (!s || !t) return '';
+              return lineGenerator([
+                { x: s.x + 48, y: s.y + 32 },
+                { x: t.x + 48, y: t.y + 32 },
+              ]);
+            })
+            .attr('stroke', 'hsl(var(--primary))')
+            .attr('stroke-width', 2)
+            .attr('fill', 'none')
+            .style('cursor', 'pointer')
+            .style('pointer-events', 'all')
+            .on('click', (_, d) => removeTransition(d.index))
+            .transition()
+            .duration(300)
+            .attr('opacity', 1),
+        (update) =>
+          update
+            .attr('d', (d) => {
+              const s = states.find((st) => st.id === d.source);
+              const t = states.find((st) => st.id === d.target);
+              if (!s || !t) return '';
+              return lineGenerator([
+                { x: s.x + 48, y: s.y + 32 },
+                { x: t.x + 48, y: t.y + 32 },
+              ]);
+            })
+            .style('pointer-events', 'all')
+            .on('click', (_, d) => removeTransition(d.index)),
+        (exit) => exit.transition().duration(300).attr('opacity', 0).remove()
+      );
   }, [states, transitions]);
 
   useEffect(() => {
@@ -212,6 +289,10 @@ const StateMachineDesigner = () => {
     resetSimulation();
   }, [states, transitions, resetSimulation]);
 
+  useEffect(() => {
+    verificationHooks.forEach((h) => h(states, transitions, currentState));
+  }, [states, transitions, currentState]);
+
   return (
     <DndContext onDragEnd={handleDragEnd}>
       <Card className="w-full">
@@ -221,6 +302,21 @@ const StateMachineDesigner = () => {
         <CardContent>
           <div className="flex flex-col gap-4">
             <div className="flex flex-wrap items-end gap-4">
+              <div className="flex flex-col">
+                <Label>Pattern Library</Label>
+                <Select value={pattern} onValueChange={handlePatternChange}>
+                  <SelectTrigger className="w-[200px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {stateMachineData.map((p) => (
+                      <SelectItem key={p.name} value={p.name}>
+                        {p.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <Button onClick={addState}>Add State</Button>
               <Button variant="outline" onClick={toggleMode}>
                 Mode: {mode}
@@ -262,6 +358,22 @@ const StateMachineDesigner = () => {
                   </SelectContent>
                 </Select>
               </div>
+              <Button variant="outline" onClick={exportJSON} aria-label="Export state machine">
+                Export
+              </Button>
+            </div>
+            <div className="text-sm" aria-live="polite">
+              <p>
+                {mode === 'Moore'
+                  ? 'Moore: outputs depend only on state.'
+                  : 'Mealy: outputs depend on state and inputs.'}
+              </p>
+              <p>
+                Encoding width: {encodingBits} bits. {optimizationHint}
+              </p>
+              <p>
+                Timing: {timing === 'edge' ? 'Edge-triggered' : 'Level-sensitive'}; Reset: {reset}
+              </p>
             </div>
 
             <div className="flex items-end gap-2">
@@ -366,21 +478,25 @@ const StateMachineDesigner = () => {
             </div>
 
             <div className="relative w-full h-96 bg-muted rounded-lg">
-              {states.map((state, idx) => (
-                <DraggableState
-                  key={state.id}
-                  id={state.id}
-                  state={state}
-                  onRemove={removeState}
-                  onClick={handleStateClick}
-                  selected={pendingTransition === state.id}
-                  encodingValue={encodeState(idx)}
-                />
-              ))}
               <svg
                 ref={svgRef}
-                className="absolute top-0 left-0 w-full h-full pointer-events-none"
+                className="absolute top-0 left-0 w-full h-full"
+                role="img"
+                aria-label="State transitions"
               />
+              <AnimatePresence>
+                {states.map((state, idx) => (
+                  <DraggableState
+                    key={state.id}
+                    id={state.id}
+                    state={state}
+                    onRemove={removeState}
+                    onClick={handleStateClick}
+                    selected={pendingTransition === state.id}
+                    encodingValue={encodeState(idx)}
+                  />
+                ))}
+              </AnimatePresence>
             </div>
           </div>
         </CardContent>
