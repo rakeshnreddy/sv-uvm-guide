@@ -1,6 +1,6 @@
 "use client";
-import React, { useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useEffect, useRef, useState } from 'react';
+import { motion, AnimatePresence, PanInfo } from 'framer-motion';
 import { concurrencyData } from './concurrency-data';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -10,6 +10,42 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 const ConcurrencyVisualizer = () => {
   const [exampleIndex, setExampleIndex] = useState(0);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+
+  type ProcState = {
+    id: string;
+    priority: number;
+    status: "running" | "blocked" | "waiting";
+    resource?: string;
+  };
+
+  const [processState, setProcessState] = useState<ProcState[]>([]);
+  const [semaphoreOwner, setSemaphoreOwner] = useState<string | null>(null);
+  const [mailboxMessage, setMailboxMessage] = useState<string | null>(null);
+  const [conflict, setConflict] = useState<string[]>([]);
+  const [deadlock, setDeadlock] = useState(false);
+
+  const semaphoreRef = useRef<HTMLDivElement>(null);
+  const mailboxRef = useRef<HTMLDivElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setProcessState(
+      concurrencyData[exampleIndex].processes.map((p, i) => ({
+        id: p,
+        priority: i + 1,
+        status: "running",
+      }))
+    );
+    setSemaphoreOwner(null);
+    setMailboxMessage(null);
+    setConflict([]);
+  }, [exampleIndex]);
+
+  useEffect(() => {
+    const allBlocked =
+      processState.length > 0 && processState.every(p => p.status !== "running");
+    setDeadlock(allBlocked);
+  }, [processState]);
 
   const handleNext = () => {
     setCurrentStepIndex(prev => (prev < concurrencyData[exampleIndex].steps.length - 1 ? prev + 1 : prev));
@@ -26,6 +62,64 @@ const ConcurrencyVisualizer = () => {
 
   const currentExample = concurrencyData[exampleIndex];
   const currentStep = currentExample.steps[currentStepIndex];
+
+  const isInside = (point: { x: number; y: number }, rect: DOMRect) => {
+    return (
+      point.x >= rect.left &&
+      point.x <= rect.right &&
+      point.y >= rect.top &&
+      point.y <= rect.bottom
+    );
+  };
+
+  const handleDragEnd = (
+    id: string,
+    _event: MouseEvent | TouchEvent | PointerEvent,
+    info: PanInfo
+  ) => {
+    const point = info.point;
+    const semRect = semaphoreRef.current?.getBoundingClientRect();
+    const mailRect = mailboxRef.current?.getBoundingClientRect();
+
+    if (semRect && isInside(point, semRect)) {
+      if (!semaphoreOwner) {
+        setSemaphoreOwner(id);
+        setProcessState(prev =>
+          prev.map(p => (p.id === id ? { ...p, resource: "semaphore" } : p))
+        );
+      } else if (semaphoreOwner !== id) {
+        setConflict([semaphoreOwner, id]);
+        setProcessState(prev =>
+          prev.map(p =>
+            p.id === id
+              ? { ...p, status: "blocked", resource: "semaphore" }
+              : p
+          )
+        );
+      }
+      return;
+    }
+
+    if (mailRect && isInside(point, mailRect)) {
+      if (!mailboxMessage) {
+        setMailboxMessage(id);
+      } else if (mailboxMessage !== id) {
+        setMailboxMessage(null);
+        setProcessState(prev =>
+          prev.map(p => (p.id === id ? { ...p, status: "running" } : p))
+        );
+      }
+      return;
+    }
+
+    if (semaphoreOwner === id) {
+      setSemaphoreOwner(null);
+      setConflict([]);
+      setProcessState(prev =>
+        prev.map(p => (p.id === id ? { ...p, resource: undefined } : p))
+      );
+    }
+  };
 
   return (
     <Card className="w-full">
@@ -48,19 +142,67 @@ const ConcurrencyVisualizer = () => {
           <div>
             <CodeBlock code={currentExample.code} language="systemverilog" />
           </div>
-          <div className="flex flex-col justify-center items-center">
-            <div className="w-full h-32 bg-muted rounded-lg p-4 flex justify-around items-center">
-              {currentExample.processes.map((process, index) => (
+          <div className="flex flex-col items-center">
+            <div
+              ref={containerRef}
+              className="relative w-full h-64 bg-muted rounded-lg p-4 overflow-hidden"
+            >
+              {processState.map((proc, idx) => (
                 <motion.div
-                  key={process}
-                  initial={{ opacity: 0, y: 50 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: index * 0.2 }}
-                  className="w-24 h-16 bg-primary text-primary-foreground rounded-lg flex items-center justify-center"
+                  key={proc.id}
+                  drag
+                  dragConstraints={containerRef}
+                  onDragEnd={(e, info) => handleDragEnd(proc.id, e, info)}
+                  className={`absolute w-24 h-16 rounded-lg flex items-center justify-center cursor-move ${
+                    conflict.includes(proc.id)
+                      ? "bg-destructive text-destructive-foreground"
+                      : "bg-primary text-primary-foreground"
+                  }`}
+                  style={{ top: idx * 48, left: 16 }}
                 >
-                  {process}
+                  {proc.id}
                 </motion.div>
               ))}
+              <div
+                ref={semaphoreRef}
+                className="absolute top-2 right-2 w-32 h-16 border-2 border-primary flex flex-col items-center justify-center text-xs"
+              >
+                <span>Semaphore</span>
+                {semaphoreOwner && (
+                  <span>locked by {semaphoreOwner}</span>
+                )}
+              </div>
+              <div
+                ref={mailboxRef}
+                className="absolute bottom-2 right-2 w-32 h-16 border-2 border-primary flex flex-col items-center justify-center text-xs"
+              >
+                <span>Mailbox</span>
+                {mailboxMessage && <span>msg from {mailboxMessage}</span>}
+              </div>
+            </div>
+            <div className="mt-4 w-full">
+              <p className="text-sm font-medium mb-2">Scheduling (by priority)</p>
+              <ul className="flex flex-col space-y-1">
+                {processState
+                  .slice()
+                  .sort((a, b) => a.priority - b.priority)
+                  .map(p => (
+                    <li
+                      key={p.id}
+                      className="flex justify-between text-xs"
+                    >
+                      <span>
+                        {p.id} (prio {p.priority})
+                      </span>
+                      <span>{p.status}</span>
+                    </li>
+                  ))}
+              </ul>
+              {deadlock && (
+                <p className="text-destructive mt-2 text-sm">
+                  Deadlock detected
+                </p>
+              )}
             </div>
           </div>
         </div>
