@@ -13,6 +13,9 @@ import useAccessibility from '@/hooks/useAccessibility';
 import { exportSvgAsPng, exportSvgAsPdf } from '@/lib/exportUtils';
 import { useTheme } from 'next-themes';
 import { useLocale } from '@/hooks/useLocale';
+import { useAsync } from '@/hooks/useAsync';
+import { useLazyRender } from '@/hooks/useLazyRender';
+import { useAccessibility } from '@/hooks/useAccessibility';
 
 
 

@@ -5,6 +5,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
+    include: ['tests/session-options.test.ts'],
   },
   resolve: {
     alias: {
