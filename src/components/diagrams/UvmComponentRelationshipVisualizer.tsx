@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useRef, useState } from 'react';
 import * as d3 from 'd3';
-import { uvmComponents, uvmConnections, UvmConnection } from './uvm-data-model';
+import { uvmComponents, uvmConnections } from './uvm-data-model';
 import { Button } from '@/components/ui/Button';
 
 const connectionTypes = [...new Set(uvmConnections.map(c => c.type))];
@@ -9,6 +9,14 @@ const connectionTypes = [...new Set(uvmConnections.map(c => c.type))];
 const UvmComponentRelationshipVisualizer = () => {
   const svgRef = useRef<SVGSVGElement>(null);
   const [activeFilters, setActiveFilters] = useState<string[]>(connectionTypes);
+  const [selectedNode, setSelectedNode] = useState<string | null>(null);
+
+  const filteredLinks = uvmConnections.filter(c => activeFilters.includes(c.type));
+  const degreeMap = new Map<string, number>();
+  filteredLinks.forEach(l => {
+    degreeMap.set(l.source, (degreeMap.get(l.source) || 0) + 1);
+    degreeMap.set(l.target, (degreeMap.get(l.target) || 0) + 1);
+  });
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -21,7 +29,6 @@ const UvmComponentRelationshipVisualizer = () => {
       .html(''); // Clear previous contents
 
     const nodes: (d3.SimulationNodeDatum & { id: string; name: string; type: string; })[] = uvmComponents.map(c => ({ ...c }));
-    const filteredLinks = uvmConnections.filter(c => activeFilters.includes(c.type));
 
     const simulation = d3.forceSimulation(nodes)
       .force('link', d3.forceLink(filteredLinks).id((d: any) => d.id).distance(100))
@@ -34,7 +41,8 @@ const UvmComponentRelationshipVisualizer = () => {
       .selectAll('line')
       .data(filteredLinks)
       .join('line')
-      .attr('stroke-width', d => Math.sqrt(d.type === 'parent_child' ? 3 : 1));
+      .attr('stroke-width', d => Math.sqrt(d.type === 'parent_child' ? 3 : 1))
+      .attr('stroke', d => (selectedNode && ((d.source as any).id === selectedNode || (d.target as any).id === selectedNode)) ? 'hsl(var(--info))' : '#999');
 
     const node = svg.append('g')
       .attr('stroke', '#fff')
@@ -43,7 +51,8 @@ const UvmComponentRelationshipVisualizer = () => {
       .data(nodes)
       .join('circle')
       .attr('r', 20)
-      .attr('fill', 'hsl(var(--primary))')
+      .attr('fill', d => d.id === selectedNode ? 'hsl(var(--info))' : 'hsl(var(--primary))')
+      .on('click', (_, d) => setSelectedNode(selectedNode === d.id ? null : d.id))
       .call(drag(simulation) as any);
 
     const labels = svg.append("g")
@@ -98,7 +107,7 @@ const UvmComponentRelationshipVisualizer = () => {
         .on('end', dragended);
     }
 
-  }, [activeFilters]);
+  }, [filteredLinks, selectedNode]);
 
   const handleFilterChange = (type: string) => {
     setActiveFilters(prev =>
@@ -121,6 +130,10 @@ const UvmComponentRelationshipVisualizer = () => {
           </Button>
         ))}
       </div>
+      <p className="text-sm mb-2">
+        Nodes: {uvmComponents.length} | Relationships: {filteredLinks.length}
+        {selectedNode && ` | ${selectedNode} connections: ${degreeMap.get(selectedNode) || 0}`}
+      </p>
       <svg ref={svgRef} className="w-full h-auto" />
     </div>
   );
