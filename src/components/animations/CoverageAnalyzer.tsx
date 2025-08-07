@@ -1,5 +1,5 @@
 "use client";
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { coverageData } from './coverage-data';
 import { Button } from '@/components/ui/Button';
@@ -10,6 +10,35 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 const CoverageAnalyzer = () => {
   const [exampleIndex, setExampleIndex] = useState(0);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
+  const [coverageState, setCoverageState] = useState<{ [key: string]: boolean[] }>({});
+
+  const currentExample = coverageData[exampleIndex];
+  const currentStep = currentExample.steps[currentStepIndex];
+
+  useEffect(() => {
+    const initialState: { [key: string]: boolean[] } = {};
+    currentExample.coverpoints.forEach(cp => {
+      initialState[cp.name] = cp.bins.map(() => false);
+    });
+    setCoverageState(initialState);
+    setCurrentStepIndex(0);
+  }, [currentExample]);
+
+  useEffect(() => {
+    const newState: { [key: string]: boolean[] } = {};
+    currentExample.coverpoints.forEach(cp => {
+      let remaining = currentStepIndex;
+      newState[cp.name] = cp.bins.map(bin => {
+        if (!bin.isCovered) return false;
+        if (remaining > 0) {
+          remaining -= 1;
+          return true;
+        }
+        return false;
+      });
+    });
+    setCoverageState(newState);
+  }, [currentStepIndex, currentExample]);
 
   const handleNext = () => {
     setCurrentStepIndex(prev => (prev < coverageData[exampleIndex].steps.length - 1 ? prev + 1 : prev));
@@ -21,11 +50,7 @@ const CoverageAnalyzer = () => {
 
   const handleExampleChange = (index: string) => {
     setExampleIndex(parseInt(index));
-    setCurrentStepIndex(0);
   };
-
-  const currentExample = coverageData[exampleIndex];
-  const currentStep = currentExample.steps[currentStepIndex];
 
   return (
     <Card className="w-full">
@@ -49,26 +74,133 @@ const CoverageAnalyzer = () => {
             <CodeBlock code={currentExample.code} language="systemverilog" />
           </div>
           <div className="flex flex-col justify-center items-center">
-            <div className="w-full h-48 bg-muted rounded-lg p-4 flex flex-col justify-around">
-              {currentExample.coverpoints.map((cp) => (
-                <div key={cp.name}>
-                  <h4 className="font-semibold">{cp.name}</h4>
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {cp.bins.map((bin) => (
-                      <motion.div
-                        key={bin.name}
-                        initial={{ scale: 0.5, opacity: 0 }}
-                        animate={{ scale: 1, opacity: 1 }}
-                        className={`px-3 py-1 rounded-full text-sm ${bin.isCovered ? 'bg-green-500 text-white' : 'bg-gray-300'}`}
-                      >
-                        {bin.name}
-                      </motion.div>
-                    ))}
+            <div className="w-full bg-muted rounded-lg p-4 flex flex-col justify-around">
+              {currentExample.coverpoints.map(cp => {
+                const binsState = coverageState[cp.name] || [];
+                const isCross = cp.name.startsWith('cross');
+                if (isCross) {
+                  const aVals = Array.from(new Set(
+                    cp.bins.map(b => parseInt(b.name.match(/a=(\d+)/)?.[1] || '0'))
+                  )).sort((a, b) => a - b);
+                  const bVals = Array.from(new Set(
+                    cp.bins.map(b => parseInt(b.name.match(/b=(\d+)/)?.[1] || '0'))
+                  )).sort((a, b) => a - b);
+                  return (
+                    <div key={cp.name} className="mb-4">
+                      <h4 className="font-semibold mb-2">{cp.name}</h4>
+                      <table className="border-collapse">
+                        <thead>
+                          <tr>
+                            <th className="p-1"></th>
+                            {bVals.map(b => (
+                              <th key={b} className="p-1 text-sm">b={b}</th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {aVals.map(a => (
+                            <tr key={a}>
+                              <th className="p-1 text-sm text-left">a={a}</th>
+                              {bVals.map(b => {
+                                const idx = cp.bins.findIndex(
+                                  bin => bin.name.includes(`a=${a}`) && bin.name.includes(`b=${b}`)
+                                );
+                                const covered = binsState[idx];
+                                return (
+                                  <td key={b} className="p-1">
+                                    <motion.div
+                                      initial={{ scale: 0.8 }}
+                                      animate={{
+                                        scale: 1,
+                                        backgroundColor: covered ? '#22c55e' : '#d1d5db'
+                                      }}
+                                      className="w-8 h-8 rounded"
+                                    />
+                                  </td>
+                                );
+                              })}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  );
+                }
+                return (
+                  <div key={cp.name} className="mb-4">
+                    <h4 className="font-semibold">{cp.name}</h4>
+                    <div className="flex flex-wrap gap-2 mt-2">
+                      {cp.bins.map((bin, idx) => (
+                        <motion.div
+                          key={bin.name}
+                          initial={{ scale: 0.5, opacity: 0 }}
+                          animate={{
+                            scale: 1,
+                            opacity: 1,
+                            backgroundColor: binsState[idx] ? '#22c55e' : '#d1d5db'
+                          }}
+                          className="px-3 py-1 rounded-full text-sm text-black"
+                        >
+                          {bin.name}
+                        </motion.div>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
+        </div>
+
+        <div className="mt-6">
+          <h4 className="font-semibold mb-2">Requirements Progress</h4>
+          {currentExample.coverpoints.map(cp => {
+            const binsState = coverageState[cp.name] || [];
+            const total = cp.bins.length;
+            const covered = binsState.filter(Boolean).length;
+            const percent = Math.round((covered / total) * 100);
+            return (
+              <div key={cp.name} className="mb-2">
+                <div className="flex justify-between text-sm mb-1">
+                  <span>{cp.name}</span>
+                  <span>{percent}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded h-2">
+                  <motion.div
+                    initial={{ width: 0 }}
+                    animate={{ width: `${percent}%` }}
+                    className="h-2 bg-primary rounded"
+                  />
+                </div>
+              </div>
+            );
+          })}
+          {(() => {
+            const totals = currentExample.coverpoints.reduce(
+              (acc, cp) => {
+                acc.total += cp.bins.length;
+                acc.covered += (coverageState[cp.name] || []).filter(Boolean).length;
+                return acc;
+              },
+              { total: 0, covered: 0 }
+            );
+            const percent = totals.total ? Math.round((totals.covered / totals.total) * 100) : 0;
+            return (
+              <div className="mt-4">
+                <div className="flex justify-between text-sm mb-1">
+                  <span>Overall Coverage</span>
+                  <span>{percent}%</span>
+                </div>
+                <div className="w-full bg-gray-200 rounded h-2">
+                  <motion.div
+                    initial={{ width: 0 }}
+                    animate={{ width: `${percent}%` }}
+                    className="h-2 bg-primary rounded"
+                  />
+                </div>
+              </div>
+            );
+          })()}
         </div>
 
         <AnimatePresence mode="wait">
