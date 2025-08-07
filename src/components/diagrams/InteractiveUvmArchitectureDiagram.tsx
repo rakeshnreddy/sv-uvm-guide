@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useZoomPan } from '@/hooks/useZoomPan';
 import { useKeyboardNavigation } from '@/hooks/useKeyboardNavigation';
-import { exportSvg } from '@/lib/exportUtils';
+import { exportSvgAsPng, exportSvgAsPdf } from '@/lib/exportUtils';
+import { useTheme } from 'next-themes';
 
 const componentTypes = [...new Set(uvmComponents.map(c => c.type.split('_')[0]))];
 
@@ -29,6 +30,7 @@ const InteractiveUvmArchitectureDiagram = () => {
   const svgRef = useRef<SVGSVGElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const { theme, setTheme } = useTheme();
   const [activeComponent, setActiveComponent] = useState<UvmComponent | null>(null);
   const [highlightedType, setHighlightedType] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -91,25 +93,40 @@ const InteractiveUvmArchitectureDiagram = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleExport = useCallback(() => {
+  const handleExportPng = useCallback(() => {
     if (svgRef.current) {
-      exportSvg(svgRef.current, 'uvm-architecture');
+      exportSvgAsPng(svgRef.current, 'uvm-architecture');
     }
   }, []);
 
-  useZoomPan(svgRef);
+  const handleExportPdf = useCallback(() => {
+    if (svgRef.current) {
+      exportSvgAsPdf(svgRef.current, 'uvm-architecture');
+    }
+  }, []);
+
+  const toggleTheme = () => {
+    if (!theme) return;
+    if (theme.endsWith('dark')) {
+      setTheme(theme.replace('dark', 'light'));
+    } else {
+      setTheme(theme.replace('light', 'dark'));
+    }
+  };
+
+  useZoomPan(svgRef, zoomRef);
   useKeyboardNavigation(svgRef as unknown as React.RefObject<HTMLElement | SVGSVGElement>);
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'e') {
         e.preventDefault();
-        handleExport();
+        handleExportPng();
       }
     };
     window.addEventListener('keydown', handleKey);
     return () => window.removeEventListener('keydown', handleKey);
-  }, [handleExport]);
+  }, [handleExportPng]);
 
   useEffect(() => {
     if (!svgRef.current) return;
@@ -308,8 +325,14 @@ const InteractiveUvmArchitectureDiagram = () => {
         >
           Control Flow
         </Button>
-        <Button variant="outline" size="sm" onClick={handleExport}>
-          Export
+        <Button variant="outline" size="sm" onClick={handleExportPng}>
+          Export PNG
+        </Button>
+        <Button variant="outline" size="sm" onClick={handleExportPdf}>
+          Export PDF
+        </Button>
+        <Button variant="outline" size="sm" onClick={toggleTheme}>
+          Toggle Theme
         </Button>
       </div>
       <svg
