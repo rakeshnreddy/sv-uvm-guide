@@ -1,10 +1,13 @@
 "use client";
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { svaOperators, SvaOperator } from './sva-data';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { Button } from '@/components/ui/Button';
+import Editor from '@monaco-editor/react';
+import { useTheme } from 'next-themes';
 
 const SortableOperator = ({ id, operator }: { id: string; operator: SvaOperator }) => {
   const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id });
@@ -23,6 +26,26 @@ const AssertionBuilder = () => {
   const [operators, setOperators] = useState(svaOperators);
   const [property, setProperty] = useState<SvaOperator[]>([]);
   const sensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
+  const { theme } = useTheme();
+  const [code, setCode] = useState('');
+  const [simulation, setSimulation] = useState<{ operator: SvaOperator; status: 'pass' | 'fail' }[]>([]);
+  const [currentStep, setCurrentStep] = useState(0);
+
+  useEffect(() => {
+    setCode(property.map(op => op.symbol).join(' '));
+  }, [property]);
+
+  const runSimulation = () => {
+    const results = property.map((op, idx) => ({
+      operator: op,
+      status: op.type === 'temporal' && idx === property.length - 1 ? 'fail' : 'pass',
+    }));
+    setSimulation(results);
+    setCurrentStep(0);
+  };
+
+  const nextStep = () => setCurrentStep(prev => Math.min(prev + 1, simulation.length - 1));
+  const prevStep = () => setCurrentStep(prev => Math.max(prev - 1, 0));
 
   const handleDragEnd = (event: any) => {
     const { active, over } = event;
@@ -67,8 +90,38 @@ const AssertionBuilder = () => {
                   {property.map(op => <SortableOperator key={op.id} id={op.id} operator={op} />)}
                 </SortableContext>
               </div>
-              <div className="mt-4 p-2 bg-gray-800 text-white rounded-lg font-mono">
-                {property.map(op => op.symbol).join(' ')}
+              <div className="mt-4">
+                <Editor
+                  height="150px"
+                  language="systemverilog"
+                  theme={theme === 'dark' ? 'vs-dark' : 'light'}
+                  value={code}
+                  onChange={value => setCode(value ?? '')}
+                />
+                <Button className="mt-2" onClick={runSimulation} disabled={property.length === 0}>Simulate</Button>
+
+                {simulation.length > 0 && (
+                  <div className="mt-4">
+                    <div className="flex items-center space-x-2 mb-2">
+                      {simulation.map((step, idx) => (
+                        <div
+                          key={idx}
+                          className={`flex-1 text-center p-2 rounded text-white ${step.status === 'fail' ? 'bg-red-500' : 'bg-green-600'} ${idx === currentStep ? 'ring-2 ring-offset-2 ring-offset-background ring-yellow-400' : ''}`}
+                        >
+                          {step.operator.symbol}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex justify-between">
+                      <Button onClick={prevStep} disabled={currentStep === 0}>Prev</Button>
+                      <Button onClick={nextStep} disabled={currentStep === simulation.length - 1}>Next</Button>
+                    </div>
+                    <p className="mt-2 text-sm">
+                      {simulation[currentStep].operator.description}
+                      {simulation[currentStep].status === 'fail' && ' - Failed'}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
