@@ -10,7 +10,7 @@ export interface UvmPhase {
   objectionTriggers?: { raise?: number; drop?: number };
 }
 
-export const uvmPhases: UvmPhase[] = [
+export let uvmPhases: UvmPhase[] = [
   // Build Phases (run in order, top-down)
   {
     name: 'build',
@@ -200,3 +200,7 @@ export const uvmPhases: UvmPhase[] = [
     timing: { start: 240, end: 250 },
   },
 ];
+
+export const addUvmPhase = (phase: UvmPhase) => {
+  uvmPhases = [...uvmPhases, phase];
+};
