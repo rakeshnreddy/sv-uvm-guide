@@ -175,4 +175,40 @@ export const generateLearningPath = (
   return { path: [] }; // No path found
 };
 
+/**
+ * Wraps recognized concepts in a given text with a custom component tag for interactive linking.
+ * @param text The raw text content to process.
+ * @param nodes The list of all concept nodes.
+ * @returns The text with concepts wrapped in <ConceptLink> components.
+ */
+export const wrapConceptsInText = (text: string, nodes: ConceptNode[]): string => {
+  // Sort nodes by name length, descending, to match longer names first
+  const sortedNodes = [...nodes].sort((a, b) => b.name.length - a.name.length);
+  const nameToIdMap = new Map(sortedNodes.map(node => [node.name.toLowerCase(), node.id]));
+
+  // Create a regex to match any of the concept names as whole words, case-insensitively
+  const conceptNamesRegex = new RegExp(
+    `\\b(${sortedNodes.map(node => node.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\b`,
+    'gi'
+  );
+
+  // A simple way to avoid replacing text inside code blocks
+  const parts = text.split(/(```[\s\S]*?```|`[^`]*?`)/);
+
+  return parts.map((part, index) => {
+    // If the part is a code block (odd index), return it as is
+    if (index % 2 === 1) {
+      return part;
+    }
+    // Otherwise, run the replacement
+    return part.replace(conceptNamesRegex, (match) => {
+      const conceptId = nameToIdMap.get(match.toLowerCase());
+      if (conceptId) {
+        return `<ConceptLink conceptId="${conceptId}">${match}</ConceptLink>`;
+      }
+      return match;
+    });
+  }).join('');
+};
+
 console.log('Knowledge graph engine loaded.');
