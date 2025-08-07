@@ -12,7 +12,11 @@ interface D3Link extends d3.SimulationLinkDatum<D3Node> {
   type: RelationshipEdge['type'];
 }
 
-const KnowledgeGraphVisualizer = () => {
+interface KnowledgeGraphVisualizerProps {
+  highlightedPath?: string[];
+}
+
+const KnowledgeGraphVisualizer = ({ highlightedPath = [] }: KnowledgeGraphVisualizerProps) => {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [graphData, setGraphData] = useState<KnowledgeGraphData | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -68,31 +72,50 @@ const KnowledgeGraphVisualizer = () => {
         .text((d: any) => d.name)
         .attr("font-size", "12px");
 
-      // Highlighting logic based on search term
+      // --- Highlighting Logic ---
       const lowercasedSearch = searchTerm.toLowerCase();
       const isSearching = lowercasedSearch.trim() !== '';
+      const searchMatchIds = new Set(isSearching ? nodes.filter(n => n.name.toLowerCase().includes(lowercasedSearch)).map(n => n.id) : []);
 
-      const searchMatchIds = new Set(
-        isSearching ? nodes.filter(n => n.name.toLowerCase().includes(lowercasedSearch)).map(n => n.id) : []
+      const isHighlightingPath = highlightedPath.length > 0;
+      const pathNodeIds = new Set(highlightedPath);
+      const pathLinkIds = new Set(
+        links
+          .filter(l => pathNodeIds.has((l.source as D3Node).id) && pathNodeIds.has((l.target as D3Node).id))
+          .map(l => `${(l.source as D3Node).id}-${(l.target as D3Node).id}`)
       );
 
       node.attr('opacity', d => {
-        if (!isSearching) return 1;
-        return searchMatchIds.has(d.id) ? 1 : 0.2;
+        if (!isSearching && !isHighlightingPath) return 1;
+        if (isHighlightingPath && pathNodeIds.has(d.id)) return 1;
+        if (isSearching && searchMatchIds.has(d.id)) return 1;
+        return 0.15;
       });
 
       link
-        .attr("stroke", "#999")
-        .attr("stroke-opacity", d => {
-            if (!isSearching) return 0.6;
-            const sourceMatch = searchMatchIds.has((d.source as D3Node).id);
-            const targetMatch = searchMatchIds.has((d.target as D3Node).id);
-            return sourceMatch && targetMatch ? 1 : 0.2;
+        .attr("stroke", l => {
+            const linkId = `${(l.source as D3Node).id}-${(l.target as D3Node).id}`;
+            return isHighlightingPath && pathLinkIds.has(linkId) ? '#4f46e5' : '#999'; // indigo-700 for path
         })
-        .attr("stroke-width", d => Math.sqrt(d.strength || 1));
+        .attr("stroke-opacity", l => {
+            const sourceId = (l.source as D3Node).id;
+            const targetId = (l.target as D3Node).id;
+            if (isHighlightingPath && pathNodeIds.has(sourceId) && pathNodeIds.has(targetId)) return 1;
+            if (isSearching && searchMatchIds.has(sourceId) && searchMatchIds.has(targetId)) return 1;
+            return isHighlightingPath || isSearching ? 0.2 : 0.6;
+        })
+        .attr("stroke-width", l => {
+            const linkId = `${(l.source as D3Node).id}-${(l.target as D3Node).id}`;
+            return isHighlightingPath && pathLinkIds.has(linkId) ? 2.5 : Math.sqrt(l.strength || 1);
+        });
 
       circles
-        .attr("stroke", d => isSearching && searchMatchIds.has(d.id) ? '#ef4444' : '#fff') // red-500 for highlight
+        .attr("stroke", d => {
+            if (isHighlightingPath && pathNodeIds.has(d.id)) return '#4f46e5'; // indigo-700
+            if (isSearching && searchMatchIds.has(d.id)) return '#ef4444'; // red-500
+            return '#fff';
+        })
+        .attr("stroke-width", d => (isHighlightingPath && pathNodeIds.has(d.id)) ? 3 : 1.5)
         .attr("fill", (d: any) => {
           if (d.id === 'root') return '#fde047';
           switch(d.tier) {
@@ -107,34 +130,27 @@ const KnowledgeGraphVisualizer = () => {
       labels.attr("fill", "#333");
 
       simulation.on("tick", () => {
-        link
-          .attr("x1", (d: any) => d.source.x)
-          .attr("y1", (d: any) => d.source.y)
-          .attr("x2", (d: any) => d.target.x)
-          .attr("y2", (d: any) => d.target.y);
-        node
-          .attr("transform", (d: any) => `translate(${d.x},${d.y})`);
+        link.attr("x1", (d: any) => d.source.x).attr("y1", (d: any) => d.source.y)
+            .attr("x2", (d: any) => d.target.x).attr("y2", (d: any) => d.target.y);
+        node.attr("transform", (d: any) => `translate(${d.x},${d.y})`);
       });
 
       function drag(simulation: d3.Simulation<D3Node, D3Link>) {
         function dragstarted(event: d3.D3DragEvent<SVGGElement, D3Node, D3Node>, d: D3Node) {
           if (!event.active) simulation.alphaTarget(0.3).restart();
-          d.fx = d.x;
-          d.fy = d.y;
+          d.fx = d.x; d.fy = d.y;
         }
         function dragged(event: d3.D3DragEvent<SVGGElement, D3Node, D3Node>, d: D3Node) {
-          d.fx = event.x;
-          d.fy = event.y;
+          d.fx = event.x; d.fy = event.y;
         }
         function dragended(event: d3.D3DragEvent<SVGGElement, D3Node, D3Node>, d: D3Node) {
           if (!event.active) simulation.alphaTarget(0);
-          d.fx = null;
-          d.fy = null;
+          d.fx = null; d.fy = null;
         }
         return d3.drag<SVGGElement, D3Node>().on("start", dragstarted).on("drag", dragged).on("end", dragended);
       }
     }
-  }, [graphData, searchTerm]);
+  }, [graphData, searchTerm, highlightedPath]);
 
   return (
     <div className="p-4 border rounded-lg bg-white shadow-lg">

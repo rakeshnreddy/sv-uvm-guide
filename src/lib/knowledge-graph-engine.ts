@@ -123,18 +123,56 @@ export const analyzeDependencies = (graphData: KnowledgeGraphData, conceptId: st
   return { prerequisites, dependents };
 };
 
+export interface LearningPath {
+  path: ConceptNode[];
+  // estimatedTime could be added later
+}
+
 /**
- * Generates a personalized learning path.
- * @param startConceptId The starting concept.
- * @param goalConceptId The target concept or goal.
+ * Generates a personalized learning path using Breadth-First Search.
+ * @param graphData The full knowledge graph data.
+ * @param startConceptId The ID of the starting concept.
+ * @param goalConceptId The ID of the target concept.
  */
-export const generateLearningPath = async (startConceptId: string, goalConceptId: string): Promise<any> => {
-  console.log(`Generating learning path from ${startConceptId} to ${goalConceptId}...`);
-  // Placeholder logic
-  return Promise.resolve({
-    path: [],
-    estimatedTime: '0 hours',
-  });
+export const generateLearningPath = (
+  graphData: KnowledgeGraphData,
+  startConceptId: string,
+  goalConceptId: string
+): LearningPath => {
+  const nodeMap = new Map(graphData.nodes.map(node => [node.id, node]));
+  const adj = new Map<string, string[]>();
+
+  for (const edge of graphData.edges) {
+    if (edge.type === 'PREREQUISITE') {
+      if (!adj.has(edge.source as string)) adj.set(edge.source as string, []);
+      adj.get(edge.source as string)!.push(edge.target as string);
+    }
+  }
+
+  const queue: string[][] = [[startConceptId]];
+  const visited = new Set<string>([startConceptId]);
+
+  while (queue.length > 0) {
+    const path = queue.shift()!;
+    const nodeId = path[path.length - 1];
+
+    if (nodeId === goalConceptId) {
+      // Path found, convert IDs to nodes
+      const conceptPath = path.map(id => nodeMap.get(id)).filter((n): n is ConceptNode => n !== undefined);
+      return { path: conceptPath };
+    }
+
+    const neighbors = adj.get(nodeId) || [];
+    for (const neighborId of neighbors) {
+      if (!visited.has(neighborId)) {
+        visited.add(neighborId);
+        const newPath = [...path, neighborId];
+        queue.push(newPath);
+      }
+    }
+  }
+
+  return { path: [] }; // No path found
 };
 
 console.log('Knowledge graph engine loaded.');
