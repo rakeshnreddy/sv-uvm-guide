@@ -7,10 +7,21 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { CodeBlock } from '@/components/ui/CodeBlock';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 
+/**
+ * Interactive coverage analyzer illustrating coverage-driven verification flow.
+ * Features:
+ * - Cross coverage visualization
+ * - Dynamic coverage collection with play/pause controls
+ * - Coverage hole identification with closure strategies
+ * - Goal tracking mapped to requirement IDs
+ * - Report generation (JSON/HTML)
+ */
+
 const CoverageAnalyzer = () => {
   const [exampleIndex, setExampleIndex] = useState(0);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
   const [coverageState, setCoverageState] = useState<{ [key: string]: boolean[] }>({});
+  const [isPlaying, setIsPlaying] = useState(false);
 
   const currentExample = coverageData[exampleIndex];
   const currentStep = currentExample.steps[currentStepIndex];
@@ -40,12 +51,33 @@ const CoverageAnalyzer = () => {
     setCoverageState(newState);
   }, [currentStepIndex, currentExample]);
 
+  useEffect(() => {
+    if (!isPlaying) return;
+    const id = setInterval(() => {
+      setCurrentStepIndex(prev => {
+        if (prev < coverageData[exampleIndex].steps.length - 1) {
+          return prev + 1;
+        }
+        setIsPlaying(false);
+        return prev;
+      });
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isPlaying, exampleIndex]);
+
   const handleNext = () => {
     setCurrentStepIndex(prev => (prev < coverageData[exampleIndex].steps.length - 1 ? prev + 1 : prev));
   };
 
   const handlePrev = () => {
     setCurrentStepIndex(prev => (prev > 0 ? prev - 1 : prev));
+  };
+
+  const handlePlay = () => setIsPlaying(true);
+  const handlePause = () => setIsPlaying(false);
+  const handleReset = () => {
+    setIsPlaying(false);
+    setCurrentStepIndex(0);
   };
 
   const handleExampleChange = (index: string) => {
@@ -100,8 +132,9 @@ const CoverageAnalyzer = () => {
                     initial={{ scale: 0.8 }}
                     animate={{
                       scale: 1,
-                      backgroundColor: covered ? '#22c55e' : '#d1d5db'
+                      backgroundColor: covered ? '#22c55e' : '#f87171'
                     }}
+                    title={`${xVar}=${x}, ${yVar}=${y}`}
                     className="w-8 h-8 rounded"
                   />
                 </td>
@@ -114,7 +147,7 @@ const CoverageAnalyzer = () => {
   );
 
   const coverageHoles = useMemo(() => {
-    const holes: { cp: string; bin: string; suggestion: string }[] = [];
+    const holes: { cp: string; bin: string; strategy: string }[] = [];
     currentExample.coverpoints.forEach(cp => {
       const binsState = coverageState[cp.name] || [];
       cp.bins.forEach((bin, idx) => {
@@ -122,7 +155,7 @@ const CoverageAnalyzer = () => {
           holes.push({
             cp: cp.name,
             bin: bin.name,
-            suggestion: `Add tests to cover ${bin.name}`
+            strategy: `Add targeted tests to cover ${bin.name}`
           });
         }
       });
@@ -140,7 +173,10 @@ const CoverageAnalyzer = () => {
         const percent = total ? Math.round((covered / total) * 100) : 0;
         const holes = cp.bins
           .filter((_, idx) => !binsState[idx])
-          .map(bin => bin.name);
+          .map(bin => ({
+            bin: bin.name,
+            strategy: `Add targeted tests to cover ${bin.name}`
+          }));
         return {
           name: cp.name,
           requirementId: cp.requirementId,
@@ -173,7 +209,7 @@ const CoverageAnalyzer = () => {
       .map(
         cp =>
           `<h2>${cp.name} (${cp.requirementId})</h2><p>${cp.percent}% coverage</p><ul>${cp.holes
-            .map(h => `<li>${h}</li>`)
+            .map(h => `<li>${h.bin} - ${h.strategy}</li>`)
             .join('')}</ul>`
       )
       .join('')}</body></html>`;
@@ -359,16 +395,16 @@ const CoverageAnalyzer = () => {
         </div>
 
         {coverageHoles.length > 0 && (
-          <div className="mt-6">
-            <h4 className="font-semibold mb-2">Coverage Holes & Suggestions</h4>
-            <ul className="list-disc ml-6 text-sm">
-              {coverageHoles.map((hole, idx) => (
-                <li key={idx}>
-                  {hole.cp}: {hole.bin} - {hole.suggestion}
-                </li>
-              ))}
-            </ul>
-          </div>
+        <div className="mt-6">
+          <h4 className="font-semibold mb-2">Coverage Holes & Closure Strategies</h4>
+          <ul className="list-disc ml-6 text-sm">
+            {coverageHoles.map((hole, idx) => (
+              <li key={idx}>
+                {hole.cp}: {hole.bin} - {hole.strategy}
+              </li>
+            ))}
+          </ul>
+        </div>
         )}
 
         <div className="flex gap-2 mt-4">
@@ -385,13 +421,23 @@ const CoverageAnalyzer = () => {
             transition={{ duration: 0.3 }}
             className="p-4 border rounded-lg bg-background/50 mt-4"
           >
+            <p className="font-medium mb-2">
+              Step {currentStepIndex + 1} of {currentExample.steps.length}
+            </p>
             <p>{currentStep}</p>
           </motion.div>
         </AnimatePresence>
 
-        <div className="flex justify-between mt-4">
-          <Button onClick={handlePrev} disabled={currentStepIndex === 0}>Previous</Button>
-          <Button onClick={handleNext} disabled={currentStepIndex === currentExample.steps.length - 1}>Next</Button>
+        <div className="flex flex-wrap gap-2 justify-between mt-4">
+          <div className="flex gap-2">
+            <Button onClick={handlePrev} disabled={currentStepIndex === 0}>Previous</Button>
+            <Button onClick={handleNext} disabled={currentStepIndex === currentExample.steps.length - 1}>Next</Button>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={handlePlay} disabled={isPlaying}>Play</Button>
+            <Button onClick={handlePause} disabled={!isPlaying}>Pause</Button>
+            <Button onClick={handleReset}>Reset</Button>
+          </div>
         </div>
       </CardContent>
     </Card>
