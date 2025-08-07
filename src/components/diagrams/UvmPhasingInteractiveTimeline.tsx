@@ -1,25 +1,29 @@
 "use client";
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { uvmPhases, UvmPhase } from './uvm-phasing-data';
+import { uvmPhases, UvmPhase, addUvmPhase } from './uvm-phasing-data';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
+import { ArrowUpCircle, ArrowDownCircle, Download, Share2 } from 'lucide-react';
 
 const UvmPhasingInteractiveTimeline = () => {
   const [phases, setPhases] = useState<UvmPhase[]>(uvmPhases);
   const [currentPhaseIndex, setCurrentPhaseIndex] = useState(0);
   const [newPhase, setNewPhase] = useState({ name: '', start: '', end: '', dependencies: '' });
+  const [showModal, setShowModal] = useState(false);
+
+  const svgRef = useRef<SVGSVGElement>(null);
 
   const totalTime = Math.max(...phases.map(p => p.timing.end));
 
-  const handleNext = () => {
+  const handleNext = React.useCallback(() => {
     setCurrentPhaseIndex(prev => (prev < phases.length - 1 ? prev + 1 : prev));
-  };
+  }, [phases.length]);
 
-  const handlePrev = () => {
+  const handlePrev = React.useCallback(() => {
     setCurrentPhaseIndex(prev => (prev > 0 ? prev - 1 : prev));
-  };
+  }, []);
 
   const handleAddPhase = () => {
     const start = Number(newPhase.start);
@@ -37,9 +41,44 @@ const UvmPhasingInteractiveTimeline = () => {
       timing: { start, end },
     };
 
+    addUvmPhase(phase);
     setPhases(prev => [...prev, phase]);
     setCurrentPhaseIndex(phases.length);
     setNewPhase({ name: '', start: '', end: '', dependencies: '' });
+    setShowModal(false);
+  };
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'ArrowRight') handleNext();
+      else if (e.key === 'ArrowLeft') handlePrev();
+      else if (/^[0-9]$/.test(e.key)) {
+        const idx = Number(e.key) - 1;
+        if (idx >= 0 && idx < phases.length) setCurrentPhaseIndex(idx);
+      }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
+  }, [phases.length, handleNext, handlePrev]);
+
+  const handleExportImage = () => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const serializer = new XMLSerializer();
+    const source = serializer.serializeToString(svg);
+    const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(source)}`;
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'uvm-timeline.svg';
+    link.click();
+  };
+
+  const handleShareLink = async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.href);
+    } catch {
+      /* empty */
+    }
   };
 
   const currentPhase = phases[currentPhaseIndex];
@@ -51,7 +90,7 @@ const UvmPhasingInteractiveTimeline = () => {
       </CardHeader>
       <CardContent>
         <div className="mb-4">
-          <svg viewBox="0 0 100 40" className="w-full h-32">
+          <svg ref={svgRef} id="uvm-timeline-svg" viewBox="0 0 100 40" className="w-full h-32">
             <defs>
               <marker id="arrow" markerWidth="4" markerHeight="4" refX="4" refY="2" orient="auto">
                 <path d="M0,0 L4,2 L0,4 Z" fill="currentColor" />
@@ -76,20 +115,18 @@ const UvmPhasingInteractiveTimeline = () => {
                     {phase.name}
                   </text>
                   {phase.objectionTriggers?.raise !== undefined && (
-                    <circle
-                      cx={(phase.objectionTriggers.raise / totalTime) * 100}
-                      cy={y + barHeight + 3}
-                      r={1}
-                      fill="red"
-                    />
+                    <g
+                      transform={`translate(${(phase.objectionTriggers.raise / totalTime) * 100}, ${y + barHeight + 1})`}
+                    >
+                      <ArrowUpCircle width={3} height={3} color="red" />
+                    </g>
                   )}
                   {phase.objectionTriggers?.drop !== undefined && (
-                    <circle
-                      cx={(phase.objectionTriggers.drop / totalTime) * 100}
-                      cy={y + barHeight + 3}
-                      r={1}
-                      fill="green"
-                    />
+                    <g
+                      transform={`translate(${(phase.objectionTriggers.drop / totalTime) * 100}, ${y + barHeight + 1})`}
+                    >
+                      <ArrowDownCircle width={3} height={3} color="green" />
+                    </g>
                   )}
                 </g>
               );
@@ -115,6 +152,14 @@ const UvmPhasingInteractiveTimeline = () => {
                 );
               })
             )}
+            <motion.g
+              initial={{ x: 0 }}
+              animate={{ x: 100 }}
+              transition={{ duration: totalTime / 10, repeat: Infinity, ease: 'linear' }}
+            >
+              <line x1={0} y1={15} x2={0} y2={32} stroke="hsl(var(--primary))" strokeWidth={0.5} />
+              <circle cx={0} cy={15} r={1.2} fill="hsl(var(--primary))" />
+            </motion.g>
           </svg>
         </div>
 
@@ -168,40 +213,74 @@ const UvmPhasingInteractiveTimeline = () => {
           </motion.div>
         </AnimatePresence>
 
-        <div className="flex justify-between mt-4">
-          <Button onClick={handlePrev} disabled={currentPhaseIndex === 0}>Previous</Button>
-          <Button onClick={handleNext} disabled={currentPhaseIndex === phases.length - 1}>Next</Button>
-        </div>
-
-        <div className="mt-4">
-          <h4 className="font-semibold mb-2">Add Custom Phase</h4>
-          <div className="flex flex-wrap gap-2 mb-2">
-            <Input
-              placeholder="Name"
-              value={newPhase.name}
-              onChange={e => setNewPhase({ ...newPhase, name: e.target.value })}
-            />
-            <Input
-              type="number"
-              placeholder="Start"
-              value={newPhase.start}
-              onChange={e => setNewPhase({ ...newPhase, start: e.target.value })}
-            />
-            <Input
-              type="number"
-              placeholder="End"
-              value={newPhase.end}
-              onChange={e => setNewPhase({ ...newPhase, end: e.target.value })}
-            />
-            <Input
-              placeholder="Deps"
-              value={newPhase.dependencies}
-              onChange={e => setNewPhase({ ...newPhase, dependencies: e.target.value })}
-            />
-            <Button onClick={handleAddPhase}>Add</Button>
+        <div className="flex justify-between mt-4 flex-wrap gap-2">
+          <div className="flex gap-2">
+            <Button onClick={handlePrev} disabled={currentPhaseIndex === 0}>Previous</Button>
+            <Button onClick={handleNext} disabled={currentPhaseIndex === phases.length - 1}>Next</Button>
+          </div>
+          <div className="flex gap-2">
+            <Button onClick={handleExportImage}>
+              <Download className="w-4 h-4 mr-1" /> Export
+            </Button>
+            <Button variant="outline" onClick={handleShareLink}>
+              <Share2 className="w-4 h-4 mr-1" /> Share
+            </Button>
+            <Button variant="outline" onClick={() => setShowModal(true)}>
+              Add Phase
+            </Button>
           </div>
         </div>
       </CardContent>
+
+      <AnimatePresence>
+        {showModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/50 flex items-center justify-center"
+          >
+            <motion.div
+              initial={{ scale: 0.9 }}
+              animate={{ scale: 1 }}
+              exit={{ scale: 0.9 }}
+              className="bg-background p-4 rounded-lg w-80"
+            >
+              <h4 className="font-semibold mb-2">Add Custom Phase</h4>
+              <div className="flex flex-col gap-2 mb-4">
+                <Input
+                  placeholder="Name"
+                  value={newPhase.name}
+                  onChange={e => setNewPhase({ ...newPhase, name: e.target.value })}
+                />
+                <Input
+                  type="number"
+                  placeholder="Start"
+                  value={newPhase.start}
+                  onChange={e => setNewPhase({ ...newPhase, start: e.target.value })}
+                />
+                <Input
+                  type="number"
+                  placeholder="End"
+                  value={newPhase.end}
+                  onChange={e => setNewPhase({ ...newPhase, end: e.target.value })}
+                />
+                <Input
+                  placeholder="Deps"
+                  value={newPhase.dependencies}
+                  onChange={e => setNewPhase({ ...newPhase, dependencies: e.target.value })}
+                />
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setShowModal(false)}>
+                  Cancel
+                </Button>
+                <Button onClick={handleAddPhase}>Add</Button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </Card>
   );
 };
