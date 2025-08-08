@@ -34,7 +34,6 @@ describe('firebase initialization', () => {
   beforeEach(() => {
     vi.resetModules();
     initSpy.mockReset();
-    setEnv();
   });
 
   afterEach(() => {
@@ -42,6 +41,7 @@ describe('firebase initialization', () => {
   });
 
   it('initializes Firebase with environment config', async () => {
+    setEnv();
     const mod = await import('@/lib/firebase');
 
     expect(initSpy).toHaveBeenCalledWith({
@@ -54,5 +54,23 @@ describe('firebase initialization', () => {
     });
     expect(mod.db).toBeDefined();
     expect(mod.auth).toBeDefined();
+  });
+
+  it('falls back to mock config when env vars missing', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const mod = await import('@/lib/firebase');
+
+    expect(initSpy).toHaveBeenCalledWith({
+      apiKey: 'MOCK_API_KEY',
+      authDomain: 'mock-project-id.firebaseapp.com',
+      projectId: 'mock-project-id',
+      storageBucket: 'mock-project-id.appspot.com',
+      messagingSenderId: 'MOCK_MESSAGING_SENDER_ID',
+      appId: 'MOCK_APP_ID',
+      measurementId: 'MOCK_MEASUREMENT_ID'
+    });
+    expect(mod.db).toBeDefined();
+    expect(mod.auth).toBeDefined();
+    warnSpy.mockRestore();
   });
 });

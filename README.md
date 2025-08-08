@@ -63,6 +63,8 @@ NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
 ```
 
 These variables are used during initialization in `src/lib/firebase.ts`.
+If they are not provided, the app falls back to a mock Firebase configuration
+so the site can still run locally, but data will not persist.
 
 ## Phase Deliverables
 
