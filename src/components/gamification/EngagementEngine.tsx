@@ -141,6 +141,22 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
     setProfile(prev => prev ? { ...prev, rewardPreference: pref } : null);
   };
 
+  const recommendedDifficulty = useMemo(() => {
+    if (!metrics) return 'Medium';
+    if (metrics.dailyStreak >= 7 && metrics.challengesAttempted > 10) return 'Hard';
+    if (metrics.lessonsCompleted < 5) return 'Easy';
+    return 'Medium';
+  }, [metrics]);
+
+  const addGoal = () => {
+    const description = prompt('Goal description?');
+    const targetStr = prompt('Target amount?');
+    const target = targetStr ? parseInt(targetStr, 10) : 0;
+    if (description && target > 0) {
+      setGoals(prev => [...prev, { id: Date.now().toString(), description, target, progress: 0, unit: 'units' }]);
+    }
+  };
+
   // --- DATA FETCHING & ANALYSIS ---
   useEffect(() => {
     // Simulate fetching data from a backend API.
@@ -159,6 +175,7 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
       setProfile(mockMotivationalProfile);
       setGoals(mockGoals);
       setMentorMessage('Hi there! I will guide you through your learning journey.');
+
 
       setIsLoading(false);
     };
@@ -226,6 +243,7 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
           action: () => console.log('Navigate to study groups'),
         });
       }
+
       if (profile?.style === 'competitive') {
         newStrategies.push({
           id: 'compete_leaderboard',
@@ -332,6 +350,7 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
               ))}
             </div>
           )}
+
         </div>
 
         {/* 5. Motivational Feedback & Personalized Strategies */}

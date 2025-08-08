@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Bug, Puzzle, Users, Timer, Package, Snail, Layers, Zap, Lightbulb, Swords, BookOpen } from 'lucide-react';
+
 import { cn } from '@/lib/utils';
 
 // --- TYPE DEFINITIONS ---
@@ -64,6 +65,7 @@ const mockStory: StoryChapter[] = [
   { id: 's1', title: 'Bootcamp Beginnings', description: 'Meet your mentor and set off on your verification journey.', mentor: 'Prof. Signal', relatedChallenges: ['c7', 'c1'] },
   { id: 's2', title: 'Industry Internship', description: 'Apply skills in a simulated company project.', mentor: 'Lead Engineer', relatedChallenges: ['c8', 'c4'] },
   { id: 's3', title: 'Innovation Summit', description: 'Showcase your most creative verification idea.', mentor: 'Innovation Panel', relatedChallenges: ['c6'] },
+
 ];
 
 
@@ -130,6 +132,7 @@ const ChallengeQuestSystem: React.FC<ChallengeQuestSystemProps> = ({ userId }) =
   const storyChapters = mockStory;
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
 
+
   useEffect(() => {
     // Fetch challenges for the user
     setChallenges(mockChallenges);
@@ -153,6 +156,7 @@ const ChallengeQuestSystem: React.FC<ChallengeQuestSystemProps> = ({ userId }) =
   }, [challenges, currentChapterIndex]);
 
   const currentChapter = storyChapters[currentChapterIndex];
+
 
   const filteredChallenges = challenges.filter(c =>
     (filterType === 'All' || c.type === filterType) &&
