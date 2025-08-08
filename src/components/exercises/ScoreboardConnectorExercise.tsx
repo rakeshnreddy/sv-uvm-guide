@@ -53,9 +53,17 @@ const portFillColorHover = "#CBD5E0"; // gray-300
 const ScoreboardConnectorExercise: React.FC = () => {
   const [components, /* setComponents */] = useState<Component[]>(initialComponents); // setComponents commented out
   const [connections, setConnections] = useState<Connection[]>([]);
+  const [connectionResults, setConnectionResults] = useState<boolean[] | null>(null);
+  const [score, setScore] = useState<number | null>(null);
   const [drawingLine, setDrawingLine] = useState<{ fromComponentId: string; fromPortId: string; x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [selectedPort, setSelectedPort] = useState<{ componentId: string; portId: string } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const [feedback, setFeedback] = useState<{ score: number; passed: boolean } | null>(null);
+
+  // Map of correct connections: output port -> valid input ports
+  const referenceMap: Record<string, string[]> = {
+    mon_ap: ['sb_imp_actual', 'cov_imp'],
+  };
 
   const getPortAbsolutePosition = (componentId: string, portId: string) => {
     const component = components.find(c => c.id === componentId);
@@ -125,8 +133,29 @@ const ScoreboardConnectorExercise: React.FC = () => {
         setDrawingLine(null);
     }
   }
+  const expectedConnections: Connection[] = [
+    { fromComponentId: 'monitor', fromPortId: 'mon_ap', toComponentId: 'scoreboard', toPortId: 'sb_imp_actual' },
+    { fromComponentId: 'monitor', fromPortId: 'mon_ap', toComponentId: 'coverage', toPortId: 'cov_imp' },
+  ];
 
-  // TODO: Add validation, scoring, feedback, retry
+  const isMatch = (a: Connection, b: Connection) =>
+    (a.fromComponentId === b.fromComponentId && a.fromPortId === b.fromPortId && a.toComponentId === b.toComponentId && a.toPortId === b.toPortId) ||
+    (a.fromComponentId === b.toComponentId && a.fromPortId === b.toPortId && a.toComponentId === b.fromComponentId && a.toPortId === b.fromPortId);
+
+  const checkConnections = () => {
+    let correct = 0;
+    expectedConnections.forEach(exp => {
+      if (connections.some(conn => isMatch(conn, exp))) correct++;
+    });
+    const score = Math.round((correct / expectedConnections.length) * 100);
+    setFeedback({ score, passed: score === 100 });
+  };
+
+  const handleRetry = () => {
+    setConnections([]);
+    setFeedback(null);
+
+  };
 
   return (
     <div className="w-full max-w-2xl mx-auto p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
@@ -148,12 +177,17 @@ const ScoreboardConnectorExercise: React.FC = () => {
         {connections.map((conn, index) => {
           const fromPos = getPortAbsolutePosition(conn.fromComponentId, conn.fromPortId);
           const toPos = getPortAbsolutePosition(conn.toComponentId, conn.toPortId);
+          const strokeColor = connectionResults
+            ? connectionResults[index]
+              ? 'green'
+              : 'red'
+            : 'hsl(var(--accent))';
           return (
             <line
               key={`conn-${index}`}
               x1={fromPos.x} y1={fromPos.y}
               x2={toPos.x} y2={toPos.y}
-              stroke="hsl(var(--accent))"
+              stroke={strokeColor}
               strokeWidth="2.5"
             />
           );
@@ -193,7 +227,7 @@ const ScoreboardConnectorExercise: React.FC = () => {
                 fill={selectedPort?.portId === port.id ? "hsl(var(--accent))" : "hsl(var(--primary-foreground))"}
                 stroke="hsl(var(--primary))"
                 strokeWidth="1.5"
-                className="cursor-pointer hover:fill-hsl(var(--accent))"
+                className="cursor-pointer hover:fill-[hsl(var(--accent))]"
                 onClick={(e) => { e.stopPropagation(); handlePortClick(comp.id, port.id);}}
                 aria-label={`Port ${port.name} on ${comp.name}`}
               />
@@ -201,15 +235,19 @@ const ScoreboardConnectorExercise: React.FC = () => {
           </g>
         ))}
       </svg>
-       <div className="mt-4 flex justify-center">
-        <Button
-            onClick={() => setConnections([])}
-            variant="destructive"
-        >
-            Reset Connections
-        </Button>
-        {/* TODO: Add Check Connections button */}
+      <div className="mt-4 flex justify-center gap-2">
+        <Button onClick={checkConnections}>Check Connections</Button>
+        <Button variant="outline" onClick={handleRetry}>Retry</Button>
       </div>
+      {feedback && (
+        <div className="mt-4 text-center">
+          <p>Score: {feedback.score}%</p>
+          <p className={feedback.passed ? 'text-green-500' : 'text-red-500'}>
+            {feedback.passed ? 'Pass' : 'Fail'}
+          </p>
+
+        </div>
+      )}
     </div>
   );
 };
