@@ -1,13 +1,70 @@
 "use client";
 
 import React, { useState } from 'react';
-import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent, DraggableSyntheticListeners, DraggableAttributes } from '@dnd-kit/core';
-import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  DraggableSyntheticListeners,
+  DraggableAttributes,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
+import { Button } from '@/components/ui/Button';
 
-interface Item {
+export interface Item {
   id: string;
   name: string;
+}
+
+// Minimal required components for a basic UVM agent
+export const REQUIRED_COMPONENTS: Item[] = [
+  { id: 'sequencer', name: 'Sequencer' },
+  { id: 'driver', name: 'Driver' },
+  { id: 'monitor', name: 'Monitor' },
+];
+
+// Helper used by the validate button and unit tests
+export function checkAgentComponents(agentComponents: Item[]) {
+  const missing = REQUIRED_COMPONENTS.filter(
+    (req) => !agentComponents.find((item) => item.id === req.id),
+  );
+
+  const orderCorrect = REQUIRED_COMPONENTS.every(
+    (req, index) => agentComponents[index]?.id === req.id,
+  );
+
+  const correctCount = REQUIRED_COMPONENTS.reduce(
+    (count, req, index) =>
+      agentComponents[index]?.id === req.id ? count + 1 : count,
+    0,
+  );
+
+  const score = Math.round(
+    (correctCount / REQUIRED_COMPONENTS.length) * 100,
+  );
+
+  const warnings: string[] = [];
+  if (missing.length > 0) {
+    warnings.push(
+      `Missing components: ${missing.map((m) => m.name).join(', ')}`,
+    );
+  }
+  if (!orderCorrect) {
+    warnings.push('Components are not in the correct order.');
+  }
+
+  return { warnings, score };
 }
 
 interface DraggableItemProps {
@@ -58,15 +115,15 @@ const SortableItem: React.FC<{ item: Item }> = ({ item }) => {
 
 const UvmAgentBuilderExercise: React.FC = () => {
   const initialComponents: Item[] = [
-    { id: 'sequencer', name: 'Sequencer' },
-    { id: 'driver', name: 'Driver' },
-    { id: 'monitor', name: 'Monitor' },
+    ...REQUIRED_COMPONENTS,
     { id: 'config_obj', name: 'Config Object' }, // Example of another component
   ];
 
   const [availableComponents, setAvailableComponents] = useState<Item[]>(initialComponents);
   const [agentComponents, setAgentComponents] = useState<Item[]>([]);
-   const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ score: number; passed: boolean } | null>(null);
+
 
 
   const sensors = useSensors(
@@ -135,58 +192,96 @@ const UvmAgentBuilderExercise: React.FC = () => {
   }
 
   const activeItem = getActiveItem();
+  const requiredIds = ['sequencer', 'driver', 'monitor'];
+
+  const checkAgent = () => {
+    const correct = requiredIds.filter(id => agentComponents.some(item => item.id === id)).length;
+    const score = Math.round((correct / requiredIds.length) * 100);
+    setFeedback({ score, passed: score === 100 });
+  };
+
+  const handleRetry = () => {
+    setAvailableComponents(initialComponents);
+    setAgentComponents([]);
+    setFeedback(null);
+  };
+
+  const handleValidate = () => {
+    const { warnings, score } = checkAgentComponents(agentComponents);
+    setScore(score);
+    if (warnings.length === 0) {
+      setFeedback('Agent correctly built!');
+    } else {
+      setFeedback(warnings.join(' '));
+    }
+  };
 
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-    >
-      <div className="flex flex-col md:flex-row gap-6 p-4 items-start">
-        {/* Available Components */}
-        <div className="w-full md:w-1/3 p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
-          <h3 className="text-lg font-semibold mb-3 text-primary">Available UVM Components</h3>
-          <SortableContext items={availableComponents.map(i => i.id)} strategy={verticalListSortingStrategy} id="available-droppable">
-             <div id="available-droppable" className="min-h-[200px] border-2 border-dashed border-white/20 rounded p-2">
-                {availableComponents.map(item => <SortableItem key={item.id} item={item} />)}
-                {availableComponents.length === 0 && <p className="text-muted-foreground text-center py-4">All components used.</p>}
-             </div>
-          </SortableContext>
-        </div>
-
-        {/* Agent Target Area */}
-        <div className="w-full md:w-2/3 p-4 bg-white/10 backdrop-blur-lg border-2 border-accent rounded-lg shadow-lg">
-          <h3 className="text-lg font-semibold mb-3 text-accent">UVM Agent (Drop Zone)</h3>
-           <SortableContext items={agentComponents.map(i => i.id)} strategy={verticalListSortingStrategy} id="agent-droppable">
-            <div id="agent-droppable" className="min-h-[200px] p-2 bg-white/10 rounded border border-dashed border-accent">
-                {agentComponents.map(item => <SortableItem key={item.id} item={item} />)}
-                {agentComponents.length === 0 && <p className="text-muted-foreground text-center py-4">Drag components here</p>}
-            </div>
-          </SortableContext>
-        </div>
-      </div>
-       {typeof document !== 'undefined' && activeId && (
-          <div style={{position: 'fixed', top: 0, left: 0, pointerEvents: 'none', zIndex: 1000}}>
-            {/* This is a simplified drag overlay. For a perfect overlay matching the item,
-                you'd use <DragOverlay> from @dnd-kit/core andPortal={document.body} */}
-            {activeItem &&
-              <DraggableItem
-                item={activeItem}
-                isOverlay={true}
-                attributes={{
-                  role: 'button', // Or appropriate role for a draggable item
-                  'aria-roledescription': 'draggable item',
-                  tabIndex: -1,
-                  'aria-disabled': true,
-                  'aria-pressed': undefined,
-                  'aria-describedby': 'draggable-item-description', // A bit generic, but satisfies type
-                }}
-                style={{}}
-              />}
+    <>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="flex flex-col md:flex-row gap-6 p-4 items-start">
+          {/* Available Components */}
+          <div className="w-full md:w-1/3 p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
+            <h3 className="text-lg font-semibold mb-3 text-primary">Available UVM Components</h3>
+            <SortableContext items={availableComponents.map(i => i.id)} strategy={verticalListSortingStrategy} id="available-droppable">
+               <div id="available-droppable" className="min-h-[200px] border-2 border-dashed border-white/20 rounded p-2">
+                  {availableComponents.map(item => <SortableItem key={item.id} item={item} />)}
+                  {availableComponents.length === 0 && <p className="text-muted-foreground text-center py-4">All components used.</p>}
+               </div>
+            </SortableContext>
           </div>
-        )}
-    </DndContext>
+
+          {/* Agent Target Area */}
+          <div className="w-full md:w-2/3 p-4 bg-white/10 backdrop-blur-lg border-2 border-accent rounded-lg shadow-lg">
+            <h3 className="text-lg font-semibold mb-3 text-accent">UVM Agent (Drop Zone)</h3>
+             <SortableContext items={agentComponents.map(i => i.id)} strategy={verticalListSortingStrategy} id="agent-droppable">
+              <div id="agent-droppable" className="min-h-[200px] p-2 bg-white/10 rounded border border-dashed border-accent">
+                  {agentComponents.map(item => <SortableItem key={item.id} item={item} />)}
+                  {agentComponents.length === 0 && <p className="text-muted-foreground text-center py-4">Drag components here</p>}
+              </div>
+            </SortableContext>
+          </div>
+        </div>
+         {typeof document !== 'undefined' && activeId && (
+            <div style={{position: 'fixed', top: 0, left: 0, pointerEvents: 'none', zIndex: 1000}}>
+              {/* This is a simplified drag overlay. For a perfect overlay matching the item,
+                  you'd use <DragOverlay> from @dnd-kit/core andPortal={document.body} */}
+              {activeItem &&
+                <DraggableItem
+                  item={activeItem}
+                  isOverlay={true}
+                  attributes={{
+                    role: 'button', // Or appropriate role for a draggable item
+                    'aria-roledescription': 'draggable item',
+                    tabIndex: -1,
+                    'aria-disabled': true,
+                    'aria-pressed': undefined,
+                    'aria-describedby': 'draggable-item-description', // A bit generic, but satisfies type
+                  }}
+                  style={{}}
+                />}
+            </div>
+          )}
+      </DndContext>
+      <div className="mt-4 flex justify-center gap-2">
+        <Button onClick={checkAgent}>Check Agent</Button>
+        <Button variant="outline" onClick={handleRetry}>Retry</Button>
+      </div>
+      {feedback && (
+        <div className="mt-4 text-center">
+          <p>Score: {feedback.score}%</p>
+          <p className={feedback.passed ? 'text-green-500' : 'text-red-500'}>
+            {feedback.passed ? 'Pass' : 'Fail'}
+          </p>
+        </div>
+      )}
+    </>
+
   );
 };
 
