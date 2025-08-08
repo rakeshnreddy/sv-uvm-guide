@@ -3,9 +3,7 @@ import { InfoPage } from '@/components/templates/InfoPage';
 
 const CoverageAnalyzerPage = () => {
   return (
-    <InfoPage title="Coverage Analyzer">
-      <CoverageAnalyzer />
-    </InfoPage>
+    <InfoPage title="Coverage Analyzer" diagrams={[<CoverageAnalyzer key="coverage" />]} />
   );
 };
 

@@ -3,9 +3,7 @@ import { InfoPage } from '@/components/templates/InfoPage';
 
 const UvmArchitecturePage = () => {
   return (
-    <InfoPage title="Interactive UVM Architecture">
-      <InteractiveUvmArchitectureDiagram />
-    </InfoPage>
+    <InfoPage title="Interactive UVM Architecture" diagrams={[<InteractiveUvmArchitectureDiagram key="uvm-arch" />]} />
   );
 };
 

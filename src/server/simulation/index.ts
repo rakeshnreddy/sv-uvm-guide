@@ -6,11 +6,10 @@ import {
 } from './types';
 
 /**
- * Executes a SystemVerilog simulation inside a containerised open-source
- * simulator. The current implementation uses a very lightweight bash script as
- * a placeholder but is structured so that tools like Icarus Verilog or
- * Verilator (via Docker or WebAssembly) can be dropped in with minimal
- * changes.
+ * Executes a SystemVerilog simulation using an external backend such as
+ * Icarus Verilog or Verilator. The source is streamed to the simulator and the
+ * resulting stdout/stderr are parsed to determine pass/fail status and extract
+ * coverage/waveform data.
  */
 export async function runSimulation(
   source: string,
@@ -20,38 +19,44 @@ export async function runSimulation(
   const cpuStart = process.cpuUsage();
 
   return new Promise((resolve, reject) => {
-    // Select a backend-specific command. These are placeholders that mimic the
-    // behaviour of real tools such as Icarus Verilog or Verilator.
     let cmd: string;
     switch (backend) {
       case 'icarus':
-        cmd =
-          'echo "[Icarus] Compiling..." && sleep 1 && echo "[Icarus] Running..." && sleep 1 && echo "Simulation PASSED"';
+        // Icarus Verilog reads from stdin when '-' is provided
+        cmd = 'iverilog -g2012 -o /tmp/a.out - && vvp /tmp/a.out';
         break;
       case 'verilator':
-        cmd =
-          'echo "[Verilator] Compiling..." && sleep 1 && echo "[Verilator] Running..." && sleep 1 && echo "Simulation PASSED"';
+        // Verilator "--binary" allows running directly from a single file
+        cmd = 'verilator --binary - && ./Vlt';
         break;
       default:
-        cmd =
-          'echo "[WASM] Initialising..." && sleep 1 && echo "[WASM] Executing..." && sleep 1 && echo "Simulation PASSED"';
+        // Fallback placeholder for the wasm backend
+        cmd = 'echo "Simulation PASSED"';
         break;
     }
-    const proc = spawn('bash', ['-lc', cmd]);
+
+    const proc = spawn('bash', ['-lc', cmd], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    proc.stdin.write(source);
+    proc.stdin.end();
 
     let output = '';
+    let stderr = '';
     proc.stdout.on('data', (d) => {
       output += d.toString();
     });
     proc.stderr.on('data', (d) => {
-      output += d.toString();
+      const text = d.toString();
+      output += text;
+      stderr += text;
     });
 
     proc.on('error', (err) => {
       reject(err);
     });
 
-    proc.on('close', () => {
+    proc.on('close', (code) => {
       const end = process.hrtime.bigint();
       const cpu = process.cpuUsage(cpuStart);
       const stats: SimulationStats = {
@@ -61,21 +66,36 @@ export async function runSimulation(
         cpuSystemMs: cpu.system / 1000,
       };
 
-      // Simple demo waveform
-      const waveform = {
-        signal: [
-          { name: 'clk', wave: 'p.....|...' },
-          { name: 'data', wave: 'x3.4..|x.' },
-        ],
-      };
+      // Parse coverage percentage if reported as `COVERAGE: <num>`
+      const covMatch = output.match(/COVERAGE:\s*(\d+(?:\.\d+)?)/i);
+      const coverage = covMatch ? parseFloat(covMatch[1]) : 0;
+
+      // Parse waveform JSON if provided as `WAVEFORM: { ... }`
+      let waveform: unknown = null;
+      const waveMatch = output.match(/WAVEFORM:\s*(\{.*\})/);
+      if (waveMatch) {
+        try {
+          waveform = JSON.parse(waveMatch[1]);
+        } catch {
+          waveform = null;
+        }
+      }
+
+      const passed = /PASSED/i.test(output) && code === 0;
+      const errors = stderr
+        .split('\n')
+        .map((l) => l.trim())
+        .filter((l) => l.length > 0);
 
       resolve({
         output,
         waveform,
         stats,
-        coverage: 80,
+        coverage,
         regressions: [],
         backend,
+        passed,
+        errors,
       });
     });
   });

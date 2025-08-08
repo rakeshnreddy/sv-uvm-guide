@@ -3,9 +3,7 @@ import { InfoPage } from '@/components/templates/InfoPage';
 
 const ProceduralBlocksPage = () => {
   return (
-    <InfoPage title="Procedural Blocks Simulator">
-      <ProceduralBlocksSimulator />
-    </InfoPage>
+    <InfoPage title="Procedural Blocks Simulator" diagrams={[<ProceduralBlocksSimulator key="proc-blocks" />]} />
   );
 };
 
