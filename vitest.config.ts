@@ -7,6 +7,7 @@ export default defineConfig({
     globals: true,
     include: ['tests/**/*.{test,spec}.{ts,tsx}'],
     exclude: ['tests/e2e/**', 'tests/reviews.spec.ts'],
+
   },
   resolve: {
     alias: {
