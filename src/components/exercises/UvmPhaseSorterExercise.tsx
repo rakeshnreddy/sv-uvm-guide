@@ -28,7 +28,7 @@ interface Phase {
   correctOrder: number; // To verify later
 }
 
-const uvmPhases: Phase[] = [
+export const uvmPhases: Phase[] = [
   // Common phases, order is important
   { id: 'build', name: 'build_phase', correctOrder: 0 },
   { id: 'connect', name: 'connect_phase', correctOrder: 1 },
@@ -56,7 +56,7 @@ const uvmPhases: Phase[] = [
 ];
 
 // Helper to shuffle array
-const shuffleArray = (array: Phase[]): Phase[] => {
+export const shuffleArray = (array: Phase[]): Phase[] => {
   const newArray = [...array];
   for (let i = newArray.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -106,13 +106,22 @@ const SortablePhaseItem: React.FC<SortablePhaseItemProps> = ({ phase }) => {
 };
 
 
-const UvmPhaseSorterExercise: React.FC = () => {
-  const [items, setItems] = useState<Phase[]>([]);
+interface UvmPhaseSorterExerciseProps {
+  initialItems?: Phase[];
+}
+
+const UvmPhaseSorterExercise: React.FC<UvmPhaseSorterExerciseProps> = ({ initialItems }) => {
+  const [items, setItems] = useState<Phase[]>(initialItems || []);
   const [activeItem, setActiveItem] = useState<Phase | null>(null);
+  const [feedback, setFeedback] = useState<'pass' | 'fail' | null>(null);
 
   useEffect(() => {
-    setItems(shuffleArray(uvmPhases));
-  }, []);
+    if (initialItems) {
+      setItems(initialItems);
+    } else {
+      setItems(shuffleArray(uvmPhases));
+    }
+  }, [initialItems]);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -139,6 +148,19 @@ const UvmPhaseSorterExercise: React.FC = () => {
     }
   }
 
+  const checkOrder = () => {
+    const correctSequence = [...uvmPhases].sort((a, b) => a.correctOrder - b.correctOrder);
+    const isCorrect = items.every((item, index) => item.id === correctSequence[index].id);
+    setFeedback(isCorrect ? 'pass' : 'fail');
+  };
+
+  const reset = () => {
+    setItems(shuffleArray(uvmPhases));
+    setFeedback(null);
+  };
+
+  const retry = () => setFeedback(null);
+
   return (
     <DndContext
       sensors={sensors}
@@ -155,6 +177,35 @@ const UvmPhaseSorterExercise: React.FC = () => {
             ))}
           </div>
         </SortableContext>
+        <button
+          onClick={checkOrder}
+          className="mt-4 w-full bg-primary text-primary-foreground px-4 py-2 rounded"
+        >
+          Check Order
+        </button>
+        {feedback && (
+          <div className="mt-4 text-center">
+            {feedback === 'pass' ? (
+              <p className="text-green-600">Correct order!</p>
+            ) : (
+              <p className="text-red-600">Incorrect order, please try again.</p>
+            )}
+            <div className="mt-2 flex justify-center gap-2">
+              <button
+                onClick={retry}
+                className="bg-muted px-3 py-1 rounded"
+              >
+                Retry
+              </button>
+              <button
+                onClick={reset}
+                className="bg-muted px-3 py-1 rounded"
+              >
+                Reset
+              </button>
+            </div>
+          </div>
+        )}
         <DragOverlay>
           {activeItem ? (
             <div className="flex items-center p-3 mb-2 bg-primary text-primary-foreground rounded-md border border-white/20 shadow-xl cursor-grabbing">
@@ -164,7 +215,6 @@ const UvmPhaseSorterExercise: React.FC = () => {
           ) : null}
         </DragOverlay>
       </div>
-      {/* TODO: Add Check Order Button, Feedback, Score, Retry */}
     </DndContext>
   );
 };
