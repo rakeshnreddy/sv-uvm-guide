@@ -5,7 +5,8 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    include: ['tests/session-options.test.ts'],
+    include: ['tests/**/*.{test,spec}.{ts,tsx}'],
+    exclude: ['tests/e2e/**', 'tests/reviews.spec.ts'],
   },
   resolve: {
     alias: {
