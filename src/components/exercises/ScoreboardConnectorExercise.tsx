@@ -58,6 +58,7 @@ const ScoreboardConnectorExercise: React.FC = () => {
   const [drawingLine, setDrawingLine] = useState<{ fromComponentId: string; fromPortId: string; x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [selectedPort, setSelectedPort] = useState<{ componentId: string; portId: string } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+  const [feedback, setFeedback] = useState<{ score: number; passed: boolean } | null>(null);
 
   // Map of correct connections: output port -> valid input ports
   const referenceMap: Record<string, string[]> = {
@@ -132,31 +133,28 @@ const ScoreboardConnectorExercise: React.FC = () => {
         setDrawingLine(null);
     }
   }
+  const expectedConnections: Connection[] = [
+    { fromComponentId: 'monitor', fromPortId: 'mon_ap', toComponentId: 'scoreboard', toPortId: 'sb_imp_actual' },
+    { fromComponentId: 'monitor', fromPortId: 'mon_ap', toComponentId: 'coverage', toPortId: 'cov_imp' },
+  ];
 
-  const resetExercise = () => {
-    setConnections([]);
-    setConnectionResults(null);
-    setScore(null);
+  const isMatch = (a: Connection, b: Connection) =>
+    (a.fromComponentId === b.fromComponentId && a.fromPortId === b.fromPortId && a.toComponentId === b.toComponentId && a.toPortId === b.toPortId) ||
+    (a.fromComponentId === b.toComponentId && a.fromPortId === b.toPortId && a.toComponentId === b.fromComponentId && a.toPortId === b.fromPortId);
+
+  const checkConnections = () => {
+    let correct = 0;
+    expectedConnections.forEach(exp => {
+      if (connections.some(conn => isMatch(conn, exp))) correct++;
+    });
+    const score = Math.round((correct / expectedConnections.length) * 100);
+    setFeedback({ score, passed: score === 100 });
   };
 
-  const handleCheckConnections = () => {
-    const results = connections.map(conn => {
-      // Determine which port is the output to canonicalize connection direction
-      const fromDetails = components
-        .find(c => c.id === conn.fromComponentId)?.ports.find(p => p.id === conn.fromPortId);
-      const toDetails = components
-        .find(c => c.id === conn.toComponentId)?.ports.find(p => p.id === conn.toPortId);
+  const handleRetry = () => {
+    setConnections([]);
+    setFeedback(null);
 
-      if (!fromDetails || !toDetails) return false;
-
-      const outputPortId = fromDetails.isOutput ? conn.fromPortId : conn.toPortId;
-      const inputPortId = fromDetails.isOutput ? conn.toPortId : conn.fromPortId;
-
-      return referenceMap[outputPortId]?.includes(inputPortId) ?? false;
-    });
-
-    setConnectionResults(results);
-    setScore(results.filter(Boolean).length);
   };
 
   return (
@@ -237,19 +235,17 @@ const ScoreboardConnectorExercise: React.FC = () => {
           </g>
         ))}
       </svg>
-       <div className="mt-4 flex justify-center gap-4">
-        <Button
-            onClick={resetExercise}
-            variant="destructive"
-        >
-            Reset Connections
-        </Button>
-        <Button onClick={handleCheckConnections}>Check Connections</Button>
+      <div className="mt-4 flex justify-center gap-2">
+        <Button onClick={checkConnections}>Check Connections</Button>
+        <Button variant="outline" onClick={handleRetry}>Retry</Button>
       </div>
-      {score !== null && (
-        <div className="mt-4 text-center space-y-2">
-          <p>You got {score} out of {referenceMap['mon_ap'].length} connections correct.</p>
-          <Button onClick={resetExercise} variant="secondary">Retry</Button>
+      {feedback && (
+        <div className="mt-4 text-center">
+          <p>Score: {feedback.score}%</p>
+          <p className={feedback.passed ? 'text-green-500' : 'text-red-500'}>
+            {feedback.passed ? 'Pass' : 'Fail'}
+          </p>
+
         </div>
       )}
     </div>

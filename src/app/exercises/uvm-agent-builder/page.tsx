@@ -28,7 +28,7 @@ const UvmAgentBuilderPage: React.FC = () => {
           <li>Understand the typical internal structure of an agent.</li>
           <li>Practice visual assembly of a key UVM architectural pattern.</li>
         </ul>
-        {/* TODO: Add Scoring, Feedback, and Retry button integration in later steps */}
+        <p className="text-muted-foreground mt-4">Check your build and use Retry to start over.</p>
       </section>
     </>
   );
