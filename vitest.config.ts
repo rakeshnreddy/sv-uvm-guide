@@ -5,7 +5,7 @@ export default defineConfig({
   test: {
     environment: 'jsdom',
     globals: true,
-    include: ['tests/session-options.test.ts'],
+    include: ['tests/session-options.test.ts', 'tests/curriculum-generator.test.ts'],
   },
   resolve: {
     alias: {
