@@ -2,38 +2,12 @@
 
 import React, { ReactNode, useEffect, useState } from "react";
 import { Accordion, AccordionItem } from "@/components/ui/Accordion";
-import { Button } from "@/components/ui/Button"; // Will create this basic Button component next
-import { Lightbulb, BookOpen } from "lucide-react"; // Example icons
+import { Button } from "@/components/ui/Button";
 import { useAuth } from "@/contexts/AuthContext";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { db } from "@/lib/firebase";
-
-// Placeholder components - these will be developed in later tasks
-const FeynmanPromptPlaceholder = () => (
-  <div className="my-4 p-4 border border-dashed border-primary/50 rounded-md bg-primary/5">
-    <h3 className="font-semibold text-primary mb-2 flex items-center">
-      <Lightbulb className="w-5 h-5 mr-2" />
-      Feynman Prompt Placeholder
-    </h3>
-    <p className="text-sm text-foreground/80">
-      Explain this concept in your own simple words here... (Textarea will go here)
-    </p>
-  </div>
-);
-
-const FlashcardWidgetPlaceholder = () => (
-  <div className="my-4 p-4 border border-dashed border-accent-foreground/30 rounded-md bg-accent/50">
-    <h3 className="font-semibold text-accent-foreground mb-2 flex items-center">
-      <BookOpen className="w-5 h-5 mr-2" />
-      Flashcard Widget Placeholder
-    </h3>
-    <p className="text-sm text-foreground/80">
-      Interactive flashcards will appear here...
-    </p>
-  </div>
-);
-
-import FlashcardWidget from "@/components/widgets/FlashcardWidget"; // Import the actual widget
+import FlashcardWidget from "@/components/widgets/FlashcardWidget";
+import FeynmanPromptWidget from "@/components/widgets/FeynmanPromptWidget";
 
 // Removed AIAssistantPlaceholder as it will be globally available from RootLayout
 
@@ -124,8 +98,8 @@ const TopicPage: React.FC<TopicPageProps> = ({
         </AccordionItem>
         <AccordionItem title="Level 2: The Practical Explanation" id="level2" prose>
           {level2Content}
-          {/* Designated slot for FeynmanPrompt - shown within Level 2 */}
-          <FeynmanPromptPlaceholder />
+          {/* Feynman Technique prompt for self-explanation */}
+          <FeynmanPromptWidget conceptTitle={title} />
         </AccordionItem>
       </Accordion>
 
