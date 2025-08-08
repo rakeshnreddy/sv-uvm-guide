@@ -28,7 +28,7 @@ const UvmPhaseSorterPage: React.FC = () => {
           <li>Understand the sequential nature of UVM phasing.</li>
           <li>Practice organizing a key aspect of UVM testbench flow.</li>
         </ul>
-        {/* TODO: Add Scoring, Feedback, and Retry button integration in later steps */}
+        <p className="text-muted-foreground mt-4">Use the Check button to evaluate your order and Retry to try again.</p>
       </section>
     </>
   );
