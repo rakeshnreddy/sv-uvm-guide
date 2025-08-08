@@ -18,6 +18,8 @@ import { DiagramPlaceholder, InteractiveChartPlaceholder } from '@/components/te
 import { Alert } from '@/components/ui/Alert';
 import dynamic from 'next/dynamic';
 import ConceptLink from '@/components/knowledge/ConceptLink';
+import matter from 'gray-matter';
+import FlashcardWidget from '@/components/widgets/FlashcardWidget';
 
 const AnimatedUvmSequenceDriverHandshakeDiagram = dynamic(() => import('@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram').then(mod => mod.AnimatedUvmSequenceDriverHandshakeDiagram));
 const DataTypeComparisonChart = dynamic(() => import('@/components/charts/DataTypeComparisonChart'));
@@ -80,8 +82,12 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
     ...slug
   ) + '.mdx';
   let mdxContent;
+  let frontmatter: Record<string, any> = {};
   try {
-    mdxContent = await fs.readFile(mdxPath, 'utf8');
+    const file = await fs.readFile(mdxPath, 'utf8');
+    const parsed = matter(file);
+    mdxContent = parsed.content;
+    frontmatter = parsed.data;
   } catch (error) {
     notFound();
   }
@@ -99,6 +105,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
       <article className="prose prose-invert max-w-none">
         <MDXRemote source={processedContent} components={components} />
       </article>
+      {frontmatter.flashcards && <FlashcardWidget deckId={frontmatter.flashcards} />}
       <FeynmanPromptWidget conceptTitle={topic.title} />
 
       {/* Navigation Footer */}
