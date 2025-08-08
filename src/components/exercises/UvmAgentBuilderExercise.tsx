@@ -1,14 +1,70 @@
 "use client";
 
 import React, { useState } from 'react';
-import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, DragEndEvent, DraggableSyntheticListeners, DraggableAttributes } from '@dnd-kit/core';
-import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
+import {
+  DndContext,
+  closestCenter,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  DragEndEvent,
+  DraggableSyntheticListeners,
+  DraggableAttributes,
+} from '@dnd-kit/core';
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Button } from '@/components/ui/Button';
 
-interface Item {
+export interface Item {
   id: string;
   name: string;
+}
+
+// Minimal required components for a basic UVM agent
+export const REQUIRED_COMPONENTS: Item[] = [
+  { id: 'sequencer', name: 'Sequencer' },
+  { id: 'driver', name: 'Driver' },
+  { id: 'monitor', name: 'Monitor' },
+];
+
+// Helper used by the validate button and unit tests
+export function checkAgentComponents(agentComponents: Item[]) {
+  const missing = REQUIRED_COMPONENTS.filter(
+    (req) => !agentComponents.find((item) => item.id === req.id),
+  );
+
+  const orderCorrect = REQUIRED_COMPONENTS.every(
+    (req, index) => agentComponents[index]?.id === req.id,
+  );
+
+  const correctCount = REQUIRED_COMPONENTS.reduce(
+    (count, req, index) =>
+      agentComponents[index]?.id === req.id ? count + 1 : count,
+    0,
+  );
+
+  const score = Math.round(
+    (correctCount / REQUIRED_COMPONENTS.length) * 100,
+  );
+
+  const warnings: string[] = [];
+  if (missing.length > 0) {
+    warnings.push(
+      `Missing components: ${missing.map((m) => m.name).join(', ')}`,
+    );
+  }
+  if (!orderCorrect) {
+    warnings.push('Components are not in the correct order.');
+  }
+
+  return { warnings, score };
 }
 
 interface DraggableItemProps {
@@ -59,9 +115,7 @@ const SortableItem: React.FC<{ item: Item }> = ({ item }) => {
 
 const UvmAgentBuilderExercise: React.FC = () => {
   const initialComponents: Item[] = [
-    { id: 'sequencer', name: 'Sequencer' },
-    { id: 'driver', name: 'Driver' },
-    { id: 'monitor', name: 'Monitor' },
+    ...REQUIRED_COMPONENTS,
     { id: 'config_obj', name: 'Config Object' }, // Example of another component
   ];
 
@@ -69,6 +123,7 @@ const UvmAgentBuilderExercise: React.FC = () => {
   const [agentComponents, setAgentComponents] = useState<Item[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ score: number; passed: boolean } | null>(null);
+
 
 
   const sensors = useSensors(
@@ -151,6 +206,16 @@ const UvmAgentBuilderExercise: React.FC = () => {
     setFeedback(null);
   };
 
+  const handleValidate = () => {
+    const { warnings, score } = checkAgentComponents(agentComponents);
+    setScore(score);
+    if (warnings.length === 0) {
+      setFeedback('Agent correctly built!');
+    } else {
+      setFeedback(warnings.join(' '));
+    }
+  };
+
   return (
     <>
       <DndContext
@@ -216,6 +281,7 @@ const UvmAgentBuilderExercise: React.FC = () => {
         </div>
       )}
     </>
+
   );
 };
 

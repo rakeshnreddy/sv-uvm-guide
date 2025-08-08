@@ -53,10 +53,17 @@ const portFillColorHover = "#CBD5E0"; // gray-300
 const ScoreboardConnectorExercise: React.FC = () => {
   const [components, /* setComponents */] = useState<Component[]>(initialComponents); // setComponents commented out
   const [connections, setConnections] = useState<Connection[]>([]);
+  const [connectionResults, setConnectionResults] = useState<boolean[] | null>(null);
+  const [score, setScore] = useState<number | null>(null);
   const [drawingLine, setDrawingLine] = useState<{ fromComponentId: string; fromPortId: string; x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [selectedPort, setSelectedPort] = useState<{ componentId: string; portId: string } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [feedback, setFeedback] = useState<{ score: number; passed: boolean } | null>(null);
+
+  // Map of correct connections: output port -> valid input ports
+  const referenceMap: Record<string, string[]> = {
+    mon_ap: ['sb_imp_actual', 'cov_imp'],
+  };
 
   const getPortAbsolutePosition = (componentId: string, portId: string) => {
     const component = components.find(c => c.id === componentId);
@@ -147,6 +154,7 @@ const ScoreboardConnectorExercise: React.FC = () => {
   const handleRetry = () => {
     setConnections([]);
     setFeedback(null);
+
   };
 
   return (
@@ -169,12 +177,17 @@ const ScoreboardConnectorExercise: React.FC = () => {
         {connections.map((conn, index) => {
           const fromPos = getPortAbsolutePosition(conn.fromComponentId, conn.fromPortId);
           const toPos = getPortAbsolutePosition(conn.toComponentId, conn.toPortId);
+          const strokeColor = connectionResults
+            ? connectionResults[index]
+              ? 'green'
+              : 'red'
+            : 'hsl(var(--accent))';
           return (
             <line
               key={`conn-${index}`}
               x1={fromPos.x} y1={fromPos.y}
               x2={toPos.x} y2={toPos.y}
-              stroke="hsl(var(--accent))"
+              stroke={strokeColor}
               strokeWidth="2.5"
             />
           );
@@ -214,7 +227,7 @@ const ScoreboardConnectorExercise: React.FC = () => {
                 fill={selectedPort?.portId === port.id ? "hsl(var(--accent))" : "hsl(var(--primary-foreground))"}
                 stroke="hsl(var(--primary))"
                 strokeWidth="1.5"
-                className="cursor-pointer hover:fill-hsl(var(--accent))"
+                className="cursor-pointer hover:fill-[hsl(var(--accent))]"
                 onClick={(e) => { e.stopPropagation(); handlePortClick(comp.id, port.id);}}
                 aria-label={`Port ${port.name} on ${comp.name}`}
               />
@@ -232,6 +245,7 @@ const ScoreboardConnectorExercise: React.FC = () => {
           <p className={feedback.passed ? 'text-green-500' : 'text-red-500'}>
             {feedback.passed ? 'Pass' : 'Fail'}
           </p>
+
         </div>
       )}
     </div>

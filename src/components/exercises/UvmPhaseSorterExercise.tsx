@@ -29,7 +29,7 @@ interface Phase {
   correctOrder: number; // To verify later
 }
 
-const uvmPhases: Phase[] = [
+export const uvmPhases: Phase[] = [
   // Common phases, order is important
   { id: 'build', name: 'build_phase', correctOrder: 0 },
   { id: 'connect', name: 'connect_phase', correctOrder: 1 },
@@ -57,7 +57,7 @@ const uvmPhases: Phase[] = [
 ];
 
 // Helper to shuffle array
-const shuffleArray = (array: Phase[]): Phase[] => {
+export const shuffleArray = (array: Phase[]): Phase[] => {
   const newArray = [...array];
   for (let i = newArray.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -107,14 +107,23 @@ const SortablePhaseItem: React.FC<SortablePhaseItemProps> = ({ phase }) => {
 };
 
 
-const UvmPhaseSorterExercise: React.FC = () => {
-  const [items, setItems] = useState<Phase[]>([]);
+interface UvmPhaseSorterExerciseProps {
+  initialItems?: Phase[];
+}
+
+const UvmPhaseSorterExercise: React.FC<UvmPhaseSorterExerciseProps> = ({ initialItems }) => {
+  const [items, setItems] = useState<Phase[]>(initialItems || []);
   const [activeItem, setActiveItem] = useState<Phase | null>(null);
   const [feedback, setFeedback] = useState<{ score: number; passed: boolean } | null>(null);
 
+
   useEffect(() => {
-    setItems(shuffleArray(uvmPhases));
-  }, []);
+    if (initialItems) {
+      setItems(initialItems);
+    } else {
+      setItems(shuffleArray(uvmPhases));
+    }
+  }, [initialItems]);
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -148,6 +157,7 @@ const UvmPhaseSorterExercise: React.FC = () => {
   };
 
   const handleRetry = () => {
+
     setItems(shuffleArray(uvmPhases));
     setFeedback(null);
   };
@@ -192,6 +202,7 @@ const UvmPhaseSorterExercise: React.FC = () => {
         </div>
       )}
     </>
+
   );
 };
 
