@@ -171,9 +171,11 @@ const UvmPhaseSorterExercise: React.FC<UvmPhaseSorterExerciseProps> = ({ initial
   }
 
   const checkOrder = () => {
-    const correct = items.filter((item, idx) => item.correctOrder === idx).length;
+    const correct = items.filter(
+      (item, idx) => item.correctOrder === uvmPhases[idx].correctOrder,
+    ).length;
     const score = Math.round((correct / items.length) * 100);
-    setFeedback({ score, passed: score === 100 });
+    setFeedback({ score, passed: correct === items.length });
   };
 
   const handleRetry = () => {

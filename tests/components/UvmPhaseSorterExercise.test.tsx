@@ -10,7 +10,7 @@ describe('UvmPhaseSorterExercise', () => {
     render(<UvmPhaseSorterExercise initialItems={uvmPhases} />);
     const button = screen.getByRole('button', { name: /check order/i });
     await userEvent.click(button);
-    expect(await screen.findByText(/correct order/i)).toBeInTheDocument();
+    expect(await screen.findByText(/pass/i)).toBeInTheDocument();
   });
 
   it('detects incorrect sequence', async () => {
@@ -21,6 +21,6 @@ describe('UvmPhaseSorterExercise', () => {
     render(<UvmPhaseSorterExercise initialItems={shuffled} />);
     const button = screen.getByRole('button', { name: /check order/i });
     await userEvent.click(button);
-    expect(await screen.findByText(/incorrect order/i)).toBeInTheDocument();
+    expect(await screen.findByText(/fail/i)).toBeInTheDocument();
   });
 });

@@ -17,6 +17,7 @@ describe('runSimulation', () => {
         const proc: any = new EventEmitter();
         proc.stdout = new EventEmitter();
         proc.stderr = new EventEmitter();
+        proc.stdin = { write: () => {}, end: () => {} };
         setTimeout(() => proc.emit('error', new Error('spawn failed')));
         return proc;
       },
@@ -24,6 +25,7 @@ describe('runSimulation', () => {
         const proc: any = new EventEmitter();
         proc.stdout = new EventEmitter();
         proc.stderr = new EventEmitter();
+        proc.stdin = { write: () => {}, end: () => {} };
         setTimeout(() => proc.emit('error', new Error('spawn failed')));
         return proc;
       } },
