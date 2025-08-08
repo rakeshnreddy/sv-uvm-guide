@@ -53,8 +53,6 @@ const portFillColorHover = "#CBD5E0"; // gray-300
 const ScoreboardConnectorExercise: React.FC = () => {
   const [components, /* setComponents */] = useState<Component[]>(initialComponents); // setComponents commented out
   const [connections, setConnections] = useState<Connection[]>([]);
-  const [connectionResults, setConnectionResults] = useState<boolean[] | null>(null);
-  const [score, setScore] = useState<number | null>(null);
   const [drawingLine, setDrawingLine] = useState<{ fromComponentId: string; fromPortId: string; x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [selectedPort, setSelectedPort] = useState<{ componentId: string; portId: string } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -63,6 +61,14 @@ const ScoreboardConnectorExercise: React.FC = () => {
   // Map of correct connections: output port -> valid input ports
   const referenceMap: Record<string, string[]> = {
     mon_ap: ['sb_imp_actual', 'cov_imp'],
+  };
+
+  const isValidConnection = (conn: Connection) => {
+    const targets = referenceMap[conn.fromPortId];
+    if (targets && targets.includes(conn.toPortId)) return true;
+    const reverseTargets = referenceMap[conn.toPortId];
+    if (reverseTargets && reverseTargets.includes(conn.fromPortId)) return true;
+    return false;
   };
 
   const getPortAbsolutePosition = (componentId: string, portId: string) => {
@@ -132,22 +138,13 @@ const ScoreboardConnectorExercise: React.FC = () => {
         setSelectedPort(null);
         setDrawingLine(null);
     }
-  }
-  const expectedConnections: Connection[] = [
-    { fromComponentId: 'monitor', fromPortId: 'mon_ap', toComponentId: 'scoreboard', toPortId: 'sb_imp_actual' },
-    { fromComponentId: 'monitor', fromPortId: 'mon_ap', toComponentId: 'coverage', toPortId: 'cov_imp' },
-  ];
+  };
 
-  const isMatch = (a: Connection, b: Connection) =>
-    (a.fromComponentId === b.fromComponentId && a.fromPortId === b.fromPortId && a.toComponentId === b.toComponentId && a.toPortId === b.toPortId) ||
-    (a.fromComponentId === b.toComponentId && a.fromPortId === b.toPortId && a.toComponentId === b.fromComponentId && a.toPortId === b.fromPortId);
+  const totalExpectedConnections = Object.values(referenceMap).reduce((sum, targets) => sum + targets.length, 0);
 
   const checkConnections = () => {
-    let correct = 0;
-    expectedConnections.forEach(exp => {
-      if (connections.some(conn => isMatch(conn, exp))) correct++;
-    });
-    const score = Math.round((correct / expectedConnections.length) * 100);
+    const correct = connections.filter(isValidConnection).length;
+    const score = Math.round((correct / totalExpectedConnections) * 100);
     setFeedback({ score, passed: score === 100 });
   };
 
@@ -177,8 +174,8 @@ const ScoreboardConnectorExercise: React.FC = () => {
         {connections.map((conn, index) => {
           const fromPos = getPortAbsolutePosition(conn.fromComponentId, conn.fromPortId);
           const toPos = getPortAbsolutePosition(conn.toComponentId, conn.toPortId);
-          const strokeColor = connectionResults
-            ? connectionResults[index]
+          const strokeColor = feedback
+            ? isValidConnection(conn)
               ? 'green'
               : 'red'
             : 'hsl(var(--accent))';

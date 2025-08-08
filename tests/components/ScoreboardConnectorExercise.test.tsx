@@ -20,7 +20,9 @@ describe('ScoreboardConnectorExercise', () => {
     const scoreboardPort = screen.getByLabelText(/Port actual_trans_imp on Scoreboard/i);
     await userEvent.click(monitorPort);
     await userEvent.click(scoreboardPort);
-    const lines = container.querySelectorAll('line[stroke="hsl(var(--accent))"]');
+    const checkButton = screen.getByRole('button', { name: /Check Connections/i });
+    await userEvent.click(checkButton);
+    const lines = container.querySelectorAll('line[stroke="green"]');
     expect(lines.length).toBe(1);
     expect(window.alert).not.toHaveBeenCalled();
   });
