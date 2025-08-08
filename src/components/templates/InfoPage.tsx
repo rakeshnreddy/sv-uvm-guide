@@ -23,7 +23,7 @@ const DiagramPlaceholder = ({ title = "Diagram" }: { title?: string }) => (
 interface InfoPageProps {
   title?: string;
   description?: string;
-  children: ReactNode; // Main content of the page
+  children?: ReactNode; // Main content of the page
   // Optional slots for specific types of content
   charts?: ReactNode[];
   diagrams?: ReactNode[];
@@ -49,9 +49,11 @@ export const InfoPage: React.FC<InfoPageProps> = ({
             </header>
           )}
 
-          <section className="mb-8">
-            {children}
-          </section>
+          {children && (
+            <section className="mb-8">
+              {children}
+            </section>
+          )}
 
           {charts && charts.length > 0 && (
             <section className="mb-8">
@@ -59,8 +61,6 @@ export const InfoPage: React.FC<InfoPageProps> = ({
               {charts.map((chart, index) => (
                 <div key={`chart-${index}`}>{chart}</div>
               ))}
-              {/* Example of using the placeholder directly */}
-              {/* <InteractiveChartPlaceholder /> */}
             </section>
           )}
 
@@ -70,8 +70,6 @@ export const InfoPage: React.FC<InfoPageProps> = ({
               {diagrams.map((diagram, index) => (
                 <div key={`diagram-${index}`}>{diagram}</div>
               ))}
-              {/* Example of using the placeholder directly */}
-              {/* <DiagramPlaceholder /> */}
             </section>
           )}
         </article>
