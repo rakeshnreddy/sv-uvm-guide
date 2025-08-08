@@ -11,6 +11,7 @@ import { Progress } from '@/components/ui/Progress';
 import { Button } from '@/components/ui/Button';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Award, Target, TrendingUp, UserCheck } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 // --- TYPE DEFINITIONS ---
 // These types define the data structures for engagement tracking.
@@ -47,6 +48,22 @@ interface PersonalizedStrategy {
   action: () => void;
 }
 
+// Personalized gamification profile structures
+type MotivationalStyle = 'competitive' | 'collaborative' | 'curious' | 'goal-oriented';
+
+interface MotivationalProfile {
+  style: MotivationalStyle;
+  rewardPreference: 'badges' | 'certificates' | 'career' | 'tools';
+}
+
+interface EngagementGoal {
+  id: string;
+  description: string;
+  target: number;
+  progress: number;
+  unit: string;
+}
+
 // --- MOCK DATA ---
 // This mock data simulates what the backend API would provide.
 
@@ -75,6 +92,15 @@ const mockEngagementChartData = [
     { name: 'Sun', activity: 50 },
 ];
 
+const mockMotivationalProfile: MotivationalProfile = {
+  style: 'goal-oriented',
+  rewardPreference: 'badges',
+};
+
+const mockGoals: EngagementGoal[] = [
+  { id: 'weekly_lessons', description: 'Lessons this week', target: 5, progress: 3, unit: 'lessons' },
+];
+
 
 // --- COMPONENT PROPS ---
 
@@ -90,7 +116,30 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
   const [metrics, setMetrics] = useState<EngagementMetrics | null>(null);
   const [patterns, setPatterns] = useState<EngagementPattern | null>(null);
   const [strategies, setStrategies] = useState<PersonalizedStrategy[]>([]);
+  const [profile, setProfile] = useState<MotivationalProfile | null>(null);
+  const [goals, setGoals] = useState<EngagementGoal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [mentorMessage, setMentorMessage] = useState<string>('');
+
+  const recommendedDifficulty = useMemo(() => {
+    if (!metrics) return 'Medium';
+    if (metrics.dailyStreak >= 7 && metrics.challengesAttempted > 10) return 'Hard';
+    if (metrics.lessonsCompleted < 5) return 'Easy';
+    return 'Medium';
+  }, [metrics]);
+
+  const addGoal = () => {
+    const description = prompt('Goal description?');
+    const targetStr = prompt('Target amount?');
+    const target = targetStr ? parseInt(targetStr, 10) : 0;
+    if (description && target > 0) {
+      setGoals(prev => [...prev, { id: Date.now().toString(), description, target, progress: 0, unit: 'units' }]);
+    }
+  };
+
+  const updateRewardPreference = (pref: MotivationalProfile['rewardPreference']) => {
+    setProfile(prev => prev ? { ...prev, rewardPreference: pref } : null);
+  };
 
   // --- DATA FETCHING & ANALYSIS ---
   useEffect(() => {
@@ -105,6 +154,11 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
 
       // Simulate engagement pattern analysis
       analyzePatterns(mockActivityHistory);
+
+      // Load personalized profile and goals
+      setProfile(mockMotivationalProfile);
+      setGoals(mockGoals);
+      setMentorMessage('Hi there! I will guide you through your learning journey.');
 
       setIsLoading(false);
     };
@@ -164,9 +218,33 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
           action: () => console.log('Navigate to flashcards'),
         });
       }
+      if (profile?.style === 'collaborative') {
+        newStrategies.push({
+          id: 'join_group',
+          title: 'Learn with Peers',
+          description: 'Your collaborative style thrives in study groups. Join one today.',
+          action: () => console.log('Navigate to study groups'),
+        });
+      }
+      if (profile?.style === 'competitive') {
+        newStrategies.push({
+          id: 'compete_leaderboard',
+          title: 'Climb the Ranks',
+          description: 'Join the weekly leaderboard challenge to satisfy your competitive spirit.',
+          action: () => console.log('Navigate to leaderboards'),
+        });
+      }
+      if (goals.length === 0) {
+        newStrategies.push({
+          id: 'set_goal',
+          title: 'Set a Learning Goal',
+          description: 'Define a weekly goal to guide your progress.',
+          action: addGoal,
+        });
+      }
       setStrategies(newStrategies);
     }
-  }, [patterns, metrics]);
+  }, [patterns, metrics, profile, goals]);
 
 
   // --- RENDER LOGIC ---
@@ -220,7 +298,43 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
             </ResponsiveContainer>
         </div>
 
-        {/* 3. Motivational Feedback & Personalized Strategies */}
+        {/* 3. Goal Setting Assistance & Progress Pacing */}
+        <div>
+          <h3 className="text-lg font-semibold mb-2">Your Goals</h3>
+          <div className="space-y-2">
+            {goals.map(goal => (
+              <div key={goal.id} className="p-2 border rounded">
+                <div className="flex justify-between text-sm">
+                  <span>{goal.description}</span>
+                  <span>{goal.progress}/{goal.target} {goal.unit}</span>
+                </div>
+                <Progress value={(goal.progress / goal.target) * 100} />
+              </div>
+            ))}
+            {goals.length === 0 && (
+              <p className="text-sm text-muted-foreground">No goals yet. Set one to guide your learning.</p>
+            )}
+            <Button onClick={addGoal} size="sm" className="mt-2">Add Goal</Button>
+          </div>
+        </div>
+
+        {/* 4. Adaptive Difficulty Recommendation */}
+        <div className="p-4 bg-secondary rounded-lg">
+          <p className="text-sm">Recommended next challenge difficulty: <span className="font-bold">{recommendedDifficulty}</span></p>
+          {profile && (
+            <p className="text-xs text-muted-foreground mt-1">Motivational style: {profile.style}, prefers {profile.rewardPreference}</p>
+          )}
+          {profile && (
+            <div className="mt-2 text-xs">
+              <span className="mr-2">Reward preference:</span>
+              {(['badges','certificates','career','tools'] as const).map(p => (
+                <button key={p} onClick={() => updateRewardPreference(p)} className={cn('px-2 py-1 rounded border text-xs', profile.rewardPreference===p?'bg-primary text-primary-foreground':'bg-transparent')}>{p}</button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* 5. Motivational Feedback & Personalized Strategies */}
         <div>
           <h3 className="text-lg font-semibold mb-2">Personalized Suggestions</h3>
           <div className="space-y-4">
@@ -236,12 +350,20 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
           </div>
         </div>
 
-        {/* 4. Retention Optimization & Personalized Content (demonstrated through strategies) */}
+        {/* 6. Retention Optimization & Personalized Content */}
         <div className="p-4 bg-accent/50 rounded-lg text-center">
             <h4 className="font-bold mb-2">Did you know?</h4>
             {patterns && <p className="text-sm">You're most active on {patterns.mostActiveDay}s. Plan a deep-dive session then!</p>}
             <p className="text-sm mt-1">Based on your progress, you might enjoy our section on <a href="#" className="underline">Advanced UVM Sequencing</a>.</p>
         </div>
+
+        {/* 7. Virtual Mentor */}
+        {mentorMessage && (
+          <div className="p-4 bg-primary/10 rounded-lg">
+            <h4 className="font-bold mb-1 flex items-center"><UserCheck className="mr-2"/>Your Mentor</h4>
+            <p className="text-sm text-muted-foreground">{mentorMessage}</p>
+          </div>
+        )}
 
       </CardContent>
     </Card>
