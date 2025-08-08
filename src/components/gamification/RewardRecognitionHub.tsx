@@ -7,7 +7,7 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Gift, Badge, Star, Briefcase, Ticket, Key, BookOpen } from 'lucide-react';
+import { Gift, Badge, Star, Briefcase, Ticket, Key, BookOpen, Award } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // --- TYPE DEFINITIONS ---
@@ -44,6 +44,10 @@ const mockRewards: Reward[] = [
   { id: 'r4', title: 'Expert Q&A Session Invite', description: 'An exclusive invitation to a live Q&A with an industry expert.', type: 'EventAccess', icon: <Ticket />, isRedeemed: false, isRedeemable: true, dateEarned: new Date('2024-09-05') },
   { id: 'r5', title: 'Interview with Partner Company', description: 'A guaranteed first-round interview for an internship at a partner company.', type: 'CareerOpportunity', icon: <Briefcase />, isRedeemed: true, isRedeemable: false, dateEarned: new Date('2024-09-10') },
   { id: 'r6', title: 'Advanced Assertions E-Book', description: 'Free access to the "SystemVerilog Assertions In-Depth" e-book.', type: 'LearningResource', icon: <BookOpen />, isRedeemed: false, isRedeemable: true, dateEarned: new Date('2024-09-12') },
+  { id: 'r7', title: 'UVM Skill Endorsement', description: 'Peers endorsed your UVM debugging skills.', type: 'SkillEndorsement', icon: <Star />, isRedeemed: true, isRedeemable: false, dateEarned: new Date('2024-09-15') },
+  { id: 'r8', title: 'Community Expert Badge', description: 'Recognized as a top contributor in expert forums.', type: 'ExpertRecognition', icon: <Award />, isRedeemed: false, isRedeemable: true, dateEarned: new Date('2024-09-18') },
+  { id: 'r9', title: 'Industry Partner Shoutout', description: 'Featured by an industry partner for outstanding project work.', type: 'IndustryRecognition', icon: <Briefcase />, isRedeemed: false, isRedeemable: false, dateEarned: new Date('2024-09-20') },
+  { id: 'r10', title: 'Professional Workshop Pass', description: 'Access to an advanced verification workshop.', type: 'ProfessionalDevelopment', icon: <BookOpen />, isRedeemed: false, isRedeemable: true, dateEarned: new Date('2024-09-22') },
 ];
 
 // --- CHILD COMPONENT: RewardCard ---
@@ -104,9 +108,9 @@ const RewardRecognitionHub: React.FC<RewardRecognitionHubProps> = ({ userId }) =
     console.log(`User ${userId} redeemed reward ${rewardId}`);
   };
 
-  const myBadges = rewards.filter(r => r.type === 'Badge' || r.type === 'Certificate');
-  const redeemableRewards = rewards.filter(r => r.isRedeemable);
-  const careerOpportunities = rewards.filter(r => r.type === 'CareerOpportunity' || r.type === 'IndustryRecognition');
+  const myBadges = rewards.filter(r => ['Badge', 'Certificate', 'SkillEndorsement', 'ExpertRecognition'].includes(r.type));
+  const redeemableRewards = rewards.filter(r => r.isRedeemable && !myBadges.includes(r));
+  const careerOpportunities = rewards.filter(r => ['CareerOpportunity', 'IndustryRecognition', 'ProfessionalDevelopment'].includes(r.type));
 
   return (
     <Card className="w-full">
