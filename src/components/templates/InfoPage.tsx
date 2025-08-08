@@ -1,25 +1,5 @@
 import React, { ReactNode } from "react";
 
-// Placeholder for an interactive chart component
-const InteractiveChartPlaceholder = ({ title = "Interactive Chart" }: { title?: string }) => (
-  <div className="my-6 p-4 border border-dashed border-blue-400/50 rounded-lg bg-blue-500/5 min-h-[200px] flex flex-col items-center justify-center">
-    <h3 className="font-semibold text-blue-600 dark:text-blue-400 mb-2">{title}</h3>
-    <p className="text-sm text-foreground/70">
-      (An interactive chart or diagram will be displayed here.)
-    </p>
-  </div>
-);
-
-// Placeholder for a diagram component
-const DiagramPlaceholder = ({ title = "Diagram" }: { title?: string }) => (
-  <div className="my-6 p-4 border border-dashed border-green-400/50 rounded-lg bg-green-500/5 min-h-[200px] flex flex-col items-center justify-center">
-    <h3 className="font-semibold text-green-600 dark:text-green-400 mb-2">{title}</h3>
-    <p className="text-sm text-foreground/70">
-      (A diagram or illustration will be displayed here.)
-    </p>
-  </div>
-);
-
 interface InfoPageProps {
   title?: string;
   description?: string;
@@ -78,6 +58,4 @@ export const InfoPage: React.FC<InfoPageProps> = ({
   );
 };
 
-// Exporting placeholders for potential use in actual page construction
-export { InteractiveChartPlaceholder, DiagramPlaceholder };
 export default InfoPage;

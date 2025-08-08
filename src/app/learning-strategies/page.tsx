@@ -1,5 +1,6 @@
 // app/learning-strategies/page.tsx
-import { InfoPage, DiagramPlaceholder } from "@/components/templates/InfoPage";
+import { InfoPage } from "@/components/templates/InfoPage";
+import HistoryTimelineChart from "@/components/charts/HistoryTimelineChart";
 
 // PLACEHOLDER CONTENT - All content below must be populated from the "SystemVerilog and UVM Mastery Blueprint"
 
@@ -21,7 +22,7 @@ const LearningStrategiesPage = () => {
         <h2 className="text-2xl font-semibold mt-6 mb-3">2. Spaced Repetition System (SRS)</h2>
         <p>[Placeholder: Explanation of SRS and the forgetting curve. How SRS optimizes learning by scheduling reviews at increasing intervals when knowledge is about to be forgotten, from blueprint].</p>
         <p>[Placeholder: Tools and techniques for implementing SRS (e.g., Anki, custom flashcard systems). How the platform&apos;s FlashcardWidget can be part of this strategy, from blueprint].</p>
-        <DiagramPlaceholder title="The Forgetting Curve & Spaced Repetition Intervals" />
+        <HistoryTimelineChart />
         <p className="text-sm text-foreground/70 mt-2">
           [Placeholder: Description of the diagram showing how spaced repetition combats the forgetting curve, from blueprint].
         </p>

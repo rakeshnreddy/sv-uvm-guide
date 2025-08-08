@@ -14,7 +14,6 @@ import { InfoPage } from '@/components/templates/InfoPage';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/Accordion';
 import { Card } from '@/components/ui/Card';
 import { CodeBlock } from '@/components/ui/CodeBlock';
-import { DiagramPlaceholder, InteractiveChartPlaceholder } from '@/components/templates/InfoPage';
 import { Alert } from '@/components/ui/Alert';
 import dynamic from 'next/dynamic';
 import ConceptLink from '@/components/knowledge/ConceptLink';
@@ -31,7 +30,14 @@ const UvmTestbenchVisualizer = dynamic(() => import('@/components/diagrams/UvmTe
 const InteractiveUvmArchitectureDiagram = dynamic(() => import('@/components/diagrams/InteractiveUvmArchitectureDiagram'));
 const UvmComponentRelationshipVisualizer = dynamic(() => import('@/components/diagrams/UvmComponentRelationshipVisualizer'));
 const UvmPhasingInteractiveTimeline = dynamic(() => import('@/components/diagrams/UvmPhasingInteractiveTimeline'));
+const UvmFactoryWorkflowVisualizer = dynamic(() => import('@/components/diagrams/UvmFactoryWorkflowVisualizer'));
 const SystemVerilogDataTypesAnimation = dynamic(() => import('@/components/animations/SystemVerilogDataTypesAnimation'));
+const CoverageAnalyzer = dynamic(() => import('@/components/animations/CoverageAnalyzer'));
+const RandomizationExplorer = dynamic(() => import('@/components/animations/RandomizationExplorer'));
+const InterfaceSignalFlow = dynamic(() => import('@/components/animations/InterfaceSignalFlow'));
+const ProceduralBlocksSimulator = dynamic(() => import('@/components/animations/ProceduralBlocksSimulator'));
+const AssertionBuilder = dynamic(() => import('@/components/animations/AssertionBuilder'));
+const DebuggingSimulator = dynamic(() => import('@/components/ui/DebuggingSimulator'));
 const InteractiveCode = dynamic(() => import('@/components/ui/InteractiveCode').then(mod => mod.InteractiveCode), { ssr: false });
 
 type CurriculumTopicPageProps = {
@@ -52,13 +58,18 @@ const components = {
   UvmHierarchySunburstChart,
   UvmPhasingDiagram,
   Link,
-  DiagramPlaceholder,
   AnimatedUvmTestbenchDiagram,
   Alert,
   UvmVirtualSequencerDiagram,
-  InteractiveChartPlaceholder,
   UvmTestbenchVisualizer,
   InteractiveUvmArchitectureDiagram,
+  UvmFactoryWorkflowVisualizer,
+  CoverageAnalyzer,
+  RandomizationExplorer,
+  InterfaceSignalFlow,
+  ProceduralBlocksSimulator,
+  AssertionBuilder,
+  DebuggingSimulator,
   ConceptLink,
 };
 
