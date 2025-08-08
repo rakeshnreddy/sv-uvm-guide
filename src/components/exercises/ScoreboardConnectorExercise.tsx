@@ -229,7 +229,7 @@ const ScoreboardConnectorExercise: React.FC = () => {
                 fill={selectedPort?.portId === port.id ? "hsl(var(--accent))" : "hsl(var(--primary-foreground))"}
                 stroke="hsl(var(--primary))"
                 strokeWidth="1.5"
-                className="cursor-pointer hover:fill-hsl(var(--accent))"
+                className="cursor-pointer hover:fill-[hsl(var(--accent))]"
                 onClick={(e) => { e.stopPropagation(); handlePortClick(comp.id, port.id);}}
                 aria-label={`Port ${port.name} on ${comp.name}`}
               />
