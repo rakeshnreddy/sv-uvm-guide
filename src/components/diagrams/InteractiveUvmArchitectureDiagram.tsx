@@ -13,9 +13,6 @@ import useAccessibility from '@/hooks/useAccessibility';
 import { exportSvgAsPng, exportSvgAsPdf } from '@/lib/exportUtils';
 import { useTheme } from 'next-themes';
 import { useLocale } from '@/hooks/useLocale';
-import { useAsync } from '@/hooks/useAsync';
-import { useLazyRender } from '@/hooks/useLazyRender';
-import { useAccessibility } from '@/hooks/useAccessibility';
 
 
 
@@ -319,8 +316,9 @@ const InteractiveUvmArchitectureDiagram = () => {
         .append('path')
         .attr('class', 'flow')
         .attr('d', d => {
-          const s = nodePositions.get(d.source)!;
-          const t = nodePositions.get(d.target)!;
+          const s = nodePositions.get(d.source);
+          const t = nodePositions.get(d.target);
+          if (!s || !t) return '';
           const midY = (s.y + t.y) / 2;
           return `M${s.y},${s.x} C${midY},${s.x} ${midY},${t.x} ${t.y},${t.x}`;
         })
