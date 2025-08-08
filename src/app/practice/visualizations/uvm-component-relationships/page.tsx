@@ -3,9 +3,7 @@ import { InfoPage } from '@/components/templates/InfoPage';
 
 const UvmComponentRelationshipVisualizerPage = () => {
   return (
-    <InfoPage title="UVM Component Relationships">
-      <UvmComponentRelationshipVisualizer />
-    </InfoPage>
+    <InfoPage title="UVM Component Relationships" diagrams={[<UvmComponentRelationshipVisualizer key="uvm-comp-rel" />]} />
   );
 };
 

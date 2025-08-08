@@ -3,9 +3,7 @@ import { InfoPage } from '@/components/templates/InfoPage';
 
 const ConcurrencyVisualizerPage = () => {
   return (
-    <InfoPage title="Concurrency Visualizer">
-      <ConcurrencyVisualizer />
-    </InfoPage>
+    <InfoPage title="Concurrency Visualizer" diagrams={[<ConcurrencyVisualizer key="concurrency" />]} />
   );
 };
 

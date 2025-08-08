@@ -3,9 +3,7 @@ import { InfoPage } from '@/components/templates/InfoPage';
 
 const StateMachineDesignerPage = () => {
   return (
-    <InfoPage title="State Machine Designer">
-      <StateMachineDesigner />
-    </InfoPage>
+    <InfoPage title="State Machine Designer" diagrams={[<StateMachineDesigner key="state-machine" />]} />
   );
 };
 

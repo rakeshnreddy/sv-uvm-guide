@@ -49,6 +49,21 @@ Deploying via Vercel works out of the box using the `next start` command. The `o
 
 If exporting with `next export`, guard any `window` usage as it only runs client-side.
 
+## Firebase Configuration
+
+The application expects Firebase credentials to be provided via environment variables. Create a `.env.local` file (or otherwise set these values) with the following keys:
+
+```
+NEXT_PUBLIC_FIREBASE_API_KEY=your_api_key
+NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_auth_domain
+NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
+NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_storage_bucket
+NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id
+NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
+```
+
+These variables are used during initialization in `src/lib/firebase.ts`.
+
 ## Phase Deliverables
 
 * [Enhancement Blueprint](enhance.md)

@@ -28,7 +28,7 @@ const ScoreboardConnectorPage: React.FC = () => {
           <li>Visualize how monitors broadcast transactions to multiple subscribers.</li>
           <li>Practice a key aspect of UVM testbench connectivity.</li>
         </ul>
-        {/* TODO: Add Scoring, Feedback, and Retry button integration in later steps */}
+        <p className="text-muted-foreground mt-4">Use Check to evaluate your connections and Retry to start over.</p>
       </section>
     </>
   );

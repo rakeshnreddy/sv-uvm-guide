@@ -3,9 +3,7 @@ import { InfoPage } from '@/components/templates/InfoPage';
 
 const UvmPhasingDiagramPage = () => {
   return (
-    <InfoPage title="UVM Phasing Diagram">
-      <UvmPhasingDiagram />
-    </InfoPage>
+    <InfoPage title="UVM Phasing Diagram" diagrams={[<UvmPhasingDiagram key="uvm-phasing" />]} />
   );
 };
 

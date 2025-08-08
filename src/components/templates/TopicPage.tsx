@@ -1,9 +1,12 @@
 "use client";
 
-import React, { ReactNode } from "react";
+import React, { ReactNode, useEffect, useState } from "react";
 import { Accordion, AccordionItem } from "@/components/ui/Accordion";
 import { Button } from "@/components/ui/Button"; // Will create this basic Button component next
 import { Lightbulb, BookOpen } from "lucide-react"; // Example icons
+import { useAuth } from "@/contexts/AuthContext";
+import { doc, getDoc, setDoc } from "firebase/firestore";
+import { db } from "@/lib/firebase";
 
 // Placeholder components - these will be developed in later tasks
 const FeynmanPromptPlaceholder = () => (
@@ -56,44 +59,59 @@ const TopicPage: React.FC<TopicPageProps> = ({
   flashcards,
   topicId, // Will be used for Firestore interaction
 }) => {
-  // TODO: Add states for initialCardIndex and loading user progress from Firestore
-  // const [initialCardIndex, setInitialCardIndex] = useState(0);
-  // const [isLoadingProgress, setIsLoadingProgress] = useState(true);
+  const { user } = useAuth();
+  const [initialCardIndex, setInitialCardIndex] = useState(0);
+  const [isLoadingProgress, setIsLoadingProgress] = useState(true);
 
-  // Placeholder for Firestore interaction logic
-  // This would typically involve:
-  // - Getting the current user from AuthContext
-  // - Reading /users/{userId}/topics/{topicId}/flashcardProgress
-  // - Setting initialCardIndex
-  // useEffect(() => {
-  //   if (user && topicId) {
-  //     // const fetchProgress = async () => { ... firebase call ... setInitialCardIndex(progress.lastViewedCardIndex); setIsLoadingProgress(false); }
-  //     // fetchProgress();
-  //   } else {
-  //     setIsLoadingProgress(false);
-  //   }
-  // }, [user, topicId]);
+  useEffect(() => {
+    const loadProgress = async () => {
+      if (user && topicId) {
+        try {
+          const docRef = doc(db, "users", user.uid, "topics", topicId);
+          const snap = await getDoc(docRef);
+          if (snap.exists()) {
+            const data = snap.data() as any;
+            const savedIndex =
+              data?.flashcardProgress?.lastViewedCardIndex ?? 0;
+            setInitialCardIndex(savedIndex);
+          }
+        } catch (error) {
+          console.error("Error loading flashcard progress:", error);
+        }
+      }
+      setIsLoadingProgress(false);
+    };
+    loadProgress();
+  }, [user, topicId]);
 
-
-  const handleFlashcardProgressUpdate = (lastViewedCardIndex: number) => {
-    // TODO: Interact with Firebase to save progress
-    // This would typically involve:
-    // - Getting the current user from AuthContext
-    // - Writing to /users/{userId}/topics/{topicId}/flashcardProgress
-    if (topicId) {
-      console.log(
-        `Flashcard progress for topic "${topicId}": last viewed card ${lastViewedCardIndex}`
+  const handleFlashcardProgressUpdate = async (
+    lastViewedCardIndex: number,
+  ) => {
+    if (!user || !topicId) return;
+    try {
+      const docRef = doc(db, "users", user.uid, "topics", topicId);
+      await setDoc(
+        docRef,
+        { flashcardProgress: { lastViewedCardIndex } },
+        { merge: true },
       );
-      // Placeholder for actual Firestore save:
-      // if (user) { firestore.doc(`users/${user.uid}/topics/${topicId}`).set({ flashcardProgress: { lastViewedCardIndex } }, { merge: true }); }
+    } catch (error) {
+      console.error("Error saving flashcard progress:", error);
     }
   };
 
-
-  const handleMarkAsComplete = () => {
-    // TODO: Interact with Firebase to mark the topic as complete for the user
-    console.log(`Topic "${title}" marked as complete.`);
-    alert(`Topic "${title}" marked as complete (placeholder).`);
+  const handleMarkAsComplete = async () => {
+    if (!user || !topicId) {
+      alert(`Topic "${title}" marked as complete.`);
+      return;
+    }
+    try {
+      const docRef = doc(db, "users", user.uid, "topics", topicId);
+      await setDoc(docRef, { completed: true }, { merge: true });
+      alert(`Topic "${title}" marked as complete.`);
+    } catch (error) {
+      console.error("Error marking topic complete:", error);
+    }
   };
 
   return (
@@ -118,11 +136,11 @@ const TopicPage: React.FC<TopicPageProps> = ({
         </div>
       </div>
 
-      {flashcards && flashcards.length > 0 && (
+      {flashcards && flashcards.length > 0 && !isLoadingProgress && (
         <FlashcardWidget
           cards={flashcards}
           onProgressUpdate={handleFlashcardProgressUpdate}
-          // initialCardIndex={initialCardIndex} // TODO: Pass this once loaded from Firestore
+          initialCardIndex={initialCardIndex}
         />
       )}
 
