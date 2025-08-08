@@ -33,6 +33,7 @@ interface Achievement {
   unlocked: boolean;
   unlockDate?: Date;
   rarity: 'Common' | 'Uncommon' | 'Rare' | 'Epic' | 'Legendary';
+  progress?: number; // Progress percentage for locked achievements
 }
 
 // --- MOCK DATA ---
@@ -46,10 +47,10 @@ const mockAchievements: Achievement[] = [
 
   // Locked Achievements
   { id: 'ral_expert', name: 'RAL Guru', description: 'Master the UVM Register Abstraction Layer.', category: 'Expert', icon: <GraduationCap />, unlocked: false, rarity: 'Epic' },
-  { id: 'vip_integration', name: 'VIP Integrator', description: 'Integrate a third-party VIP into a project.', category: 'Industry', icon: <Briefcase />, unlocked: false, rarity: 'Epic' },
-  { id: 'creative_solution', name: 'Creative Coder', description: 'Solve a challenge with a non-obvious, elegant solution.', category: 'Creative', icon: <Lightbulb />, unlocked: false, rarity: 'Rare' },
-  { id: 'pair_programming', name: 'Dynamic Duo', description: 'Complete a collaborative project with a partner.', category: 'Collaboration', icon: <GitMerge />, unlocked: false, rarity: 'Uncommon' },
-  { id: 'mentor_badge', name: 'Guiding Light', description: 'Successfully mentor a peer through a difficult concept.', category: 'Mentoring', icon: <Users />, unlocked: false, rarity: 'Legendary' },
+  { id: 'vip_integration', name: 'VIP Integrator', description: 'Integrate a third-party VIP into a project.', category: 'Industry', icon: <Briefcase />, unlocked: false, rarity: 'Epic', progress: 40 },
+  { id: 'creative_solution', name: 'Creative Coder', description: 'Solve a challenge with a non-obvious, elegant solution.', category: 'Creative', icon: <Lightbulb />, unlocked: false, rarity: 'Rare', progress: 20 },
+  { id: 'pair_programming', name: 'Dynamic Duo', description: 'Complete a collaborative project with a partner.', category: 'Collaboration', icon: <GitMerge />, unlocked: false, rarity: 'Uncommon', progress: 60 },
+  { id: 'mentor_badge', name: 'Guiding Light', description: 'Successfully mentor a peer through a difficult concept.', category: 'Mentoring', icon: <Users />, unlocked: false, rarity: 'Legendary', progress: 10 },
 ];
 
 // --- CHILD COMPONENT: AchievementCard ---
@@ -74,13 +75,19 @@ const AchievementCard: React.FC<AchievementCardProps> = ({ achievement }) => {
       <div className={iconClasses}>
         {achievement.unlocked ? achievement.icon : <Lock />}
       </div>
-      <div>
+      <div className="flex-1">
         <h4 className="font-bold text-lg">{achievement.name}</h4>
         <p className="text-sm text-muted-foreground">{achievement.description}</p>
         {achievement.unlocked && achievement.unlockDate && (
           <p className="text-xs text-green-500 mt-1">
             Unlocked on: {achievement.unlockDate.toLocaleDateString()}
           </p>
+        )}
+        {!achievement.unlocked && typeof achievement.progress === 'number' && (
+          <div className="mt-2">
+            <Progress value={achievement.progress} className="h-2" />
+            <p className="text-xs text-muted-foreground mt-1">{achievement.progress}% complete</p>
+          </div>
         )}
       </div>
        <div className="ml-auto text-right flex-shrink-0">

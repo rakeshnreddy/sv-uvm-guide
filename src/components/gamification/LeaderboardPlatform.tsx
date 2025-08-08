@@ -6,7 +6,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Trophy, Zap, Target, Award, Users, Mic, Briefcase, Lightbulb } from 'lucide-react';
+import { Trophy, Zap, Target, Award, Users, Mic, Briefcase, Lightbulb, GraduationCap } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // --- TYPE DEFINITIONS ---
@@ -28,7 +28,8 @@ type LeaderboardType =
   | 'Collaboration'
   | 'Expertise'
   | 'IndustryPrep'
-  | 'Innovation';
+  | 'Innovation'
+  | 'TeachingImpact';
 
 interface LeaderboardInfo {
     id: LeaderboardType;
@@ -48,6 +49,7 @@ const leaderboards: Record<LeaderboardType, LeaderboardInfo> = {
     Expertise: { id: 'Expertise', title: 'Expert Recognition', icon: <Mic />, description: "Most 'expert' answers in forums." },
     IndustryPrep: { id: 'IndustryPrep', title: 'Industry Ready', icon: <Briefcase />, description: "Highest score on industry-standard simulations." },
     Innovation: { id: 'Innovation', title: 'Creative Minds', icon: <Lightbulb />, description: "Top-voted creative solutions." },
+    TeachingImpact: { id: 'TeachingImpact', title: 'Teaching Impact', icon: <GraduationCap />, description: "Learners with the highest mentoring ratings." },
 };
 
 const mockLeaderboardData: Record<LeaderboardType, LeaderboardEntry[]> = {
@@ -66,12 +68,30 @@ const mockLeaderboardData: Record<LeaderboardType, LeaderboardEntry[]> = {
     { rank: 2, userId: 'user1', username: 'You', score: 22, scoreUnit: 'Challenges' },
     { rank: 3, userId: 'user2', username: 'VerilogViper', score: 20, scoreUnit: 'Challenges' },
   ],
-  // Add mock data for other leaderboards as needed...
-  Achievement: [],
-  Collaboration: [],
-  Expertise: [],
-  IndustryPrep: [],
-  Innovation: [],
+  Achievement: [
+    { rank: 1, userId: 'user7', username: 'BadgeHunter', score: 12, scoreUnit: 'Rare Badges' },
+    { rank: 2, userId: 'user1', username: 'You', score: 10, scoreUnit: 'Rare Badges' },
+  ],
+  Collaboration: [
+    { rank: 1, userId: 'user8', username: 'TeamPlayer', score: 18, scoreUnit: 'Projects' },
+    { rank: 2, userId: 'user1', username: 'You', score: 12, scoreUnit: 'Projects' },
+  ],
+  Expertise: [
+    { rank: 1, userId: 'user3', username: 'UVM_Master', score: 30, scoreUnit: 'Expert Answers' },
+    { rank: 2, userId: 'user9', username: 'SV_Sage', score: 25, scoreUnit: 'Expert Answers' },
+  ],
+  IndustryPrep: [
+    { rank: 1, userId: 'user4', username: 'SpeedySV', score: 95, scoreUnit: 'Sim Score' },
+    { rank: 2, userId: 'user1', username: 'You', score: 90, scoreUnit: 'Sim Score' },
+  ],
+  Innovation: [
+    { rank: 1, userId: 'user5', username: 'QuickChip', score: 8, scoreUnit: 'Ideas' },
+    { rank: 2, userId: 'user3', username: 'UVM_Master', score: 6, scoreUnit: 'Ideas' },
+  ],
+  TeachingImpact: [
+    { rank: 1, userId: 'user6', username: 'MentorMike', score: 15, scoreUnit: 'Students' },
+    { rank: 2, userId: 'user1', username: 'You', score: 10, scoreUnit: 'Students' },
+  ],
 };
 
 

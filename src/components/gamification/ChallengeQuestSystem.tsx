@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
-import { Bug, Puzzle, Users, Timer, Package, Snail, Architecture, Zap, Lightbulb, Swords } from 'lucide-react';
+import { Bug, Puzzle, Users, Timer, Package, Snail, Layers, Zap, Lightbulb, Swords } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 // --- TYPE DEFINITIONS ---
@@ -43,11 +43,14 @@ interface Challenge {
 
 const mockChallenges: Challenge[] = [
   { id: 'c1', title: 'APB Protocol Debug', description: 'Find the bug in the APB slave component that is causing data corruption.', type: 'Debugging', icon: <Bug />, difficulty: 'Medium', status: 'Not Started', rewards: { xp: 500, badge: 'Bug Squasher' } },
-  { id: 'c2', title: 'Design a DMA Controller', description: 'Create a high-level architecture for a multi-channel DMA controller.', type: 'Architecture', icon: <Architecture />, difficulty: 'Hard', status: 'Not Started', rewards: { xp: 1000, badge: 'Architect' } },
+  { id: 'c2', title: 'Design a DMA Controller', description: 'Create a high-level architecture for a multi-channel DMA controller.', type: 'Architecture', icon: <Layers />, difficulty: 'Hard', status: 'Not Started', rewards: { xp: 1000, badge: 'Architect' } },
   { id: 'c3', title: 'Optimize FIFO Performance', description: 'Refactor the given FIFO design to improve throughput by 25%.', type: 'Performance', icon: <Zap />, difficulty: 'Hard', status: 'Completed', rewards: { xp: 800 } },
   { id: 'c4', title: 'Team UVM Testbench', description: 'Collaborate with a partner to build a testbench for a complex DUT.', type: 'Team', icon: <Users />, difficulty: 'Expert', status: 'In Progress', rewards: { xp: 1500, badge: 'Team Player' } },
   { id: 'c5', title: 'Timed Coverage Closure', description: 'Reach 95% functional coverage on the given module within 60 minutes.', type: 'Time-Constrained', icon: <Timer />, difficulty: 'Medium', status: 'Not Started', rewards: { xp: 600 } },
   { id: 'c6', title: 'Creative Test Sequence', description: 'Develop an innovative sequence to find a hidden bug in the DUT.', type: 'Innovation', icon: <Lightbulb />, difficulty: 'Expert', status: 'Not Started', rewards: { xp: 1200, badge: 'Innovator' } },
+  { id: 'c7', title: 'UVM Phases Quiz', description: 'Answer a series of questions to solidify your understanding of UVM phases.', type: 'Skill-Building', icon: <Puzzle />, difficulty: 'Easy', status: 'Not Started', rewards: { xp: 300 } },
+  { id: 'c8', title: 'Automotive I2C Verification', description: 'Verify an I2C controller for an automotive safety system.', type: 'Real-World', icon: <Package />, difficulty: 'Medium', status: 'Not Started', rewards: { xp: 700 } },
+  { id: 'c9', title: 'Memory Footprint Challenge', description: 'Reduce memory usage of the verification environment by 20%.', type: 'Resource-Optimization', icon: <Snail />, difficulty: 'Hard', status: 'Not Started', rewards: { xp: 900 } },
 ];
 
 
@@ -109,11 +112,17 @@ const ChallengeQuestSystem: React.FC<ChallengeQuestSystemProps> = ({ userId }) =
   const [challenges, setChallenges] = useState<Challenge[]>([]);
   const [filterType, setFilterType] = useState<ChallengeType | 'All'>('All');
   const [filterDifficulty, setFilterDifficulty] = useState<ChallengeDifficulty | 'All'>('All');
+  const [suggested, setSuggested] = useState<Challenge[]>([]);
 
   useEffect(() => {
     // Fetch challenges for the user
     setChallenges(mockChallenges);
   }, [userId]);
+
+  useEffect(() => {
+    // Generate personalized challenge suggestions (placeholder logic)
+    setSuggested(challenges.filter(c => c.status === 'Not Started').slice(0, 2));
+  }, [challenges]);
 
   const filteredChallenges = challenges.filter(c =>
     (filterType === 'All' || c.type === filterType) &&
@@ -148,6 +157,15 @@ const ChallengeQuestSystem: React.FC<ChallengeQuestSystemProps> = ({ userId }) =
             </SelectContent>
           </Select>
         </div>
+
+        {suggested.length > 0 && (
+          <div className="mb-6">
+            <h3 className="text-lg font-semibold mb-2">Suggested for You</h3>
+            <div className="space-y-4">
+              {suggested.map(ch => <ChallengeCard key={ch.id} challenge={ch} />)}
+            </div>
+          </div>
+        )}
 
         <div className="space-y-4">
           {filteredChallenges.length > 0 ? (
