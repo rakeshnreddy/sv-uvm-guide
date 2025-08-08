@@ -122,7 +122,9 @@ const UvmAgentBuilderExercise: React.FC = () => {
   const [availableComponents, setAvailableComponents] = useState<Item[]>(initialComponents);
   const [agentComponents, setAgentComponents] = useState<Item[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<{ score: number; passed: boolean } | null>(null);
+  const [feedback, setFeedback] = useState<
+    { score: number; passed: boolean; warnings: string[] } | null
+  >(null);
 
 
 
@@ -192,28 +194,16 @@ const UvmAgentBuilderExercise: React.FC = () => {
   }
 
   const activeItem = getActiveItem();
-  const requiredIds = ['sequencer', 'driver', 'monitor'];
 
   const checkAgent = () => {
-    const correct = requiredIds.filter(id => agentComponents.some(item => item.id === id)).length;
-    const score = Math.round((correct / requiredIds.length) * 100);
-    setFeedback({ score, passed: score === 100 });
+    const { warnings, score } = checkAgentComponents(agentComponents);
+    setFeedback({ score, passed: score === 100, warnings });
   };
 
   const handleRetry = () => {
     setAvailableComponents(initialComponents);
     setAgentComponents([]);
     setFeedback(null);
-  };
-
-  const handleValidate = () => {
-    const { warnings, score } = checkAgentComponents(agentComponents);
-    setScore(score);
-    if (warnings.length === 0) {
-      setFeedback('Agent correctly built!');
-    } else {
-      setFeedback(warnings.join(' '));
-    }
   };
 
   return (
@@ -275,6 +265,13 @@ const UvmAgentBuilderExercise: React.FC = () => {
       {feedback && (
         <div className="mt-4 text-center">
           <p>Score: {feedback.score}%</p>
+          {feedback.warnings.length > 0 && (
+            <div className="text-yellow-500">
+              {feedback.warnings.map((w, i) => (
+                <p key={i}>{w}</p>
+              ))}
+            </div>
+          )}
           <p className={feedback.passed ? 'text-green-500' : 'text-red-500'}>
             {feedback.passed ? 'Pass' : 'Fail'}
           </p>
