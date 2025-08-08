@@ -14,16 +14,22 @@ import {
   type UserEdit,
 } from '../../lib/collaboration';
 
-// This is a placeholder for SystemVerilog language support.
-// A full implementation would require a Monarch tokenizer.
-const registerSystemVerilogLanguage = (monacoInstance: typeof monaco) => {
+// Register a more complete SystemVerilog language definition using Monarch
+// tokenization rules. This provides basic support for numbers, strings,
+// macros and comments so that the editor can properly highlight typical
+// SystemVerilog source files.
+export const registerSystemVerilogLanguage = (monacoInstance: typeof monaco) => {
     const langId = 'systemverilog';
     if (monacoInstance.languages.getLanguages().some(lang => lang.id === langId)) {
         return;
     }
+
     monacoInstance.languages.register({ id: langId });
-    // Basic keyword highlighting for demonstration
     monacoInstance.languages.setMonarchTokensProvider(langId, {
+        defaultToken: '',
+        tokenPostfix: '.sv',
+
+        // Keywords taken from the SystemVerilog specification
         keywords: [
             'module', 'endmodule', 'logic', 'reg', 'wire', 'initial', 'always',
             'begin', 'end', 'if', 'else', 'case', 'endcase', 'parameter',
@@ -31,34 +37,57 @@ const registerSystemVerilogLanguage = (monacoInstance: typeof monaco) => {
             'task', 'class', 'extends', 'super', 'new', 'virtual', 'interface',
             'modport', 'program', 'package', 'import', 'export', 'typedef',
             'struct', 'union', 'enum', 'string', 'integer', 'bit', 'byte', 'int',
-            'shortint', 'longint', 'time', 'real', 'shortreal'
+            'shortint', 'longint', 'time', 'real', 'shortreal', 'generate',
+            'endgenerate', 'typedef', 'return', 'void'
         ],
+
         operators: [
             '=', '>', '<', '!', '~', '?', ':', '==', '<=', '>=', '!=',
             '&&', '||', '++', '--', '+', '-', '*', '/', '&', '|', '^', '%',
-            '<<', '>>', '->', '<->'
+            '<<', '>>', '<<<', '>>>', '->', '<->'
         ],
-        symbols:  /[=><!~?:&|+\-*/^%]+/,
+
+        // regular expressions used by the tokenizer
+        symbols: /[=><!~?:&|+\-*\/^%]+/,
+        escapes: /\\(?:[abfnrtv"'\\]|x[0-9A-Fa-f]{1,4})/,
+
         tokenizer: {
             root: [
-                [/[a-zA-Z_]\w*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
-                [/`[a-zA-Z_]\w*/, 'predefined'], // For `defines
-                [/\d+/, 'number'],
-                [/"/, { token: 'string.quote', bracket: '@open', next: '@string' }],
-                [/\/\//, 'comment'],
-                [/\/\*/, 'comment', '@comment' ],
+                { include: '@whitespace' },
+                [/`define|`ifdef|`ifndef|`else|`elsif|`endif|`timescale|`include/, 'keyword.directive'],
+                [/`[a-zA-Z_][\w$]*/, 'macro'],
+                [/[a-zA-Z_][\w$]*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
+                [/\/\*/, 'comment', '@comment'],
+                [/\/\/.*$/, 'comment'],
+                [/#?\d+'[bodhBODH][0-9a-fA-F_xzXZ?]+/, 'number'],
+                [/#?\d+/, 'number'],
+                [/"/, { token: 'string.quote', bracket: '@open', next: '@string_dq' }],
+                [/'/, { token: 'string.quote', bracket: '@open', next: '@string_sq' }],
+                [/@symbols/, { cases: { '@operators': 'operator', '@default': '' } }],
                 [/[{}()\[\]]/, '@brackets'],
-                [/@symbols/, { cases: { '@operators': 'operator', '@default': '' } } ],
             ],
+
+            // whitespace, including newlines
+            whitespace: [
+                [/[ \t\r\n]+/, 'white'],
+            ],
+
             comment: [
-                [/[^/*]+/, 'comment' ],
-                [/\*\//, 'comment', '@pop'  ],
+                [/[^/*]+/, 'comment'],
+                [/\*\//, 'comment', '@pop'],
                 [/./, 'comment'],
             ],
-            string: [
-                [/[^\\"]+/, 'string'],
-                [/\\./, 'string.escape.invalid'],
-                [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' } ]
+
+            string_dq: [
+                [/[^\\"\n]+/, 'string'],
+                [/\\./, 'string.escape'],
+                [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' }],
+            ],
+
+            string_sq: [
+                [/[^\\'\n]+/, 'string'],
+                [/\\./, 'string.escape'],
+                [/'/, { token: 'string.quote', bracket: '@close', next: '@pop' }],
             ],
         },
     });
