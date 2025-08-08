@@ -34,5 +34,6 @@ describe('ScoreboardConnectorExercise', () => {
     expect(window.alert).toHaveBeenCalled();
     const lines = container.querySelectorAll('line[stroke="hsl(var(--accent))"]');
     expect(lines.length).toBe(0);
+
   });
 });

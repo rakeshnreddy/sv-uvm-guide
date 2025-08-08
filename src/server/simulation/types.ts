@@ -24,4 +24,8 @@ export interface SimulationResult {
   regressions: string[];
   /** Backend used for the simulation */
   backend: SimulatorBackend;
+  /** Whether the simulation completed successfully */
+  passed: boolean;
+  /** Detailed error messages reported by the simulator */
+  errors: string[];
 }

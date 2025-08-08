@@ -3,9 +3,7 @@ import { InfoPage } from '@/components/templates/InfoPage';
 
 const InterfaceSignalFlowPage = () => {
   return (
-    <InfoPage title="Interface Signal Flow">
-      <InterfaceSignalFlow />
-    </InfoPage>
+    <InfoPage title="Interface Signal Flow" diagrams={[<InterfaceSignalFlow key="if-flow" />]} />
   );
 };
 

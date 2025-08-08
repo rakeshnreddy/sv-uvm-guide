@@ -3,9 +3,7 @@ import { InfoPage } from '@/components/templates/InfoPage';
 
 const DataTypeComparisonChartPage = () => {
   return (
-    <InfoPage title="Data Type Comparison Chart">
-      <DataTypeComparisonChart />
-    </InfoPage>
+    <InfoPage title="Data Type Comparison Chart" charts={[<DataTypeComparisonChart key="dt-chart" />]} />
   );
 };
 

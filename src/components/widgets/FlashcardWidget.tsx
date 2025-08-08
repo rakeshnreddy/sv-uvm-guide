@@ -4,6 +4,7 @@ import React, { useState, useEffect, ReactNode } from "react"; // Added ReactNod
 import { ArrowLeft, ArrowRight, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { motion } from "framer-motion";
+import flashcardDecks, { RawFlashcard } from "@/lib/flashcard-decks";
 
 interface CardData {
   id: string | number;
@@ -12,19 +13,38 @@ interface CardData {
 }
 
 interface FlashcardWidgetProps {
-  cards: CardData[];
+  cards?: CardData[];
+  deckId?: string;
   onProgressUpdate?: (lastViewedCardIndex: number) => void; // For Firestore integration later
   initialCardIndex?: number;
 }
 
 const FlashcardWidget: React.FC<FlashcardWidgetProps> = ({
   cards,
+  deckId,
   onProgressUpdate,
   initialCardIndex = 0,
 }) => {
+  const [loadedCards, setLoadedCards] = useState<CardData[]>(cards || []);
   const [currentIndex, setCurrentIndex] = useState(initialCardIndex);
   const [isFlipped, setIsFlipped] = useState(false);
   const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    if (!cards && deckId) {
+      const deck = flashcardDecks[deckId];
+      if (deck) {
+        const formatted = deck.map((c: RawFlashcard) => ({
+          id: c.id,
+          front: c.question,
+          back: c.answer,
+        }));
+        setLoadedCards(formatted);
+      }
+    } else if (cards) {
+      setLoadedCards(cards);
+    }
+  }, [deckId, cards]);
 
   useEffect(() => {
     setIsMounted(true);
@@ -39,7 +59,7 @@ const FlashcardWidget: React.FC<FlashcardWidgetProps> = ({
     setIsFlipped(false);
   }, [currentIndex, onProgressUpdate, isMounted]);
 
-  if (!isMounted || !cards || cards.length === 0) {
+  if (!isMounted || !loadedCards || loadedCards.length === 0) {
     return (
       <div className="my-6 p-5 rounded-lg shadow-md bg-secondary/20 dark:bg-secondary/10 border border-border/30 text-center">
         <p className="text-foreground/70">No flashcards available or component loading...</p>
@@ -47,11 +67,11 @@ const FlashcardWidget: React.FC<FlashcardWidgetProps> = ({
     );
   }
 
-  const currentCard = cards[currentIndex];
-  const progressPercentage = ((currentIndex + 1) / cards.length) * 100;
+  const currentCard = loadedCards[currentIndex];
+  const progressPercentage = ((currentIndex + 1) / loadedCards.length) * 100;
 
   const handleNext = () => {
-    if (currentIndex < cards.length - 1) {
+    if (currentIndex < loadedCards.length - 1) {
       setCurrentIndex(currentIndex + 1);
     }
   };
@@ -81,7 +101,7 @@ const FlashcardWidget: React.FC<FlashcardWidgetProps> = ({
       {/* Header: Counter and Restart Button */}
       <div className="w-full flex justify-between items-center mb-3 px-1">
         <span className="text-sm font-medium text-foreground/80">
-          Card {currentIndex + 1} of {cards.length}
+          Card {currentIndex + 1} of {loadedCards.length}
         </span>
         <Button variant="ghost" size="sm" onClick={handleRestart} aria-label="Restart flashcards">
           <RefreshCw className="w-4 h-4 mr-1 sm:mr-2" />
@@ -143,7 +163,7 @@ const FlashcardWidget: React.FC<FlashcardWidgetProps> = ({
         </Button>
         <Button
           onClick={handleNext}
-          disabled={currentIndex === cards.length - 1}
+          disabled={currentIndex === loadedCards.length - 1}
           variant="outline"
           aria-label="Next card"
         >

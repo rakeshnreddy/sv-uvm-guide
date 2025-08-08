@@ -9,6 +9,7 @@ export const challenges: Challenge[] = [
     starterCode: `function solution(a: number, b: number) {
   // TODO: return the sum of a and b
 }`,
+    solution: (a: number, b: number): number => a + b,
     testCases: [
       { input: [1, 2], expected: 3 },
       { input: [5, 7], expected: 12 }
@@ -22,6 +23,16 @@ export const challenges: Challenge[] = [
     starterCode: `function solution(n: number) {
   // TODO: return n!
 }`,
+    solution: (n: number): number => {
+      if (!Number.isInteger(n) || n < 0) {
+        throw new Error("n must be a non-negative integer");
+      }
+      let result = 1;
+      for (let i = 2; i <= n; i++) {
+        result *= i;
+      }
+      return result;
+    },
     testCases: [
       { input: [3], expected: 6 },
       { input: [5], expected: 120 }
@@ -35,6 +46,20 @@ export const challenges: Challenge[] = [
     starterCode: `function solution(n: number) {
   // TODO: return the nth fibonacci number
 }`,
+    solution: (n: number): number => {
+      if (!Number.isInteger(n) || n < 0) {
+        throw new Error("n must be a non-negative integer");
+      }
+      if (n <= 1) return n;
+      let prev = 0;
+      let curr = 1;
+      for (let i = 2; i <= n; i++) {
+        const next = prev + curr;
+        prev = curr;
+        curr = next;
+      }
+      return curr;
+    },
     testCases: [
       { input: [5], expected: 5 },
       { input: [10], expected: 55 }
