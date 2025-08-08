@@ -7,9 +7,9 @@
 import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import { Input } from '@/components/ui/Input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
-import { Bug, Puzzle, Users, Timer, Package, Snail, Layers, Zap, Lightbulb, Swords } from 'lucide-react';
+import { Bug, Puzzle, Users, Timer, Package, Snail, Layers, Zap, Lightbulb, Swords, BookOpen } from 'lucide-react';
+
 import { cn } from '@/lib/utils';
 
 // --- TYPE DEFINITIONS ---
@@ -36,7 +36,15 @@ interface Challenge {
   icon: React.ReactNode;
   difficulty: ChallengeDifficulty;
   status: ChallengeStatus;
-  rewards: { xp: number; badge?: string };
+  rewards: { xp: number; badge?: string; partner?: string };
+}
+
+interface StoryChapter {
+  id: string;
+  title: string;
+  description: string;
+  mentor: string;
+  relatedChallenges: string[]; // challenge ids
 }
 
 // --- MOCK DATA ---
@@ -45,12 +53,19 @@ const mockChallenges: Challenge[] = [
   { id: 'c1', title: 'APB Protocol Debug', description: 'Find the bug in the APB slave component that is causing data corruption.', type: 'Debugging', icon: <Bug />, difficulty: 'Medium', status: 'Not Started', rewards: { xp: 500, badge: 'Bug Squasher' } },
   { id: 'c2', title: 'Design a DMA Controller', description: 'Create a high-level architecture for a multi-channel DMA controller.', type: 'Architecture', icon: <Layers />, difficulty: 'Hard', status: 'Not Started', rewards: { xp: 1000, badge: 'Architect' } },
   { id: 'c3', title: 'Optimize FIFO Performance', description: 'Refactor the given FIFO design to improve throughput by 25%.', type: 'Performance', icon: <Zap />, difficulty: 'Hard', status: 'Completed', rewards: { xp: 800 } },
-  { id: 'c4', title: 'Team UVM Testbench', description: 'Collaborate with a partner to build a testbench for a complex DUT.', type: 'Team', icon: <Users />, difficulty: 'Expert', status: 'In Progress', rewards: { xp: 1500, badge: 'Team Player' } },
+  { id: 'c4', title: 'Team UVM Testbench', description: 'Collaborate with a partner to build a testbench for a complex DUT.', type: 'Team', icon: <Users />, difficulty: 'Expert', status: 'In Progress', rewards: { xp: 1500, badge: 'Team Player', partner: 'Acme Verification' } },
   { id: 'c5', title: 'Timed Coverage Closure', description: 'Reach 95% functional coverage on the given module within 60 minutes.', type: 'Time-Constrained', icon: <Timer />, difficulty: 'Medium', status: 'Not Started', rewards: { xp: 600 } },
   { id: 'c6', title: 'Creative Test Sequence', description: 'Develop an innovative sequence to find a hidden bug in the DUT.', type: 'Innovation', icon: <Lightbulb />, difficulty: 'Expert', status: 'Not Started', rewards: { xp: 1200, badge: 'Innovator' } },
   { id: 'c7', title: 'UVM Phases Quiz', description: 'Answer a series of questions to solidify your understanding of UVM phases.', type: 'Skill-Building', icon: <Puzzle />, difficulty: 'Easy', status: 'Not Started', rewards: { xp: 300 } },
-  { id: 'c8', title: 'Automotive I2C Verification', description: 'Verify an I2C controller for an automotive safety system.', type: 'Real-World', icon: <Package />, difficulty: 'Medium', status: 'Not Started', rewards: { xp: 700 } },
+  { id: 'c8', title: 'Automotive I2C Verification', description: 'Verify an I2C controller for an automotive safety system.', type: 'Real-World', icon: <Package />, difficulty: 'Medium', status: 'Not Started', rewards: { xp: 700, partner: 'AutoChip Inc.' } },
   { id: 'c9', title: 'Memory Footprint Challenge', description: 'Reduce memory usage of the verification environment by 20%.', type: 'Resource-Optimization', icon: <Snail />, difficulty: 'Hard', status: 'Not Started', rewards: { xp: 900 } },
+];
+
+const mockStory: StoryChapter[] = [
+  { id: 's1', title: 'Bootcamp Beginnings', description: 'Meet your mentor and set off on your verification journey.', mentor: 'Prof. Signal', relatedChallenges: ['c7', 'c1'] },
+  { id: 's2', title: 'Industry Internship', description: 'Apply skills in a simulated company project.', mentor: 'Lead Engineer', relatedChallenges: ['c8', 'c4'] },
+  { id: 's3', title: 'Innovation Summit', description: 'Showcase your most creative verification idea.', mentor: 'Innovation Panel', relatedChallenges: ['c6'] },
+
 ];
 
 
@@ -93,6 +108,7 @@ const ChallengeCard: React.FC<ChallengeCardProps> = ({ challenge }) => {
         <div className="flex justify-between items-center">
             <div>
                 <span className="text-xs font-semibold uppercase">Reward: {challenge.rewards.xp} XP</span>
+                {challenge.rewards.partner && <p className="text-xs text-muted-foreground">Partner: {challenge.rewards.partner}</p>}
             </div>
             <Button>{challenge.status === 'In Progress' ? 'Continue' : 'Start Challenge'}</Button>
         </div>
@@ -113,6 +129,9 @@ const ChallengeQuestSystem: React.FC<ChallengeQuestSystemProps> = ({ userId }) =
   const [filterType, setFilterType] = useState<ChallengeType | 'All'>('All');
   const [filterDifficulty, setFilterDifficulty] = useState<ChallengeDifficulty | 'All'>('All');
   const [suggested, setSuggested] = useState<Challenge[]>([]);
+  const storyChapters = mockStory;
+  const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
+
 
   useEffect(() => {
     // Fetch challenges for the user
@@ -123,6 +142,21 @@ const ChallengeQuestSystem: React.FC<ChallengeQuestSystemProps> = ({ userId }) =
     // Generate personalized challenge suggestions (placeholder logic)
     setSuggested(challenges.filter(c => c.status === 'Not Started').slice(0, 2));
   }, [challenges]);
+
+  useEffect(() => {
+    // Check if current chapter is complete
+    const chapter = storyChapters[currentChapterIndex];
+    if (chapter) {
+      const completed = chapter.relatedChallenges.every(id => challenges.find(c => c.id === id && c.status === 'Completed'));
+      if (completed && currentChapterIndex < storyChapters.length - 1) {
+        setCurrentChapterIndex(i => i + 1);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [challenges, currentChapterIndex]);
+
+  const currentChapter = storyChapters[currentChapterIndex];
+
 
   const filteredChallenges = challenges.filter(c =>
     (filterType === 'All' || c.type === filterType) &&
@@ -135,6 +169,19 @@ const ChallengeQuestSystem: React.FC<ChallengeQuestSystemProps> = ({ userId }) =
         <CardTitle className="flex items-center"><Swords className="mr-2" /> Challenge & Quest Hub</CardTitle>
       </CardHeader>
       <CardContent>
+        {currentChapter && (
+          <div className="mb-6 p-4 border rounded-lg bg-secondary">
+            <h3 className="text-lg font-semibold flex items-center"><BookOpen className="mr-2" />Story Campaign</h3>
+            <p className="text-sm mb-2">Chapter {currentChapterIndex + 1}/{storyChapters.length}: {currentChapter.title}</p>
+            <p className="text-xs text-muted-foreground mb-2">{currentChapter.description} Mentor: {currentChapter.mentor}</p>
+            <div className="flex gap-2 flex-wrap">
+              {currentChapter.relatedChallenges.map(id => {
+                const ch = challenges.find(c => c.id === id);
+                return ch ? <span key={id} className={cn('px-2 py-1 text-xs rounded border', ch.status === 'Completed' ? 'bg-primary text-primary-foreground' : '')}>{ch.title}</span> : null;
+              })}
+            </div>
+          </div>
+        )}
         <div className="flex flex-col md:flex-row gap-4 mb-6">
           {/* Filtering controls could be more sophisticated */}
           <Select onValueChange={(value) => setFilterType(value as any)} defaultValue="All">

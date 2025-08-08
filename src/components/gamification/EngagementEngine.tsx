@@ -11,6 +11,7 @@ import { Progress } from '@/components/ui/Progress';
 import { Button } from '@/components/ui/Button';
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Award, Target, TrendingUp, UserCheck } from 'lucide-react';
+import { cn } from '@/lib/utils';
 
 // --- TYPE DEFINITIONS ---
 // These types define the data structures for engagement tracking.
@@ -118,6 +119,27 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
   const [profile, setProfile] = useState<MotivationalProfile | null>(null);
   const [goals, setGoals] = useState<EngagementGoal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [mentorMessage, setMentorMessage] = useState<string>('');
+
+  const recommendedDifficulty = useMemo(() => {
+    if (!metrics) return 'Medium';
+    if (metrics.dailyStreak >= 7 && metrics.challengesAttempted > 10) return 'Hard';
+    if (metrics.lessonsCompleted < 5) return 'Easy';
+    return 'Medium';
+  }, [metrics]);
+
+  const addGoal = () => {
+    const description = prompt('Goal description?');
+    const targetStr = prompt('Target amount?');
+    const target = targetStr ? parseInt(targetStr, 10) : 0;
+    if (description && target > 0) {
+      setGoals(prev => [...prev, { id: Date.now().toString(), description, target, progress: 0, unit: 'units' }]);
+    }
+  };
+
+  const updateRewardPreference = (pref: MotivationalProfile['rewardPreference']) => {
+    setProfile(prev => prev ? { ...prev, rewardPreference: pref } : null);
+  };
 
   const recommendedDifficulty = useMemo(() => {
     if (!metrics) return 'Medium';
@@ -152,6 +174,8 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
       // Load personalized profile and goals
       setProfile(mockMotivationalProfile);
       setGoals(mockGoals);
+      setMentorMessage('Hi there! I will guide you through your learning journey.');
+
 
       setIsLoading(false);
     };
@@ -211,6 +235,15 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
           action: () => console.log('Navigate to flashcards'),
         });
       }
+      if (profile?.style === 'collaborative') {
+        newStrategies.push({
+          id: 'join_group',
+          title: 'Learn with Peers',
+          description: 'Your collaborative style thrives in study groups. Join one today.',
+          action: () => console.log('Navigate to study groups'),
+        });
+      }
+
       if (profile?.style === 'competitive') {
         newStrategies.push({
           id: 'compete_leaderboard',
@@ -309,6 +342,15 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
           {profile && (
             <p className="text-xs text-muted-foreground mt-1">Motivational style: {profile.style}, prefers {profile.rewardPreference}</p>
           )}
+          {profile && (
+            <div className="mt-2 text-xs">
+              <span className="mr-2">Reward preference:</span>
+              {(['badges','certificates','career','tools'] as const).map(p => (
+                <button key={p} onClick={() => updateRewardPreference(p)} className={cn('px-2 py-1 rounded border text-xs', profile.rewardPreference===p?'bg-primary text-primary-foreground':'bg-transparent')}>{p}</button>
+              ))}
+            </div>
+          )}
+
         </div>
 
         {/* 5. Motivational Feedback & Personalized Strategies */}
@@ -333,6 +375,14 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
             {patterns && <p className="text-sm">You're most active on {patterns.mostActiveDay}s. Plan a deep-dive session then!</p>}
             <p className="text-sm mt-1">Based on your progress, you might enjoy our section on <a href="#" className="underline">Advanced UVM Sequencing</a>.</p>
         </div>
+
+        {/* 7. Virtual Mentor */}
+        {mentorMessage && (
+          <div className="p-4 bg-primary/10 rounded-lg">
+            <h4 className="font-bold mb-1 flex items-center"><UserCheck className="mr-2"/>Your Mentor</h4>
+            <p className="text-sm text-muted-foreground">{mentorMessage}</p>
+          </div>
+        )}
 
       </CardContent>
     </Card>
