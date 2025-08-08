@@ -1,0 +1,129 @@
+import * as fs from 'fs';
+import * as path from 'path';
+import matter from 'gray-matter';
+
+export interface Topic {
+  title: string;
+  slug: string;
+  description: string;
+}
+
+export interface Section {
+  title: string;
+  slug: string;
+  topics: Topic[];
+}
+
+export interface Module {
+  title: string;
+  slug: string;
+  tier: string;
+  sections: Section[];
+}
+
+function titleFromSlug(slug: string): string {
+  return slug
+    .replace(/[-_]/g, ' ')
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function getAllMdxFiles(dir: string): string[] {
+  let results: string[] = [];
+  for (const entry of fs.readdirSync(dir)) {
+    const p = path.join(dir, entry);
+    const stat = fs.statSync(p);
+    if (stat.isDirectory()) {
+      results = results.concat(getAllMdxFiles(p));
+    } else if (p.endsWith('.mdx')) {
+      results.push(p);
+    }
+  }
+  return results;
+}
+
+function createTopic(filePath: string, moduleSlug: string, sectionSlug: string, represented: Set<string>): Topic {
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const { data } = matter(raw);
+  const topicSlug = path.basename(filePath).replace(/\.mdx$/, '');
+  const relSlug = [moduleSlug, sectionSlug, topicSlug].join('/');
+  represented.add(relSlug);
+  if (topicSlug === 'index') {
+    represented.add([moduleSlug, sectionSlug].join('/'));
+  }
+  return {
+    title: data.title || titleFromSlug(topicSlug),
+    slug: topicSlug,
+    description: data.description || '',
+  };
+}
+
+function validateLinks(baseDir: string, validSlugs: Set<string>) {
+  const linkRegex = /href\s*=\s*["']\/curriculum\/([^"']+)["']/g;
+  const files = getAllMdxFiles(baseDir);
+  for (const file of files) {
+    const content = fs.readFileSync(file, 'utf8');
+    let match: RegExpExecArray | null;
+    while ((match = linkRegex.exec(content))) {
+      const target = match[1].split('#')[0];
+      if (!validSlugs.has(target)) {
+        throw new Error(`Broken link in ${file}: ${target}`);
+      }
+    }
+  }
+}
+
+export function generateCurriculumData(baseDir = path.join(process.cwd(), 'content', 'curriculum')): Module[] {
+  const modules: Module[] = [];
+  const represented = new Set<string>();
+  const allFiles = getAllMdxFiles(baseDir).map(p => path.relative(baseDir, p).replace(/\\/g, '/').replace(/\.mdx$/, ''));
+
+  const moduleDirs = fs.readdirSync(baseDir).filter(d => fs.statSync(path.join(baseDir, d)).isDirectory()).sort();
+
+  for (const moduleDir of moduleDirs) {
+    const modulePath = path.join(baseDir, moduleDir);
+    const tier = moduleDir.split('_')[0] || moduleDir;
+    const moduleTitle = titleFromSlug(moduleDir.replace(/^T\d+_/, ''));
+    const module: Module = { title: moduleTitle, slug: moduleDir, tier, sections: [] };
+
+    const sectionDirs = fs.readdirSync(modulePath).filter(d => fs.statSync(path.join(modulePath, d)).isDirectory()).sort();
+
+    for (const sectionDir of sectionDirs) {
+      const sectionPath = path.join(modulePath, sectionDir);
+      const indexPath = path.join(sectionPath, 'index.mdx');
+      let sectionTitle = titleFromSlug(sectionDir);
+      const topics: Topic[] = [];
+
+      if (fs.existsSync(indexPath)) {
+        const topic = createTopic(indexPath, moduleDir, sectionDir, represented);
+        sectionTitle = topic.title;
+        topics.push(topic);
+      }
+
+      const mdxFiles = fs.readdirSync(sectionPath).filter(f => f.endsWith('.mdx')).sort();
+      for (const file of mdxFiles) {
+        if (file === 'index.mdx') continue;
+        const topic = createTopic(path.join(sectionPath, file), moduleDir, sectionDir, represented);
+        topics.push(topic);
+      }
+
+      module.sections.push({ title: sectionTitle, slug: sectionDir, topics });
+    }
+
+    modules.push(module);
+  }
+
+  const missing = allFiles.filter(f => !represented.has(f));
+  if (missing.length) {
+    throw new Error(`Unrepresented MDX files: ${missing.join(', ')}`);
+  }
+
+  validateLinks(baseDir, represented);
+
+  return modules;
+}
+
+if (require.main === module) {
+  const data = generateCurriculumData();
+  console.log(JSON.stringify(data, null, 2));
+}
+
