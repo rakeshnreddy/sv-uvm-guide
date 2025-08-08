@@ -51,7 +51,7 @@ const AIAssistantWidget: React.FC = () => {
     setInputValue(event.target.value);
   };
 
-  const handleSubmit = async (event?: FormEvent<HTMLFormElement>) => {
+  const handleSendMessage = async (event?: FormEvent<HTMLFormElement>) => {
     if (event) event.preventDefault();
     const trimmedInput = inputValue.trim();
     if (!trimmedInput) return;
@@ -66,9 +66,13 @@ const AIAssistantWidget: React.FC = () => {
     setInputValue("");
     setIsLoading(true);
 
-    // TODO: Implement actual page context extraction
-    const pageContext = "Placeholder: Current page content will be extracted here.";
-    const systemPrompt = "You are an expert-level verification engineer with 20 years of experience in SystemVerilog and UVM. You are a helpful tutor. Explain complex concepts clearly and concisely. Always refer to the provided context before answering.";
+    const context = {
+      pageTitle: document.title,
+      route: window.location.pathname,
+      selectedText: window.getSelection()?.toString() || "",
+    };
+    const systemPrompt =
+      "You are an expert-level verification engineer with 20 years of experience in SystemVerilog and UVM. You are a helpful tutor. Explain complex concepts clearly and concisely. Always refer to the provided context before answering.";
 
     try {
       const response = await fetch('/api/ai/chat', {
@@ -78,7 +82,7 @@ const AIAssistantWidget: React.FC = () => {
         },
         body: JSON.stringify({
           systemPrompt,
-          pageContext,
+          context,
           userQuestion: trimmedInput,
         }),
       });
@@ -96,12 +100,13 @@ const AIAssistantWidget: React.FC = () => {
         timestamp: new Date(),
       };
       setMessages((prevMessages) => [...prevMessages, assistantResponse]);
-
     } catch (error) {
       console.error("Failed to get AI response:", error);
       const errorMessage: Message = {
         id: `err-${Date.now()}`,
-        text: `Sorry, I encountered an error. ${error instanceof Error ? error.message : 'Please try again.'}`,
+        text: `Sorry, I encountered an error. ${
+          error instanceof Error ? error.message : 'Please try again.'
+        }`,
         sender: "assistant", // Error shown as an assistant message
         timestamp: new Date(),
       };
@@ -215,7 +220,7 @@ const AIAssistantWidget: React.FC = () => {
             </div>
 
             {/* Input Area */}
-            <form onSubmit={handleSubmit} className="p-3 border-t border-border/50 bg-background/50 dark:bg-background/30">
+            <form onSubmit={handleSendMessage} className="p-3 border-t border-border/50 bg-background/50 dark:bg-background/30">
               <div className="flex items-end space-x-2">
                 <Textarea
                   value={inputValue}
@@ -223,7 +228,7 @@ const AIAssistantWidget: React.FC = () => {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault();
-                      handleSubmit();
+                      handleSendMessage();
                     }
                   }}
                   placeholder="Ask about SystemVerilog, UVM..."
