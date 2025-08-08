@@ -30,8 +30,10 @@ export async function runSimulation(
         cmd = 'verilator --binary - && ./Vlt';
         break;
       default:
-        // Fallback placeholder for the wasm backend
-        cmd = 'echo "Simulation PASSED"';
+        // Fallback placeholder for the wasm backend.  We emit a small mock
+        // waveform so that unit tests and the UI have predictable data to
+        // render without requiring a full simulator.
+        cmd = 'printf "Simulation PASSED\nWAVEFORM: {\\"signal\\":[{\\"name\\":\\"clk\\",\\"wave\\":\\"p\\"}]}\n"';
         break;
     }
 
