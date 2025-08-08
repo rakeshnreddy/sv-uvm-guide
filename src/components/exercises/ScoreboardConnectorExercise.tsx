@@ -53,9 +53,16 @@ const portFillColorHover = "#CBD5E0"; // gray-300
 const ScoreboardConnectorExercise: React.FC = () => {
   const [components, /* setComponents */] = useState<Component[]>(initialComponents); // setComponents commented out
   const [connections, setConnections] = useState<Connection[]>([]);
+  const [connectionResults, setConnectionResults] = useState<boolean[] | null>(null);
+  const [score, setScore] = useState<number | null>(null);
   const [drawingLine, setDrawingLine] = useState<{ fromComponentId: string; fromPortId: string; x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [selectedPort, setSelectedPort] = useState<{ componentId: string; portId: string } | null>(null);
   const svgRef = useRef<SVGSVGElement>(null);
+
+  // Map of correct connections: output port -> valid input ports
+  const referenceMap: Record<string, string[]> = {
+    mon_ap: ['sb_imp_actual', 'cov_imp'],
+  };
 
   const getPortAbsolutePosition = (componentId: string, portId: string) => {
     const component = components.find(c => c.id === componentId);
@@ -126,7 +133,31 @@ const ScoreboardConnectorExercise: React.FC = () => {
     }
   }
 
-  // TODO: Add validation, scoring, feedback, retry
+  const resetExercise = () => {
+    setConnections([]);
+    setConnectionResults(null);
+    setScore(null);
+  };
+
+  const handleCheckConnections = () => {
+    const results = connections.map(conn => {
+      // Determine which port is the output to canonicalize connection direction
+      const fromDetails = components
+        .find(c => c.id === conn.fromComponentId)?.ports.find(p => p.id === conn.fromPortId);
+      const toDetails = components
+        .find(c => c.id === conn.toComponentId)?.ports.find(p => p.id === conn.toPortId);
+
+      if (!fromDetails || !toDetails) return false;
+
+      const outputPortId = fromDetails.isOutput ? conn.fromPortId : conn.toPortId;
+      const inputPortId = fromDetails.isOutput ? conn.toPortId : conn.fromPortId;
+
+      return referenceMap[outputPortId]?.includes(inputPortId) ?? false;
+    });
+
+    setConnectionResults(results);
+    setScore(results.filter(Boolean).length);
+  };
 
   return (
     <div className="w-full max-w-2xl mx-auto p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
@@ -148,12 +179,17 @@ const ScoreboardConnectorExercise: React.FC = () => {
         {connections.map((conn, index) => {
           const fromPos = getPortAbsolutePosition(conn.fromComponentId, conn.fromPortId);
           const toPos = getPortAbsolutePosition(conn.toComponentId, conn.toPortId);
+          const strokeColor = connectionResults
+            ? connectionResults[index]
+              ? 'green'
+              : 'red'
+            : 'hsl(var(--accent))';
           return (
             <line
               key={`conn-${index}`}
               x1={fromPos.x} y1={fromPos.y}
               x2={toPos.x} y2={toPos.y}
-              stroke="hsl(var(--accent))"
+              stroke={strokeColor}
               strokeWidth="2.5"
             />
           );
@@ -193,7 +229,7 @@ const ScoreboardConnectorExercise: React.FC = () => {
                 fill={selectedPort?.portId === port.id ? "hsl(var(--accent))" : "hsl(var(--primary-foreground))"}
                 stroke="hsl(var(--primary))"
                 strokeWidth="1.5"
-                className="cursor-pointer hover:fill-hsl(var(--accent))"
+                className="cursor-pointer hover:fill-[hsl(var(--accent))]"
                 onClick={(e) => { e.stopPropagation(); handlePortClick(comp.id, port.id);}}
                 aria-label={`Port ${port.name} on ${comp.name}`}
               />
@@ -201,15 +237,21 @@ const ScoreboardConnectorExercise: React.FC = () => {
           </g>
         ))}
       </svg>
-       <div className="mt-4 flex justify-center">
+       <div className="mt-4 flex justify-center gap-4">
         <Button
-            onClick={() => setConnections([])}
+            onClick={resetExercise}
             variant="destructive"
         >
             Reset Connections
         </Button>
-        {/* TODO: Add Check Connections button */}
+        <Button onClick={handleCheckConnections}>Check Connections</Button>
       </div>
+      {score !== null && (
+        <div className="mt-4 text-center space-y-2">
+          <p>You got {score} out of {referenceMap['mon_ap'].length} connections correct.</p>
+          <Button onClick={resetExercise} variant="secondary">Retry</Button>
+        </div>
+      )}
     </div>
   );
 };
