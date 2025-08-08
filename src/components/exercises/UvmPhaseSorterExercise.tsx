@@ -65,6 +65,26 @@ const shuffleArray = (array: Phase[]): Phase[] => {
   return newArray;
 };
 
+// Helpers exported for unit tests
+export function movePhase(
+  items: Phase[],
+  activeId: UniqueIdentifier,
+  overId: UniqueIdentifier,
+): Phase[] {
+  const oldIndex = items.findIndex((item) => item.id === activeId);
+  const newIndex = items.findIndex((item) => item.id === overId);
+  return arrayMove(items, oldIndex, newIndex);
+}
+
+export function evaluatePhaseOrder(items: Phase[]): boolean {
+  for (let i = 0; i < items.length - 1; i++) {
+    if (items[i].correctOrder > items[i + 1].correctOrder) {
+      return false;
+    }
+  }
+  return true;
+}
+
 interface SortablePhaseItemProps {
   phase: Phase;
 }
