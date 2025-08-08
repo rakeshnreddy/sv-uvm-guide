@@ -21,6 +21,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { GripVertical } from 'lucide-react'; // For drag handle
+import { Button } from '@/components/ui/Button';
 
 interface Phase {
   id: UniqueIdentifier; // Use UniqueIdentifier from dnd-kit
@@ -109,6 +110,7 @@ const SortablePhaseItem: React.FC<SortablePhaseItemProps> = ({ phase }) => {
 const UvmPhaseSorterExercise: React.FC = () => {
   const [items, setItems] = useState<Phase[]>([]);
   const [activeItem, setActiveItem] = useState<Phase | null>(null);
+  const [feedback, setFeedback] = useState<{ score: number; passed: boolean } | null>(null);
 
   useEffect(() => {
     setItems(shuffleArray(uvmPhases));
@@ -139,33 +141,57 @@ const UvmPhaseSorterExercise: React.FC = () => {
     }
   }
 
+  const checkOrder = () => {
+    const correct = items.filter((item, idx) => item.correctOrder === idx).length;
+    const score = Math.round((correct / items.length) * 100);
+    setFeedback({ score, passed: score === 100 });
+  };
+
+  const handleRetry = () => {
+    setItems(shuffleArray(uvmPhases));
+    setFeedback(null);
+  };
+
   return (
-    <DndContext
-      sensors={sensors}
-      collisionDetection={closestCenter}
-      onDragStart={handleDragStart}
-      onDragEnd={handleDragEnd}
-    >
-      <div className="w-full max-w-md mx-auto p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
-        <h3 className="text-lg font-semibold mb-4 text-center text-primary">Sort the UVM Phases</h3>
-        <SortableContext items={items.map(item => item.id)} strategy={verticalListSortingStrategy}>
-          <div className="space-y-2">
-            {items.map((phase) => (
-              <SortablePhaseItem key={phase.id} phase={phase} />
-            ))}
-          </div>
-        </SortableContext>
-        <DragOverlay>
-          {activeItem ? (
-            <div className="flex items-center p-3 mb-2 bg-primary text-primary-foreground rounded-md border border-white/20 shadow-xl cursor-grabbing">
-               <GripVertical size={20} className="mr-3"/>
-              <span>{activeItem.name}</span>
+    <>
+      <DndContext
+        sensors={sensors}
+        collisionDetection={closestCenter}
+        onDragStart={handleDragStart}
+        onDragEnd={handleDragEnd}
+      >
+        <div className="w-full max-w-md mx-auto p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
+          <h3 className="text-lg font-semibold mb-4 text-center text-primary">Sort the UVM Phases</h3>
+          <SortableContext items={items.map(item => item.id)} strategy={verticalListSortingStrategy}>
+            <div className="space-y-2">
+              {items.map((phase) => (
+                <SortablePhaseItem key={phase.id} phase={phase} />
+              ))}
             </div>
-          ) : null}
-        </DragOverlay>
+          </SortableContext>
+          <DragOverlay>
+            {activeItem ? (
+              <div className="flex items-center p-3 mb-2 bg-primary text-primary-foreground rounded-md border border-white/20 shadow-xl cursor-grabbing">
+                 <GripVertical size={20} className="mr-3"/>
+                <span>{activeItem.name}</span>
+              </div>
+            ) : null}
+          </DragOverlay>
+        </div>
+      </DndContext>
+      <div className="mt-4 flex justify-center gap-2">
+        <Button onClick={checkOrder}>Check Order</Button>
+        <Button variant="outline" onClick={handleRetry}>Retry</Button>
       </div>
-      {/* TODO: Add Check Order Button, Feedback, Score, Retry */}
-    </DndContext>
+      {feedback && (
+        <div className="mt-4 text-center">
+          <p>Score: {feedback.score}%</p>
+          <p className={feedback.passed ? 'text-green-500' : 'text-red-500'}>
+            {feedback.passed ? 'Pass' : 'Fail'}
+          </p>
+        </div>
+      )}
+    </>
   );
 };
 
