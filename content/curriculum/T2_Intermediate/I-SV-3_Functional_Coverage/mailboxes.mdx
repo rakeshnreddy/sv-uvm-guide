@@ -1,8 +1,9 @@
 import { InfoPage } from "@/components/templates/InfoPage";
+import { Quiz, InteractiveCode } from "@/components/ui";
 
 export const metadata = {
   title: "Mailboxes | Advanced SystemVerilog for Verification",
-  description: "...",
+  description: "Use mailboxes for thread-safe communication between processes.",
 };
 
 <InfoPage
@@ -10,8 +11,72 @@ export const metadata = {
   sv_concept_tags={["mailboxes"]}
 >
 
-  ## Mailboxes
+  ## Level 1: The Big Idea
 
-  This section is under construction. Please check back later.
+  A **mailbox** is a built-in message queue. One process `put`s an item into the mailbox while another `get`s it out. It's like dropping a letter into a box for someone else to pick up later.
+
+  ## Level 2: Practical Usage
+
+  ### Basic Operations
+
+  -   `put(item)`: place an item into the mailbox (blocks if full).
+  -   `get(item)`: remove an item (blocks if empty).
+  -   `try_get(item)` and `peek(item)`: non-blocking alternatives.
+
+  <InteractiveCode>
+  ```systemverilog
+  typedef struct {int id; bit [7:0] data;} packet;
+  mailbox #(packet) mbx = new(4); // depth of 4
+
+  initial begin
+    packet p;
+    p.id = 1;
+    p.data = $urandom;
+    mbx.put(p); // producer
+  end
+
+  initial begin
+    packet r;
+    mbx.get(r); // consumer waits here until item arrives
+    $display("Got packet %0d", r.id);
+  end
+  ```
+  </InteractiveCode>
+
+  Mailboxes often carry randomized transactions. For generating those transactions, see [Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2_Constrained_Randomization).
+
+  ## Level 3: Expert Insights
+
+  **Bounded vs. Unbounded:** A mailbox without a size is unbounded and never blocks on `put`. Bounded mailboxes model limited buffers.
+
+  **Typed Mailboxes:** Parameterized mailboxes (`mailbox#(packet)`) catch type mismatches at compile time.
+
+  **Mailboxes vs. Analysis Ports:** Mailboxes connect one producer to one consumer. For broadcasting transactions to multiple subscribers, use [analysis ports](/curriculum/uvm-building/essentials/analysis-components).
+
+  ## Quiz
+
+  <Quiz questions={[
+    {
+      question: "What happens when `get()` is called on an empty mailbox?",
+      answers: [
+        { text: "It returns immediately with a default value", correct: false },
+        { text: "It blocks until an item is available", correct: true },
+        { text: "It deletes the mailbox", correct: false },
+        { text: "It throws a runtime error", correct: false }
+      ],
+      explanation: "`get()` blocks the calling process until data is present in the mailbox."
+    },
+    {
+      question: "How do you create a mailbox with a depth of 4 packets?",
+      answers: [
+        { text: "`mailbox mbx = new;`", correct: false },
+        { text: "`mailbox #(packet) mbx = new(4);`", correct: true },
+        { text: "`mailbox[4] mbx;`", correct: false },
+        { text: "`mailbox mbx[4];`", correct: false }
+      ],
+      explanation: "Passing a number to `new` sets the mailbox depth." 
+    }
+  ]} />
 
 </InfoPage>
+
