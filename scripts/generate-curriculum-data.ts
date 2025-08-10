@@ -50,10 +50,27 @@ function createTopic(filePath: string, moduleSlug: string, sectionSlug: string, 
   if (topicSlug === 'index') {
     represented.add([moduleSlug, sectionSlug].join('/'));
   }
+
+  let title = data.title as string | undefined;
+  let description = data.description as string | undefined;
+
+  if (!title || !description) {
+    const metaMatch = raw.match(/export const metadata\s*=\s*{[^}]*}/);
+    if (metaMatch) {
+      try {
+        const metaObj = eval('(' + metaMatch[0].replace(/export const metadata\s*=\s*/, '') + ')');
+        title = title || metaObj.title;
+        description = description || metaObj.description;
+      } catch {
+        // ignore parse errors and fall back to defaults
+      }
+    }
+  }
+
   return {
-    title: data.title || titleFromSlug(topicSlug),
+    title: title || titleFromSlug(topicSlug),
     slug: topicSlug,
-    description: data.description || '',
+    description: description || '',
   };
 }
 
