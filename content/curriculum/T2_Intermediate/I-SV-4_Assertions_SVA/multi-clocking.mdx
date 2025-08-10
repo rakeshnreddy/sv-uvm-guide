@@ -1,8 +1,9 @@
 import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
   title: "Multi-Clocking and disable-iff | Advanced SystemVerilog for Verification",
-  description: "...",
+  description: "Coordinate assertions across clock domains and mask reset behavior with disable iff.",
 };
 
 <InfoPage
@@ -12,6 +13,67 @@ export const metadata = {
 
   ## Multi-Clocking and disable-iff
 
-  This section is under construction. Please check back later.
+  Designs often cross clock domains. SVA lets you relate events on different clocks within one property.
+
+  <InteractiveCode>
+  ```systemverilog
+  // Write on wr_clk must be followed by a read on rd_clk
+  sequence s_wr_then_rd;
+    @(posedge wr_clk) wr_en ##1 @(posedge rd_clk) rd_en;
+  endsequence
+
+  property p_wr_followed_by_rd;
+    disable iff (!rst_n)
+      s_wr_then_rd;
+  endproperty
+
+  assert property (p_wr_followed_by_rd)
+    else $error("Read did not follow write across clocks");
+  ```
+  </InteractiveCode>
+
+  ### Understanding `disable iff`
+
+  `disable iff` temporarily turns off an assertion when its expression is true, typically during reset.
+
+  <InteractiveCode>
+  ```systemverilog
+  property p_ack_within3;
+    @(posedge clk) disable iff (!rst_n)
+      req |-> ##[1:3] ack;
+  endproperty
+  ```
+  </InteractiveCode>
+
+  ### Tips
+
+  - Use multiple `@` event controls in a sequence to hop between clocks.
+  - A `##0` delay switches clocks without advancing time.
+  - Always guard cross-domain assertions with `disable iff` for asynchronous resets.
+
+  ## Check Your Understanding
+
+  <Quiz questions={[
+    {
+      question: "What does `disable iff (!rst_n)` do in an assertion?",
+      answers: [
+        { text: "Pauses the assertion when reset is asserted", correct: true },
+        { text: "Delays the assertion by one cycle", correct: false },
+        { text: "Changes the clock", correct: false },
+        { text: "Makes the assertion immediate", correct: false }
+      ],
+      explanation: "`disable iff` disables the assertion when its expression evaluates to true."
+    },
+    {
+      question: "How can you relate a write on `wr_clk` to a read on `rd_clk`?",
+      answers: [
+        { text: "By using a sequence with `@` events for each clock", correct: true },
+        { text: "By using an immediate assertion in each clock domain", correct: false },
+        { text: "It is not possible with SVA", correct: false },
+        { text: "By using only `##1` delays", correct: false }
+      ],
+      explanation: "Sequences can include multiple event controls to cross clock domains."
+    }
+  ]} />
 
 </InfoPage>
