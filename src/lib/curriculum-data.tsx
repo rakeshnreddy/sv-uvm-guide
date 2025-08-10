@@ -375,61 +375,6 @@ export const curriculumData: Module[] = [
             "description": ""
           }
         ]
-      },
-      {
-        "title": "I1 – Advanced SystemVerilog Features",
-        "slug": "I1_Advanced_SystemVerilog_Features",
-        "topics": [
-          {
-            "title": "I1 – Advanced SystemVerilog Features",
-            "slug": "index",
-            "description": "A guide on interfaces, modports, functional coverage (covergroups), and assertions (SVA)."
-          }
-        ]
-      },
-      {
-        "title": "I2 – UVM Primer (Testbench Architecture)",
-        "slug": "I2_UVM_Primer",
-        "topics": [
-          {
-            "title": "I2 – UVM Primer (Testbench Architecture)",
-            "slug": "index",
-            "description": "An introduction to the Universal Verification Methodology (UVM) and its standard testbench architecture."
-          }
-        ]
-      },
-      {
-        "title": "I3 – UVM Factory and Configuration",
-        "slug": "I3_UVM_Factory_and_Config",
-        "topics": [
-          {
-            "title": "I3 – UVM Factory and Configuration",
-            "slug": "index",
-            "description": "Learn how to use the UVM factory and configuration database (uvm_config_db) to build flexible and reusable testbenches."
-          }
-        ]
-      },
-      {
-        "title": "I4 – Building a UVM Testbench (Step by Step)",
-        "slug": "I4_Building_a_UVM_Testbench",
-        "topics": [
-          {
-            "title": "I4 – Building a UVM Testbench (Step by Step)",
-            "slug": "index",
-            "description": "A practical, hands-on guide to building your first complete UVM environment for the ALU DUT."
-          }
-        ]
-      },
-      {
-        "title": "I5 – Debugging and Tracing UVM Tests",
-        "slug": "I5_Debugging_and_Tracing",
-        "topics": [
-          {
-            "title": "I5 – Debugging and Tracing UVM Tests",
-            "slug": "index",
-            "description": "Learn about common UVM debugging features, including verbosity control, the reporting mechanism, and phase/factory tracing."
-          }
-        ]
       }
     ]
   },
