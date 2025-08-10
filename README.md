@@ -49,6 +49,15 @@ Deploying via Vercel works out of the box using the `next start` command. The `o
 
 If exporting with `next export`, guard any `window` usage as it only runs client-side.
 
+### Curriculum Link Checker
+
+The `check_pages.js` script verifies that each curriculum page is reachable.
+
+1. Start the local server: `npm run dev` (serves on `http://localhost:3000`).
+2. In a separate terminal, run `node check_pages.js`.
+
+The script imports the latest curriculum structure and issues a `curl` request for every topic URL, reporting any failures.
+
 ## Firebase Configuration
 
 The application expects Firebase credentials to be provided via environment variables. Create a `.env.local` file (or otherwise set these values) with the following keys:
