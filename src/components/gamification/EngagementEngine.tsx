@@ -141,22 +141,6 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
     setProfile(prev => prev ? { ...prev, rewardPreference: pref } : null);
   };
 
-  const recommendedDifficulty = useMemo(() => {
-    if (!metrics) return 'Medium';
-    if (metrics.dailyStreak >= 7 && metrics.challengesAttempted > 10) return 'Hard';
-    if (metrics.lessonsCompleted < 5) return 'Easy';
-    return 'Medium';
-  }, [metrics]);
-
-  const addGoal = () => {
-    const description = prompt('Goal description?');
-    const targetStr = prompt('Target amount?');
-    const target = targetStr ? parseInt(targetStr, 10) : 0;
-    if (description && target > 0) {
-      setGoals(prev => [...prev, { id: Date.now().toString(), description, target, progress: 0, unit: 'units' }]);
-    }
-  };
-
   // --- DATA FETCHING & ANALYSIS ---
   useEffect(() => {
     // Simulate fetching data from a backend API.
