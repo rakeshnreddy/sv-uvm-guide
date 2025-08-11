@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect } from "react";
-import { PrismAsyncLight as SyntaxHighlighter } from "react-syntax-highlighter";
+import SyntaxHighlighter from "react-syntax-highlighter";
 import { useTheme } from "next-themes";
 import { lightTheme, darkTheme } from "@/lib/code-theme";
 import { Copy, Check } from "lucide-react";
