@@ -363,6 +363,7 @@ export const curriculumData: Module[] = [
             "title": "I-UVM-4: UVM Factory and Overrides",
             "slug": "index",
             "description": "Swap component implementations on the fly using the UVM factory's type and instance overrides."
+
           }
         ]
       },
