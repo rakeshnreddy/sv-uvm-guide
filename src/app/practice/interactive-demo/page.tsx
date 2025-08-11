@@ -1,9 +1,28 @@
-import { InteractiveCode, ExplanationStep } from '@/components/ui/InteractiveCode';
-import { CodeExecutionEnvironment } from '@/components/ui/CodeExecutionEnvironment';
-import { CodeChallengeSystem } from '@/components/ui/CodeChallengeSystem';
-import { DebuggingSimulator } from '@/components/ui/DebuggingSimulator';
-import { CodeReviewAssistant } from '@/components/ui/CodeReviewAssistant';
+import dynamic from 'next/dynamic';
+import { type ExplanationStep } from '@/components/ui/InteractiveCode';
 import { InfoPage } from '@/components/templates/InfoPage';
+
+// These interactive components depend on browser APIs, so load them client-side only.
+const InteractiveCode = dynamic(
+  () => import('@/components/ui/InteractiveCode'),
+  { ssr: false }
+);
+const CodeExecutionEnvironment = dynamic(
+  () => import('@/components/ui/CodeExecutionEnvironment'),
+  { ssr: false }
+);
+const CodeChallengeSystem = dynamic(
+  () => import('@/components/ui/CodeChallengeSystem'),
+  { ssr: false }
+);
+const DebuggingSimulator = dynamic(
+  () => import('@/components/ui/DebuggingSimulator'),
+  { ssr: false }
+);
+const CodeReviewAssistant = dynamic(
+  () => import('@/components/ui/CodeReviewAssistant'),
+  { ssr: false }
+);
 
 const demoCode = `
 module simple_driver;

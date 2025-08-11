@@ -46,14 +46,14 @@ export const curriculumData: Module[] = [
             "description": "Understand SystemVerilog data types: the crucial difference between 2-state (bit, int) and 4-state (logic, wire, reg) types, and their application in modeling hardware signals and building verification testbenches."
           },
           {
-            "title": "Arrays",
+            "title": "Arrays: Packed, Unpacked, Dynamic, Queues, Associative | SystemVerilog Language Foundations",
             "slug": "arrays",
-            "description": ""
+            "description": "An overview of arrays in SystemVerilog."
           },
           {
-            "title": "User Defined",
+            "title": "User-Defined Types: structs, unions, enums, typedef | SystemVerilog Language Foundations",
             "slug": "user-defined",
-            "description": ""
+            "description": "How to create user-defined types."
           }
         ]
       },
@@ -100,19 +100,19 @@ export const curriculumData: Module[] = [
             "description": "Understanding the building blocks of SystemVerilog code."
           },
           {
-            "title": "Flow Control",
+            "title": "Procedural Flow Control | SystemVerilog Language Foundations",
             "slug": "flow-control",
-            "description": ""
+            "description": "Guide decisions with if, case, and loop constructs to steer simulation flow."
           },
           {
-            "title": "Fork Join",
+            "title": "Fork-Join and Process Control | SystemVerilog Language Foundations",
             "slug": "fork-join",
-            "description": ""
+            "description": "Launch parallel threads and synchronize them with join variants."
           },
           {
-            "title": "Tasks Functions",
+            "title": "Tasks and Functions: Scoping and Lifetimes | SystemVerilog Language Foundations",
             "slug": "tasks-functions",
-            "description": ""
+            "description": "Compare callable blocks with and without timing to structure reusable code."
           }
         ]
       },
@@ -142,9 +142,9 @@ export const curriculumData: Module[] = [
             "description": "Learn how to use SystemVerilog interfaces and modports to simplify connections and create reusable verification components."
           },
           {
-            "title": "Packages",
+            "title": "Packages and Compilation Scopes | SystemVerilog Language Foundations",
             "slug": "packages",
-            "description": ""
+            "description": "Group shared declarations into reusable namespaces and manage visibility."
           },
           {
             "title": "F4: Program and Clocking Blocks",
@@ -203,14 +203,14 @@ export const curriculumData: Module[] = [
             "description": "Understanding OOP as the foundation for modern verification methodologies like UVM."
           },
           {
-            "title": "Constructors",
+            "title": "Constructors, 'this', and 'super' | Advanced SystemVerilog for Verification",
             "slug": "constructors",
-            "description": ""
+            "description": "How to create objects with new and reference parent and current class members using this and super."
           },
           {
-            "title": "Parameterized Classes",
+            "title": "Parameterized Classes and Abstract Classes | Advanced SystemVerilog for Verification",
             "slug": "parameterized-classes",
-            "description": ""
+            "description": "Use generics and abstract classes to build reusable components while avoiding common pitfalls."
           }
         ]
       },
@@ -224,19 +224,19 @@ export const curriculumData: Module[] = [
             "description": "Using constrained randomization to intelligently search for bugs."
           },
           {
-            "title": "Advanced Constraints",
+            "title": "Advanced Constraints: implication and iteration | Advanced SystemVerilog for Verification",
             "slug": "advanced-constraints",
-            "description": ""
+            "description": "Express conditional and iterative rules with implication and foreach constructs."
           },
           {
-            "title": "Constraint Blocks",
+            "title": "Constraint Blocks, soft, and solve...before | Advanced SystemVerilog for Verification",
             "slug": "constraint-blocks",
-            "description": ""
+            "description": "Control dependencies and defaults using constraint blocks, soft values, and solve-before ordering."
           },
           {
-            "title": "Controlling Randomization",
+            "title": "Controlling Randomization: pre_randomize and post_randomize | Advanced SystemVerilog for Verification",
             "slug": "controlling-randomization",
-            "description": ""
+            "description": "Hook solver callbacks with pre_randomize and post_randomize to prepare and finalize objects."
           }
         ]
       },
@@ -250,29 +250,29 @@ export const curriculumData: Module[] = [
             "description": "Answering the question 'Are we done yet?' by modeling and measuring functional coverage."
           },
           {
-            "title": "Coverage Options",
+            "title": "Coverage Options and Sampling | Advanced UVM Techniques & Strategy",
             "slug": "coverage-options",
-            "description": ""
+            "description": "Learn how covergroup options influence when and how data is sampled."
           },
           {
-            "title": "Events",
+            "title": "Events | Advanced SystemVerilog for Verification",
             "slug": "events",
-            "description": ""
+            "description": "Synchronize parallel processes with SystemVerilog events."
           },
           {
-            "title": "Linking Coverage",
+            "title": "Linking Coverage to the V-Plan | Advanced UVM Techniques & Strategy",
             "slug": "linking-coverage",
-            "description": ""
+            "description": "Tie functional coverage points back to verification plan items."
           },
           {
-            "title": "Mailboxes",
+            "title": "Mailboxes | Advanced SystemVerilog for Verification",
             "slug": "mailboxes",
-            "description": ""
+            "description": "Use mailboxes for thread-safe communication between processes."
           },
           {
-            "title": "Semaphores",
+            "title": "Semaphores | Advanced SystemVerilog for Verification",
             "slug": "semaphores",
-            "description": ""
+            "description": "Control access to shared resources using semaphore keys."
           }
         ]
       },
@@ -286,19 +286,19 @@ export const curriculumData: Module[] = [
             "description": "Learn how to use SystemVerilog Assertions (SVA) to specify design behavior over time and create powerful functional checks."
           },
           {
-            "title": "Immediate Vs Concurrent",
+            "title": "Immediate vs. Concurrent Assertions | Advanced SystemVerilog for Verification",
             "slug": "immediate-vs-concurrent",
-            "description": ""
+            "description": "Compare procedural checks with temporal properties through hands-on examples."
           },
           {
-            "title": "Local Variables",
+            "title": "Local Variables in Sequences | Advanced SystemVerilog for Verification",
             "slug": "local-variables",
-            "description": ""
+            "description": "Capture and reuse values within sequences to create robust properties."
           },
           {
-            "title": "Multi Clocking",
+            "title": "Multi-Clocking and disable-iff | Advanced SystemVerilog for Verification",
             "slug": "multi-clocking",
-            "description": ""
+            "description": "Coordinate assertions across clock domains and mask reset behavior with disable iff."
           }
         ]
       },
@@ -323,14 +323,14 @@ export const curriculumData: Module[] = [
             "description": "Assembling a standard UVM testbench and understanding the role of each component."
           },
           {
-            "title": "Uvm Report Server",
+            "title": "UVM Report Server and Verbosity | The UVM Universe - Core Concepts",
             "slug": "uvm-report-server",
-            "description": ""
+            "description": "Centralized UVM message control and how to override it with a custom report handler."
           },
           {
-            "title": "Uvm Root",
+            "title": "uvm_root and Test Execution | The UVM Universe - Core Concepts",
             "slug": "uvm-root",
-            "description": ""
+            "description": "The singleton that orchestrates UVM phases and launches tests."
           }
         ]
       },
@@ -344,14 +344,25 @@ export const curriculumData: Module[] = [
             "description": "Mastering the core of UVM's powerful stimulus generation methodology by writing sequences."
           },
           {
-            "title": "Uvm Config Db",
+            "title": "uvm_config_db: set and get | The UVM Universe - Core Concepts",
             "slug": "uvm-config-db",
-            "description": ""
+            "description": "Use the UVM configuration database to pass settings down the hierarchy without tight coupling."
           },
           {
-            "title": "Uvm Resource Db",
+            "title": "uvm_resource_db and Precedence | The UVM Universe - Core Concepts",
             "slug": "uvm-resource-db",
-            "description": ""
+            "description": "Resolve configuration conflicts using the underlying resource database and precedence rules."
+          }
+        ]
+      },
+      {
+        "title": "I-UVM-4: UVM Factory and Overrides",
+        "slug": "I-UVM-4_Factory_and_Overrides",
+        "topics": [
+          {
+            "title": "I-UVM-4: UVM Factory and Overrides",
+            "slug": "index",
+            "description": "Swap component implementations on the fly using the UVM factory's type and instance overrides."
           }
         ]
       },
@@ -365,14 +376,14 @@ export const curriculumData: Module[] = [
             "description": "Understand the UVM phasing mechanism for synchronizing testbench execution and the core UVM class hierarchy."
           },
           {
-            "title": "Domains Phase Jumping",
+            "title": "Domains and Phase Jumping | The UVM Universe - Core Concepts",
             "slug": "domains-phase-jumping",
-            "description": ""
+            "description": "Separate components into custom phase domains and redirect execution with phase jumping."
           },
           {
-            "title": "Uvm Event Barrier",
+            "title": "uvm_event and uvm_barrier | The UVM Universe - Core Concepts",
             "slug": "uvm-event-barrier",
-            "description": ""
+            "description": "Coordinate activity using lightweight events and blocking barriers for synchronization."
           }
         ]
       }
@@ -393,59 +404,59 @@ export const curriculumData: Module[] = [
             "description": "Learn about advanced UVM sequencing techniques, including layered sequences, virtual sequences, and sequence libraries."
           },
           {
-            "title": "Connecting",
+            "title": "Connecting the Agent Components | Building a UVM Testbench",
             "slug": "connecting",
-            "description": ""
+            "description": "..."
           },
           {
-            "title": "Environment Test Classes",
+            "title": "The Environment and Test Classes | Building a UVM Testbench",
             "slug": "environment-test-classes",
-            "description": ""
+            "description": "..."
           },
           {
-            "title": "Interrupt Handling",
+            "title": "Interrupt Handling and Layered Stimulus | Advanced UVM Techniques & Strategy",
             "slug": "interrupt-handling",
-            "description": ""
+            "description": "..."
           },
           {
-            "title": "Layered Sequences",
+            "title": "Layered Sequences and p_sequencer | Building a UVM Testbench",
             "slug": "layered-sequences",
-            "description": ""
+            "description": "..."
           },
           {
-            "title": "Sequence Arbitration",
+            "title": "Sequence Arbitration and Priority | Advanced UVM Techniques & Strategy",
             "slug": "sequence-arbitration",
-            "description": ""
+            "description": "..."
           },
           {
-            "title": "Sequence Libraries",
+            "title": "Sequence Libraries and grab/ungrab | Building a UVM Testbench",
             "slug": "sequence-libraries",
-            "description": ""
+            "description": "..."
           },
           {
-            "title": "Sequencer Driver Handshake",
+            "title": "The Sequencer-Driver Handshake | Building a UVM Testbench",
             "slug": "sequencer-driver-handshake",
-            "description": ""
+            "description": "..."
           },
           {
-            "title": "Uvm Monitor",
+            "title": "uvm_monitor and Analysis Ports | Building a UVM Testbench",
             "slug": "uvm-monitor",
-            "description": ""
+            "description": "..."
           },
           {
-            "title": "Uvm Scoreboard",
+            "title": "The UVM Scoreboard | Building a UVM Testbench",
             "slug": "uvm-scoreboard",
-            "description": ""
+            "description": "..."
           },
           {
-            "title": "Uvm Sequence Item",
+            "title": "uvm_sequence_item and uvm_sequence | Building a UVM Testbench",
             "slug": "uvm-sequence-item",
-            "description": ""
+            "description": "..."
           },
           {
-            "title": "Uvm Subscriber",
+            "title": "uvm_subscriber | Building a UVM Testbench",
             "slug": "uvm-subscriber",
-            "description": ""
+            "description": "..."
           },
           {
             "title": "UVM Virtual Sequencer",
@@ -469,25 +480,25 @@ export const curriculumData: Module[] = [
             "description": "Explore advanced UVM factory features, including instance overrides, string-based overrides, and debugging techniques."
           },
           {
-            "title": "Heartbeats",
+            "title": "Heartbeats and Testbench Monitoring | Advanced UVM Techniques & Strategy",
             "slug": "heartbeats",
-            "description": ""
+            "description": "..."
           },
           {
-            "title": "Uvm Callbacks",
+            "title": "UVM Callbacks and Facade Classes | Advanced UVM Techniques & Strategy",
             "slug": "uvm-callbacks",
-            "description": ""
+            "description": "..."
           }
         ]
       },
       {
-        "title": "Index",
+        "title": "Advanced UVM Techniques & Strategy | Advanced UVM",
         "slug": "A-UVM-3_Advanced_UVM_Techniques",
         "topics": [
           {
-            "title": "Index",
+            "title": "Advanced UVM Techniques & Strategy | Advanced UVM",
             "slug": "index",
-            "description": ""
+            "description": "Expert-level concepts like RAL, virtual sequences, callbacks, and coverage integration."
           }
         ]
       },
@@ -501,19 +512,19 @@ export const curriculumData: Module[] = [
             "description": "Learn how to use the UVM Register Abstraction Layer (RAL) to model and access DUT registers in a standardized and reusable way."
           },
           {
-            "title": "Built In Ral Sequences",
+            "title": "Built-in RAL Sequences and Adapters | Advanced UVM Techniques & Strategy",
             "slug": "built-in-ral-sequences",
-            "description": ""
+            "description": "..."
           },
           {
-            "title": "Explicit Vs Implicit",
+            "title": "Explicit vs. Implicit Prediction | Advanced UVM Techniques & Strategy",
             "slug": "explicit-vs-implicit",
-            "description": ""
+            "description": "..."
           },
           {
-            "title": "Frontdoor Vs Backdoor",
+            "title": "Frontdoor vs. Backdoor Access | Advanced UVM Techniques & Strategy",
             "slug": "frontdoor-vs-backdoor",
-            "description": ""
+            "description": "..."
           }
         ]
       }
@@ -545,14 +556,14 @@ export const curriculumData: Module[] = [
             "description": "Learn advanced techniques for debugging complex UVM environments."
           },
           {
-            "title": "Effective Debug",
+            "title": "Effective Debug Techniques in UVM | The Professional Verification Craft",
             "slug": "effective-debug",
-            "description": ""
+            "description": "Tried-and-true methods for diagnosing tricky failures."
           },
           {
-            "title": "Reusable Vip",
+            "title": "Reusable Verification IP (VIP) Architecture | The Professional Verification Craft",
             "slug": "reusable-vip",
-            "description": ""
+            "description": "Patterns for building maintainable verification components."
           }
         ]
       },
@@ -566,14 +577,14 @@ export const curriculumData: Module[] = [
             "description": "Learn how to combine the power of UVM and formal verification to create a more robust verification environment."
           },
           {
-            "title": "Dpi",
+            "title": "Direct Programming Interface (DPI) | The Professional Verification Craft",
             "slug": "dpi",
-            "description": ""
+            "description": "C interoperability for performance and modeling flexibility."
           },
           {
-            "title": "Pss",
+            "title": "Introduction to Portable Stimulus (PSS) | The Professional Verification Craft",
             "slug": "pss",
-            "description": ""
+            "description": "Conceptual overview of portable stimulus methodology."
           }
         ]
       },
@@ -598,14 +609,14 @@ export const curriculumData: Module[] = [
             "description": "Learn about the unique challenges and strategies for verifying a complete System-on-Chip (SoC)."
           },
           {
-            "title": "Coverage Closure",
+            "title": "Coverage Closure and Metrics | The Professional Verification Craft",
             "slug": "coverage-closure",
-            "description": ""
+            "description": "Using coverage results to measure verification completeness."
           },
           {
-            "title": "Regression Triage",
+            "title": "Regression and Triage Strategies | The Professional Verification Craft",
             "slug": "regression-triage",
-            "description": ""
+            "description": "Building stable regressions and quickly diagnosing failures."
           }
         ]
       }
