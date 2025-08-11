@@ -1,5 +1,12 @@
 import React from 'react';
-import { InteractiveCode, ExplanationStep } from '@/components/ui/InteractiveCode';
+import dynamic from 'next/dynamic';
+import { type ExplanationStep } from '@/components/ui/InteractiveCode';
+
+// Disable server-side rendering for the interactive editor which relies on `window`.
+const InteractiveCode = dynamic(
+  () => import('@/components/ui/InteractiveCode'),
+  { ssr: false }
+);
 
 const testCode = 
 '// test_sequence.sv\n' +
