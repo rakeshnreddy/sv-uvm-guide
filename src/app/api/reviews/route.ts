@@ -1,20 +1,8 @@
 import { NextResponse } from 'next/server';
-
-
-interface Review {
-  commitId: string;
-  comment?: string;
-  approved?: boolean;
-}
-
-export const reviews: Review[] = [];
-
-export function clearReviews() {
-  reviews.length = 0;
-}
+import { Review, addReview, getReviews } from '@/server/reviews';
 
 export async function GET() {
-  return NextResponse.json(reviews);
+  return NextResponse.json(getReviews());
 }
 
 export async function POST(request: Request) {
@@ -24,7 +12,6 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
   }
-
 
   const { commitId, comment, approved } = data ?? {};
   if (!commitId || typeof commitId !== 'string') {
@@ -36,14 +23,8 @@ export async function POST(request: Request) {
   }
 
   const record: Review = { commitId };
-  if (typeof comment === 'string') {
-    record.comment = comment;
-  }
-  if (typeof approved === 'boolean') {
-    record.approved = approved;
-  }
-  reviews.push(record);
+  if (typeof comment === 'string') record.comment = comment;
+  if (typeof approved === 'boolean') record.approved = approved;
+  addReview(record);
   return NextResponse.json({ message: 'Review recorded' }, { status: 201 });
 }
-
-export { GET as getReviews };

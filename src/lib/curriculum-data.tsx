@@ -356,6 +356,18 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "I-UVM-4: UVM Factory and Overrides",
+        "slug": "I-UVM-4_Factory_and_Overrides",
+        "topics": [
+          {
+            "title": "I-UVM-4: UVM Factory and Overrides",
+            "slug": "index",
+            "description": "Swap component implementations on the fly using the UVM factory's type and instance overrides."
+
+          }
+        ]
+      },
+      {
         "title": "I-UVM-5: UVM Phasing and Synchronization",
         "slug": "I-UVM-5_Phasing_and_Synchronization",
         "topics": [
