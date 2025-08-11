@@ -51,7 +51,7 @@ const InterfaceSignalFlow = () => {
       setSignalValues(prev => prev.map(v => (v ? 0 : 1)));
       setPhase(prev => (prev === 'sample' ? 'drive' : 'sample'));
       if (currentExample.arraySize) {
-        setArrayIndex(prev => (prev + 1) % currentExample.arraySize);
+        setArrayIndex(prev => (prev + 1) % currentExample.arraySize!);
       }
     }, speed);
     return () => clearInterval(id);
