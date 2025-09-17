@@ -11,31 +11,31 @@ const testimonials = [
     quote: "This platform transformed my understanding of UVM. The interactive labs are a game-changer!",
     name: "Alex Johnson",
     title: "Verification Engineer",
-    image: "/avatars/01.png",
+    image: "/avatars/01.svg",
   },
   {
     quote: "I finally grasped complex SystemVerilog concepts thanks to the clear explanations and examples.",
     name: "Maria Garcia",
     title: "ASIC Designer",
-    image: "/avatars/02.png",
+    image: "/avatars/02.svg",
   },
   {
     quote: "The best resource for UVM on the web. I recommend it to all my colleagues.",
     name: "David Chen",
     title: "Senior DV Engineer",
-    image: "/avatars/03.png",
+    image: "/avatars/03.svg",
   },
   {
     quote: "The community forum is incredibly helpful. I've learned so much from other users.",
     name: "Samantha Lee",
     title: "FPGA Developer",
-    image: "/avatars/04.png",
+    image: "/avatars/04.svg",
   },
   {
     quote: "An indispensable tool for anyone serious about a career in semiconductor verification.",
     name: "Ben Carter",
     title: "VLSI Student",
-    image: "/avatars/05.png",
+    image: "/avatars/05.svg",
   }
 ];
 

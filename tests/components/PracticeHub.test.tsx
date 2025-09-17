@@ -8,8 +8,8 @@ describe('PracticeHub', () => {
 
     expect(
       screen.getByRole('heading', { level: 1, name: /practice hub/i }),
-    ).toBeTruthy();
-    expect(screen.getByText(/sharpen your systemverilog/i)).toBeTruthy();
+    ).toBeInTheDocument();
+    expect(screen.getByText(/sharpen your systemverilog/i)).toBeInTheDocument();
   });
 
   it('groups items by category and renders cards', () => {
@@ -19,7 +19,7 @@ describe('PracticeHub', () => {
       level: 2,
       name: /exercise/i,
     });
-    expect(exerciseHeading).toBeTruthy();
+    expect(exerciseHeading).toBeInTheDocument();
 
     const cardTitles = screen.getAllByRole('heading', { level: 3 });
     expect(cardTitles.length).toBeGreaterThan(0);
