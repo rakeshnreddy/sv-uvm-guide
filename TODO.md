@@ -21,8 +21,8 @@
 - [ ] Update remaining legacy components (navbar, footer) to new design tokens
 
 ## Coverage & Automation
-- [ ] Add regression test coverage for slug normalization so 2-segment curriculum routes stay routable
-- [ ] Add lint/test check in CI for template compliance on all tiers
+- [x] Add regression test coverage for slug normalization so 2-segment curriculum routes stay routable
+- [x] Add lint/test check in CI for template compliance on all tiers
 - [ ] Build PR checklist referencing template + visual design guide
 - [ ] Script a factory audit that flags `uvm_*` classes still using direct `new()` instead of `::type_id::create`
 
@@ -36,12 +36,13 @@
 - [ ] Create coverage dashboard showing migration status per topic
 - [ ] Define SME review rotation for Tier 2 & Tier 3 content
 - [ ] Draft contributor guide for adding visuals (SVG/animations)
-- [ ] Drive homepage CTAs (learning paths, recommendations) from curriculum data to avoid stale slugs
+- [x] Drive homepage CTAs (learning paths, recommendations) from curriculum data to avoid stale slugs
 
 ## Technical Debt
 - [ ] Address outstanding lint TODOs (e.g., animations hooking pattern)
 - [ ] Replace remaining mock data (home personalization) with feature flag/empty states
 - [ ] Investigate Monaco sourcemap warning during tests
 - [ ] Drive curriculum sidebar completion states from actual module metadata instead of hard-coded flags
-- [ ] Audit secondary tsconfig overrides to ensure `moduleResolution: bundler` stays compatible with emitted module targets
+- [x] Audit secondary tsconfig overrides to ensure `moduleResolution: bundler` stays compatible with emitted module targets
+- [ ] Replace breadcrumb progress mock with a dynamic progress source to prevent stale or invalid slugs showing in navigation
 - [ ] Fix outstanding TypeScript errors (KnowledgeGraphVisualizer, AudioLearningSystem, AI Assistant tests, simulation mocks) so `npm run type-check` passes

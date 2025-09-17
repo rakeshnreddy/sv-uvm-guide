@@ -5,8 +5,9 @@ import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/Button';
 import { Code, Share2, Gamepad2, Bot, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
+import { resolveCurriculumPath } from '@/lib/curriculum-path';
 
-const features = [
+const featureConfigs = [
   {
     title: 'Live Code Editor',
     description: 'Write, compile, and run SystemVerilog code directly in your browser. Get instant feedback on your solutions.',
@@ -18,7 +19,7 @@ const features = [
     title: 'UVM Diagram Explorer',
     description: 'Visualize complex UVM hierarchies and understand component relationships with our interactive diagrams.',
     icon: Share2,
-    href: '/curriculum/interactive-tools/uvm-visualizers/interactive-testbench',
+    slug: ['interactive-tools', 'uvm-visualizers', 'interactive-testbench'],
     imageUrl: '/images/feature-uvm-explorer.png'
   },
   {
@@ -36,6 +37,11 @@ const features = [
     imageUrl: '/images/feature-ai-tutor.png'
   }
 ];
+
+const features = featureConfigs.map(config => ({
+  ...config,
+  href: config.slug ? resolveCurriculumPath(config.slug, '/curriculum') : config.href ?? '#',
+}));
 
 const FeatureCard = ({ feature, index }: { feature: (typeof features)[0], index: number }) => (
   <motion.div

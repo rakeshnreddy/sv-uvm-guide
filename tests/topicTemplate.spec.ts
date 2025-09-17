@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import path from 'path';
 import matter from 'gray-matter';
 
-const topicRoot = path.join(process.cwd(), 'content', 'curriculum');
+const repoRoot = process.cwd();
+const migrationTrackerPath = path.join(repoRoot, 'docs', 'topic-template-migration.md');
 
 const templateHeadings = [
   '## Quick Take',
@@ -14,38 +15,89 @@ const templateHeadings = [
   '## References & Next Topics',
 ];
 
-// Track files already migrated to the new template.
-const migratedTopics = [
-  'T1_Foundational/F1_Why_Verification/index.mdx',
-  'T1_Foundational/F2_Data_Types/index.mdx',
-  'T1_Foundational/F3_Procedural_Constructs/index.mdx',
-  'T1_Foundational/F4_RTL_and_Testbench_Constructs/index.mdx',
-  'T2_Intermediate/I-SV-1_OOP/index.mdx',
-  'T2_Intermediate/I-SV-2_Constrained_Randomization/index.mdx',
-];
+function parseMigratedTopicPaths(): string[] {
+  if (!existsSync(migrationTrackerPath)) {
+    throw new Error('Missing topic template migration tracker markdown file.');
+  }
+
+  const raw = readFileSync(migrationTrackerPath, 'utf8');
+  const topics = new Set<string>();
+
+  raw.split('\n').forEach((line) => {
+    if (!line.startsWith('|')) {
+      return;
+    }
+
+    const trimmedLine = line.trim();
+    if (trimmedLine.startsWith('| ---')) {
+      return;
+    }
+
+    const cells = trimmedLine
+      .split('|')
+      .slice(1, -1)
+      .map((cell) => cell.trim());
+
+    if (cells.length < 4 || cells[0] === 'Tier') {
+      return;
+    }
+
+    const topicPathCell = cells[2];
+    const statusCell = cells[3];
+    if (!statusCell.includes('✅')) {
+      return;
+    }
+
+    const pathMatch = topicPathCell.match(/`([^`]+)`/);
+    const normalizedPath = (pathMatch ? pathMatch[1] : topicPathCell)
+      .replace(/^\.\//, '')
+      .replace(/\\/g, '/');
+
+    if (normalizedPath.length > 0) {
+      topics.add(normalizedPath);
+    }
+  });
+
+  return Array.from(topics);
+}
+
+const migratedTopics = parseMigratedTopicPaths();
 
 describe('Curriculum topic template compliance', () => {
-  migratedTopics.forEach((relativePath) => {
-    const filePath = path.join(topicRoot, relativePath);
-    const fileId = relativePath.replace(/\\/g, '/');
+  it('has at least one migrated topic recorded in the tracker', () => {
+    expect(migratedTopics.length).toBeGreaterThan(0);
+  });
 
-    it(`${fileId} includes required headings in order`, () => {
-      const content = readFileSync(filePath, 'utf8');
+  migratedTopics.forEach((recordedPath) => {
+    const sanitizedPath = recordedPath
+      .replace(/^\.\//, '')
+      .replace(/\\/g, '/');
+    const absolutePath = path.join(repoRoot, sanitizedPath);
+    const curriculumRelativePath = sanitizedPath.startsWith('content/curriculum/')
+      ? sanitizedPath.replace('content/curriculum/', '')
+      : sanitizedPath;
+    const displayId = curriculumRelativePath.replace(/\\/g, '/');
+
+    it(`${displayId} exists and includes required headings in order`, () => {
+      expect(sanitizedPath.startsWith('content/curriculum/'), `${sanitizedPath} should live under content/curriculum/`).toBe(true);
+      expect(existsSync(absolutePath), `${displayId} listed in migration tracker but missing on disk`).toBe(true);
+
+      const content = readFileSync(absolutePath, 'utf8');
       let lastIndex = -1;
       templateHeadings.forEach((heading) => {
         const index = content.indexOf(heading);
-        expect(index, `${heading} missing in ${fileId}`).toBeGreaterThan(-1);
-        expect(index, `${heading} out of order in ${fileId}`).toBeGreaterThan(lastIndex);
+        expect(index, `${heading} missing in ${displayId}`).toBeGreaterThan(-1);
+        expect(index, `${heading} out of order in ${displayId}`).toBeGreaterThan(lastIndex);
         lastIndex = index;
       });
     });
 
-    it(`${fileId} front matter includes required fields`, () => {
-      const raw = readFileSync(filePath, 'utf8');
+    it(`${displayId} front matter includes required fields`, () => {
+      const raw = readFileSync(absolutePath, 'utf8');
       const { data } = matter(raw);
-      expect(data.title, `title missing in ${fileId}`).toBeTruthy();
-      expect(data.description, `description missing in ${fileId}`).toBeTruthy();
-      expect(data.flashcards, `flashcards missing in ${fileId}`).toBeTruthy();
+      expect(data.title, `title missing in ${displayId}`).toBeTruthy();
+      expect(data.description, `description missing in ${displayId}`).toBeTruthy();
+      expect(data.flashcards, `flashcards missing in ${displayId}`).toBeTruthy();
     });
   });
 });

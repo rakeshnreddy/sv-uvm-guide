@@ -5,27 +5,34 @@ import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/Button';
 import { Book, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
+import { resolveCurriculumPath } from '@/lib/curriculum-path';
 
 interface User {
   name: string;
   lastLesson: {
     title: string;
-    href: string;
+    slug: string[];
   };
   progress: number;
   streak: number;
 }
 
-const recommendations = [
-  { title: 'Advanced Sequences', href: '/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/index' },
-  { title: 'The UVM Factory In-Depth', href: '/curriculum/T3_Advanced/A-UVM-2_The_UVM_Factory_In-Depth/index' },
-  { title: 'Building a RAL Model', href: '/curriculum/T3_Advanced/A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL/index' },
+const recommendationConfigs = [
+  { title: 'Advanced Sequences', slug: ['T3_Advanced', 'A-UVM-1_Advanced_Sequencing'] },
+  { title: 'The UVM Factory In-Depth', slug: ['T3_Advanced', 'A-UVM-2_The_UVM_Factory_In-Depth'] },
+  { title: 'Building a RAL Model', slug: ['T3_Advanced', 'A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL'] },
 ];
 
 const PersonalizationSection = ({ user }: { user: User | null }) => {
   if (!user) {
     return null; // Don't render anything if user is not logged in
   }
+
+  const lastLessonHref = resolveCurriculumPath(user.lastLesson.slug, '/curriculum');
+  const recommendations = recommendationConfigs.map(config => ({
+    ...config,
+    href: resolveCurriculumPath([...config.slug], '/curriculum'),
+  }));
 
   return (
     <section className="py-20 bg-primary/5">
@@ -56,7 +63,7 @@ const PersonalizationSection = ({ user }: { user: User | null }) => {
                     <h4 className="text-xl font-semibold text-foreground">{user.lastLesson.title}</h4>
                 </div>
                 <Button asChild size="lg" className="mt-6 w-full md:w-auto">
-                    <Link href={user.lastLesson.href}>
+                    <Link href={lastLessonHref}>
                         Jump Back In <ArrowRight className="ml-2"/>
                     </Link>
                 </Button>
