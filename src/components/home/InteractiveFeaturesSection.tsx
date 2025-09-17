@@ -18,7 +18,7 @@ const features = [
     title: 'UVM Diagram Explorer',
     description: 'Visualize complex UVM hierarchies and understand component relationships with our interactive diagrams.',
     icon: Share2,
-    href: '/curriculum/interactive-tools/uvm-visualizers',
+    href: '/curriculum/interactive-tools/uvm-visualizers/interactive-testbench',
     imageUrl: '/images/feature-uvm-explorer.png'
   },
   {

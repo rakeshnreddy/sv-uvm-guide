@@ -15,7 +15,7 @@ const learningPaths = [
     time: '20-30 hours',
     skills: ['SystemVerilog Basics', 'Data Types', 'Procedural Blocks', 'Your First Testbench'],
     description: 'Start from scratch. No prior verification knowledge needed.',
-    href: '/curriculum/T1_Foundational'
+    href: '/curriculum/T1_Foundational/F1_Why_Verification/index'
   },
   {
     tier: 'Intermediate',
@@ -25,7 +25,7 @@ const learningPaths = [
     time: '40-60 hours',
     skills: ['OOP in SV', 'UVM Basics', 'Sequences & Drivers', 'Monitors & Scoreboards'],
     description: 'For those with SV knowledge, ready to dive into UVM.',
-    href: '/curriculum/T2_Intermediate'
+    href: '/curriculum/T2_Intermediate/I-SV-1_OOP/index'
   },
   {
     tier: 'Advanced',
@@ -35,7 +35,7 @@ const learningPaths = [
     time: '80-100 hours',
     skills: ['Advanced Sequencing', 'Register Layer (RAL)', 'Factory & Overrides', 'Functional Coverage'],
     description: 'Deepen UVM expertise and tackle complex verification scenarios.',
-    href: '/curriculum/T3_Advanced'
+    href: '/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/index'
   },
   {
     tier: 'Expert',
@@ -45,7 +45,7 @@ const learningPaths = [
     time: '120+ hours',
     skills: ['Methodology Customization', 'Performance Optimization', 'SoC Verification', 'Formal Integration'],
     description: 'Become a verification leader and architect cutting-edge testbenches.',
-    href: '/curriculum/T4_Expert'
+    href: '/curriculum/T4_Expert/E-CUST-1_UVM_Methodology_Customization/index'
   },
 ];
 

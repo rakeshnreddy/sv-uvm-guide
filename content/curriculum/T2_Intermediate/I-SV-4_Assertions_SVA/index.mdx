@@ -1,90 +1,114 @@
 ---
 title: "I-SV-4: SystemVerilog Assertions (SVA)"
-description: "Learn how to use SystemVerilog Assertions (SVA) to specify design behavior over time and create powerful functional checks."
+description: "Specify temporal intent with SystemVerilog Assertions so your verification environment automatically checks protocol rules." 
+flashcards: "I-SV-4_Assertions_SVA"
 ---
 
-import { Quiz, InteractiveCode } from '@/components/ui';
-import AssertionBuilder from '/src/components/animations/AssertionBuilder';
+import { InteractiveCode, Quiz } from '@/components/ui';
+import AssertionBuilder from '@/components/animations/AssertionBuilder';
 
-## The "Why" of SVA
+## Quick Take
+- **What it is:** SystemVerilog Assertions let you describe how signals should behave over time and automatically flag violations.
+- **Why it matters:** Assertions catch protocol bugs the instant they occur, shrink debug time, and document the contract between blocks.
+- **The Analogy:** Think of SVA as highway patrol. Sequences spot patterns like “car stops at red”; properties turn them into laws; an `assert` issues a ticket when a driver misbehaves.
 
-How do you formally specify and automatically check that your design follows complex rules over time? For example, "after a request is sent, an acknowledge signal must arrive within 3 clock cycles." This is where SystemVerilog Assertions (SVA) shine. They provide a powerful, declarative language to specify temporal behavior.
+> **Retention Hook:** Repeat “Sequence = pattern, Property = rule, Assert = enforcement” before you leave this page.
 
-## Level 1: The Traffic Rules Analogy
-
-Think of SVA like the traffic rules for your design's signals.
-- **Sequence:** A specific pattern of events, like "a car stopping at a red light, then the light turning green." (`req ##1 gnt`)
-- **Property:** A rule that uses a sequence, like "a car stopping at a red light *implies that* the light will eventually turn green." (`req |-> ##[1:3] gnt`)
-- **Assert:** A directive that says, "check that this rule is never violated."
-
-## Level 2: Core Mechanics
+## Build Your Mental Model
+### Traffic Rules for Signals
+How do you guarantee an `ack` follows a `req` within three cycles? Assertions codify those timing rules. Immediate assertions are quick checkpoints inside procedural code; concurrent assertions sit alongside the design watching every clock tick.
 
 ### Immediate vs. Concurrent Assertions
-
-- **Immediate Assertions:** These are simple checks that execute like regular procedural statements. They are useful for checking conditions that should be true at a specific point in time.
-- **Concurrent Assertions:** These are the heart of SVA. They are checked "concurrently" on every clock edge and can specify behavior over a window of time.
-
-### Sequences, Properties, and Assertion Directives
+Immediate assertions execute once, exactly where they are written. Concurrent assertions evaluate on a clock edge and observe time windows. Use concurrent assertions for protocol rules.
 
 <InteractiveCode>
 ```systemverilog
-// Example of a simple sequence and property
+// Sequence: request followed by acknowledge one cycle later
 sequence s_req_then_ack;
-  req ##1 ack; // req is high, and on the next clock cycle, ack is high
+  req ##1 ack;
 endsequence
 
 property p_req_implies_ack;
   @(posedge clk)
-  req |-> s_req_then_ack; // If req is high, the s_req_then_ack sequence must follow
+  req |-> s_req_then_ack;
 endproperty
 
-// Use the property in an assertion
+// Assertions and coverage derived from the property
 assert_req_ack: assert property (p_req_implies_ack)
-  else $error("Assertion failed: Request not acknowledged in the next cycle.");
+  else $error("Request not acknowledged in one cycle");
 
-// Use the property for functional coverage
 cover_req_ack: cover property (p_req_implies_ack);
 ```
 </InteractiveCode>
 
-### Temporal Operators
-
-- `##1`: One clock cycle delay. `a ##1 b` means `b` is true one cycle after `a` is true.
-- `##[1:5]`: A delay of 1 to 5 clock cycles.
-- `|->` (overlapping implication): If the antecedent is true, the consequent must be true on the same clock edge.
-- `|=>` (non-overlapping implication): If the antecedent is true, the consequent must be true on the next clock edge.
+### Temporal Operators at a Glance
+- `##1` — delay by one cycle; `##[1:3]` — permit a range.
+- `|->` — overlapping implication (consequent can happen now); `|=>` — non-overlapping (consequent must happen on the next sample).
+- `throughout`, `until`, `s_eventually` — express “holds while” and liveness expectations.
 
 <AssertionBuilder />
 
-## Level 3: Expert Insights
+## Make It Work
+1. **Identify intent:** Translate protocol rules or handshake timing into short English statements.
+2. **Capture the pattern:** Write a `sequence` that names the events and timing separation.
+3. **Promote to a rule:** Wrap the sequence inside a `property`, add clocking, and select `|->` or `|=>` based on the required alignment.
+4. **Enforce & observe:** Instantiate the property with `assert` (and optionally `cover`) in an interface, bind file, or checker class.
 
-**Writing Good Assertions:** Good assertions are clear, concise, and directly reflect the design specification. They should be placed in `interface` files or bound to modules to be reusable.
+**Checklist before moving on:**
+- [ ] You can write a sequence that mirrors a verbal spec.
+- [ ] You know when to use immediate versus concurrent assertions.
+- [ ] You can choose `|->` or `|=>` to express timing intent.
 
-**Assertions in Formal Verification:** SVA is not just for simulation. It is the core language for formal verification tools, which can mathematically prove that an assertion can never fail, providing a much higher level of confidence than simulation alone.
+## Push Further
+- **Layered checking:** Combine assertions with functional coverage—every property can double as a coverage point.
+- **Formal verification:** The same SVA feeds formal tools; they prove whether a property *can ever* fail.
+- **Reusable checkers:** Package assertions in interfaces or bind files so DUT code stays untouched.
+- **Memory trick:** Sequence = pattern, Property = rule, Assert/Cover = enforce/measure.
 
-**Memory & Retention Tip:** Remember: **Sequence = "The Pattern"**. **Property = "The Rule about the Pattern"**. **Assert/Cover = "Check/Track the Rule"**.
+## Practice & Reinforce
+- Flashcards – Drill the core vocabulary (`sequence`, `property`, `bind`, temporal operators).
+- Micro-lab – Write a property enforcing “burst writes must stay aligned” and bind it to a virtual interface.
+- Quiz – Confirm you understand assertions below.
 
-## Check Your Understanding
-
-<Quiz questions={[
+<Quiz
+  questions={[
     {
-      "question": "What is the primary difference between an immediate and a concurrent assertion?",
-      "answers": [
-        {"text": "Immediate assertions can only be used in modules.", "correct": false},
-        {"text": "Concurrent assertions are checked on every clock cycle over time; immediate assertions are checked once when the statement is executed.", "correct": true},
-        {"text": "Immediate assertions cannot have a failure message.", "correct": false},
-        {"text": "Concurrent assertions do not require a clock.", "correct": false}
+      question: 'What is the primary difference between an immediate and a concurrent assertion?',
+      answers: [
+        { text: 'Immediate assertions can only be used in modules.', correct: false },
+        { text: 'Concurrent assertions are checked on every clock cycle over time; immediate assertions are checked once when the statement executes.', correct: true },
+        { text: 'Immediate assertions cannot have a failure message.', correct: false },
+        { text: 'Concurrent assertions do not require a clock.', correct: false }
       ],
-      "explanation": "Concurrent assertions are the foundation of SVA's temporal power, allowing you to specify behavior across multiple clock cycles."
+      explanation:
+        'Concurrent assertions run alongside the design and evaluate every sampling event, whereas immediate assertions are single-point checks.'
     },
     {
-      "question": "In the property `req |-> ##[1:5] gnt;`, what does it specify?",
-      "answers": [
-        {"text": "If req is high, gnt must be high on the same cycle.", "correct": false},
-        {"text": "If req is high, gnt must be high sometime between 1 and 5 cycles later.", "correct": true},
-        {"text": "req and gnt must both be high for 5 cycles.", "correct": false},
-        {"text": "gnt must be high 1 cycle before req.", "correct": false}
+      question: 'In the property `req |-> ##[1:5] gnt;`, what does it specify?',
+      answers: [
+        { text: 'If req is high, gnt must be high on the same cycle.', correct: false },
+        { text: 'If req is high, gnt must be high sometime between 1 and 5 cycles later.', correct: true },
+        { text: 'req and gnt must both be high for 5 cycles.', correct: false },
+        { text: 'gnt must be high one cycle before req.', correct: false }
       ],
-      "explanation": "The `|->` is the implication operator, and `##[1:5]` specifies a cycle delay range for the consequent to be checked."
+      explanation:
+        'The delay `##[1:5]` widens the acceptance window so the acknowledgement may arrive in any of the next five samples.'
+    },
+    {
+      question: 'Where should you house reusable concurrent assertions?',
+      answers: [
+        { text: 'Inside random stimulus constraints.', correct: false },
+        { text: 'Within interfaces or bind files so multiple components can share them.', correct: true },
+        { text: 'Sprinkled throughout the DUT RTL for convenience.', correct: false },
+        { text: 'Only in test classes to keep compilation order simple.', correct: false }
+      ],
+      explanation:
+        'Interfaces or checkers keep assertions close to the signals they observe without modifying DUT source.'
     }
-  ]} />
+  ]}
+/>
+
+## References & Next Topics
+- IEEE 1800-2017 §16 “Assertions.”
+- Mentor Graphics, *Assertion-Based Verification Methodology*.
+- Next: [/curriculum/T2_Intermediate/I-UVM-1_UVM_Intro](../I-UVM-1_UVM_Intro/index).

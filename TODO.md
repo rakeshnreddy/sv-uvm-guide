@@ -4,12 +4,12 @@
 ## Tier 2 Curriculum Migration
 - [x] I-SV-2 Constrained Randomization – completed ✅
 - [x] I-SV-3 Functional Coverage – completed ✅
-- [ ] I-SV-4 Assertions & SVA – migrate to new template, add visuals/flashcards
-- [ ] I-UVM-1 UVM Intro – migrate to new template, add visuals/flashcards
-- [ ] I-UVM-2 Building TB – update to template, verify assets
-- [ ] I-UVM-3 Sequences – update template, add practice links
-- [ ] I-UVM-4 Factory & Overrides – update template, ensure diagrams
-- [ ] I-UVM-5 Phasing & Sync – update template + visuals
+- [x] I-SV-4 Assertions & SVA – migrate to new template, add visuals/flashcards ✅
+- [x] I-UVM-1 UVM Intro – migrate to new template, add visuals/flashcards ✅
+- [x] I-UVM-2 Building TB – update to template, verify assets ✅
+- [x] I-UVM-3 Sequences – update template, add practice links ✅
+- [x] I-UVM-4 Factory & Overrides – update template, ensure diagrams ✅
+- [x] I-UVM-5 Phasing & Sync – update template + visuals ✅
 
 ## Tier 3/4 Planning
 - [ ] Audit Tier 3/4 topics for template adoption and create migration plan
@@ -21,19 +21,27 @@
 - [ ] Update remaining legacy components (navbar, footer) to new design tokens
 
 ## Coverage & Automation
+- [ ] Add regression test coverage for slug normalization so 2-segment curriculum routes stay routable
 - [ ] Add lint/test check in CI for template compliance on all tiers
 - [ ] Build PR checklist referencing template + visual design guide
+- [ ] Script a factory audit that flags `uvm_*` classes still using direct `new()` instead of `::type_id::create`
 
 ## Interactive Components
 - [ ] Finish UVM exercises (Agent Builder, Phase Sorter, Scoreboard) – scoring, feedback, persistence
 - [ ] Implement Randomization Explorer enhancements (if any outstanding)
+- [ ] Build sequencer↔driver handshake animation for the I-UVM-2 module to reinforce the transaction flow
+- [ ] Prototype a sequencer arbitration sandbox (lock/unlock, grab/release) to accompany I-UVM-3 sequencing drills
 
 ## Content Operations
 - [ ] Create coverage dashboard showing migration status per topic
 - [ ] Define SME review rotation for Tier 2 & Tier 3 content
 - [ ] Draft contributor guide for adding visuals (SVG/animations)
+- [ ] Drive homepage CTAs (learning paths, recommendations) from curriculum data to avoid stale slugs
 
 ## Technical Debt
 - [ ] Address outstanding lint TODOs (e.g., animations hooking pattern)
 - [ ] Replace remaining mock data (home personalization) with feature flag/empty states
 - [ ] Investigate Monaco sourcemap warning during tests
+- [ ] Drive curriculum sidebar completion states from actual module metadata instead of hard-coded flags
+- [ ] Audit secondary tsconfig overrides to ensure `moduleResolution: bundler` stays compatible with emitted module targets
+- [ ] Fix outstanding TypeScript errors (KnowledgeGraphVisualizer, AudioLearningSystem, AI Assistant tests, simulation mocks) so `npm run type-check` passes

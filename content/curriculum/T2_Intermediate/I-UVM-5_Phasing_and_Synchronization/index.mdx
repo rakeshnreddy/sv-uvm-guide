@@ -1,116 +1,109 @@
 ---
 title: "I-UVM-5: UVM Phasing and Synchronization"
-description: "Understand the UVM phasing mechanism for synchronizing testbench execution and the core UVM class hierarchy."
+description: "Orchestrate build, run, and cleanup with UVM phases and objections so every component stays in lockstep."
+flashcards: "I-UVM-5_Phasing_and_Synchronization"
 ---
 
-import { Quiz, InteractiveCode } from '@/components/ui';
-import UvmPhasingDiagram from '/src/components/diagrams/UvmPhasingDiagram';
+import { InteractiveCode, Quiz } from '@/components/ui';
+import UvmPhasingDiagram from '@/components/diagrams/UvmPhasingDiagram';
 import UvmHierarchySunburstChart from '@/components/charts/UvmHierarchySunburstChart';
 
-## The "Why" of Phasing and Hierarchy
+## Quick Take
+- **What it is:** UVM phasing defines the sequence of build, run, and cleanup steps each component follows; objections control when task-based phases end.
+- **Why it matters:** Consistent phasing keeps agents, scoreboards, and tests synchronized—no component starts driving before everything is connected.
+- **The Analogy:** Think of phases as a rehearsal schedule: setup, sound check, showtime, encore. Objections are the stage manager holding the curtain until performers finish.
 
-How do you ensure that all your testbench components are built and connected before they start running? How does UVM provide a standardized set of capabilities to all its components? The answers lie in the UVM phasing mechanism and its class hierarchy.
+> **Retention Hook:** Say “build → connect → run → report” and picture objections as the brake pedal on `run_phase`.
 
-- **Phasing:** Provides an ordered, synchronized sequence of steps (e.g., `build`, `connect`, `run`) to ensure the testbench constructs, executes, and cleans up in a predictable way.
-- **Class Hierarchy:** Creates a "family tree" for all UVM classes, where components and transactions inherit a common set of features from base classes like `uvm_component` and `uvm_object`.
-
-## Level 1: Rocket Launch and Family Tree
-
-- **Phasing Analogy:** Think of UVM phases like the stages of a rocket launch:
-  1.  **Build:** Assemble the rocket on the launchpad.
-  2.  **Connect:** Hook up all the electrical and fuel lines.
-  3.  **Run:** Ignite the engines and execute the mission.
-  4.  **Cleanup:** Analyze the results after the mission.
-- **Hierarchy Analogy:** The class hierarchy is like a family tree. Every component is a "descendant" of `uvm_component`, so they all inherit the "family traits" like having phases.
-
-## Level 2: Core Mechanics
-
-### The UVM Phasing Order
-
-UVM phases are grouped into three main categories:
-1.  **Build Phases:** These are function-based and execute top-down.
-    -   `build_phase`: Create component instances.
-    -   `connect_phase`: Connect ports and exports.
-    -   `end_of_elaboration_phase`: Finalize connections and prepare for simulation.
-2.  **Run-time Phases:** These are task-based and execute in parallel. The `run_phase` is the main phase where stimulus is generated and the test executes.
-3.  **Cleanup Phases:** These are function-based and execute bottom-up.
-    -   `extract_phase`: Gather data from monitors and scoreboards.
-    -   `check_phase`: Check for errors and correctness.
-    -   `report_phase`: Print final reports and summaries.
+## Build Your Mental Model
+### Three Buckets of Phases
+Phases fall into predictable groups:
+- **Build-time (functions, top-down):** `build`, `connect`, `end_of_elaboration` create and wire components.
+- **Run-time (tasks, parallel):** `run_phase` is the workhorse; optional runtime phases (`reset`, `configure`, `main`, `shutdown`) execute in order but allow overlap across components.
+- **Cleanup (functions, bottom-up):** `extract`, `check`, `report` gather results and print summaries.
 
 <UvmPhasingDiagram />
 
-### The Objection Mechanism: Ending the Test
-
-How does the `run_phase` know when to end? It ends when there are no more "objections" raised. A component raises an objection to "object" to the phase ending while it still has work to do.
+### Objection Flow
+Task-based phases end only when all objections drop.
 
 <InteractiveCode>
 ```systemverilog
-class my_driver extends uvm_driver #(my_transaction);
+class my_driver extends uvm_driver#(my_txn);
   `uvm_component_utils(my_driver)
 
-  // ... constructor and other phases ...
-
   virtual task run_phase(uvm_phase phase);
-    // 1. Raise an objection to prevent the phase from ending prematurely.
-    phase.raise_objection(this, "Driver starting stimulus");
+    phase.raise_objection(this, "Driver warming up");
 
-    `uvm_info("RUN", "Driver run_phase starting", UVM_MEDIUM)
+    repeat (10) begin
+      drive_one_transaction();
+    end
 
-    // ... drive transactions for 100ns ...
-    #100ns;
-
-    `uvm_info("RUN", "Driver run_phase ending", UVM_MEDIUM)
-
-    // 2. Drop the objection, signaling this component is done.
-    phase.drop_objection(this, "Driver finished stimulus");
+    phase.drop_objection(this, "Driver finished");
   endtask
 endclass
 ```
 </InteractiveCode>
 
-The `run_phase` will only end after *all* components that raised an objection have dropped their objection. Forgetting to drop an objection is a common cause of simulation timeouts.
+Forget to drop an objection and your simulation hangs. Automate safety nets with `phase.raise_objection(this, reason, 1)` timeouts or `uvm_objection::set_drain_time` to drain gracefully.
 
-### The UVM Class Hierarchy
-
-The sunburst chart below shows a simplified view of the UVM class hierarchy. Hover over the segments to see the relationships.
+### Hierarchy Reminder
+`uvm_component` descendants participate in phasing; `uvm_object` descendants do not.
 
 <div className="my-6">
   <UvmHierarchySunburstChart />
 </div>
 
-- **`uvm_object`**: The base class for data-like objects that have no structural hierarchy or phasing. Transactions and sequences are derived from `uvm_object`.
-- **`uvm_component`**: The base class for structural, quasi-static components that have phasing. Drivers, monitors, agents, environments, and tests are all derived from `uvm_component`.
+- Components (envs, agents, drivers, scoreboards) inherit phasing callbacks.
+- Objects (sequence items, configs) travel between components without phases.
 
-## Level 3: Expert Insights
+## Make It Work
+1. **Implement the lifecycle:** Override relevant phases (`build_phase`, `connect_phase`, `run_phase`, `report_phase`) and always call `super`.
+2. **Control runtime:** Raise objections before asynchronous work and drop them when done. Centralize long-running sequences in virtual tests so a single component coordinates lifetime.
+3. **Instrument reporting:** Use `report_phase` for pass/fail summaries; keep heavy analysis in `check_phase` to separate evaluation from logging.
+4. **Validate ordering:** Run with `+UVM_PHASE_TRACE` (or `uvm_top.print_topology()`) to confirm which components fire each phase.
 
-**User-Defined Phases:** You can define your own phases to run alongside the standard run-time phases, allowing for fine-grained control over testbench execution (e.g., a `configure_phase` that runs before the main `run_phase`).
+**Checklist before moving on:**
+- [ ] You can list build/run/cleanup phases without peeking at docs.
+- [ ] You know how objections gate the end of `run_phase`.
+- [ ] You can explain why only components, not objects, receive phases.
 
-**Phase Jumping:** In some advanced scenarios, you can "jump" forward or backward to specific phases, but this should be used with extreme caution as it can easily lead to unpredictable behavior.
+## Push Further
+- **Custom phase nodes:** Insert user-defined phases (e.g., `configure_phase`) to line up multi-interface bring-up.
+- **Phase jumping:** Use `phase.jump()` sparingly to reset or fast-forward, and only when every component expects it.
+- **Drain times:** Leverage `set_drain_time` to allow monitors to flush FIFOs after objections clear.
+- **Phase automation:** Add assertions that `phase.is_ready_to_end()` returns true before dropping final objections.
 
-**Memory & Retention Tip:** Remember the phase order with the mnemonic: **B**uild, **C**onnect, **E**laborate, **S**tart, **R**un, **P**ost-Run, **E**xtract, **C**heck, **R**eport. For the hierarchy, remember: **Object = Data**, **Component = Structure**.
-
-## Check Your Understanding
+## Practice & Reinforce
+- Flashcards – Drill phase ordering and objection semantics.
+- Micro-lab – Instrument a monitor to raise an objection until it sees a DONE packet, then drop it.
+- Debug drill – Enable `+UVM_PHASE_TRACE` and annotate the log with who raises/drops objections.
+- Quiz – Check your understanding below.
 
 <Quiz questions={[
-    {
-      "question": "Which UVM phase is primarily used for instantiating components?",
-      "answers": [
-        {"text": "connect_phase", "correct": false},
-        {"text": "run_phase", "correct": false},
-        {"text": "build_phase", "correct": true},
-        {"text": "report_phase", "correct": false}
-      ],
-      "explanation": "The `build_phase` executes top-down, ensuring that parent components are created before their children, which is the logical order for construction."
-    },
-    {
-      "question": "What is the purpose of the objection mechanism in UVM?",
-      "answers": [
-        {"text": "To object to a component's configuration.", "correct": false},
-        {"text": "To prevent a run-time phase from ending while components still have work to do.", "correct": true},
-        {"text": "To report errors during the check_phase.", "correct": false},
-        {"text": "To create user-defined phases.", "correct": false}
-      ],
-      "explanation": "The objection mechanism is the standard way to control the duration of a test. The `run_phase` will not end until all raised objections are dropped."
-    }
-  ]} />
+  {
+    question: 'Which UVM phase executes top-down and is responsible for instantiating components?',
+    answers: [
+      { text: 'connect_phase', correct: false },
+      { text: 'run_phase', correct: false },
+      { text: 'build_phase', correct: true },
+      { text: 'report_phase', correct: false }
+    ],
+    explanation: 'The `build_phase` walks the hierarchy top-down, giving each parent the chance to create its children before those children run.'
+  },
+  {
+    question: 'What is the primary role of the objection mechanism in UVM?',
+    answers: [
+      { text: 'To configure components before build', correct: false },
+      { text: 'To keep a run-time phase active while work remains', correct: true },
+      { text: 'To report scoreboard mismatches', correct: false },
+      { text: 'To randomize sequences', correct: false }
+    ],
+    explanation: 'Objections are cooperative counters; `run_phase` ends only after every component that raised one has dropped it.'
+  }
+]} />
+
+## References & Next Topics
+- Accellera, *UVM User Guide* – Chapter on phasing and objections.
+- Mentor Graphics, *UVM Phase Jumping Best Practices*.
+- Next: [Tier 3 planning](../../../docs/topic-template-migration).

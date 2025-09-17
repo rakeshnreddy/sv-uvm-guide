@@ -1,13 +1,17 @@
 import { describe, it, expect, vi } from 'vitest';
 import { runSimulation as runSimulationOriginal } from '../../src/server/simulation';
 import { EventEmitter } from 'events';
+import type { SimulationWaveform } from '../../src/server/simulation/types';
 
 describe('runSimulation', () => {
   it('parses simulator output', async () => {
     const result = await runSimulationOriginal('module', 'wasm');
     expect(result.output).toContain('Simulation PASSED');
     expect(result.backend).toBe('wasm');
-    expect(result.waveform.signal.length).toBeGreaterThan(0);
+    expect(result.waveform).not.toBeNull();
+    const waveform = result.waveform as SimulationWaveform;
+    expect(Array.isArray(waveform.signal)).toBe(true);
+    expect(waveform.signal.length).toBeGreaterThan(0);
   });
 
   it('handles simulator errors', async () => {

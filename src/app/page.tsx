@@ -10,7 +10,7 @@ const mockUser = {
   name: 'Jules',
   lastLesson: {
     title: 'UVM Phasing In-Depth',
-    href: '/curriculum/T2_Intermediate/I-UVM-5_Phasing_and_Synchronization',
+    href: '/curriculum/T2_Intermediate/I-UVM-5_Phasing_and_Synchronization/index',
   },
   progress: 75,
   streak: 12,

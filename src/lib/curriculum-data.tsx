@@ -283,7 +283,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-SV-4: SystemVerilog Assertions (SVA)",
             "slug": "index",
-            "description": "Learn how to use SystemVerilog Assertions (SVA) to specify design behavior over time and create powerful functional checks."
+            "description": "Specify temporal intent with SystemVerilog Assertions so your verification environment automatically checks protocol rules."
           },
           {
             "title": "Immediate vs. Concurrent Assertions | Advanced SystemVerilog for Verification",
@@ -309,7 +309,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-1: UVM Introduction: Objects, Components, and Factory",
             "slug": "index",
-            "description": "Understanding the most fundamental UVM concepts: uvm_object, uvm_component, and the UVM Factory."
+            "description": "Understand how UVM objects, components, and the factory stitch together so your testbench stays configurable."
           }
         ]
       },
@@ -320,7 +320,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-2: Building a UVM Testbench: Components & Hierarchy",
             "slug": "index",
-            "description": "Assembling a standard UVM testbench and understanding the role of each component."
+            "description": "Assemble a layered UVM environment—agents, drivers, sequencers, monitors, and scoreboards—and know how data flows between them."
           },
           {
             "title": "UVM Report Server and Verbosity | The UVM Universe - Core Concepts",
@@ -341,7 +341,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-3: Basic UVM Sequences and Stimulus Generation",
             "slug": "index",
-            "description": "Mastering the core of UVM's powerful stimulus generation methodology by writing sequences."
+            "description": "Author reusable UVM sequences, understand the sequencer ↔ driver handshake, and stitch stimulus into layered scenarios."
           },
           {
             "title": "uvm_config_db: set and get | The UVM Universe - Core Concepts",
@@ -362,7 +362,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-4: UVM Factory and Overrides",
             "slug": "index",
-            "description": "Swap component implementations on the fly using the UVM factory's type and instance overrides."
+            "description": "Swap component implementations on demand with UVM factory overrides and keep your testbench wiring untouched."
           }
         ]
       },
@@ -373,7 +373,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-5: UVM Phasing and Synchronization",
             "slug": "index",
-            "description": "Understand the UVM phasing mechanism for synchronizing testbench execution and the core UVM class hierarchy."
+            "description": "Orchestrate build, run, and cleanup with UVM phases and objections so every component stays in lockstep."
           },
           {
             "title": "Domains and Phase Jumping | The UVM Universe - Core Concepts",
@@ -710,9 +710,35 @@ export const curriculumData: Module[] = [
 
 // Helper functions to navigate the new structure
 
+export function normalizeSlug(slug: string[]): string[] {
+  if (slug.length >= 3) {
+    return slug.slice(0, 3);
+  }
+  if (slug.length === 0) return [];
+
+  const [tierSlug, sectionSlug] = slug;
+  const courseModule = curriculumData.find(m => m.slug === tierSlug);
+  if (!courseModule) return [];
+
+  if (slug.length === 1) {
+    const firstSection = courseModule.sections[0];
+    if (!firstSection) return [];
+    const firstTopic = firstSection.topics.find(t => t.slug === 'index') ?? firstSection.topics[0];
+    if (!firstTopic) return [];
+    return [tierSlug, firstSection.slug, firstTopic.slug];
+  }
+
+  const section = courseModule.sections.find(s => s.slug === sectionSlug);
+  if (!section) return [];
+  const topic = section.topics.find(t => t.slug === 'index') ?? section.topics[0];
+  if (!topic) return [];
+  return [tierSlug, section.slug, topic.slug];
+}
+
 export function findTopicBySlug(slug: string[]): Topic | undefined {
-  if (slug.length !== 3) return undefined;
-  const [tierSlug, sectionSlug, topicSlug] = slug;
+  const normalized = normalizeSlug(slug);
+  if (normalized.length !== 3) return undefined;
+  const [tierSlug, sectionSlug, topicSlug] = normalized;
   const courseModule = curriculumData.find(m => m.slug === tierSlug);
   if (!courseModule) return undefined;
   const section = courseModule.sections.find(s => s.slug === sectionSlug);
@@ -721,31 +747,31 @@ export function findTopicBySlug(slug: string[]): Topic | undefined {
 }
 
 export function getBreadcrumbs(slug: string[]): { title: string, path: string }[] {
+  const normalized = normalizeSlug(slug);
+  if (normalized.length !== 3) return [];
+  const [tierSlug, sectionSlug, topicSlug] = normalized;
   const breadcrumbs: { title: string, path: string }[] = [];
-  if (slug.length > 0) {
-    const courseModule = curriculumData.find(m => m.slug === slug[0]);
-    if (courseModule) {
-      breadcrumbs.push({ title: "Curriculum", path: `/curriculum` });
-      breadcrumbs.push({ title: courseModule.title, path: `/curriculum/${courseModule.slug}` });
-      if (slug.length > 1) {
-        const section = courseModule.sections.find(s => s.slug === slug[1]);
-        if (section) {
-          breadcrumbs.push({ title: section.title, path: `/curriculum/${courseModule.slug}/${section.slug}` });
-          if (slug.length > 2) {
-            const topic = section.topics.find(t => t.slug === slug[2]);
-            if (topic) {
-              breadcrumbs.push({ title: topic.title, path: `/curriculum/${courseModule.slug}/${section.slug}/${topic.slug}` });
-            }
-          }
-        }
-      }
-    }
+  const courseModule = curriculumData.find(m => m.slug === tierSlug);
+  if (!courseModule) return breadcrumbs;
+
+  breadcrumbs.push({ title: "Curriculum", path: `/curriculum` });
+  breadcrumbs.push({ title: courseModule.title, path: `/curriculum/${courseModule.slug}` });
+
+  const section = courseModule.sections.find(s => s.slug === sectionSlug);
+  if (!section) return breadcrumbs;
+  breadcrumbs.push({ title: section.title, path: `/curriculum/${courseModule.slug}/${section.slug}` });
+
+  const topic = section.topics.find(t => t.slug === topicSlug);
+  if (topic) {
+    breadcrumbs.push({ title: topic.title, path: `/curriculum/${courseModule.slug}/${section.slug}/${topic.slug}` });
   }
+
   return breadcrumbs;
 }
 
 export function findPrevNextTopics(slug: string[]): { prev: Topic | undefined, next: Topic | undefined } {
-  if (slug.length !== 3) return { prev: undefined, next: undefined };
+  const normalized = normalizeSlug(slug);
+  if (normalized.length !== 3) return { prev: undefined, next: undefined };
 
   const allTopics: Topic[] = [];
   curriculumData.forEach(m => {
@@ -756,7 +782,7 @@ export function findPrevNextTopics(slug: string[]): { prev: Topic | undefined, n
     });
   });
 
-  const currentIndex = allTopics.findIndex(t => t.slug === slug.join('/'));
+  const currentIndex = allTopics.findIndex(t => t.slug === normalized.join('/'));
   if (currentIndex === -1) return { prev: undefined, next: undefined };
 
   const prev = currentIndex > 0 ? allTopics[currentIndex - 1] : undefined;

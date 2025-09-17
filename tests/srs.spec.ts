@@ -1,5 +1,5 @@
 /// <reference types="vitest/globals" />
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, Mock } from 'vitest';
 import { createFlashcard, reviewFlashcard, getDueFlashcards } from '../src/app/actions/srs';
 import { PrismaClient } from '@prisma/client';
 
@@ -49,7 +49,7 @@ describe('SRS Actions', () => {
       nextReviewAt: new Date(),
     };
 
-    (prisma.flashcard.create as vi.Mock).mockResolvedValue(expectedFlashcard);
+    (prisma.flashcard.create as Mock).mockResolvedValue(expectedFlashcard);
 
     const flashcard = await createFlashcard(topicId);
 
@@ -78,8 +78,8 @@ describe('SRS Actions', () => {
       nextReviewAt: new Date(),
     };
 
-    (prisma.flashcard.findUnique as vi.Mock).mockResolvedValue(initialFlashcard);
-    (prisma.flashcard.update as vi.Mock).mockImplementation(async ({ data }: { data: any }) => ({
+    (prisma.flashcard.findUnique as Mock).mockResolvedValue(initialFlashcard);
+    (prisma.flashcard.update as Mock).mockImplementation(async ({ data }: { data: any }) => ({
       ...initialFlashcard,
       ...data,
     }));
@@ -100,7 +100,7 @@ describe('SRS Actions', () => {
       { id: '2', nextReviewAt: new Date(Date.now() - 172800000) }, // 2 days ago
     ];
 
-    (prisma.flashcard.findMany as vi.Mock).mockResolvedValue(dueFlashcards);
+    (prisma.flashcard.findMany as Mock).mockResolvedValue(dueFlashcards);
 
     const result = await getDueFlashcards();
 

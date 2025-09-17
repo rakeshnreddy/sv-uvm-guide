@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
 import { PassThrough } from 'stream';
 import { EventEmitter } from 'events';
 
@@ -10,14 +10,15 @@ vi.mock('child_process', () => {
 
 import { runSimulation } from '@/server/simulation';
 import { spawn } from 'child_process';
+import type { SimulationWaveform } from '@/server/simulation/types';
 
 function mockSimulator({ stdoutData = '', stderrData = '', exitCode = 0 }) {
   const stdout = new PassThrough();
   const stderr = new PassThrough();
   const stdin = new PassThrough();
   const events = new EventEmitter();
-  (spawn as unknown as vi.Mock).mockReturnValueOnce(
-    Object.assign(events, { stdout, stderr, stdin }) as any,
+  (spawn as unknown as Mock).mockReturnValueOnce(
+    Object.assign(events, { stdout, stderr, stdin }) as unknown,
   );
 
   setImmediate(() => {
@@ -31,7 +32,7 @@ function mockSimulator({ stdoutData = '', stderrData = '', exitCode = 0 }) {
 
 describe('runSimulation', () => {
   beforeEach(() => {
-    (spawn as unknown as vi.Mock).mockReset();
+    (spawn as unknown as Mock).mockReset();
   });
 
   it('captures pass, coverage and waveform information', async () => {
@@ -44,7 +45,9 @@ describe('runSimulation', () => {
     const result = await runSimulation('module t; endmodule', 'icarus');
     expect(result.passed).toBe(true);
     expect(result.coverage).toBe(75);
-    expect(result.waveform).toEqual({
+    const waveform = result.waveform as SimulationWaveform | null;
+    expect(waveform).not.toBeNull();
+    expect(waveform).toEqual({
       signal: [{ name: 'clk', wave: 'p' }],
     });
     expect(result.errors).toEqual([]);
@@ -62,4 +65,3 @@ describe('runSimulation', () => {
     expect(result.errors).toContain('ERROR: bad signal');
   });
 });
-

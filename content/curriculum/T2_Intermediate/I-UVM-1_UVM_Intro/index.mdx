@@ -1,98 +1,51 @@
 ---
 title: "I-UVM-1: UVM Introduction: Objects, Components, and Factory"
-description: "Understanding the most fundamental UVM concepts: uvm_object, uvm_component, and the UVM Factory."
+description: "Understand how UVM objects, components, and the factory stitch together so your testbench stays configurable."
+flashcards: "I-UVM-1_UVM_Intro"
 ---
 
-import { Quiz, InteractiveCode, Panel } from '@/components/ui';
-import UvmHierarchySunburstChart from '@/components/charts/UvmHierarchySunburstChart'
-import UvmPhasingDiagram from '/src/components/diagrams/UvmPhasingDiagram'
+import { InteractiveCode, Quiz } from '@/components/ui';
+import UvmHierarchySunburstChart from '@/components/charts/UvmHierarchySunburstChart';
+import UvmPhasingDiagram from '@/components/diagrams/UvmPhasingDiagram';
 
-## UVM Base Classes: `uvm_object` vs. `uvm_component`
+## Quick Take
+- **What it is:** UVM splits reusable logic into `uvm_object` data containers, `uvm_component` infrastructure, and a factory that decides which concrete types actually get built.
+- **Why it matters:** Factory-driven creation keeps testbenches configurable—teams can swap sequences or drivers without touching the code that instantiates them.
+- **The Analogy:** Objects are “packages” moving through the mail; components are “buildings” wired into the city; the factory is dispatch control deciding which package variant arrives where.
 
-`uvm_object` and `uvm_component` form the root of every UVM class. Think of `uvm_object` as a **package** that is shipped around, while `uvm_component` is a **building** permanently placed in the testbench city. The base classes exist so that every piece of data or infrastructure in UVM follows common creation and reporting rules.
+> **Retention Hook:** Say out loud: "Register, create, override"—that rhythm mirrors how every factory substitution works.
+
+## Build Your Mental Model
+### Objects Travel, Components Stay Anchored
+`uvm_object` derivatives (sequence items, configs) travel between components. `uvm_component` derivatives (agents, drivers, envs) stay anchored in the hierarchy and join UVM phasing.
 
 <UvmHierarchySunburstChart />
 
-* `uvm_component` participates in phasing; forgetting `super.build_phase` can break hierarchies.
-* `uvm_object` derived classes should use the `clone` method when copying to preserve factory type.
-* Remember: **"Components are buildings, objects are packages"** – a quick mnemonic seasoned engineers repeat.
+- `uvm_component` participates in build/connect/run phases—skip `super.build_phase` and child components never appear.
+- `uvm_object` copies should go through `clone()` to preserve factory type info.
+- Remember: **package vs. building**—one moves, one is installed.
 
-## The UVM Factory
-
-The UVM factory is a powerful mechanism that allows you to **replace the type of an object being created without changing a single line of the source code that creates it.**
-
-### The Three Core Mechanics of the Factory
-
-The factory operates on a simple three-step process: **Register, Create, and Override.**
-
-#### 1. Registration (`uvm_*_utils`)
-
-A class must be "registered" with the factory to be eligible for creation and overrides. This is like getting a birth certificate. We use the `uvm_object_utils` macro for `uvm_object`-based classes and `uvm_component_utils` for `uvm_component`-based classes.
+### The Factory Contract
+Every override hinges on the same contract: **register** the class, **create** through the factory, and **override** where needed.
 
 ```systemverilog
 import uvm_pkg::*;
 `include "uvm_macros.svh"
 
 class base_packet extends uvm_sequence_item;
-  // Registration with the factory
-  `uvm_object_utils(base_packet)
-
-  // Constructor
-  function new(string name = "base_packet");
-    super.new(name);
-  endfunction
-endclass
-```
-
-#### 2. Creation (`create()`)
-
-To allow the factory to work its magic, you **must never call `new()` directly** for UVM objects and components. Instead, you must always use the factory's `create()` method. This is the "hook" that allows the factory to intercept the request and perform an override if one is registered.
-
-```systemverilog
-// In some component (e.g., a driver)
-...
-base_packet my_pkt;
-// Instead of my_pkt = new();
-// We use the factory to create the object.
-my_pkt = base_packet::type_id::create("my_pkt");
-...
-```
-
-#### 3. Overrides (`set_*_override`)
-
-In your test, you can instruct the factory to substitute one type for another. There are two main ways to do this:
-
--   **Type Override:** Replace *all* instances of a certain type with another type.
--   **Instance Override:** Replace a *specific instance* of a certain type with another type, based on its path in the component hierarchy.
-
-<InteractiveCode>
-```systemverilog
-import uvm_pkg::*;
-`include "uvm_macros.svh"
-
-// 1. The base packet class
-class base_packet extends uvm_sequence_item;
   `uvm_object_utils(base_packet)
   function new(string name = "base_packet");
     super.new(name);
   endfunction
-  virtual function void print_type();
-    `uvm_info("PKTTYPE", "This is a base_packet", UVM_LOW)
-  endfunction
 endclass
 
-// 2. The special error packet class
 class error_packet extends base_packet;
   `uvm_object_utils(error_packet)
   function new(string name = "error_packet");
     super.new(name);
   endfunction
-  virtual function void print_type();
-    `uvm_info("PKTTYPE", "This is an **error_packet**", UVM_LOW)
-  endfunction
 endclass
 
-// 3. An environment component that creates packets
 class my_env extends uvm_env;
   `uvm_component_utils(my_env)
   function new(string name, uvm_component parent);
@@ -102,27 +55,30 @@ class my_env extends uvm_env;
     base_packet pkt;
     phase.raise_objection(this);
     `uvm_info("ENV", "Creating a packet...", UVM_LOW)
-    // The environment *thinks* it's creating a base_packet
     pkt = base_packet::type_id::create("pkt");
     pkt.print_type();
     phase.drop_objection(this);
   endtask
 endclass
+```
 
-// 4. The test that applies the override
+### Overrides in Action
+Factory overrides let tests redirect traffic without touching environment code.
+
+<InteractiveCode>
+```systemverilog
 class my_test extends uvm_test;
   `uvm_component_utils(my_test)
   my_env env;
+
   function new(string name, uvm_component parent);
     super.new(name, parent);
   endfunction
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    // Set the factory override BEFORE the environment is built
     `uvm_info("TEST", "Setting factory override: base_packet -> error_packet", UVM_LOW)
-    factory.set_type_override_by_type(base_packet::get_type(),
-                                      error_packet::get_type());
+    factory.set_type_override_by_type(base_packet::get_type(), error_packet::get_type());
     env = my_env::type_id::create("env", this);
   endfunction
 endclass
@@ -133,17 +89,36 @@ endmodule
 ```
 </InteractiveCode>
 
-## Phasing
+## Make It Work
+1. **Register every class:** Drop `uvm_object_utils` or `uvm_component_utils` inside the class body.
+2. **Create through the factory:** Use `::type_id::create` instead of `new()` so overrides can intercept construction.
+3. **Select override scope:** Use `set_type_override_by_type` for global swaps; `set_inst_override_by_type` when only one path should change.
+4. **Verify with print hooks:** Call `uvm_top.print_topology()` or custom `print_type()` logs to ensure overrides landed.
 
-UVM phasing is the **schedule** that orchestrates every component. Like stages of a concert rehearsal, components prepare (`build_phase`), connect instruments (`connect_phase`), perform (`run_phase`), and wrap up (`report_phase`).
+**Checklist before moving on:**
+- [ ] You can explain the object vs. component split using the package/building analogy.
+- [ ] You can write the register → create → override sequence without checking docs.
+- [ ] You know which override API to use for global vs. single-instance substitutions.
+
+## Push Further
+- **Layer in configuration:** Pair factory overrides with configuration DB entries for fine-grained tweaks.
+- **Leverage type overrides in regressions:** Swap in predictive monitors or error-injecting drivers per test.
+- **Audit registration:** Lint for missing `*_utils` macros—without them the factory can’t help you.
+- **Memory trick:** Say "register, create, override" whenever you stub a new component.
+
+## UVM Phasing in Context
+Phasing is the rehearsal schedule that keeps buildings (components) coordinated—build before connect, run before report.
 
 <UvmPhasingDiagram />
 
-* Always call `super.build_phase` and friends to ensure parents create children.
-* Phases can be jumped with `phase.jump(uvm_reset_phase::get())`, but use sparingly.
-* Remember: **"Phasing is the rehearsal schedule"** – keep components in sync.
+- Always call parent implementations of each phase (`super.build_phase`, etc.).
+- Raise/drop objections in `run_phase` to control when simulation ends.
+- Jump phases (`phase.jump(...)`) sparingly; use when resetting, not for normal flow.
 
-## Quiz
+## Practice & Reinforce
+- Flashcards – Drill the object/component split and factory lifecycle.
+- Micro-lab – Override a scoreboard component in a toy testbench and confirm the replacement logs.
+- Quiz – Validate your understanding below.
 
 <Quiz questions={[
     {
@@ -177,3 +152,8 @@ UVM phasing is the **schedule** that orchestrates every component. Like stages o
       "explanation": "The `build_phase` executes top-down, ensuring that parent components are created before their children, which is the logical order for construction."
     }
   ]} />
+
+## References & Next Topics
+- Accellera, *UVM Class Reference* (uvm_component, uvm_object, factory API).
+- Mentor Graphics, *Cookbook for UVM Factory Overrides*.
+- Next: [/curriculum/T2_Intermediate/I-UVM-2_Building_TB](../I-UVM-2_Building_TB/index).

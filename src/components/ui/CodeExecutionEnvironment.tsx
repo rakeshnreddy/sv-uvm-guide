@@ -7,6 +7,7 @@ import * as WaveDrom from 'wavedrom';
 import type {
   SimulationStats,
   SimulatorBackend,
+  SimulationWaveform,
 } from '@/server/simulation/types';
 
 interface CodeExecutionEnvironmentProps {
@@ -21,7 +22,7 @@ export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> =
   const [output, setOutput] = useState<string>('');
   const [coverage, setCoverage] = useState<number | null>(null);
   const [regressions, setRegressions] = useState<string[]>([]);
-  const [waveform, setWaveform] = useState<any>(null);
+  const [waveform, setWaveform] = useState<SimulationWaveform | null>(null);
   const [stats, setStats] = useState<SimulationStats | null>(null);
   const waveRef = useRef<HTMLDivElement>(null);
 
@@ -44,7 +45,7 @@ export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> =
       });
       const data = await res.json();
       setOutput(data.output);
-      setWaveform(data.waveform);
+      setWaveform(data.waveform as SimulationWaveform | null);
       setStats(data.stats);
       setCoverage(data.coverage);
       setRegressions(data.regressions || []);

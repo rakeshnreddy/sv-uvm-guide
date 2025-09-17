@@ -1,65 +1,56 @@
 ---
 title: "I-UVM-2: Building a UVM Testbench: Components & Hierarchy"
-description: "Assembling a standard UVM testbench and understanding the role of each component."
+description: "Assemble a layered UVM environment—agents, drivers, sequencers, monitors, and scoreboards—and know how data flows between them."
+flashcards: "I-UVM-2_Building_TB"
 ---
 
-import { Quiz, InteractiveCode, Panel } from '@/components/ui';
+import { InteractiveCode, Quiz } from '@/components/ui';
 import AnimatedUvmTestbenchDiagram from '@/components/diagrams/AnimatedUvmTestbenchDiagram';
-import UvmComponentRelationshipVisualizer from '/src/components/diagrams/UvmComponentRelationshipVisualizer';
-import Link from 'next/link'
+import UvmComponentRelationshipVisualizer from '@/components/diagrams/UvmComponentRelationshipVisualizer';
 
-## Assembling the Pieces
+## Quick Take
+- **What it is:** The UVM testbench is a layered environment where agents wrap protocol knowledge, sequencers feed intent, drivers wiggle pins, monitors observe, and scoreboards compare.
+- **Why it matters:** Using the standard hierarchy keeps big projects consistent—teams can plug in reusable agents, swap drivers, and share scoreboards without rewiring.
+- **The Analogy:** Think of a city transit system—sequencers post routes, drivers operate buses, monitors collect rider data, and the scoreboard is central dispatch verifying riders reach their stops.
 
-With the foundational concepts of objects, components, and the factory understood, we can now assemble a standard UVM testbench. This modular, hierarchical structure is one of the key benefits of UVM, promoting reuse and clear organization.
+> **Retention Hook:** Repeat “agent = driver + sequencer + monitor” whenever you sketch an interface block.
 
-The UVM layered testbench provides a standardized, reusable, and modular architecture for creating robust verification environments. It organizes components into logical layers, facilitating complexity management and promoting best practices in functional verification.
+## Build Your Mental Model
+### Layered Environment Snapshot
+With objects vs. components under your belt, zoom out to the full environment: tests configure and launch an `uvm_env`, the environment instantiates agents and scoreboards, and each agent encapsulates everything needed for a single DUT interface.
 
 <div className="flex justify-center items-center my-8 p-4 border rounded-lg shadow-sm bg-white">
   <AnimatedUvmTestbenchDiagram />
 </div>
 
-## The Standard UVM Components
+### Agents as the Unit of Reuse
+An `uvm_agent` packages the sequencer, driver, and monitor for one interface. Flip `is_active` to control behavior:
+- **Active agents** generate stimulus—driver + sequencer come alive.
+- **Passive agents** listen only—instantiate just the monitor to tap traffic non-invasively.
 
-Let's follow the logical flow of data through the environment to understand the purpose of each standard component.
+### Sequencer ↔ Driver Handshake
+Sequencers manage high-level intent, drivers translate that intent into pin-wiggles. Their protocol keeps stimulus flowing:
+1. Driver blocks on `seq_item_port.get_next_item(req)`.
+2. A sequence running on the sequencer produces the transaction.
+3. The driver drives the interface using the transaction fields.
+4. `item_done()` tells the sequencer the driver is ready for the next request—skip it and the test hangs.
 
-### The UVM Agent: The Unit of Reuse
+```systemverilog
+// Driver requesting transactions from the sequencer
+task my_driver::run_phase(uvm_phase phase);
+  forever begin
+    seq_item_port.get_next_item(req);
+    drive_transfer(req);
+    seq_item_port.item_done();
+  end
+endtask
+```
 
-The `uvm_agent` is the fundamental building block for verifying a single interface (like AXI, APB, or a custom interface). It's a container that bundles together the three key components needed to interact with that interface:
-
--   **Driver:** Drives stimulus onto the interface.
--   **Monitor:** Passively observes signals on the interface.
--   **Sequencer:** Feeds transactions to the Driver.
-
-An agent can be configured as `active` or `passive` via its `is_active` flag.
--   **Active Mode:** The agent generates stimulus. It contains a `uvm_driver` and a `uvm_sequencer`.
--   **Passive Mode:** The agent only listens. It only contains a `uvm_monitor`. This is useful for checking at a system level without driving the signals.
-
-### The Driver and Sequencer: Decoupling Stimulus from Signals
-
-This is a critical concept. The `uvm_sequencer` and `uvm_driver` work together to separate the *intent* of a test from the physical, cycle-accurate protocol.
-
--   **The Sequencer (`uvm_sequencer`)**: This component manages a stream of `uvm_sequence_item`s (transactions). It acts as a "transaction FIFO" for the driver. Sequences, which define the high-level test scenario (e.g., "send 10 random packets"), run on the sequencer.
--   **The Driver (`uvm_driver`)**: The driver's job is purely to wiggle the pins of the DUT interface. It has no knowledge of the overall test. It simply requests the next transaction from the sequencer, and then drives the pins, cycle-by-cycle, to transmit that transaction.
-
-This communication happens via a standard handshake:
-1.  The driver calls `seq_item_port.get_next_item(req)`. This is a *blocking* call; the driver waits until a sequence provides a transaction.
-2.  A sequence running on the sequencer creates a transaction (`req`) and sends it to the driver.
-3.  The driver receives `req` and drives the physical pins according to the data in the transaction.
-4.  Once done, the driver *must* call `seq_item_port.item_done()`. This signals to the sequencer that it is ready for the next item. Forgetting `item_done()` is a common cause of testbench hangs.
-
-### The Monitor and Analysis Components
-
--   **The Monitor (`uvm_monitor`)**: The monitor is the "eyes" of the testbench. It passively observes the DUT's interface signals and, based on the protocol rules, reconstructs the transactions that occurred. It should *never* drive any signals.
--   **Analysis Ports (`uvm_analysis_port`)**: Once the monitor reconstructs a transaction, where does it send it? It writes the transaction to one or more `uvm_analysis_port`s. An analysis port is a broadcast mechanism. It can be connected to multiple subscribers. Any component that needs to know about the transactions on this interface (like a scoreboard or a coverage collector) can connect to this port. This implements a powerful subscriber/observer pattern, decoupling the monitor from the components that consume its data.
--   **The Scoreboard (`uvm_scoreboard`)**: The scoreboard is the primary self-checking component. It typically has at least two inputs: one for "expected" data and one for "actual" data. For example, it might receive transactions from a monitor on an upstream interface (the expected result) and transactions from a monitor on a downstream interface (the actual result). It then compares the two streams to verify that the DUT behaved correctly.
-
-### The Environment
-
-The `uvm_env` is the top-level container for a verification environment. It instantiates one or more agents (for the different interfaces of the DUT) and other components like scoreboards and coverage collectors. The environment is responsible for connecting all the pieces together, primarily by making connections to the analysis ports of its agents' monitors.
+### Monitors, Scoreboards, and the Analysis Fabric
+Monitors reconstruct transactions without touching pins, analysis ports broadcast those transactions, and subscribers (scoreboards, coverage collectors) consume them.
 
 <InteractiveCode>
 ```systemverilog
-// An agent that contains a driver, sequencer, and monitor
 class my_agent extends uvm_agent;
   `uvm_component_utils(my_agent)
   my_driver d;
@@ -82,7 +73,6 @@ class my_agent extends uvm_agent;
   endfunction
 endclass
 
-// An environment that contains an agent and a scoreboard
 class my_env extends uvm_env;
   `uvm_component_utils(my_env)
   my_agent a;
@@ -101,17 +91,38 @@ endclass
 ```
 </InteractiveCode>
 
-### Component Communication: TLM
+### TLM Is Your Wiring Harness
+Transaction-Level Modeling (TLM) abstracts communication so components move data instead of toggling pins.
+- **Ports** send transactions (like mail slots).
+- **Exports/Imps** receive them (the mailboxes).
+- **Analysis ports** broadcast to many listeners.
 
-In a UVM testbench, components need to talk to each other. A monitor needs to send observed transactions to a scoreboard. A producer component might need to send transactions to a consumer. Transaction-Level Modeling (TLM) provides a standardized set of interfaces for this communication. It abstracts away the pin-level details, allowing components to communicate by passing transaction objects.
-
-- **TLM Port:** Think of this as a mail slot. A component with a port "sends mail" (transactions).
-- **TLM Export/Imp:** This is the <Link href="/curriculum/T2_Intermediate/I-SV-3_Functional_Coverage/mailboxes">mailbox</Link>. A component with an export or imp "receives mail".
-- **Analysis Port:** This is a special kind of mail slot for "broadcasting". It sends a copy of the mail to every mailbox connected to it.
+Review the [mailbox primer](../I-SV-3_Functional_Coverage/mailboxes) if the terminology feels rusty.
 
 <UvmComponentRelationshipVisualizer />
 
-## Quiz
+## Make It Work
+1. **Map interfaces to agents:** List every DUT interface and decide which need active vs. passive agents.
+2. **Instantiate via the factory:** In `build_phase`, call `::type_id::create` for each driver, sequencer, monitor, and scoreboard so overrides and configuration stay viable.
+3. **Wire the data paths:** Connect sequencer ↔ driver TLM ports and hook monitor analysis ports into scoreboards and coverage collectors.
+4. **Verify the topology:** Run `uvm_top.print_topology()`—if an agent or connection is missing, fix it before writing sequences.
+
+**Checklist before moving on:**
+- [ ] You can sketch the agent/driver/sequencer/monitor relationships from memory.
+- [ ] You know how to flip an agent between active and passive using configuration.
+- [ ] You can trace which component owns each analysis port or export.
+
+## Push Further
+- **Compose environments:** Build parent envs that instantiate multiple protocol agents and share a scoreboard.
+- **Instrument coverage collectors:** Subscribe coverage components to the same analysis ports the scoreboard uses.
+- **Standardize config knobs:** Centralize agent configuration (passive mode, virtual interfaces) in the environment's `build_phase`.
+- **Regression trick:** Keep shallow passive agents for busses you only monitor—less connection code, more reuse.
+
+## Practice & Reinforce
+- Flashcards – Drill the agent makeup, handshake, and analysis fabric vocabulary.
+- Micro-lab – Convert an agent from active to passive and confirm the driver stops requesting items.
+- Architecture sketch – Draw a dual-agent environment and label each TLM connection.
+- Quiz – Lock in the fundamentals below.
 
 <Quiz questions={[
     {
@@ -132,6 +143,11 @@ In a UVM testbench, components need to talk to each other. A monitor needs to se
         {"text": "It is required by the UVM base classes.", "correct": false},
         {"text": "It simplifies the monitor's job.", "correct": false}
       ],
-      "explanation": "This separation is a cornerstone of UVM methodology. You can write a complex sequence once (e.g., 'send a burst of back-to-back packets') and reuse it with different drivers for different physical interfaces (e.g., an AXI driver or an APB driver) without changing the sequence code."
+      "explanation": "This separation is a cornerstone of UVM methodology. You can write a complex sequence once and reuse it with different drivers for different physical interfaces without touching the sequence code."
     }
   ]} />
+
+## References & Next Topics
+- Accellera, *UVM Class Reference* (uvm_agent, uvm_monitor, analysis ports).
+- Verification Academy, *UVM Testbench Architecture Cookbook*.
+- Next: [/curriculum/T2_Intermediate/I-UVM-3_Sequences](../I-UVM-3_Sequences/index).

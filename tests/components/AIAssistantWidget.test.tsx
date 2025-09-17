@@ -2,7 +2,7 @@ import React from 'react';
 import '@testing-library/jest-dom';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, Mock } from 'vitest';
 import AIAssistantWidget from '../../src/components/widgets/AIAssistantWidget';
 
 vi.mock('@/contexts/AuthContext', () => ({
@@ -38,7 +38,7 @@ describe('AIAssistantWidget page context', () => {
     const sendButton = screen.getByRole('button', { name: /send message/i });
     await userEvent.click(sendButton);
 
-    const fetchMock = fetch as unknown as vi.Mock;
+    const fetchMock = fetch as unknown as Mock;
     expect(fetchMock).toHaveBeenCalled();
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.context).toEqual({

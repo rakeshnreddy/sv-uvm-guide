@@ -54,7 +54,9 @@ const AudioLearningSystem: React.FC = () => {
     if (!Ctor) return;
     const ctx = new Ctor();
     setAudioCtx(ctx);
-    return () => ctx.close();
+    return () => {
+      void ctx.close();
+    };
   }, []);
 
   useEffect(() => {

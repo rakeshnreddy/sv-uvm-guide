@@ -3,7 +3,14 @@ import {
   SimulationResult,
   SimulationStats,
   SimulatorBackend,
+  SimulationWaveform,
 } from './types';
+
+function isSimulationWaveform(value: unknown): value is SimulationWaveform {
+  if (!value || typeof value !== 'object') return false;
+  const candidate = value as { signal?: unknown };
+  return Array.isArray(candidate.signal);
+}
 
 /**
  * Executes a SystemVerilog simulation using an external backend such as
@@ -73,11 +80,12 @@ export async function runSimulation(
       const coverage = covMatch ? parseFloat(covMatch[1]) : 0;
 
       // Parse waveform JSON if provided as `WAVEFORM: { ... }`
-      let waveform: unknown = null;
+      let waveform: SimulationWaveform | null = null;
       const waveMatch = output.match(/WAVEFORM:\s*(\{.*\})/);
       if (waveMatch) {
         try {
-          waveform = JSON.parse(waveMatch[1]);
+          const parsed = JSON.parse(waveMatch[1]);
+          waveform = isSimulationWaveform(parsed) ? parsed : null;
         } catch {
           waveform = null;
         }

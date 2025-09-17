@@ -1,170 +1,114 @@
 ---
 title: "I-UVM-3: Basic UVM Sequences and Stimulus Generation"
-description: "Mastering the core of UVM's powerful stimulus generation methodology by writing sequences."
+description: "Author reusable UVM sequences, understand the sequencer ↔ driver handshake, and stitch stimulus into layered scenarios."
+flashcards: "I-UVM-3_Sequences"
 ---
 
-import { Quiz, InteractiveCode, Panel } from '@/components/ui';
-import Link from 'next/link'
-import { AnimatedUvmSequenceDriverHandshakeDiagram } from '/src/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram.tsx'
+import { InteractiveCode, Quiz } from '@/components/ui';
+import { AnimatedUvmSequenceDriverHandshakeDiagram } from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram.tsx';
 
-## The "Why" of Sequences
+## Quick Take
+- **What it is:** UVM sequences encapsulate stimulus intent—procedural code that generates transactions and hands them to the driver through the sequencer.
+- **Why it matters:** Sequencing keeps tests reusable. You can replay the same sequence across different agents or mix sequences together without rewriting drivers.
+- **The Analogy:** Think of sequences as playlists: they decide which songs (transactions) play and in what order, while the driver is the DJ mixing them onto the bus.
 
-In UVM, we don't write stimulus inside the testcase itself. Instead, we encapsulate test intent into **sequences**. A sequence is a `uvm_object` that contains the logic to generate a stream of related `uvm_sequence_item`s (transactions).
+> **Retention Hook:** Whisper “start, drive, item_done” until the handshake cadence sticks.
 
-Why this extra layer of abstraction?
--   **Reusability:** A sequence like `write_all_registers` can be reused across dozens of tests.
--   **Decoupling:** Sequences are completely decoupled from the physical driver. A sequence defines *what* to send, while the driver handles *how* to send it. This means you can run the same sequence on different agents with different driver implementations.
--   **Layering:** You can build complex scenarios by creating sequences that call other, simpler sequences.
+## Build Your Mental Model
+### Why Sequences Exist
+Instead of scripting stimulus in a test, sequences (`uvm_sequence`) house the scenario logic. Because they extend `uvm_object`, they are easy to configure, clone, and reuse across agents.
+- Reuse a `register_reset_check` sequence across dozens of IPs.
+- Layer small helper sequences inside bigger ones for realistic scenarios.
+- Swap drivers without touching the sequence—intent stays separate from pin-level implementation.
 
-Sequences are the "brains" of the test. They represent the actual test intent.
-
-## The Sequence/Driver Handshake
-
-The communication between the sequence, sequencer, and driver is fundamental. Let's visualize the blocking handshake that occurs when `uvm_do` is called.
+### The Sequencer ↔ Driver Handshake
+The handshake is a blocking baton pass between sequence, sequencer, and driver.
 
 <AnimatedUvmSequenceDriverHandshakeDiagram />
 
-1.  **`driver.get_next_item(req)`**: The driver requests the next item from the sequencer. This call blocks until an item is available from a sequence.
-2.  **`start_item(item)`**: The sequence sends the transaction to the sequencer. The sequencer places it in its FIFO and grants access to the driver. The `start_item` call is *blocking* and does not return until the driver calls `get_next_item()`.
-3.  **Driver executes**: The driver receives the transaction and has exclusive access to drive it.
-4.  **`finish_item(item)`**: The sequence call returns. The transaction has been sent to the driver.
-5.  **`driver.item_done()`**: The driver signals that it has finished with the current item and is ready for the next one. **This is the step that unblocks the sequencer to allow the next transaction.**
+1. Driver calls `get_next_item(req)` and waits.
+2. Sequence randomizes data, calls `start_item(req)` / `finish_item(req)` (or `uvm_do`) to hand over the transaction.
+3. Driver drives the bus.
+4. Driver calls `item_done()` to unblock the next item—skip it and the pipeline jams.
 
-### Your First Sequence: Generating a Single Transaction
-
-A sequence must be extended from `uvm_sequence` and implement the `body()` task. The `body()` task contains the logic for generating transactions. The `uvm_do` family of macros is the standard way to create, randomize, and send a transaction to the driver.
+### Your First Sequence
+Use the `uvm_do` macros to create, randomize, and send items inside `body()`.
 
 <InteractiveCode>
 ```systemverilog
-// The transaction (sequence item)
 class my_transaction extends uvm_sequence_item;
   rand int data;
   `uvm_object_utils_begin(my_transaction)
     `uvm_field_int(data, UVM_DEFAULT)
   `uvm_object_utils_end
-  function new(string name = "my_transaction"); super.new(name); endfunction
 endclass
 
-// The sequence that generates the transactions
-class my_simple_sequence extends uvm_sequence #(my_transaction);
+class my_simple_sequence extends uvm_sequence#(my_transaction);
   `uvm_object_utils(my_simple_sequence)
-  function new(string name = "my_simple_sequence"); super.new(name); endfunction
 
   virtual task body();
     my_transaction req;
-    // Send 5 transactions
     repeat (5) begin
-      // The uvm_do macro is a shortcut for create, randomize, and send
       `uvm_do(req)
     end
   endtask
 endclass
 
-// The driver that executes the transactions
-class my_driver extends uvm_driver #(my_transaction);
+class my_driver extends uvm_driver#(my_transaction);
   `uvm_component_utils(my_driver)
-  // ... constructor ...
+
   virtual task run_phase(uvm_phase phase);
     forever begin
-      // 1. Get the next item from the sequencer
       seq_item_port.get_next_item(req);
-
-      // 2. Drive the transaction to the DUT
-      `uvm_info("DRIVER", $sformatf("Driving transaction: %s", req.sprint()), UVM_MEDIUM)
-      #10; // Simulate driving time
-
-      // 3. Indicate completion to the sequencer
+      drive_transfer(req);
       seq_item_port.item_done();
     end
   endtask
 endclass
 
-// In a test, you would start the sequence on the agent's sequencer:
-// my_simple_sequence_inst.start(env.agent.sequencer);
+// Start the sequence on an agent's sequencer:
+// my_simple_sequence::type_id::create("seq").start(env.agent.sqr);
 ```
 </InteractiveCode>
 
-This example registers the default sequence using <Link href="/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-config-db">uvm_config_db</Link> so the sequencer can retrieve it at runtime.
-
-### Procedural Sequences
-
-The `body()` task is a regular SystemVerilog task, so you can use loops, conditionals, and other procedural constructs to create complex stimulus.
+### Guarding Critical Bursts
+Need exclusive access (e.g., program a mode register)? Use `lock()`/`unlock()` around the critical section or `pre_do()`/`mid_do()` overrides to control arbitration.
 
 ```systemverilog
-class my_burst_sequence extends uvm_sequence#(my_item);
-  `uvm_object_utils(my_burst_sequence)
-  // ... constructor ...
-
-  task body();
-    `uvm_info(get_type_name(), "Starting burst sequence", UVM_LOW)
-    // Send a burst of 10 transactions
-    repeat (10) begin
-      `uvm_do_with(req, {
-        // Constrain the address for this specific transaction
-        req.addr == 8'h40 + i;
-      })
-    end
-    `uvm_info(get_type_name(), "Finished burst sequence", UVM_LOW)
-  endtask
-endclass
+task body();
+  my_transaction req;
+  lock();
+  repeat (5) `uvm_do_with(req, { burst_mode == 1; })
+  unlock();
+endtask
 ```
 
-## Analysis Components
+### Hooking Into Configuration & Analysis
+- Register default sequences via [`uvm_config_db`](./uvm-config-db) so agents pull the right stimulus at runtime.
+- Expose results with analysis ports or to coverage subscribers, keeping stimulus and checking loosely coupled.
 
-Analysis components are the "eyes and ears" of your testbench. They observe the behavior of the DUT and check that it is correct.
+## Make It Work
+1. **Define the transaction:** Extend `uvm_sequence_item` with the fields and constraints sequences will manipulate.
+2. **Build the base sequence:** Override `body()`, call `uvm_do`/`uvm_do_with`, and add logging so failures are traceable.
+3. **Schedule it:** Start the sequence directly or configure it as an `default_sequence` through the sequencer/config DB.
+4. **Verify the handshake:** Watch the driver log and ensure every `get_next_item` is matched with `item_done()`.
 
-### The Monitor
+**Checklist before moving on:**
+- [ ] You can sketch the four-step handshake from memory.
+- [ ] You know when to reach for `lock()` or sequencer arbitration hooks.
+- [ ] You can describe how sequences stay agnostic of driver implementation.
 
-The monitor is a passive component that observes the DUT's interface and captures transactions. It should never drive any signals.
+## Push Further
+- **Layer sequences:** Compose virtual sequences that orchestrate multiple interface agents at once.
+- **Parameterize intent:** Use sequence parameters or configuration objects to tweak behavior without new subclasses.
+- **Tie into coverage:** Trigger covergroups inside sequences to correlate stimulus with coverage bins.
+- **Regression tip:** Seed sequences from the test to replay failing scenarios deterministically.
 
-### The Scoreboard
-
-The scoreboard is a checker component that compares the actual results from the DUT with the expected results.
-
-<InteractiveCode>
-```systemverilog
-// A monitor that observes transactions and broadcasts them
-class my_monitor extends uvm_monitor;
-  `uvm_component_utils(my_monitor)
-  uvm_analysis_port #(my_transaction) ap;
-
-  function new(string name="my_monitor", uvm_component parent=null);
-    super.new(name,parent);
-    ap = new("ap", this);
-  endfunction
-
-  virtual task run_phase(uvm_phase phase);
-    // ... capture bus activity and create a transaction 'tr' ...
-    ap.write(tr);
-  endtask
-endclass
-
-// A scoreboard that subscribes to the monitor's analysis port
-class my_scoreboard extends uvm_scoreboard;
-  `uvm_component_utils(my_scoreboard)
-  uvm_analysis_imp #(my_transaction, my_scoreboard) analysis_export;
-
-  function new(string name="my_scoreboard", uvm_component parent=null);
-    super.new(name,parent);
-    analysis_export = new("analysis_export", this);
-  endfunction
-
-  function void write(my_transaction tr);
-    // ... scoreboard checking logic ...
-  endfunction
-endclass
-```
-</InteractiveCode>
-
-## Key Takeaways
-
--   **Sequences** represent the *intent* of a test and are the primary mechanism for stimulus generation in UVM.
--   They are decoupled from the driver, enabling high reusability.
--   The `uvm_do` family of macros is the standard way to generate and send a single transaction.
--   The **sequence/sequencer/driver handshake** is a critical blocking protocol that you must understand to debug testbench hangs.
--   **Layering sequences** allows you to build complex scenarios from simple, reusable building blocks.
-
-## Quiz
+## Practice & Reinforce
+- Flashcards – Cement the handshake verbs and sequencing patterns.
+- Micro-lab – Add `lock()`/`unlock()` to protect a register programming burst and observe the driver logs.
+- Debug drill – Comment out `item_done()` and practice diagnosing the resulting hang.
+- Quiz – Check your understanding below.
 
 <Quiz questions={[
     {
@@ -188,3 +132,8 @@ endclass
       "explanation": "Forgetting to call `item_done()` is a very common bug. It prevents the sequencer from unblocking and sending the next transaction, causing the testbench to hang."
     }
   ]} />
+
+## References & Next Topics
+- Accellera, *UVM Cookbook* sequencer and arbitration chapter.
+- Verification Academy, *Virtual Sequences and Layered Stimulus* webinar.
+- Next: [/curriculum/T2_Intermediate/I-UVM-4_Factory_and_Overrides](../I-UVM-4_Factory_and_Overrides/index).

@@ -3,7 +3,7 @@ import Link from 'next/link';
 import { promises as fs } from 'fs';
 import path from 'path';
 import { MDXRemote } from 'next-mdx-remote/rsc';
-import { findTopicBySlug, getBreadcrumbs, findPrevNextTopics } from '@/lib';
+import { findTopicBySlug, getBreadcrumbs, findPrevNextTopics, normalizeSlug } from '@/lib';
 import { getFullKnowledgeGraph, wrapConceptsInText } from '@/lib/knowledge-graph-engine';
 import { notFound } from 'next/navigation';
 import Breadcrumbs from '@/components/layout/Breadcrumbs';
@@ -80,17 +80,25 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
     notFound();
   }
 
-  const topic = findTopicBySlug(slug);
+  const normalizedSlug = normalizeSlug(slug);
+
+  if (normalizedSlug.length !== 3) {
+    notFound();
+  }
+
+  const topic = findTopicBySlug(normalizedSlug);
 
   if (!topic) {
     notFound();
   }
 
+  const navigation = findPrevNextTopics(normalizedSlug);
+
   const mdxPath = path.join(
     process.cwd(),
     'content',
     'curriculum',
-    ...slug
+    ...normalizedSlug
   ) + '.mdx';
   let mdxContent;
   let frontmatter: Record<string, any> = {};
@@ -109,7 +117,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
 
   return (
     <div className="p-4 md:p-6 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
-      <Breadcrumbs slug={slug} />
+      <Breadcrumbs slug={normalizedSlug} />
       <h1 className="text-3xl sm:text-4xl font-bold text-primary font-sans mb-6 pb-2 border-b border-white/20">
         {topic.title}
       </h1>
@@ -121,16 +129,16 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
 
       {/* Navigation Footer */}
       <div className="mt-8 pt-4 border-t border-white/20 flex justify-between items-center">
-        {findPrevNextTopics(slug).prev ? (
-          <Link href={`/curriculum/${findPrevNextTopics(slug).prev?.slug}`} className="text-primary hover:underline">
-            &larr; Previous: {findPrevNextTopics(slug).prev?.title}
+        {navigation.prev ? (
+          <Link href={`/curriculum/${navigation.prev.slug}`} className="text-primary hover:underline">
+            &larr; Previous: {navigation.prev.title}
           </Link>
         ) : (
           <div />
         )}
-        {findPrevNextTopics(slug).next ? (
-          <Link href={`/curriculum/${findPrevNextTopics(slug).next?.slug}`} className="text-primary hover:underline">
-            Next: {findPrevNextTopics(slug).next?.title} &rarr;
+        {navigation.next ? (
+          <Link href={`/curriculum/${navigation.next.slug}`} className="text-primary hover:underline">
+            Next: {navigation.next.title} &rarr;
           </Link>
         ) : (
           <div />

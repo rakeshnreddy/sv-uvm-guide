@@ -17,9 +17,9 @@ interface User {
 }
 
 const recommendations = [
-  { title: 'Advanced Sequences', href: '/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing' },
-  { title: 'The UVM Factory In-Depth', href: '/curriculum/T3_Advanced/A-UVM-2_The_UVM_Factory_In-Depth' },
-  { title: 'Building a RAL Model', href: '/curriculum/T3_Advanced/A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL' },
+  { title: 'Advanced Sequences', href: '/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/index' },
+  { title: 'The UVM Factory In-Depth', href: '/curriculum/T3_Advanced/A-UVM-2_The_UVM_Factory_In-Depth/index' },
+  { title: 'Building a RAL Model', href: '/curriculum/T3_Advanced/A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL/index' },
 ];
 
 const PersonalizationSection = ({ user }: { user: User | null }) => {

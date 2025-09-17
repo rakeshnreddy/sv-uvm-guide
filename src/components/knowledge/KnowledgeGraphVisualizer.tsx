@@ -10,6 +10,7 @@ interface D3Link extends d3.SimulationLinkDatum<D3Node> {
   source: string | D3Node;
   target: string | D3Node;
   type: RelationshipEdge['type'];
+  strength?: number;
 }
 
 interface KnowledgeGraphVisualizerProps {

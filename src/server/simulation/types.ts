@@ -11,11 +11,25 @@ export interface SimulationStats {
 
 export type SimulatorBackend = 'wasm' | 'icarus' | 'verilator';
 
+export interface SimulationWaveformSignal {
+  name: string;
+  wave: string;
+  data?: unknown;
+  period?: number;
+  phase?: number;
+  [key: string]: unknown;
+}
+
+export interface SimulationWaveform {
+  signal: SimulationWaveformSignal[];
+  [key: string]: unknown;
+}
+
 export interface SimulationResult {
   /** Combined stdout/stderr output from the simulator */
   output: string;
   /** Waveform JSON suitable for WaveDrom rendering */
-  waveform: unknown;
+  waveform: SimulationWaveform | null;
   /** Aggregate performance and resource metrics */
   stats: SimulationStats;
   /** Code coverage percentage reported by the simulator */
