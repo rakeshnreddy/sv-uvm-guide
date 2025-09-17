@@ -50,7 +50,10 @@ const TestimonialsCarousel = () => {
       viewport={{ once: true, amount: 0.3 }}
       transition={{ duration: 0.8 }}
     >
-      <h3 className="text-3xl font-bold text-center text-white mb-8">What Our Learners Say</h3>
+      <h3 className="text-3xl font-bold text-center text-[color:var(--blueprint-foreground)] mb-6">
+        What Our Learners Say
+      </h3>
+      <div className="neon-divider mb-8 mx-auto max-w-2xl" />
       <div className="overflow-hidden" ref={emblaRef}>
         <div className="flex">
           {testimonials.map((testimonial, index) => (

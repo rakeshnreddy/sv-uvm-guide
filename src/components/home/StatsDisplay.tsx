@@ -41,17 +41,23 @@ const itemVariants = {
 const StatsDisplay = () => {
   return (
     <motion.div
-      className="mt-12 w-full"
+      className="mt-8 w-full"
       variants={containerVariants}
       initial="hidden"
       animate="show"
     >
-      <div className="mx-auto max-w-4xl grid grid-cols-3 gap-8">
+      <div className="mx-auto max-w-5xl grid grid-cols-1 sm:grid-cols-3 gap-6">
         {stats.map((stat, index) => (
-          <motion.div key={index} className="text-center text-white" variants={itemVariants}>
-            <div className="text-accent mb-2">{stat.icon}</div>
-            <p className="text-3xl font-bold">{stat.value}</p>
-            <p className="text-sm opacity-80">{stat.label}</p>
+          <motion.div
+            key={index}
+            className="glass-card px-6 py-8 text-center"
+            variants={itemVariants}
+          >
+            <div className="flex items-center justify-center text-[color:var(--blueprint-accent)] mb-3">
+              {stat.icon}
+            </div>
+            <p className="text-3xl font-bold text-[color:var(--blueprint-foreground)]">{stat.value}</p>
+            <p className="text-sm text-[color:var(--blueprint-foreground)]/70">{stat.label}</p>
           </motion.div>
         ))}
       </div>

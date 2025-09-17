@@ -7,9 +7,11 @@ export const useZoomPan = (
   svgRef: React.RefObject<SVGSVGElement>,
   zoomRef?: React.MutableRefObject<
     d3.ZoomBehavior<SVGSVGElement, unknown> | null
-  >
+  >,
+  enabled: boolean = true
 ) => {
   useEffect(() => {
+    if (!enabled) return;
     const svgElement = svgRef.current;
     if (!svgElement) return;
     const svg = d3.select(svgElement);
@@ -55,7 +57,7 @@ export const useZoomPan = (
       svgElement.removeEventListener("keydown", handleKey);
       svg.on(".zoom", null);
     };
-  }, [svgRef, zoomRef]);
+  }, [svgRef, zoomRef, enabled]);
 };
 
 export default useZoomPan;

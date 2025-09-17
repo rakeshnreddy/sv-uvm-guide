@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import * as d3 from 'd3';
 import { uvmComponents, uvmConnections } from './uvm-data-model';
 import { Button } from '@/components/ui/Button';
@@ -20,55 +20,76 @@ const UvmComponentRelationshipVisualizer = () => {
   const [path, setPath] = useState<string[]>([]);
   const [isolatedNode, setIsolatedNode] = useState<string | null>(null);
 
-  const baseLinks = uvmConnections.filter(c =>
-    (showComposition && c.type === 'composition') ||
-    (showInheritance && c.type === 'inheritance') ||
-    (showPorts && portTypes.includes(c.type))
+  const baseLinks = useMemo(
+    () =>
+      uvmConnections.filter(
+        c =>
+          (showComposition && c.type === 'composition') ||
+          (showInheritance && c.type === 'inheritance') ||
+          (showPorts && portTypes.includes(c.type))
+      ),
+    [showComposition, showInheritance, showPorts]
   );
-  let nodesFiltered = uvmComponents;
-  let linksFiltered = baseLinks;
-  if (isolatedNode) {
+
+  const { nodesFiltered, linksFiltered } = useMemo(() => {
+    if (!isolatedNode) {
+      return { nodesFiltered: uvmComponents, linksFiltered: baseLinks };
+    }
     const neighborIds = new Set<string>([isolatedNode]);
     baseLinks.forEach(l => {
       if (l.source === isolatedNode) neighborIds.add(l.target);
       if (l.target === isolatedNode) neighborIds.add(l.source);
     });
-    nodesFiltered = uvmComponents.filter(n => neighborIds.has(n.id));
-    linksFiltered = baseLinks.filter(l => neighborIds.has(l.source) && neighborIds.has(l.target));
-  }
-  const nodeMetrics = new Map<string, { in: number; out: number; types: Record<string, number>; clustering: number }>();
-  const adjacency = new Map<string, Set<string>>();
-  linksFiltered.forEach(l => {
-    const src = nodeMetrics.get(l.source) || { in: 0, out: 0, types: {} as Record<string, number>, clustering: 0 };
-    src.out++;
-    src.types[l.type] = (src.types[l.type] || 0) + 1;
-    nodeMetrics.set(l.source, src);
-    const tgt = nodeMetrics.get(l.target) || { in: 0, out: 0, types: {} as Record<string, number>, clustering: 0 };
-    tgt.in++;
-    tgt.types[l.type] = (tgt.types[l.type] || 0) + 1;
-    nodeMetrics.set(l.target, tgt);
-    if (!adjacency.has(l.source)) adjacency.set(l.source, new Set());
-    if (!adjacency.has(l.target)) adjacency.set(l.target, new Set());
-    adjacency.get(l.source)!.add(l.target);
-    adjacency.get(l.target)!.add(l.source);
-  });
-  adjacency.forEach((neighbors, node) => {
-    const k = neighbors.size;
-    let clustering = 0;
-    if (k > 1) {
-      let linksBetween = 0;
-      const arr = Array.from(neighbors);
-      for (let i = 0; i < arr.length; i++) {
-        for (let j = i + 1; j < arr.length; j++) {
-          if (adjacency.get(arr[i])?.has(arr[j])) linksBetween++;
+    return {
+      nodesFiltered: uvmComponents.filter(n => neighborIds.has(n.id)),
+      linksFiltered: baseLinks.filter(
+        l => neighborIds.has(l.source) && neighborIds.has(l.target)
+      ),
+    };
+  }, [baseLinks, isolatedNode]);
+
+  const nodeMetrics = useMemo(() => {
+    const metrics = new Map<
+      string,
+      { in: number; out: number; types: Record<string, number>; clustering: number }
+    >();
+    const adjacency = new Map<string, Set<string>>();
+
+    linksFiltered.forEach(l => {
+      const src = metrics.get(l.source) || { in: 0, out: 0, types: {} as Record<string, number>, clustering: 0 };
+      src.out++;
+      src.types[l.type] = (src.types[l.type] || 0) + 1;
+      metrics.set(l.source, src);
+      const tgt = metrics.get(l.target) || { in: 0, out: 0, types: {} as Record<string, number>, clustering: 0 };
+      tgt.in++;
+      tgt.types[l.type] = (tgt.types[l.type] || 0) + 1;
+      metrics.set(l.target, tgt);
+      if (!adjacency.has(l.source)) adjacency.set(l.source, new Set());
+      if (!adjacency.has(l.target)) adjacency.set(l.target, new Set());
+      adjacency.get(l.source)!.add(l.target);
+      adjacency.get(l.target)!.add(l.source);
+    });
+
+    adjacency.forEach((neighbors, node) => {
+      const k = neighbors.size;
+      let clustering = 0;
+      if (k > 1) {
+        let linksBetween = 0;
+        const arr = Array.from(neighbors);
+        for (let i = 0; i < arr.length; i++) {
+          for (let j = i + 1; j < arr.length; j++) {
+            if (adjacency.get(arr[i])?.has(arr[j])) linksBetween++;
+          }
         }
+        clustering = linksBetween / (k * (k - 1) / 2);
       }
-      clustering = linksBetween / (k * (k - 1) / 2);
-    }
-    const m = nodeMetrics.get(node) || { in: 0, out: 0, types: {}, clustering: 0 };
-    m.clustering = clustering;
-    nodeMetrics.set(node, m);
-  });
+      const metric = metrics.get(node) || { in: 0, out: 0, types: {}, clustering: 0 };
+      metric.clustering = clustering;
+      metrics.set(node, metric);
+    });
+
+    return metrics;
+  }, [linksFiltered]);
 
   const nodes: (d3.SimulationNodeDatum & {
     id: string;
@@ -77,16 +98,19 @@ const UvmComponentRelationshipVisualizer = () => {
     description: string;
     parent?: string;
     children?: string[];
-  })[] = nodesFiltered.map(c => ({ ...c }));
-  const phaseCount: Record<string, number> = {};
-  const links = linksFiltered.map(l => ({
-    ...l,
-    order: l.phase
-      ? (phaseCount[l.phase] = (phaseCount[l.phase] || 0) + 1)
-      : undefined,
-  }));
+  })[] = useMemo(() => nodesFiltered.map(c => ({ ...c })), [nodesFiltered]);
 
-  const findPath = (start: string, end: string): string[] => {
+  const links = useMemo(() => {
+    const phaseCount: Record<string, number> = {};
+    return linksFiltered.map(l => ({
+      ...l,
+      order: l.phase
+        ? (phaseCount[l.phase] = (phaseCount[l.phase] || 0) + 1)
+        : undefined,
+    }));
+  }, [linksFiltered]);
+
+  const findPath = useCallback((start: string, end: string): string[] => {
     const queue: string[] = [start];
     const visited = new Set<string>([start]);
     const parent = new Map<string, string>();
@@ -119,7 +143,7 @@ const UvmComponentRelationshipVisualizer = () => {
       cur = p;
     }
     return result;
-  };
+  }, [linksFiltered]);
 
   useEffect(() => {
     if (!svgRef.current) return;

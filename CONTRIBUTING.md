@@ -25,6 +25,8 @@ All new content must follow this structure.
 ## Content Style Guide
 
 *   **Tone:** Authoritative but accessible.
+*   **Topic Template:** Follow the Quick Take → References & Next Topics structure documented in `STYLE_GUIDE.md`. Use `docs/topic-template.mdx` as your starting point when creating or refreshing a page.
+*   **Visual Direction:** Align with the glassmorphism and visual density guidance outlined in `docs/visual-design-guide.md`; every major section should include a supporting visual while preserving full explanatory depth.
 *   **Text Formatting:** Use Markdown for all content.
 *   **Code Style:** Follow industry-standard SystemVerilog and UVM formatting conventions.
 
@@ -42,6 +44,7 @@ All pull requests must be linked to an existing issue in the issue tracker.
 For any new content to be merged, it must meet the following criteria:
 
 *   Content is technically accurate.
+*   Uses the required section order (Quick Take → References & Next Topics) and references the migration tracker when updated.
 *   Includes at least one minimal, complete, compilable, and executable code example.
 *   Adheres to the "Why before How" principle.
 *   Includes a "Key Takeaways" summary.

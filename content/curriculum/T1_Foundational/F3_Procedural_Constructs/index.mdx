@@ -1,161 +1,152 @@
 ---
 title: "F3: Procedural Constructs"
-description: "Understanding the building blocks of SystemVerilog code."
+description: "Master the procedural heart of SystemVerilog—initial/always/final blocks, flow control, and assignment semantics that drive every testbench."
 flashcards: "F3_Procedural_Constructs"
 ---
 
-import { Quiz, InteractiveCode } from '@/components/ui';
-import ProceduralBlocksSimulator from '/src/components/animations/ProceduralBlocksSimulator';
+import { InteractiveCode, Quiz } from '@/components/ui';
+import ProceduralBlocksSimulator from '@/components/animations/ProceduralBlocksSimulator';
 
-## Level 1: The Elevator Pitch
+## Quick Take
+- **What it is:** Procedural constructs are SystemVerilog’s sequential code paths—`initial`, `always`, `final`, loops, and conditionals—that choreograph stimulus and checking.
+- **Why it matters:** Misusing blocking vs. non-blocking assignments or mis-scoping procedural code leads to race conditions, false failures, and weeks of lost debug time.
+- **The Analogy:** Picture a stage production: `initial` is the stage manager’s countdown, `always_ff` and `always_comb` are the actors following scripted cues, and flow control is the choreography keeping every move in sync.
 
-**What is it?** Procedural constructs are the parts of SystemVerilog that look and feel like a traditional programming language. They allow you to write sequential, algorithmic code to control the flow of your testbench and model complex behavior.
+> **Visual cue:** This page pairs simulators, code overlays, and animated timelines with the narrative so you can *see* how procedural elements run frame by frame.
 
-**The Analogy:** Think of procedural constructs as the "recipe" for your testbench. The `initial` and `always` blocks are the cooking instructions, and the flow control statements (`if`, `for`, `while`) are the steps in the recipe.
+## Build Your Mental Model
+### Timeline of a Simulation Tick
+<div className="my-8 rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur shadow-2xl">
+  <ProceduralBlocksSimulator />
+</div>
 
-**Why this matters:** Procedural constructs are the workhorses of any testbench. You'll use them to generate stimulus, create complex checking logic, and control the overall flow of your tests.
+SystemVerilog simulators run every timestep through distinct event regions: **active** (procedural code executes), **inactive** (zero-delay updates), **NBA** (non-blocking assignments commit), and **postponed** (assertion sampling & `final`). Knowing where your code lands explains why a `<=` update appears “later” than a blocking `=`—the simulator is honoring those regions. Internalizing that timeline eliminates the feeling that the tool is acting randomly.
 
-## Level 2: The Practical Explanation
+### Interactive Core Patterns
+<InteractiveCode
+  language="systemverilog"
+  fileName="procedural_constructs.sv"
+  code={`
+logic clk, reset_n, d_in, q_out;
 
-### `initial`, `always`, and `final` blocks
-
-- **`initial` blocks** are executed only once at the beginning of a simulation.
-- **`always` blocks** are executed continuously throughout a simulation.
-- **`final` blocks** are executed only once at the end of a simulation.
-
-### Blocking vs. Non-blocking Assignments
-
-A critical concept in procedural blocks is the difference between blocking (`=`) and non-blocking (`<=`) assignments.
-
-- **Blocking assignments (`=`)** are executed in the order they appear in the code.
-- **Non-blocking assignments (`<=`)** are scheduled to occur at the end of the current time step.
-
-<InteractiveCode>
-```systemverilog
-// Preferred approach: always_ff for a simple flip-flop
-logic clk, reset, d_in, q_out;
-always_ff @(posedge clk or posedge reset) begin
-  if (reset) begin
-    q_out <= 1'b0; // Non-blocking assignment for sequential logic
-  end else begin
-    q_out <= d_in; // Update on each clock edge
-  end
-end
-
-// Alternative approach using always @ (for reference)
-// SystemVerilog allows always_ff to be replaced with always
-// but always_ff provides better synthesis/simulation checking
-always @(posedge clk or posedge reset) begin
-  if (reset)
+// Sequential region: non-blocking keeps flip-flops in sync
+always_ff @(posedge clk or negedge reset_n) begin
+  if (!reset_n)
     q_out <= 1'b0;
   else
     q_out <= d_in;
 end
 
-// Preferred approach: always_comb for combinational logic
-logic a, b, c, y_comb, y_comb_alt;
+// Combinational region: blocking to model logic equations
+logic [2:0] state_next;
 always_comb begin
-  y_comb = (a & b) | c; // Blocking assignment for combinational logic
+  unique case (q_out)
+    1'b0: state_next = 3'b001;
+    1'b1: state_next = 3'b010;
+    default: state_next = 3'b000;
+  endcase
 end
 
-// Alternative continuous assignment
-assign y_comb_alt = (a & b) | c;
-```
-</InteractiveCode>
+// Testbench stimulus using initial + fork/join_none
+initial begin
+  reset_n = 0;
+  d_in = 0;
+  #10 reset_n = 1;
+  fork
+    begin // drive pattern
+      repeat (5) begin
+        #5 d_in = $random;
+      end
+    end
+    begin // monitor
+      forever @(posedge clk) $display("time=%0t q_out=%0b", $time, q_out);
+    end
+  join_none
+end
 
-<ProceduralBlocksSimulator />
+final begin
+  $display("Simulation complete. Final state=%0b", q_out);
+end
+  `}
+  explanationSteps={[
+    { target: "1-8", title: "Sequential Rules", explanation: "`always_ff` with non-blocking (`<=`) mirrors flip-flop behavior and keeps updates aligned with the clock." },
+    { target: "10-16", title: "Combinational Intent", explanation: "`always_comb` and blocking assignments evaluate instantly, catching missing sensitivity list issues automatically." },
+    { target: "18-34", title: "Concurrency with Fork/Join", explanation: "Testbenches routinely spawn concurrent threads—one drives stimulus, another checks results—using `fork ... join_none`." },
+    { target: "36-38", title: "Graceful Shutdown", explanation: "`final` blocks run once at simulation end—perfect for summaries, coverage dumps, or resource cleanup." }
+  ]}
+/>
 
-### Practical Application: Running a Simple Simulation
+### Common Pitfalls
+- Mixing blocking and non-blocking assignments to the same signal, causing races.
+- Using `always` instead of `always_ff`/`always_comb`, hiding missing signals in sensitivity lists.
+- Forgetting to terminate `fork/join` threads, leaving simulations hanging.
 
-1. **Save the Files:** Put the flip-flop example in `dff.sv` and the testbench in `tb_dff.sv`.
-2. **Compile and Run:**
-   ```bash
-   # Synopsys VCS
-   vcs -sverilog tb_dff.sv dff.sv -o simv
-   ./simv
+### Flow-Control Building Blocks
+- **Conditionals (`if`, `case`, `unique case`)** gate behavior inside procedural blocks. Use `unique`/`priority` to signal intent to tools and catch missing branches.
+- **Loops (`for`, `foreach`, `while`, `repeat`)** generate structured stimulus. `foreach` shines with dynamic arrays, while `repeat` crafts reset pulses or pattern bursts.
+- **Tasks & Functions** wrap procedural logic for reuse. Functions must stay side-effect free; tasks can launch timing controls. Distinguish them so your scoreboard or sequence code remains predictable.
 
-   # Mentor Questa/ModelSim
-   vlog dff.sv tb_dff.sv
-   vsim -c tb_dff -do "run -all; quit"
-   ```
-3. **Inspect the Output:** Use `$display` or a waveform viewer to confirm `q_out` follows `d_in` on each clock.
+## Make It Work
+1. **Set the stage:** Draft a timing diagram for your DUT, marking where sequential and combinational regions live. Annotate which constructs you’ll use (`always_ff`, `always_comb`, `initial`).
+2. **Instrument aggressively:** Add assertions that fail if a sequential block uses `=` or if a combinational block uses `<=`. Tools like Verilator and SpyGlass can automate these checks.
+3. **Prototype the flow:** Use the interactive snippet above as a template. Swap in your DUT signals and run a quick sim to validate ordering.
 
-## Level 3: Expert Insights
+**Checklist before moving on:**
+- [ ] You can explain why sequential logic needs non-blocking assignments and combinational logic prefers blocking.
+- [ ] You’ve run a mini-simulation that includes `initial`, `always_ff`, and `final` blocks working together.
+- [ ] You can describe the event scheduling order (active → inactive → NBA → postponed) and place each construct within it.
 
-**Race Conditions:** A common source of bugs in procedural code is race conditions. This is when the order of execution of two or more concurrent processes is not guaranteed. Using non-blocking assignments in sequential logic helps to avoid race conditions.
+## Push Further
+- Model a multi-threaded sequencer using `fork/join_any` and observe how join semantics affect stimulus timing.
+- Rewrite legacy `always @(*)` code with `always_comb` and document the tool warnings that disappear.
+- Experiment with `disable fork` to clean up auxiliary threads—visualize the effect in a waveform viewer.
 
-**Simulation vs. Synthesis:** Not all procedural constructs are synthesizable. For example, `initial` blocks are generally not synthesizable, and `final` blocks are never synthesizable.
+## Practice & Reinforce
+- Flashcards – Review definitions for blocking/non-blocking, `always_ff`, `fork/join` semantics.
+- Quiz – Complete the knowledge check below.
+- Animation lab – Capture a screen recording of the procedural simulator while toggling assignments to see race conditions surface.
+- Code kata – Convert a buggy `always` block using blocking assignments into a clean `always_ff` implementation.
 
-**Memory & Retention Tip:** Remember: **Non-blocking for sequential logic (`always_ff`), blocking for combinational logic (`always_comb`) and testbench procedural code.**
+## References & Next Topics
+- Spear & Tumbush, *SystemVerilog for Verification*, Chapter 3.
+- Accellera, *SystemVerilog LRM*, sections on process scheduling.
+- Verification Academy session: “Avoiding Race Conditions in SystemVerilog.”
+- Next: [`/curriculum/T1_Foundational/F4_RTL_and_Testbench_Constructs`](../F4_RTL_and_Testbench_Constructs/).
 
-## Industry Connection
-
-Procedural constructs show up everywhere in real verification environments. Sequences, scoreboards, and monitors all rely on `initial` and `always` blocks to generate and check traffic. Companies building CPUs, GPUs, or networking ASICs depend on engineers who can wield these constructs to create reusable, scalable testbenches.
-
-## Historical Context
-
-Early Verilog used a generic `always` block for everything. SystemVerilog introduced `always_ff`, `always_comb`, and `always_latch` to express intent and catch bugs earlier. This evolution was driven by decades of debugging race conditions and mismatched sensitivity lists in large projects.
-
-## Career Impact
-
-Mastering procedural code is table stakes for a verification engineer. Interviews often probe your understanding of timing and concurrency, and on the job you will review others' code for correct use of blocking and non-blocking assignments. Strong fundamentals translate directly into faster debugging and higher-quality silicon.
-
-## Tool Integration
-
-Simulators such as VCS, Questa, and Xcelium provide warnings when `always_ff` and `always_comb` are misused. Lint tools (Verilator, SpyGlass) flag blocking assignments in sequential logic, while waveform viewers help you observe the effect of scheduling. Knowing how these tools interpret procedural constructs lets you diagnose issues quickly.
-
-## Common Interview Questions
-
-**Q1: Why would you use `always_ff` instead of a generic `always @`?**
-> **A1:** `always_ff` clearly communicates intent, restricts the sensitivity list to clock and reset, and enables tools to check for improper blocking assignments.
-
-**Q2: What happens if you mix blocking and non-blocking assignments to the same signal?**
-> **A2:** It can create unpredictable race conditions because the assignments execute at different times. Most simulators warn about this, but it's best to avoid the mix altogether.
-
-**Q3: When is it appropriate to use a `final` block?**
-> **A3:** Use `final` for cleanup code or summary reports that should run once when simulation ends.
-
-## Self-Assessment Exercises
-
-- Write a small module that uses a `for` loop inside an `initial` block to generate a ramp on a signal.
-- Convert a sequential block that uses blocking assignments to the correct non-blocking style.
-- Explain what happens if an `always_comb` block forgets a signal in the expression. How would a simulator behave?
-
-## Code Review Challenge
-
-Identify the bug in the sequential logic below and fix it.
-
-<InteractiveCode>
-```systemverilog
-module flop_bug(input logic clk, d, output logic q);
-  always @(posedge clk) begin
-    q = d; // Is this assignment style correct?
-  end
-endmodule
-```
-</InteractiveCode>
-
-## Check Your Understanding
-
-<Quiz questions={[
+<Quiz
+  questions={[
     {
-      "question": "When should you use a non-blocking assignment (`<=`)?",
-      "answers": [
-        {"text": "In combinational logic (`always_comb`)", "correct": false},
-        {"text": "In sequential logic (`always_ff`)", "correct": true},
-        {"text": "In `initial` blocks", "correct": false},
-        {"text": "In `final` blocks", "correct": false}
+      question: 'When should you use a non-blocking assignment (`<=`)?',
+      answers: [
+        { text: 'In combinational logic (`always_comb`)', correct: false },
+        { text: 'In sequential logic (`always_ff`)', correct: true },
+        { text: 'Inside `final` blocks', correct: false },
+        { text: 'Inside `initial` blocks for stimulus', correct: false }
       ],
-      "explanation": "Non-blocking assignments are used in sequential logic to avoid race conditions and correctly model the behavior of flip-flops."
+      explanation:
+        'Non-blocking assignments align with flip-flop behavior and prevent races between concurrent sequential blocks.'
     },
     {
-      "question": "Which type of procedural block is executed only once at the beginning of a simulation?",
-      "answers": [
-        {"text": "`always`", "correct": false},
-        {"text": "`initial`", "correct": true},
-        {"text": "`final`", "correct": false},
-        {"text": "`fork-join`", "correct": false}
+      question: 'Which procedural block runs exactly once after time zero?',
+      answers: [
+        { text: '`always_comb`', correct: false },
+        { text: '`initial`', correct: true },
+        { text: '`final`', correct: false },
+        { text: '`always_ff`', correct: false }
       ],
-      "explanation": "`initial` blocks are used for initialization tasks that only need to be performed once at the beginning of a simulation."
+      explanation:
+        '`initial` executes a single time at simulation startup—it is ideal for reset sequences or configuration setup.'
+    },
+    {
+      question: 'Why prefer `always_comb` over `always @(*)`?',
+      answers: [
+        { text: 'It allows non-blocking assignments', correct: false },
+        { text: 'It automatically infers the sensitivity list and checks for latches', correct: true },
+        { text: 'It runs in the NBA region', correct: false },
+        { text: 'It is synthesizable for flip-flops', correct: false }
+      ],
+      explanation:
+        '`always_comb` generates the correct sensitivity list and warns when storage elements sneak in—ideal for robust combinational modeling.'
     }
-  ]} />
+  ]}
+/>

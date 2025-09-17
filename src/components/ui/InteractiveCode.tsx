@@ -134,6 +134,148 @@ const parseTargetLines = (target: string, monacoInstance: typeof monaco): monaco
   return ranges;
 };
 
+interface ASTNode {
+  type: string;
+  name?: string;
+  children?: ASTNode[];
+  details?: Record<string, any>;
+}
+
+interface AnalysisResult {
+  ast: ASTNode[];
+  metrics: {
+    lines: number;
+    modules: number;
+    alwaysBlocks: number;
+    complexity: number;
+  };
+  suggestions: string[];
+  warnings: string[];
+  refactorSuggestions: string[];
+  performance: {
+    speed: string;
+    memory: number;
+    timing: string;
+  };
+  testCases: string[];
+}
+
+const parseSystemVerilogAST = (input: string): ASTNode[] => {
+  const lines = input.split(/\r?\n/);
+  const root: ASTNode[] = [];
+  let currentModule: ASTNode | null = null;
+  const stack: ASTNode[] = [];
+
+  lines.forEach((line) => {
+    const moduleMatch = line.match(/^\s*module\s+(\w+)/);
+    if (moduleMatch) {
+      const moduleNode: ASTNode = { type: 'module', name: moduleMatch[1], children: [] };
+      root.push(moduleNode);
+      currentModule = moduleNode;
+      stack.length = 0;
+      return;
+    }
+    if (/^\s*endmodule/.test(line)) {
+      currentModule = null;
+      stack.length = 0;
+      return;
+    }
+    if (!currentModule) return;
+
+    const alwaysMatch = line.match(/^\s*always(_ff|_comb)?/);
+    if (alwaysMatch) {
+      const alwaysNode: ASTNode = {
+        type: 'always',
+        name: alwaysMatch[0],
+        children: [],
+      };
+      currentModule.children!.push(alwaysNode);
+      stack.push(alwaysNode);
+      return;
+    }
+    if (/^\s*begin\b/.test(line)) {
+      const blockNode: ASTNode = { type: 'block', children: [] };
+      const parent = stack[stack.length - 1] || currentModule;
+      parent.children!.push(blockNode);
+      stack.push(blockNode);
+      return;
+    }
+    if (/^\s*end\b/.test(line)) {
+      stack.pop();
+      return;
+    }
+    const parent = stack[stack.length - 1] || currentModule;
+    parent.children!.push({ type: 'statement', details: { line: line.trim() } });
+  });
+  return root;
+};
+
+const analyzeSystemVerilog = (input: string): AnalysisResult => {
+  const lines = input.split(/\r?\n/);
+  const ast = parseSystemVerilogAST(input);
+  const modules = ast.length;
+  let alwaysBlocks = 0;
+  ast.forEach((m) => {
+    alwaysBlocks += m.children?.filter((c) => c.type === 'always').length || 0;
+  });
+  const complexity = lines.reduce(
+    (acc, l) => acc + ((l.match(/\b(if|case|for|while)\b/g) || []).length),
+    0
+  );
+
+  const metrics = {
+    lines: lines.length,
+    modules,
+    alwaysBlocks,
+    complexity,
+  };
+
+  const suggestions: string[] = [];
+  const refactorSuggestions: string[] = [];
+
+  if (input.match(/\btodo\b/i)) {
+    suggestions.push('Remove TODO comments before final submission.');
+  }
+  if (input.includes('always_ff') && !input.includes('<=')) {
+    suggestions.push('Use non-blocking assignments (<=) in sequential logic.');
+  }
+  if (complexity > 10) {
+    refactorSuggestions.push('Consider simplifying complex conditional logic.');
+  }
+  if (lines.some((l) => l.length > 120)) {
+    refactorSuggestions.push('Split long lines to improve readability.');
+  }
+
+  const warnings: string[] = [];
+  if (input.includes('#')) {
+    warnings.push('Avoid using # delays for synthesizable code.');
+  }
+  if (input.match(/\bfork\b/)) {
+    warnings.push('fork...join detected; ensure this is safe for your design.');
+  }
+
+  const memory = lines.filter((l) => l.match(/\b(reg|logic|byte|int|bit|shortint|longint)\b/)).length * 4;
+  const performance = {
+    speed: complexity > 20 ? 'Slow' : complexity > 5 ? 'Moderate' : 'Fast',
+    memory,
+    timing: `${alwaysBlocks * 10 + complexity} ns estimated latency`,
+  };
+
+  const testCases = ast.map(
+    (m) => `module tb_${m.name};\n  ${m.name} uut();\n  initial begin\n    // Add test sequences here\n  end\nendmodule`
+  );
+
+  return {
+    ast,
+    metrics,
+    suggestions,
+    warnings,
+    refactorSuggestions,
+    performance,
+    testCases,
+  };
+};
+
 export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   children,
   language = "systemverilog",
@@ -148,7 +290,7 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   const { theme } = useTheme();
   const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
   const monacoRef = useRef<typeof monaco | null>(null);
-  const [decorations, setDecorations] = useState<string[]>([]);
+  const decorationsRef = useRef<string[]>([]);
 
   const code = useMemo(() => {
     let codeString = '';
@@ -340,10 +482,8 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
     };
   };
 
-  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
-  useEffect(() => {
-    setAnalysis(analyzeSystemVerilog(codeContent));
-  }, [codeContent]);
+  /* eslint-disable-next-line react-hooks/exhaustive-deps -- analyzeSystemVerilog is a stable helper */
+  const analysis = useMemo(() => analyzeSystemVerilog(codeContent), [codeContent]);
 
   const svgRef = useRef<SVGSVGElement | null>(null);
   const flowRef = useRef<SVGSVGElement | null>(null);
@@ -410,7 +550,7 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
     if (editorRef.current && monacoRef.current && hasExplanations) {
       const currentStep = explanationSteps[currentStepIndex];
       const newDecorations = editorRef.current.deltaDecorations(
-        decorations,
+        decorationsRef.current,
         currentStep ? parseTargetLines(currentStep.target, monacoRef.current).map(range => ({
           range,
           options: {
@@ -420,7 +560,7 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
           }
         })) : []
       );
-      setDecorations(newDecorations);
+      decorationsRef.current = newDecorations;
 
       if (currentStep) {
         const ranges = parseTargetLines(currentStep.target, monacoRef.current);
@@ -439,25 +579,25 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
 
     // Initial decoration update
     if (hasExplanations) {
-        const currentStep = explanationSteps[currentStepIndex];
-        if (currentStep) {
-            const ranges = parseTargetLines(currentStep.target, monacoInstance);
-            const newDecorations = editor.deltaDecorations(
-                [],
-                ranges.map(range => ({
-                    range,
-                    options: {
-                        isWholeLine: true,
-                        className: 'monaco-highlighted-line',
-                        marginClassName: 'monaco-highlighted-line-margin',
-                    }
-                }))
-            );
-            setDecorations(newDecorations);
-            if (ranges.length > 0) {
-              editor.revealLineInCenter(ranges[0].startLineNumber);
+      const currentStep = explanationSteps[currentStepIndex];
+      if (currentStep) {
+        const ranges = parseTargetLines(currentStep.target, monacoInstance);
+        const newDecorations = editor.deltaDecorations(
+          [],
+          ranges.map(range => ({
+            range,
+            options: {
+              isWholeLine: true,
+              className: 'monaco-highlighted-line',
+              marginClassName: 'monaco-highlighted-line-margin',
             }
+          }))
+        );
+        decorationsRef.current = newDecorations;
+        if (ranges.length > 0) {
+          editor.revealLineInCenter(ranges[0].startLineNumber);
         }
+      }
     }
   };
 

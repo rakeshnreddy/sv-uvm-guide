@@ -10,9 +10,7 @@ export const useAccessibility = (
   { svg = true } = {}
 ) => {
   useKeyboardNavigation(ref as React.RefObject<HTMLElement>);
-  if (svg) {
-    useZoomPan(ref as React.RefObject<SVGSVGElement>);
-  }
+  useZoomPan(ref as React.RefObject<SVGSVGElement>, undefined, svg);
 
   useEffect(() => {
     const el = ref.current;

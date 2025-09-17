@@ -38,6 +38,15 @@ const config: Config = {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
         },
+        blueprint: {
+          base: "var(--blueprint-bg)",
+          foreground: "var(--blueprint-foreground)",
+          glass: "var(--blueprint-glass)",
+          glassStrong: "var(--blueprint-glass-strong)",
+          accent: "var(--blueprint-accent)",
+          accentSecondary: "var(--blueprint-accent-secondary)",
+          border: "var(--blueprint-border)",
+        },
       },
       fontFamily: {
         sans: ["var(--font-cal-sans)", "var(--font-inter)"],
@@ -49,13 +58,19 @@ const config: Config = {
         md: "calc(var(--radius, 0.5rem) - 2px)",
         sm: "calc(var(--radius, 0.5rem) - 4px)",
       },
+      boxShadow: {
+        blueprint: "0 28px 60px rgba(8, 15, 35, 0.55)",
+        "blueprint-soft": "0 16px 40px rgba(20, 33, 61, 0.18)",
+      },
       backgroundImage: {
         "gradient-radial": "radial-gradient(var(--tw-gradient-stops))",
         "gradient-conic":
           "conic-gradient(from 180deg at 50% 50%, var(--tw-gradient-stops))",
+        "hero-glow": "var(--blueprint-gradient)",
       },
       backdropBlur: {
         xs: "2px",
+        xxl: "24px",
       },
     },
   },

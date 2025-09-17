@@ -43,7 +43,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F2: SystemVerilog Data Types",
             "slug": "index",
-            "description": "Understand SystemVerilog data types: the crucial difference between 2-state (bit, int) and 4-state (logic, wire, reg) types, and their application in modeling hardware signals and building verification testbenches."
+            "description": "Understand how SystemVerilog data types balance hardware fidelity with simulation speed, and choose the right type for every signal."
           },
           {
             "title": "Arrays: Packed, Unpacked, Dynamic, Queues, Associative | SystemVerilog Language Foundations",
@@ -97,7 +97,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F3: Procedural Constructs",
             "slug": "index",
-            "description": "Understanding the building blocks of SystemVerilog code."
+            "description": "Master the procedural heart of SystemVerilog—initial/always/final blocks, flow control, and assignment semantics that drive every testbench."
           },
           {
             "title": "Procedural Flow Control | SystemVerilog Language Foundations",
@@ -134,7 +134,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F4: RTL and Testbench Constructs",
             "slug": "index",
-            "description": "Key constructs for design and verification."
+            "description": "Wire up designs and verification harnesses with modules, interfaces, packages, and clocking blocks that keep signal intent crystal clear."
           },
           {
             "title": "F4: Interfaces and Modports",
@@ -200,7 +200,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-SV-1: Object-Oriented Programming for Verification",
             "slug": "index",
-            "description": "Understanding OOP as the foundation for modern verification methodologies like UVM."
+            "description": "Build reusable, polymorphic verification components with SystemVerilog classes, inheritance, and virtual methods."
           },
           {
             "title": "Constructors, 'this', and 'super' | Advanced SystemVerilog for Verification",
@@ -221,7 +221,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-SV-2: Constrained Randomization",
             "slug": "index",
-            "description": "Using constrained randomization to intelligently search for bugs."
+            "description": "Guide SystemVerilog's random stimulus with constraints, distributions, and inline tweaks to uncover corner-case bugs fast."
           },
           {
             "title": "Advanced Constraints: implication and iteration | Advanced SystemVerilog for Verification",
@@ -247,7 +247,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-SV-3: Functional Coverage",
             "slug": "index",
-            "description": "Answering the question 'Are we done yet?' by modeling and measuring functional coverage."
+            "description": "Model verification intent with covergroups, coverpoints, and crosses to prove you've exercised every critical scenario."
           },
           {
             "title": "Coverage Options and Sampling | Advanced UVM Techniques & Strategy",

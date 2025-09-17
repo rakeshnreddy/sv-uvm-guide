@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Button } from '@/components/ui/Button';
 
 type Difficulty = 'Easy' | 'Medium' | 'Hard';
@@ -35,7 +35,7 @@ export const AdaptiveTestEngine = () => {
     return questionBank.filter(q => q.difficulty === currentDifficulty && !answeredQuestions.includes(q.id));
   }, [currentDifficulty, answeredQuestions]);
 
-  const selectNextQuestion = () => {
+  const selectNextQuestion = useCallback(() => {
     let nextQuestion: Question | undefined;
     if (availableQuestions.length > 0) {
       nextQuestion = availableQuestions[Math.floor(Math.random() * availableQuestions.length)];
@@ -55,7 +55,7 @@ export const AdaptiveTestEngine = () => {
 
     setSelectedAnswer(null);
     setFeedback('');
-  };
+  }, [availableQuestions, answeredQuestions]);
 
   const startQuiz = () => {
     setAnsweredQuestions([]);
@@ -66,10 +66,9 @@ export const AdaptiveTestEngine = () => {
 
   useEffect(() => {
     if (isStarted) {
-      // This effect runs when isStarted becomes true, or when the list of answered questions changes.
       selectNextQuestion();
     }
-  }, [isStarted]);
+  }, [isStarted, selectNextQuestion]);
 
 
   const handleAnswerSubmit = () => {

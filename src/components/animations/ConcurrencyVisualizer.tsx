@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence, PanInfo } from 'framer-motion';
 import { concurrencyData } from './concurrency-data';
 import { Button } from '@/components/ui/Button';
@@ -37,17 +37,14 @@ const ConcurrencyVisualizer = () => {
   const mutexRef = useRef<HTMLDivElement>(null);
   const eventRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const dragAreaRef = useRef<HTMLDivElement>(null);
   const visible = useLazyRender(containerRef);
   const { locale } = useLocale();
   const { theme } = useTheme();
 
-  useAccessibility(containerRef, 'Concurrency visualizer', { svg: false });
+  useAccessibility(dragAreaRef as React.RefObject<HTMLElement>, 'Concurrency visualizer canvas', { svg: false });
 
-  if (!visible) {
-    return <div ref={containerRef}>Loading visualization...</div>;
-  }
-
-  const recalcScheduling = (state: ProcState[]): ProcState[] => {
+  const recalcScheduling = useCallback((state: ProcState[]): ProcState[] => {
     const unblocked = state.filter(p => p.status !== "blocked");
     if (unblocked.length === 0) return state;
     const highest = Math.min(...unblocked.map(p => p.priority));
@@ -55,9 +52,9 @@ const ConcurrencyVisualizer = () => {
       if (p.status === "blocked") return p;
       return { ...p, status: p.priority === highest ? "running" : "waiting" };
     });
-  };
+  }, []);
 
-  const adjustPriority = (id: string, delta: number) => {
+  const adjustPriority = useCallback((id: string, delta: number) => {
     setProcessState(prev => {
       const target = prev.find(p => p.id === id);
       if (!target) return prev;
@@ -71,7 +68,7 @@ const ConcurrencyVisualizer = () => {
       });
       return recalcScheduling(updated);
     });
-  };
+  }, [recalcScheduling]);
 
   useEffect(() => {
     const initial: ProcState[] = concurrencyData[exampleIndex].processes.map(
@@ -88,7 +85,7 @@ const ConcurrencyVisualizer = () => {
     setConflict([]);
     setEventWaiters([]);
     setOverlay(null);
-  }, [exampleIndex]);
+  }, [exampleIndex, recalcScheduling]);
 
   useEffect(() => {
     const allBlocked =
@@ -277,6 +274,11 @@ const ConcurrencyVisualizer = () => {
 
   return (
     <div ref={containerRef} className="w-full">
+      {!visible ? (
+        <div className="glass-card p-10 text-center text-[color:var(--blueprint-foreground)]/80">
+          Loading visualization...
+        </div>
+      ) : (
       <Card>
       <CardHeader>
         <CardTitle>Concurrency Visualizer</CardTitle>
@@ -313,14 +315,14 @@ const ConcurrencyVisualizer = () => {
           </div>
           <div className="flex flex-col items-center">
             <div
-              ref={containerRef}
+              ref={dragAreaRef}
               className="relative w-full h-64 bg-muted rounded-lg p-4 overflow-hidden"
             >
               {processState.map(proc => (
                 <motion.div
                   key={proc.id}
                   drag
-                  dragConstraints={containerRef}
+                  dragConstraints={dragAreaRef}
                   onDragEnd={(e, info) => handleDragEnd(proc.id, e, info)}
                   className={`absolute w-24 h-16 rounded-lg flex items-center justify-center cursor-move ${
                     conflict.includes(proc.id)
@@ -450,11 +452,19 @@ const ConcurrencyVisualizer = () => {
         </AnimatePresence>
 
         <div className="flex justify-between mt-4">
-          <Button onClick={handlePrev} disabled={currentStepIndex === 0}>Previous</Button>
-          <Button onClick={handleNext} disabled={currentStepIndex === currentExample.steps.length - 1}>Next</Button>
+          <Button onClick={handlePrev} disabled={currentStepIndex === 0}>
+            Previous
+          </Button>
+          <Button
+            onClick={handleNext}
+            disabled={currentStepIndex === currentExample.steps.length - 1}
+          >
+            Next
+          </Button>
         </div>
       </CardContent>
       </Card>
+      )}
     </div>
   );
 };

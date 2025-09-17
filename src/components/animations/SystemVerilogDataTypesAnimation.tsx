@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/Button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -43,12 +43,12 @@ const SystemVerilogDataTypesAnimation = () => {
   const [logicBitValue, setLogicBitValue] = useState<StateColorKey>('0');
   const [isPlaying, setIsPlaying] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
-  const cycleState = (currentValue: StateColorKey, values: StateColorKey[]) => {
+  const cycleState = useCallback((currentValue: StateColorKey, values: StateColorKey[]) => {
     const currentIndex = values.indexOf(currentValue);
     return values[(currentIndex + 1) % values.length];
-  };
+  }, []);
 
-  const steps = [
+  const steps = useMemo(() => [
     () => {
       setInputA('1');
       setInputB('1');
@@ -67,7 +67,7 @@ const SystemVerilogDataTypesAnimation = () => {
     }),
     () => setLogicValue(v => cycleState(v, FourStateValues)),
     () => setLogicBitValue(v => cycleState(v, FourStateValues)),
-  ];
+  ], [cycleState]);
 
   useEffect(() => {
     if (!isPlaying) return;

@@ -77,15 +77,20 @@ export const VideoLearningCenter: React.FC<VideoLearningCenterProps> = ({
   };
 
   // Analytics recording helper
-  const record = (event: AnalyticsEvent) => {
-    const updated = recordEvent(events, event);
-    setEvents(updated);
-    onRecordEvent?.(updated);
-  };
+  const record = useCallback(
+    (event: AnalyticsEvent) => {
+      setEvents(prev => {
+        const updated = recordEvent(prev, event);
+        onRecordEvent?.(updated);
+        return updated;
+      });
+    },
+    [onRecordEvent]
+  );
 
   useEffect(() => {
     record({ type: 'interaction', value: currentIndex, timestamp: Date.now() });
-  }, [currentIndex]);
+  }, [currentIndex, record]);
 
   // Quiz integration hooks
   const startQuiz = () => {

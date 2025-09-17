@@ -91,7 +91,7 @@ export const SkillMatrixVisualizer = () => {
       .style('stroke', 'rgba(59, 130, 246, 1)')
       .style('stroke-width', '2px');
 
-  }, [mockSkills]);
+  }, []);
 
   return (
     <div className="p-4 border border-dashed border-white/30 rounded-lg my-6 bg-white/5">

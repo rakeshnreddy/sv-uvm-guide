@@ -140,33 +140,44 @@ const PracticeHub = () => {
   }, {} as Record<PracticeItem['type'], PracticeItem[]>);
 
   return (
-    <div className="container mx-auto px-4 py-8">
-      <h1 className="text-4xl font-bold text-primary mb-4">Practice Hub</h1>
-      <p className="text-lg text-muted-foreground mb-8">
-        Sharpen your SystemVerilog and UVM skills with hands-on exercises, interactive visualizations, and tools.
-      </p>
+    <div className="relative w-full bg-[color:var(--blueprint-bg)] text-[color:var(--blueprint-foreground)] overflow-hidden">
+      <div className="absolute inset-0 hero-gradient opacity-40" />
+      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#050B1A]/60 to-[#050B1A]" />
 
-      {Object.entries(categorizedItems).map(([category, items]) => (
-        <section key={category} className="mb-12">
-          <h2 className="text-2xl font-semibold text-accent mb-4 pb-2 border-b border-border">{category}</h2>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {items.map((item) => (
-              <Link href={item.href} key={item.href} className="group">
-                <Card className="h-full transition-all duration-300 hover:shadow-lg hover:border-primary">
-                  <CardHeader>
-                    <div className="flex justify-between items-start">
-                      <CardTitle className="group-hover:text-primary">{item.title}</CardTitle>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-muted-foreground">{item.description}</p>
-                  </CardContent>
-                </Card>
-              </Link>
-            ))}
-          </div>
-        </section>
-      ))}
+      <div className="relative z-10 container mx-auto px-6 py-16">
+        <div className="glass-card glow-border px-8 py-10 mb-12 text-center">
+          <h1 className="text-4xl md:text-5xl font-bold mb-4">Practice Hub</h1>
+          <p className="text-lg text-[color:var(--blueprint-foreground)]/75 max-w-2xl mx-auto">
+            Sharpen your SystemVerilog & UVM skills with immersive exercises, visualizations, and tools.
+          </p>
+        </div>
+
+        {Object.entries(categorizedItems).map(([category, items]) => (
+          <section key={category} className="mb-14">
+            <div className="flex items-center justify-between mb-5">
+              <h2 className="text-2xl font-semibold text-[color:var(--blueprint-accent)]">{category}</h2>
+              <div className="neon-divider w-40" />
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {items.map((item) => (
+                <Link href={item.href} key={item.href} className="group">
+                  <Card className="h-full px-6 py-8 transition-transform duration-300 group-hover:-translate-y-1">
+                    <CardHeader className="p-0 mb-4">
+                      <div className="flex justify-between items-start">
+                        <CardTitle className="text-[color:var(--blueprint-foreground)] group-hover:text-[color:var(--blueprint-accent)]">{item.title}</CardTitle>
+                        <span className="text-xs uppercase tracking-widest text-[color:var(--blueprint-foreground)]/50">{item.type}</span>
+                      </div>
+                    </CardHeader>
+                    <CardContent className="p-0">
+                      <p className="text-sm text-[color:var(--blueprint-foreground)]/70">{item.description}</p>
+                    </CardContent>
+                  </Card>
+                </Link>
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
     </div>
   );
 };

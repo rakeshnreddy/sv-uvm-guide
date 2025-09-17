@@ -26,55 +26,64 @@ const HeroSection = () => {
   }, []);
 
   return (
-    <section className="relative w-full min-h-screen flex flex-col justify-center items-center text-center text-white overflow-hidden py-20">
-      <div className="absolute inset-0 w-full h-full animated-gradient z-0" />
-      <div className="absolute inset-0 w-full h-full bg-black/30 z-0" />
+    <section className="relative w-full min-h-screen bg-[color:var(--blueprint-bg)] text-[color:var(--blueprint-foreground)] overflow-hidden py-24">
+      <div className="absolute inset-0 hero-gradient opacity-60" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(100,255,218,0.25),transparent_55%)]" />
+      <div className="absolute inset-0 bg-gradient-to-b from-[#050B1A]/70 via-transparent to-[#050B1A]" />
 
-      <div className="relative z-10 p-4 flex flex-col items-center">
-        <motion.h1
-          className="text-5xl md:text-7xl font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-b from-white to-gray-300"
-          initial={{ opacity: 0, y: -30 }}
+      <div className="relative z-10 flex flex-col items-center gap-14 px-6">
+        <motion.div
+          initial={{ opacity: 0, y: -24 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8 }}
+          className="glass-card glow-border max-w-5xl w-full px-8 py-12 text-center"
         >
-          Master SystemVerilog & UVM
-        </motion.h1>
-
-        <AnimatePresence mode="wait">
-          <motion.p
-            key={taglineIndex}
-            initial={{ opacity: 0, y: -20 }}
+          <motion.h1
+            className="text-5xl md:text-7xl font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-b from-white/95 to-white/60"
+            initial={{ opacity: 0, y: -30 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            transition={{ duration: 0.5 }}
-            className="text-xl md:text-2xl mb-8 text-gray-200 max-w-2xl"
+            transition={{ duration: 0.8 }}
           >
-            {taglines[taglineIndex]}
-          </motion.p>
-        </AnimatePresence>
+            Master SystemVerilog & UVM
+          </motion.h1>
 
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.5, delay: 0.3 }}
-        >
-          <Button size="lg" asChild>
-            <a href="/quiz/placement" className="btn-gradient text-white font-bold text-lg px-8 py-6 rounded-full shadow-lg">
-              Take Skill Level Assessment
-              <ArrowRight className="ml-2" />
-            </a>
-          </Button>
+          <AnimatePresence mode="wait">
+            <motion.p
+              key={taglineIndex}
+              initial={{ opacity: 0, y: -20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 20 }}
+              transition={{ duration: 0.5 }}
+              className="text-xl md:text-2xl mb-8 text-[color:var(--blueprint-foreground)]/80 max-w-3xl mx-auto"
+            >
+              {taglines[taglineIndex]}
+            </motion.p>
+          </AnimatePresence>
+
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.5, delay: 0.3 }}
+          >
+            <Button size="lg" asChild>
+              <a
+                href="/quiz/placement"
+                className="btn-gradient text-white font-bold text-lg px-8 py-6 rounded-full shadow-blueprint"
+              >
+                Take Skill Level Assessment
+                <ArrowRight className="ml-2" />
+              </a>
+            </Button>
+          </motion.div>
         </motion.div>
 
         <motion.div
-          className="mt-16 w-full max-w-4xl px-4"
+          className="glass-card max-w-4xl w-full px-4 py-6"
           initial={{ opacity: 0, y: 50 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.8, delay: 0.6 }}
         >
-          <div className="bg-white/10 backdrop-blur-md rounded-xl p-4 shadow-2xl border border-white/20">
-            <InteractiveUvmArchitectureDiagram />
-          </div>
+          <InteractiveUvmArchitectureDiagram />
         </motion.div>
 
         <StatsDisplay />
