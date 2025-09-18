@@ -17,5 +17,9 @@ Use this table to track adoption of the Quick Take → References & Next Topics 
 | T2 | I-UVM-3: Basic UVM Sequences | `content/curriculum/T2_Intermediate/I-UVM-3_Sequences/index.mdx` | ✅ | Refreshed with Quick Take, handshake walkthrough, and sequencing drills on 2025-09-18 |
 | T2 | I-UVM-4: UVM Factory and Overrides | `content/curriculum/T2_Intermediate/I-UVM-4_Factory_and_Overrides/index.mdx` | ✅ | Converted to Quick Take structure with override scope guidance + flashcards on 2025-09-18 |
 | T2 | I-UVM-5: UVM Phasing & Synchronization | `content/curriculum/T2_Intermediate/I-UVM-5_Phasing_and_Synchronization/index.mdx` | ✅ | Updated with Quick Take phasing overview, objection drills, and flashcards on 2025-09-18 |
+| T3 | A-UVM-1: Advanced Sequencing | `content/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/index.mdx` | ✅ | Migrated to Quick Take structure with orchestration patterns on 2025-09-18 |
+| T3 | A-UVM-2: UVM Factory In-Depth | `content/curriculum/T3_Advanced/A-UVM-2_The_UVM_Factory_In-Depth/index.mdx` | ✅ | Converted to Quick Take structure with override policy guidance on 2025-09-18 |
+| T3 | A-UVM-3: Advanced Techniques | `content/curriculum/T3_Advanced/A-UVM-3_Advanced_UVM_Techniques/index.mdx` | ✅ | Migrated to Quick Take structure covering RAL, callbacks, and coverage orchestration on 2025-09-18 |
+| T3 | A-UVM-4: RAL Deep Dive | `content/curriculum/T3_Advanced/A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL/index.mdx` | ✅ | Converted to Quick Take structure emphasizing adapters and hybrid access on 2025-09-18 |
 
 _Add additional rows for Tier 2+ as you migrate those modules._

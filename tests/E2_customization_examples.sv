@@ -120,7 +120,8 @@ class my_test extends uvm_test;
     driver = my_driver::type_id::create("driver", this);
 
     // Add the report catcher
-    demote_error_catcher catcher = new("catcher");
+    demote_error_catcher catcher;
+    catcher = demote_error_catcher::type_id::create("catcher");
     uvm_report_cb::add(null, catcher);
 
     // Add the callback

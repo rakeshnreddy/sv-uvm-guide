@@ -22,7 +22,8 @@ class alu_monitor extends uvm_monitor;
     forever begin
       @(vif.monitor_cb);
       if (vif.monitor_cb.start) begin
-        alu_transaction item = new();
+        alu_transaction item;
+        item = alu_transaction::type_id::create("item", this);
         item.a = vif.monitor_cb.a;
         item.b = vif.monitor_cb.b;
         item.op = alu_op_e'(vif.monitor_cb.op);

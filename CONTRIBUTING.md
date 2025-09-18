@@ -35,7 +35,8 @@ All new content must follow this structure.
 1.  **Fork the repository.**
 2.  **Create a feature branch.**
 3.  **Make your changes.**
-4.  **Submit a pull request.**
+4.  **Run through the [PR checklist](docs/pr-checklist.md).**
+5.  **Submit a pull request.**
 
 All pull requests must be linked to an existing issue in the issue tracker.
 

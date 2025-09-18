@@ -38,7 +38,7 @@ class scoreboard extends uvm_scoreboard;
       `uvm_info("SCOREBOARD", $sformatf("Checking transaction: op=%s, a=%0h, b=%0h",
                 input_tx.op.name(), input_tx.a, input_tx.b), UVM_HIGH)
 
-      expected_tx = new();
+      expected_tx = alu_transaction::type_id::create("expected_tx", this);
       predict_result(input_tx, expected_tx);
 
       if (!expected_tx.compare(output_tx)) begin

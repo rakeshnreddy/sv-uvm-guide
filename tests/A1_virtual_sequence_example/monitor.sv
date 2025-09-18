@@ -20,7 +20,8 @@ class monitor extends uvm_monitor;
 
   virtual task run_phase(uvm_phase phase);
     forever begin
-      sequence_item item = new();
+      sequence_item item;
+      item = sequence_item::type_id::create("item", this);
       @(vif.monitor_cb);
       item.a = vif.monitor_cb.a;
       item.b = vif.monitor_cb.b;

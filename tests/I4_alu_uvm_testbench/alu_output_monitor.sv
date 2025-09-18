@@ -22,7 +22,8 @@ class alu_output_monitor extends uvm_monitor;
     forever begin
       @(vif.monitor_cb);
       if (vif.monitor_cb.done) begin
-        alu_transaction item = new();
+        alu_transaction item;
+        item = alu_transaction::type_id::create("item", this);
         item.result = vif.monitor_cb.result;
         item_collected_port.write(item);
       end

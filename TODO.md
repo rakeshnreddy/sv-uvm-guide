@@ -23,8 +23,8 @@
 ## Coverage & Automation
 - [x] Add regression test coverage for slug normalization so 2-segment curriculum routes stay routable
 - [x] Add lint/test check in CI for template compliance on all tiers
-- [ ] Build PR checklist referencing template + visual design guide
-- [ ] Script a factory audit that flags `uvm_*` classes still using direct `new()` instead of `::type_id::create`
+- [x] Build PR checklist referencing template + visual design guide
+- [x] Script a factory audit that flags `uvm_*` classes still using direct `new()` instead of `::type_id::create`
 
 ## Interactive Components
 - [ ] Finish UVM exercises (Agent Builder, Phase Sorter, Scoreboard) – scoring, feedback, persistence

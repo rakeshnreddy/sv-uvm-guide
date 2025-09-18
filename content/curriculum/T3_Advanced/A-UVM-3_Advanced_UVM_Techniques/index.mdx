@@ -1,105 +1,124 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import InteractiveCode from "@/components/ui/InteractiveCode";
+---
+title: "A-UVM-3: Advanced UVM Techniques & Strategy"
+description: "Orchestrate register models, virtual sequences, callbacks, and functional coverage to harden complex UVM environments."
+flashcards: "A-UVM-3_Advanced_UVM_Techniques"
+---
 
-export const metadata = {
-  title: "Advanced UVM Techniques & Strategy | Advanced UVM",
-  description: "Expert-level concepts like RAL, virtual sequences, callbacks, and coverage integration.",
-};
+import { InteractiveCode } from '@/components/ui';
 
-<InfoPage title="Advanced UVM Techniques & Strategy" uvm_concept_tags={["ral","virtual sequence","callback","coverage"]}>
+## Quick Take
+- **What it is:** A playbook of expert UVM patterns—RAL integration, virtual sequence control, callbacks, custom phases, and coverage wiring.
+- **Why it matters:** Large SoCs demand reusable infrastructure; these techniques keep stimulus, checking, and configuration aligned without rewriting agents.
+- **The Analogy:** Think of a mission control room: RAL mirrors the system state, virtual sequences schedule missions, callbacks inject last-minute tweaks, and coverage confirms objectives were hit.
 
-## Level 1: Quick Overviews
+> **Signal:** If "just tweak the test" means touching three agents, a scoreboard, and a register file, apply these advanced hooks instead.
 
-- **Register Abstraction Layer (RAL)** – A framework to model DUT registers as objects. It lets tests read/write registers consistently and keeps a mirrored view of the hardware.
-- **Virtual Sequences & Advanced Sequencing** – Virtual sequences orchestrate multiple sequencers for complex scenarios such as resets or simultaneous bus traffic.
-- **UVM Extensibility** – Callbacks and custom phases allow code to hook into the standard UVM flow without modifying existing components.
-- **Functional Coverage in UVM** – Covergroups embedded in monitors or scoreboards collect metrics that link back to the verification plan.
+## Build Your Mental Model
+### Register Abstraction Layer (RAL)
+RAL turns DUT registers into objects you can script, mirror, and reset in one place. Build a `uvm_reg_block`, map it to bus addresses, then let sequences perform frontdoor (through the bus) or backdoor (direct) accesses.
 
-## Level 2: Detailed Examples
-
-### RAL Basics
 <InteractiveCode
-  code={`class my_reg extends uvm_reg;
-  rand uvm_reg_field f;
-  function new(); super.new("my_reg", 8, UVM_NO_COVERAGE); endfunction
+  language="systemverilog"
+  fileName="ral_block.sv"
+  code={`class status_reg extends uvm_reg;
+  rand uvm_reg_field state;
+  function new(); super.new("status_reg", 8, UVM_NO_COVERAGE); endfunction
   virtual function void build();
-    f = uvm_reg_field::type_id::create("f");
-    f.configure(this, 8, 0, "RW", 0, 0, 1, 0);
+    state = uvm_reg_field::type_id::create("state");
+    state.configure(this, 8, 0, "RO", 0, 0, 1, 0);
   endfunction
 endclass
 
-class my_block extends uvm_reg_block;
-  my_reg r;
+class codec_block extends uvm_reg_block;
+  status_reg status;
   virtual function void build();
-    r = my_reg::type_id::create("r");
-    r.configure(this, null);
-    r.build();
-    default_map = create_map("sbus", 'h0, 4, UVM_LITTLE_ENDIAN);
-    default_map.add_reg(r, 'h0, "RW");
+    status = status_reg::type_id::create("status");
+    status.configure(this, null);
+    status.build();
+    default_map = create_map("cfg_bus", 'h0, 4, UVM_LITTLE_ENDIAN);
+    default_map.add_reg(status, 'h20, "RO");
   endfunction
 endclass
 
-class reg_seq extends uvm_sequence#(uvm_reg_item);
-  my_block model;
+class codec_reg_seq extends uvm_sequence#(uvm_reg_item);
+  codec_block blk;
   virtual task body();
-    uvm_status_e status;
-    model.r.write(status, 'hAA, UVM_FRONTDOOR);
-    model.r.write(status, 'h55, UVM_BACKDOOR);
+    uvm_status_e s;
+    uvm_reg_data_t data;
+    blk.status.read(s, data, UVM_FRONTDOOR);
+    blk.status.read(s, data, UVM_BACKDOOR);
   endtask
 endclass`}
-  language="systemverilog"
   explanationSteps={[
-    { target: "1-7", title: "Register Definition", explanation: "Define fields inside a uvm_reg class." },
-    { target: "9-18", title: "Register Block", explanation: "Registers are placed into maps for addressability." },
-    { target: "20-30", title: "Frontdoor vs Backdoor", explanation: "Sequences can access regs via bus or directly." }
+    { target: "1-8", title: "Model the register", explanation: "Creates a typed view of the DUT register with access policy." },
+    { target: "10-19", title: "Map it", explanation: "Place registers into an address map so bus agents can locate them." },
+    { target: "21-28", title: "Use both doors", explanation: "Sequences choose frontdoor for protocol accuracy or backdoor for speed/reset." }
   ]}
 />
 
-### Advanced Sequencing
+### Virtual sequences & arbitration
+Use a virtual sequencer to coordinate agents and apply `grab()` / `lock()` only when exclusivity is essential. Combine with events or analysis FIFO notifications instead of fixed delays so agents stay synchronized without race conditions.
+
 <InteractiveCode
-  code={`class top_virtual_seq extends uvm_sequence;
-  virtual task body();
-    p_sequencer.seqrA.grab(this);
+  language="systemverilog"
+  fileName="powerup_virtual_seq.sv"
+  code={`class powerup_vseq extends uvm_sequence;
+  `uvm_object_utils(powerup_vseq)
+
+  powerup_seqr_h ctrl_sqr;
+  fabric_seqr_h  fabric_sqr;
+
+  task body();
+    ctrl_init_seq ctrl = ctrl_init_seq::type_id::create("ctrl");
+    fabric_bringup_seq fabric = fabric_bringup_seq::type_id::create("fabric");
+
+    ctrl.start(ctrl_sqr);
+    ctrl.wait_for_completion();
+
     fork
-      seqA.start(p_sequencer.seqrA);
-      seqB.start(p_sequencer.seqrB);
+      fabric.start(fabric_sqr);
+      begin
+        fabric_monitor_seq mon = fabric_monitor_seq::type_id::create("mon");
+        mon.start(fabric_sqr);
+      end
     join
-    p_sequencer.seqrA.ungrab(this);
   endtask
 endclass`}
-  language="systemverilog"
   explanationSteps={[
-    { target: "2-3", explanation: "Grab locks a sequencer for exclusive use." },
-    { target: "4-6", explanation: "Start child sequences on two sequencers." },
-    { target: "7", explanation: "Release the lock when done." }
+    { target: "4-5", title: "Handles via virtual sequencer", explanation: "Sequencer handles are injected from the environment so the virtual sequence stays generic." },
+    { target: "9-11", title: "Stage 1: control", explanation: "Configure control logic before fabric traffic starts." },
+    { target: "13-22", title: "Concurrent stage", explanation: "Run bring-up and monitoring in parallel—no `#delays` required." }
   ]}
 />
 
-### Custom Phase
-<InteractiveCode
-  code={'class reset_phase extends uvm_phase;\n  function new(); super.new("reset_phase", UVM_PHASE_SCHEDULE | UVM_PHASE_NODE); endfunction\n  virtual task exec_task(uvm_component c, uvm_phase p);\n    `uvm_info("RESET", "Applying reset", UVM_LOW)`\n  endtask\nendclass'}
-  language="systemverilog"
-  explanationSteps={[{target:"1-5", explanation:"Define a new phase and print reset"}]}
-/>
+### Callbacks & custom phases
+Callbacks allow optional behavior without subclass explosion; custom phases slot special activities into the phase schedule (e.g., chip-wide reset) without hacking `run_phase` directly.
 
-### Coverage Monitor
-<InteractiveCode
-  code={`class monitor;
-  covergroup cg;
-    cp_type: coverpoint tr.type;
-  endgroup
-  function new(); cg = new(); endfunction
-  function void write(tr); cg.sample(); endfunction
-endclass`}
-  language="systemverilog"
-  explanationSteps={[{target:"2-5", explanation:"Covergroup defined in monitor and sampled on write."}]}
-/>
+## Make It Work
+1. **Centralize infrastructure:** Store register models, virtual sequencers, and callback registries in the environment so tests only opt-in via factory/config DB.
+2. **Expose synchronization hooks:** Publish analysis exports or events that sequences can wait on instead of hard-coding delays.
+3. **Instrument coverage:** Place covergroups in monitors or subscribers so the same stimulus feeds scoreboard checks and coverage dashboards.
+4. **Document extension points:** List callbacks, override targets, and phase inserts in module docs to guide future contributors.
 
-## Level 3: Expert Insights
+**Checklist before moving on:**
+- [ ] You can explain when to choose frontdoor versus backdoor register access.
+- [ ] You know how a virtual sequence gains access to multiple sequencers.
+- [ ] You can demonstrate adding a callback or custom phase without editing base components.
 
-- **RAL Naming** – Use consistent prefix/suffix conventions so the predictor can associate bus transactions with model fields.
-- **Sequencer Handles** – Always access sequencers via `p_sequencer` to avoid type mismatches. Be cautious with `grab`/`lock`; forgetting to release can stall simulation.
-- **Callbacks vs Factory vs ConfigDB** – Use callbacks for localized behavior hooks, factory overrides for substituting component types, and config DB for parameter-like settings.
-- **Phase Order Mnemonic** – Remember "build, connect, end_of_elaboration, start" to keep custom phases aligned.
+## Push Further
+- **RAL bring-up automation:** Generate register sequences that self-check reset values, then integrate them into regression smoke tests.
+- **Health monitors:** Pair callbacks with heartbeats to assert components stay active (see [heartbeats](./heartbeats)).
+- **Coverage correlation:** Feed coverage hits into dashboards so architects see which features each regression touches.
+- **Hybrid flows:** Reuse the same environment for simulation and formal by overriding drivers with formal stubs via the factory.
 
-</InfoPage>
+## Practice & Reinforce
+- Study [heartbeats](./heartbeats) to explore liveness monitoring hooks.
+- Dive into [uvm-callbacks](./uvm-callbacks) for opt-in extension points.
+- Extend the RAL example to add mirrored fields and coverage bins.
+- Prototype a reset phase that coordinates multiple power domains.
+
+## References & Next Topics
+- Accellera *UVM User Guide*, Chapters 5–7 (sequencers, callbacks, RAL).
+- Verification Academy, *UVM Register Layer* and *Callbacks* courses.
+- Internal methodology guides on phase customization and health checks.
+- Next: [/curriculum/T3_Advanced/A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL/index](../A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL/index) for a deep dive on full RAL environments.

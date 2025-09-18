@@ -1,195 +1,88 @@
 ---
 title: "A-UVM-2: The UVM Factory In-Depth"
-description: "Explore advanced UVM factory features, including instance overrides, string-based overrides, and debugging techniques."
+description: "Target overrides precisely, debug factory configuration, and architect reusable agents with advanced UVM factory techniques."
+flashcards: "A-UVM-2_The_UVM_Factory"
 ---
 
-import { Quiz, InteractiveCode } from '@/components/ui';
+import { InteractiveCode } from '@/components/ui';
 
-## The "Why" of Advanced Factory Usage
+## Quick Take
+- **What it is:** The UVM factory lets you substitute components or objects dynamically—per type, per instance, or even per command-line option.
+- **Why it matters:** Precise overrides unlock reuse: one agent can act active at block level and passive at SoC level without forked code.
+- **The Analogy:** Think of a theme park ride with "skins." The chassis stays the same, but you can swap decor or behavior modules before the ride starts.
 
-Simple type overrides are powerful, but the UVM factory offers more granular control. What if you want to replace a driver in only *one* specific agent? What if you need to debug why an override isn't working? Advanced factory usage gives you the tools to handle these complex scenarios.
+> **Signal:** If you copy/paste an agent just to tweak one field, you probably needed an instance override or a config object instead.
 
-## Level 1: The Targeted Swap
+## Build Your Mental Model
+### Override techniques at a glance
 
-Imagine a car factory that produces cars for both the US and the UK. The assembly line is the same, but for the UK cars, you need to install the steering wheel on the right side. You don't want to change the steering wheel for all cars, just the ones going to the UK. This is like an **instance override**: targeting a specific instance for a change, rather than all instances of a type.
+<InteractiveCode
+  language="systemverilog"
+  fileName="factory_overrides.sv"
+  code={`
+class base_test extends uvm_test;
+  `uvm_component_utils(base_test)
 
-## Level 2: Core Mechanics
+  alu_env m_env;
 
-### Instance Overrides
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
 
-An instance override replaces a component or object at a specific hierarchical path. This is useful for targeting a change to a specific part of the testbench.
+    // 1. Type override: swap all alu_drivers everywhere
+    alu_driver::type_id::set_type_override(error_injecting_driver::get_type());
 
-<InteractiveCode>
-```systemverilog
-// In the test's build_phase:
+    // 2. Instance override: only touch the DMA agent's driver
+    factory.set_inst_override_by_type(
+      "m_env.m_dma_agent.m_driver",
+      alu_driver::get_type(),
+      dma_err_driver::get_type()
+    );
 
-// This will override the 'my_driver' instance inside the 'agent1' instance
-// with the 'error_driver' type.
-factory.set_inst_override_by_type("env.agent1.driver",
-                                  my_driver::get_type(),
-                                  error_driver::get_type());
-```
-</InteractiveCode>
+    m_env = alu_env::type_id::create("m_env", this);
+  endfunction
 
-### String-Based Overrides
+  function void end_of_elaboration_phase(uvm_phase phase);
+    super.end_of_elaboration_phase(phase);
+    factory.print(); // Debug what actually got registered
+  endfunction
+endclass
+  `}
+  explanationSteps={[
+    { target: "9-12", title: "Global swap", explanation: "`set_type_override` replaces the driver everywhere it's built. Use for broad policy decisions." },
+    { target: "15-21", title: "Scoped override", explanation: "Instance overrides key off a hierarchical path—perfect when only one agent needs custom behavior." },
+    { target: "24-27", title: "Visibility", explanation: "`factory.print()` is the go-to diagnostic when overrides don't behave." }
+  ]}
+/>
 
-You can also use strings to specify the types for overrides. This is less safe than using `get_type()` because it's not checked at compile time, but it can be useful for scripting and command-line overrides.
+### Patterns to internalize
+- **Configurable agent:** Build a common `*_base_agent` that constructs subcomponents via the factory. Tests override it with protocol-specific descendants to reuse the same environment everywhere.
+- **Company extensions:** Override base UVM classes globally so house style (logging, metrics) flows through the entire environment without touching vendor code.
+- **Command-line tuning:** Allow string-based overrides only for high-level scripting; keep RTL-level benches on safe `get_type()` overrides.
 
-<InteractiveCode>
-```systemverilog
-// In the test's build_phase:
-factory.set_type_override_by_name("my_driver", "error_driver");
-```
-</InteractiveCode>
+## Make It Work
+1. **Centralize overrides:** Collect factory policy in base tests or dedicated configuration modules so teams know where behavior is defined.
+2. **Prefer handles over strings:** Use `::get_type()` for compile-time safety. String overrides are a last resort for prototyping or CLI knobs.
+3. **Instrument debugging:** Call `factory.print()` or `uvm_factory::find_override_by_name()` during `end_of_elaboration_phase` to audit active overrides.
+4. **Document default behavior:** Publish the intended override map (module doc, README) so newcomers understand how agents change personality.
 
-### Architectural Pattern: The Configurable Agent
+**Checklist before moving on:**
+- [ ] You can explain the difference between type and instance overrides and when to use each.
+- [ ] You have a plan for locating all factory policy in one place.
+- [ ] You can demonstrate how to debug a missing override with `factory.print()`.
 
-A powerful use of the factory is to create an agent that can be easily configured to be active or passive. This is a cornerstone of vertical reuse, allowing you to reuse the same agent at the block level (as an active driver) and at the SoC level (as a passive monitor).
+## Push Further
+- **Layered personalities:** Override an agent with a monitor-only variant for SoC regression while keeping the active version for block testing.
+- **Factory governance:** Create lint rules or CI checks that ban string overrides in reusable VIP.
+- **Dynamic experiments:** Use plusargs or JSON configs to feed override decisions without recompiling—great for cross-team experiments.
+- **Factory + config_db:** Combine both: use the factory to swap classes, and config objects to tweak parameters inside the substituted component.
 
+## Practice & Reinforce
+- Explore targeted overrides in [/curriculum/T3_Advanced/A-UVM-2_The_UVM_Factory_In-Depth/heartbeats](./heartbeats).
+- Learn about callback registration and factory interplay in [/curriculum/T3_Advanced/A-UVM-2_The_UVM_Factory_In-Depth/uvm-callbacks](./uvm-callbacks).
+- Prototype a base-vs-specialized agent pattern in your sandbox environment.
 
-
-### Debugging the Factory
-
-When an override doesn't work as expected, the `print()` method is your best friend.
-
-<InteractiveCode>
-```systemverilog
-// In your test's end_of_elaboration_phase:
-factory.print();
-```
-</InteractiveCode>
-
-This will print a detailed report of all the factory's registered types, overrides, and instance overrides.
-
-## Level 3: Methodology & Strategy
-
-### Methodology Customization with the Factory
-
-The factory is the primary mechanism for customizing and extending a verification methodology without modifying the original source code.
-
-- **Creating Custom Component Base Classes:** A common practice in large companies is to create a custom base class for all components (e.g., `my_company_driver extends uvm_driver`). This custom class can contain company-specific additions, such as hooks for a proprietary reporting or debug system. To ensure all drivers in the environment use this new base class, you can set a global factory override in your base test:
-  `factory.set_type_override_by_name("uvm_driver", "my_company_driver");`
-
-- **Swapping in Protocol-Specific Checkers:** Imagine a generic bus scoreboard. For an AHB bus, you want it to use an `ahb_checker`. For an AXI bus, you want an `axi_checker`. You can create your scoreboard to contain a generic `uvm_component` called `m_checker`. Then, in your AHB environment, you use the factory to override `m_checker` with the `ahb_checker`. In the AXI environment, you override it with the `axi_checker`. This makes the scoreboard highly reusable.
-
-### Leadership: Planning a Factory Strategy
-
-As a verification lead or architect, how you manage the factory is a critical policy decision.
-- **Centralized vs. Decentralized Overrides:** Do you allow every test writer to set their own overrides, or do you have a centralized file or base test that controls all overrides?
-  - **Centralized (Recommended):** A centralized approach (e.g., in a `test_library`'s `build_phase`) is more maintainable and predictable. It provides a single place to look to understand the environment's configuration.
-  - **Decentralized:** Allowing overrides in individual tests can lead to chaos. A test might pass or fail depending on a "hidden" override deep in the test file, making regression debug very difficult.
-
-- **Policy on String-Based Overrides:** Do you allow them? A good policy is to **ban string-based overrides in all RTL-level testbenches**. They are acceptable for scripting or top-level testbenches where flexibility is key, but for reusable VIP, the compile-time safety of `get_type()` overrides is essential.
-
-### Real-World Case Study
-
-During verification of a multi-port Ethernet switch, the team needed to inject malformed packets on only one port while the other ports used the standard driver. The original environment created the default driver for every port agent:
-
-<InteractiveCode>
-```systemverilog
-// build_phase before override
-m_port_driver = eth_driver::type_id::create("m_port_driver", this);
-```
-</InteractiveCode>
-
-Instead of modifying the reusable agent, the test applied an instance override to swap in a fault-injecting driver solely for the stressed port:
-
-<InteractiveCode>
-```systemverilog
-// In the test's build_phase
-factory.set_inst_override_by_type("env.port3.m_port_driver",
-                                  eth_driver::get_type(),
-                                  eth_err_driver::get_type());
-```
-</InteractiveCode>
-
-**Lessons Learned:** Centralizing overrides in the test kept the agent reusable and prevented accidental propagation of the error driver. Using `get_type()` avoided the string typos that previously caused silent misconfigurations.
-
-## Level 4: Architect's Corner
-
-### Advanced Factory Usage: The "Abstract Agent" Pattern
-
-**The Challenge:** You need to create a piece of Verification IP (VIP) for a standard bus protocol, like AXI. This VIP will be used by many different teams in your company, and each team might have slightly different needs. Team A needs a simple AXI4-Lite agent. Team B needs a full AXI4 agent with burst support. Team C needs an AXI-Stream agent.
-
-**The Anti-Pattern:** Creating three separate, monolithic agents (`axi_lite_agent`, `axi4_agent`, `axi_stream_agent`). This leads to massive code duplication and a maintenance nightmare.
-
-**The Architectural Pattern:**
-
-1.  **Create an Abstract Base Agent (`axi_base_agent`):** This agent contains all the common elements: a virtual interface handle, an `is_active` flag, and a `uvm_analysis_port`. However, its `build_phase` and `connect_phase` are **empty virtual methods**. It cannot be constructed directly.
-
-2.  **Create Concrete Component Classes:** Create different driver and monitor classes for each protocol variant (e.g., `axi_lite_driver`, `axi4_driver`, `axi_stream_driver`).
-
-3.  **Create Concrete Agent Implementations:** Create specific agent classes that extend the abstract base agent (e.g., `class axi4_agent extends axi_base_agent`). In the `build_phase` of this concrete agent, you use the factory to construct the specific components you need (`m_driver = axi4_driver::type_id::create(...)`).
-
-4.  **Use the Factory in the Environment:** The environment is built to contain the *abstract* `axi_base_agent`.
-    ```systemverilog
-    class my_env extends uvm_env;
-      axi_base_agent m_agent; // Contains the abstract agent
-      //...
-      function void build_phase(uvm_phase phase);
-        // The factory creates the agent
-        m_agent = axi_base_agent::type_id::create("m_agent", this);
-      endfunction
-    endclass
-    ```
-
-5.  **Control Everything from the Test:** In a test, you use a single factory override to select the desired agent "personality":
-    ```systemverilog
-    // Test for AXI4-Lite
-    factory.set_type_override_by_type(axi_base_agent::get_type(), axi_lite_agent::get_type());
-    ```
-    This single line of code tells the factory, "Whenever someone tries to create an `axi_base_agent`, create an `axi_lite_agent` instead." The `axi_lite_agent` then populates itself with the correct driver and monitor.
-
-**The Outcome:** This pattern provides the ultimate in reusability and configurability. The environment is completely generic. All the protocol-specific details are encapsulated in the concrete agent classes, and the choice of which protocol to use is controlled by a single, clean factory override in the test. This is a hallmark of a professional, architect-level UVM environment.
-
-## Level 5: Scaling & Optimization
-
-### Performance Optimization
-
-Large regressions can create tens of thousands of factory lookups.  Cache expensive type calculations, prefer `get_type()` handles over strings, and avoid creating temporary objects in tight loops.  Profiling the factory during early bring-up prevents late-cycle surprises.
-
-### SoC-Level Strategies
-
-At the SoC level, aggressive vertical reuse means most agents run passively.  Use the factory to spin up lightweight monitors across subsystems and reserve heavy active components for block-level verification.  Centralized overrides ensure consistent policy across a sprawling hierarchy.
-
-### Formal Verification Integration
-
-Formal harnesses often require simplified drivers and checkers.  Swap in formal-specific components via the factory so you can reuse the same environment for simulation and formal analysis without duplicating code.
-
-### Advanced Tool Integration
-
-Modern verification flows pair the factory with CI dashboards, coverage databases, and waveform triage tools.  Exposing factory settings to these tools enables automated regression configuration and environment introspection.
-
-### Cutting-Edge Topics
-
-Vendors are experimenting with AI-guided factories that learn optimal overrides from regression history.  Keep an eye on standards work around plug-in factories and metadata-driven configuration.
-
-### Leadership for Large Teams
-
-For multi-site projects, establish a factory governance board.  Define override naming conventions, review policies, and training so new team members know where configuration decisions live.  A clear strategy avoids configuration drift across dozens of contributors.
-
-## Check Your Understanding
-
-<Quiz questions={[
-    {
-      "question": "You want to replace the `my_driver` in `env.agent1` with `error_driver`, but leave the `my_driver` in `env.agent2` unchanged. What kind of override should you use?",
-      "answers": [
-        {"text": "A type override", "correct": false},
-        {"text": "An instance override", "correct": true},
-        {"text": "A `uvm_config_db` set", "correct": false},
-
-        {"text": "A sequence override", "correct": false}
-      ],
-      "explanation": "An instance override allows you to target a specific component by its hierarchical path (e.g., `env.agent1.*`), providing the precision needed for this scenario."
-    },
-    {
-      "question": "What is the main advantage of using `get_type()` instead of strings for factory overrides?",
-      "answers": [
-        {"text": "It's shorter to type.", "correct": false},
-        {"text": "It's checked at compile time, preventing typos.", "correct": true},
-        {"text": "It's faster at runtime.", "correct": false},
-        {"text": "It's the only way to do instance overrides.", "correct": false}
-      ],
-      "explanation": "Using `get_type()` is much safer because the compiler will catch any typos in the class names. String-based overrides are not checked until runtime."
-    }
-  ]} />
+## References & Next Topics
+- Accellera *UVM User Guide*, Section 5.7 (Factory Overrides).
+- Mentor Verification Academy, *UVM Factory and Configuration Strategies*.
+- Company design guidelines or factory governance docs.
+- Next: [/curriculum/T3_Advanced/A-UVM-3_Advanced_UVM_Techniques/index](../A-UVM-3_Advanced_UVM_Techniques/index) for callbacks, heartbeats, and phase control that rely on these overrides.
