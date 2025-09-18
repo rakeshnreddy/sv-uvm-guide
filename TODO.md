@@ -13,12 +13,12 @@
 
 ## Tier 3/4 Planning
 - [x] Audit Tier 3/4 topics for template adoption and create migration plan
-- [ ] Identify missing visual assets for advanced topics (RAL, performance, debug)
+- [x] Identify missing visual assets for advanced topics (RAL, performance, debug)
 
 ## Glassmorphism Rollout
 - [x] Practice Hub – completed ✅
-- [ ] Apply glass-card utilities to dashboard/community pages
-- [ ] Update remaining legacy components (navbar, footer) to new design tokens
+- [x] Apply glass-card utilities to dashboard/community pages
+- [x] Update remaining legacy components (navbar, footer) to new design tokens
 
 ## Coverage & Automation
 - [x] Add regression test coverage for slug normalization so 2-segment curriculum routes stay routable
