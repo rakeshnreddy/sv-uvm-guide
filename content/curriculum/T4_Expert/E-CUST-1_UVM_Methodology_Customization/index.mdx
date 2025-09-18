@@ -1,38 +1,34 @@
 ---
 title: "E-CUST-1: UVM Methodology Customization"
-description: "Learn how to customize the UVM methodology to meet the specific needs of your project."
+description: "Design project-wide extensions to UVM—custom bases, phases, and governance—to keep large teams aligned without forking the methodology."
+flashcards: "E-CUST-1_Methodology_Customization"
 ---
 
-import { Quiz, InteractiveCode } from '@/components/ui';
+import { InteractiveCode } from '@/components/ui';
 
-## Level 1: The Elevator Pitch
+## Quick Take
+- **What it is:** A blueprint for tailoring UVM to your organisation—custom base classes, phases, and guardrails that scale across projects.
+- **Why it matters:** Enterprise verification breaks down when every team reinvents the environment; a curated methodology keeps stimulus consistent and debuggable.
+- **The Analogy:** Imagine a bespoke software framework: you package utilities, logging, and policy into a base layer so feature teams focus on design-specific checks.
 
-**What is it?** UVM is a flexible methodology that can be customized to meet the specific needs of your project. This can involve creating custom base classes, defining custom phases, and developing project-specific coding guidelines.
+> **Signal:** If every new block duplicates config plumbing or logging conventions, invest in a methodology layer.
 
-**The Analogy:** Think of UVM as a "custom-built suit". You start with a standard pattern, but you can tailor it to fit your exact measurements.
-
-**Why this matters:** Customizing UVM can help you to create a more efficient and effective verification environment. It can also help to ensure that your testbenches are consistent and maintainable.
-
-## Level 2: Core Customization Techniques
-
-### Creating a Custom Component Base Class
-
-A common customization is to create a project-specific base class for all components. This allows you to inject common functionality, like a handle to a central configuration object or a standardized logging interface, into every component in your environment.
+## Build Your Mental Model
+### Custom base classes
+Wrap standard UVM components with project behaviour—configuration handles, logging, metrics—so every derived component inherits the same posture.
 
 <InteractiveCode
   language="systemverilog"
-  fileName="custom_base_class.sv"
-  code={`
-// 1. Define a central configuration object
-class proj_config extends uvm_object;
-  // ... project-specific config fields ...
+  fileName="proj_component.sv"
+  code={`class proj_config extends uvm_object;
+  `uvm_object_utils(proj_config)
+  bit enable_scoreboard_hooks;
 endclass
 
-// 2. Create a custom base class for all components
 class proj_component extends uvm_component;
   `uvm_component_utils(proj_component)
 
-  proj_config m_cfg; // Handle to the project config object
+  proj_config cfg;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -40,232 +36,88 @@ class proj_component extends uvm_component;
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    // Get the config object from the config_db
-    if (!$cast(m_cfg, uvm_config_db#(uvm_object)::get(this, "", "proj_config")))
-      `uvm_fatal("NO_CFG", "Failed to get project config object")
+    if (!uvm_config_db#(proj_config)::get(this, "", "proj_cfg", cfg))
+      `uvm_fatal("NO_CFG", "Project config missing—ensure base test seeds it")
+  endfunction
+
+  virtual function void post_configure();
+    // Hook subclasses override
   endfunction
 endclass
 
-// 3. All other components now extend from the project base class
-class my_driver extends proj_component;
-  // ... now has access to m_cfg automatically ...
-endclass
-  `}
-  explanationSteps={[
+class proj_driver extends proj_component;
+  `uvm_component_utils(proj_driver)
 
-    { target: "2-5", title: "Project Configuration Object", explanation: "First, we define a central configuration object for our project. This will hold all the key configuration parameters for the environment." },
-    { target: "8-22", title: "Custom Base Component", explanation: "This is our custom base class, `proj_component`. It extends `uvm_component` and adds a handle (`m_cfg`) for the project configuration object. In its `build_phase`, it automatically gets this configuration object from the `uvm_config_db`." },
-    { target: "25-27", title: "Extending the Custom Base", explanation: "Now, instead of extending `uvm_driver`, our `my_driver` extends `proj_component`. Because it inherits from `proj_component`, it automatically has the `m_cfg` handle and the logic to retrieve it, reducing boilerplate code in every single component." }
+  virtual function void post_configure();
+    if (cfg.enable_scoreboard_hooks) begin
+      // Register additional analysis exports, instrumentation, etc.
+    end
+  endfunction
+endclass`}
+  explanationSteps={[
+    { target: "1-6", title: "Central config", explanation: "Establish a single object carrying policy toggles for every component." },
+    { target: "8-24", title: "Reusable base", explanation: "Custom base class fetches the config and exposes overridable hooks." },
+    { target: "26-35", title: "Lightweight hooks", explanation: "Downstream components override `post_configure` without fiddling with config plumbing." }
   ]}
 />
 
-### Defining Custom UVM Phases
-
-While UVM provides a comprehensive set of phases, sometimes you need to insert a custom phase for a specific synchronization point in your testbench. For example, you might need a `load_firmware_phase` that runs after the DUT is reset but before the main test stimulus begins.
+### Custom phases & schedules
+Insert bespoke phases to coordinate activities (firmware load, security attestation, traffic ramp-up) without shoehorning code into `run_phase`.
 
 <InteractiveCode
   language="systemverilog"
-  fileName="custom_phase.sv"
-  code={`
-// 1. Define the custom phase class
-class load_firmware_phase extends uvm_task_phase;
-  `uvm_object_utils(load_firmware_phase)
-  static local load_firmware_phase m_inst;
+  fileName="load_fw_phase.sv"
+  code={`class load_fw_phase extends uvm_task_phase;
+  `uvm_object_utils(load_fw_phase)
+  static load_fw_phase m_inst;
 
-  function new(string name = "load_firmware");
-    super.new(name);
-  endfunction
-
-  static function load_firmware_phase get();
-    if (m_inst == null) m_inst = new();
+  static function load_fw_phase get();
+    if (m_inst == null) m_inst = new("load_fw");
     return m_inst;
   endfunction
 endclass
 
-// 2. Create a custom phase schedule
-function void my_test::build_phase(uvm_phase phase);
-  uvm_phase run_phases[];
-  // ...
-  // Insert the custom phase after 'reset_phase'
-  uvm_domain::get_common_domain().m_add_phase(load_firmware_phase::get(),
-                                             .after_phase(uvm_reset_phase::get()));
+function void base_test::build_phase(uvm_phase phase);
+  super.build_phase(phase);
+  uvm_phase reset = uvm_reset_phase::get();
+  uvm_domain::get_common_domain()
+    .add(load_fw_phase::get(), .after_phase(reset));
 endfunction
 
-// 3. Implemented the custom phase task in a component
-task my_driver::load_firmware_phase(uvm_phase phase);
-  // ... code to load firmware into DUT memory via backdoor ...
-endtask
-  `}
+task soc_env::load_fw_phase(uvm_phase phase);
+  // Backdoor load firmware images before main stimulus
+endtask`}
   explanationSteps={[
-    { target: "2-14", title: "Defining the Phase Class", explanation: "First, you define your custom phase class, inheriting from `uvm_task_phase` (for tasks) or `uvm_func_phase` (for functions). It's implemented as a singleton, so there's only one instance of it in the simulation." },
-    { target: "17-22", title: "Inserting the Phase", explanation: "In your test or base test, you get the common UVM domain and use the `m_add_phase` method to insert your custom phase into the schedule. Here, we place it immediately after the standard `reset_phase`." },
-    { target: "25-27", title: "Implementing the Phase Method", explanation: "Finally, you implement the corresponding phase method in the components that need to participate. The simulator will automatically call this `load_firmware_phase` task at the correct point in the simulation." }
+    { target: "1-10", title: "Phase singleton", explanation: "Define a single shared instance of the custom phase." },
+    { target: "12-18", title: "Schedule insertion", explanation: "Add the phase after reset so everyone participates consistently." },
+    { target: "20-23", title: "Opt-in implementation", explanation: "Environment implements the phase task to inject custom behaviour." }
   ]}
 />
 
-## Level 3: Advanced Integration & Strategy
+## Make It Work
+1. **Codify policy:** Publish a methodology package (base classes, utilities, adapters) with versioning and CI tests.
+2. **Seed configuration early:** Base tests push `proj_config` and any shared services (coverage bus, scoreboards) via `uvm_config_db`.
+3. **Offer extension hooks:** Provide virtual methods or callbacks instead of hard-coded behaviour so block teams extend safely.
+4. **Enforce adoption:** Create linting/check scripts that forbid raw `uvm_component` inheritance or missing custom phases.
 
-### Methodology Customization Patterns
+**Checklist before moving on:**
+- [ ] You know where methodology overrides live (base tests, packages, repos).
+- [ ] You have a plan to distribute configs and shared services automatically.
+- [ ] You can describe how teams add behaviour via hooks/callbacks instead of editing core code.
 
-- **The "Hook" Pattern:** Instead of forcing users to extend your base classes, you can provide "hooks" for customization. A hook is simply an empty virtual method in your base class (e.g., `virtual function void post_configure();`). A user can then extend your class and override this method to add their own functionality without having to understand or call the parent class's implementation. This is a less intrusive way to allow customization.
+## Push Further
+- **CI governance:** Automate regression of methodology examples to catch breaking changes before they hit projects.
+- **Documentation portal:** Host API docs and playbooks so new hires ramp quickly.
+- **Metrics integration:** Instrument base classes with telemetry (coverage snapshots, performance counters).
+- **Multi-site scaling:** Pair methodology releases with change logs, migration guides, and support rotations.
 
-- **Policy and Linting:** A key part of methodology is enforcement. Your custom methodology should be accompanied by a set of linting rules (e.g., using SpyGlass or AscentLint) and coding guidelines. For example, you can enforce a rule that all components must extend `proj_component`, not `uvm_component`.
+## Practice & Reinforce
+- Extend the base class hook to register security monitors only when a flag is set.
+- Prototype a `load_fw_phase` on your SoC bench and measure boot-time savings.
+- Add a lint rule ensuring all components inherit from `proj_component`.
+- Review [/curriculum/T3_Advanced/A-UVM-2_The_UVM_Factory_In-Depth/index](../../T3_Advanced/A-UVM-2_The_UVM_Factory_In-Depth/index) to align factory policy with methodology layers.
 
-### Advanced Tool Integration: CI for Methodology
-
-Your UVM methodology is a software project and should be treated as such.
-- **Version Control:** Your methodology code should live in its own Git repository.
-- **Continuous Integration (CI):** Set up a CI pipeline (e.g., using Jenkins or GitLab CI) that automatically runs a set of "smoke tests" every time a change is committed to the methodology repository. This ensures that a change to a base class doesn't accidentally break hundreds of projects that depend on it.
-- **Release Management:** Have a clear release versioning scheme (e.g., `v1.0`, `v1.1`, `v2.0`) for your methodology. Projects should be able to "pin" to a specific version of the methodology to ensure stability, and only upgrade when they are ready.
-
-### Expanding the Methodology to Advanced Domains
-
-- **Performance Optimization:** Profile critical components and provide configuration switches for lightweight "fast" modes that keep regressions running efficiently.
-- **Debug Methodology:** Standardize logging, waveform bookmarks, and failure triage APIs so engineers can diagnose issues quickly across projects.
-- **SoC-Level Verification:** Support hierarchical configuration, multi-IP coordination, and top-level scoreboards required for complex SoC environments.
-
-### Formal Verification Integration
-
-Bridging simulation and formal flows lets teams reuse properties and close coverage more efficiently.
-
-<InteractiveCode
-  language="systemverilog"
-  fileName="reusable_property.sv"
-  code={`
-// 1. Define the property once in a package
-package arb_props;
-  property req_gnt;
-    @(posedge clk) req |-> ##[1:2] gnt;
-  endproperty
-endpackage
-
-// 2. Bind the property into the design
-bind arbiter arb_props req_gnt_assert: assert property(arb_props::req_gnt);
-
-// 3. Cover to track closure in both sim and formal
-cover property (@(posedge clk) req ##1 gnt);
-  `}
-  explanationSteps={[
-    { target: "2-6", title: "Reusable Property", explanation: "Package the property so the same definition is shared across simulation and formal runs." },
-    { target: "8-9", title: "Binding", explanation: "Bind the property to the DUT to avoid modifying RTL." },
-    { target: "11-11", title: "Coverage Closure", explanation: "Cover directives help determine when the property has been exercised." }
-  ]}
-/>
-
-**Best Practices Checklist**
-
-- [ ] Collect assertions in shared packages for reuse.
-- [ ] Track both assertion and cover property metrics to drive coverage closure.
-- [ ] Use `bind` so RTL remains untouched.
-
-### Leadership & Strategy for Methodology Rollout
-
-Rolling out a custom methodology across teams requires planning, tooling, and clear ownership.
-
-<InteractiveCode
-  language="bash"
-  fileName="rollout.sh"
-  code={`#!/usr/bin/env bash
-set -e
-git clone https://git.example.com/uvm_methodology.git
-cd uvm_methodology
-npm ci
-./install_hooks.sh ../my_project
-  `}
-  explanationSteps={[
-    { target: "1-6", title: "Bootstrap Script", explanation: "Automates fetching the methodology repository and installing standard hooks into a new project." }
-  ]}
-/>
-
-**Best Practices Checklist**
-
-- [ ] Nominate a methodology owner or steering committee.
-- [ ] Pilot the flow on a small project before organization-wide rollout.
-- [ ] Provide versioned documentation and regular training sessions.
-
-### Cutting-Edge Topics: Cloud & ML Customization
-
-Emerging trends like cloud-based regression farms and ML-driven configuration can further optimize verification.
-
-<InteractiveCode
-  language="python"
-  fileName="ml_config.py"
-  code={`import requests
-import yaml
-from sklearn.ensemble import RandomForestClassifier
-
-def choose_seed(history):
-  model = RandomForestClassifier().fit(history['features'], history['labels'])
-  return int(model.predict([history['current']])[0])
-
-cfg = requests.get("https://config.example.com/myproj").json()
-cfg['seed'] = choose_seed(cfg['history'])
-print(yaml.dump(cfg))
-  `}
-  explanationSteps={[
-    { target: "1-3", title: "Cloud & ML Imports", explanation: "Pull configuration from a cloud service and use an ML model to predict parameters." },
-    { target: "5-7", title: "Model Training", explanation: "Train a simple classifier on past regression data." },
-    { target: "9-10", title: "ML-Assisted Config", explanation: "Update the configuration with an ML-selected random seed." }
-  ]}
-/>
-
-**Best Practices Checklist**
-
-- [ ] Externalize configuration so cloud jobs can override parameters easily.
-- [ ] Use ML models to prioritize tests or tune random seeds based on history.
-- [ ] Monitor resource usage and costs in cloud environments.
-
-## Level 4: Architect's Corner
-
-### Case Study: A Custom Base Library for a Networking SoC
-
-**The Challenge:** An organization is developing multiple networking SoCs. Each SoC has dozens of Ethernet MACs, interconnects, and other common components. The goal is to maximize verification reuse and efficiency across all these projects.
-
-**The Anti-Pattern:** Each project team develops their own base classes and methodology from scratch. This leads to divergence, duplicated effort, and makes it difficult for engineers to move between projects.
-
-**The Architectural Solution: `net_uvm_lib`**
-
-A central methodology team was created to develop and maintain a `net_uvm_lib` package. This was a company-wide, standardized UVM extension library.
-
-1.  **Custom Base Classes:**
-    *   `net_component extends uvm_component`: Added a handle to a central `net_config` object and an interface to a company-wide debug and logging system.
-    *   `net_driver extends uvm_driver`: Added built-in functional coverage for basic bus protocol correctness (e.g., "was a packet of every possible length driven?").
-    *   `net_monitor extends uvm_monitor`: Added built-in protocol checkers that could be enabled or disabled via the `net_config` object.
-
-2.  **Standardized TLM Interfaces:**
-    *   The library defined a standard `net_packet_c` class that was used for all packet-based communication between components (e.g., from monitor to scoreboard). This ensured all components spoke the same language.
-
-3.  **Custom Phases:**
-    *   A `program_pll_phase` was added to configure the DUT's PLLs before any other activity.
-    *   A `check_clocks_gates_phase` was added at the end of the test to automatically check that all clock gates were in their expected state.
-
-4.  **Factory and Configuration:**
-    *   The `base_test` for all networking projects included a standard set of factory overrides to ensure all components used the `net_*` base classes.
-    *   The `net_config` object provided a centralized place to control everything: enable/disable coverage, turn on/off protocol checkers, set verbosity for different agents, etc.
-
-**The Outcome:** The `net_uvm_lib` was a huge success. Project teams could build complex environments much faster because they were starting from a rich, pre-validated foundation. Regression debug was easier because all testbenches had a consistent structure and logging format. Engineers could move between projects with minimal ramp-up time. This initial investment in a custom methodology paid for itself many times over in increased productivity and quality.
-
-## Check Your Understanding
-
-<Quiz questions={[
-    {
-      "question": "Why would you want to create a custom base class?",
-      "answers": [
-        {"text": "To add your own project-specific functionality to the UVM library.", "correct": true},
-        {"text": "To make your testbenches run faster.", "correct": false},
-        {"text": "To replace the need for a verification plan.", "correct": false},
-        {"text": "To make your testbenches easier to read.", "correct": false}
-      ],
-      "explanation": "Custom base classes allow you to add your own project-specific functionality to the UVM library, which can help to make your testbenches more efficient and effective."
-    },
-    {
-      "question": "What is the most important thing to remember when customizing UVM?",
-      "answers": [
-        {"text": "To customize as much as possible.", "correct": false},
-        {"text": "To keep it simple and customize with a purpose.", "correct": true},
-        {"text": "To never use custom phases.", "correct": false},
-        {"text": "To always use custom base classes.", "correct": false}
-      ],
-      "explanation": "Don't over-customize your environment. The more you customize, the harder it will be for other people to understand and use your testbenches."
-    }
-  ]} />
+## References & Next Topics
+- Accellera *UVM User Guide*, Section 7 (Phases) and Annex for methodology tips.
+- Internal methodology portal or coding standards.
+- Next: tackle Tier-4 debug and performance modules to round out expert-level infrastructure.

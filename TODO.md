@@ -12,7 +12,7 @@
 - [x] I-UVM-5 Phasing & Sync – update template + visuals ✅
 
 ## Tier 3/4 Planning
-- [ ] Audit Tier 3/4 topics for template adoption and create migration plan
+- [x] Audit Tier 3/4 topics for template adoption and create migration plan
 - [ ] Identify missing visual assets for advanced topics (RAL, performance, debug)
 
 ## Glassmorphism Rollout

@@ -1,232 +1,114 @@
 ---
 title: "E-DBG-1: Advanced UVM Debug Methodologies"
-description: "Learn advanced techniques for debugging complex UVM environments."
+description: "Instrument complex UVM environments with reporting, objections, and transaction timelines so failures localize themselves." 
+flashcards: "E-DBG-1_Advanced_Debug"
 ---
 
-import { Quiz, InteractiveCode } from '@/components/ui';
+import { InteractiveCode } from '@/components/ui';
 import DebuggingSimulator from '@/components/ui/DebuggingSimulator';
 import UvmTestbenchVisualizer from '@/components/diagrams/UvmTestbenchVisualizer';
 
-## The "Why" of Advanced Debugging
+## Quick Take
+- **What it is:** A stack of debug tactics—reporting filters, objection tracing, transaction recording, and performance profiling—for deep UVM environments.
+- **Why it matters:** Overnight regressions stall when hangs and race conditions hide; disciplined instrumentation surfaces root causes quickly.
+- **The Analogy:** Think of an air-traffic control center: correlated radar (transactions), radio transcripts (logs), and black boxes (waveforms) keep the investigation focused when something goes wrong.
 
-As UVM environments grow in complexity, debugging becomes a major challenge. A simple `$display` statement is no longer sufficient to understand what's happening. Advanced debugging techniques are essential for quickly finding and fixing bugs in a large, complex testbench.
+> **Signal:** When your team relies on rerunning with `$display` to diagnose issues, upgrade the debug toolkit.
 
-## Level 1: The Detective's Toolkit
-
-Think of debugging as being a detective. You have a set of tools and techniques to help you solve the mystery of why your testbench isn't behaving as expected.
-- **UVM Reporting:** The first line of defense. Using `uvm_info`, `uvm_warning`, `uvm_error`, and `uvm_fatal` to get a clear picture of what's happening.
-- **Factory Debug:** Using `factory.print()` to see what components are being created and what overrides are in place.
-- **Waveform Debugging:** Using a waveform viewer to see the signals on the DUT interface and correlate them with the transactions in your testbench.
-
-## Level 2: Core Mechanics
-
-### UVM Reporting
-
-The UVM reporting mechanism is a powerful tool for debugging. You can control the verbosity of messages from different components and at different severity levels.
-
-<InteractiveCode>
-```systemverilog
-// In your component:
-`uvm_info("MY_COMP", "This is an informational message", UVM_LOW)
-
-// On the command line:
-// +UVM_VERBOSITY=UVM_HIGH // See all messages
-// +UVM_VERBOSITY=UVM_NONE // See no messages
-```
-</InteractiveCode>
-
-### Factory Debug
-
-The factory's `print()` method is invaluable for debugging override issues.
-
-<InteractiveCode>
-```systemverilog
-// In your test's end_of_elaboration_phase:
-factory.print();
-```
-</InteractiveCode>
-
-### Waveform Debugging with `uvm_field_int`
-
-The `uvm_field_int` macro has a flag that allows you to record the field's value in the waveform.
-
-<InteractiveCode>
-```systemverilog
-class my_transaction extends uvm_sequence_item;
-  rand int data;
-  `uvm_object_utils_begin(my_transaction)
-    `uvm_field_int(data, UVM_DEFAULT | UVM_RECORD)
-  `uvm_object_utils_end
-  // ...
-endclass
-```
-</InteractiveCode>
-
-### Systematic Hang Debug: Using Objection Drains
-
-A simulation hang is one of the most common and frustrating UVM debug scenarios. It's almost always caused by a component failing to drop a phase objection. UVM provides a built-in mechanism to debug this systematically.
+## Build Your Mental Model
+### Layered instrumentation
+- **Logs first:** Structured `uvm_info` with component IDs + verbosity controls.
+- **Objection tracing:** Watch the lifecycle of phase objections to pinpoint hangs.
+- **Transaction timelines:** Record sequence_items to waveform or database so cross-interface events align.
+- **Environment snapshotting:** Use factory prints, config dumps, and coverage checkpoints to verify setup.
 
 <InteractiveCode
   language="systemverilog"
-  fileName="hang_debug.sv"
-  code={`
-// In your base test or environment
-function void my_base_test::build_phase(uvm_phase phase);
-  // Set a drain time for the run phase.
-  // If the phase doesn't end 1000ns after all objections are dropped,
-  // it's a sign of a problem.
-  phase.phase_done.set_drain_time(this, 1000ns);
-endfunction
+  fileName="debug_instrumentation.sv"
+  code={`class debug_base_test extends uvm_test;
+  `uvm_component_utils(debug_base_test)
 
-function void my_base_test::end_of_elaboration_phase(uvm_phase phase);
-  // Enable the objection trace plusarg for maximum debug info
-  // This can also be done on the command line: +UVM_OBJECTION_TRACE
-  uvm_top.set_objection_trace(1);
-endfunction
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    uvm_config_db#(int)::set(null, "*", "recording_detail", UVM_HIGH);
+    uvm_report_server server = uvm_report_server::get_server();
+    server.set_max_quit_count(1);
+  endfunction
 
-// In a driver, a bug is introduced: item_done() is forgotten
-task my_driver::run_phase(uvm_phase phase);
-  forever begin
-    seq_item_port.get_next_item(req);
-    // BUG: The objection is raised but never dropped!
-    phase.raise_objection(this, "Driving one transaction");
-    drive_item(req);
-    // seq_item_port.item_done(); // FORGOTTEN!
-  end
-endtask
-  `}
+  function void end_of_elaboration_phase(uvm_phase phase);
+    super.end_of_elaboration_phase(phase);
+    uvm_top.set_objection_trace(1);
+    factory.print(" +overrides");
+  endfunction
+
+  function void start_of_simulation_phase(uvm_phase phase);
+    super.start_of_simulation_phase(phase);
+    `uvm_info("DEBUG", "Transaction recording enabled", UVM_LOW)
+  endfunction
+endclass`}
   explanationSteps={[
-    { target: "3-7", title: "Setting a Drain Time", explanation: "The `set_drain_time` method tells the UVM scheduler to wait a specified amount of time after all objections for a phase have been dropped before actually ending the phase. If new objections are raised during this time, the phase continues. It's a safety net." },
-    { target: "9-13", title: "Enabling Objection Tracing", explanation: "Calling `uvm_top.set_objection_trace(1)` or using the `+UVM_OBJECTION_TRACE` plusarg on the command line tells UVM to print a detailed message every time an objection is raised or dropped, including the component path and the total objection count." },
-    { target: "16-23", title: "The Bug", explanation: "Here, the driver correctly raises an objection before driving an item. However, the author has forgotten to call `item_done()`, which is what ultimately causes the sequencer to drop its objection. The total objection count will never go to zero." },
-    { title: "The Debug Process", explanation: "When the simulation hangs, you would look at the log file. The objection trace would show the last component to raise an objection was this driver. You would see the total count go to 1 and never come back down. This immediately pinpoints the component (and likely the specific `get_next_item` call) that is the source of the hang." }
+    { target: "4-9", title: "Config-driven logging", explanation: "Set recording/detail knobs once in the base test so all components inherit the policy." },
+    { target: "11-16", title: "Objection trace & factory snapshot", explanation: "Enable objection trace and dump active overrides before stimulus starts." },
+    { target: "18-21", title: "Narrate instrumentation", explanation: "Log that recording is on so teammates know where to find timelines." }
   ]}
 />
 
-## Level 3: Advanced Debug & Tool Integration
+### Systematic hang triage
+Objection drains, watchdogs, and command-line tracing expose components that forget `item_done()` or leave objections raised. Pair with simulators’ live phase viewers (e.g., DVE, Verdi) for real-time insight.
 
-### Systematic Debug Methodology: The 4-Step Process
+<InteractiveCode
+  language="systemverilog"
+  fileName="hang_watchdog.sv"
+  code={`task debug_base_test::run_phase(uvm_phase phase);
+  phase.raise_objection(this);
+  fork
+    begin
+      #1ms;
+      `uvm_fatal("WATCHDOG", "Simulation exceeded 1ms without completing")
+    end
+    super.run_phase(phase);
+  join_any;
+  disable fork;
+  phase.drop_objection(this);
+endtask`}
+  explanationSteps={[
+    { target: "1-3", title: "Proactive objection", explanation: "Base test holds the run phase open while watchers execute." },
+    { target: "4-8", title: "Timeout thread", explanation: "Watchdog terminates runaway simulations instead of hanging regressions." },
+    { target: "10-11", title: "Clean exit", explanation: "Drop the objection once either branch completes." }
+  ]}
+/>
 
-When faced with a complex bug, avoid random guessing. Follow a systematic process:
-1.  **Reproduce:** Find a *minimal* failing test case. Can you reproduce the bug with a specific seed? Can you simplify the sequence? A simple, repeatable failure is the most important first step.
-2.  **Isolate:** Narrow down the source of the failure. Is it in the DUT or the testbench? Use the UVM reporting system (`set_report_verbosity_level_hier`) to turn on `UVM_HIGH` verbosity for the suspect component. Use waveform logging of the interface signals to determine if the testbench is driving correctly and if the DUT is responding correctly.
-3.  **Root Cause:** Once isolated to a component, use UVM-aware debug tools to understand the internal state. Set breakpoints, examine UVM component hierarchy, inspect sequence states, and trace TLM connections.
-4.  **Fix and Verify:** Fix the bug, then *add a specific check* to your testbench to catch this exact failure mode in the future. This turns a bug into a permanent improvement in your verification environment.
+### Transaction correlation
+Use UVM recording (`UVM_RECORD`) or tool-specific APIs (Verdi `FSDB`, DVE TCL) to align stimulus, monitor data, and scoreboard results. Visuals like `UvmTestbenchVisualizer` reinforce the data flow.
 
-### Advanced Tool Integration: UVM-Aware Debugging
+<UvmTestbenchVisualizer />
 
-Modern debug tools like **Verdi** and **Simvision** have powerful UVM-aware features.
-- **UVM Hierarchy Browser:** Instead of a simple design hierarchy, you can view the UVM component tree, making it easy to navigate your environment.
-- **Transaction-Level Debug:** You can see transactions (sequence items) as high-level objects in the waveform, and automatically trace them from the sequencer, through the driver, onto the physical pins, and back through the monitor to the scoreboard.
-- **Objection Debug:** These tools provide graphical views of the UVM phase and objection status, making it easy to spot the source of a hang.
-- **TLM Debug:** You can visualize TLM connections and see the transactions flowing through `uvm_analysis_port`s, which is invaluable for debugging scoreboards and coverage collectors.
+## Make It Work
+1. **Standardize logging:** Define report macros, verbosity defaults, and message IDs in a shared package; ban raw `$display` in code reviews.
+2. **Enable tracing knobs:** Always allow `+UVM_OBJECTION_TRACE`, `+UVM_VERBOSITY`, and transaction recording toggles; document recommended settings per debug scenario.
+3. **Record what matters:** Annotate sequence items with `UVM_RECORD`, sample analysis FIFOs into debug buffers, and limit waveform scope to reduce noise.
+4. **Automate watchdogs:** Install base-test timeouts and phase drains so hung tests fail quickly with actionable context.
 
-## Level 4: Architect's Corner
+**Checklist before moving on:**
+- [ ] Logs include component path + unique message IDs.
+- [ ] Objection trace plusargs are exercised regularly.
+- [ ] You can generate a merged transaction timeline across interfaces.
+- [ ] Watchdogs or drain times cap regression hangs.
 
-### Debug Automation: The "Self-Checking" Environment
+## Push Further
+- **Tool scripts:** Integrate Verdi/DVE macros that auto-load relevant waveforms and bookmarks for failing seeds.
+- **Performance profiling:** Schedule regular simulator profiling runs to keep debug from introducing bottlenecks.
+- **Debug dashboards:** Stream key metrics (active objections, pending transactions) to a live dashboard during long runs.
+- **Cross-team playbooks:** Document debug recipes (hang triage, scoreboard mismatch, factory confusion) in a shared portal.
 
-As an architect, your goal is to build an environment that debugs itself as much as possible.
-- **Protocol Checkers:** Your monitors should not just observe traffic; they should contain protocol checkers that fire UVM errors if they see illegal behavior on the bus (e.g., a response arriving without a request).
-- **Scoreboard Assertions:** Your scoreboard should use `uvm_error` or `uvm_fatal` when it sees a data mismatch, not just a `$display`. A failing test should be loud and unambiguous.
-- **Automatic Timeouts:** Every test should have a timeout mechanism. The base test can `fork...join_none` a "watchdog" process that simply waits for a long time (e.g., 1ms) and then calls `uvm_fatal` if it's still running. This prevents a single hung test from stalling an entire overnight regression.
+## Practice & Reinforce
+- Exercise objection tracing on a failing test and inspect the trace output.
+- Use `DebuggingSimulator` to rehearse hang resolution scenarios in [/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab](./hang-lab) (create as needed).
+- Configure transaction recording on one agent and replay the timeline in your waveform viewer.
+- Pair with [/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index](../E-PERF-1_UVM_Performance/index) to ensure debug instrumentation doesn’t tank performance.
 
-### Performance Profiling
-
-Debug isn't just about correctness; it's also about performance. A testbench that takes 10 hours to run is a major bottleneck.
-- **Simulator Profilers:** Most simulators have a built-in profiler (e.g., VCS's `-profile` option). This tool will show you which parts of your code (both testbench and DUT) are consuming the most simulation time.
-- **Common Bottlenecks:**
-  - **Excessive Waveform Dumping:** Dumping large busses or memories can be extremely slow. Use conditional dumping (`$dumpvars(1, top.dut.sub_block)`) to only record the signals you need.
-  - **Inefficient Scoreboards:** Scoreboards that use associative arrays with deep queues can consume huge amounts of memory and CPU time during lookups. Consider optimizing your data structures.
-  - **Chatty TLM Connections:** A monitor that sends millions of transactions through an analysis port can create a huge amount of overhead. Consider adding a filter in the monitor to only send "interesting" transactions.
-
-### Case Study: Debugging a Coherency Protocol
-
-**The Challenge:** In a multi-core SoC, a test for the cache coherency protocol was failing. A read from one core was occasionally returning stale data after another core had written to the same cache line.
-
-**The Debug Process:**
-1.  **Reproduce:** The failure was intermittent. The team ran the test with 100 different seeds until they found one that failed consistently.
-2.  **Isolate:** This was a system-level problem. They couldn't isolate it to a single agent. Instead, they used the UVM's transaction recording features (`UVM_RECORD`) on all the bus interfaces.
-3.  **Root Cause (UVM-Aware Debug):** They loaded the waveform into Verdi. Using the transaction-level viewing feature, they could see the flow of coherency commands (Read-Shared, Write-Invalidate, etc.) across all the interfaces. They were able to put the transactions from all interfaces onto a single timeline. This revealed that a "Write-Invalidate" command from Core 2 was being dropped by the interconnect fabric under very specific load conditions, so Core 1 never knew its cache line was stale.
-4.  **Fix and Verify:** The DUT bug in the interconnect was fixed. Crucially, the verification team added a new monitor inside the interconnect that specifically watched for dropped coherency commands and would fire a `uvm_error` if it detected one.
-
-**The Lesson:** For system-level bugs, transaction-level debug is not a luxury; it's a necessity. The ability to see and correlate high-level transactions across multiple interfaces is the only way to efficiently debug complex, system-level interactions.
-
-### SoC-Level Verification Strategies
-
-**The Analogy:** Debugging an SoC is like coordinating traffic across an entire city. You care less about a single car and more about how intersections and freeways work together.
-
-- **Vertical Reuse:** Run IP-level agents in `UVM_PASSIVE` mode so they act as monitors when reused in the full-chip environment.
-- **System Scenarios:** Develop virtual sequences that represent software-driven flows such as boot, power management, or interrupt storms.
-- **Cross-Domain Correlation:** Record transactions on every major interface and align them on a shared timeline to trace bugs that cross between subsystems.
-
-### Formal Verification Integration
-
-- **Shared Assertions:** Write **SystemVerilog Assertions** once and leverage them in both simulation and formal tools.
-- **Formal Apps:** Use automated deadlock, X-propagation, or security apps to search for corner-case failures that may not appear in random simulation.
-- **Proof-Guided Tests:** When a formal run produces a counterexample, translate the waveform trace into a targeted UVM test for regression.
-
-### Methodology Customization Examples
-
-- **Custom Base Classes:** Extend `uvm_component` or `uvm_sequence` to include standardized logging or performance counters.
-- **Reusable Debug Utilities:** Provide tasks for log filtering, waveform dumping, or transaction tagging that any test can enable via the `uvm_config_db`.
-- **Configurable Logging:** Allow tests to toggle heavy debug features without recompiling, keeping regressions lean until deep debug is needed.
-
-**A Simple Example:** Extending a base sequence to tag every transaction with a unique ID.
-
-```systemverilog
-class dbg_sequence extends uvm_sequence#(my_item);
-  rand int debug_id;
-
-  task pre_start();
-    `uvm_info("DBG_SEQ", $sformatf("Starting seq %0d", debug_id), UVM_LOW)
-  endtask
-endclass
-```
-
-### Leadership & Strategy Guidance
-
-- **Establish a Debug Culture:** Conduct brief post-mortems after major issues so lessons become shared knowledge.
-- **Plan for Visibility:** Make debug hooks and logging requirements part of the verification plan from day one.
-- **Mentor Strategically:** Pair new engineers with experienced debuggers during tricky investigations to accelerate skill growth.
-
-### Cutting-Edge Topics
-
-- **AI-Assisted Waveform Analysis:** Emerging tools apply machine learning to flag anomalies in massive trace files, helping engineers zero in on suspicious patterns.
-  <DebuggingSimulator />
-
-- **Cloud Debug Platforms:** Cloud-hosted dashboards allow teams to upload waveforms and logs for shared, real-time investigation across global teams.
-  <UvmTestbenchVisualizer />
-
-- **PSS-Driven Debugging:** Portable Stimulus can encode repeatable debug scenarios that reproduce failures across platforms.
-  ```pss
-  component debug_flow {
-    action capture_waveforms;
-    action analyze_with_ai;
-    action report_issue;
-  }
-  ```
-
-## Check Your Understanding
-
-<Quiz questions={[
-    {
-      "question": "Your simulation is hanging. What is the most likely cause?",
-      "answers": [
-        {"text": "A syntax error in your code.", "correct": false},
-        {"text": "A forgotten `item_done()` call in a driver or a dropped objection.", "correct": true},
-        {"text": "A problem with the simulator.", "correct": false},
-        {"text": "A race condition.", "correct": false}
-      ],
-      "explanation": "Simulation hangs are almost always caused by a problem with the sequence/driver handshake or the objection mechanism."
-    },
-    {
-      "question": "You want to see all the messages from a specific component, `env.agent1.driver`. What is the best way to do this?",
-      "answers": [
-        {"text": "Add `$display` statements to the driver.", "correct": false},
-        {"text": "Use the `+UVM_VERBOSITY` plusarg.", "correct": false},
-        {"text": "Use the `set_report_verbosity_level_hier()` method.", "correct": true},
-        {"text": "Use the `factory.print()` method.", "correct": false}
-      ],
-      "explanation": "`set_report_verbosity_level_hier()` allows you to set the verbosity level for a specific component or hierarchy, which is the most efficient way to target messages from a specific part of your testbench."
-    }
-  ]} />
+## References & Next Topics
+- Accellera *UVM User Guide*, Appendix C (command-line processor) and debug sections.
+- Mentor/Siemens Verdi, Synopsys Verdi, Cadence SimVision user guides for UVM-aware debug.
+- Internal debug playbooks and regression dashboards.
+- Next: explore expert-level performance tuning (E-PERF-1) to keep instrumented benches fast.

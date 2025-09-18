@@ -21,5 +21,10 @@ Use this table to track adoption of the Quick Take → References & Next Topics 
 | T3 | A-UVM-2: UVM Factory In-Depth | `content/curriculum/T3_Advanced/A-UVM-2_The_UVM_Factory_In-Depth/index.mdx` | ✅ | Converted to Quick Take structure with override policy guidance on 2025-09-18 |
 | T3 | A-UVM-3: Advanced Techniques | `content/curriculum/T3_Advanced/A-UVM-3_Advanced_UVM_Techniques/index.mdx` | ✅ | Migrated to Quick Take structure covering RAL, callbacks, and coverage orchestration on 2025-09-18 |
 | T3 | A-UVM-4: RAL Deep Dive | `content/curriculum/T3_Advanced/A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL/index.mdx` | ✅ | Converted to Quick Take structure emphasizing adapters and hybrid access on 2025-09-18 |
+| T4 | E-CUST-1: Methodology Customization | `content/curriculum/T4_Expert/E-CUST-1_UVM_Methodology_Customization/index.mdx` | ✅ | Migrated to Quick Take structure with governance guidance on 2025-09-18 |
+| T4 | E-DBG-1: Advanced Debug | `content/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index.mdx` | ✅ | Converted to Quick Take structure featuring instrumentation and hang triage on 2025-09-18 |
+| T4 | E-INT-1: UVM + Formal Integration | `content/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index.mdx` | ✅ | Migrated to Quick Take structure emphasizing shared assertions on 2025-09-18 |
+| T4 | E-PERF-1: UVM Performance | `content/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index.mdx` | ✅ | Migrated to Quick Take structure highlighting profiling and architectural tuning on 2025-09-18 |
+| T4 | E-SOC-1: SoC Strategies | `content/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index.mdx` | ✅ | Migrated to Quick Take structure covering vertical reuse and scenario planning on 2025-09-18 |
 
 _Add additional rows for Tier 2+ as you migrate those modules._
