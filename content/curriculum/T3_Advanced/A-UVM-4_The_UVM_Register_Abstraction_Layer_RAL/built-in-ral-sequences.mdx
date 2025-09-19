@@ -1,17 +1,105 @@
 import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
-  title: "Built-in RAL Sequences and Adapters | Advanced UVM Techniques & Strategy",
-  description: "...",
+  title: "Built-in RAL Sequences & Utilities | Advanced UVM RAL",
+  description: "Leverage UVM’s prebuilt register sequences—reset, bit-bash, mem tests—and learn how to extend or constrain them safely.",
 };
 
 <InfoPage
-  title="Built-in RAL Sequences and Adapters"
-  uvm_concept_tags={["RAL sequences", "RAL adapters"]}
+  title="Built-in RAL Sequences & Utilities"
+  uvm_concept_tags={["RAL sequences", "uvm_reg_sequence", "bit-bash"]}
 >
 
-  ## Built-in RAL Sequences and Adapters
+  ## Elevator Pitch
 
-  This section is under construction. Please check back later.
+  RAL ships with powerful sequences—`uvm_reg_hw_reset_seq`, `uvm_reg_bit_bash_seq`, `uvm_mem_walk_seq`. Use them to prove the model and silicon (or emulation) agree, then extend them to fit your access rules.
+
+  ## Reset & Mirror Validation
+
+  <InteractiveCode
+    language="systemverilog"
+    fileName="reset_seq.sv"
+    code={`
+class soc_reset_seq extends uvm_reg_hw_reset_seq;
+  `uvm_object_utils(soc_reset_seq)
+
+  constraint c_paths {
+    register_sequences == {"cfg_map"};
+  }
+
+  virtual task body();
+    uvm_status_e status;
+    super.body();
+    // Optionally sanity-check mirrors after the base sequence completes
+    foreach (model.default_map.regs[i]) begin
+      uvm_reg rg = model.default_map.regs[i];
+      if (!rg.has_hdl_path("CFG")) continue;
+      rg.mirror(status, UVM_CHECK);
+    end
+  endtask
+endclass
+    `}
+    explanationSteps={[
+      { target: "1-9", title: "Extending reset sequence", explanation: "Subclass the built-in reset sequence to add constraints or post-processing." },
+      { target: "11-18", title: "Mirror after reset", explanation: "After the default run, mirror key registers with `UVM_CHECK` for additional assurance." }
+    ]}
+  />
+
+  ## Bit-Bash & Field Policies
+
+  - `uvm_reg_bit_bash_seq`: toggles W/R bits to validate access types. Override `is_legal` hook to skip write-one-to-clear (W1C) or reserved bits.
+  - `uvm_reg_access_seq`: simple sweeping read/write; great smoke test for new adapters.
+  - `uvm_mem_walk_seq`: diag for memories; ensure the adapter handles bursts correctly.
+
+  <InteractiveCode
+    language="systemverilog"
+    fileName="bit_bash_override.sv"
+    code={`
+class filtered_bit_bash_seq extends uvm_reg_bit_bash_seq;
+  `uvm_object_utils(filtered_bit_bash_seq)
+
+  virtual function bit is_legal(uvm_reg_field field);
+    if (field.get_access() inside {"WO", "W1C"})
+      return 0;
+    return super.is_legal(field);
+  endfunction
+endclass
+    `}
+    explanationSteps={[
+      { target: "1-8", title: "Custom legality", explanation: "Skip fields that could disrupt DUT state while still leveraging the base bit-bash logic." }
+    ]}
+  />
+
+  ## Checklist
+
+  - [ ] Built-in sequences are subclassed to respect DUT-specific access restrictions.
+  - [ ] Coverage/scoreboards observe these sequences to collect reset/bit coverage metrics.
+  - [ ] Register model and adapters are synchronized before running memory walk tests.
+
+  ## Quiz Yourself
+
+  <Quiz questions={[
+    {
+      question: "What does `uvm_reg_bit_bash_seq` primarily validate?",
+      answers: [
+        { text: "Adapters convert opcodes correctly", correct: false },
+        { text: "Register fields honor their access policies (RW/RO/etc.)", correct: true },
+        { text: "The DUT boots correctly", correct: false },
+        { text: "Scoreboards are connected", correct: false }
+      ],
+      explanation: "Bit-bash toggles each writable bit to confirm read/write semantics and mirroring." }
+    },
+    {
+      question: "How do you prevent a built-in sequence from corrupting W1C fields?",
+      answers: [
+        { text: "Disable mirroring", correct: false },
+        { text: "Override `is_legal()` and return 0 for those fields", correct: true },
+        { text: "Switch to backdoor", correct: false },
+        { text: "Use `set_sequencer(null)`", correct: false }
+      ],
+      explanation: "Customizing `is_legal` lets you skip sensitive fields while reusing the sequence logic." }
+    }
+  ]} />
 
 </InfoPage>

@@ -1,17 +1,100 @@
 import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
-  title: "Frontdoor vs. Backdoor Access | Advanced UVM Techniques & Strategy",
-  description: "...",
+  title: "Frontdoor vs. Backdoor RAL Access | Advanced UVM RAL",
+  description: "Balance realism and speed by choosing the right path for each register operation, and instrument both for coverage and debug.",
 };
 
 <InfoPage
   title="Frontdoor vs. Backdoor Access"
-  uvm_concept_tags={["frontdoor", "backdoor", "RAL"]}
+  uvm_concept_tags={["frontdoor", "backdoor", "uvm_reg"]}
 >
 
-  ## Frontdoor vs. Backdoor Access
+  ## Elevator Pitch
 
-  This section is under construction. Please check back later.
+  Frontdoor hits the bus—great for validating interconnect and timing. Backdoor bypasses it—perfect for fast init, scoreboards, or unblocking deadlocks. Advanced environments blend both depending on phase, performance targets, and coverage goals.
+
+  ## Decision Matrix
+
+  | Scenario | Preferred Path | Why |
+  | --- | --- | --- |
+  | Power-on reset checks | Backdoor for initial load, then frontdoor for audits | Initialize quickly, then confirm bus connectivity |
+  | Bus protocol validation | Frontdoor | Exercises adapters, sequencers, monitors |
+  | Scoreboard mirroring | Backdoor `peek`/`poke` | Mirrors without altering DUT timing |
+  | Post-silicon bring-up | Frontdoor | Matches firmware behaviour |
+  | Mass register scrub | Backdoor | Faster than thousands of bus transactions |
+
+  ## Implementation Pattern
+
+  <InteractiveCode
+    language="systemverilog"
+    fileName="hybrid_sequence.sv"
+    code={`
+class hybrid_reg_seq extends uvm_sequence#(uvm_reg_item);
+  `uvm_object_utils(hybrid_reg_seq)
+  codec_block blk;
+
+  rand bit use_frontdoor;
+
+  constraint c_weights { use_frontdoor dist {1 := 3, 0 := 1}; }
+
+  virtual task body();
+    uvm_status_e status;
+    uvm_reg_data_t data;
+
+    if (use_frontdoor) begin
+      blk.status.write(status, 8'h3C, UVM_FRONTDOOR);
+    end else begin
+      blk.status.poke(status, 8'h3C); // backdoor write
+    end
+
+    blk.status.mirror(status, UVM_CHECK);
+  endtask
+endclass
+    `}
+    explanationSteps={[
+      { target: "1-9", title: "Hybrid control", explanation: "Randomize which path to use—weight toward frontdoor unless speed is critical." },
+      { target: "11-21", title: "Mirror verification", explanation: "Regardless of path, mirror the register to ensure model/DUT alignment." }
+    ]}
+  />
+
+  ## Tips
+
+  - Use plusargs or config objects (`cfg.force_frontdoor`) so tests can switch modes without recompiling.
+  - When using backdoor on memories, ensure the HDL paths are stable across synth/sim flows.
+  - Log access source (front/back) in scoreboards to trace mismatches to the correct path.
+  - Guard backdoor writes with semaphores if multiple sequences might touch the same field concurrently.
+
+  ## Checklist
+
+  - [ ] Each register has valid HDL paths if backdoor is enabled.
+  - [ ] Adapters and predictors are configured for frontdoor operations.
+  - [ ] Tests clearly document when they switch paths and why.
+
+  ## Quiz Yourself
+
+  <Quiz questions={[
+    {
+      question: "Why mirror after a backdoor poke?",
+      answers: [
+        { text: "To update the register model's mirror value", correct: true },
+        { text: "To randomize the field", correct: false },
+        { text: "To trigger callbacks", correct: false },
+        { text: "It's not needed", correct: false }
+      ],
+      explanation: "Backdoor writes bypass the frontdoor mirroring mechanism—call `mirror` or `update` to keep the model consistent." }
+    },
+    {
+      question: "When is frontdoor mandatory?",
+      answers: [
+        { text: "When validating bus protocols or firmware-equivalent flows", correct: true },
+        { text: "During reset", correct: false },
+        { text: "During scoreboarding", correct: false },
+        { text: "Never", correct: false }
+      ],
+      explanation: "Only frontdoor accesses exercise the actual bus logic and arbitration seen by firmware." }
+    }
+  ]} />
 
 </InfoPage>

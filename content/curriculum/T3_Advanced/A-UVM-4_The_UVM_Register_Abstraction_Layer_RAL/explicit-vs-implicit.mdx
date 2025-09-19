@@ -1,17 +1,110 @@
 import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
-  title: "Explicit vs. Implicit Prediction | Advanced UVM Techniques & Strategy",
-  description: "...",
+  title: "Explicit vs. Implicit Prediction | Advanced UVM RAL",
+  description: "Choose the right prediction strategy so your RAL mirror tracks DUT state without redundant bus traffic.",
 };
 
 <InfoPage
   title="Explicit vs. Implicit Prediction"
-  uvm_concept_tags={["explicit prediction", "implicit prediction", "RAL"]}
+  uvm_concept_tags={["prediction", "uvm_reg_predictor", "mirror"]}
 >
 
-  ## Explicit vs. Implicit Prediction
+  ## Elevator Pitch
 
-  This section is under construction. Please check back later.
+  Prediction keeps the RAL mirror aligned with the DUT. Explicit prediction pulls the model from scoreboards/tests; implicit prediction wires the bus monitor into the reg predictor. Knowing when to use each is key to accurate checking and performance.
+
+  ## Definitions
+
+  - **Implicit prediction:** `uvm_reg_predictor` listens to bus transactions and updates the model automatically.
+  - **Explicit prediction:** Tests/sequences call `mirror`, `peek`, or `predict` manually (e.g., after a backdoor write).
+
+  ## Connection Example
+
+  <InteractiveCode
+    language="systemverilog"
+    fileName="predictor_hookup.sv"
+    code={`
+class soc_env extends uvm_env;
+  `uvm_component_utils(soc_env)
+
+  axi_agent      axi_agt;
+  codec_block    ral;
+  uvm_reg_predictor#(axi_item) predictor;
+  codec_adapter  adapter;
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    axi_agt    = axi_agent::type_id::create("axi_agt", this);
+    ral        = codec_block::type_id::create("ral", this);
+    predictor  = uvm_reg_predictor#(axi_item)::type_id::create("predictor", this);
+    adapter    = codec_adapter::type_id::create("adapter");
+  endfunction
+
+  function void connect_phase(uvm_phase phase);
+    predictor.map     = ral.default_map;
+    predictor.adapter = adapter;
+    axi_agt.monitor.ap.connect(predictor.bus_in);
+  endfunction
+endclass
+    `}
+    explanationSteps={[
+      { target: "1-10", title: "Instantiate pieces", explanation: "Environment owns the agent, RAL block, predictor, and adapter." },
+      { target: "12-19", title: "Implicit hookup", explanation: "Connect the monitor analysis port to `predictor.bus_in` and set the map+adapter for automatic prediction." }
+    ]}
+  />
+
+  ## When to Use Which
+
+  - **Implicit suits:** Normal frontdoor traffic where monitors see every transaction.
+  - **Explicit suits:** Backdoor pokes, scoreboards forcing mirror updates, or special events (DMA triggered changes) where the monitor doesn’t observe the write.
+  - Combine: Run implicit prediction for bus writes, call `predict()` manually for backdoor or sideband updates.
+
+  <InteractiveCode
+    language="systemverilog"
+    fileName="explicit_predict.sv"
+    code={`
+task update_shadow(codec_block blk, uvm_reg_data_t new_val);
+  uvm_status_e s;
+  blk.status.poke(s, new_val);
+  blk.status.predict(new_val, -1, UVM_BACKDOOR);
+endtask
+    `}
+    explanationSteps={[
+      { target: "1-5", title: "Manual predict", explanation: "After a backdoor poke, call `predict` so the mirror reflects the new value without extra bus operations." }
+    ]}
+  />
+
+  ## Checklist
+
+  - [ ] Predictors are wired for every bus that touches the RAL model.
+  - [ ] Backdoor or external updates call `predict()`/`mirror()` explicitly.
+  - [ ] Scoreboards know which prediction path updated the mirror (for debug logging).
+
+  ## Quiz Yourself
+
+  <Quiz questions={[
+    {
+      question: "Implicit prediction requires...",
+      answers: [
+        { text: "Connecting the bus monitor to a reg predictor", correct: true },
+        { text: "Calling `mirror()` after each write", correct: false },
+        { text: "Disabling adapters", correct: false },
+        { text: "Backdoor access", correct: false }
+      ],
+      explanation: "Implicit prediction relies on the monitor feeding transactions into a predictor." }
+    },
+    {
+      question: "After a backdoor `poke`, how do you keep the mirror accurate?",
+      answers: [
+        { text: "Do nothing; it updates automatically", correct: false },
+        { text: "Call `predict()` or `mirror()` explicitly", correct: true },
+        { text: "Run bit-bash sequence", correct: false },
+        { text: "Switch to frontdoor", correct: false }
+      ],
+      explanation: "Backdoor updates bypass the predictor, so explicit prediction is needed." }
+    }
+  ]} />
 
 </InfoPage>

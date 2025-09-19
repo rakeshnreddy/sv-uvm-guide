@@ -1,17 +1,104 @@
 import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
-  title: "Heartbeats and Testbench Monitoring | Advanced UVM Techniques & Strategy",
-  description: "...",
+  title: "Heartbeats & Hang Detection | Advanced UVM Factory",
+  description: "Instrument your testbench with automated heartbeat monitors so overrides or callbacks can recover from stimulus hangs fast.",
 };
 
 <InfoPage
-  title="Heartbeats and Testbench Monitoring"
-  uvm_concept_tags={["heartbeats", "testbench monitoring"]}
+  title="Heartbeats & Hang Detection"
+  uvm_concept_tags={["heartbeats", "hang detection", "uvm_heartbeat"]}
 >
 
-  ## Heartbeats and Testbench Monitoring
+  ## Elevator Pitch
 
-  This section is under construction. Please check back later.
+  Heartbeats are watchdogs for your stimulus. They watch sequences and phases, ensuring factory overrides or callbacks don’t accidentally stall traffic. When the heartbeat stops, the monitor raises alarms, captures diagnostics, or forces a recovery sequence.
+
+  ## Wiring a Heartbeat
+
+  <InteractiveCode
+    language="systemverilog"
+    fileName="heartbeat_setup.sv"
+    code={`
+class soc_test extends uvm_test;
+  `uvm_component_utils(soc_test)
+
+  soc_env      m_env;
+  uvm_heartbeat hb;
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    m_env = soc_env::type_id::create("m_env", this);
+  endfunction
+
+  function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    hb = uvm_heartbeat::type_id::create("hb", this);
+    hb.set_heartbeat(m_env.vseqr, "main_phase");
+    hb.add(m_env.vseqr.get_global_seq());
+    hb.set_timeout(.timeout = 1ms, .grace = 100us);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    phase.raise_objection(this);
+
+    boot_vseq boot = boot_vseq::type_id::create("boot");
+    boot.start(m_env.vseqr);
+
+    wait (hb.is_stopped() || boot.is_finished);
+    phase.drop_objection(this);
+  endtask
+
+  virtual function void report_phase(uvm_phase phase);
+    if (hb.is_stopped())
+      `uvm_fatal("HB", "Heartbeat stopped—sequence likely hung")
+  endfunction
+endclass
+    `}
+    explanationSteps={[
+      { target: "1-13", title: "Instantiate", explanation: "Create the environment and heartbeat component during build/connect." },
+      { target: "14-20", title: "Monitor target", explanation: "Point the heartbeat at the virtual sequencer’s main phase and register the sequence(s) to watch." },
+      { target: "22-33", title: "Timeouts & response", explanation: "Set timeout/grace intervals and respond in report phase if the heartbeat dies." }
+    ]}
+  />
+
+  ## Patterns for Reliability
+
+  - **Multiple sequences:** Register each critical sequence (`hb.add(seq_handle);`) so parallel stimulus is monitored.
+  - **Dynamic registration:** Use callbacks or factory overrides to auto-register sequences when they start (`uvm_heartbeat::add` inside `pre_start` hook).
+  - **Recovery flows:** Pair a heartbeat with an interrupt-handling virtual sequence to kick off resets or soft recovery sequences.
+  - **Telemetry:** Record heartbeat events to your logging pipeline to correlate with DUT hangs.
+
+  ## Checklist
+
+  - [ ] Heartbeat timeout aligns with expected stimulus cadence.
+  - [ ] Sequences are registered and deregistered as they start/finish.
+  - [ ] Report/log actions give enough context (phase name, sequence handles).
+
+  ## Quiz Yourself
+
+  <Quiz questions={[
+    {
+      question: "What does `set_timeout` configure?",
+      answers: [
+        { text: "The time a sequence waits before starting", correct: false },
+        { text: "How long the heartbeat can stay idle before flagging a hang", correct: true },
+        { text: "When the driver calls `item_done()`", correct: false },
+        { text: "The duration of `raise_objection`", correct: false }
+      ],
+      explanation: "Timeout and grace define how much idle time is tolerated before the heartbeat reports a failure." }
+    },
+    {
+      question: "Where should you typically register sequences with a heartbeat?",
+      answers: [
+        { text: "Inside the DUT", correct: false },
+        { text: "When sequences are started (e.g., in the test or a callback)", correct: true },
+        { text: "In the driver", correct: false },
+        { text: "You do not need to register them", correct: false }
+      ],
+      explanation: "Heartbeats monitor sequences; register them when they begin so the monitor can track activity." }
+    }
+  ]} />
 
 </InfoPage>
