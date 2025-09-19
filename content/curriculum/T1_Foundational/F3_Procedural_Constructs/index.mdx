@@ -22,6 +22,13 @@ import ProceduralBlocksSimulator from '@/components/animations/ProceduralBlocksS
 
 SystemVerilog simulators run every timestep through distinct event regions: **active** (procedural code executes), **inactive** (zero-delay updates), **NBA** (non-blocking assignments commit), and **postponed** (assertion sampling & `final`). Knowing where your code lands explains why a `<=` update appears “later” than a blocking `=`—the simulator is honoring those regions. Internalizing that timeline eliminates the feeling that the tool is acting randomly.
 
+| Region | Who runs here | Debug cue |
+| --- | --- | --- |
+| Active | `initial`, blocking assignments, tasks | Watch waveform edges jump immediately |
+| Inactive | Zero-delay updates (`#0`), event rescheduling | Rare today, but legacy code may rely on it |
+| NBA (non-blocking assign) | Sequential `<=` updates | Values “snap” after the active region finishes |
+| Postponed | Assertions, `final`, `$strobe` | Perfect spot for end-of-tick checks |
+
 ### Interactive Core Patterns
 <InteractiveCode
   language="systemverilog"
@@ -76,10 +83,80 @@ end
   ]}
 />
 
+> **Process hygiene:** When you use `fork ... join_none`, give the block a name so you can clean it up later. Pair `disable <label>;` or `process::kill()` with timeouts so runaway threads do not block simulation end.
+
+```systemverilog
+fork : stimulus
+  begin : driver
+    repeat (5) begin
+      #5 d_in = $urandom_range(0, 1);
+    end
+  end
+  begin : monitor
+    forever @(posedge clk) $display("q_out=%0b", q_out);
+  end
+join_none
+
+#100 disable stimulus; // tidy up if the threads outlive their usefulness
+```
+
 ### Common Pitfalls
-- Mixing blocking and non-blocking assignments to the same signal, causing races.
-- Using `always` instead of `always_ff`/`always_comb`, hiding missing signals in sensitivity lists.
-- Forgetting to terminate `fork/join` threads, leaving simulations hanging.
+- Mixing blocking and non-blocking assignments to the same signal, causing races. **Fix:** pick one style per signal—`<=` for sequential flops, `=` for combinational/testbench code.
+- Using `always` instead of `always_ff`/`always_comb`, hiding missing signals in sensitivity lists. **Fix:** swap to the intent-specific variants so the compiler enforces reset/clock rules for you.
+- Forgetting to terminate `fork/join` threads, leaving simulations hanging. **Fix:** manage spawned processes with `join`, `disable fork`, or `process::kill()` from a handle.
+
+### Case Study: Sequence Detector FSM
+Put the guidelines into context with a classic problem: detect the bit pattern `101` on a serial input. A clean implementation separates sequential state updates (`always_ff`) from combinational next-state logic.
+
+<InteractiveCode
+  language="systemverilog"
+  fileName="sequence_detector.sv"
+  code={`
+module sequence_detector (
+  input  logic clk,
+  input  logic reset,
+  input  logic din,
+  output logic detected
+);
+
+  typedef enum logic [1:0] {
+    S_IDLE,
+    S_GOT_1,
+    S_GOT_10
+  } state_t;
+
+  state_t state, state_next;
+
+  // Sequential evolution of the state register
+  always_ff @(posedge clk or posedge reset) begin
+    if (reset)
+      state <= S_IDLE;
+    else
+      state <= state_next;
+  end
+
+  // Combinational next-state logic
+  always_comb begin
+    state_next = state;
+    detected = 1'b0;
+    unique case (state)
+      S_IDLE:   state_next = din ? S_GOT_1  : S_IDLE;
+      S_GOT_1:  state_next = din ? S_GOT_1  : S_GOT_10;
+      S_GOT_10: begin
+        detected   = din;
+        state_next = din ? S_GOT_1 : S_IDLE;
+      end
+    endcase
+  end
+
+endmodule
+  `}
+/>
+
+**What to notice:**
+- State updates use non-blocking assignments in `always_ff`, mirroring flip-flop behavior.
+- The combinational block seeds `state_next` and `detected` with safe defaults, preventing unintended latches.
+- Using `unique case` catches missing branches while documenting intent for tools and reviewers.
 
 ### Flow-Control Building Blocks
 - **Conditionals (`if`, `case`, `unique case`)** gate behavior inside procedural blocks. Use `unique`/`priority` to signal intent to tools and catch missing branches.

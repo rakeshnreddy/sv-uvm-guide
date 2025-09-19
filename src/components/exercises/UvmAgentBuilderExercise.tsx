@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -9,8 +9,10 @@ import {
   useSensor,
   useSensors,
   DragEndEvent,
+  DragStartEvent,
   DraggableSyntheticListeners,
   DraggableAttributes,
+  DragOverlay,
 } from '@dnd-kit/core';
 import {
   arrayMove,
@@ -21,6 +23,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Button } from '@/components/ui/Button';
+import { useExerciseProgress } from '@/hooks/useExerciseProgress';
 
 export interface Item {
   id: string;
@@ -72,14 +75,27 @@ interface DraggableItemProps {
   isOverlay?: boolean; // To style the drag overlay differently if needed
 }
 
+interface FeedbackState {
+  score: number;
+  passed: boolean;
+  warnings: string[];
+  message: string;
+}
+
 // Simple Draggable Item Component
-const DraggableItem: React.FC<DraggableItemProps & { attributes: DraggableAttributes; listeners?: DraggableSyntheticListeners; style: React.CSSProperties }> = ({ item, attributes, listeners, style, isOverlay }) => {
+const DraggableItem: React.FC<
+  DraggableItemProps & {
+    attributes?: DraggableAttributes;
+    listeners?: DraggableSyntheticListeners;
+    style?: React.CSSProperties;
+  }
+> = ({ item, attributes, listeners, style, isOverlay }) => {
   return (
     <div
-      {...attributes}
-      {...listeners}
-      style={style}
-      className={`p-3 mb-2 rounded-md shadow ${isOverlay ? 'bg-blue-400 text-white ring-2 ring-blue-600' : 'bg-blue-100 text-blue-700 hover:bg-blue-200 cursor-grab'}`}
+      {...(attributes ?? {})}
+      {...(listeners ?? {})}
+      style={style ?? {}}
+      className={`p-3 mb-2 rounded-md shadow ${isOverlay ? 'bg-blue-400 text-white ring-2 ring-blue-600 cursor-grabbing' : 'bg-blue-100 text-blue-700 hover:bg-blue-200 cursor-grab'}`}
     >
       {item.name}
     </div>
@@ -106,27 +122,39 @@ const SortableItem: React.FC<{ item: Item }> = ({ item }) => {
     };
 
     return (
-      <div ref={setNodeRef} style={style}>
-        <DraggableItem item={item} attributes={attributes} listeners={listeners} style={{}} isOverlay={isDragging} />
+      <div
+        ref={setNodeRef}
+        style={style}
+        role="listitem"
+        aria-roledescription="sortable item"
+      >
+        <DraggableItem item={item} attributes={attributes} listeners={listeners} isOverlay={isDragging} />
       </div>
     );
 };
 
 
 const UvmAgentBuilderExercise: React.FC = () => {
-  const initialComponents: Item[] = [
-    ...REQUIRED_COMPONENTS,
-    { id: 'config_obj', name: 'Config Object' }, // Example of another component
-  ];
+  const initialComponents = useMemo<Item[]>(
+    () => [
+      ...REQUIRED_COMPONENTS,
+      { id: 'config_obj', name: 'Config Object' },
+      { id: 'virtual_sequencer', name: 'Virtual Sequencer' },
+    ],
+    [],
+  );
 
-  const [availableComponents, setAvailableComponents] = useState<Item[]>(initialComponents);
+  const [availableComponents, setAvailableComponents] = useState<Item[]>(() => [...initialComponents]);
   const [agentComponents, setAgentComponents] = useState<Item[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState<
-    { score: number; passed: boolean; warnings: string[] } | null
-  >(null);
-
-
+  const [feedback, setFeedback] = useState<FeedbackState | null>(null);
+  const {
+    progress: savedProgress,
+    recordAttempt,
+    resetProgress,
+    logInteraction,
+    analytics,
+  } = useExerciseProgress('uvm-agent-builder');
 
   const sensors = useSensors(
     useSensor(PointerSensor),
@@ -146,9 +174,10 @@ const UvmAgentBuilderExercise: React.FC = () => {
     return availableComponents.find(i => i.id === activeId) || agentComponents.find(i => i.id === activeId);
   }
 
-  function handleDragStart(event: DragEndEvent) {
-    const {active} = event;
+  function handleDragStart(event: DragStartEvent) {
+    const { active } = event;
     setActiveId(active.id as string);
+    logInteraction();
   }
 
 
@@ -157,6 +186,8 @@ const UvmAgentBuilderExercise: React.FC = () => {
     setActiveId(null);
 
     if (!over) return; // Dropped outside any droppable
+
+    logInteraction();
 
     const activeContainer = findContainer(active.id as string);
     const overContainerId = over.id as string; // 'available-droppable' or 'agent-droppable'
@@ -196,90 +227,124 @@ const UvmAgentBuilderExercise: React.FC = () => {
   const activeItem = getActiveItem();
 
   const checkAgent = () => {
+    logInteraction();
     const { warnings, score } = checkAgentComponents(agentComponents);
-    setFeedback({ score, passed: score === 100, warnings });
+    const passed = score === 100;
+    const message = passed
+      ? 'Sequencer, driver, and monitor are assembled in the right order. Nice work!'
+      : warnings.length > 0
+        ? `Keep iterating—${warnings.join(' ')}`
+        : 'Components are present but the order needs a quick check.';
+
+    recordAttempt(score);
+    setFeedback({ score, passed, warnings, message });
   };
 
   const handleRetry = () => {
-    setAvailableComponents(initialComponents);
+    setAvailableComponents([...initialComponents]);
     setAgentComponents([]);
     setFeedback(null);
+    logInteraction();
   };
 
   return (
-    <>
+    <div className="space-y-4">
+      <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-white/5 p-4 text-sm text-[rgba(230,241,255,0.75)] md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="font-semibold text-primary">Best score: {savedProgress.bestScore}%</p>
+          <p>
+            Attempts: {savedProgress.attempts}
+            {savedProgress.lastPlayedLabel ? ` • Last played ${savedProgress.lastPlayedLabel}` : ''}
+          </p>
+          {savedProgress.attempts > 0 && (
+            <p className="text-xs text-[rgba(230,241,255,0.65)]">
+              Average score: {Math.round(analytics.competency)}% • Interactions: {analytics.engagement}
+            </p>
+          )}
+        </div>
+        {savedProgress.attempts > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={resetProgress}
+            className="self-start text-xs text-[rgba(230,241,255,0.8)] hover:bg-white/10"
+          >
+            Clear saved progress
+          </Button>
+        )}
+      </div>
+
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        <div className="flex flex-col md:flex-row gap-6 p-4 items-start">
-          {/* Available Components */}
-          <div className="w-full md:w-1/3 p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
-            <h3 className="text-lg font-semibold mb-3 text-primary">Available UVM Components</h3>
+        <div className="flex flex-col items-start gap-6 p-4 md:flex-row">
+          <p id={instructionId} className="mb-4 text-sm text-muted-foreground md:w-full">
+            Drag each component or use keyboard controls (space to lift, arrow keys to move) to assemble the agent. Drop sequencer, driver, and monitor into the UVM Agent zone.
+          </p>
+          <div className="w-full rounded-lg border border-white/20 bg-white/10 p-4 shadow-lg backdrop-blur-lg md:w-1/3">
+            <h3 className="mb-3 text-lg font-semibold text-primary">Available UVM Components</h3>
             <SortableContext items={availableComponents.map(i => i.id)} strategy={verticalListSortingStrategy} id="available-droppable">
-               <div id="available-droppable" className="min-h-[200px] border-2 border-dashed border-white/20 rounded p-2">
-                  {availableComponents.map(item => <SortableItem key={item.id} item={item} />)}
-                  {availableComponents.length === 0 && <p className="text-muted-foreground text-center py-4">All components used.</p>}
-               </div>
+              <div
+                id="available-droppable"
+                className="min-h-[220px] rounded border-2 border-dashed border-white/20 p-2"
+                role="list"
+                aria-describedby={instructionId}
+              >
+                {availableComponents.map(item => <SortableItem key={item.id} item={item} />)}
+                {availableComponents.length === 0 && <p className="py-4 text-center text-muted-foreground">All components used.</p>}
+              </div>
             </SortableContext>
           </div>
 
-          {/* Agent Target Area */}
-          <div className="w-full md:w-2/3 p-4 bg-white/10 backdrop-blur-lg border-2 border-accent rounded-lg shadow-lg">
-            <h3 className="text-lg font-semibold mb-3 text-accent">UVM Agent (Drop Zone)</h3>
-             <SortableContext items={agentComponents.map(i => i.id)} strategy={verticalListSortingStrategy} id="agent-droppable">
-              <div id="agent-droppable" className="min-h-[200px] p-2 bg-white/10 rounded border border-dashed border-accent">
-                  {agentComponents.map(item => <SortableItem key={item.id} item={item} />)}
-                  {agentComponents.length === 0 && <p className="text-muted-foreground text-center py-4">Drag components here</p>}
+          <div className="w-full rounded-lg border-2 border-accent bg-white/10 p-4 shadow-lg backdrop-blur-lg md:w-2/3">
+            <h3 className="mb-3 text-lg font-semibold text-accent">UVM Agent (Drop Zone)</h3>
+            <SortableContext items={agentComponents.map(i => i.id)} strategy={verticalListSortingStrategy} id="agent-droppable">
+              <div
+                id="agent-droppable"
+                className="min-h-[220px] rounded border border-dashed border-accent bg-white/10 p-2"
+                role="list"
+                aria-describedby={instructionId}
+              >
+                {agentComponents.map(item => <SortableItem key={item.id} item={item} />)}
+                {agentComponents.length === 0 && <p className="py-4 text-center text-muted-foreground">Drag components here</p>}
               </div>
             </SortableContext>
           </div>
         </div>
-         {typeof document !== 'undefined' && activeId && (
-            <div style={{position: 'fixed', top: 0, left: 0, pointerEvents: 'none', zIndex: 1000}}>
-              {/* This is a simplified drag overlay. For a perfect overlay matching the item,
-                  you'd use <DragOverlay> from @dnd-kit/core andPortal={document.body} */}
-              {activeItem &&
-                <DraggableItem
-                  item={activeItem}
-                  isOverlay={true}
-                  attributes={{
-                    role: 'button', // Or appropriate role for a draggable item
-                    'aria-roledescription': 'draggable item',
-                    tabIndex: -1,
-                    'aria-disabled': true,
-                    'aria-pressed': undefined,
-                    'aria-describedby': 'draggable-item-description', // A bit generic, but satisfies type
-                  }}
-                  style={{}}
-                />}
-            </div>
-          )}
+
+        <DragOverlay>
+          {activeItem ? <DraggableItem item={activeItem} isOverlay /> : null}
+        </DragOverlay>
       </DndContext>
-      <div className="mt-4 flex justify-center gap-2">
+
+      <div className="flex justify-center gap-2">
         <Button onClick={checkAgent}>Check Agent</Button>
         <Button variant="outline" onClick={handleRetry}>Retry</Button>
       </div>
+
       {feedback && (
-        <div className="mt-4 text-center">
-          <p>Score: {feedback.score}%</p>
+        <div
+          className={`rounded-lg border p-4 text-sm ${feedback.passed ? 'border-emerald-400/50 bg-emerald-400/10 text-emerald-100' : 'border-amber-400/50 bg-amber-500/10 text-amber-100'}`}
+          role="status"
+          aria-live="polite"
+        >
+          <p className="text-lg font-semibold">Score: {feedback.score}%</p>
+          <p className="mt-1">{feedback.message}</p>
           {feedback.warnings.length > 0 && (
-            <div className="text-yellow-500">
-              {feedback.warnings.map((w, i) => (
-                <p key={i}>{w}</p>
+            <ul className="mt-3 list-disc list-inside text-xs">
+              {feedback.warnings.map(warning => (
+                <li key={warning}>{warning}</li>
               ))}
-            </div>
+            </ul>
           )}
-          <p className={feedback.passed ? 'text-green-500' : 'text-red-500'}>
-            {feedback.passed ? 'Pass' : 'Fail'}
-          </p>
         </div>
       )}
-    </>
-
+    </div>
   );
 };
 
 export default UvmAgentBuilderExercise;
+  const instructionId = 'uvm-agent-builder-instructions';

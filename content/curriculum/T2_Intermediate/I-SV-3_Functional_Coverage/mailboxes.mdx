@@ -19,26 +19,41 @@ export const metadata = {
 
   ### Basic Operations
 
-  -   `put(item)`: place an item into the mailbox (blocks if full).
-  -   `get(item)`: remove an item (blocks if empty).
-  -   `try_get(item)` and `peek(item)`: non-blocking alternatives.
+  | Call | Blocking? | Use it when |
+  | --- | --- | --- |
+  | `put(item)` | Blocks if the mailbox is full | Backpressure producer threads until consumers catch up. |
+  | `try_put(item)` | Returns 0 if full | Drop low-priority work instead of stalling. |
+  | `get(item)` | Blocks until something arrives | Classic producer/consumer handshakes. |
+  | `try_get(item)` | Returns 0 if empty | Poll without blocking a monitor. |
+  | `peek(item)` | Non-destructive read | Look at the next transaction while leaving it queued. |
+  | `num()` | Instant | Inspect queue depth for assertions or adaptive throttling. |
 
   <InteractiveCode>
   ```systemverilog
-  typedef struct {int id; bit [7:0] data;} packet;
-  mailbox #(packet) mbx = new(4); // depth of 4
+  typedef struct { int id; bit [7:0] data; } packet_t;
+  mailbox #(packet_t) mbx = new(4); // depth-limited queue
+
+  task automatic produce_packet(int id);
+    packet_t p = '{id: id, data: $urandom_range(0, 255)};
+    if (!mbx.try_put(p)) begin
+      // Backpressure: wait for space, then block on put
+      wait (mbx.num() < 4);
+      mbx.put(p);
+    end
+  endtask
 
   initial begin
-    packet p;
-    p.id = 1;
-    p.data = $urandom;
-    mbx.put(p); // producer
+    for (int idx = 0; idx < 8; idx++) begin
+      produce_packet(idx);
+    end
   end
 
   initial begin
-    packet r;
-    mbx.get(r); // consumer waits here until item arrives
-    $display("Got packet %0d", r.id);
+    packet_t pkt;
+    forever begin
+      mbx.get(pkt);
+      $display("[%0t] Consumer saw id=%0d depth=%0d", $time, pkt.id, mbx.num());
+    end
   end
   ```
   </InteractiveCode>
@@ -47,11 +62,15 @@ export const metadata = {
 
   ## Level 3: Expert Insights
 
-  **Bounded vs. Unbounded:** A mailbox without a size is unbounded and never blocks on `put`. Bounded mailboxes model limited buffers.
+  **Bounded vs. unbounded:** `new()` with no arguments gives you an infinite queue—useful for scoreboards, dangerous for drivers that might overrun memory. Set a depth to spot backpressure issues during bring-up.
 
-  **Typed Mailboxes:** Parameterized mailboxes (`mailbox#(packet)`) catch type mismatches at compile time.
+  **Typed mailboxes:** Parameterized mailboxes (`mailbox#(packet_t)`) prevent accidental mixing of transaction types. Pair them with `typedef`ed structs so refactors stay safe.
 
-  **Mailboxes vs. Analysis Ports:** Mailboxes connect one producer to one consumer. For broadcasting transactions to multiple subscribers, use [analysis ports](/curriculum/uvm-building/essentials/analysis-components).
+  **Monitoring depth:** `mbx.num()` is a quick health indicator—assert it never exceeds your architectural limits, or expose it via telemetry to visualize congestion.
+
+  **Mailboxes vs. TLM/FIFOs:** UVM’s `uvm_tlm_fifo` wraps a mailbox with analysis ports, reset control, and blocking/non-blocking APIs. Reach for it when you need producer/consumer plus broadcast behavior; stick with raw mailboxes for lightweight handshakes.
+
+  **One-to-one only:** Mailboxes always deliver each message to a single consumer. When you need broadcast semantics, rely on [analysis ports](/curriculum/T2_Intermediate/I-UVM-2_Building_TB/index#monitors-scoreboards-and-the-analysis-fabric) or register callbacks.
 
   ## Quiz
 
@@ -79,4 +98,3 @@ export const metadata = {
   ]} />
 
 </InfoPage>
-

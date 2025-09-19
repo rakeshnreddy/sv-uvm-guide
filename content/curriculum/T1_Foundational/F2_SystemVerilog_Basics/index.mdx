@@ -12,6 +12,24 @@ import ProceduralBlocksSimulator from '@/components/animations/ProceduralBlocksS
 
 Welcome to the second module in our foundational tier. Now that you understand *why* we verify, it's time to learn the basic vocabulary of the language we use to do it: **SystemVerilog**. SystemVerilog is a Hardware Description and Verification Language (HDVL), meaning it's used for both designing and testing digital circuits. This module will cover the absolute essentials you need to start reading and writing basic SystemVerilog code.
 
+## Synthesizable vs. Verification Code
+
+SystemVerilog lives a double life. A subset of the language maps directly to hardware gates—**synthesizable code**. Another subset exists purely for testbenches—**non-synthesizable verification code** that only the simulator understands.
+
+- *Design side:* RTL modules, always blocks, and signals must obey synthesizable rules so tools can convert them into transistors.
+- *Verification side:* Classes, randomization, mailboxes, `initial` blocks, and `$display` calls make simulations smarter but never turn into silicon.
+
+> **Mental model:** Think of synthesizable code as the blueprint the fabrication plant reads, while verification code is the inspection checklist the shop floor uses to prove the blueprint works.
+
+Knowing which constructs belong to each world keeps your designs portable and your testbenches expressive. As you read the rest of this module, ask yourself: *Would this line run in hardware, or only in the simulator?*
+
+| Common Construct | Synthesizable? | Why it matters |
+| --- | --- | --- |
+| `always_ff`, `always_comb`, continuous `assign` | ✅ | Infers flip-flops, combinational logic, and net drivers the tool can synthesize. |
+| `initial`, `final`, classes, randomization | ❌ | Simulator-only helpers that provide testbench behavior but cannot map to hardware. |
+| Interfaces, packages | ✅ (structure) | Great for design partitioning; contents may still include non-synthesizable helpers. |
+| Mailboxes, semaphores, queues | ❌ | Behavioral verification constructs—the DUT will never “see” them. |
+
 ## Data Types: The Building Blocks
 
 In SystemVerilog, data types define what kind of data a variable or net can hold.
@@ -27,6 +45,10 @@ The most important data type for modern SystemVerilog is `logic`. It is a 4-stat
 In older Verilog, you had to use `reg` for variables used in procedural blocks and `wire` for signals connecting different parts of a design. SystemVerilog's `logic` type can be used in both contexts, simplifying the language.
 
 **Rule of Thumb:** Always use `logic` unless you have a specific reason to use `wire` (e.g., for a multi-driver net).
+
+> **Two-state alternative:** Reach for `bit` when you need a fast, 2-state scalar for counters and flags. Keep `logic` where you care about modelling `X`/`Z` conditions that expose resets or bus contention.
+
+`logic` intentionally disallows multiple procedural drivers so that contention turns into compile errors. If you really do need wired-OR behavior or tri-stated outputs, declare the net as `wire`/`tri` and drive it with `assign` statements or interface modports.
 
 <InteractiveCode>
 ```systemverilog
@@ -99,14 +121,21 @@ module array_example;
     queue.push_back("hello");
     queue.push_front("world");
     $display("Queue: %p", queue);
+    string popped = queue.pop_back();
+    $display("After pop_back(): %p (removed %s)", queue, popped);
 
     // Use an associative array
     assoc_array["foo"] = 123;
     $display("Associative array entry for 'foo': %d", assoc_array["foo"]);
+    $display("Does 'bar' exist? %0d", assoc_array.exists("bar"));
   end
 endmodule
 ```
 </InteractiveCode>
+
+<div className="my-6">
+  <DataTypeComparisonChart />
+</div>
 
 ### User-Defined Types
 
@@ -132,6 +161,8 @@ module user_defined_example;
   initial begin
     current_state = IDLE;
     $display("Current state: %s", current_state.name());
+    current_state = current_state.next();
+    $display("Next state: %s", current_state.name());
 
     transaction.addr = 32'h1000;
     transaction.data = 32'hdeadbeef;
@@ -225,6 +256,19 @@ Literals are how you define constant values. The syntax is `size'base_format`val
 #### Timescale
 
 The `` `timescale `` directive specifies the time units and precision for the simulation. `` `timescale 1ns / 1ps `` means that `#1` corresponds to 1 nanosecond, and the simulation precision is 1 picosecond.
+
+A more modern style is to place the settings directly inside a module or package with `timeunit/timeprecision`. That keeps the scope local and avoids macro leakage.
+
+```systemverilog
+module timer;
+  timeunit 1ns;
+  timeprecision 1ps;
+
+  initial begin
+    #0.2ns $display("200ps elapsed");
+  end
+endmodule
+```
 
 #### Delays
 
@@ -360,6 +404,8 @@ endinterface
 ```
 </InteractiveCode>
 
+> **When to reach for program blocks?** Modern UVM environments manage ordering internally, so dedicated `program` blocks show up mostly in legacy benches or directed tests. Use one when you need a guaranteed \"testbench runs after DUT\" scheduling wall.
+
 ## Key Takeaways
 
 *   Use `logic` as your default data type for hardware modeling.
@@ -368,6 +414,7 @@ endinterface
 *   Use non-blocking assignments (`<=`) for sequential logic and blocking assignments (`=`) for combinational logic and testbench code.
 *   Use interfaces to simplify connections and improve reusability.
 *   Use packages to organize your code.
+*   Prefer `timeunit/timeprecision` inside scopes instead of a global `` `timescale `` when you can.
 
 ## Check Your Understanding
 

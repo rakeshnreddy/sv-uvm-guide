@@ -36,9 +36,9 @@ describe('curriculum slug utilities', () => {
     expect(path.endsWith('/index')).toBe(true);
   });
 
-  it('supports non-tier collections such as interactive tools', () => {
-    const path = resolveCurriculumPath(['interactive-tools', 'uvm-visualizers']);
-    expect(path).toBe('/curriculum/interactive-tools/uvm-visualizers/interactive-testbench');
+  it('resolves nested lesson slugs for Tier 2 sequences', () => {
+    const path = resolveCurriculumPath(['T2_Intermediate', 'I-UVM-3_Sequences', 'uvm-config-db']);
+    expect(path).toBe('/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-config-db');
   });
 
   it('falls back gracefully when a slug cannot be resolved', () => {

@@ -8,6 +8,7 @@ import { InteractiveCode, Quiz } from '@/components/ui';
 import AnimatedUvmTestbenchDiagram from '@/components/diagrams/AnimatedUvmTestbenchDiagram';
 import UvmComponentRelationshipVisualizer from '@/components/diagrams/UvmComponentRelationshipVisualizer';
 import { AnimatedUvmSequenceDriverHandshakeDiagram } from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram';
+import UvmTestbenchVisualizer from '@/components/diagrams/UvmTestbenchVisualizer';
 
 ## Quick Take
 - **What it is:** The UVM testbench is a layered environment where agents wrap protocol knowledge, sequencers feed intent, drivers wiggle pins, monitors observe, and scoreboards compare.
@@ -26,10 +27,19 @@ With objects vs. components under your belt, zoom out to the full environment: t
   </div>
 </div>
 
+<div className="my-6 rounded-3xl border border-white/10 bg-white/5 p-6 text-sm text-[rgba(230,241,255,0.8)] backdrop-blur">
+  <UvmTestbenchVisualizer />
+  <p className="mt-3 text-center text-xs uppercase tracking-[0.25em] text-[rgba(230,241,255,0.6)]">
+    Hover components to trace stimulus, monitoring, and scoreboard flow.
+  </p>
+</div>
+
 ### Agents as the Unit of Reuse
 An `uvm_agent` packages the sequencer, driver, and monitor for one interface. Flip `is_active` to control behavior:
 - **Active agents** generate stimulus—driver + sequencer come alive.
 - **Passive agents** listen only—instantiate just the monitor to tap traffic non-invasively.
+
+> **Interface Tip:** Keep agents self-contained by binding them to a SystemVerilog `interface` handle (via the config DB). Drivers dereference a virtual interface; monitors sample via the same handle. That separation is what lets the agent drop into any testbench without rewiring pins.
 
 ### Sequencer ↔ Driver Handshake
 Sequencers manage high-level intent, drivers translate that intent into pin-wiggles. Their protocol keeps stimulus moving—step through the handshake timeline below.
@@ -51,6 +61,10 @@ endtask
 
 ### Monitors, Scoreboards, and the Analysis Fabric
 Monitors reconstruct transactions without touching pins, analysis ports broadcast those transactions, and subscribers (scoreboards, coverage collectors) consume them.
+
+- **Monitor = security camera.** It quietly records bus activity and publishes polished transactions.
+- **Scoreboard = security guard.** It watches the monitor feed and compares reality to the rules defined by your reference model.
+- **Coverage collector = data analyst.** It taps the same feed to measure which scenarios your stimulus actually exercised.
 
 <InteractiveCode>
 ```systemverilog
@@ -100,6 +114,20 @@ Transaction-Level Modeling (TLM) abstracts communication so components move data
 - **Exports/Imps** receive them (the mailboxes).
 - **Analysis ports** broadcast to many listeners.
 
+```systemverilog
+// Producer/consumer via blocking put
+uvm_blocking_put_port #(my_txn) put_port;
+uvm_blocking_put_imp  #(my_txn, my_consumer) put_export;
+
+// Analysis fabric for monitors and subscribers
+uvm_analysis_port #(my_txn) ap;
+uvm_analysis_imp  #(my_txn, my_scoreboard) analysis_export;
+```
+
+- Use **`put`/`get` ports** for point-to-point producer ↔ consumer flows.
+- Use the **sequencer handshake** (`get_next_item`/`item_done`) for stimulus delivery.
+- Use **analysis ports** when one monitor needs to fan out transactions to scoreboards, subscribers, and coverage collectors simultaneously.
+
 Review the [mailbox primer](../I-SV-3_Functional_Coverage/mailboxes) if the terminology feels rusty.
 
 <UvmComponentRelationshipVisualizer />
@@ -116,6 +144,7 @@ Review the [mailbox primer](../I-SV-3_Functional_Coverage/mailboxes) if the term
 - [ ] You can trace which component owns each analysis port or export.
 
 ## Push Further
+- **Coordinate with virtual sequencers:** Expose child sequencer handles and create a parent `uvm_virtual_sequencer` so complex SoCs can script cross-agent stimulus without fragile global handles.
 - **Compose environments:** Build parent envs that instantiate multiple protocol agents and share a scoreboard.
 - **Instrument coverage collectors:** Subscribe coverage components to the same analysis ports the scoreboard uses.
 - **Standardize config knobs:** Centralize agent configuration (passive mode, virtual interfaces) in the environment's `build_phase`.
@@ -125,6 +154,7 @@ Review the [mailbox primer](../I-SV-3_Functional_Coverage/mailboxes) if the term
 - Flashcards – Drill the agent makeup, handshake, and analysis fabric vocabulary.
 - Micro-lab – Convert an agent from active to passive and confirm the driver stops requesting items.
 - Architecture sketch – Draw a dual-agent environment and label each TLM connection.
+- Interactive wiring drill – Use the [Scoreboard Connector exercise](/exercises/scoreboard-connector) to practice wiring analysis ports and `analysis_imp`s.
 - Quiz – Lock in the fundamentals below.
 
 <Quiz questions={[

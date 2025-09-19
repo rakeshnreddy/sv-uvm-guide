@@ -401,62 +401,62 @@ export const curriculumData: Module[] = [
           {
             "title": "A-UVM-1: Advanced UVM Sequencing",
             "slug": "index",
-            "description": "Learn about advanced UVM sequencing techniques, including layered sequences, virtual sequences, and sequence libraries."
+            "description": "Coordinate layered stimulus with virtual sequences, arbitration hooks, and reusable sequence libraries across complex UVM testbenches."
           },
           {
-            "title": "Connecting the Agent Components | Building a UVM Testbench",
+            "title": "Connecting the Agent Components | Advanced UVM Sequencing",
             "slug": "connecting",
-            "description": "..."
+            "description": "Wire sequencers, drivers, monitors, and scoreboards with robust connect_phase patterns and analysis backbones."
           },
           {
-            "title": "The Environment and Test Classes | Building a UVM Testbench",
+            "title": "Environment & Test Classes | Advanced UVM Sequencing",
             "slug": "environment-test-classes",
-            "description": "..."
+            "description": "Structure environments and tests to configure agents, publish sequencer handles, and launch layered stimulus cleanly."
           },
           {
-            "title": "Interrupt Handling and Layered Stimulus | Advanced UVM Techniques & Strategy",
+            "title": "Interrupt Handling and Layered Stimulus | Advanced UVM Sequencing",
             "slug": "interrupt-handling",
-            "description": "..."
+            "description": "Turn asynchronous interrupts into deterministic stimulus by combining monitor events, routing policy, and virtual sequences."
           },
           {
-            "title": "Layered Sequences and p_sequencer | Building a UVM Testbench",
+            "title": "Layered Sequences and p_sequencer | Advanced UVM Sequencing",
             "slug": "layered-sequences",
-            "description": "..."
+            "description": "Design atomic, scenario, and virtual layers of sequences while using p_sequencer to orchestrate cross-agent stimulus."
           },
           {
-            "title": "Sequence Arbitration and Priority | Advanced UVM Techniques & Strategy",
+            "title": "Sequence Arbitration and Priority | Advanced UVM Sequencing",
             "slug": "sequence-arbitration",
-            "description": "..."
+            "description": "Understand how UVM sequencers choose the next sequence, how to apply lock/grab, and how to customize arbitration for complex stimulus coordination."
           },
           {
-            "title": "Sequence Libraries and grab/ungrab | Building a UVM Testbench",
+            "title": "Sequence Libraries & Arbitration Control | Advanced UVM Sequencing",
             "slug": "sequence-libraries",
-            "description": "..."
+            "description": "Package reusable stimulus into sequence libraries, weight them, and know when to grab/ungrab for critical sections."
           },
           {
-            "title": "The Sequencer-Driver Handshake | Building a UVM Testbench",
+            "title": "The Sequencer-Driver Handshake | Advanced UVM Sequencing",
             "slug": "sequencer-driver-handshake",
-            "description": "..."
+            "description": "Dissect the blocking protocol between UVM sequencers and drivers, from arbitration to item_done(), and learn how to instrument and debug the flow."
           },
           {
-            "title": "uvm_monitor and Analysis Ports | Building a UVM Testbench",
+            "title": "uvm_monitor & Analysis Fabric | Advanced UVM Sequencing",
             "slug": "uvm-monitor",
-            "description": "..."
+            "description": "Instrument monitors to reconstruct transactions, publish them reliably, and feed subscribers and scoreboards."
           },
           {
-            "title": "The UVM Scoreboard | Building a UVM Testbench",
+            "title": "UVM Scoreboard Patterns | Advanced UVM Sequencing",
             "slug": "uvm-scoreboard",
-            "description": "..."
+            "description": "Design scoreboards that compare expected vs. observed traffic, manage response queues, and surface mismatches clearly."
           },
           {
-            "title": "uvm_sequence_item and uvm_sequence | Building a UVM Testbench",
+            "title": "uvm_sequence_item Mastery | Advanced UVM Sequencing",
             "slug": "uvm-sequence-item",
-            "description": "..."
+            "description": "Engineer rich transaction objects with constraints, deep copy behaviour, and response tracking so every layer of the testbench stays in sync."
           },
           {
-            "title": "uvm_subscriber | Building a UVM Testbench",
+            "title": "uvm_subscriber in Practice | Advanced UVM Sequencing",
             "slug": "uvm-subscriber",
-            "description": "..."
+            "description": "Leverage uvm_subscriber to capture analysis traffic for coverage, scoreboards, and telemetry without bloating monitors."
           },
           {
             "title": "UVM Virtual Sequencer",
@@ -477,28 +477,28 @@ export const curriculumData: Module[] = [
           {
             "title": "A-UVM-2: The UVM Factory In-Depth",
             "slug": "index",
-            "description": "Explore advanced UVM factory features, including instance overrides, string-based overrides, and debugging techniques."
+            "description": "Target overrides precisely, debug factory configuration, and architect reusable agents with advanced UVM factory techniques."
           },
           {
-            "title": "Heartbeats and Testbench Monitoring | Advanced UVM Techniques & Strategy",
+            "title": "Heartbeats & Hang Detection | Advanced UVM Factory",
             "slug": "heartbeats",
-            "description": "..."
+            "description": "Instrument your testbench with automated heartbeat monitors so overrides or callbacks can recover from stimulus hangs fast."
           },
           {
-            "title": "UVM Callbacks and Facade Classes | Advanced UVM Techniques & Strategy",
+            "title": "UVM Callbacks & Factory Overrides | Advanced UVM Sequencing",
             "slug": "uvm-callbacks",
-            "description": "..."
+            "description": "Combine callbacks with factory overrides so you can instrument VIP, inject errors, and audit behaviour without touching source modules."
           }
         ]
       },
       {
-        "title": "Advanced UVM Techniques & Strategy | Advanced UVM",
+        "title": "A-UVM-3: Advanced UVM Techniques & Strategy",
         "slug": "A-UVM-3_Advanced_UVM_Techniques",
         "topics": [
           {
-            "title": "Advanced UVM Techniques & Strategy | Advanced UVM",
+            "title": "A-UVM-3: Advanced UVM Techniques & Strategy",
             "slug": "index",
-            "description": "Expert-level concepts like RAL, virtual sequences, callbacks, and coverage integration."
+            "description": "Orchestrate register models, virtual sequences, callbacks, and functional coverage to harden complex UVM environments."
           }
         ]
       },
@@ -509,22 +509,22 @@ export const curriculumData: Module[] = [
           {
             "title": "A-UVM-4: The UVM Register Abstraction Layer (RAL)",
             "slug": "index",
-            "description": "Learn how to use the UVM Register Abstraction Layer (RAL) to model and access DUT registers in a standardized and reusable way."
+            "description": "Model DUT registers once, drive them through any bus, and balance frontdoor/backdoor access for realistic yet fast verification."
           },
           {
-            "title": "Built-in RAL Sequences and Adapters | Advanced UVM Techniques & Strategy",
+            "title": "Built-in RAL Sequences & Utilities | Advanced UVM RAL",
             "slug": "built-in-ral-sequences",
-            "description": "..."
+            "description": "Leverage UVM’s prebuilt register sequences—reset, bit-bash, mem tests—and learn how to extend or constrain them safely."
           },
           {
-            "title": "Explicit vs. Implicit Prediction | Advanced UVM Techniques & Strategy",
+            "title": "Explicit vs. Implicit Prediction | Advanced UVM RAL",
             "slug": "explicit-vs-implicit",
-            "description": "..."
+            "description": "Choose the right prediction strategy so your RAL mirror tracks DUT state without redundant bus traffic."
           },
           {
-            "title": "Frontdoor vs. Backdoor Access | Advanced UVM Techniques & Strategy",
+            "title": "Frontdoor vs. Backdoor RAL Access | Advanced UVM RAL",
             "slug": "frontdoor-vs-backdoor",
-            "description": "..."
+            "description": "Balance realism and speed by choosing the right path for each register operation, and instrument both for coverage and debug."
           }
         ]
       }
@@ -542,7 +542,7 @@ export const curriculumData: Module[] = [
           {
             "title": "E-CUST-1: UVM Methodology Customization",
             "slug": "index",
-            "description": "Learn how to customize the UVM methodology to meet the specific needs of your project."
+            "description": "Design project-wide extensions to UVM—custom bases, phases, and governance—to keep large teams aligned without forking the methodology."
           }
         ]
       },
@@ -553,12 +553,17 @@ export const curriculumData: Module[] = [
           {
             "title": "E-DBG-1: Advanced UVM Debug Methodologies",
             "slug": "index",
-            "description": "Learn advanced techniques for debugging complex UVM environments."
+            "description": "Instrument complex UVM environments with reporting, objections, and transaction timelines so failures localize themselves."
           },
           {
             "title": "Effective Debug Techniques in UVM | The Professional Verification Craft",
             "slug": "effective-debug",
             "description": "Tried-and-true methods for diagnosing tricky failures."
+          },
+          {
+            "title": "Hang Lab: Practising UVM Deadlock Recovery",
+            "slug": "hang-lab",
+            "description": "Use the debugging simulator to rehearse objection tracing, heartbeat analysis, and item_done triage on realistic UVM hangs."
           },
           {
             "title": "Reusable Verification IP (VIP) Architecture | The Professional Verification Craft",
@@ -574,7 +579,7 @@ export const curriculumData: Module[] = [
           {
             "title": "E-INT-1: Integrating UVM with Formal Verification",
             "slug": "index",
-            "description": "Learn how to combine the power of UVM and formal verification to create a more robust verification environment."
+            "description": "Bridge simulation and proof: share assertions, align coverage, and orchestrate flows where UVM and formal reinforce each other."
           },
           {
             "title": "Direct Programming Interface (DPI) | The Professional Verification Craft",
@@ -595,7 +600,7 @@ export const curriculumData: Module[] = [
           {
             "title": "E-PERF-1: UVM Performance",
             "slug": "index",
-            "description": "Learn how to identify and address performance bottlenecks in your UVM testbench."
+            "description": "Profile, architect, and operationalize UVM environments so regressions stay fast without sacrificing fidelity."
           }
         ]
       },
@@ -606,7 +611,7 @@ export const curriculumData: Module[] = [
           {
             "title": "E-SOC-1: SoC-Level Verification Strategies",
             "slug": "index",
-            "description": "Learn about the unique challenges and strategies for verifying a complete System-on-Chip (SoC)."
+            "description": "Coordinate vertical reuse, system scenarios, and cross-domain methodologies to validate complete SoCs."
           },
           {
             "title": "Coverage Closure and Metrics | The Professional Verification Craft",
@@ -617,90 +622,6 @@ export const curriculumData: Module[] = [
             "title": "Regression and Triage Strategies | The Professional Verification Craft",
             "slug": "regression-triage",
             "description": "Building stable regressions and quickly diagnosing failures."
-          }
-        ]
-      }
-    ]
-  },
-  {
-    "title": "Interactive Tools",
-    "slug": "interactive-tools",
-    "tier": "interactive-tools",
-    "sections": [
-      {
-        "title": "Uvm Visualizers",
-        "slug": "uvm-visualizers",
-        "topics": [
-          {
-            "title": "Interactive UVM Testbench",
-            "slug": "interactive-testbench",
-            "description": "A hands-on, interactive visualizer for exploring the UVM testbench architecture, phasing, and data flow in real-time."
-          }
-        ]
-      }
-    ]
-  },
-  {
-    "title": "Uvm Building",
-    "slug": "uvm-building",
-    "tier": "uvm-building",
-    "sections": [
-      {
-        "title": "Essentials",
-        "slug": "essentials",
-        "topics": [
-          {
-            "title": "Agents and Environment",
-            "slug": "agents-and-environment",
-            "description": "Learn how to use agents and environments to build modular and reusable UVM testbenches."
-          },
-          {
-            "title": "Analysis Components",
-            "slug": "analysis-components",
-            "description": "Learn how to use monitors, scoreboards, and other analysis components to check the correctness of your DUT."
-          },
-          {
-            "title": "Testbench Architecture Overview",
-            "slug": "architecture-overview",
-            "description": "An overview of the standard UVM testbench architecture."
-          },
-          {
-            "title": "Stimulus Generation",
-            "slug": "stimulus-generation",
-            "description": "Learn how to generate stimulus in a UVM testbench using sequences and sequencers."
-          }
-        ]
-      }
-    ]
-  },
-  {
-    "title": "Uvm Core",
-    "slug": "uvm-core",
-    "tier": "uvm-core",
-    "sections": [
-      {
-        "title": "Fundamentals",
-        "slug": "fundamentals",
-        "topics": [
-          {
-            "title": "UVM Base Classes",
-            "slug": "base-classes",
-            "description": ""
-          },
-          {
-            "title": "Component Communication",
-            "slug": "component-communication",
-            "description": "Learn how UVM components communicate using Transaction-Level Modeling (TLM), a high-level approach that enables interoperability and reuse."
-          },
-          {
-            "title": "UVM Factory",
-            "slug": "factory",
-            "description": "Learn how the UVM factory enables test-specific customization and replacement of components and objects without modifying the original testbench code."
-          },
-          {
-            "title": "Phasing",
-            "slug": "phasing",
-            "description": ""
           }
         ]
       }

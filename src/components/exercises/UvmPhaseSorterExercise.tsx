@@ -22,6 +22,7 @@ import {
 import { CSS } from '@dnd-kit/utilities';
 import { GripVertical } from 'lucide-react'; // For drag handle
 import { Button } from '@/components/ui/Button';
+import { useExerciseProgress } from '@/hooks/useExerciseProgress';
 
 interface Phase {
   id: UniqueIdentifier; // Use UniqueIdentifier from dnd-kit
@@ -86,6 +87,12 @@ export function evaluatePhaseOrder(items: Phase[]): boolean {
   return true;
 }
 
+interface PhaseSorterFeedback {
+  score: number;
+  passed: boolean;
+  message: string;
+}
+
 interface SortablePhaseItemProps {
   phase: Phase;
 }
@@ -112,11 +119,14 @@ const SortablePhaseItem: React.FC<SortablePhaseItemProps> = ({ phase }) => {
       ref={setNodeRef}
       style={style}
       className="flex items-center p-3 mb-2 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg text-foreground touch-none select-none"
+      role="listitem"
+      aria-roledescription="sortable item"
     >
       <button
         {...attributes}
         {...listeners}
         className="cursor-grab p-1 mr-3 text-muted-foreground hover:bg-white/20 rounded"
+        type="button"
         aria-label={`Drag ${phase.name}`}
       >
         <GripVertical size={20} />
@@ -134,7 +144,14 @@ interface UvmPhaseSorterExerciseProps {
 const UvmPhaseSorterExercise: React.FC<UvmPhaseSorterExerciseProps> = ({ initialItems }) => {
   const [items, setItems] = useState<Phase[]>(initialItems || []);
   const [activeItem, setActiveItem] = useState<Phase | null>(null);
-  const [feedback, setFeedback] = useState<{ score: number; passed: boolean } | null>(null);
+  const [feedback, setFeedback] = useState<PhaseSorterFeedback | null>(null);
+  const {
+    progress: savedProgress,
+    recordAttempt,
+    resetProgress,
+    logInteraction,
+    analytics,
+  } = useExerciseProgress('uvm-phase-sorter');
 
 
   useEffect(() => {
@@ -154,6 +171,7 @@ const UvmPhaseSorterExercise: React.FC<UvmPhaseSorterExerciseProps> = ({ initial
 
   function handleDragStart(event: DragEndEvent) {
     const { active } = event;
+    logInteraction();
     setActiveItem(items.find(item => item.id === active.id) || null);
   }
 
@@ -162,6 +180,7 @@ const UvmPhaseSorterExercise: React.FC<UvmPhaseSorterExerciseProps> = ({ initial
     setActiveItem(null);
 
     if (over && active.id !== over.id) {
+      logInteraction();
       setItems((currentItems) => {
         const oldIndex = currentItems.findIndex((item) => item.id === active.id);
         const newIndex = currentItems.findIndex((item) => item.id === over.id);
@@ -171,31 +190,67 @@ const UvmPhaseSorterExercise: React.FC<UvmPhaseSorterExerciseProps> = ({ initial
   }
 
   const checkOrder = () => {
+    logInteraction();
     const correct = items.filter(
       (item, idx) => item.correctOrder === uvmPhases[idx].correctOrder,
     ).length;
     const score = Math.round((correct / items.length) * 100);
-    setFeedback({ score, passed: correct === items.length });
+    const passed = correct === items.length;
+    const message = passed
+      ? 'Every phase falls into place—build, connect, run, and report are perfectly sequenced.'
+      : 'A few phases are still out of order. Remember the rehearsal: build → connect → run → extract/check/report.';
+
+    recordAttempt(score);
+    setFeedback({ score, passed, message });
   };
 
   const handleRetry = () => {
-
     setItems(shuffleArray(uvmPhases));
+    setActiveItem(null);
     setFeedback(null);
+    logInteraction();
   };
 
   return (
-    <>
+    <div className="space-y-4">
+      <div className="mx-auto flex w-full max-w-md flex-col gap-2 rounded-lg border border-white/10 bg-white/5 p-4 text-sm text-[rgba(230,241,255,0.75)]">
+        <div>
+          <p className="font-semibold text-primary">Best score: {savedProgress.bestScore}%</p>
+          <p>
+            Attempts: {savedProgress.attempts}
+            {savedProgress.lastPlayedLabel ? ` • Last played ${savedProgress.lastPlayedLabel}` : ''}
+          </p>
+          {savedProgress.attempts > 0 && (
+            <p className="text-xs text-[rgba(230,241,255,0.65)]">
+              Average score: {Math.round(analytics.competency)}% • Interactions: {analytics.engagement}
+            </p>
+          )}
+        </div>
+        {savedProgress.attempts > 0 && (
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={resetProgress}
+            className="self-start text-xs text-[rgba(230,241,255,0.8)] hover:bg-white/10"
+          >
+            Clear saved progress
+          </Button>
+        )}
+      </div>
+
       <DndContext
         sensors={sensors}
         collisionDetection={closestCenter}
         onDragStart={handleDragStart}
         onDragEnd={handleDragEnd}
       >
-        <div className="w-full max-w-md mx-auto p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
-          <h3 className="text-lg font-semibold mb-4 text-center text-primary">Sort the UVM Phases</h3>
+        <div className="mx-auto w-full max-w-md rounded-lg border border-white/20 bg-white/10 p-4 shadow-lg backdrop-blur-lg">
+          <h3 className="mb-4 text-center text-lg font-semibold text-primary">Sort the UVM Phases</h3>
+          <p id={instructionId} className="mb-4 text-center text-sm text-muted-foreground">
+            Drag phases or use keyboard controls: focus a handle, press space to pick it up, arrow keys to move, and space again to drop.
+          </p>
           <SortableContext items={items.map(item => item.id)} strategy={verticalListSortingStrategy}>
-            <div className="space-y-2">
+            <div className="space-y-2" role="list" aria-describedby={instructionId}>
               {items.map((phase) => (
                 <SortablePhaseItem key={phase.id} phase={phase} />
               ))}
@@ -203,29 +258,34 @@ const UvmPhaseSorterExercise: React.FC<UvmPhaseSorterExerciseProps> = ({ initial
           </SortableContext>
           <DragOverlay>
             {activeItem ? (
-              <div className="flex items-center p-3 mb-2 bg-primary text-primary-foreground rounded-md border border-white/20 shadow-xl cursor-grabbing">
-                 <GripVertical size={20} className="mr-3"/>
+              <div className="flex items-center rounded-md border border-white/20 bg-primary px-3 py-2 text-primary-foreground shadow-xl">
+                <GripVertical size={20} className="mr-3" />
                 <span>{activeItem.name}</span>
               </div>
             ) : null}
           </DragOverlay>
         </div>
       </DndContext>
-      <div className="mt-4 flex justify-center gap-2">
+
+      <div className="flex justify-center gap-2">
         <Button onClick={checkOrder}>Check Order</Button>
-        <Button variant="outline" onClick={handleRetry}>Retry</Button>
+        <Button variant="outline" onClick={handleRetry}>Shuffle Again</Button>
       </div>
+
       {feedback && (
-        <div className="mt-4 text-center">
-          <p>Score: {feedback.score}%</p>
-          <p className={feedback.passed ? 'text-green-500' : 'text-red-500'}>
-            {feedback.passed ? 'Pass' : 'Fail'}
-          </p>
+        <div
+          className={`mx-auto max-w-md rounded-lg border p-4 text-sm ${feedback.passed ? 'border-emerald-400/50 bg-emerald-400/10 text-emerald-100' : 'border-amber-400/50 bg-amber-500/10 text-amber-100'}`}
+          role="status"
+          aria-live="polite"
+        >
+          <p className="text-lg font-semibold">Score: {feedback.score}%</p>
+          <p className="mt-1">{feedback.message}</p>
         </div>
       )}
-    </>
+    </div>
 
   );
 };
 
 export default UvmPhaseSorterExercise;
+  const instructionId = 'uvm-phase-sorter-instructions';

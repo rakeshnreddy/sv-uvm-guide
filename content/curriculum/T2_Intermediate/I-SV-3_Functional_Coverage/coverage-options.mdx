@@ -22,21 +22,35 @@ export const metadata = {
   ### Automatic vs. Manual Sampling
 
   -   Define an event to sample automatically: `covergroup cg @(posedge clk);`
-  -   Call `cg.sample()` manually when your monitor observes a transaction. See the [analysis components](/curriculum/uvm-building/essentials/analysis-components) page for how monitors publish transactions through analysis ports.
+  -   Call `cg.sample()` manually when your monitor observes a transaction. See the [analysis components](/curriculum/T2_Intermediate/I-UVM-2_Building_TB/index#monitors-scoreboards-and-the-analysis-fabric) section for how monitors publish transactions through analysis ports.
 
   ### Useful Options
 
-  -   `option.per_instance`: track coverage separately for each instance.
-  -   `option.goal`: set the percentage goal that determines completion.
-  -   `option.comment`: attach notes such as a V-Plan ID.
+  | Setting | Applies to | Why you use it |
+  | --- | --- | --- |
+  | `option.per_instance` | Covergroup instance | Keep coverage per agent, channel, or configuration. |
+  | `option.goal` | Covergroup instance | Define completion targets (e.g., 90%) for dashboards and regressions. |
+  | `option.comment` | Covergroup instance | Tag requirements or Jira IDs next to the data. |
+  | `option.weight` | Covergroup instance | Make high-value coverage count more in aggregate metrics. |
+  | `type_option.merge_instances` | Covergroup type | Merge per-instance data when you want a global view. |
+  | `type_option.auto_bin_max` | Coverpoint | Clamp auto bin creation so reports stay readable. |
+  | `option.at_least` | Coverpoint / cross | Require each bin to hit N times before counting as covered. |
 
   <InteractiveCode>
   ```systemverilog
   covergroup cg_pkt @(posedge clk);
     option.per_instance = 1;
     option.goal = 90;
+    option.weight = 2;
     option.comment = "VP-3.1";
-    cp_kind: coverpoint pkt.kind;
+    type_option.auto_bin_max = 16;
+
+    cp_kind: coverpoint pkt.kind iff pkt.valid;
+    cp_len: coverpoint pkt.length {
+      bins small[] = {[0:63]};
+      bins large[] = {[64:255]};
+      option.at_least = 3;
+    }
   endgroup
 
   initial begin
@@ -50,11 +64,13 @@ export const metadata = {
 
   ## Level 3: Expert Insights
 
-  **Gating and Conditional Sampling:** Use `iff` to sample only when a condition is true, preventing meaningless hits.
+  **Gating and Conditional Sampling:** Use `iff` guards (as in the example above) or call `cov.sample()` only when transactions are valid—otherwise you dilute your metrics with idle cycles.
 
-  **Per-Instance vs. Merge:** Per-instance coverage isolates under-tested blocks, while merged coverage gives an overall view.
+  **Per-Instance vs. Merge:** Keep `option.per_instance = 1` for insight, but remember you can enable `cg_pkt.type_option.merge_instances = 1;` during reporting if you need a global roll-up.
 
-  **Coverage Closure Loop:** Coverage reports feed back into constraint tweaks. Review [Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2_Constrained_Randomization) to see how stimulus can be adjusted to hit missing bins.
+  **Runtime Introspection:** Query `cov.get_inst_coverage()` or `cov.find()` to build live dashboards, and use `set_inst_name()` so reports align with DUT hierarchy.
+
+  **Coverage Closure Loop:** Feed uncovered bins back into constraint randomization (see [Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2_Constrained_Randomization)) or targeted sequences until `option.goal` is satisfied.
 
   ## Quiz
 
@@ -82,4 +98,3 @@ export const metadata = {
   ]} />
 
 </InfoPage>
-

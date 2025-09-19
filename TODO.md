@@ -27,15 +27,17 @@
 - [x] Script a factory audit that flags `uvm_*` classes still using direct `new()` instead of `::type_id::create`
 
 ## Interactive Components
-- [ ] Finish UVM exercises (Agent Builder, Phase Sorter, Scoreboard) – scoring, feedback, persistence
+- [x] Finish UVM exercises (Agent Builder, Phase Sorter, Scoreboard) – scoring, feedback, persistence (local persistence + feedback shipped; add analytics + accessibility polish)
 - [ ] Implement Randomization Explorer enhancements (if any outstanding)
 - [x] Build sequencer↔driver handshake animation for the I-UVM-2 module to reinforce the transaction flow
-- [ ] Prototype a sequencer arbitration sandbox (lock/unlock, grab/release) to accompany I-UVM-3 sequencing drills
+- [x] Prototype a sequencer arbitration sandbox (lock/unlock, grab/release) to accompany I-UVM-3 sequencing drills
 
 ## Content Operations
-- [ ] Create coverage dashboard showing migration status per topic
-- [ ] Define SME review rotation for Tier 2 & Tier 3 content
-- [ ] Draft contributor guide for adding visuals (SVG/animations)
+- [x] Create coverage dashboard showing migration status per topic – live at `/dashboard/coverage`
+- [x] Define SME review rotation for Tier 2 & Tier 3 content
+- [x] Draft contributor guide for adding visuals (SVG/animations)
+- [ ] Conduct comprehensive content QA: review each section for accuracy, fill missing details, and ensure explanations stay approachable *(Tier 1/2 pass completed; Tier 3/4 pending)*
+- [ ] Audit and remove redundant pages/data so the site stays lean and maintainable (legacy UVM folders archived; continue Tier-1 consolidation)
 - [x] Drive homepage CTAs (learning paths, recommendations) from curriculum data to avoid stale slugs
 
 ## Technical Debt

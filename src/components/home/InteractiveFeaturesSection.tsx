@@ -5,7 +5,6 @@ import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/Button';
 import { Code, Share2, Gamepad2, Bot, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
-import { resolveCurriculumPath } from '@/lib/curriculum-path';
 
 const featureConfigs = [
   {
@@ -19,7 +18,7 @@ const featureConfigs = [
     title: 'UVM Diagram Explorer',
     description: 'Visualize complex UVM hierarchies and understand component relationships with our interactive diagrams.',
     icon: Share2,
-    slug: ['interactive-tools', 'uvm-visualizers', 'interactive-testbench'],
+    href: '/curriculum/T2_Intermediate/I-UVM-2_Building_TB/index#layered-environment-snapshot',
     imageUrl: '/images/feature-uvm-explorer.png'
   },
   {
@@ -40,7 +39,7 @@ const featureConfigs = [
 
 const features = featureConfigs.map(config => ({
   ...config,
-  href: config.slug ? resolveCurriculumPath(config.slug, '/curriculum') : config.href ?? '#',
+  href: config.href ?? '#',
 }));
 
 const FeatureCard = ({ feature, index }: { feature: (typeof features)[0], index: number }) => (

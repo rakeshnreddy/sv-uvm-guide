@@ -14,19 +14,25 @@ const exercises: ExerciseLink[] = [
     href: '/exercises/uvm-agent-builder',
     title: 'UVM Agent Builder',
     description: 'Drag and drop components to build a complete UVM agent (Sequencer, Driver, Monitor).',
-    status: 'planned',
+    status: 'completed',
   },
   {
     href: '/exercises/uvm-phase-sorter',
     title: 'UVM Phase Sorter',
     description: 'Correctly order the UVM runtime phases in a dynamic, sortable list.',
-    status: 'planned',
+    status: 'completed',
   },
   {
     href: '/exercises/scoreboard-connector',
     title: 'Scoreboard Connector',
     description: 'Visually connect monitor analysis ports to scoreboard and coverage collector import ports.',
-    status: 'planned',
+    status: 'completed',
+  },
+  {
+    href: '/exercises/sequencer-arbitration',
+    title: 'Sequencer Arbitration Sandbox',
+    description: 'Play with lock(), grab(), and arbitration settings to see which sequence the sequencer grants next.',
+    status: 'completed',
   },
   // Add more exercises as they are conceptualized
 ];

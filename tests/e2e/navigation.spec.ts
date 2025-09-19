@@ -1,10 +1,10 @@
 import { test, expect } from '@playwright/test';
 
-test('factory page next link navigates to component communication page', async ({ page }) => {
-  await page.goto('/curriculum/uvm-core/fundamentals/factory');
-  await page.click('a:has-text("Component Communication")');
-  await expect(page).toHaveURL('/curriculum/uvm-core/fundamentals/component-communication');
-  await expect(page.locator('h1')).toContainText('Component Communication');
+test('sequence config page next link navigates to resource DB page', async ({ page }) => {
+  await page.goto('/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-config-db');
+  await page.click('a:has-text("uvm_resource_db")');
+  await expect(page).toHaveURL('/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-resource-db');
+  await expect(page.locator('h1')).toContainText('uvm_resource_db and Precedence');
 });
 
 

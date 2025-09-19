@@ -20,22 +20,35 @@ export const metadata = {
   ### Declaring and Triggering
 
   -   Declare an event: `event done;`
-  -   Trigger it: `-> done;`
-  -   Wait for it: `@done;`
+  -   Trigger once: `-> done;` (all waiters run in the current timestep).
+  -   Trigger with persistence: `->> done;` (waiters that start later in the same timestep still wake up).
+  -   Wait for it: `@done;` or, if you need to poll, `wait(done.triggered);`.
 
   <InteractiveCode>
   ```systemverilog
-  event start;
+  event start, done;
 
   initial begin
-    // Stimulus thread
-    #10 -> start;      // trigger the event
+    // Producer thread
+    repeat (3) begin
+      #10 -> start;          // fire the start event
+      @done;                 // wait for acknowledgement
+    end
   end
 
   initial begin
-    // Monitor thread
-    @start;             // wait for trigger
-    $display("Started at %0t", $time);
+    // Consumer thread
+    forever begin
+      @start;
+      $display("Start seen at %0t", $time);
+      #2 ->> done;           // acknowledge with persistence
+    end
+  end
+
+  initial begin
+    // Late listener still sees the persistent trigger
+    wait(done.triggered);
+    $display("First completion observed at %0t", $time);
   end
   ```
   </InteractiveCode>
@@ -44,11 +57,13 @@ export const metadata = {
 
   ## Level 3: Expert Insights
 
-  **Multiple Triggers:** An event can be triggered repeatedly; waiting processes react to each trigger.
+  **Multiple triggers & lost pulses:** Native events do not queue requests. If you trigger with `->` before anyone is waiting, the pulse is gone. Use `->>` or keep a `done_seen` flag to avoid races.
 
-  **`wait_order`:** Use `wait_order(e1, e2)` to ensure events occur in sequence.
+  **Ordering constraints:** `wait_order(e1, e2)` (or the array form) asserts that events arrive in a given sequence—perfect for handshake protocols. Pair with assertions so violations show up in logs.
 
-  **`uvm_event`:** UVM provides `uvm_event` with additional features like callbacks and history. See [analysis components](/curriculum/uvm-building/essentials/analysis-components) for how events can work alongside analysis ports.
+  **Leveraging `triggered`:** The built-in `event.triggered` bit goes high for the remainder of the timestep after a trigger. Combine it with `wait(event.triggered)` when you need to poll or drive scoreboard state machines.
+
+  **Bridging to UVM:** `uvm_event` adds `wait_on()`, `wait_off()`, callbacks, and a `trigger_cnt`. Manage them through an `uvm_event_pool` so components can look up events by name without hard-coded handles. See [analysis components](/curriculum/T2_Intermediate/I-UVM-2_Building_TB/index#monitors-scoreboards-and-the-analysis-fabric) for how that integrates with monitors.
 
   ## Quiz
 
@@ -76,4 +91,3 @@ export const metadata = {
   ]} />
 
 </InfoPage>
-

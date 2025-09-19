@@ -1,12 +1,12 @@
 'use client';
 
 import React from 'react';
-import { useCurriculumProgress } from '../../hooks/useCurriculumProgress';
-import { curriculumData, getModules } from '@/lib/curriculum-data';
-
+import Link from 'next/link';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Progress } from "@/components/ui/Progress";
+import { Button } from "@/components/ui/Button";
 import { Medal, BookOpen, Target, TrendingUp, Users, Zap, Lightbulb, BarChart2, PieChart, Activity } from 'lucide-react';
+import { buildCurriculumStatus } from '@/lib/curriculum-status';
 
 const DashboardPage = () => {
   const overallProgress = 65;
@@ -21,6 +21,23 @@ const DashboardPage = () => {
     { type: 'Started', description: 'Began the "Scoreboards and Coverage" section.' },
     { type: 'Practiced', description: 'Completed 3 practice exercises.' },
   ];
+
+  const coverageStatus = React.useMemo(() => buildCurriculumStatus(), []);
+  const coverageCounts = React.useMemo(
+    () =>
+      coverageStatus.reduce(
+        (acc, entry) => {
+          acc.total += 1;
+          if (entry.status === 'complete') acc.complete += 1;
+          if (entry.status === 'in-review') acc.inReview += 1;
+          if (entry.status === 'draft') acc.draft += 1;
+          return acc;
+        },
+        { total: 0, complete: 0, inReview: 0, draft: 0 },
+      ),
+    [coverageStatus],
+  );
+  const reviewBacklog = coverageCounts.inReview + coverageCounts.draft;
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[var(--blueprint-bg)] text-[var(--blueprint-foreground)]">
@@ -53,7 +70,7 @@ const DashboardPage = () => {
           </div>
         </section>
 
-        <section className="grid grid-cols-1 gap-6 md:grid-cols-3">
+        <section className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-4">
           <Card className="glass-card border border-white/10 bg-[var(--blueprint-glass)]">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-xs uppercase tracking-[0.3em] text-[rgba(230,241,255,0.7)]">
@@ -115,6 +132,37 @@ const DashboardPage = () => {
                   <span>+2</span>
                 </div>
               </div>
+            </CardContent>
+          </Card>
+
+          <Card className="glass-card border border-white/10 bg-[var(--blueprint-glass)]">
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-xs uppercase tracking-[0.3em] text-[rgba(230,241,255,0.7)]">
+                Coverage snapshot
+              </CardTitle>
+              <TrendingUp className="h-5 w-5 text-[var(--blueprint-accent)]" />
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div>
+                <p className="text-3xl font-semibold text-primary">{coverageCounts.complete}/{coverageCounts.total}</p>
+                <p className="text-xs text-[rgba(230,241,255,0.7)]">Lessons migrated</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-[rgba(230,241,255,0.7)]">
+                <div className="flex items-center justify-between">
+                  <span>In review</span>
+                  <span className="font-semibold text-amber-200">{coverageCounts.inReview}</span>
+                </div>
+                <div className="mt-1 flex items-center justify-between">
+                  <span>Draft backlog</span>
+                  <span className="font-semibold text-slate-200">{coverageCounts.draft}</span>
+                </div>
+              </div>
+              <p className="text-xs text-[rgba(230,241,255,0.65)]">
+                {reviewBacklog} topics still need accuracy or polish before the next push.
+              </p>
+              <Button asChild variant="outline" className="w-full justify-center border-white/30 text-sm text-[rgba(230,241,255,0.85)] hover:bg-white/10">
+                <Link href="/dashboard/coverage">Open dashboard</Link>
+              </Button>
             </CardContent>
           </Card>
         </section>
