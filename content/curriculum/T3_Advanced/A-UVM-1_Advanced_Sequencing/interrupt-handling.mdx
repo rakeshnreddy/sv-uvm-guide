@@ -1,17 +1,133 @@
 import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
-  title: "Interrupt Handling and Layered Stimulus | Advanced UVM Techniques & Strategy",
-  description: "...",
+  title: "Interrupt Handling and Layered Stimulus | Advanced UVM Sequencing",
+  description: "Turn asynchronous interrupts into deterministic stimulus by combining monitor events, routing policy, and virtual sequences.",
 };
 
 <InfoPage
   title="Interrupt Handling and Layered Stimulus"
-  uvm_concept_tags={["interrupt handling", "layered stimulus"]}
+  uvm_concept_tags={["interrupt handling", "virtual sequence", "events"]}
 >
 
-  ## Interrupt Handling and Layered Stimulus
+  ## Elevator Pitch
 
-  This section is under construction. Please check back later.
+  Real silicon fires interrupts at awkward times. Convert those asynchronous edges into structured UVM transactions so sequences can acknowledge, recover, and resume deterministically—no shotgun `#delays`, no lost handshakes.
+
+  ## Event-Driven Interrupt Flow
+
+  <InteractiveCode
+    language="systemverilog"
+    fileName="interrupt_flow.sv"
+    code={`
+class irq_monitor extends uvm_monitor;
+  `uvm_component_utils(irq_monitor)
+  uvm_analysis_port#(irq_tr) ap;
+  uvm_event irq_event;
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    ap = new("ap", this);
+    irq_event = new("irq_event");
+  endfunction
+
+  virtual task run_phase(uvm_phase phase);
+    forever begin
+      @(posedge vif.clk iff vif.irq);
+      irq_tr tr = irq_tr::type_id::create("tr");
+      tr.vector = vif.irq_vector;
+      ap.write(tr);
+      irq_event.trigger(tr);
+    end
+  endtask
+endclass
+
+class irq_router extends uvm_subscriber#(irq_tr);
+  `uvm_component_utils(irq_router)
+  mailbox #(irq_tr) pending = new();
+
+  virtual function void write(irq_tr t);
+    pending.put(t.clone());
+  endfunction
+endclass
+
+class irq_recover_vseq extends uvm_sequence;
+  `uvm_object_utils(irq_recover_vseq)
+  typedef virtual_sequencer pseq_t;
+  pseq_t p_sequencer;
+
+  irq_router router;
+
+  virtual task body();
+    if (!$cast(p_sequencer, m_sequencer))
+      `uvm_fatal("IRQ", "Missing virtual sequencer handle")
+
+    if (!uvm_config_db#(irq_router)::get(null, "", "irq_router", router))
+      `uvm_fatal("IRQ", "Router not configured")
+
+    forever begin
+      irq_tr tr;
+      router.pending.get(tr);
+      handle_irq(tr);
+    end
+  endtask
+
+  task handle_irq(irq_tr tr);
+    clear_irq_seq clear = clear_irq_seq::type_id::create("clear");
+    replay_seq    replay = replay_seq::type_id::create("replay");
+
+    clear.vector = tr.vector;
+    clear.start(p_sequencer.cfg_sqr);
+
+    if (tr.requires_replay)
+      replay.start(p_sequencer.data_sqr);
+  endtask
+endclass
+    `}
+    explanationSteps={[
+      { target: "1-20", title: "Monitor detects interrupts", explanation: "Translate pin wiggles into typed transactions and trigger an event so multiple listeners can react." },
+      { target: "22-30", title: "Router policy", explanation: "Subscriber queues interrupts—swap in priority queues or throttling logic without touching sequences." },
+      { target: "32-64", title: "Virtual sequence reaction", explanation: "Virtual sequence waits on the mailbox and launches clear/replay sequences on configured agent sequencers." }
+    ]}
+  />
+
+  ## Design Patterns
+
+  - **Debounce & coalesce:** Track timestamps or vector history in the router to fold bursts of identical interrupts into one recovery action.
+  - **Prioritize:** Replace the mailbox with `uvm_tlm_analysis_fifo` + custom ordering when certain vectors must pre-empt others.
+  - **Coverage:** Sample coverage in the router to map interrupt vectors to the recovery sequences that handled them.
+  - **Timeouts:** Add watchdog timers in the virtual sequence to flag the absence of expected interrupts within a window.
+
+  ## Checklist
+
+  - [ ] Monitors own interrupt detection and publish structured transactions or events.
+  - [ ] Virtual sequences block on events/queues instead of `#delays`.
+  - [ ] Recovery sequences are reusable, parameterized, and launched via `p_sequencer` handles.
+
+  ## Quiz Yourself
+
+  <Quiz questions={[
+    {
+      question: "Why queue interrupts in an `irq_router` before reacting?",
+      answers: [
+        { text: "To randomize their order", correct: false },
+        { text: "To serialize asynchronous events and enforce policy", correct: true },
+        { text: "Because monitors cannot call sequences", correct: false },
+        { text: "To convert them into responses", correct: false }
+      ],
+      explanation: "A queue centralizes prioritization, coalescing, and rate limiting so the recovery logic stays deterministic." }
+    },
+    {
+      question: "Where should the interrupt acknowledgement sequence run?",
+      answers: [
+        { text: "On the monitor", correct: false },
+        { text: "On the virtual sequencer using the appropriate agent sequencer handle", correct: true },
+        { text: "Directly on the driver", correct: false },
+        { text: "Inside the scoreboard", correct: false }
+      ],
+      explanation: "Virtual sequences coordinate which agent should acknowledge, using handles stored on the virtual sequencer." }
+    }
+  ]} />
 
 </InfoPage>

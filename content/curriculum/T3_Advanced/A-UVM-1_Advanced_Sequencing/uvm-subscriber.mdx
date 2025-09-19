@@ -1,17 +1,97 @@
 import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
-  title: "uvm_subscriber | Building a UVM Testbench",
-  description: "...",
+  title: "uvm_subscriber in Practice | Advanced UVM Sequencing",
+  description: "Leverage uvm_subscriber to capture analysis traffic for coverage, scoreboards, and telemetry without bloating monitors.",
 };
 
 <InfoPage
-  title="uvm_subscriber"
-  uvm_concept_tags={["uvm_subscriber"]}
+  title="uvm_subscriber in Practice"
+  uvm_concept_tags={["uvm_subscriber", "analysis", "coverage"]}
 >
 
-  ## uvm_subscriber
+  ## Elevator Pitch
 
-  This section is under construction. Please check back later.
+  `uvm_subscriber` lets you observe analysis traffic without modifying agents. Use it for coverage, metrics, or interrupt routing: implement `write()`, plug into analysis ports, and keep observers modular.
+
+  ## Subscriber Blueprint
+
+  <InteractiveCode
+    language="systemverilog"
+    fileName="transaction_coverage.sv"
+    code={`
+class txn_cov_sub extends uvm_subscriber#(mem_item);
+  `uvm_component_utils(txn_cov_sub)
+
+  covergroup cg @(posedge vif.clk);
+    option.per_instance = 1;
+    addr_cp : coverpoint tr.addr {
+      bins low  = {[0    :16'h0FFF]};
+      bins mid  = {[16'h1000:16'h8FFF]};
+      bins high = {[16'h9000:16'hFFFF]};
+    }
+    op_cp   : coverpoint tr.op;
+    cross addr_cp, op_cp;
+  endgroup
+
+  virtual function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    cg = new();
+  endfunction
+
+  // Latest transaction for use inside the covergroup sample
+  mem_item tr;
+
+  virtual function void write(mem_item t);
+    tr = t.clone();
+    cg.sample();
+  endfunction
+endclass
+    `}
+    explanationSteps={[
+      { target: "1-6", title: "Subscriber basics", explanation: "Extend `uvm_subscriber`, register with the factory, and define coverage or logging resources." },
+      { target: "8-18", title: "Covergroup sampling", explanation: "Sample analysis transactions without touching the monitor or scoreboard." },
+      { target: "20-25", title: "Safe cloning", explanation: "Clone the transaction if you store it—analysis traffic may be reused elsewhere." }
+    ]}
+  />
+
+  ## Usage Patterns
+
+  - **Coverage collectors:** Each coverage aspect (transactions, interrupts, responses) gets a dedicated subscriber to keep bins focused.
+  - **Scoreboard bridges:** Subscribers can push transactions into queues or analysis FIFOs consumed by scoreboards.
+  - **Telemetry:** Send statistics to JSON loggers or databases by formatting transactions in `write()`.
+  - **Filtering:** Override `write()` to skip noise—for example, ignore idle packets or zero-length bursts.
+
+  ## Wiring Tips
+
+  - Connect subscribers in the environment’s `connect_phase`: `agent.analysis_port.connect(sub.analysis_export);`.
+  - Use the same subscriber in multiple environments by registering via config DB and retrieving handles inside tests.
+  - When sampling coverage, get a virtual interface (`vif`) through the config DB if the covergroup needs a clock.
+
+  ## Quiz Yourself
+
+  <Quiz questions={[
+    {
+      question: "Where should a coverage subscriber connect?",
+      answers: [
+        { text: "Directly to the driver", correct: false },
+        { text: "To the agent's analysis port", correct: true },
+        { text: "Inside a sequence", correct: false },
+        { text: "It doesn't need a connection", correct: false }
+      ],
+      explanation: "Subscribers consume analysis transactions broadcast by monitors or agents." }
+    },
+    {
+      question: "Why clone the transaction in `write()`?",
+      answers: [
+        { text: "To randomize it again", correct: false },
+        { text: "To avoid aliasing when other subscribers modify the same object", correct: true },
+        { text: "Because coverage cannot see original data", correct: false },
+        { text: "To change the sequence ID", correct: false }
+      ],
+      explanation: "Analysis ports broadcast the same object to every subscriber. Clone it if you plan to store or mutate it." }
+    }
+  ]} />
 
 </InfoPage>

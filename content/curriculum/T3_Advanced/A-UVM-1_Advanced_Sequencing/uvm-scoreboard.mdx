@@ -1,17 +1,116 @@
 import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
-  title: "The UVM Scoreboard | Building a UVM Testbench",
-  description: "...",
+  title: "UVM Scoreboard Patterns | Advanced UVM Sequencing",
+  description: "Design scoreboards that compare expected vs. observed traffic, manage response queues, and surface mismatches clearly.",
 };
 
 <InfoPage
-  title="The UVM Scoreboard"
-  uvm_concept_tags={["scoreboard"]}
+  title="UVM Scoreboard Patterns"
+  uvm_concept_tags={["scoreboard", "analysis", "comparison"]}
 >
 
-  ## The UVM Scoreboard
+  ## Elevator Pitch
 
-  This section is under construction. Please check back later.
+  Scoreboards judge whether stimulus produced the right behaviour. Hook them to analysis streams, build prediction models, and produce forensic logs when actual and expected diverge.
+
+  ## Predict vs. Observe
+
+<InteractiveCode
+    language="systemverilog"
+    fileName="mem_scoreboard.sv"
+    code={`
+`uvm_analysis_imp_decl(_exp)
+`uvm_analysis_imp_decl(_act)
+
+class mem_scoreboard extends uvm_component;
+  `uvm_component_utils(mem_scoreboard)
+
+  uvm_analysis_imp_exp#(mem_item, mem_scoreboard) exp_export;
+  uvm_analysis_imp_act#(mem_item, mem_scoreboard) act_export;
+
+  typedef uvm_tlm_analysis_fifo#(mem_item) fifo_t;
+  fifo_t exp_fifo;
+  fifo_t act_fifo;
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    exp_export = new("exp_export", this);
+    act_export = new("act_export", this);
+    exp_fifo   = fifo_t::type_id::create("exp_fifo", this);
+    act_fifo   = fifo_t::type_id::create("act_fifo", this);
+  endfunction
+
+  virtual function void write_exp(mem_item t);
+    exp_fifo.try_put(t.clone());
+  endfunction
+
+  virtual function void write_act(mem_item t);
+    act_fifo.try_put(t.clone());
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    forever begin
+      mem_item exp, act;
+      exp_fifo.get(exp);
+      act_fifo.get(act);
+
+      if (!compare(exp, act)) begin
+        `uvm_error("SCB", $sformatf("Mismatch exp=%s act=%s", exp.convert2string(), act.convert2string()))
+      end
+    end
+  endtask
+
+  function bit compare(mem_item exp, mem_item act);
+    if (!exp.do_compare(act, null)) return 0;
+    return 1;
+  endfunction
+endclass
+    `}
+    explanationSteps={[
+      { target: "1-16", title: "Analysis interfaces", explanation: "Separate expected/actual analysis imps feed dedicated FIFOs." },
+      { target: "18-33", title: "Cloning into FIFOs", explanation: "Scoreboard takes ownership of transactions—clone them before queuing." },
+      { target: "35-46", title: "Comparison loop", explanation: "Pull matching entries, compare with `do_compare`, and issue clear error logs when mismatched." }
+    ]}
+  />
+
+  ## Design Considerations
+
+  - **Matching policy:** Use associative arrays keyed by address or ID when order differs, or `uvm_in_order_class_comparer` for in-order streams.
+  - **Latency tolerance:** Add timeouts or scoreboard configuration to allow write/read latency before flagging mismatches.
+  - **Reference models:** Embed a predictive model (e.g., simple memory model) inside the scoreboard to generate expected responses rather than relying solely on sequences.
+  - **Debug artifacts:** Emit transaction trails (`uvm_table_printer`) or JSON logs for failing cases.
+
+  ## Checklist
+
+  - [ ] Expected and actual paths are independent analysis connections.
+  - [ ] Transactions are cloned before storing.
+  - [ ] Mismatch logs include enough context (address, data, sequence ID).
+
+  ## Quiz Yourself
+
+  <Quiz questions={[
+    {
+      question: "Why push transactions through `uvm_tlm_analysis_fifo`?",
+      answers: [
+        { text: "To randomize their order", correct: false },
+        { text: "To decouple producers and consumers with blocking semantics", correct: true },
+        { text: "Because monitors require it", correct: false },
+        { text: "To convert them to responses", correct: false }
+      ],
+      explanation: "FIFOs buffer bursts of activity and allow the scoreboard to process items at its own pace." }
+    },
+    {
+      question: "Your scoreboard logs mismatches but no context. What should you add first?",
+      answers: [
+        { text: "Grab the sequencer", correct: false },
+        { text: "A custom `convert2string()` on the sequence item", correct: true },
+        { text: "Randomize the expected item", correct: false },
+        { text: "Disable the scoreboard", correct: false }
+      ],
+      explanation: "Readable `convert2string()` output makes mismatch logs actionable." }
+    }
+  ]} />
 
 </InfoPage>

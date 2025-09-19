@@ -1,17 +1,104 @@
 import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
-  title: "Sequence Libraries and grab/ungrab | Building a UVM Testbench",
-  description: "...",
+  title: "Sequence Libraries & Arbitration Control | Advanced UVM Sequencing",
+  description: "Package reusable stimulus into sequence libraries, weight them, and know when to grab/ungrab for critical sections.",
 };
 
 <InfoPage
-  title="Sequence Libraries and grab/ungrab"
-  uvm_concept_tags={["sequence libraries", "grab", "ungrab"]}
+  title="Sequence Libraries & Arbitration Control"
+  uvm_concept_tags={["sequence library", "grab", "uvm_sequence_library"]}
 >
 
-  ## Sequence Libraries and grab/ungrab
+  ## Elevator Pitch
 
-  This section is under construction. Please check back later.
+  Sequence libraries turn curated stimulus into data. Register atomic/scenario sequences once, randomize which one runs via weights, and reserve `grab()` for emergency overrides when policy isn't enough.
+
+  ## Building a Library
+
+  <InteractiveCode
+    language="systemverilog"
+    fileName="mem_sequence_library.sv"
+    code={`
+`uvm_sequence_library_utils_begin(mem_vip_library)
+  `uvm_sequence_library_utils_add(mem_atomic_write)
+  `uvm_sequence_library_utils_add(mem_burst_program)
+  `uvm_sequence_library_utils_add(mem_backdoor_check)
+`uvm_sequence_library_utils_end
+
+class mem_vip_library extends uvm_sequence_library#(mem_item);
+  `uvm_object_utils(mem_vip_library)
+
+  function new(string name = "mem_vip_library");
+    super.new(name);
+    init_sequence_library();
+  endfunction
+endclass
+
+class mem_sequence_player extends uvm_sequence#(mem_item);
+  `uvm_object_utils(mem_sequence_player)
+  `uvm_declare_p_sequencer(mem_sequencer)
+
+  mem_vip_library lib;
+
+  virtual task body();
+    lib = mem_vip_library::type_id::create("lib");
+    lib.randomize() with {
+      select_next_seq == mem_atomic_write::get_type();
+      mem_atomic_write::type_id::set_priority(5);
+      mem_burst_program::type_id::set_priority(2);
+      mem_backdoor_check::type_id::set_priority(1);
+    };
+
+    repeat (num_loops) begin
+      `uvm_info(get_type_name(), $sformatf("Running %s", lib.next_sequence_name()), UVM_LOW)
+      lib.pick_sequence(p_sequencer);
+    end
+  endtask
+endclass
+    `}
+    explanationSteps={[
+      { target: "1-12", title: "Library declaration", explanation: "Macro helpers register sequences so the library can manufacture them at runtime." },
+      { target: "14-33", title: "Sequence player", explanation: "A wrapper sequence randomizes library weights, logs selections, and starts whichever sequence the library chooses." }
+    ]}
+  />
+
+  ## Weights, Constraints, and Coverage
+
+  - Call `type_id::set_priority(weight)` before `pick_sequence()`; weights drive `SEQ_ARB_WEIGHTED` fairness.
+  - Use `sequence_library_mode = UVM_SEQ_LIB_RANDC` to cycle through every sequence before repeating.
+  - Store metadata (scenario name, error injection flags) in the library to feed regression dashboards.
+
+  ## grab()/ungrab()—Use Sparingly
+
+  - `grab()` gives a sequence exclusive access to the sequencer, bypassing priorities. Reserve it for debug or safety-critical overrides.
+  - Always place `grab()`/`ungrab()` in `try/finally` style constructs (using fork/join or `uvm_resource_db`) so exceptions cannot leak control.
+  - Prefer `lock()` or weighting before reaching for `grab()`; they keep arbitration fair.
+
+  ## Quiz Yourself
+
+  <Quiz questions={[
+    {
+      question: "What does `pick_sequence()` do?",
+      answers: [
+        { text: "Randomizes a new sequence and starts it on the given sequencer", correct: true },
+        { text: "Locks the sequencer", correct: false },
+        { text: "Calls `grab()` internally", correct: false },
+        { text: "Returns the library pointer", correct: false }
+      ],
+      explanation: "`pick_sequence()` chooses the next registered sequence and launches it on the provided sequencer." }
+    },
+    {
+      question: "When is `grab()` appropriate?",
+      answers: [
+        { text: "Whenever you want more bandwidth", correct: false },
+        { text: "For short, critical overrides when other sequences must be blocked immediately", correct: true },
+        { text: "For routine register programming", correct: false },
+        { text: "Never—it's illegal", correct: false }
+      ],
+      explanation: "`grab()` bypasses arbitration—use it for emergency stimulus, then `ungrab()` promptly." }
+    }
+  ]} />
 
 </InfoPage>

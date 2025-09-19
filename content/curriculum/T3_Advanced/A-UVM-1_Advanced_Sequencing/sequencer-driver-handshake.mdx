@@ -1,17 +1,143 @@
 import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, Quiz } from "@/components/ui";
+import { AnimatedUvmSequenceDriverHandshakeDiagram } from "@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram";
 
 export const metadata = {
-  title: "The Sequencer-Driver Handshake | Building a UVM Testbench",
-  description: "...",
+  title: "The Sequencer-Driver Handshake | Advanced UVM Sequencing",
+  description: "Dissect the blocking protocol between UVM sequencers and drivers, from arbitration to item_done(), and learn how to instrument and debug the flow.",
 };
 
 <InfoPage
   title="The Sequencer-Driver Handshake"
-  uvm_concept_tags={["sequencer-driver handshake"]}
+  uvm_concept_tags={["sequencer-driver handshake", "get_next_item", "item_done"]}
 >
 
-  ## The Sequencer-Driver Handshake
+  ## Elevator Pitch
 
-  This section is under construction. Please check back later.
+  The sequencer ↔ driver handshake is the regulated airway that keeps stimulus moving. The driver blocks in `get_next_item()`, a sequence petitions via `start_item()` / `finish_item()`, the sequencer arbitrates, and nothing advances until `item_done()` frees the lane. Mastering that rhythm is what prevents deadlocks, duplicated traffic, and phantom hangs in complex environments.
+
+  ## Walk the Timeline
+
+  <AnimatedUvmSequenceDriverHandshakeDiagram />
+
+  1. **Driver waits:** `seq_item_port.get_next_item(req)` blocks until a sequence delivers work.
+  2. **Sequence requests:** `start_item(req)` (or `uvm_do`) raises its hand; the sequencer grants access via `wait_for_grant()`.
+  3. **Sequence delivers:** `finish_item(req)` finalizes the transaction and hands it to the sequencer.
+  4. **Driver drives:** The sequencer releases the item, letting `get_next_item()` return so the driver can `drive_transfer(req)`.
+  5. **Driver completes:** `seq_item_port.item_done(rsp)` signals the sequencer and optionally ships a response object back up the chain.
+
+  Critical takeaways:
+  - The handoff is *blocking* at every stage—missing a call stalls the pipeline.
+  - Arbitration happens between the sequence's `start_item()` and `wait_for_grant()`; priority hooks (`mid_do`, `pre_do`) sit here.
+  - Responses ride with `item_done()` or `put(rsp)`; ignoring them means lost coverage and inconsistent scoreboards.
+
+  ## Anatomy of the Calls
+
+  <InteractiveCode
+    language="systemverilog"
+    fileName="driver_and_sequence.sv"
+    code={`
+class my_driver extends uvm_driver#(my_item);
+  `uvm_component_utils(my_driver)
+
+  virtual task run_phase(uvm_phase phase);
+    forever begin
+      seq_item_port.get_next_item(req);             // 1. Wait
+      drive_transfer(req);                          // 2. Act on the DUT
+      if (needs_rsp(req)) begin
+        rsp = my_item::type_id::create("rsp");
+        rsp.copy(req);
+        rsp.status = OK;
+        seq_item_port.item_done(rsp);               // 3a. Reply with data
+      end else begin
+        seq_item_port.item_done();                  // 3b. Signal completion
+      end
+    end
+  endtask
+endclass
+
+class burst_sequence extends uvm_sequence#(my_item);
+  `uvm_object_utils(burst_sequence)
+
+  virtual task body();
+    repeat (burst_len) begin
+      `uvm_do_with(req, { burst_mode == BURST; })  // Creates + start/finish
+    end
+  endtask
+endclass
+
+class intrusive_sequence extends uvm_sequence#(my_item);
+  `uvm_object_utils(intrusive_sequence)
+
+  uvm_semaphore grant_sem;
+  uvm_event     item_done_evt;
+
+  function new(string name = "intrusive_sequence");
+    super.new(name);
+    grant_sem     = new(0);                        // Supplied by the environment
+    item_done_evt = new("item_done_evt");
+  endfunction
+
+  virtual task body();
+    lock();                                        // Protect critical section
+    start_item(req);
+    assert(req.randomize() with { opcode == CLEAR; });
+    finish_item(req);
+    grant_sem.put(1);                              // Optional sync with monitors
+    item_done_evt.wait_on();                       // Wait for `item_done`
+    unlock();
+  endtask
+endclass
+    `}
+    explanationSteps={[
+      { target: "5-15", title: "Driver obligations", explanation: "Drivers must *always* pair `get_next_item()` with `item_done()`—with a response if the protocol expects one." },
+      { target: "17-23", title: "Macro shorthand", explanation: "`uvm_do_with` wraps `start_item`/`finish_item`. Even when hidden, the handshake timing is identical." },
+      { target: "25-35", title: "Critical ownership", explanation: "Lock/grab ensure other sequences queue behind you. Use events instead of delays to watch for completion." }
+    ]}
+  />
+
+  ## Responses, Queues, and Observation Hooks
+
+  - **Response paths:** Drivers send data back through `item_done(rsp)` or the `put(rsp)` channel. Sequences pull responses with `get_response(rsp)` or `peek_response(rsp)`—ideal for register reads or DMA completions.
+  - **Multiple outstanding items:** Use `set_sequence_id_info()` when cloning items so responses map to the right request. Sequencers track `(sequence_id, transaction_id)` pairs to route replies.
+  - **Passive monitoring:** Drop a monitor on the sequencer's analysis port (`seq_item_export.analysis_export`) or enable `+UVM_SEQ_ITEM_TRACE` to log arbitration decisions without hacking the driver.
+  - **Non-blocking checks:** `try_next_item(req)` or `can_get_next_item()` let performance-tuned drivers poll without stalling simulation time.
+
+  ## Failure Signatures and Debug Triage
+
+  - **Symptom: Driver hangs forever.** Usually `item_done()` was skipped or threw an exception. Enable `uvm_report_info` inside the driver to log every completion.
+  - **Symptom: Sequence never starts.** The driver grabbed the sequencer via `grab()` and forgot to `ungrab()`, or another high-priority sequence holds a `lock()`.
+  - **Symptom: Responses mismatched.** Sequence IDs were lost (`req.set_id_info(rsp)` missing) or the response queue drained out of order.
+  - **Symptom: Duplicate traffic.** Calling `finish_item()` twice or reusing the same item handle without `set_id_info()`.
+
+  Debug tactics:
+  - Call `sequencer.print_seq_info()` or use the UVM Command Line Processor (`uvm_report_sequences`) to inspect active locks, grabs, and pending sequences.
+  - Add `uvm_event` notifications inside the driver around `get_next_item()` and `item_done()` to correlate with monitor logs.
+  - Wrap stimulus in a scoreboard hook that watches for hung handshakes (e.g., timeout after N cycles without `item_done()`).
+
+  ## Quiz Yourself
+
+  <Quiz questions={[
+    {
+      question: "A driver issues `get_next_item()` and nothing returns. What should you check first?",
+      answers: [
+        { text: "Whether the monitor saw any transactions", correct: false },
+        { text: "Whether a sequence called `start_item()` / `finish_item()`", correct: true },
+        { text: "If the sequencer's analysis port is connected", correct: false },
+        { text: "If the virtual interface has been set", correct: false }
+      ],
+      explanation: "`get_next_item()` blocks until a sequence completes the `start_item()`/`finish_item()` handoff. If no sequence ran, the driver will wait indefinitely." }
+    },
+    {
+      question: "When should a driver send a response object with `item_done(rsp)`?",
+      answers: [
+        { text: "Only when using `uvm_do` macros", correct: false },
+        { text: "Whenever the protocol returns read data or status that the sequence expects", correct: true },
+        { text: "Whenever the sequence locks the sequencer", correct: false },
+        { text: "Only if the sequence called `get_response()` first", correct: false }
+      ],
+      explanation: "Protocols with readbacks (register reads, DMA completions) rely on response objects so higher-level sequences can validate results." }
+    }
+  ]} />
 
 </InfoPage>

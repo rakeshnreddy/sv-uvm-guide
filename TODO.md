@@ -29,7 +29,7 @@
 ## Interactive Components
 - [ ] Finish UVM exercises (Agent Builder, Phase Sorter, Scoreboard) – scoring, feedback, persistence
 - [ ] Implement Randomization Explorer enhancements (if any outstanding)
-- [ ] Build sequencer↔driver handshake animation for the I-UVM-2 module to reinforce the transaction flow
+- [x] Build sequencer↔driver handshake animation for the I-UVM-2 module to reinforce the transaction flow
 - [ ] Prototype a sequencer arbitration sandbox (lock/unlock, grab/release) to accompany I-UVM-3 sequencing drills
 
 ## Content Operations

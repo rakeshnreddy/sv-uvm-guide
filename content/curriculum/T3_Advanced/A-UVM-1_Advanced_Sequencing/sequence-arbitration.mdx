@@ -1,17 +1,128 @@
 import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
-  title: "Sequence Arbitration and Priority | Advanced UVM Techniques & Strategy",
-  description: "...",
+  title: "Sequence Arbitration and Priority | Advanced UVM Sequencing",
+  description: "Understand how UVM sequencers choose the next sequence, how to apply lock/grab, and how to customize arbitration for complex stimulus coordination.",
 };
 
 <InfoPage
   title="Sequence Arbitration and Priority"
-  uvm_concept_tags={["sequence arbitration", "priority"]}
+  uvm_concept_tags={["sequence arbitration", "lock", "grab", "sequencer priority"]}
 >
 
-  ## Sequence Arbitration and Priority
+  ## Elevator Pitch
 
-  This section is under construction. Please check back later.
+  When multiple sequences target the same sequencer, UVM becomes an air-traffic controller. Arbitration decides who flies next, locks and grabs enforce critical sections, and priorities let you bias traffic without rewriting drivers. Get this wrong and you'll see starvation, jittery stimulus, or deadlocks that look like DUT bugs.
+
+  ## Default Arbitration Modes
+
+  The base sequencer supports several built-in policies:
+
+  - `SEQ_ARB_FIFO` (default) – first request wins; great for fairness.
+  - `SEQ_ARB_STRICT_FIFO` – preserves strict order, even across locks.
+  - `SEQ_ARB_RANDOM` / `SEQ_ARB_STRICT_RANDOM` – randomized scheduling to expose ordering bugs.
+  - `SEQ_ARB_WEIGHTED` – honors per-sequence weights set with `set_priority()`.
+  - `SEQ_ARB_USER` – call your own `user_priority_arbitration()` implementation for bespoke logic.
+
+  ```systemverilog
+  class my_sequencer extends uvm_sequencer#(my_item);
+    `uvm_component_utils(my_sequencer)
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      set_arbitration(SEQ_ARB_WEIGHTED);
+    endfunction
+  endclass
+  ```
+
+  Pair `SEQ_ARB_WEIGHTED` with `sequence.set_priority()` to mix stimulus proportionally.
+
+  ## Locks vs. Grabs vs. Priority
+
+  | Tool | What it does | Use it for | Watch out for |
+  | --- | --- | --- | --- |
+  | `lock()` / `unlock()` | Reserves the sequencer until you release the lock. Pending sequences queue behind you. | Short atomic bursts (e.g., register program followed by readback). | Forgetting `unlock()` starves everyone. Keep the critical region small. |
+  | `grab()` / `ungrab()` | Takes exclusive control, even over higher-priority sequences. | Debugging or forcing emergency stimulus (error injection). | You *must* `ungrab()`; use sparingly to avoid livelock. |
+  | `set_priority()` | Assigns a positive integer weight. Higher value means more turns under `SEQ_ARB_WEIGHTED`. | Bias traffic toward latency-sensitive sequences. | Weights only apply with weighted arbitration; document the rationale. |
+
+  ## Hooking `pre_do` / `mid_do`
+
+  Sequences can override these hooks to veto requests or adjust priority dynamically.
+
+  <InteractiveCode
+    language="systemverilog"
+    fileName="priority_sequence.sv"
+    code={`
+class credit_sensitive_seq extends uvm_sequence#(my_item);
+  `uvm_object_utils(credit_sensitive_seq)
+
+  int unsigned credits;
+
+  virtual task body();
+    forever begin
+      start_item(req);
+      if (!credits_available()) begin
+        `uvm_info("CREDIT", "Stalled: waiting for credits", UVM_MEDIUM)
+        wait (credits_available());
+      end
+      assert(req.randomize() with { opcode inside { READ, WRITE }; });
+      finish_item(req);
+    end
+  endtask
+
+  virtual function bit mid_do(uvm_sequence_item this_req);
+    if (!credits_available()) begin
+      set_priority(1);                         // deprioritize when empty
+      return 0;                                // veto until credits return
+    end
+    set_priority(10);                          // prioritize when ready
+    return 1;
+  endfunction
+endclass
+    `}
+    explanationSteps={[
+      { target: "6-18", title: "Dynamic throttling", explanation: "The sequence loops forever but only proceeds when flow-control credits exist." },
+      { target: "20-28", title: "mid_do veto", explanation: "`mid_do` runs after arbitration but before `start_item()` returns. Returning `0` re-queues the request without stalling the driver." }
+    ]}
+  />
+
+  ## Debugging Starvation
+
+  - Enable `uvm_report_sequences` (via `+UVM_CMDLINE_PROC`, then `uvm_report_sequences`) to print active locks, grabs, and priorities at runtime.
+  - Add timeouts: sequences should call `uvm_report_warning` if they wait too long in `lock()` or `grab()`.
+  - Watch for unbalanced `lock()`/`unlock()` pairs. Use RAII-style helpers or macros to guarantee release even on exceptions.
+  - Mix in `SEQ_ARB_RANDOM` regressions to surface ordering-dependent corner cases.
+
+  ## Checklist
+
+  - [ ] Can you describe when to choose `lock()` versus `grab()`?
+  - [ ] Do you know which arbitration mode your sequencer uses and why?
+  - [ ] Are starvation timeouts and logging in place for long waits?
+
+  ## Quiz Yourself
+
+  <Quiz questions={[
+    {
+      question: "A sequence needs five uninterrupted beats to program a mode register. What is the best tool?",
+      answers: [
+        { text: "Increase its priority with `set_priority(10)`", correct: false },
+        { text: "Call `lock()` before the burst and `unlock()` after", correct: true },
+        { text: "Call `grab()` at the start of the test", correct: false },
+        { text: "Switch the sequencer to `SEQ_ARB_RANDOM`", correct: false }
+      ],
+      explanation: "`lock()` lets the sequence finish a short critical section while other sequences queue behind it." }
+    },
+    {
+      question: "You enabled `SEQ_ARB_WEIGHTED` but traffic is still uniform. What is missing?",
+      answers: [
+        { text: "You must override `mid_do`", correct: false },
+        { text: "Call `set_priority()` on each sequence to supply weights", correct: true },
+        { text: "Switch the driver to `try_next_item()`", correct: false },
+        { text: "Enable the command line processor", correct: false }
+      ],
+      explanation: "Weighted arbitration only reacts to the priority value assigned to each sequence via `set_priority()`." }
+    }
+  ]} />
 
 </InfoPage>
