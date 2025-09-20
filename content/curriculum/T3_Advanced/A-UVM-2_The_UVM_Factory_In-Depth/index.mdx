@@ -10,6 +10,7 @@ import { InteractiveCode } from '@/components/ui';
 - **What it is:** The UVM factory lets you substitute components or objects dynamically—per type, per instance, or even per command-line option.
 - **Why it matters:** Precise overrides unlock reuse: one agent can act active at block level and passive at SoC level without forked code.
 - **The Analogy:** Think of a theme park ride with "skins." The chassis stays the same, but you can swap decor or behavior modules before the ride starts.
+- **Accuracy hook:** Measure override hits the same way you would scoreboard transactions so you can show auditors that the planned personalities actually took over.
 
 > **Signal:** If you copy/paste an agent just to tweak one field, you probably needed an instance override or a config object instead.
 
@@ -59,22 +60,35 @@ endclass
 - **Company extensions:** Override base UVM classes globally so house style (logging, metrics) flows through the entire environment without touching vendor code.
 - **Command-line tuning:** Allow string-based overrides only for high-level scripting; keep RTL-level benches on safe `get_type()` overrides.
 
+### Accuracy toolkit
+
+| Goal | Technique | Coverage / Metric |
+| --- | --- | --- |
+| Prove each planned override actually fires | Capture a lightweight `factory_stats` service that listens to `uvm_factory::debug_create()` callbacks or wraps `type_id::create()` to log the resolved type | Functional coverage per `override_path` with a target hit count >= 1; export the histogram to your regression dashboard |
+| Guard against silent fallback to defaults | Add scoreboard hooks that compare the instantiated type name against the testplan expectation; fail the test if a default implementation appears in a stimulus class that promised an override | Assertion on `factory_stats.last_type` plus a metric that flags any regression run where `default_hits > 0` |
+| Keep string overrides honest | Limit CLI overrides to curated allowlists; parse `uvm_cmdline_processor::get_arg_matches()` and compare with the registered handles | Coverage bin that only passes when every CLI override matches a known allowlist entry |
+| Eliminate direct `new()` on UVM classes | Run the `scripts/audit-uvm-factory.ts` script (wired into CI) so contributors get a failing build whenever they bypass the factory | CI artifact summarising offending files; track zero findings before sign-off |
+
+> **Evidence pack:** Include the override histogram, default-hit counter, and CLI audit output in your verification plan. SMEs can now glance at concrete artifacts instead of reverse-engineering factory policy from the code.
+
 ## Make It Work
 1. **Centralize overrides:** Collect factory policy in base tests or dedicated configuration modules so teams know where behavior is defined.
 2. **Prefer handles over strings:** Use `::get_type()` for compile-time safety. String overrides are a last resort for prototyping or CLI knobs.
-3. **Instrument debugging:** Call `factory.print()` or `uvm_factory::find_override_by_name()` during `end_of_elaboration_phase` to audit active overrides.
-4. **Document default behavior:** Publish the intended override map (module doc, README) so newcomers understand how agents change personality.
+3. **Instrument debugging:** Call `factory.print()` or `uvm_factory::find_override_by_name()` during `end_of_elaboration_phase` to audit active overrides, and persist the diff so regressions can flag surprises automatically.
+4. **Document default behavior:** Publish the intended override map (module doc, README) so newcomers understand how agents change personality—attach the evidence pack so readers trust the table.
+5. **Schedule negative tests:** Run at least one regression without overrides (`factory.restore()` or knobs off) to prove the base implementation still works and to exercise removal paths in functional coverage.
 
 **Checklist before moving on:**
 - [ ] You can explain the difference between type and instance overrides and when to use each.
 - [ ] You have a plan for locating all factory policy in one place.
-- [ ] You can demonstrate how to debug a missing override with `factory.print()`.
+- [ ] You can demonstrate how to debug a missing override with `factory.print()` and prove the planned overrides fired via coverage or logs.
 
 ## Push Further
 - **Layered personalities:** Override an agent with a monitor-only variant for SoC regression while keeping the active version for block testing.
 - **Factory governance:** Create lint rules or CI checks that ban string overrides in reusable VIP.
 - **Dynamic experiments:** Use plusargs or JSON configs to feed override decisions without recompiling—great for cross-team experiments.
 - **Factory + config_db:** Combine both: use the factory to swap classes, and config objects to tweak parameters inside the substituted component.
+- **Override scorecards:** Publish the override histogram next to functional coverage so project leads see stimulus variety and configuration accuracy in one glance.
 
 ## Practice & Reinforce
 - Explore targeted overrides in [/curriculum/T3_Advanced/A-UVM-2_The_UVM_Factory_In-Depth/heartbeats](./heartbeats).

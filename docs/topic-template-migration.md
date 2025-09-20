@@ -5,9 +5,13 @@ Use this table to track adoption of the Quick Take → References & Next Topics 
 | Tier | Module | Topic Path | Template Updated? | Notes |
 | --- | --- | --- | --- | --- |
 | T1 | F1: Why Verification? | `content/curriculum/T1_Foundational/F1_Why_Verification/index.mdx` | ✅ | Converted on 2025-09-17 |
-| T1 | F2: Data Types | `content/curriculum/T1_Foundational/F2_Data_Types/index.mdx` | ✅ | Updated with visuals + quiz on 2025-09-17 |
+| T1 | F2: Data Types | `content/curriculum/T1_Foundational/F2_SystemVerilog_Basics/index.mdx` | ✅ | Merged into the language basics module on 2025-09-22 |
+| T1 | F2: Digital Logic & HDL Primer | `content/curriculum/T1_Foundational/F2_SystemVerilog_Primer/index.mdx` | 🔁 | Retired module; content folded into F2 SystemVerilog Basics on 2025-09-23 |
 | T1 | F3: Procedural Constructs | `content/curriculum/T1_Foundational/F3_Procedural_Constructs/index.mdx` | ✅ | Updated with animated timeline + expanded narrative on 2025-09-17 |
+| T1 | F4: Verification Basics without UVM | `content/curriculum/T1_Foundational/F4_Verification_Basics_without_UVM/index.mdx` | 🔁 | Redirects to F1 (Verification Essentials) as of 2025-09-22 |
 | T1 | F4: RTL and Testbench Constructs | `content/curriculum/T1_Foundational/F4_RTL_and_Testbench_Constructs/index.mdx` | ✅ | Updated with interface/package visual blueprint on 2025-09-17 |
+| T1 | F4: Your First Testbench | `content/curriculum/T1_Foundational/F4_Your_First_Testbench/index.mdx` | 🔁 | Redirects to `labs/simple_dut/lab1_first_tb` walkthrough on 2025-09-22 |
+| T1 | F5: Intro to OOP in SV | `content/curriculum/T1_Foundational/F5_Intro_to_OOP_in_SV/index.mdx` | 🔁 | Redirects to `I-SV-1_OOP` (Foundation Refresh) on 2025-09-22 |
 | T2 | I-SV-1: OOP | `content/curriculum/T2_Intermediate/I-SV-1_OOP/index.mdx` | ✅ | Updated with OOP blueprint and interactive walkthrough on 2025-09-17 |
 | T2 | I-SV-2: Constrained Randomization | `content/curriculum/T2_Intermediate/I-SV-2_Constrained_Randomization/index.mdx` | ✅ | Updated with smart stimulus blueprint + explorer on 2025-09-17 |
 | T2 | I-SV-3: Functional Coverage | `content/curriculum/T2_Intermediate/I-SV-3_Functional_Coverage/index.mdx` | ✅ | Converted with coverage blueprint visuals and analyzer demo on 2025-09-17 |

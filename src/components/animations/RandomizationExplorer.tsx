@@ -19,98 +19,192 @@ import {
   Line,
 } from 'recharts';
 
+type SolveResult = {
+  values: Record<string, number>;
+  iterations: string[];
+  callbacks: string[];
+  conflictName: string | null;
+  duration: number;
+  success: boolean;
+};
+
+const MAX_ATTEMPTS = 20;
+const MAX_HISTORY = 200;
+
 const RandomizationExplorer = () => {
   const [exampleIndex, setExampleIndex] = useState(0);
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
-  const [randomValues, setRandomValues] = useState<{ [key: string]: number }>({});
+  const [randomValues, setRandomValues] = useState<Record<string, number>>({});
   const [iterationLog, setIterationLog] = useState<string[]>([]);
-  const [distribution, setDistribution] = useState<number[]>(Array(16).fill(0));
+  const [distribution, setDistribution] = useState<number[]>(() => Array(16).fill(0));
   const [weight, setWeight] = useState(50);
-  const [activeConstraints, setActiveConstraints] = useState<{ [key: string]: boolean }>({});
+  const [activeConstraints, setActiveConstraints] = useState<Record<string, boolean>>({});
   const [conflictingConstraint, setConflictingConstraint] = useState<string | null>(null);
   const [callbackLog, setCallbackLog] = useState<string[]>([]);
   const [solveTimes, setSolveTimes] = useState<number[]>([]);
+  const [stats, setStats] = useState({ success: 0, failure: 0 });
+  const [sampleCount, setSampleCount] = useState(25);
 
   const currentExample = randomizationData[exampleIndex];
+  const distributionKey = currentExample.distributionKey ?? currentExample.variables[0];
 
-  useEffect(() => {
-    const initialActive = currentExample.constraints.reduce(
-      (acc, c) => ({ ...acc, [c.name]: true }),
-      {}
-    );
-    setActiveConstraints(initialActive);
-    setDistribution(Array(16).fill(0));
-    setIterationLog([]);
-    setWeight(50);
-    setSolveTimes([]);
-    setCallbackLog([]);
-    setConflictingConstraint(null);
-  }, [currentExample]);
-
-  const updateDistribution = useCallback((value: number) => {
-    const bin = Math.floor(value / 16);
-    setDistribution(prev => {
-      const next = [...prev];
-      next[bin] += 1;
-      return next;
-    });
-  }, []);
-
-  const randomize = useCallback(
-    (w = weight) => {
+  const solveOnce = useCallback(
+    (w: number, constraintSnapshot: Record<string, boolean> = activeConstraints): SolveResult => {
       const iterations: string[] = [];
-      const cbMessages: string[] = [];
+      const callbacks: string[] = [];
+
       if (currentExample.preRandomize) {
-        cbMessages.push(currentExample.preRandomize());
+        callbacks.push(currentExample.preRandomize());
       }
-      let newValues: { [key: string]: number } = {};
+
+      let newValues: Record<string, number> = {};
       let conflictName: string | null = null;
+      let conflictReason = '';
+
       const start = performance.now();
-      for (let attempt = 1; attempt <= 20; attempt++) {
-        const attemptValues: { [key: string]: number } = {};
-        currentExample.variables.forEach(v => {
-          attemptValues[v] = Math.floor(Math.random() * 256);
+
+      for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        const attemptValues: Record<string, number> = {};
+        currentExample.variables.forEach(variable => {
+          attemptValues[variable] = Math.floor(Math.random() * 256);
         });
+
         conflictName = null;
-        let conflictReason = '';
-        for (const c of currentExample.constraints) {
-          if (!activeConstraints[c.name]) continue;
-          const res = c.check(attemptValues, w);
-          if (!res.ok) {
-            conflictName = c.name;
-            conflictReason = res.reason || 'failed';
+        conflictReason = '';
+
+        for (const constraint of currentExample.constraints) {
+          if (!constraintSnapshot[constraint.name]) continue;
+          const result = constraint.check(attemptValues, w);
+          if (!result.ok) {
+            conflictName = constraint.name;
+            conflictReason = result.reason || 'failed';
             break;
           }
         }
+
         if (!conflictName) {
           newValues = attemptValues;
           iterations.push(`Iteration ${attempt}: success`);
-          if (attemptValues.data !== undefined) {
-            updateDistribution(attemptValues.data);
-          }
           break;
         } else {
           iterations.push(`Iteration ${attempt}: ${conflictName} - ${conflictReason}`);
         }
       }
-      const end = performance.now();
-      if (currentExample.postRandomize) {
-        cbMessages.push(currentExample.postRandomize(newValues));
+
+      const duration = performance.now() - start;
+      const success = !conflictName;
+
+      if (success) {
+        if (currentExample.postRandomize) {
+          callbacks.push(currentExample.postRandomize(newValues));
+        }
+      } else {
+        const exhaustedMessage = conflictName
+          ? `Solver exhausted ${MAX_ATTEMPTS} attempts (stalled at ${conflictName})`
+          : `Solver exhausted ${MAX_ATTEMPTS} attempts`;
+        iterations.push(exhaustedMessage);
+        callbacks.push('post_randomize skipped: solver failed to find a solution');
       }
-      setRandomValues(newValues);
-      setIterationLog(iterations);
-      setConflictingConstraint(conflictName);
-      setCallbackLog(cbMessages);
-      setSolveTimes(prev => [...prev, end - start]);
+
+      return {
+        values: newValues,
+        iterations,
+        callbacks,
+        conflictName,
+        duration,
+        success,
+      };
     },
-    [currentExample, weight, activeConstraints, updateDistribution]
+    [activeConstraints, currentExample]
+  );
+
+  const applyResults = useCallback(
+    (results: SolveResult[], options?: { reset?: boolean }) => {
+      if (results.length === 0) return;
+
+      const lastResult = results[results.length - 1];
+      setRandomValues(lastResult.values);
+      setIterationLog(lastResult.iterations);
+      setConflictingConstraint(lastResult.conflictName);
+      setCallbackLog(lastResult.callbacks);
+
+      const successes = results.filter(result => result.success).length;
+      const failures = results.length - successes;
+      const durations = results.map(result => result.duration);
+
+      if (options?.reset) {
+        setStats({ success: successes, failure: failures });
+        setSolveTimes(durations.slice(-MAX_HISTORY));
+      } else {
+        setStats(prev => ({
+          success: prev.success + successes,
+          failure: prev.failure + failures,
+        }));
+        setSolveTimes(prev => [...prev, ...durations].slice(-MAX_HISTORY));
+      }
+
+      if (distributionKey) {
+        const increments = Array(16).fill(0);
+        results.forEach(result => {
+          if (!result.success) return;
+          const value = result.values[distributionKey];
+          if (typeof value !== 'number' || Number.isNaN(value)) return;
+          const bin = Math.min(15, Math.max(0, Math.floor(value / 16)));
+          increments[bin] += 1;
+        });
+
+        if (options?.reset) {
+          setDistribution(increments);
+        } else if (increments.some(count => count > 0)) {
+          setDistribution(prev => prev.map((count, idx) => count + increments[idx]));
+        }
+      } else if (options?.reset) {
+        setDistribution(Array(16).fill(0));
+      }
+    },
+    [distributionKey]
   );
 
   useEffect(() => {
-    randomize(50);
-  }, [currentExample, activeConstraints, randomize]);
+    const initialActive = currentExample.constraints.reduce<Record<string, boolean>>(
+      (acc, constraint) => ({ ...acc, [constraint.name]: true }),
+      {}
+    );
+    setActiveConstraints(initialActive);
+    setWeight(currentExample.defaultWeight ?? 50);
+    setStats({ success: 0, failure: 0 });
+    setSampleCount(currentExample.defaultSampleCount ?? 25);
+    setCurrentStepIndex(0);
 
+    const initialResult = solveOnce(currentExample.defaultWeight ?? 50, initialActive);
+    applyResults([initialResult], { reset: true });
+  }, [currentExample, solveOnce, applyResults]);
 
+  const runRandomize = useCallback(
+    (overrideWeight?: number) => {
+      const result = solveOnce(overrideWeight ?? weight);
+      applyResults([result]);
+    },
+    [solveOnce, applyResults, weight]
+  );
+
+  const runBatch = useCallback(() => {
+    const clamped = Math.max(1, Math.min(500, sampleCount));
+    const results = Array.from({ length: clamped }, () => solveOnce(weight));
+    applyResults(results);
+  }, [applyResults, sampleCount, solveOnce, weight]);
+
+  const resetMetrics = useCallback(() => {
+    setDistribution(Array(16).fill(0));
+    setSolveTimes([]);
+    setStats({ success: 0, failure: 0 });
+    setIterationLog([]);
+    setCallbackLog([]);
+    setConflictingConstraint(null);
+    setRandomValues({});
+  }, []);
+
+  const currentStep = currentExample.steps[currentStepIndex];
   const distributionChartData = useMemo(
     () =>
       distribution.map((count, index) => ({
@@ -129,31 +223,35 @@ const RandomizationExplorer = () => {
     const width = 400;
     const varSpacing = width / (currentExample.variables.length + 1);
     const conSpacing = width / (currentExample.constraints.length + 1);
-    const varNodes = currentExample.variables.map((v, i) => ({
-      id: v,
-      x: (i + 1) * varSpacing,
+
+    const varNodes = currentExample.variables.map((variable, idx) => ({
+      id: variable,
+      x: (idx + 1) * varSpacing,
       y: 20,
     }));
-    const conNodes = currentExample.constraints.map((c, i) => ({
-      id: c.name,
-      x: (i + 1) * conSpacing,
+
+    const conNodes = currentExample.constraints.map((constraint, idx) => ({
+      id: constraint.name,
+      x: (idx + 1) * conSpacing,
       y: 120,
-      dependsOn: c.dependsOn,
-      enabled: activeConstraints[c.name],
-      conflict: conflictingConstraint === c.name,
+      dependsOn: constraint.dependsOn,
+      enabled: activeConstraints[constraint.name],
+      conflict: conflictingConstraint === constraint.name,
     }));
-    const edges = conNodes.flatMap(c =>
-      c.dependsOn.map(v => ({
-        from: varNodes.find(vn => vn.id === v)!,
-        to: c,
+
+    const edges = conNodes.flatMap(node =>
+      node.dependsOn.map(variable => ({
+        from: varNodes.find(v => v.id === variable)!,
+        to: node,
       }))
     );
+
     return { varNodes, conNodes, edges };
   }, [currentExample, activeConstraints, conflictingConstraint]);
 
   const handleNext = () => {
     if (currentStepIndex === currentExample.steps.length - 1) {
-      randomize();
+      runRandomize();
       setCurrentStepIndex(0);
     } else {
       setCurrentStepIndex(prev => prev + 1);
@@ -164,12 +262,28 @@ const RandomizationExplorer = () => {
     setCurrentStepIndex(prev => (prev > 0 ? prev - 1 : prev));
   };
 
-  const handleExampleChange = (index: string) => {
-    setExampleIndex(parseInt(index));
-    setCurrentStepIndex(0);
+  const handleExampleChange = (value: string) => {
+    setExampleIndex(parseInt(value, 10));
   };
 
-  const currentStep = currentExample.steps[currentStepIndex];
+  const handleSampleCountChange = (value: string) => {
+    const parsed = Number(value);
+    if (!Number.isNaN(parsed)) {
+      setSampleCount(Math.max(1, Math.min(500, Math.round(parsed))));
+    }
+  };
+
+  const totalRuns = stats.success + stats.failure;
+  const successRate = totalRuns ? (stats.success / totalRuns) * 100 : 0;
+  const latestSolveTime = solveTimes[solveTimes.length - 1] ?? 0;
+  const averageSolveTime = useMemo(() => {
+    if (!solveTimes.length) return 0;
+    const total = solveTimes.reduce((sum, time) => sum + time, 0);
+    return total / solveTimes.length;
+  }, [solveTimes]);
+
+  const weightLabel = currentExample.weightLabel ?? 'Override Weight';
+  const weightDescription = currentExample.weightDescription;
 
   return (
     <Card className="w-full">
@@ -177,13 +291,15 @@ const RandomizationExplorer = () => {
         <CardTitle>Randomization Explorer</CardTitle>
       </CardHeader>
       <CardContent>
-        <Select onValueChange={handleExampleChange} defaultValue={exampleIndex.toString()}>
+        <Select onValueChange={handleExampleChange} value={exampleIndex.toString()}>
           <SelectTrigger className="w-[280px] mb-4">
             <SelectValue placeholder="Select an example" />
           </SelectTrigger>
           <SelectContent>
             {randomizationData.map((example, index) => (
-              <SelectItem key={example.name} value={index.toString()}>{example.name}</SelectItem>
+              <SelectItem key={example.name} value={index.toString()}>
+                {example.name}
+              </SelectItem>
             ))}
           </SelectContent>
         </Select>
@@ -192,141 +308,206 @@ const RandomizationExplorer = () => {
           <div>
             <CodeBlock code={currentExample.code} language="systemverilog" />
           </div>
-            <div className="flex flex-col justify-center items-center">
-              <div className="w-full h-48 bg-muted rounded-lg p-4 flex flex-col justify-around items-center">
-                {currentExample.variables.map((v) => (
-                  <div key={v} className="flex items-center">
-                    <span className="font-mono text-lg mr-4">{v}:</span>
-                    <motion.div
-                      key={randomValues[v]}
-                      initial={{ scale: 0.5, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      className="w-24 h-12 bg-primary text-primary-foreground rounded-lg flex items-center justify-center text-xl font-bold"
-                    >
-                      {randomValues[v]}
-                    </motion.div>
-                  </div>
-                ))}
-              </div>
-              <Button onClick={() => randomize()} className="mt-4">Randomize</Button>
-              {exampleIndex === 1 && (
-                <div className="w-full mt-4">
-                  <Label htmlFor="weight" className="mb-2 block">
-                    Override Weight ({weight}%)
-                  </Label>
-                  <Input
-                    id="weight"
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={weight}
-                    onChange={(e) => setWeight(parseInt(e.target.value))}
-                  />
+          <div className="flex flex-col justify-center items-center">
+            <div className="w-full h-48 bg-muted rounded-lg p-4 flex flex-col justify-around items-center">
+              {currentExample.variables.map(variable => (
+                <div key={variable} className="flex items-center">
+                  <span className="font-mono text-lg mr-4">{variable}:</span>
+                  <motion.div
+                    key={`${variable}-${randomValues[variable] ?? 'unset'}`}
+                    initial={{ scale: 0.5, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    className="w-24 h-12 bg-primary text-primary-foreground rounded-lg flex items-center justify-center text-xl font-bold"
+                  >
+                    {randomValues[variable] ?? '–'}
+                  </motion.div>
                 </div>
-              )}
-              {currentExample.constraints.length > 0 && (
-                <div className="w-full mt-4">
-                  <h3 className="mb-2 font-semibold">Constraints</h3>
-                  {currentExample.constraints.map(c => (
-                    <div key={c.name} className="flex items-center mb-1">
-                      <input
-                        type="checkbox"
-                        className="mr-2"
-                        checked={activeConstraints[c.name]}
-                        onChange={(e) =>
-                          setActiveConstraints(prev => ({ ...prev, [c.name]: e.target.checked }))
-                        }
-                      />
-                      <span className={conflictingConstraint === c.name ? 'text-destructive' : ''}>
-                        {c.name}: {c.expression}
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              )}
+              ))}
+            </div>
+            <Button onClick={() => runRandomize()} className="mt-4">
+              Randomize
+            </Button>
+            {currentExample.showWeightControl && (
               <div className="w-full mt-4">
-                <h3 className="mb-2 font-semibold">Solver Iterations</h3>
-                <ul className="text-sm list-disc pl-4 max-h-40 overflow-y-auto">
-                  {iterationLog.map((log, i) => (
-                    <li key={i}>{log}</li>
-                  ))}
-                </ul>
-              </div>
-              <div className="w-full mt-4">
-                <h3 className="mb-2 font-semibold">Callbacks</h3>
-                <ul className="text-sm list-disc pl-4 max-h-40 overflow-y-auto">
-                  {callbackLog.map((log, i) => (
-                    <li key={i}>{log}</li>
-                  ))}
-                </ul>
-              </div>
-              <div className="w-full mt-4">
-                <h3 className="mb-2 font-semibold">Distribution</h3>
-                <ResponsiveContainer width="100%" height={200}>
-                  <BarChart data={distributionChartData}>
-                    <XAxis dataKey="range" />
-                    <YAxis allowDecimals={false} />
-                    <Tooltip />
-                    <Bar dataKey="count" fill="#8884d8" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-              <div className="w-full mt-4">
-                <h3 className="mb-2 font-semibold">Constraint Graph</h3>
-                {graph.conNodes.length === 0 ? (
-                  <p className="text-sm">No constraints</p>
-                ) : (
-                  <svg width={400} height={160} className="border rounded">
-                    {graph.edges.map((e, i) => (
-                      <line
-                        key={i}
-                        x1={e.from.x}
-                        y1={e.from.y + 10}
-                        x2={e.to.x}
-                        y2={e.to.y - 10}
-                        stroke="#888"
-                      />
-                    ))}
-                    {graph.varNodes.map(v => (
-                      <g key={v.id}>
-                        <circle cx={v.x} cy={v.y} r={10} fill="#8884d8" />
-                        <text x={v.x} y={v.y + 4} textAnchor="middle" fontSize="10" fill="white">
-                          {v.id}
-                        </text>
-                      </g>
-                    ))}
-                    {graph.conNodes.map(c => (
-                      <g key={c.id}>
-                        <rect
-                          x={c.x - 20}
-                          y={c.y - 10}
-                          width={40}
-                          height={20}
-                          fill={c.conflict ? '#f87171' : c.enabled ? '#82ca9d' : '#d1d5db'}
-                        />
-                        <text x={c.x} y={c.y + 4} textAnchor="middle" fontSize="10" fill="white">
-                          {c.id}
-                        </text>
-                      </g>
-                    ))}
-                  </svg>
+                <Label htmlFor="weight" className="mb-2 block">
+                  {weightLabel} ({weight}%)
+                </Label>
+                <Input
+                  id="weight"
+                  type="range"
+                  min={0}
+                  max={100}
+                  value={weight}
+                  onChange={event => {
+                    const next = parseInt(event.target.value, 10);
+                    setWeight(Number.isNaN(next) ? weight : next);
+                  }}
+                />
+                {weightDescription && (
+                  <p className="text-xs text-muted-foreground mt-1">{weightDescription}</p>
                 )}
               </div>
-              <div className="w-full mt-4">
-                <h3 className="mb-2 font-semibold">Performance Metrics</h3>
-                <p className="text-sm mb-2">
-                  Last solve time: {solveTimes[solveTimes.length - 1]?.toFixed(2) ?? '0'} ms
+            )}
+
+            <div className="w-full mt-4 flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-2">
+                <Label htmlFor="sample-count" className="text-sm">
+                  Batch samples
+                </Label>
+                <Input
+                  id="sample-count"
+                  type="number"
+                  min={1}
+                  max={500}
+                  value={sampleCount}
+                  onChange={event => handleSampleCountChange(event.target.value)}
+                  className="w-24"
+                />
+              </div>
+              <Button variant="outline" onClick={runBatch}>
+                Run Batch
+              </Button>
+              <Button variant="ghost" onClick={resetMetrics}>
+                Reset Metrics
+              </Button>
+            </div>
+
+            {conflictingConstraint && (
+              <div className="w-full mt-4 rounded border border-destructive/50 bg-destructive/10 p-3 text-sm">
+                <p>
+                  <strong>Solver note:</strong> Last run stalled on <code>{conflictingConstraint}</code>. Disable or
+                  adjust that constraint to find a valid solution.
                 </p>
-                <ResponsiveContainer width="100%" height={200}>
-                  <LineChart data={solveTimeChartData}>
-                    <XAxis dataKey="run" />
-                    <YAxis />
-                    <Tooltip />
-                    <Line type="monotone" dataKey="time" stroke="#82ca9d" />
-                  </LineChart>
-                </ResponsiveContainer>
+              </div>
+            )}
+
+            <div className="w-full mt-4">
+              <h3 className="mb-2 font-semibold">Constraints</h3>
+              {currentExample.constraints.length === 0 ? (
+                <p className="text-sm">No constraints</p>
+              ) : (
+                currentExample.constraints.map(constraint => (
+                  <div key={constraint.name} className="flex items-center mb-1">
+                    <input
+                      type="checkbox"
+                      className="mr-2"
+                      checked={activeConstraints[constraint.name]}
+                      onChange={event =>
+                        setActiveConstraints(prev => ({
+                          ...prev,
+                          [constraint.name]: event.target.checked,
+                        }))
+                      }
+                    />
+                    <span className={conflictingConstraint === constraint.name ? 'text-destructive' : ''}>
+                      {constraint.name}: {constraint.expression}
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="w-full mt-4 grid gap-3 md:grid-cols-2">
+              <div className="rounded border p-3 text-sm">
+                <p className="font-semibold mb-1">Run Summary</p>
+                <p>Successes: {stats.success}</p>
+                <p>Failures: {stats.failure}</p>
+                <p>Success rate: {successRate.toFixed(1)}%</p>
+              </div>
+              <div className="rounded border p-3 text-sm">
+                <p className="font-semibold mb-1">Solve Time</p>
+                <p>Latest: {solveTimes.length ? `${latestSolveTime.toFixed(2)} ms` : '–'}</p>
+                <p>Average: {solveTimes.length ? `${averageSolveTime.toFixed(2)} ms` : '–'}</p>
               </div>
             </div>
+
+            <div className="w-full mt-4">
+              <h3 className="mb-2 font-semibold">Solver Iterations</h3>
+              <ul className="text-sm list-disc pl-4 max-h-40 overflow-y-auto">
+                {iterationLog.map((log, idx) => (
+                  <li key={`${log}-${idx}`}>{log}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="w-full mt-4">
+              <h3 className="mb-2 font-semibold">Callbacks</h3>
+              <ul className="text-sm list-disc pl-4 max-h-40 overflow-y-auto">
+                {callbackLog.map((log, idx) => (
+                  <li key={`${log}-${idx}`}>{log}</li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="w-full mt-4">
+              <h3 className="mb-2 font-semibold">Distribution</h3>
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={distributionChartData}>
+                  <XAxis dataKey="range" />
+                  <YAxis allowDecimals={false} />
+                  <Tooltip />
+                  <Bar dataKey="count" fill="#8884d8" />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+
+            <div className="w-full mt-4">
+              <h3 className="mb-2 font-semibold">Constraint Graph</h3>
+              {graph.conNodes.length === 0 ? (
+                <p className="text-sm">No constraints</p>
+              ) : (
+                <svg width={400} height={160} className="border rounded">
+                  {graph.edges.map((edge, idx) => (
+                    <line
+                      key={`edge-${idx}`}
+                      x1={edge.from.x}
+                      y1={edge.from.y + 10}
+                      x2={edge.to.x}
+                      y2={edge.to.y - 10}
+                      stroke="#888"
+                    />
+                  ))}
+                  {graph.varNodes.map(node => (
+                    <g key={node.id}>
+                      <circle cx={node.x} cy={node.y} r={10} fill="#8884d8" />
+                      <text x={node.x} y={node.y + 4} textAnchor="middle" fontSize="10" fill="white">
+                        {node.id}
+                      </text>
+                    </g>
+                  ))}
+                  {graph.conNodes.map(node => (
+                    <g key={node.id}>
+                      <rect
+                        x={node.x - 20}
+                        y={node.y - 10}
+                        width={40}
+                        height={20}
+                        fill={node.conflict ? '#f87171' : node.enabled ? '#82ca9d' : '#d1d5db'}
+                      />
+                      <text x={node.x} y={node.y + 4} textAnchor="middle" fontSize="10" fill="white">
+                        {node.id}
+                      </text>
+                    </g>
+                  ))}
+                </svg>
+              )}
+            </div>
+
+            <div className="w-full mt-4">
+              <h3 className="mb-2 font-semibold">Performance Metrics</h3>
+              <p className="text-sm mb-2">
+                Last solve time: {solveTimes.length ? `${latestSolveTime.toFixed(2)} ms` : '–'}
+              </p>
+              <ResponsiveContainer width="100%" height={200}>
+                <LineChart data={solveTimeChartData}>
+                  <XAxis dataKey="run" />
+                  <YAxis />
+                  <Tooltip />
+                  <Line type="monotone" dataKey="time" stroke="#82ca9d" />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
         </div>
 
         <AnimatePresence mode="wait">
@@ -343,7 +524,9 @@ const RandomizationExplorer = () => {
         </AnimatePresence>
 
         <div className="flex justify-between mt-4">
-          <Button onClick={handlePrev} disabled={currentStepIndex === 0}>Previous</Button>
+          <Button onClick={handlePrev} disabled={currentStepIndex === 0}>
+            Previous
+          </Button>
           <Button onClick={handleNext}>
             {currentStepIndex === currentExample.steps.length - 1 ? 'Finish and Randomize' : 'Next'}
           </Button>

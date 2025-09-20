@@ -1,6 +1,7 @@
 ---
 title: "F2: SystemVerilog Language Basics"
 description: "A comprehensive introduction to the fundamental building blocks of the SystemVerilog language."
+flashcards: "F2_Data_Types"
 ---
 
 import { Quiz, InteractiveCode } from '@/components/ui';
@@ -11,6 +12,129 @@ import ProceduralBlocksSimulator from '@/components/animations/ProceduralBlocksS
 ## Introduction
 
 Welcome to the second module in our foundational tier. Now that you understand *why* we verify, it's time to learn the basic vocabulary of the language we use to do it: **SystemVerilog**. SystemVerilog is a Hardware Description and Verification Language (HDVL), meaning it's used for both designing and testing digital circuits. This module will cover the absolute essentials you need to start reading and writing basic SystemVerilog code.
+
+## Quick Take
+- **Why it matters:** SystemVerilog powers both the DUT and the testbench—choosing the right construct keeps designs faithful and verification nimble.
+- **Two worlds:** 4-state types (`logic`) mirror uncertain hardware; 2-state types (`bit`, `int`) keep verification math fast.
+- **Analogy:** Think laboratory gear—`logic` is the rugged oscilloscope probe, `wire` is the shared power rail, and `bit`/`int` are precision tweezers for algorithmic work.
+
+> **Visual cue:** Keep the comparison chart and interactive snippet below handy—treat them as your quick-reference cheat sheet.
+
+
+## Legacy Intro Spotlight
+
+
+**What is it?** SystemVerilog is the universal language of modern chip design. It's used to both design and verify hardware.
+
+**The Analogy:** Think of SystemVerilog as the "English" of the hardware world. It's the language that everyone speaks, whether they're designing the chip or testing it.
+
+**Why this matters:** To be a verification engineer, you need to be fluent in SystemVerilog. It's the language you'll use every day to write testbenches, create stimulus, and check for bugs.
+
+## Level 2: A Practical Explanation
+
+### Module Structure
+
+The fundamental building block of any SystemVerilog design or testbench is the `module`. A module is a self-contained block with a defined set of `ports` (inputs and outputs) that allow it to connect to other modules.
+
+<InteractiveCode
+  code={`
+module my_module (
+  input  logic clk,
+  input  logic reset,
+  output logic [7:0] data_out
+);
+  // Module content goes here
+endmodule
+  `}
+  language="systemverilog"
+/>
+
+### The 'logic' Data Type
+
+The most common data type in SystemVerilog is `logic`, which is a **4-state** type.
+- **0**: Logic zero.
+- **1**: Logic one.
+- **X**: An unknown value.
+- **Z**: High-impedance.
+
+### Procedural Blocks
+
+Procedural blocks are chunks of code that execute in a more "program-like" way.
+- **`initial` block**: Executes once at the beginning of the simulation.
+- **`always_comb` block**: Models combinational logic.
+- **`always_ff` block**: Models sequential, or clocked, logic.
+
+## Level 3: A 10-Year Veteran's Perspective
+
+A common point of confusion is the difference between "synthesizable" and "non-synthesizable" SystemVerilog.
+- **Synthesizable code** is a subset of the language that can be automatically converted into a physical hardware implementation.
+- **Non-synthesizable code** includes the full power of the language, with many abstract constructs that are incredibly useful for verification but have no direct hardware equivalent.
+
+As a verification engineer, you have the freedom to use the entire language to its fullest extent to stress the DUT.
+
+## Digital Logic & HDL Primer
+
+### Combinational Logic
+
+Digital designs start with combinational logic—gates whose outputs depend only on the current inputs. AND, OR, and XOR gates are the building blocks you will still model day to day when you sanity-check DUT behaviour.
+
+<InteractiveCode
+  code={`
+module and_gate (
+  input  logic a,
+  input  logic b,
+  output logic y
+);
+  assign y = a & b;
+endmodule
+  `}
+  language="systemverilog"
+  fileName="and_gate.sv"
+/>
+
+- **AND** emits `1` only when every input is `1`.
+- **OR** drives `1` when any input is `1`.
+- **XOR** highlights mismatches—perfect for parity and quick error detection.
+
+When you read a DUT spec, translate each logical requirement into simple gate-level relationships like this. It keeps checkers honest and catches typos in truth tables before they become silicon bugs.
+
+### Sequential Building Blocks
+
+Sequential logic remembers the past. Flip-flops and registers capture data on a clock edge and hold it for later comparison.
+
+<InteractiveCode
+  code={`
+module register #(parameter WIDTH = 8) (
+  input  logic clk,
+  input  logic rst,
+  input  logic [WIDTH-1:0] d,
+  output logic [WIDTH-1:0] q
+);
+  always_ff @(posedge clk or posedge rst) begin
+    if (rst) begin
+      q <= '0;
+    end else begin
+      q <= d;
+    end
+  end
+endmodule
+  `}
+  language="systemverilog"
+  fileName="register.sv"
+/>
+
+- Use non-blocking assignments inside sequential blocks so every flop samples the same timestep.
+- Parameterise width early; your future self will repurpose the module for buses of different sizes.
+
+### Think in Parallel
+
+Hardware does not execute line by line—every `assign`, `always_ff`, and concurrent block runs together. When you add ten assignments to a module you just described ten pieces of always-on logic.
+
+> This mindset shift is essential for verification. Race conditions, simultaneous edges, and handshake skew only appear when you imagine **all** blocks toggling at once. Build tiny mental timelines or wave sketches as you read RTL so your assertions cover the right windows.
+
+## Build Your Mental Model
+
+Start by separating the hardware-friendly subset from the verification helpers, then map out the core data structures you'll reach for every day.
 
 ## Synthesizable vs. Verification Code
 
@@ -133,6 +257,10 @@ endmodule
 ```
 </InteractiveCode>
 
+- **Dynamic helpers:** `size()`, `delete()`, `foreach`, and `exists()` (for associative arrays) keep runtime structures flexible without manual bookkeeping.
+- **Packed on the left:** Declare packed dimensions to the left of the identifier (`logic [7:0] data_q [4]`) so bit slicing behaves as expected while leaving software-style indexing on the right.
+- **Queues for FIFOs:** `push_back`/`pop_front` (and their `front` counterparts) make queues a perfect stand-in for drivers, scoreboards, or trace buffers.
+
 <div className="my-6">
   <DataTypeComparisonChart />
 </div>
@@ -172,6 +300,12 @@ module user_defined_example;
 endmodule
 ```
 </InteractiveCode>
+
+- Tagged unions (`union tagged`) give you safer type switching when you must reinterpret the same bits.
+- Keep common typedefs in packages so monitors, scoreboards, and sequences stay aligned.
+- Enums expose helper methods like `name()`/`next()` that make logging and assertions readable.
+
+> **Combine for clarity:** Pair enums with arrays or structs to model state machines; your scoreboard logs will thank you when they print `state.name()` instead of raw numbers.
 
 ### Operators
 
@@ -406,19 +540,69 @@ endinterface
 
 > **When to reach for program blocks?** Modern UVM environments manage ordering internally, so dedicated `program` blocks show up mostly in legacy benches or directed tests. Use one when you need a guaranteed \"testbench runs after DUT\" scheduling wall.
 
+## Make It Work
+
+1. **Map your signals:** Sketch each DUT interface and choose types deliberately—tri-state nets as `wire`, single drivers as `logic`, counters and scoreboards as `bit`/`int`.
+2. **Instrument uncertainty:** Add simple assertions or `$fatal` calls when a `logic` value goes `X/Z` outside reset; you will spot wiring mistakes instantly.
+3. **Prototype data structures:** Spin up queues, associative arrays, and packed structs in a scratch file to mirror how your testbench will store transactions.
+
+**Checklist before moving on:**
+- [ ] You can explain when to grab `logic`, `wire`, or `bit` without peeking at docs.
+- [ ] Your sandbox shows how queues/dynamic arrays grow and shrink at runtime.
+- [ ] Unknown (`X/Z`) states are either expected or trapped with assertions.
+
+## Push Further
+
+- Benchmark a small regression using `logic` payloads versus `bit` payloads and record the runtime delta.
+- Explore nettypes (`tri`, `wand`, `wor`) and document how they behave inside interfaces and scoreboards.
+- Serialize a packed struct into a mailbox and reconstruct it in a monitor—compare against your transaction typedef to ensure fidelity.
+
 ## Key Takeaways
 
 *   Use `logic` as your default data type for hardware modeling.
 *   Understand the difference between logical (`&&`, `||`) and bitwise (`&`, `|`) operators.
 *   Use `===` when you need to explicitly check for `X` or `Z` values.
 *   Use non-blocking assignments (`<=`) for sequential logic and blocking assignments (`=`) for combinational logic and testbench code.
+*   Separate combinational logic from sequential state and remember that every concurrent block runs together.
 *   Use interfaces to simplify connections and improve reusability.
 *   Use packages to organize your code.
 *   Prefer `timeunit/timeprecision` inside scopes instead of a global `` `timescale `` when you can.
+*   Reach for queues and associative arrays when verification logic needs elastic storage—keep payloads 2-state when hardware fidelity isn’t required.
+*   Define shared structs/enums via `typedef` so every component speaks the same language.
 
 ## Check Your Understanding
 
 <Quiz questions={[
+    {
+      "question": "A block whose output depends only on its current inputs is classified as what?",
+      "answers": [
+        {"text": "Sequential logic", "correct": false},
+        {"text": "Combinational logic", "correct": true},
+        {"text": "A Finite State Machine", "correct": false},
+        {"text": "A clock divider", "correct": false}
+      ],
+      "explanation": "Combinational logic reacts instantly to its inputs—there is no stored state across clock edges."
+    },
+    {
+      "question": "What does a D-type flip-flop capture?",
+      "answers": [
+        {"text": "The logical AND of its inputs", "correct": false},
+        {"text": "A single bit on the active clock edge", "correct": true},
+        {"text": "An entire transaction payload", "correct": false},
+        {"text": "Only rising edges on asynchronous resets", "correct": false}
+      ],
+      "explanation": "Flip-flops sample `D` on a triggering clock edge and hold it on `Q` until the next edge—this is how sequential state is stored."
+    },
+    {
+      "question": "Why must verification engineers think about parallel execution when reading RTL?",
+      "answers": [
+        {"text": "Because simulators execute statements sequentially like software.", "correct": false},
+        {"text": "Because all concurrent blocks evaluate together and can race or interact in surprising ways.", "correct": true},
+        {"text": "Because non-blocking assignments disable concurrency.", "correct": false},
+        {"text": "Because clocks only update every other cycle.", "correct": false}
+      ],
+      "explanation": "Hardware is inherently parallel; understanding simultaneous updates is the only way to write meaningful checks and assertions."
+    },
     {
       "question": "What is the main advantage of using `logic` over the older `reg` and `wire` types?",
       "answers": [
@@ -448,5 +632,38 @@ endinterface
         {"text": "To replace the need for a testbench.", "correct": false}
       ],
       "explanation": "Interfaces are used to simplify connections between modules and to create clean, modular designs."
+    },
+    {
+      "question": "Which array type lets you push and pop from either end with built-in methods?",
+      "answers": [
+        {"text": "Packed array", "correct": false},
+        {"text": "Dynamic array", "correct": false},
+        {"text": "Queue", "correct": true},
+        {"text": "Associative array", "correct": false}
+      ],
+      "explanation": "Queues expose `push_back`, `push_front`, and matching pop operations—perfect for elastic FIFOs in drivers or scoreboards."
+    },
+    {
+      "question": "Why wrap state encodings in an enum instead of raw integers?",
+      "answers": [
+        {"text": "Enums randomize automatically", "correct": false},
+        {"text": "Enums provide symbolic names and helper methods like `name()`", "correct": true},
+        {"text": "Enums synthesize faster", "correct": false},
+        {"text": "Enums remove the need for typedefs", "correct": false}
+      ],
+      "explanation": "Enums make logs readable, prevent invalid values, and offer helper utilities—ideal for state machines and coverage." 
     }
   ]} />
+
+## Practice & Reinforce
+
+- Flashcards – Drill `logic` vs. `bit` rules and datatype trade-offs with the linked deck.
+- Visual notebook – Capture waveform snapshots showing how `X/Z` propagate, then repeat with 2-state types to compare behaviour.
+- Mini-lab – Extend the array example to randomize queue depth and measure runtime differences when payloads switch between `logic` and `bit`.
+
+## References & Next Topics
+
+- Chris Spear & Greg Tumbush, *SystemVerilog for Verification*, Chapter 2 (data types) and Chapter 3 (procedural code).
+- Siemens Verification Academy video, “SystemVerilog Data Types in Practice.”
+- Ray Salemi, *The UVM Primer*, sections on transaction field design.
+- Next: [`/curriculum/T1_Foundational/F3_Procedural_Constructs`](../F3_Procedural_Constructs/) to master the sequential side of SystemVerilog.

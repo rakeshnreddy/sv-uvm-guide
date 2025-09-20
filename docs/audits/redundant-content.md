@@ -43,4 +43,18 @@ These documents define the Tier 1–4 structure. Anything outside those lanes sh
 ### 2025-09-22 Update
 - Tier-2 UVM fundamentals (base classes, phasing, agent wiring) have been merged into the canonical `I-UVM-2` and `I-UVM-5` lessons. The redundant `uvm-core/fundamentals` and `uvm-building/essentials` folders are now documented in `docs/archive/legacy-curriculum/README.md`.
 - `interactive-tools/uvm-visualizers/interactive-testbench.mdx` has been retired in favour of embedding the visualizer directly in `I-UVM-2_Building_TB`.
-- Remaining cleanup focus: Tier-1 legacy duplicates (`F3_SystemVerilog_Intro`, `F4_Verification_Basics_without_UVM`). Draft migration steps before deletion.
+- Remaining cleanup focus: Verify merged Tier-1 materials with SMEs before removing the final redirect stubs from navigation.
+
+### 2025-09-23 Update
+- `F2_SystemVerilog_Primer` retired; a "Digital Logic & HDL Primer" spotlight now lives inside `F2_SystemVerilog_Basics` and the archive ledger documents the move.
+- `F3_SystemVerilog_Intro` copy merged into `F2_SystemVerilog_Basics` so newcomers land on a single intro flow with the original quiz migrated over.
+- Curriculum navigation no longer surfaces the legacy Tier-1 stubs (`F2_SystemVerilog_Primer`, verification lab redirects, OOP intro); `curriculum-data.tsx` reflects the streamlined structure.
+- New `labs/simple_dut/lab1_first_tb/README.md` carries the relocated lab walkthrough referenced from Tier-1 and the Labs hub.
+- Behavioral-to-RTL guidance from `F3_Behavioral_RTL_Modeling` now lives in `F4_RTL_and_Testbench_Constructs`, including a package + interface bridge example.
+- Verification playbook/checklist content from `F4_Verification_Basics_without_UVM` is embedded directly in `F1_Why_Verification`, closing the Tier-1 loop and preserving accuracy guidance.
+
+### 2025-09-24 Update
+- F3 intro consolidation confirmed; archive ledger updated with the relocation and redundant files removed from the workspace.
+- Added accuracy instrumentation guidance to the Tier-3 factory lesson so the cleanup effort now ties back to measurable sign-off artifacts.
+- Outstanding cleanup: final SME double-check on the merged F1/F2 flow plus pruning any stale nav links surfaced by `check-titles`.
+- Ran `check-titles` audit on 2025-09-24; no mismatches reported after the Tier-1 archive sweep.

@@ -73,6 +73,101 @@ endmodule
   ]}
 />
 
+## Behavioral-to-RTL Workflow
+
+Bridging behavioral intent to clean RTL is less about rewriting code and more about enforcing structure:
+
+- **Factor logic into named processes.** Keep `always_ff`/`always_comb` blocks inside the DUT for the core behavior and move transaction assembly into interfaces or packages. This mirrors the workflow you practiced in the legacy behavioral module.
+- **Guard state transitions with packages.** Store enums, `typedef struct packed` payloads, and helper functions in a package so drivers, monitors, and the DUT share the same definition—no more drift between behavioral models and synthesized RTL.
+- **Stage simulation hooks in the interface.** Mailboxes, scoreboards, or debug signals belong in the interface/testbench world. Use `clocking` blocks and modports to expose them without polluting DUT timing.
+
+<InteractiveCode
+  language="systemverilog"
+  fileName="behavioral_to_rtl_bridge.sv"
+  code={`
+package alu_pkg;
+  typedef enum logic [2:0] {ADD, SUB, AND_OP, OR_OP, XOR_OP, CMP} alu_op_e;
+  typedef struct packed {
+    alu_op_e op;
+    logic [31:0] a, b;
+  } alu_req_s;
+  typedef struct packed {
+    logic [31:0] result;
+    logic        carry;
+  } alu_rsp_s;
+endpackage
+
+interface alu_if(input logic clk);
+  import alu_pkg::*;
+  logic        valid;
+  logic        ready;
+  alu_req_s    req;
+  alu_rsp_s    rsp;
+
+  clocking drv_cb @(posedge clk);
+    output valid, req;
+    input  ready, rsp;
+  endclocking
+
+  clocking mon_cb @(posedge clk);
+    input valid, ready, req, rsp;
+  endclocking
+endinterface
+
+module alu_core(
+  input  logic        clk,
+  input  logic        valid,
+  output logic        ready,
+  input  alu_pkg::alu_req_s req,
+  output alu_pkg::alu_rsp_s rsp
+);
+  always_ff @(posedge clk) begin
+    ready <= 1'b1;
+    unique case (req.op)
+      alu_pkg::ADD:    {rsp.carry, rsp.result} <= req.a + req.b;
+      alu_pkg::SUB:    {rsp.carry, rsp.result} <= req.a - req.b;
+      alu_pkg::AND_OP: rsp <= '{carry: 1'b0, result: req.a & req.b};
+      alu_pkg::OR_OP:  rsp <= '{carry: 1'b0, result: req.a | req.b};
+      alu_pkg::XOR_OP: rsp <= '{carry: 1'b0, result: req.a ^ req.b};
+      default:         rsp <= '{carry: 1'b0, result: (req.a == req.b)};
+    endcase
+  end
+endmodule
+
+module alu_tb;
+  import alu_pkg::*;
+  logic clk = 0;
+  always #5 clk = ~clk;
+
+  alu_if alu_bus (clk);
+  alu_core dut (
+    .clk   (clk),
+    .valid (alu_bus.valid),
+    .ready (alu_bus.ready),
+    .req   (alu_bus.req),
+    .rsp   (alu_bus.rsp)
+  );
+
+  initial begin
+    alu_bus.drv_cb.valid <= 0;
+    repeat (2) @(posedge clk);
+    alu_bus.drv_cb.req   <= '{op: ADD, a: 32'hA5, b: 32'h1B};
+    alu_bus.drv_cb.valid <= 1;
+    @(posedge clk);
+    alu_bus.drv_cb.valid <= 0;
+  end
+endmodule
+  `}
+  explanationSteps={[
+    { target: "1-8", title: "Package as contract", explanation: "The package captures the legacy behavioral types (ops/requests/responses) so DUT and bench cannot drift." },
+    { target: "10-25", title: "Interfaces stage timing", explanation: "Two clocking blocks let drivers and monitors sample with different intent while sharing the same signals." },
+    { target: "27-44", title: "RTL mirrors behavior", explanation: "`alu_core` keeps synthesizable logic in `always_ff`, translating the behavioral case statement into real hardware." },
+    { target: "46-65", title: "Testbench drives through interface", explanation: "The bench no longer touches DUT ports directly—everything flows through `alu_if`, echoing the structure from the behavioral lesson." }
+  ]}
+/>
+
+> **Migration tip:** When porting older behavioral models, start by creating packages and interfaces that express the same transactions. Once the shell is in place, the RTL drops in cleanly and verification components can reuse the exact same definitions.
+
 ### Common Pitfalls
 - Copy/pasting typedefs instead of placing them in a package, leading to mismatched transaction shapes.
 - Driving interface signals directly without clocking blocks, introducing subtle race conditions in UVM environments.
@@ -99,6 +194,7 @@ endmodule
 - Convert a legacy design that wires individual signals into one that uses an interface + package; measure the reduction in LOC and wiring bugs.
 - Explore virtual interfaces in UVM components and observe how they allow agent reuse across sequencers and drivers.
 - Experiment with multiple clocking blocks inside a single interface to support different timing domains (e.g., driver vs. monitor skew).
+- Rebuild an older behavioral ALU or bus model using the package + interface pattern above, then lint the RTL to confirm synthesizability rules are met.
 
 ## Practice & Reinforce
 - Flashcards – Review the definitions of module/interface/package/clocking block from the linked deck.
@@ -146,6 +242,17 @@ endmodule
       ],
       explanation:
         'Packages prevent duplication and mismatched definitions by providing a single source for shared declarations.'
+    },
+    {
+      question: 'How do packages assist when migrating behavioral models into synthesizable RTL?',
+      answers: [
+        { text: 'They automatically generate finite state machines', correct: false },
+        { text: 'They centralize enums/structs so RTL and verification share the exact same transaction shapes', correct: true },
+        { text: 'They replace the need for interfaces entirely', correct: false },
+        { text: 'They make modules clock independent', correct: false }
+      ],
+      explanation:
+        'Packages act as the single source of truth for transactions and opcodes, preventing divergence between behavioral scaffolding and final RTL.'
     }
   ]}
 />

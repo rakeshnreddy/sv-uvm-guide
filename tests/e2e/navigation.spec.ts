@@ -56,18 +56,18 @@ test.describe('Advanced Navigation Features', () => {
   });
 
   test('should show enhanced breadcrumbs on a curriculum page', async ({ page }) => {
-    await page.goto('/curriculum/T1_Foundational/F2_Data_Types/arrays');
+    await page.goto('/curriculum/T1_Foundational/F2_SystemVerilog_Basics');
 
-    // Check for progress indicator
-    await expect(page.locator('nav:has-text("Data Types")').locator('svg.lucide-circle.text-primary')).toBeVisible();
+    // Check for progress indicator sourced from curriculum status
+    await expect(page.locator('nav:has-text("SystemVerilog Language Basics")').locator('svg.lucide-clock.text-amber-500')).toBeVisible();
 
     // Check for "Jump to" button and dropdown
     const jumpToButton = page.getByRole('button', { name: 'Jump to' });
     await expect(jumpToButton).toBeVisible();
     await jumpToButton.click();
-    const jumpToDropdown = page.locator('div.absolute:has-text("Topics in Data Types")');
+    const jumpToDropdown = page.locator('div.absolute:has-text("Topics in F2: SystemVerilog Language Basics")');
     await expect(jumpToDropdown).toBeVisible();
-    await expect(jumpToDropdown.getByRole('link', { name: 'User Defined' })).toBeVisible();
+    await expect(jumpToDropdown.getByRole('link', { name: 'F2: SystemVerilog Language Basics' })).toBeVisible();
   });
 
 });

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { getBreadcrumbs, curriculumData } from "@/lib/curriculum-data";
+import { buildCurriculumStatus, type TopicStatus } from "@/lib/curriculum-status";
 import { ChevronRight, ChevronsUpDown, CheckCircle, Circle, Clock } from "lucide-react";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
@@ -11,12 +12,51 @@ type BreadcrumbsProps = {
 };
 
 // Mock progress data - in a real app, this would come from a context or API
-const progressData: { [key: string]: 'completed' | 'in_progress' } = {
-    '/curriculum/T1_Foundational': 'completed',
-    '/curriculum/T1_Foundational/F1_Why_Verification': 'completed',
-    '/curriculum/T1_Foundational/F2_SystemVerilog_Primer': 'completed',
-    '/curriculum/T1_Foundational/F2_Data_Types': 'in_progress',
+type ProgressState = 'completed' | 'in_progress';
+
+const topicStatuses = buildCurriculumStatus();
+
+const statusToProgress = (status: TopicStatus): ProgressState =>
+  status === 'complete' ? 'completed' : 'in_progress';
+
+const tally = (map: Map<string, { total: number; complete: number }>, key: string, isComplete: boolean) => {
+  const current = map.get(key) ?? { total: 0, complete: 0 };
+  current.total += 1;
+  if (isComplete) current.complete += 1;
+  map.set(key, current);
 };
+
+const progressData: Record<string, ProgressState> = (() => {
+  const topicProgress: Record<string, ProgressState> = {};
+  const sectionStats = new Map<string, { total: number; complete: number }>();
+  const moduleStats = new Map<string, { total: number; complete: number }>();
+
+  topicStatuses.forEach(entry => {
+    const topicPath = `/curriculum/${entry.moduleSlug}/${entry.sectionSlug}/${entry.topicSlug}`;
+    const sectionPath = `/curriculum/${entry.moduleSlug}/${entry.sectionSlug}`;
+    const modulePath = `/curriculum/${entry.moduleSlug}`;
+
+    const isComplete = entry.status === 'complete';
+
+    topicProgress[topicPath] = statusToProgress(entry.status);
+    tally(sectionStats, sectionPath, isComplete);
+    tally(moduleStats, modulePath, isComplete);
+  });
+
+  const aggregate = (
+    stats: Map<string, { total: number; complete: number }>,
+    target: Record<string, ProgressState>,
+  ) => {
+    stats.forEach((value, key) => {
+      target[key] = value.total > 0 && value.complete === value.total ? 'completed' : 'in_progress';
+    });
+  };
+
+  aggregate(sectionStats, topicProgress);
+  aggregate(moduleStats, topicProgress);
+
+  return topicProgress;
+})();
 
 export default function Breadcrumbs({ slug }: BreadcrumbsProps) {
   const breadcrumbs = getBreadcrumbs(slug);
@@ -47,7 +87,15 @@ export default function Breadcrumbs({ slug }: BreadcrumbsProps) {
                             isLast ? "text-foreground font-semibold" : ""
                             }`}
                         >
-                            {status === 'completed' ? <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" /> : (isLast ? <Circle className="h-4 w-4 text-primary flex-shrink-0" /> : <Circle className="h-4 w-4 flex-shrink-0" />)}
+                            {status === 'completed' ? (
+                              <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />
+                            ) : status === 'in_progress' ? (
+                              <Clock className="h-4 w-4 text-amber-500 flex-shrink-0" />
+                            ) : isLast ? (
+                              <Circle className="h-4 w-4 text-primary flex-shrink-0" />
+                            ) : (
+                              <Circle className="h-4 w-4 flex-shrink-0" />
+                            )}
                             <span className="truncate">{breadcrumb.title}</span>
                         </Link>
                         </div>

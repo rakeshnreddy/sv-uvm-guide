@@ -37,27 +37,6 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "F2: SystemVerilog Data Types",
-        "slug": "F2_Data_Types",
-        "topics": [
-          {
-            "title": "F2: SystemVerilog Data Types",
-            "slug": "index",
-            "description": "Understand how SystemVerilog data types balance hardware fidelity with simulation speed, and choose the right type for every signal."
-          },
-          {
-            "title": "Arrays: Packed, Unpacked, Dynamic, Queues, Associative | SystemVerilog Language Foundations",
-            "slug": "arrays",
-            "description": "An overview of arrays in SystemVerilog."
-          },
-          {
-            "title": "User-Defined Types: structs, unions, enums, typedef | SystemVerilog Language Foundations",
-            "slug": "user-defined",
-            "description": "How to create user-defined types."
-          }
-        ]
-      },
-      {
         "title": "F2: SystemVerilog Language Basics",
         "slug": "F2_SystemVerilog_Basics",
         "topics": [
@@ -65,28 +44,6 @@ export const curriculumData: Module[] = [
             "title": "F2: SystemVerilog Language Basics",
             "slug": "index",
             "description": "A comprehensive introduction to the fundamental building blocks of the SystemVerilog language."
-          }
-        ]
-      },
-      {
-        "title": "Module F-2: Digital Logic & HDL Primer",
-        "slug": "F2_SystemVerilog_Primer",
-        "topics": [
-          {
-            "title": "Module F-2: Digital Logic & HDL Primer",
-            "slug": "index",
-            "description": "A crash course in the essential digital logic and HDL concepts for verification."
-          }
-        ]
-      },
-      {
-        "title": "F3: Behavioral & RTL Modeling",
-        "slug": "F3_Behavioral_RTL_Modeling",
-        "topics": [
-          {
-            "title": "F3: Behavioral & RTL Modeling",
-            "slug": "index",
-            "description": "A core module that teaches how to describe hardware behavior in SystemVerilog."
           }
         ]
       },
@@ -117,17 +74,6 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "Module F-3: Introduction to the SystemVerilog Language",
-        "slug": "F3_SystemVerilog_Intro",
-        "topics": [
-          {
-            "title": "Module F-3: Introduction to the SystemVerilog Language",
-            "slug": "index",
-            "description": "An introduction to the basic building blocks of the SystemVerilog language for verification."
-          }
-        ]
-      },
-      {
         "title": "F4: RTL and Testbench Constructs",
         "slug": "F4_RTL_and_Testbench_Constructs",
         "topics": [
@@ -150,39 +96,6 @@ export const curriculumData: Module[] = [
             "title": "F4: Program and Clocking Blocks",
             "slug": "program-clocking",
             "description": "Understand how program and clocking blocks help create race-free testbenches by separating the testbench from the DUT and defining clear timing for signal interaction."
-          }
-        ]
-      },
-      {
-        "title": "F4: Verification Basics without UVM",
-        "slug": "F4_Verification_Basics_without_UVM",
-        "topics": [
-          {
-            "title": "F4: Verification Basics without UVM",
-            "slug": "index",
-            "description": "Bridging the gap between basic SystemVerilog and the complex UVM methodology."
-          }
-        ]
-      },
-      {
-        "title": "Module F-4: Your First Testbench",
-        "slug": "F4_Your_First_Testbench",
-        "topics": [
-          {
-            "title": "Module F-4: Your First Testbench",
-            "slug": "index",
-            "description": "A guided, hands-on lab to build your first simple, self-checking SystemVerilog testbench."
-          }
-        ]
-      },
-      {
-        "title": "F5: Intro to Object-Oriented Programming (OOP) in SV",
-        "slug": "F5_Intro_to_OOP_in_SV",
-        "topics": [
-          {
-            "title": "F5: Intro to Object-Oriented Programming (OOP) in SV",
-            "slug": "index",
-            "description": "The final prerequisite before diving into UVM."
           }
         ]
       }

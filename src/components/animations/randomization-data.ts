@@ -16,6 +16,12 @@ export interface RandomizationExample {
   constraints: Constraint[];
   preRandomize?: () => string;
   postRandomize?: (values: { [key: string]: number }) => string;
+  distributionKey?: string;
+  showWeightControl?: boolean;
+  weightLabel?: string;
+  weightDescription?: string;
+  defaultWeight?: number;
+  defaultSampleCount?: number;
 }
 
 export const randomizationData: RandomizationExample[] = [
@@ -29,6 +35,9 @@ export const randomizationData: RandomizationExample[] = [
       ],
       variables: ['data'],
       constraints: [],
+      distributionKey: 'data',
+      defaultWeight: 50,
+      defaultSampleCount: 25,
     },
     {
       name: 'Constraint Block',
@@ -59,6 +68,12 @@ export const randomizationData: RandomizationExample[] = [
       ],
       preRandomize: () => 'pre_randomize called',
       postRandomize: values => `post_randomize: data=${values.data}`,
+      distributionKey: 'data',
+      showWeightControl: true,
+      weightLabel: 'Override Weight',
+      weightDescription: 'Increase to bias toward the override threshold; lower values let the base constraint win more often.',
+      defaultWeight: 50,
+      defaultSampleCount: 25,
     },
     {
       name: 'Multiple Constraints',
@@ -99,5 +114,47 @@ export const randomizationData: RandomizationExample[] = [
       ],
       preRandomize: () => 'pre_randomize called',
       postRandomize: values => `post_randomize: data=${values.data}, len=${values.len}`,
+      distributionKey: 'data',
+      defaultWeight: 50,
+      defaultSampleCount: 25,
+    },
+    {
+      name: 'Conflicting Constraints',
+      code: 'class Packet;\n  rand bit [7:0] data;\n  constraint c_low { data inside {[0:15]}; }\n  constraint c_high { data >= 200; }\nendclass',
+      steps: [
+        'Two hard constraints intentionally pull `data` in opposite directions.',
+        'With both enabled the solver exhausts its attempts—toggle one constraint off to let a solution through.',
+        'Use batch sampling to watch the success rate recover once the conflict is resolved.',
+      ],
+      variables: ['data'],
+      constraints: [
+        {
+          name: 'c_low',
+          expression: 'data inside {[0:15]}',
+          dependsOn: ['data'],
+          check: values => {
+            if (values.data <= 15) {
+              return { ok: true };
+            }
+            return { ok: false, reason: `data (${values.data}) > 15` };
+          },
+        },
+        {
+          name: 'c_high',
+          expression: 'data >= 200',
+          dependsOn: ['data'],
+          check: values => {
+            if (values.data >= 200) {
+              return { ok: true };
+            }
+            return { ok: false, reason: `data (${values.data}) < 200` };
+          },
+        },
+      ],
+      preRandomize: () => 'pre_randomize: conflicting constraint demo',
+      postRandomize: values => `post_randomize: data=${values.data}`,
+      distributionKey: 'data',
+      defaultWeight: 50,
+      defaultSampleCount: 25,
     },
 ];

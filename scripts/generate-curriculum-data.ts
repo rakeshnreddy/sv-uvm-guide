@@ -107,20 +107,35 @@ export function generateCurriculumData(baseDir = path.join(process.cwd(), 'conte
     for (const sectionDir of sectionDirs) {
       const sectionPath = path.join(modulePath, sectionDir);
       const indexPath = path.join(sectionPath, 'index.mdx');
+      const mdxFiles = fs.readdirSync(sectionPath).filter(f => f.endsWith('.mdx')).sort();
+      const hasNonIndexTopics = mdxFiles.some(file => file !== 'index.mdx');
+
       let sectionTitle = titleFromSlug(sectionDir);
       const topics: Topic[] = [];
 
       if (fs.existsSync(indexPath)) {
+        const raw = fs.readFileSync(indexPath, 'utf8');
+        const { data } = matter(raw);
+        if (data.redirect && !hasNonIndexTopics) {
+          // Track the file so link validation still passes, but skip adding it to navigation data.
+          represented.add([moduleDir, sectionDir, 'index'].join('/'));
+          represented.add([moduleDir, sectionDir].join('/'));
+          continue;
+        }
+
         const topic = createTopic(indexPath, moduleDir, sectionDir, represented);
         sectionTitle = topic.title;
         topics.push(topic);
       }
 
-      const mdxFiles = fs.readdirSync(sectionPath).filter(f => f.endsWith('.mdx')).sort();
       for (const file of mdxFiles) {
         if (file === 'index.mdx') continue;
         const topic = createTopic(path.join(sectionPath, file), moduleDir, sectionDir, represented);
         topics.push(topic);
+      }
+
+      if (!topics.length) {
+        continue;
       }
 
       module.sections.push({ title: sectionTitle, slug: sectionDir, topics });

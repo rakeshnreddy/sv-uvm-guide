@@ -30,14 +30,14 @@ const tierDefaults: Record<Module['tier'], StatusMetadata> = {
   T2: {
     status: 'complete',
     owner: 'Content Ops',
-    lastUpdated: '2025-09-19',
-    notes: 'Template + interactive alignment verified.',
+    lastUpdated: '2025-09-22',
+    notes: 'Template + interactive alignment verified; Tier-1 refresh folded in where relevant.',
   },
   T3: {
     status: 'draft',
     owner: 'Advanced Curriculum',
-    lastUpdated: '2025-08-28',
-    notes: 'Structure locked; awaiting deep content expansion.',
+    lastUpdated: '2025-09-24',
+    notes: 'Structure locked; arbitration + factory accuracy toolkits in review awaiting SME scoring sign-off.',
   },
   T4: {
     status: 'draft',
@@ -49,12 +49,13 @@ const tierDefaults: Record<Module['tier'], StatusMetadata> = {
 
 const overrides: Record<string, Partial<StatusMetadata>> = {
   'T1_Foundational/F1_Why_Verification/index': {
-    notes: 'Update industry impact statistics + add 2025 citations.',
+    lastUpdated: '2025-09-23',
+    notes: 'Industry impact data refreshed with 2024/2025 studies; queue SME fact-check.',
   },
   'T1_Foundational/F2_SystemVerilog_Basics/index': {
     status: 'in-review',
-    lastUpdated: '2025-09-22',
-    notes: 'Synth vs. verification reference + datatype drill added; await SME review.',
+    lastUpdated: '2025-09-23',
+    notes: 'Synth vs. verification reference, datatype drill, and digital logic primer folded in; await SME review.',
   },
   'T1_Foundational/F3_Procedural_Constructs/index': {
     status: 'in-review',
@@ -67,10 +68,15 @@ const overrides: Record<string, Partial<StatusMetadata>> = {
   'T2_Intermediate/I-UVM-3_Sequences/index': {
     notes: 'New arbitration sandbox live—collect learner telemetry.',
   },
+  'T2_Intermediate/I-SV-1_OOP/index': {
+    status: 'complete',
+    lastUpdated: '2025-09-22',
+    notes: 'Foundation refresh merged from Tier-1; ready for SME review sign-off.',
+  },
   'T3_Advanced/A-UVM-1_Advanced_Sequencing/index': {
     status: 'in-review',
-    lastUpdated: '2025-09-22',
-    notes: 'Advanced sequencing aligned with sandbox + Tier-2 references; queue SME validation.',
+    lastUpdated: '2025-09-23',
+    notes: 'Arbitration toolkit + sandbox reference added; log fairness coverage expectations for SME pass.',
   },
   'T3_Advanced/A-UVM-1_Advanced_Sequencing/sequence-arbitration': {
     status: 'in-review',
@@ -94,8 +100,8 @@ const overrides: Record<string, Partial<StatusMetadata>> = {
   },
   'T3_Advanced/A-UVM-2_The_UVM_Factory_In-Depth/index': {
     status: 'in-review',
-    lastUpdated: '2025-09-05',
-    notes: 'Callback coverage section partially drafted.',
+    lastUpdated: '2025-09-24',
+    notes: 'Accuracy toolkit + override evidence pack drafted; await SME validation of metrics.',
   },
   'T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab': {
     status: 'in-review',
