@@ -1,0 +1,30 @@
+# Learning-First Audit
+
+This audit categorizes all application routes to align with the "Learning-First" primary objective. The goal is to identify and prioritize core learning content while de-scoping or feature-flagging non-essential features like mock community and user-specific tracking elements.
+
+| Route                               | Learning Outcome                                                              | Must-have content | Nice-to-have (later) | Mock/Remove/Flag                               |
+| ----------------------------------- | ----------------------------------------------------------------------------- | ----------------- | -------------------- | ---------------------------------------------- |
+| **Core Learning**                   |                                                                               |                   |                      |                                                |
+| `/curriculum`                       | Provides an overview and navigation for all learning modules.                 | Yes               |                      | Keep                                           |
+| `/curriculum/[...slug]`             | Delivers fundamental theoretical and practical knowledge on SV/UVM.           | Yes               |                      | Keep                                           |
+| **Interactive Learning**            |                                                                               |                   |                      |                                                |
+| `/practice/lab/[labId]`             | Provides hands-on coding experience in a simulated environment.               | Yes               |                      | Keep, but optimize (lazy-load heavy components) |
+| `/exercises/*`                      | Reinforces concepts with targeted, interactive challenges.                    | Yes               |                      | Keep, but optimize (lazy-load heavy components) |
+| `/practice/visualizations/*`        | Helps learners understand complex concepts through interactive diagrams.      | Yes               |                      | Keep, but optimize (lazy-load heavy components) |
+| `/quiz/placement`                   | Assesses a user's initial knowledge to recommend a starting point.            | Yes               |                      | Keep                                           |
+| **Supporting Content**              |                                                                               |                   |                      |                                                |
+| `/` (Homepage)                      | Orients new users to the purpose and value of the guide.                      | Yes               |                      | Keep                                           |
+| `/knowledge-hub`                    | A central place for articles, glossary, or deeper dives.                      | Yes               |                      | Keep                                           |
+| `/learning-strategies`              | Provides meta-learning advice on how to study verification effectively.       | Yes               |                      | Keep                                           |
+| `/resources`                        | A curated list of external tools, papers, and other resources.                | Yes               |                      | Keep                                           |
+| **User & Community (Non-Essential)**|                                                                               |                   |                      |                                                |
+| `/community/**`                     | Mock forum/discussion functionality. No current learning value.               | No                | Yes                  | **Flag & Remove**                              |
+| `/dashboard/**`                     | Mock user-specific progress tracking and content management.                  | No                | Yes                  | **Flag & Remove**                              |
+| `/settings`                         | Mock user profile and settings management.                                    | No                | Yes                  | **Flag & Remove**                              |
+| `/notifications`                    | Mock user notifications.                                                      | No                | Yes                  | **Flag & Remove**                              |
+| `/history`                          | Mock user activity history.                                                   | No                | Yes                  | **Flag & Remove**                              |
+| `/projects`                         | Mock user projects area.                                                      | No                | Yes                  | **Flag & Remove**                              |
+| `/assessment`                       | Mock user assessment/certification tracking.                                  | No                | Yes                  | **Flag & Remove**                              |
+| **Static/Legal**                    |                                                                               |                   |                      |                                                |
+| `/terms-of-service`                 | Legal requirement.                                                            | Yes               |                      | Keep                                           |
+| `/privacy-policy`                   | Legal requirement.                                                            | Yes               |                      | Keep                                           |
