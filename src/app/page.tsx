@@ -1,20 +1,16 @@
 "use client";
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import dynamic from 'next/dynamic';
 import HeroSection from '@/components/home/HeroSection';
 import PersonalizationSection from '@/components/home/PersonalizationSection';
-
-// Mock user data for demonstration purposes
-const mockUser = {
-  name: 'Jules',
-  lastLesson: {
-    title: 'UVM Phasing In-Depth',
-    slug: ['T2_Intermediate', 'I-UVM-5_Phasing_and_Synchronization'],
-  },
-  progress: 75,
-  streak: 12,
-};
+import { useAuth } from '@/contexts/AuthContext';
+import {
+  derivePersonalization,
+  DEFAULT_ENGAGEMENT_SNAPSHOT,
+  type EngagementSnapshot,
+  type PersonalizedHomeUser,
+} from '@/lib/personalization';
 
 // A simple placeholder for lazy-loaded components
 const LoadingPlaceholder = () => (
@@ -35,15 +31,81 @@ const CommunitySection = dynamic(() => import('@/components/home/CommunitySectio
 });
 
 export default function HomePage() {
-  // In a real application, this user object would come from a session provider or an auth hook.
-  // For this redesign demonstration, we'll use the mock user to show the personalization feature.
-  // To see the page as a logged-out user, you would set `mockUser` to `null`.
+  const { user: authUser, loading: authLoading } = useAuth();
+  const [personalization, setPersonalization] = useState<PersonalizedHomeUser | null>(null);
+  const [isLoadingPersonalization, setIsLoadingPersonalization] = useState(false);
+
+  useEffect(() => {
+    if (authLoading) {
+      return;
+    }
+
+    if (!authUser) {
+      setPersonalization(null);
+      setIsLoadingPersonalization(false);
+      return;
+    }
+
+    let isMounted = true;
+    const abortController = new AbortController();
+
+    const loadPersonalization = async () => {
+      setIsLoadingPersonalization(true);
+      try {
+        const response = await fetch(`/api/engagement/${authUser.uid}`, {
+          signal: abortController.signal,
+        });
+
+        let snapshot: EngagementSnapshot | null = null;
+
+        if (response.ok) {
+          const payload = await response.json();
+          snapshot = {
+            metrics: payload.metrics ?? DEFAULT_ENGAGEMENT_SNAPSHOT.metrics,
+            activityHistory: payload.activityHistory ?? DEFAULT_ENGAGEMENT_SNAPSHOT.activityHistory,
+          } satisfies EngagementSnapshot;
+        }
+
+        if (isMounted) {
+          setPersonalization(
+            derivePersonalization(snapshot ?? DEFAULT_ENGAGEMENT_SNAPSHOT, {
+              displayName: authUser.displayName,
+            }),
+          );
+        }
+      } catch (error) {
+        if (!isMounted || (error as Error).name === 'AbortError') {
+          return;
+        }
+        setPersonalization(
+          derivePersonalization(DEFAULT_ENGAGEMENT_SNAPSHOT, {
+            displayName: authUser.displayName,
+          }),
+        );
+      } finally {
+        if (isMounted) {
+          setIsLoadingPersonalization(false);
+        }
+      }
+    };
+
+    loadPersonalization();
+
+    return () => {
+      isMounted = false;
+      abortController.abort();
+    };
+  }, [authUser, authLoading]);
+
   return (
     <main className="flex flex-col items-center w-full bg-background">
       <HeroSection />
 
-      {/* The PersonalizationSection will only render if a user object is present */}
-      <PersonalizationSection user={mockUser} />
+      {/* The PersonalizationSection will only render if personalization data is available */}
+      <PersonalizationSection
+        user={personalization}
+        isLoading={isLoadingPersonalization}
+      />
 
       <LearningPathsSection />
       <InteractiveFeaturesSection />

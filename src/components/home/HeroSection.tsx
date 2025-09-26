@@ -7,6 +7,7 @@ import InteractiveUvmArchitectureDiagram from '@/components/diagrams/Interactive
 import TestimonialsCarousel from './TestimonialsCarousel';
 import StatsDisplay from './StatsDisplay';
 import { ArrowRight } from 'lucide-react';
+import Link from 'next/link';
 
 const taglines = [
   "From Basics to Brilliance in UVM",
@@ -66,13 +67,13 @@ const HeroSection = () => {
             transition={{ duration: 0.5, delay: 0.3 }}
           >
             <Button size="lg" asChild>
-              <a
+              <Link
                 href="/quiz/placement"
                 className="btn-gradient text-white font-bold text-lg px-8 py-6 rounded-full shadow-blueprint"
               >
                 Take Skill Level Assessment
                 <ArrowRight className="ml-2" />
-              </a>
+              </Link>
             </Button>
           </motion.div>
         </motion.div>

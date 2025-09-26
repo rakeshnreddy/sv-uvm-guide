@@ -64,54 +64,112 @@ interface EngagementGoal {
   unit: string;
 }
 
-// --- MOCK DATA ---
-// This mock data simulates what the backend API would provide.
+// --- FALLBACK DATA ---
+// These constants act as graceful fallbacks when the real API is unavailable.
 
-const mockEngagementMetrics: EngagementMetrics = {
-  dailyStreak: 5,
-  weeklyActiveDays: 4,
-  lessonsCompleted: 12,
-  challengesAttempted: 8,
-  timeSpentMinutes: 420,
+const EMPTY_METRICS: EngagementMetrics = {
+  dailyStreak: 0,
+  weeklyActiveDays: 0,
+  lessonsCompleted: 0,
+  challengesAttempted: 0,
+  timeSpentMinutes: 0,
 };
 
-const mockActivityHistory: ActivityLog[] = [
-  { id: '1', userId: 'user1', type: 'lesson_completed', timestamp: new Date(Date.now() - 86400000 * 1), details: { lesson: 'UVM Basics' } },
-  { id: '2', userId: 'user1', type: 'challenge_attempted', timestamp: new Date(Date.now() - 86400000 * 2), details: { challenge: 'FIFO Sequencer' } },
-  { id: '3', userId: 'user1', type: 'lesson_completed', timestamp: new Date(Date.now() - 86400000 * 3), details: { lesson: 'SystemVerilog Assertions' } },
-  { id: '4', userId: 'user1', type: 'forum_post', timestamp: new Date(Date.now() - 86400000 * 4), details: { postTitle: 'Question about RAL' } },
+const EMPTY_CHART_DATA = [
+  { name: 'Mon', activity: 0 },
+  { name: 'Tue', activity: 0 },
+  { name: 'Wed', activity: 0 },
+  { name: 'Thu', activity: 0 },
+  { name: 'Fri', activity: 0 },
+  { name: 'Sat', activity: 0 },
+  { name: 'Sun', activity: 0 },
 ];
 
-const mockEngagementChartData = [
-    { name: 'Mon', activity: 30 },
-    { name: 'Tue', activity: 45 },
-    { name: 'Wed', activity: 60 },
-    { name: 'Thu', activity: 25 },
-    { name: 'Fri', activity: 70 },
-    { name: 'Sat', activity: 90 },
-    { name: 'Sun', activity: 50 },
-];
+const FALLBACK_MENTOR_MESSAGE = 'Welcome back! Ready to keep your verification skills sharp today?';
 
-const mockMotivationalProfile: MotivationalProfile = {
-  style: 'goal-oriented',
-  rewardPreference: 'badges',
+const FALLBACK_DATA = {
+  metrics: {
+    dailyStreak: 5,
+    weeklyActiveDays: 4,
+    lessonsCompleted: 12,
+    challengesAttempted: 8,
+    timeSpentMinutes: 420,
+  } satisfies EngagementMetrics,
+  activityHistory: [
+    {
+      id: '1',
+      userId: 'user1',
+      type: 'lesson_completed',
+      timestamp: new Date(Date.now() - 86400000 * 1),
+      details: {
+        lesson: 'UVM Basics',
+        lessonSlug: ['T2_Intermediate', 'I-UVM-1_UVM_Intro', 'index'],
+      },
+    },
+    {
+      id: '2',
+      userId: 'user1',
+      type: 'challenge_attempted',
+      timestamp: new Date(Date.now() - 86400000 * 2),
+      details: {
+        challenge: 'FIFO Sequencer',
+        lessonSlug: ['T3_Advanced', 'A-UVM-1_Advanced_Sequencing', 'sequence-arbitration'],
+      },
+    },
+    {
+      id: '3',
+      userId: 'user1',
+      type: 'lesson_completed',
+      timestamp: new Date(Date.now() - 86400000 * 3),
+      details: {
+        lesson: 'SystemVerilog Assertions',
+        lessonSlug: ['T2_Intermediate', 'I-SV-4_Assertions_and_SVA', 'index'],
+      },
+    },
+    {
+      id: '4',
+      userId: 'user1',
+      type: 'forum_post',
+      timestamp: new Date(Date.now() - 86400000 * 4),
+      details: {
+        postTitle: 'Question about RAL',
+        lessonSlug: ['T3_Advanced', 'A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL', 'index'],
+      },
+    },
+  ] as ActivityLog[],
+  motivationalProfile: {
+    style: 'goal-oriented',
+    rewardPreference: 'badges',
+  } satisfies MotivationalProfile,
+  goals: [
+    { id: 'weekly_lessons', description: 'Lessons this week', target: 5, progress: 3, unit: 'lessons' },
+  ] as EngagementGoal[],
 };
 
-const mockGoals: EngagementGoal[] = [
-  { id: 'weekly_lessons', description: 'Lessons this week', target: 5, progress: 3, unit: 'lessons' },
-];
+type SerializedActivityLog = Omit<ActivityLog, 'timestamp'> & { timestamp: string };
+
+interface EngagementApiResponse {
+  metrics: EngagementMetrics;
+  activityHistory: SerializedActivityLog[];
+  motivationalProfile?: MotivationalProfile | null;
+  goals?: EngagementGoal[];
+  mentorMessage?: string;
+  activityChart?: { name: string; activity: number }[];
+  patterns?: EngagementPattern;
+}
 
 
 // --- COMPONENT PROPS ---
 
 interface EngagementEngineProps {
   userId: string;
+  useMockData?: boolean;
 }
 
 /**
  * The EngagementEngine component serves as a user-facing dashboard to drive engagement.
  */
-const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
+const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId, useMockData }) => {
   // --- STATE MANAGEMENT ---
   const [metrics, setMetrics] = useState<EngagementMetrics | null>(null);
   const [patterns, setPatterns] = useState<EngagementPattern | null>(null);
@@ -120,6 +178,15 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
   const [goals, setGoals] = useState<EngagementGoal[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [mentorMessage, setMentorMessage] = useState<string>('');
+  const [activityHistory, setActivityHistory] = useState<ActivityLog[]>([]);
+  const [activityChart, setActivityChart] = useState<{ name: string; activity: number }[]>(EMPTY_CHART_DATA);
+
+  const mockEnabled = useMemo(() => {
+    if (typeof useMockData === 'boolean') {
+      return useMockData;
+    }
+    return process.env.NEXT_PUBLIC_USE_MOCK_ENGAGEMENT === 'true';
+  }, [useMockData]);
 
   const recommendedDifficulty = useMemo(() => {
     if (!metrics) return 'Medium';
@@ -143,29 +210,59 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
 
   // --- DATA FETCHING & ANALYSIS ---
   useEffect(() => {
-    // Simulate fetching data from a backend API.
     const fetchData = async () => {
       setIsLoading(true);
-      // In a real app: const response = await fetch(`/api/users/${userId}/engagement`);
-      // const data = await response.json();
-      // setMetrics(data.metrics);
-      // setPatterns(data.patterns);
-      setMetrics(mockEngagementMetrics);
+      try {
+        const response = await fetch(`/api/engagement/${userId}`);
+        if (!response.ok) {
+          throw new Error('Failed to load engagement data');
+        }
+        const data: EngagementApiResponse = await response.json();
 
-      // Simulate engagement pattern analysis
-      analyzePatterns(mockActivityHistory);
+        setMetrics(data.metrics ?? EMPTY_METRICS);
 
-      // Load personalized profile and goals
-      setProfile(mockMotivationalProfile);
-      setGoals(mockGoals);
-      setMentorMessage('Hi there! I will guide you through your learning journey.');
+        const history = (data.activityHistory ?? []).map(log => ({
+          ...log,
+          timestamp: new Date(log.timestamp),
+        }));
+        setActivityHistory(history);
 
+        if (data.patterns) {
+          setPatterns(data.patterns);
+        } else {
+          analyzePatterns(history);
+        }
 
-      setIsLoading(false);
+        setProfile(data.motivationalProfile ?? null);
+        setGoals(data.goals ?? []);
+        setMentorMessage(data.mentorMessage ?? FALLBACK_MENTOR_MESSAGE);
+        setActivityChart(data.activityChart ?? buildActivityChart(history));
+      } catch (error) {
+        if (mockEnabled) {
+          setMetrics(FALLBACK_DATA.metrics);
+          setActivityHistory(FALLBACK_DATA.activityHistory);
+          setActivityChart(buildActivityChart(FALLBACK_DATA.activityHistory));
+          analyzePatterns(FALLBACK_DATA.activityHistory);
+          setProfile(FALLBACK_DATA.motivationalProfile);
+          setGoals(FALLBACK_DATA.goals);
+          setMentorMessage(FALLBACK_MENTOR_MESSAGE);
+        } else {
+          setMetrics(EMPTY_METRICS);
+          setActivityHistory([]);
+          setActivityChart(EMPTY_CHART_DATA);
+          setPatterns(null);
+          setProfile(null);
+          setGoals([]);
+          setMentorMessage('');
+          setStrategies([]);
+        }
+      } finally {
+        setIsLoading(false);
+      }
     };
 
     fetchData();
-  }, [userId]);
+  }, [mockEnabled, userId]);
 
   // --- ENGAGEMENT LOGIC ---
 
@@ -173,20 +270,54 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
    * Analyzes user activity history to derive engagement patterns.
    * In a real system, this logic might live on the backend.
    */
-  const analyzePatterns = (activity: ActivityLog[]) => {
-    // This is a simplified analysis for demonstration.
+  const analyzePatterns = (activity: ActivityLog[]): EngagementPattern => {
     const dayMap = activity.reduce((acc, log) => {
-        const day = log.timestamp.toLocaleString('en-US', { weekday: 'long' });
-        acc[day] = (acc[day] || 0) + 1;
-        return acc;
+      const day = log.timestamp.toLocaleString('en-US', { weekday: 'long' });
+      acc[day] = (acc[day] || 0) + 1;
+      return acc;
     }, {} as Record<string, number>);
-    const mostActiveDay = Object.keys(dayMap).reduce((a, b) => dayMap[a] > dayMap[b] ? a : b, 'N/A');
 
-    setPatterns({
-        mostActiveDay,
-        preferredTopic: 'UVM', // Placeholder
-        learningStyle: 'steady-progress' // Placeholder
+    const dayEntries = Object.entries(dayMap);
+    const mostActiveDay = dayEntries.length
+      ? dayEntries.reduce((max, current) => (current[1] > max[1] ? current : max))[0]
+      : 'N/A';
+
+    const lessonCounts = activity.reduce((acc, log) => {
+      const lesson = typeof log.details.lesson === 'string' ? log.details.lesson : null;
+      if (lesson) {
+        acc.set(lesson, (acc.get(lesson) ?? 0) + 1);
+      }
+      return acc;
+    }, new Map<string, number>());
+
+    const preferredTopic = lessonCounts.size
+      ? [...lessonCounts.entries()].reduce((max, current) => (current[1] > max[1] ? current : max))[0]
+      : 'General Skill Building';
+
+    const learningStyle: EngagementPattern['learningStyle'] = activity.length > 5 ? 'steady-progress' : 'binge-learner';
+
+    const derived = {
+      mostActiveDay,
+      preferredTopic,
+      learningStyle,
+    } satisfies EngagementPattern;
+
+    setPatterns(derived);
+    return derived;
+  };
+
+  const buildActivityChart = (activity: ActivityLog[]) => {
+    if (!activity.length) {
+      return EMPTY_CHART_DATA;
+    }
+    const dayBuckets = new Map<string, number>();
+    activity.forEach(log => {
+      const day = log.timestamp.toLocaleString('en-US', { weekday: 'short' });
+      dayBuckets.set(day, (dayBuckets.get(day) ?? 0) + 1);
     });
+
+    const orderedDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    return orderedDays.map(name => ({ name, activity: dayBuckets.get(name) ?? 0 }));
   };
 
   /**
@@ -290,7 +421,7 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId }) => {
         <div>
             <h3 className="text-lg font-semibold mb-2">Weekly Activity</h3>
             <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={mockEngagementChartData} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                <BarChart data={activityChart} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
                     <XAxis dataKey="name" />
                     <YAxis />
                     <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}/>

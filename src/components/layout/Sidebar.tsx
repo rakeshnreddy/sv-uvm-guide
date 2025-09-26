@@ -1,23 +1,51 @@
 "use client";
 
+import React, { useMemo, useState } from 'react';
 import { useNavigation } from '@/contexts/NavigationContext';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Book, Link as LinkIcon, ChevronsUpDown, LayoutList } from 'lucide-react';
-import { useState } from 'react';
+import { X, Book, ChevronsUpDown, LayoutList } from 'lucide-react';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, useSortable, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
+import { curriculumData, normalizeSlug } from '@/lib/curriculum-data';
+import { buildCurriculumStatus, type TopicStatus } from '@/lib/curriculum-status';
 
-// Placeholder data
-const moduleOutline = {
-  title: 'T2: Intermediate UVM',
-  sections: [
-    { id: '1', title: 'I-UVM-1: UVM Intro', completed: true, current: false },
-    { id: '2', title: 'I-UVM-2: Building a TB', completed: true, current: false },
-    { id: '3', title: 'I-UVM-3: Sequences', completed: false, current: true },
-    { id: '4', title: 'I-UVM-4: Phasing', completed: false, current: false },
-  ],
+type OutlineSection = {
+  id: string;
+  title: string;
+  href: string;
+  status: TopicStatus;
+  current: boolean;
+};
+
+type OutlineModule = {
+  title: string;
+  sections: OutlineSection[];
+};
+
+const statusLabels: Record<TopicStatus, string> = {
+  complete: 'Complete',
+  'in-review': 'In Review',
+  draft: 'Draft',
+};
+
+const statusStyles: Record<TopicStatus, string> = {
+  complete: 'border border-emerald-400/30 bg-emerald-500/15 text-emerald-200',
+  'in-review': 'border border-amber-400/30 bg-amber-500/15 text-amber-200',
+  draft: 'border border-slate-400/30 bg-slate-500/15 text-slate-200',
+};
+
+const formatTierTitle = (slug: string, fallback: string): string => {
+  if (!slug) return fallback;
+  const [tierCode, ...rest] = slug.split('_');
+  if (!tierCode) return fallback;
+  const tierLabel = tierCode.replace(/^T/, 'Tier ');
+  if (rest.length === 0) return `${tierLabel}: ${fallback}`;
+  const descriptor = rest.join(' ').replace(/_/g, ' ');
+  const titled = descriptor.replace(/\b\w/g, char => char.toUpperCase());
+  return `${tierLabel}: ${titled}`;
 };
 
 const quickLinks = [
@@ -51,6 +79,68 @@ const Sidebar = () => {
   const { isSidebarOpen, toggleSidebar } = useNavigation();
   const [isOutlineOpen, setOutlineOpen] = useState(true);
   const [bookmarks, setBookmarks] = useState(initialBookmarks);
+  const pathname = usePathname();
+
+  const curriculumStatus = useMemo(() => buildCurriculumStatus(), []);
+
+  const moduleOutline: OutlineModule | null = useMemo(() => {
+    if (!curriculumData.length) {
+      return null;
+    }
+
+    const segments = pathname.split('/').filter(Boolean);
+    let normalized: string[] = [];
+
+    if (segments[0] === 'curriculum') {
+      normalized = normalizeSlug(segments.slice(1));
+    }
+
+    if (normalized.length === 0) {
+      const defaultTier = curriculumData[0];
+      normalized = defaultTier ? normalizeSlug([defaultTier.slug]) : [];
+    }
+
+    if (normalized.length < 2) {
+      return null;
+    }
+
+    const [tierSlug, sectionSlug] = normalized;
+    const tier = curriculumData.find(module => module.slug === tierSlug);
+    if (!tier || tier.sections.length === 0) {
+      return null;
+    }
+
+    const tierStatuses = curriculumStatus.filter(entry => entry.moduleSlug === tierSlug);
+
+    const sections: OutlineSection[] = tier.sections.map(section => {
+      const sectionStatuses = tierStatuses.filter(entry => entry.sectionSlug === section.slug);
+      let status: TopicStatus = 'draft';
+
+      if (sectionStatuses.length > 0) {
+        if (sectionStatuses.every(entry => entry.status === 'complete')) {
+          status = 'complete';
+        } else if (sectionStatuses.some(entry => entry.status === 'in-review')) {
+          status = 'in-review';
+        }
+      }
+
+      const targetSlug = normalizeSlug([tier.slug, section.slug]);
+      const href = targetSlug.length === 3 ? `/curriculum/${targetSlug.join('/')}` : `/curriculum/${tier.slug}`;
+
+      return {
+        id: section.slug,
+        title: section.title,
+        href,
+        status,
+        current: section.slug === sectionSlug,
+      };
+    });
+
+    return {
+      title: formatTierTitle(tier.slug, tier.title),
+      sections,
+    };
+  }, [curriculumStatus, pathname]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, {
@@ -98,31 +188,40 @@ const Sidebar = () => {
             </div>
             <div className="flex-grow overflow-y-auto p-4 space-y-6">
               {/* Module Outline */}
-              <div>
-                <button onClick={() => setOutlineOpen(!isOutlineOpen)} className="w-full flex justify-between items-center font-semibold text-left mb-2">
-                  <span>Module Outline</span>
-                  <ChevronsUpDown className={`h-4 w-4 transition-transform ${isOutlineOpen ? 'rotate-180' : ''}`} />
-                </button>
-                <AnimatePresence>
-                    {isOutlineOpen && (
-                        <motion.div
-                            initial={{ height: 0, opacity: 0 }}
-                            animate={{ height: 'auto', opacity: 1 }}
-                            exit={{ height: 0, opacity: 0 }}
-                            className="mt-2 space-y-2 overflow-hidden"
-                        >
-                            <h3 className="font-semibold text-sm text-muted-foreground px-2">{moduleOutline.title}</h3>
-                            <div className="mt-1 space-y-1">
-                              {moduleOutline.sections.map(section => (
-                                  <Link key={section.id} href="#" className={`block text-sm p-2 rounded-md ${section.current ? 'bg-primary/10 text-primary font-semibold' : 'hover:bg-muted/50'} ${section.completed ? 'text-muted-foreground line-through' : ''}`}>
-                                      {section.title}
-                                  </Link>
-                              ))}
-                            </div>
-                        </motion.div>
-                    )}
-                </AnimatePresence>
-              </div>
+              {moduleOutline && moduleOutline.sections.length > 0 && (
+                <div>
+                  <button onClick={() => setOutlineOpen(!isOutlineOpen)} className="w-full flex justify-between items-center font-semibold text-left mb-2">
+                    <span>Module Outline</span>
+                    <ChevronsUpDown className={`h-4 w-4 transition-transform ${isOutlineOpen ? 'rotate-180' : ''}`} />
+                  </button>
+                  <AnimatePresence>
+                      {isOutlineOpen && (
+                          <motion.div
+                              initial={{ height: 0, opacity: 0 }}
+                              animate={{ height: 'auto', opacity: 1 }}
+                              exit={{ height: 0, opacity: 0 }}
+                              className="mt-2 space-y-2 overflow-hidden"
+                          >
+                              <h3 className="font-semibold text-sm text-muted-foreground px-2">{moduleOutline.title}</h3>
+                              <div className="mt-1 space-y-1">
+                                {moduleOutline.sections.map(section => (
+                                    <Link
+                                      key={section.id}
+                                      href={section.href}
+                                      className={`flex items-center justify-between gap-2 rounded-md p-2 text-sm transition-colors ${section.current ? 'bg-primary/10 text-primary font-semibold' : 'text-muted-foreground hover:bg-muted/50'}`}
+                                    >
+                                      <span className="truncate">{section.title}</span>
+                                      <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[section.status]}`}>
+                                        {statusLabels[section.status]}
+                                      </span>
+                                    </Link>
+                                ))}
+                              </div>
+                          </motion.div>
+                      )}
+                  </AnimatePresence>
+                </div>
+              )}
 
               {/* Quick Links */}
               <div>

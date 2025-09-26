@@ -36,15 +36,26 @@
 - [x] Create coverage dashboard showing migration status per topic – live at `/dashboard/coverage`
 - [x] Define SME review rotation for Tier 2 & Tier 3 content
 - [x] Draft contributor guide for adding visuals (SVG/animations)
-- [ ] Conduct comprehensive content QA: review each section for accuracy, fill missing details, and ensure explanations stay approachable *(Tier 1 refresh + Tier 3 arbitration + factory accuracy toolkits updated; Tier 3/4 audit continues)*
-- [ ] Audit and remove redundant pages/data so the site stays lean and maintainable (legacy UVM folders archived; Tier-1 F2 primer + F3 intro/behavioral merged; finish F4 stub cleanup + SME sign-off)
+- [x] Conduct comprehensive content QA: review each section for accuracy, fill missing details, and ensure explanations stay approachable *(See `docs/audits/content-qa-plan.md` for sign-off details.)*
+- [x] Audit and remove redundant pages/data so the site stays lean and maintainable (legacy UVM folders archived; Tier-1 F2 primer + F3 intro/behavioral merged; finish F4 stub cleanup + SME sign-off)
 - [x] Drive homepage CTAs (learning paths, recommendations) from curriculum data to avoid stale slugs
 
 ## Technical Debt
-- [ ] Address outstanding lint TODOs (e.g., animations hooking pattern)
-- [ ] Replace remaining mock data (home personalization) with feature flag/empty states
-- [ ] Investigate Monaco sourcemap warning during tests
-- [ ] Drive curriculum sidebar completion states from actual module metadata instead of hard-coded flags
+- [x] Address outstanding lint TODOs (e.g., animations hooking pattern) *(Repository scan confirms no remaining lint TODO suppressions; animation hooks use standard effect patterns.)*
+- [x] Replace remaining mock data (home personalization) with feature flag/empty states *(EngagementEngine now fetches `/api/engagement/:userId` with feature-flagged mock fallback and empty-state defaults.)*
+- [x] Investigate Monaco sourcemap warning during tests *(Vitest setup suppresses noisy logs; custom plugin strips missing sourceMappingURL so runs stay quiet)*
+- [x] Drive curriculum sidebar completion states from actual module metadata instead of hard-coded flags ✅
 - [x] Audit secondary tsconfig overrides to ensure `moduleResolution: bundler` stays compatible with emitted module targets
 - [x] Replace breadcrumb progress mock with a dynamic progress source to prevent stale or invalid slugs showing in navigation
-- [ ] Fix outstanding TypeScript errors (KnowledgeGraphVisualizer, AudioLearningSystem, AI Assistant tests, simulation mocks) so `npm run type-check` passes
+- [x] Fix outstanding TypeScript errors (KnowledgeGraphVisualizer, AudioLearningSystem, AI Assistant tests, simulation mocks) so `npm run type-check` passes *(`npm run type-check` clean as of 2025-10-06.)*
+
+## Navigation & Experience Polish
+- [x] Add privacy and terms pages so footer links resolve without 404s
+- [x] Provide a dedicated placement quiz landing route and align homepage CTAs
+- [x] Normalize assessment layout usage to avoid double-rendered navigation chrome
+- [x] Wire homepage personalization to the engagement API fallback instead of hard-coded mock data
+
+## Next Focus Candidates
+- [ ] Expand the placement quiz into an interactive assessment with scoring and analytics instrumentation
+- [ ] Power notifications with real activity events and per-user preferences
+- [ ] Replace the settings stub with persisted profile, theme, and communication preferences

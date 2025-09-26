@@ -34,8 +34,22 @@ We have migrated Tier-3/4 curriculum content, but several advanced modules still
 | Instrumentation Stack Blueprint | Static SVG | Layer logs, transaction DB, waveform clips, analytics dashboard. | Stack of translucent cards; annotate where knobs (`+UVM_OBJECTION_TRACE`, `UVM_RECORD`) plug in. |
 | Debug Control Room Mock | 3-panel illustration | Convey the “air-traffic control” metaphor (logs, transactions, waveforms). | Use blueprint palette, include mini-monitor screens displaying sample data; tie to Quick Take analogy. |
 
-## Next Steps
-1. Align with Design team on ownership and sequencing (suggested order: RAL blueprint → Debug timeline → Performance dashboard).
-2. Create Figma frames with asset specs; export to `public/visuals/tier-4/` once approved.
-3. Update corresponding MDX modules to embed visuals and reference captions.
-4. Track status in this doc; mark TODO item complete when assets ship and pages embed them.
+## Delivery Tracker
+
+| Asset | Owner | Status | Target Sprint | Notes |
+| --- | --- | --- | --- | --- |
+| RAL Mapping Blueprint | VX – Harper | ✅ Complete | Oct Sprint A | Exported `public/visuals/tier-4/ral-mapping-blueprint.svg`; ready for MDX embed. |
+| Frontdoor vs Backdoor Timeline | VX – Harper | ✅ Complete | Oct Sprint A | Timeline visualization shipped (`frontdoor-backdoor-timeline.svg`) with contrast-checked palette. |
+| Mirror Health Heatmap | Data Viz – Chen | ✅ Complete | Oct Sprint A | Heatmap asset generated (`mirror-health-heatmap.svg`) with legend offsets baked in. |
+| Regression Throughput Dashboard | Data Viz – Chen | ✅ Complete | Oct Sprint A | Dashboard mock exported (`regression-throughput-dashboard.svg`) reflecting current KPI set. |
+| Hotspot Anatomy Diagram | Content – Priya | ✅ Complete | Oct Sprint A | Scoreboard hotspot diagram (`hotspot-anatomy-diagram.svg`) annotated per profiling log. |
+| Performance Mode Switcher | VX – Elena | ✅ Complete | Oct Sprint A | Toggle asset delivered (`performance-mode-switcher.svg`) with accessible labels baked in. |
+| Objection Cascade Timeline | VX – Elena | ✅ Complete | Oct Sprint A | Timeline asset (`objection-cascade-timeline.svg`) highlights stalled drop scenario. |
+| Instrumentation Stack Blueprint | VX – Elena | ✅ Complete | Oct Sprint A | Layered stack blueprint (`instrumentation-stack-blueprint.svg`) exported to tier-4 library. |
+| Debug Control Room Mock | VX – Elena | ✅ Complete | Oct Sprint A | Air-traffic inspired mock (`debug-control-room-mock.svg`) available for hero embeds. |
+
+## Rolling Actions
+1. Confirm ownership assignments above with Design/VX leads in 2025-10-03 stand-up (Harper to post summary in `#visual-assets`).
+2. Create Figma frames and export SVG/Lottie assets to `public/visuals/tier-4/` once each item reaches ✅.
+3. Update embedded visuals within the relevant MDX modules, documenting captions and accessibility notes.
+4. Maintain this tracker; mark status ✅ when assets ship and modules reference the new visuals.

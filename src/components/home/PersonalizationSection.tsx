@@ -6,16 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Book, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 import { resolveCurriculumPath } from '@/lib/curriculum-path';
-
-interface User {
-  name: string;
-  lastLesson: {
-    title: string;
-    slug: string[];
-  };
-  progress: number;
-  streak: number;
-}
+import type { PersonalizedHomeUser } from '@/lib/personalization';
 
 const recommendationConfigs = [
   { title: 'Advanced Sequences', slug: ['T3_Advanced', 'A-UVM-1_Advanced_Sequencing'] },
@@ -23,7 +14,42 @@ const recommendationConfigs = [
   { title: 'Building a RAL Model', slug: ['T3_Advanced', 'A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL'] },
 ];
 
-const PersonalizationSection = ({ user }: { user: User | null }) => {
+interface PersonalizationSectionProps {
+  user: PersonalizedHomeUser | null;
+  isLoading?: boolean;
+}
+
+const PersonalizationSkeleton = () => (
+  <section className="py-20 bg-primary/5">
+    <div className="container mx-auto px-4">
+      <div className="animate-pulse space-y-6">
+        <div className="h-8 w-64 rounded-full bg-white/10" />
+        <div className="grid gap-8 lg:grid-cols-3">
+          <div className="lg:col-span-2 space-y-4 rounded-xl border bg-card/40 p-6">
+            <div className="h-6 w-40 rounded-full bg-white/10" />
+            <div className="h-4 w-56 rounded-full bg-white/5" />
+            <div className="h-24 rounded-lg bg-white/5" />
+            <div className="h-12 w-48 rounded-full bg-white/10" />
+          </div>
+          <div className="space-y-4 rounded-xl border bg-card/40 p-6">
+            <div className="h-6 w-48 rounded-full bg-white/10" />
+            <div className="space-y-3">
+              <div className="h-4 rounded-full bg-white/5" />
+              <div className="h-4 rounded-full bg-white/5" />
+              <div className="h-4 rounded-full bg-white/5" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+);
+
+const PersonalizationSection = ({ user, isLoading }: PersonalizationSectionProps) => {
+  if (isLoading) {
+    return <PersonalizationSkeleton />;
+  }
+
   if (!user) {
     return null; // Don't render anything if user is not logged in
   }

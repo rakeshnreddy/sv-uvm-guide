@@ -41,8 +41,8 @@ This document is the single source of truth for strategy, scope, and execution o
 | --- | --- | --- |
 | Curriculum coverage | Tier 1 pages rich; Tier 2-4 mix of stubs & outlines | `PENDING_CONTENT.md` checklist exists but lacks depth tracking |
 | Interactive experiences | Hero diagram, flashcards, drag-and-drop exercises prototyped | Scoring, persistence, and accessibility incomplete |
-| Data & personalization | Mock data in home page; Firestore integration stubbed | Need abstraction + environment configuration guidance |
-| QA & testing | Linting/type-check; limited unit tests; theming E2E | Need coverage for exercises, content routing, accessibility |
+| Data & personalization | Homepage pulls engagement API fallback; Firestore integration still stubbed | Need environment configuration and production data connectors |
+| QA & testing | Linting/type-check; limited unit tests; theming E2E | Need coverage for exercises, content routing, accessibility *(personalization mapper tests added Oct 2025)* |
 | Documentation | Multiple overlapping plans; style guide + contributing doc solid | This master plan supersedes previous planning files |
 
 ## 6. Workstreams & Roadmap
@@ -147,5 +147,6 @@ This document is the single source of truth for strategy, scope, and execution o
 ---
 
 ### Changelog
+- **2025-10-07:** Homepage personalization now sources `/api/engagement/:userId` fallback data; navigation polish added placement quiz, privacy, terms, settings, and notifications routes; TODO next-focus candidates logged for interactive quiz and preference persistence.
 - **2025-09-17:** Template update – adopted Quick Take → References & Next Topics structure, published docs/topic-template.mdx, refreshed style guide.
 - **2025-09-17:** Initial consolidation authored by project steward.

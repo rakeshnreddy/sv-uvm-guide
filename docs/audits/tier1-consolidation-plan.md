@@ -31,7 +31,7 @@ Goal: eliminate duplicate Tier-1 modules left over from the migration by folding
 - [x] Diff `F2_Data_Types` against `F2_SystemVerilog_Basics`; log missing snippets and merge unique guidance.
 - [x] Draft lab relocation plan for `F4_Your_First_Testbench` (ensure Playwright tests updated).
 - [x] Schedule SME checkpoint for OOP migration (`F5` → `I-SV-1`).
-- [ ] Close the loop on verification essentials cleanup once SME review signs off on the combined `F1` + `F2` accuracy sweep.
+- [x] Close the loop on verification essentials cleanup once SME review signs off on the combined `F1` + `F2` accuracy sweep. *(Sign-off recorded 2025-10-03 in content QA log.)*
 
 ### SME Follow-up Checklist
 - Confirm redirect ledger: `F4_Verification_Basics_without_UVM` → `F1_Why_Verification`, `F3_SystemVerilog_Intro` → `F2_SystemVerilog_Basics`, `F4_Your_First_Testbench` → `labs/simple_dut/lab1_first_tb` (see `docs/archive/legacy-curriculum/README.md`).

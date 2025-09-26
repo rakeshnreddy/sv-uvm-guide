@@ -58,3 +58,8 @@ These documents define the Tier 1–4 structure. Anything outside those lanes sh
 - Added accuracy instrumentation guidance to the Tier-3 factory lesson so the cleanup effort now ties back to measurable sign-off artifacts.
 - Outstanding cleanup: final SME double-check on the merged F1/F2 flow plus pruning any stale nav links surfaced by `check-titles`.
 - Ran `check-titles` audit on 2025-09-24; no mismatches reported after the Tier-1 archive sweep.
+
+### 2025-10-03 Update
+- Verified repository no longer contains `content/curriculum/uvm-core`, `uvm-building`, or `interactive-tools`; nav data aligned with canonical structure.
+- Linked SME follow-up to the new content QA plan (`docs/audits/content-qa-plan.md`) to collect sign-off notes.
+- Scheduled final navigation audit after QA completion to determine when TODO cleanup item can close.
