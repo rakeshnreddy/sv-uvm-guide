@@ -1,8 +1,5 @@
-import React from 'react';
-import { db } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
-import PostClientPage from './PostClientPage';
 import { notFound } from 'next/navigation';
+import { isFeatureEnabled } from '@/tools/featureFlags';
 
 type Post = {
   id: string;
@@ -13,13 +10,22 @@ type Post = {
 };
 
 type PostPageProps = {
-  params: Promise<{
+  params: {
     postId: string;
-  }>;
+  };
 };
 
 export default async function PostPage({ params }: PostPageProps) {
-  const { postId } = await params;
+  if (!isFeatureEnabled('community')) {
+    notFound();
+  }
+
+  const [{ db }, { doc, getDoc }] = await Promise.all([
+    import('@/lib/firebase'),
+    import('firebase/firestore'),
+  ]);
+
+  const { postId } = params;
   const docRef = doc(db, 'posts', postId);
   const docSnap = await getDoc(docRef);
 
@@ -28,6 +34,7 @@ export default async function PostPage({ params }: PostPageProps) {
   }
 
   const post = { id: docSnap.id, ...docSnap.data() } as Post;
+  const PostClientPage = (await import('./PostClientPage')).default;
 
   return <PostClientPage post={post} />;
 }

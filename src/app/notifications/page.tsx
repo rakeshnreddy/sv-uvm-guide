@@ -1,3 +1,5 @@
+import { isFeatureEnabled } from '@/tools/featureFlags';
+
 const notifications = [
   {
     title: 'Tier 3 sequencing review ready',
@@ -17,6 +19,20 @@ const notifications = [
 ];
 
 export default function NotificationsPage() {
+  if (!isFeatureEnabled('accountUI')) {
+    return (
+      <div className="space-y-6">
+        <header className="glass-card border border-white/10 bg-[var(--blueprint-glass)] p-8 shadow-xl">
+          <h1 className="text-3xl font-semibold text-[var(--blueprint-foreground)]">Notifications</h1>
+          <p className="mt-2 text-sm text-[rgba(230,241,255,0.75)]">
+            Notifications will launch once account preferences are wired up. For now, focus on the core curriculum—there are no
+            alerts you might miss.
+          </p>
+        </header>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-8">
       <header className="glass-card border border-white/10 bg-[var(--blueprint-glass)] p-8 shadow-xl">

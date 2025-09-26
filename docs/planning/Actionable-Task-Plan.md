@@ -18,6 +18,7 @@
 **Est. Impact:** Foundational for all other learning-first cleanup tasks.
 **Effort:** M
 **Dependencies:** None
+**Status:** ✅ Completed – route inventory mapped to audit recommendations and flag ownership noted (2025-10-07).
 
 #### [L2] Introduce tools/featureFlags.ts
 **Why:** To provide a centralized, code-based mechanism for enabling or disabling features, allowing for safe removal of mock UI without deleting the underlying code immediately.
@@ -32,6 +33,7 @@
 **Est. Impact:** Enables safe de-scoping and progressive feature rollouts.
 **Effort:** S
 **Dependencies:** None
+**Status:** ✅ Completed – centralized feature flag helper created with default-off flags (2025-10-07).
 
 #### [L3] Gate Mock UI & Associated Heavy Components
 **Why:** Several heavy components are used exclusively on mock pages (Dashboard, Community, etc.) that provide no current learning value. Gating them is a quick way to improve performance and simplify the codebase.
@@ -47,6 +49,7 @@
 **Est. Impact:** High. Reduces bundle size and removes distracting, non-functional UI.
 **Effort:** M
 **Dependencies:** [L2]
+**Status:** ✅ Completed – community, dashboard, history, assessment, notifications, projects, and settings are now guarded by feature flags (2025-10-07).
 
 #### [M1-1] Enable TypeScript Error Checking in Build
 **Why:** The project currently ignores TypeScript errors during the build (`typescript: { ignoreBuildErrors: true }`), which defeats the purpose of using TypeScript and hides potentially critical bugs.

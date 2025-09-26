@@ -1,31 +1,50 @@
-import { z } from 'zod';
-
-const featureFlagsSchema = z.object({
-  // Set to true to enable community features (comments, user profiles, etc.)
-  community: z.boolean().default(false),
-  // Set to true to enable user progress tracking and assessments
-  tracking: z.boolean().default(false),
-  // Set to true to enable personalization features (e.g., recommended content)
-  personalization: z.boolean().default(false),
-  // Set to true to show mock comment sections
-  fakeComments: z.boolean().default(false),
-  // Set to true to show user account UI elements (e.g., avatar, login button)
-  accountUI: z.boolean().default(false),
-});
-
-export type FeatureFlags = z.infer<typeof featureFlagsSchema>;
-
-// TODO: Implement a proper remote config system (e.g., using environment variables or a service)
-const flags: FeatureFlags = {
+const defaultFlags = {
   community: false,
   tracking: false,
   personalization: false,
   fakeComments: false,
   accountUI: false,
+} as const;
+
+export type FeatureFlag = keyof typeof defaultFlags;
+
+function parseBooleanFlag(value: string | undefined): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (['1', 'true', 'on', 'yes', 'enabled'].includes(normalized)) {
+    return true;
+  }
+  if (['0', 'false', 'off', 'no', 'disabled'].includes(normalized)) {
+    return false;
+  }
+
+  return undefined;
+}
+
+const environmentOverrides: Partial<Record<FeatureFlag, boolean>> = {
+  community: parseBooleanFlag(process.env.NEXT_PUBLIC_FEATURE_FLAG_COMMUNITY),
+  tracking: parseBooleanFlag(process.env.NEXT_PUBLIC_FEATURE_FLAG_TRACKING),
+  personalization: parseBooleanFlag(process.env.NEXT_PUBLIC_FEATURE_FLAG_PERSONALIZATION),
+  fakeComments: parseBooleanFlag(process.env.NEXT_PUBLIC_FEATURE_FLAG_FAKE_COMMENTS),
+  accountUI: parseBooleanFlag(process.env.NEXT_PUBLIC_FEATURE_FLAG_ACCOUNT_UI),
 };
 
-export const featureFlags = featureFlagsSchema.parse(flags);
+export function isFeatureEnabled(flag: FeatureFlag): boolean {
+  const override = environmentOverrides[flag];
+  if (override !== undefined) {
+    return override;
+  }
 
-export const isFeatureEnabled = (flag: keyof FeatureFlags) => {
-  return featureFlags[flag];
-};
+  return defaultFlags[flag];
+}
+
+export const featureFlags: Readonly<Record<FeatureFlag, boolean>> = Object.freeze({
+  community: isFeatureEnabled('community'),
+  tracking: isFeatureEnabled('tracking'),
+  personalization: isFeatureEnabled('personalization'),
+  fakeComments: isFeatureEnabled('fakeComments'),
+  accountUI: isFeatureEnabled('accountUI'),
+});
