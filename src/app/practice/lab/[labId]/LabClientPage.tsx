@@ -1,7 +1,12 @@
 "use client";
 
 import React, { useState } from "react";
-import Editor from "@monaco-editor/react";
+import dynamic from "next/dynamic";
+
+const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
+  ssr: false,
+  loading: () => <div className="flex h-full items-center justify-center">Loading editor...</div>,
+});
 
 const labData = {
   id: "1",
@@ -90,7 +95,7 @@ const LabClientPage = ({ lab }: LabClientPageProps) => {
           <p>{lab.steps[currentStep].instructions}</p>
         </div>
         <div className="flex-1">
-          <Editor
+          <MonacoEditor
             height="100%"
             language="systemverilog"
             value={code}

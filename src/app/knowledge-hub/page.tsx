@@ -1,11 +1,19 @@
 'use client';
 
 import React, { useState } from 'react';
-import KnowledgeGraphVisualizer from '@/components/knowledge/KnowledgeGraphVisualizer';
+import dynamic from 'next/dynamic';
 import ConceptRelationshipMapper from '@/components/knowledge/ConceptRelationshipMapper';
 import IntelligentCrossReference from '@/components/knowledge/IntelligentCrossReference';
 import LearningPathGenerator from '@/components/knowledge/LearningPathGenerator';
 import ConceptDependencyAnalyzer from '@/components/knowledge/ConceptDependencyAnalyzer';
+
+const KnowledgeGraphVisualizer = dynamic(
+  () => import('@/components/knowledge/KnowledgeGraphVisualizer'),
+  {
+    ssr: false,
+    loading: () => <div className="flex h-64 items-center justify-center">Loading visualization...</div>,
+  },
+);
 
 const KnowledgeHubPage = () => {
   const [highlightedPath, setHighlightedPath] = useState<string[]>([]);

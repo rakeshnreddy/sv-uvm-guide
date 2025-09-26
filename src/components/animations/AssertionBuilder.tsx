@@ -7,8 +7,13 @@ import { svaOperators, SvaOperator } from './sva-data';
 import { assertionPatterns, AssertionPattern } from './assertion-patterns-data';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
-import Editor from '@monaco-editor/react';
+import dynamic from 'next/dynamic';
 import { useTheme } from 'next-themes';
+
+const MonacoEditor = dynamic(() => import('@monaco-editor/react'), {
+  ssr: false,
+  loading: () => <div className="flex h-full items-center justify-center">Loading editor...</div>,
+});
 
 const operatorStyle = (op: SvaOperator) => {
   switch (op.type) {
@@ -241,7 +246,7 @@ const AssertionBuilder = () => {
                 <p className="text-sm mb-2" aria-live="polite">
                   Syntax: <code>antecedent |-&gt; ##delay consequent</code>
                 </p>
-                <Editor
+                <MonacoEditor
                   height="150px"
                   language="systemverilog"
                   theme={theme === 'dark' ? 'vs-dark' : 'light'}

@@ -1,6 +1,15 @@
 // app/learning-strategies/page.tsx
+import dynamic from "next/dynamic";
 import { InfoPage } from "@/components/templates/InfoPage";
-import HistoryTimelineChart from "@/components/charts/HistoryTimelineChart";
+
+const VisualizationFallback = () => (
+  <div className="flex h-48 items-center justify-center">Loading visualization...</div>
+);
+
+const HistoryTimelineChart = dynamic(
+  () => import("@/components/charts/HistoryTimelineChart"),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 
 // PLACEHOLDER CONTENT - All content below must be populated from the "SystemVerilog and UVM Mastery Blueprint"
 

@@ -98,6 +98,11 @@
 **Est. Impact:** High. Significant reduction in initial JS load.
 **Effort:** L
 **Dependencies:** None
+**Current Progress (2025-10-08):**
+- Monaco usage in `src/app/practice/lab/[labId]/LabClientPage.tsx` and `src/components/animations/AssertionBuilder.tsx` now loads via `next/dynamic` with an inline loading state.
+- All D3 / Recharts-heavy experiences (knowledge hub, curriculum MDX embeds, hero diagrams, assessment dashboards, and every visualization route under `src/app/practice/visualizations`) now wrap their imports in `next/dynamic` with `ssr: false` plus lightweight fallbacks, preventing these libraries from inflating the initial server bundle.
+- Legacy documentation (`docs/archive/.../interactive-testbench.mdx`) now mirrors the same dynamic-loading strategy, keeping parity between content surfaces.
+- Remaining candidates: unused experimental surfaces such as `EngagementEngine` still import Recharts directly; evaluate whether they should be lazy-loaded or removed when that UI surfaces again.
 
 #### [P2] Refactor D3 Imports for Tree-Shaking
 **Why:** The current `import * as d3 from 'd3'` pattern bundles the entire D3 library. Importing only the necessary modules will dramatically reduce the size of the D3-related code.

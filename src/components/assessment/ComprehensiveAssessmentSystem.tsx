@@ -1,12 +1,25 @@
 "use client";
 
 import React, { useState } from 'react';
+import dynamic from 'next/dynamic';
 import { AdaptiveTestEngine } from './AdaptiveTestEngine';
 import { ProjectBasedEvaluator } from './ProjectBasedEvaluator';
-import { SkillMatrixVisualizer } from './SkillMatrixVisualizer';
-import { ProgressAnalytics } from './ProgressAnalytics';
 import { CompetencyCertification } from './CompetencyCertification';
 import { Button } from '@/components/ui/Button';
+
+const VisualizationFallback = () => (
+  <div className="flex h-48 items-center justify-center">Loading visualization...</div>
+);
+
+const SkillMatrixVisualizer = dynamic(
+  () => import('./SkillMatrixVisualizer'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
+
+const ProgressAnalytics = dynamic(
+  () => import('./ProgressAnalytics'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 
 type AssessmentTab = 'overview' | 'test' | 'project' | 'skills' | 'analytics' | 'certification';
 

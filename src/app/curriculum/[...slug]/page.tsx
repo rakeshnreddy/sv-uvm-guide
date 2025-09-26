@@ -20,23 +20,51 @@ import ConceptLink from '@/components/knowledge/ConceptLink';
 import matter from 'gray-matter';
 import FlashcardWidget from '@/components/widgets/FlashcardWidget';
 
+const VisualizationFallback = () => (
+  <div className="flex h-48 items-center justify-center">Loading visualization...</div>
+);
+
 const AnimatedUvmSequenceDriverHandshakeDiagram = dynamic(() => import('@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram').then(mod => mod.AnimatedUvmSequenceDriverHandshakeDiagram));
-const DataTypeComparisonChart = dynamic(() => import('@/components/charts/DataTypeComparisonChart'));
-const UvmHierarchySunburstChart = dynamic(() => import('@/components/charts/UvmHierarchySunburstChart'));
+const DataTypeComparisonChart = dynamic(
+  () => import('@/components/charts/DataTypeComparisonChart'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
+const UvmHierarchySunburstChart = dynamic(
+  () => import('@/components/charts/UvmHierarchySunburstChart'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 const UvmPhasingDiagram = dynamic(() => import('@/components/diagrams/UvmPhasingDiagram'));
 const AnimatedUvmTestbenchDiagram = dynamic(() => import('@/components/diagrams/AnimatedUvmTestbenchDiagram'));
 const UvmVirtualSequencerDiagram = dynamic(() => import('@/components/diagrams/UvmVirtualSequencerDiagram'));
-const UvmTestbenchVisualizer = dynamic(() => import('@/components/diagrams/UvmTestbenchVisualizer'));
-const InteractiveUvmArchitectureDiagram = dynamic(() => import('@/components/diagrams/InteractiveUvmArchitectureDiagram'));
-const UvmComponentRelationshipVisualizer = dynamic(() => import('@/components/diagrams/UvmComponentRelationshipVisualizer'));
+const UvmTestbenchVisualizer = dynamic(
+  () => import('@/components/diagrams/UvmTestbenchVisualizer'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
+const InteractiveUvmArchitectureDiagram = dynamic(
+  () => import('@/components/diagrams/InteractiveUvmArchitectureDiagram'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
+const UvmComponentRelationshipVisualizer = dynamic(
+  () => import('@/components/diagrams/UvmComponentRelationshipVisualizer'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 const UvmPhasingInteractiveTimeline = dynamic(() => import('@/components/diagrams/UvmPhasingInteractiveTimeline'));
 const UvmFactoryWorkflowVisualizer = dynamic(() => import('@/components/diagrams/UvmFactoryWorkflowVisualizer'));
-const SystemVerilogDataTypesAnimation = dynamic(() => import('@/components/animations/SystemVerilogDataTypesAnimation'));
+const SystemVerilogDataTypesAnimation = dynamic(
+  () => import('@/components/animations/SystemVerilogDataTypesAnimation'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 const CoverageAnalyzer = dynamic(() => import('@/components/animations/CoverageAnalyzer'));
-const RandomizationExplorer = dynamic(() => import('@/components/animations/RandomizationExplorer'));
+const RandomizationExplorer = dynamic(
+  () => import('@/components/animations/RandomizationExplorer'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 const InterfaceSignalFlow = dynamic(() => import('@/components/animations/InterfaceSignalFlow'));
 const ProceduralBlocksSimulator = dynamic(() => import('@/components/animations/ProceduralBlocksSimulator'));
-const AssertionBuilder = dynamic(() => import('@/components/animations/AssertionBuilder'));
+const AssertionBuilder = dynamic(
+  () => import('@/components/animations/AssertionBuilder'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 const DebuggingSimulator = dynamic(() => import('@/components/ui/DebuggingSimulator'));
 const InteractiveCode = dynamic(() => import('@/components/ui/InteractiveCode').then(mod => mod.InteractiveCode), { ssr: false });
 

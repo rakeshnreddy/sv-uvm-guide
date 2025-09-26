@@ -14,8 +14,7 @@ test('AI assistant shows loading spinner when sending message', async ({ page })
   const input = page.getByPlaceholder(/ask about systemverilog, uvm/i);
   await input.fill('hello');
   await page.getByLabel('Send message').click();
-  const spinner = page.locator('.animate-spin');
-  await expect(spinner).toBeVisible();
-  await expect(spinner).toBeHidden();
+  await expect(page.getByText('Assistant is thinking...')).toBeVisible();
+  await expect(page.getByText('Assistant is thinking...')).toBeHidden();
   await expect(page.getByText('hi there')).toBeVisible();
 });

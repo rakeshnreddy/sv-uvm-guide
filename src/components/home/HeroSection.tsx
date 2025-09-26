@@ -2,12 +2,21 @@
 
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
+import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/Button';
-import InteractiveUvmArchitectureDiagram from '@/components/diagrams/InteractiveUvmArchitectureDiagram';
 import TestimonialsCarousel from './TestimonialsCarousel';
 import StatsDisplay from './StatsDisplay';
 import { ArrowRight } from 'lucide-react';
 import Link from 'next/link';
+
+const VisualizationFallback = () => (
+  <div className="flex h-64 items-center justify-center">Loading visualization...</div>
+);
+
+const InteractiveUvmArchitectureDiagram = dynamic(
+  () => import('@/components/diagrams/InteractiveUvmArchitectureDiagram'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 
 const taglines = [
   "From Basics to Brilliance in UVM",

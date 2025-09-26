@@ -2,10 +2,6 @@
 const nextConfig = {
   // Add your Next.js config options here
   output: 'standalone',
-  eslint: { ignoreDuringBuilds: true },
-  typescript: { ignoreBuildErrors: true },
-  
-  
 
   webpack(config) {
     config.module.rules.push({

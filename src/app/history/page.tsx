@@ -1,5 +1,15 @@
+import dynamic from 'next/dynamic';
 import { InfoPage } from '@/components/templates/InfoPage';
 import { isFeatureEnabled } from '@/tools/featureFlags';
+
+const VisualizationFallback = () => (
+  <div className="flex h-48 items-center justify-center">Loading visualization...</div>
+);
+
+const HistoryTimelineChart = dynamic(
+  () => import('@/components/charts/HistoryTimelineChart'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 
 export default async function HistoryPage() {
   if (!isFeatureEnabled('tracking')) {
@@ -11,8 +21,6 @@ export default async function HistoryPage() {
       </InfoPage>
     );
   }
-
-  const HistoryTimelineChart = (await import('@/components/charts/HistoryTimelineChart')).default;
 
   const timelineSection = (
     <div key="history-timeline">

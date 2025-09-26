@@ -8,13 +8,13 @@ The following features provide no immediate learning value and are either mock i
 
 | Feature / Page(s) | Component(s) / Route(s) | Proposal | Feature Flag | Re-enable Instructions |
 |---|---|---|---|---|
-| **Community Features** | `/app/community/**` | Flag | `community` | Set `community: true` in `featureFlags.ts` and re-deploy. |
-| **User Dashboard** | `/app/dashboard/**` | Flag | `tracking` | Set `tracking: true` in `featureFlags.ts` and re-deploy. |
-| **User Settings** | `/app/settings` | Flag | `accountUI` | Set `accountUI: true` in `featureFlags.ts` and re-deploy. |
-| **Notifications** | `/app/notifications` | Flag | `accountUI` | Set `accountUI: true` in `featureFlags.ts` and re-deploy. |
-| **User History** | `/app/history` | Flag | `tracking` | Set `tracking: true` in `featureFlags.ts` and re-deploy. |
-| **User Projects** | `/app/projects` | Flag | `tracking` | Set `tracking: true` in `featureFlags.ts` and re-deploy. |
-| **Assessments** | `/app/assessment` | Flag | `tracking` | Set `tracking: true` in `featureFlags.ts` and re-deploy. |
+| **Community Features** | `/app/community/**` | Flag | `community` | Set `NEXT_PUBLIC_FEATURE_FLAG_COMMUNITY=true` (or `FEATURE_FLAGS_FORCE_ON=true`) and redeploy. |
+| **User Dashboard** | `/app/dashboard/**` | Flag | `tracking` | Set `NEXT_PUBLIC_FEATURE_FLAG_TRACKING=true` (or `FEATURE_FLAGS_FORCE_ON=true`) and redeploy. |
+| **User Settings** | `/app/settings` | Flag | `accountUI` | Set `NEXT_PUBLIC_FEATURE_FLAG_ACCOUNT_UI=true` (or `FEATURE_FLAGS_FORCE_ON=true`) and redeploy. |
+| **Notifications** | `/app/notifications` | Flag | `accountUI` | Set `NEXT_PUBLIC_FEATURE_FLAG_ACCOUNT_UI=true` (or `FEATURE_FLAGS_FORCE_ON=true`) and redeploy. |
+| **User History** | `/app/history` | Flag | `tracking` | Set `NEXT_PUBLIC_FEATURE_FLAG_TRACKING=true` (or `FEATURE_FLAGS_FORCE_ON=true`) and redeploy. |
+| **User Projects** | `/app/projects` | Flag | `tracking` | Set `NEXT_PUBLIC_FEATURE_FLAG_TRACKING=true` (or `FEATURE_FLAGS_FORCE_ON=true`) and redeploy. |
+| **Assessments** | `/app/assessment` | Flag | `tracking` | Set `NEXT_PUBLIC_FEATURE_FLAG_TRACKING=true` (or `FEATURE_FLAGS_FORCE_ON=true`) and redeploy. |
 
 ## 2. Heavy Components Used by Mock Features
 

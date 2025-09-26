@@ -60,4 +60,4 @@ This audit categorizes all application routes to align with the "Learning-First"
 - `accountUI`: Controls account shell experiences (notifications, settings).
 - `fakeComments`: Controls seeded comment widgets on marketing pages; replace with empty state when disabled.
 
-**How to toggle flags locally:** set `NEXT_PUBLIC_FEATURE_FLAG_<FLAG_NAME>` in your `.env.local` (or shell) to `true/false`, `1/0`, `on/off`, etc. When unset, the defaults above apply.
+**How to toggle flags locally:** set `NEXT_PUBLIC_FEATURE_FLAG_<FLAG_NAME>` in your `.env.local` (or shell) to `true/false`, `1/0`, `on/off`, etc. When unset, the defaults above apply. For full UI test runs, `FEATURE_FLAGS_FORCE_ON=true` now forces every flag on without touching individual values.

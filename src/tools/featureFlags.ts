@@ -24,6 +24,8 @@ function parseBooleanFlag(value: string | undefined): boolean | undefined {
   return undefined;
 }
 
+const globalOverride = parseBooleanFlag(process.env.FEATURE_FLAGS_FORCE_ON);
+
 const environmentOverrides: Partial<Record<FeatureFlag, boolean>> = {
   community: parseBooleanFlag(process.env.NEXT_PUBLIC_FEATURE_FLAG_COMMUNITY),
   tracking: parseBooleanFlag(process.env.NEXT_PUBLIC_FEATURE_FLAG_TRACKING),
@@ -33,6 +35,10 @@ const environmentOverrides: Partial<Record<FeatureFlag, boolean>> = {
 };
 
 export function isFeatureEnabled(flag: FeatureFlag): boolean {
+  if (globalOverride === true) {
+    return true;
+  }
+
   const override = environmentOverrides[flag];
   if (override !== undefined) {
     return override;
