@@ -1,26 +1,40 @@
 "use client";
 
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import Editor, { type OnMount } from '@monaco-editor/react';
+import dynamic from 'next/dynamic';
 import { useTheme } from 'next-themes';
 import { Button } from './Button';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import * as monaco from 'monaco-editor/esm/vs/editor/editor.api';
-import * as d3 from 'd3';
+import type { EditorProps, OnMount } from '@monaco-editor/react';
+import type * as monacoEditor from 'monaco-editor/esm/vs/editor/editor.api';
+
+type Monaco = typeof monacoEditor;
+type MonacoRange = monacoEditor.IRange;
+type MonacoEditorInstance = monacoEditor.editor.IStandaloneCodeEditor;
+type MonacoLanguageExtension = monacoEditor.languages.ILanguageExtensionPoint;
 import {
   connectCollaboration,
   broadcastEdit,
   type UserEdit,
 } from '../../lib/collaboration';
 
+const MonacoEditor = dynamic<EditorProps>(
+  () => import('@monaco-editor/react').then(mod => mod.default),
+  { ssr: false }
+);
+
 // Register a more complete SystemVerilog language definition using Monarch
 // tokenization rules. This provides basic support for numbers, strings,
 // macros and comments so that the editor can properly highlight typical
 // SystemVerilog source files.
-export const registerSystemVerilogLanguage = (monacoInstance: typeof monaco) => {
+export const registerSystemVerilogLanguage = (monacoInstance: Monaco) => {
     const langId = 'systemverilog';
-    if (monacoInstance.languages.getLanguages().some(lang => lang.id === langId)) {
+    if (
+      monacoInstance.languages
+        .getLanguages()
+        .some((lang: MonacoLanguageExtension) => lang.id === langId)
+    ) {
         return;
     }
 
@@ -111,12 +125,12 @@ interface InteractiveCodeProps {
   userId?: string;
 }
 
-const parseTargetLines = (target: string, monacoInstance: typeof monaco): monaco.IRange[] => {
+const parseTargetLines = (target: string, monacoInstance: Monaco | null): MonacoRange[] => {
   if (!target || target.toLowerCase() === 'all' || !monacoInstance) {
     return [];
   }
 
-  const ranges: monaco.IRange[] = [];
+  const ranges: MonacoRange[] = [];
   const parts = target.split(',');
   parts.forEach(part => {
     if (part.includes('-')) {
@@ -288,8 +302,8 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
 }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(initialStep);
   const { theme } = useTheme();
-  const editorRef = useRef<monaco.editor.IStandaloneCodeEditor | null>(null);
-  const monacoRef = useRef<typeof monaco | null>(null);
+  const editorRef = useRef<MonacoEditorInstance | null>(null);
+  const monacoRef = useRef<Monaco | null>(null);
   const decorationsRef = useRef<string[]>([]);
 
   const code = useMemo(() => {
@@ -339,157 +353,33 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
     };
     return () => socket.close();
   }, [collabUrl, userId]);
-  interface ASTNode {
-    type: string;
-    name?: string;
-    children?: ASTNode[];
-    details?: Record<string, any>;
-  }
-
-
-  interface AnalysisResult {
-    ast: ASTNode[];
-    metrics: {
-      lines: number;
-      modules: number;
-      alwaysBlocks: number;
-      complexity: number;
-    };
-    suggestions: string[];
-    warnings: string[];
-    refactorSuggestions: string[];
-    performance: {
-      speed: string;
-      memory: number;
-      timing: string;
-    };
-    testCases: string[];
-  }
-
-  const parseSystemVerilogAST = (input: string): ASTNode[] => {
-    const lines = input.split(/\r?\n/);
-    const root: ASTNode[] = [];
-    let currentModule: ASTNode | null = null;
-    const stack: ASTNode[] = [];
-
-    lines.forEach((line) => {
-      const moduleMatch = line.match(/^\s*module\s+(\w+)/);
-      if (moduleMatch) {
-        const moduleNode: ASTNode = { type: 'module', name: moduleMatch[1], children: [] };
-        root.push(moduleNode);
-        currentModule = moduleNode;
-        stack.length = 0;
-        return;
-      }
-      if (/^\s*endmodule/.test(line)) {
-        currentModule = null;
-        stack.length = 0;
-        return;
-      }
-      if (!currentModule) return;
-
-      const alwaysMatch = line.match(/^\s*always(_ff|_comb)?/);
-      if (alwaysMatch) {
-        const alwaysNode: ASTNode = {
-          type: 'always',
-          name: alwaysMatch[0],
-          children: [],
-        };
-        currentModule.children!.push(alwaysNode);
-        stack.push(alwaysNode);
-        return;
-      }
-      if (/^\s*begin\b/.test(line)) {
-        const blockNode: ASTNode = { type: 'block', children: [] };
-        const parent = stack[stack.length - 1] || currentModule;
-        parent.children!.push(blockNode);
-        stack.push(blockNode);
-        return;
-      }
-      if (/^\s*end\b/.test(line)) {
-        stack.pop();
-        return;
-      }
-      const parent = stack[stack.length - 1] || currentModule;
-      parent.children!.push({ type: 'statement', details: { line: line.trim() } });
-    });
-    return root;
-  };
-
-  const analyzeSystemVerilog = (input: string): AnalysisResult => {
-    const lines = input.split(/\r?\n/);
-    const ast = parseSystemVerilogAST(input);
-    const modules = ast.length;
-    let alwaysBlocks = 0;
-    ast.forEach((m) => {
-      alwaysBlocks += m.children?.filter((c) => c.type === 'always').length || 0;
-    });
-    const complexity = lines.reduce(
-      (acc, l) => acc + ((l.match(/\b(if|case|for|while)\b/g) || []).length),
-      0
-    );
-
-    const metrics = {
-      lines: lines.length,
-      modules,
-      alwaysBlocks,
-      complexity,
-    };
-
-    const suggestions: string[] = [];
-    const refactorSuggestions: string[] = [];
-
-    if (input.match(/\btodo\b/i)) {
-      suggestions.push('Remove TODO comments before final submission.');
-    }
-    if (input.includes('always_ff') && !input.includes('<=')) {
-      suggestions.push('Use non-blocking assignments (<=) in sequential logic.');
-    }
-    if (complexity > 10) {
-      refactorSuggestions.push('Consider simplifying complex conditional logic.');
-    }
-    if (lines.some((l) => l.length > 120)) {
-      refactorSuggestions.push('Split long lines to improve readability.');
-    }
-
-    const warnings: string[] = [];
-    if (input.includes('#')) {
-      warnings.push('Avoid using # delays for synthesizable code.');
-    }
-    if (input.match(/\bfork\b/)) {
-      warnings.push('fork...join detected; ensure this is safe for your design.');
-    }
-
-    const memory = lines.filter((l) => l.match(/\b(reg|logic|byte|int|bit|shortint|longint)\b/)).length * 4;
-    const performance = {
-      speed: complexity > 20 ? 'Slow' : complexity > 5 ? 'Moderate' : 'Fast',
-      memory,
-      timing: `${alwaysBlocks * 10 + complexity} ns estimated latency`,
-    };
-
-    const testCases = ast.map(
-      (m) => `module tb_${m.name};\n  ${m.name} uut();\n  initial begin\n    // Add test sequences here\n  end\nendmodule`
-    );
-
-    return {
-      ast,
-      metrics,
-      suggestions,
-      warnings,
-      refactorSuggestions,
-      performance,
-      testCases,
-    };
-  };
 
   /* eslint-disable-next-line react-hooks/exhaustive-deps -- analyzeSystemVerilog is a stable helper */
   const analysis = useMemo(() => analyzeSystemVerilog(codeContent), [codeContent]);
 
   const svgRef = useRef<SVGSVGElement | null>(null);
   const flowRef = useRef<SVGSVGElement | null>(null);
+  const d3Ref = useRef<typeof import('d3') | null>(null);
 
   useEffect(() => {
-    if (!analysis || !svgRef.current) return;
+    let isMounted = true;
+    import('d3')
+      .then(module => {
+        if (isMounted) {
+          d3Ref.current = module;
+        }
+      })
+      .catch(() => {
+        d3Ref.current = null;
+      });
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const d3 = d3Ref.current;
+    if (!analysis || !svgRef.current || !d3) return;
     const data = [
       { label: 'Lines', value: analysis.metrics.lines },
       { label: 'Modules', value: analysis.metrics.modules },
@@ -512,7 +402,8 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   }, [analysis]);
 
   useEffect(() => {
-    if (!analysis || !flowRef.current) return;
+    const d3 = d3Ref.current;
+    if (!analysis || !flowRef.current || !d3) return;
     const svg = d3.select(flowRef.current);
     const width = Number(svg.attr('width')) || 300;
     const height = Number(svg.attr('height')) || 200;
@@ -565,7 +456,11 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
       if (currentStep) {
         const ranges = parseTargetLines(currentStep.target, monacoRef.current);
         if (ranges.length > 0) {
-          editorRef.current.revealLineInCenter(ranges[0].startLineNumber, monaco.editor.ScrollType.Smooth);
+          const monacoInstance = monacoRef.current;
+          editorRef.current.revealLineInCenter(
+            ranges[0].startLineNumber,
+            monacoInstance?.editor.ScrollType.Smooth
+          );
         }
       }
     }
@@ -616,7 +511,7 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
         {fileName && (
             <div className="bg-gray-700 text-white text-sm py-1 px-4">{fileName}</div>
         )}
-        <Editor
+        <MonacoEditor
           height="400px"
           language={language}
           value={codeContent}

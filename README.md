@@ -6,6 +6,48 @@
 
 This repository provides a structured and comprehensive curriculum for learning SystemVerilog and the Universal Verification Methodology (UVM). Our goal is to create a platform that is accessible to beginners, yet deep enough for experienced engineers to hone their skills.
 
+## Getting Started
+
+Follow these steps to spin up the project locally:
+
+1. **Clone and install dependencies**
+
+   ```bash
+   git clone https://github.com/<your-org>/sv-uvm-guide.git
+   cd sv-uvm-guide
+   npm install
+   ```
+
+   The install step automatically downloads the Playwright browsers through the `postinstall` hook, so E2E tests are ready to run without any manual setup.
+
+2. **Configure environment variables**
+
+   Copy the provided example and adjust the values as needed:
+
+   ```bash
+   cp .env.example .env.local
+   ```
+
+   For local development you can leave the Firebase keys blank to use the mocked configuration. See [Firebase Configuration](#firebase-configuration) for details.
+
+3. **Start the development server**
+
+   ```bash
+   npm run dev
+   ```
+
+   This command also runs `prisma generate` to keep the client in sync before launching Next.js on <http://localhost:3000>.
+
+4. **Run end-to-end tests (optional)**
+
+   ```bash
+   npm run test:e2e
+   ```
+
+   The command builds the app and executes the Playwright suite using the browsers installed during `npm install`.
+
+For a clean slate you can run `npm run clean-and-run`, which removes build artifacts, reinstalls dependencies, and restarts the dev server.
+
 ## Curriculum Architecture
 
 The curriculum is organized into a four-tiered structure, based on the principle of progressive disclosure. Each tier builds upon the previous one, creating a clear learning path from foundational concepts to expert-level techniques.
