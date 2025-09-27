@@ -1,6 +1,10 @@
 "use client";
 import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import * as d3 from 'd3';
+import { select } from 'd3-selection';
+import { stratify, tree } from 'd3-hierarchy';
+import { linkVertical } from 'd3-shape';
+import { zoomIdentity, ZoomBehavior } from 'd3-zoom';
+import 'd3-transition';
 import { motion } from 'framer-motion';
 import type { UvmComponent } from './uvm-data-model';
 import { Button } from '@/components/ui/Button';
@@ -34,7 +38,7 @@ const InteractiveUvmArchitectureDiagram = () => {
   const svgRef = useRef<SVGSVGElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const zoomRef = useRef<d3.ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const nodePositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const { theme, setTheme } = useTheme();
   const [activeComponent, setActiveComponent] = useState<UvmComponent | null>(null);
@@ -111,10 +115,10 @@ const InteractiveUvmArchitectureDiagram = () => {
 
   const resetZoom = () => {
     if (svgRef.current && zoomRef.current) {
-      d3.select(svgRef.current)
+      select(svgRef.current)
         .transition()
         .duration(750)
-        .call(zoomRef.current.transform, d3.zoomIdentity);
+        .call(zoomRef.current.transform, zoomIdentity);
     }
   };
 
@@ -125,10 +129,10 @@ const InteractiveUvmArchitectureDiagram = () => {
     const width = 850;
     const height = 650;
     const scale = 1.5;
-    const transform = d3.zoomIdentity
+    const transform = zoomIdentity
       .translate(width / 2 - pos.y * scale, height / 2 - pos.x * scale)
       .scale(scale);
-    d3.select(svgRef.current)
+    select(svgRef.current)
       .transition()
       .duration(750)
       .call(zoomRef.current.transform, transform);
@@ -196,17 +200,16 @@ const InteractiveUvmArchitectureDiagram = () => {
     const width = 850;
     const height = 650;
 
-    const svg = d3
-      .select(svgRef.current)
+    const svg = select(svgRef.current)
       .attr('viewBox', `0 0 ${width} ${height}`)
       .html(''); // Clear previous contents
 
-    const root = d3.stratify<UvmComponent>()
+    const root = stratify<UvmComponent>()
       .id(d => d.id)
       .parentId(d => d.parent)
       (compositionalComponents);
 
-    const treeLayout = d3.tree<UvmComponent>().size([height - 100, width - 250]);
+    const treeLayout = tree<UvmComponent>().size([height - 100, width - 250]);
     const treeData = treeLayout(root);
 
     const g = svg.append('g').attr('transform', 'translate(125, 50)');
@@ -229,7 +232,7 @@ const InteractiveUvmArchitectureDiagram = () => {
         .enter()
         .append('path')
         .attr('class', 'link')
-        .attr('d', d3.linkVertical()
+        .attr('d', linkVertical()
           .x(d => (d as any).y)
           .y(d => (d as any).x) as any
         )

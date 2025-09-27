@@ -90,16 +90,16 @@ The following libraries are used extensively and are known to be large. A major 
   - `app/practice/lab/[labId]/LabClientPage.tsx`
   - `components/animations/AssertionBuilder.tsx`
   - `components/ui/InteractiveCode.tsx`
-- **`d3`**: This powerful visualization library is imported in its entirety (`import * as d3 from 'd3'`) in numerous components, which is detrimental to tree-shaking and pulls in the entire library. Usage is concentrated in complex diagrams and visualizations.
+- **`d3`**: This powerful visualization library underpins the custom diagrams and analytics surfaces. **Update (2025-10-09):** every usage now imports only the specific modules required (e.g., `d3-selection`, `d3-scale`, `d3-force`), but the aggregate payload of these features should still be monitored via bundle analysis.
 - **`recharts`**: A charting library used for various animations and charts. Its functionality overlaps with `d3`, indicating redundancy.
 
 **B. Problematic Import Patterns:**
 
-- **`d3` Whole-Library Import**: The pattern `import * as d3 from 'd3'` is used universally. This prevents tree-shaking and guarantees that the entire `d3` library is included in any bundle that uses it. All `d3` usage must be refactored to import specific modules (e.g., `import { select } from 'd3-selection'`).
+- **`d3` Whole-Library Import**: *(Resolved 2025-10-09)* The codebase previously used the monolithic `import * as d3` pattern, forcing the entire library into each bundle. Imports now target the precise modules needed, enabling tree-shaking while preserving the existing functionality.
 
 **C. Component-Level Hotspots:**
 
-- **`components/ui/InteractiveCode.tsx`**: This component imports both `@monaco-editor/react` and `d3`. If this component is widely used across the site without being lazy-loaded, it could be a primary contributor to poor performance on many pages.
+- **`components/ui/InteractiveCode.tsx`**: This component imports `@monaco-editor/react` alongside several D3 helpers. After the modularization work it now pulls only the specific helpers (`d3-selection`, `d3-scale`, etc.), but it remains a good candidate for continued lazy-loading and performance scrutiny. **Update (2025-10-10):** The shell now swaps between dark- and light-mode background/border tokens so the layout matches the design system and the theming E2E spec locks in the contrast expectations.
 - **Visualization Components**: The majority of files in `src/components/diagrams`, `src/components/animations`, and `src/components/charts` import `d3` or `recharts`. These are prime candidates for dynamic loading via `next/dynamic`.
 - **Mock Feature Components**: Several heavy components are tied to mock/future features that have been marked for removal or flagging. This provides a quick win for performance.
   - `components/assessment/ProgressAnalytics.tsx` (uses `d3`)
@@ -118,9 +118,9 @@ The user has reported that "navigating the site locally is difficult." The E2E t
 
 **B. Critical Application Errors (revealed by E2E tests):**
 
-- **Server-Side Rendering (SSR) Failures**: The application fails to render several pages on the server due to a `ReferenceError: window is not defined`. This error originates in the `InteractiveCode.tsx` component, which is being incorrectly executed in a Node.js environment. This causes curriculum pages to return a 500 Internal Server Error.
+- **Server-Side Rendering (SSR) Failures**: The application fails to render several pages on the server due to a `ReferenceError: window is not defined`. This error originates in the `InteractiveCode.tsx` component, which is being incorrectly executed in a Node.js environment. This causes curriculum pages to return a 500 Internal Server Error. **Update (2025-10-09):** Exercise helpers now define their `instructionId` constants ahead of usage, removing a TDZ runtime crash when the lazy-loaded widgets mount, but the broader SSR audit remains open.
 - **MDX Content Errors**: At least one curriculum page fails to build due to a syntax error in an MDX file (`Could not parse expression with acorn`).
-- **Brittle Tests**: The vast majority of E2E tests fail due to non-unique locators (`strict mode violation`). This makes the entire test suite unreliable and unable to provide a clear signal on application health.
+- **Brittle Tests**: The vast majority of E2E tests fail due to non-unique locators (`strict mode violation`). This makes the entire test suite unreliable and unable to provide a clear signal on application health. **Update (2025-10-09):** Exercise flows now assert against refreshed copy (`Shuffle Again`, `Reset Board`, contextual score messaging), reducing false negatives once the Playwright runtime is restored.
 
 **Conclusion:**
 The local development experience is broken due to a combination of missing setup documentation and severe application-level bugs that prevent core parts of the site (the curriculum pages) from rendering. Fixing the SSR and content errors is the highest priority.
