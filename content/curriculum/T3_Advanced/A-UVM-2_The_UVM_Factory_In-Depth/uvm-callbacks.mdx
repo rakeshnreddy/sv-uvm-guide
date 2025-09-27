@@ -1,5 +1,4 @@
 import { InfoPage } from "@/components/templates/InfoPage";
-import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
   title: "UVM Callbacks & Factory Overrides | Advanced UVM Sequencing",
@@ -17,61 +16,58 @@ export const metadata = {
 
   ## Callback Implementation Pattern
 
-  <InteractiveCode
-    language="systemverilog"
-    fileName="driver_with_callbacks.sv"
-    code={`
-class my_driver_cb extends uvm_callback;
-  `uvm_object_utils(my_driver_cb)
+  ```systemverilog
+  class my_driver_cb extends uvm_callback;
+    `uvm_object_utils(my_driver_cb)
 
-  virtual function void pre_drive(my_driver drv, my_item item);
-  endfunction
+    virtual function void pre_drive(my_driver drv, my_item item);
+    endfunction
 
-  virtual function void post_drive(my_driver drv, my_item item);
-  endfunction
-endclass
+    virtual function void post_drive(my_driver drv, my_item item);
+    endfunction
+  endclass
 
-typedef uvm_callbacks#(my_driver, my_driver_cb) my_driver_cbs_t;
+  typedef uvm_callbacks#(my_driver, my_driver_cb) my_driver_cbs_t;
 
-class logging_driver_cb extends my_driver_cb;
-  `uvm_object_utils(logging_driver_cb)
+  class logging_driver_cb extends my_driver_cb;
+    `uvm_object_utils(logging_driver_cb)
 
-  virtual function void pre_drive(my_driver drv, my_item item);
-    `uvm_info("DRV_CB", $sformatf("About to drive %s", item.convert2string()), UVM_LOW)
-  endfunction
-endclass
+    virtual function void pre_drive(my_driver drv, my_item item);
+      `uvm_info("DRV_CB", $sformatf("About to drive %s", item.convert2string()), UVM_LOW)
+    endfunction
+  endclass
 
-class my_driver extends uvm_driver#(my_item);
-  `uvm_component_utils(my_driver)
+  class my_driver extends uvm_driver#(my_item);
+    `uvm_component_utils(my_driver)
 
-  virtual task run_phase(uvm_phase phase);
-    forever begin
-      seq_item_port.get_next_item(req);
-      my_driver_cbs_t::pre_drive(this, req);
-      drive_transfer(req);
-      my_driver_cbs_t::post_drive(this, req);
-      seq_item_port.item_done();
-    end
-  endtask
-endclass
+    virtual task run_phase(uvm_phase phase);
+      forever begin
+        seq_item_port.get_next_item(req);
+        my_driver_cbs_t::pre_drive(this, req);
+        drive_transfer(req);
+        my_driver_cbs_t::post_drive(this, req);
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
 
-class my_env extends uvm_env;
-  `uvm_component_utils(my_env)
-  my_driver drv;
+  class my_env extends uvm_env;
+    `uvm_component_utils(my_env)
+    my_driver drv;
 
-  function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    drv = my_driver::type_id::create("drv", this);
-    my_driver_cbs_t::add(drv, logging_driver_cb::type_id::create("cb"));
-  endfunction
-endclass
-    `}
-    explanationSteps={[
-      { target: "1-18", title: "Callback base & specializations", explanation: "Define a base callback with hooks, then extend for specific behaviours." },
-      { target: "20-35", title: "Driver integration", explanation: "Use `uvm_callbacks::pre_drive`/`post_drive` to invoke registered callbacks." },
-      { target: "37-44", title: "Registration", explanation: "Environment registers callbacks on the driver instance—no source edits required." }
-    ]}
-  />
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      drv = my_driver::type_id::create("drv", this);
+      my_driver_cbs_t::add(drv, logging_driver_cb::type_id::create("cb"));
+    endfunction
+  endclass
+  ```
+
+  **Implementation checklist**
+  - Lines 2-10 define a base callback with `pre_drive`/`post_drive` hooks so specializations can override the behaviour.
+  - Lines 12-20 introduce a logging callback that prints transactions before the driver acts on them.
+  - Lines 22-36 wire callbacks into the driver’s `run_phase`, invoking hooks around the data transfer.
+  - Lines 38-46 show how the environment creates the driver and registers the callback without modifying vendor code.
 
   ## Factory + Callback Synergy
 
@@ -87,27 +83,16 @@ endclass
 
   ## Quiz Yourself
 
-  <Quiz questions={[
-    {
-      question: "Why prefer callbacks over subclassing for logging?",
-      answers: [
-        { text: "They execute faster", correct: false },
-        { text: "They add behaviour without needing a new driver subclass", correct: true },
-        { text: "They replace the factory", correct: false },
-        { text: "They only work with monitors", correct: false }
-      ],
-      explanation: "Callbacks decouple instrumentation from the component implementation so multiple observers can coexist." }
-    },
-    {
-      question: "How do you invoke registered callbacks?",
-      answers: [
-        { text: "Call `uvm_callbacks#(...).do()`", correct: false },
-        { text: "Use the typedef helper, e.g., `my_driver_cbs_t::pre_drive(...)`", correct: true },
-        { text: "Callbacks fire automatically", correct: false },
-        { text: "`factory.print()`", correct: false }
-      ],
-      explanation: "The typedef provides static helper methods that iterate all registered callbacks." }
-    }
-  ]} />
+  **Why prefer callbacks over subclassing for logging?**
+  - They execute faster
+  - They add behaviour without needing a new driver subclass *(correct)*
+  - They replace the factory
+  - They only work with monitors
+
+  **How do you invoke registered callbacks?**
+  - Call `uvm_callbacks#(...).do()`
+  - Use the typedef helper, e.g., `my_driver_cbs_t::pre_drive(...)` *(correct)*
+  - Callbacks fire automatically
+  - `factory.print()`
 
 </InfoPage>

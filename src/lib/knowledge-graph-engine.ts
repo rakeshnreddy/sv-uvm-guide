@@ -192,10 +192,19 @@ export const wrapConceptsInText = (text: string, nodes: ConceptNode[]): string =
     'gi'
   );
 
-  // A simple way to avoid replacing text inside code blocks
-  const parts = text.split(/(```[\s\S]*?```|`[^`]*?`)/);
+  // Preserve InteractiveCode code props so we don't inject concept tags into string literals
+  const codeSnippets: string[] = [];
+  const placeholderPrefix = '@@CODE_SNIPPET_';
+  const sanitized = text.replace(/code={`[\s\S]*?`}/g, (snippet) => {
+    const token = `${placeholderPrefix}${codeSnippets.length}@@`;
+    codeSnippets.push(snippet);
+    return token;
+  });
 
-  return parts.map((part, index) => {
+  // A simple way to avoid replacing text inside code blocks
+  const parts = sanitized.split(/(```[\s\S]*?```|`[^`]*?`)/);
+
+  const replaced = parts.map((part, index) => {
     // If the part is a code block (odd index), return it as is
     if (index % 2 === 1) {
       return part;
@@ -209,6 +218,11 @@ export const wrapConceptsInText = (text: string, nodes: ConceptNode[]): string =
       return match;
     });
   }).join('');
+
+  return codeSnippets.reduce(
+    (acc, snippet, index) => acc.replace(`${placeholderPrefix}${index}@@`, snippet),
+    replaced,
+  );
 };
 
 console.log('Knowledge graph engine loaded.');

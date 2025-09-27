@@ -88,7 +88,8 @@ const Sidebar = () => {
       return null;
     }
 
-    const segments = pathname.split('/').filter(Boolean);
+    const activePath = pathname ?? '';
+    const segments = activePath.split('/').filter(Boolean);
     let normalized: string[] = [];
 
     if (segments[0] === 'curriculum') {

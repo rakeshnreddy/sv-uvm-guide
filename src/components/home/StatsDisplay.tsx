@@ -3,6 +3,7 @@
 import React from 'react';
 import { Users, CheckCircle, BarChart } from 'lucide-react';
 import { motion } from 'framer-motion';
+import { cn } from '@/lib/utils';
 
 const stats = [
   {
@@ -38,26 +39,30 @@ const itemVariants = {
   show: { opacity: 1, y: 0 },
 };
 
-const StatsDisplay = () => {
+type StatsDisplayProps = {
+  className?: string;
+};
+
+const StatsDisplay = ({ className }: StatsDisplayProps) => {
   return (
     <motion.div
-      className="mt-8 w-full"
+      className={cn('w-full', className)}
       variants={containerVariants}
       initial="hidden"
       animate="show"
     >
-      <div className="mx-auto max-w-5xl grid grid-cols-1 sm:grid-cols-3 gap-6">
+      <div className="mx-auto grid max-w-5xl grid-cols-1 gap-6 sm:grid-cols-3">
         {stats.map((stat, index) => (
           <motion.div
             key={index}
-            className="glass-card px-6 py-8 text-center"
+            className="rounded-2xl border border-border/60 bg-card/80 px-6 py-8 text-center shadow-sm"
             variants={itemVariants}
           >
-            <div className="flex items-center justify-center text-[color:var(--blueprint-accent)] mb-3">
+            <div className="mb-3 flex items-center justify-center text-primary">
               {stat.icon}
             </div>
-            <p className="text-3xl font-bold text-[color:var(--blueprint-foreground)]">{stat.value}</p>
-            <p className="text-sm text-[color:var(--blueprint-foreground)]/70">{stat.label}</p>
+            <p className="text-3xl font-semibold text-foreground">{stat.value}</p>
+            <p className="text-sm text-muted-foreground">{stat.label}</p>
           </motion.div>
         ))}
       </div>

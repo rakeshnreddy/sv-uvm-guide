@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import {
   DndContext,
   closestCenter,
@@ -176,6 +176,42 @@ const UvmAgentBuilderExercise: React.FC = () => {
     return availableComponents.find(i => i.id === activeId) || agentComponents.find(i => i.id === activeId);
   }
 
+  useEffect(() => {
+    // Expose deterministic controls for Playwright so the suite can stage
+    // required components without relying on flaky drag-and-drop gestures.
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    const testApi = {
+      setAgentComponents: (ids: string[]) => {
+        const desired = initialComponents.filter((item) => ids.includes(item.id));
+        setAgentComponents(desired);
+        setAvailableComponents(initialComponents.filter((item) => !ids.includes(item.id)));
+        setFeedback(null);
+      },
+      reset: () => {
+        setAvailableComponents([...initialComponents]);
+        setAgentComponents([]);
+        setFeedback(null);
+      },
+    };
+
+    (window as typeof window & {
+      __uvmAgentBuilderTest?: typeof testApi;
+    }).__uvmAgentBuilderTest = testApi;
+
+    return () => {
+      const win = window as typeof window & {
+        __uvmAgentBuilderTest?: typeof testApi;
+      };
+
+      if (win.__uvmAgentBuilderTest === testApi) {
+        delete win.__uvmAgentBuilderTest;
+      }
+    };
+  }, [initialComponents]);
+
   function handleDragStart(event: DragStartEvent) {
     const { active } = event;
     setActiveId(active.id as string);
@@ -286,7 +322,10 @@ const UvmAgentBuilderExercise: React.FC = () => {
           <p id={instructionId} className="mb-4 text-sm text-muted-foreground md:w-full">
             Drag each component or use keyboard controls (space to lift, arrow keys to move) to assemble the agent. Drop sequencer, driver, and monitor into the UVM Agent zone.
           </p>
-          <div className="w-full rounded-lg border border-white/20 bg-white/10 p-4 shadow-lg backdrop-blur-lg md:w-1/3">
+          <div
+            className="w-full rounded-lg border border-white/20 bg-white/10 p-4 shadow-lg backdrop-blur-lg md:w-1/3"
+            data-testid="agent-palette"
+          >
             <h3 className="mb-3 text-lg font-semibold text-primary">Available UVM Components</h3>
             <SortableContext items={availableComponents.map(i => i.id)} strategy={verticalListSortingStrategy} id="available-droppable">
               <div
@@ -332,6 +371,7 @@ const UvmAgentBuilderExercise: React.FC = () => {
           className={`rounded-lg border p-4 text-sm ${feedback.passed ? 'border-emerald-400/50 bg-emerald-400/10 text-emerald-100' : 'border-amber-400/50 bg-amber-500/10 text-amber-100'}`}
           role="status"
           aria-live="polite"
+          data-testid="exercise-feedback"
         >
           <p className="text-lg font-semibold">Score: {feedback.score}%</p>
           <p className="mt-1">{feedback.message}</p>

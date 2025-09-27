@@ -1,83 +1,73 @@
 ---
 title: "E-SOC-1: SoC-Level Verification Strategies"
-description: "Coordinate vertical reuse, system scenarios, and cross-domain methodologies to validate complete SoCs." 
+description: "Scale block-level infrastructure to SoC: plan reuse, configure virtual platforms, and coordinate cross-team stimulus." 
 flashcards: "E-SOC-1_SoC_Verification"
 ---
 
-import { InteractiveCode } from '@/components/ui';
-
 ## Quick Take
-- **What it is:** An orchestration layer that elevates IP-level assets into full-chip verification with shared scenarios, coverage, and risk tracking.
-- **Why it matters:** Integration bugs hide at subsystem boundaries; structured SoC verification finds them before silicon.
-- **The Analogy:** Managing a city: buildings (IPs) were inspected alone, but now traffic laws, utilities, and emergency response must work together.
+- **What it is:** Patterns for reusing block-level VIP, integrating firmware, and orchestrating large SoC benches.
+- **Why it matters:** SoC programs stumble when VIP isn’t reusable or cross-team configurations drift.
+- **The Analogy:** Treat SoC verification like a city grid—shared infrastructure (power/reset, interconnect checkers) keeps traffic flowing.
 
-> **Signal:** If every subsystem team writes bespoke stimulus, the SoC plan isn’t reusable enough—unify the flow.
+> **Signal:** If every IP team delivers a bespoke env that the SoC bench rewrites, you need a reuse strategy.
 
 ## Build Your Mental Model
-### Vertical reuse in action
-Reuse agents and checkers from IP benches by flipping them passive; layer system sequencing on top.
+### Reusing block environments
+- Wrap block agents into “personalities”: active/passive, scoreboarding on/off, metrics toggles.
+- Provide configuration packages (plusargs, JSON, YAML) so SoC tests flip personalities without recompiling.
 
-<InteractiveCode
-  language="systemverilog"
-  fileName="soc_reuse.sv"
-  code={`class spi_soc_test extends uvm_test;
+```systemverilog
+class spi_soc_test extends uvm_test;
   `uvm_component_utils(spi_soc_test)
   soc_env m_env;
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    uvm_config_db#(uvm_active_passive_enum)::set(
-      this, "m_env.spi_env.spi_agent", "is_active", UVM_PASSIVE);
+    spi_agent_cfg spi_cfg = spi_agent_cfg::type_id::create("spi_cfg");
+    spi_cfg.mode = SPI_PASSIVE;
+    uvm_config_db#(spi_agent_cfg)::set(this, "*.spi_agent", "cfg", spi_cfg);
+
+    m_env = soc_env::type_id::create("m_env", this);
   endfunction
+endclass
+```
 
-  task run_phase(uvm_phase phase);
-    phase.raise_objection(this);
-    boot_vseq seq = boot_vseq::type_id::create("seq");
-    seq.start(m_env.soc_vsequencer);
-    phase.drop_objection(this);
-  endtask
-endclass`}
-  explanationSteps={[
-    { target: "6-8", title: "Reuse the IP env", explanation: "Instantiate the same SPI env—no duplication." },
-    { target: "9-12", title: "Flip to passive", explanation: "Config DB switches agent role; monitor/checkers stay active without drivers." },
-    { target: "14-19", title: "System sequence", explanation: "Virtual sequence drives CPU/boot flows while SPI monitor validates traffic." }
-  ]}
-/>
+**Reuse takeaway**
+- Lines 1-10 show a SoC test flipping an SPI agent to passive mode via config, reusing the block VIP without source edits.
 
-### Scenario-driven planning
-Map SoC features (boot, DMA bursts, low-power entry) to virtual sequences, formal properties, and emulation runs. Track coverage per feature, not per module.
+### Firmware/virtual platform coordination
+- Mirror firmware versions in `uvm_config_db`; log commit hashes.
+- Use virtual platforms for early software bring-up; swap to RTL once interfaces stabilise.
+- Provide hooks for firmware to notify UVM (e.g., semaphores, shared memory mailboxes).
 
-### Multi-domain coordination
-Mix digital, analog, firmware, and security perspectives: run mixed-signal cosims, hardware/software co-verification, and security assertions within the same plan.
-
-### Risk-based execution
-Score features by novelty and impact; allocate regression time, formal proofs, and emulation slots accordingly.
+### Interconnect observability
+- Deploy protocol monitors at every ingress/egress; aggregate latency/throughput metrics.
+- Build “traffic dashboards” that cross-link to traces and coverage reports.
+- Correlate scoreboard mismatches with firmware logs using timestamps.
 
 ## Make It Work
-1. **Central plan:** Maintain a living feature/risk matrix with owners, stimuli, and exit criteria.
-2. **Shared infrastructure:** Provide SoC virtual sequencers, reference scoreboards, and logging policies all teams consume.
-3. **Scenario library:** Curate virtual sequences (boot-from-X, DMA-stress, power-cycle) parameterized for subsystems.
-4. **Cross-tool handoffs:** Export formal counterexamples to UVM seeds; feed emulation logs back to scoreboard checks.
+1. **IP onboarding checklist:** Define deliverables (VIP package, docs, config samples) before IPs hand over their environments.
+2. **Configuration governance:** Maintain central config repos; run lint to ensure SoC tests only use approved personalities.
+3. **Firmware handshake:** Standardise APIs between firmware and UVM (mailboxes, CSR register semantics) so debug signals align.
+4. **Telemetry pipelines:** Aggregate metrics (latency, bandwidth, coverage) per regression and publish dashboards.
 
 **Checklist before moving on:**
-- [ ] Every IP agent you reuse supports passive mode and feeds SoC scoreboards.
-- [ ] Feature/risk matrix exists with status per methodology (UVM/formal/emulation).
-- [ ] System scenarios are versioned and parameterized.
-- [ ] Debug handoffs (counterexample → UVM test) are scripted.
+- [ ] IP VIP supports passive/active personalities via config.
+- [ ] Firmware builds are traceable inside logs and traces.
+- [ ] SoC regression dashboards show traffic metrics alongside pass/fail.
 
 ## Push Further
-- **Unified dashboards:** Merge UVM coverage, formal proof status, and emulation run health into one view.
-- **Hardware acceleration:** Offload long-running system scenarios to emulation/prototyping.
-- **Resilience testing:** Inject faults (clock glitches, secure partition breaches) via scripted sequences.
-- **Continuous integration:** Run smoke SoC scenarios on every build; gate releases on cross-methodology sign-off.
+- **Platform twins:** Run block-level VIP inside emulators/FPGA prototypes, not just RTL sim.
+- **Cross-team contracts:** Formalise service-level agreements (SLAs) for VIP updates and bug turnaround.
+- **Performance profiling:** Integrate power/perf counters so SoC regressions track more than pass/fail.
+- **Self-serve debug:** Provide scripts that collect logs/waves/traces for failing tests with one command.
 
 ## Practice & Reinforce
-- Convert an IP-level agent to passive and integrate it into a SoC scoreboard.
-- Build a feature table linking boot, DMA, and low-power scenarios to responsible sequences and coverage goals.
-- Run a SoC virtual sequence that coordinates CPU, DMA, and memory agents; record transactions for debug.
-- Align with [/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index](../E-INT-1_Integrating_UVM_with_Formal_Verification/index) to ensure assertions cover the same features.
+- Convert one block bench to configurable personalities and integrate it into the SoC env.
+- Build a firmware-to-UVM mailbox demo that toggles SoC agents at runtime.
+- Publish a dashboard snapshot showing traffic distribution across fabrics.
 
 ## References & Next Topics
-- Project verification plans, risk matrices, and schedule dashboards.
-- Accellera SoC verification guidelines, methodology playbooks.
-- Next: continue refining Tier‑4 modules with debug/performance instrumentation as you operationalize SoC flows.
+- Company SoC verification guidelines and onboarding checklists.
+- Firmware integration strategies (virtual platforms, co-sim).
+- Next: Continue with Tier-4 performance/throughput optimization modules.

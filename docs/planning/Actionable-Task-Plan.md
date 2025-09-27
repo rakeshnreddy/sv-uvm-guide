@@ -213,6 +213,7 @@
 ### Milestone 4: Maintainability
 
 **Progress (2025-10-09):** Realigned the Playwright exercise-flow specs with the latest UI copy (`Shuffle Again`, `Reset Board`, contextual feedback text) so those scenarios can pass once Playwright browser dependencies are available in CI/local images.
+**Progress (2025-10-10 evening):** Replaced the curriculum MDX lessons that still referenced `<InteractiveCode>` with static SystemVerilog fences so the server renderer no longer 500s. Hardened the exercise specs (Phase Sorter, Agent Builder, Scoreboard) with deterministic palette locators and post-drop assertions, and updated `module5.spec.ts` to match the refreshed snippet. A full Playwright run is still pending until browsers are installed on the target environment.
 
 #### [M1] Refactor E2E Tests to Use Unique Locators
 **Why:** The E2E tests are failing due to `strict mode violation`, meaning locators are not unique. This makes the test suite brittle and unreliable.
@@ -228,6 +229,7 @@
 **Est. Impact:** High. Makes the E2E test suite usable and trustworthy.
 **Effort:** L
 **Dependencies:** None
+**Status:** ⏳ In progress – Exercise flows and Module 5 now use unique selectors and deterministic assertions; navigation and hero journeys still require locator cleanup and verification once Playwright browsers are available (2025-10-10).
 
 #### [M2] Enforce Code Quality with Pre-commit Hooks
 **Why:** To automate code formatting and linting, ensuring that all committed code adheres to the project's standards.

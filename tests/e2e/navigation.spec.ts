@@ -4,7 +4,7 @@ test('sequence config page next link navigates to resource DB page', async ({ pa
   await page.goto('/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-config-db');
   await page.click('a:has-text("uvm_resource_db")');
   await expect(page).toHaveURL('/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-resource-db');
-  await expect(page.locator('h1')).toContainText('uvm_resource_db and Precedence');
+  await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('uvm_resource_db and Precedence');
 });
 
 
@@ -15,33 +15,31 @@ test.describe('Advanced Navigation Features', () => {
   });
 
   test('should toggle sidebar with navbar button', async ({ page }) => {
-    await expect(page.getByText('Quick Access')).not.toBeVisible();
+    const quickAccessHeading = page.locator('h2:has-text("Quick Access")');
+    await expect(quickAccessHeading).toHaveCount(0);
     await page.getByLabel('Toggle Sidebar').click();
-    await expect(page.getByText('Quick Access')).toBeVisible();
+    await expect(quickAccessHeading).toBeVisible();
     await page.locator('h2:has-text("Quick Access") + button').click();
-    await expect(page.getByText('Quick Access')).not.toBeVisible();
+    await expect(quickAccessHeading).toHaveCount(0);
   });
 
   test('should toggle sidebar with keyboard shortcut (Ctrl+B)', async ({ page }) => {
-    await expect(page.getByText('Quick Access')).not.toBeVisible();
+    const quickAccessHeading = page.locator('h2:has-text("Quick Access")');
+    await expect(quickAccessHeading).toHaveCount(0);
     const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
-    await page.getByRole('main').first().focus();
-    await page.keyboard.down(modifier);
-    await page.keyboard.press('B');
-    await page.keyboard.up(modifier);
-    await expect(page.getByText('Quick Access')).toBeVisible();
-    await page.keyboard.press(`${modifier}+B`);
-    await expect(page.getByText('Quick Access')).not.toBeVisible();
+    await page.keyboard.press(`${modifier}+KeyB`);
+    await expect(quickAccessHeading).toBeVisible();
+    await page.keyboard.press(`${modifier}+KeyB`);
+    await expect(quickAccessHeading).toHaveCount(0);
   });
 
   test('should focus search bar with keyboard shortcut (Ctrl+K)', async ({ page }) => {
     const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
-    await page.getByRole('main').first().focus();
-    await page.keyboard.down(modifier);
-    await page.keyboard.press('K');
-    await page.keyboard.up(modifier);
+    await page.keyboard.press(`${modifier}+KeyK`);
     const searchInput = page.getByTestId('main-search-input');
-    await expect(searchInput).toBeFocused();
+    await expect.poll(async () => {
+      return searchInput.evaluate((el) => document.activeElement === el);
+    }).toBeTruthy();
   });
 
   test('should open user profile and notification dropdowns', async ({ page }) => {
@@ -59,7 +57,13 @@ test.describe('Advanced Navigation Features', () => {
     await page.goto('/curriculum/T1_Foundational/F2_SystemVerilog_Basics');
 
     // Check for progress indicator sourced from curriculum status
-    await expect(page.locator('nav:has-text("SystemVerilog Language Basics")').locator('svg.lucide-clock.text-amber-500')).toBeVisible();
+    await expect(
+      page
+        .locator('nav')
+        .filter({ hasText: 'SystemVerilog Language Basics' })
+        .locator('svg.lucide-clock.text-amber-500')
+        .first(),
+    ).toBeVisible();
 
     // Check for "Jump to" button and dropdown
     const jumpToButton = page.getByRole('button', { name: 'Jump to' });

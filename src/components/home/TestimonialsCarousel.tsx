@@ -5,6 +5,7 @@ import useEmblaCarousel from 'embla-carousel-react';
 import Autoplay from 'embla-carousel-autoplay';
 import TestimonialCard from './TestimonialCard';
 import { motion } from 'framer-motion';
+import { cn } from '@/lib/utils';
 
 const testimonials = [
   {
@@ -39,25 +40,32 @@ const testimonials = [
   }
 ];
 
-const TestimonialsCarousel = () => {
+type TestimonialsCarouselProps = {
+  className?: string;
+};
+
+const TestimonialsCarousel = ({ className }: TestimonialsCarouselProps) => {
   const [emblaRef] = useEmblaCarousel({ loop: true }, [Autoplay({ delay: 5000 })]);
 
   return (
     <motion.div
-      className="mt-16 w-full"
-      initial={{ opacity: 0, y: 50 }}
+      className={cn('w-full', className)}
+      initial={{ opacity: 0, y: 32 }}
       whileInView={{ opacity: 1, y: 0 }}
       viewport={{ once: true, amount: 0.3 }}
-      transition={{ duration: 0.8 }}
+      transition={{ duration: 0.6 }}
     >
-      <h3 className="text-3xl font-bold text-center text-[color:var(--blueprint-foreground)] mb-6">
-        What Our Learners Say
+      <h3 className="mb-3 text-center text-3xl font-semibold text-foreground">
+        What our learners say
       </h3>
-      <div className="neon-divider mb-8 mx-auto max-w-2xl" />
+      <div className="neon-divider mx-auto mb-8 max-w-2xl" />
       <div className="overflow-hidden" ref={emblaRef}>
         <div className="flex">
           {testimonials.map((testimonial, index) => (
-            <div className="flex-[0_0_100%] md:flex-[0_0_50%] lg:flex-[0_0_33.33%] p-4" key={index}>
+            <div
+              className="flex-[0_0_100%] p-4 md:flex-[0_0_50%] lg:flex-[0_0_33.33%]"
+              key={index}
+            >
               <TestimonialCard testimonial={testimonial} />
             </div>
           ))}

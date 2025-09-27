@@ -16,12 +16,12 @@ interface TestimonialCardProps {
 
 const TestimonialCard: React.FC<TestimonialCardProps> = ({ testimonial }) => {
   return (
-    <div className="glass-card h-full px-6 py-8 flex flex-col justify-between text-left">
-      <p className="text-[color:var(--blueprint-foreground)]/80 italic mb-6">
+    <div className="flex h-full flex-col justify-between rounded-2xl border border-border/60 bg-card/80 px-6 py-8 text-left shadow-sm">
+      <p className="mb-6 text-base italic text-muted-foreground">
         “{testimonial.quote}”
       </p>
       <div className="flex items-center gap-4">
-        <div className="relative w-12 h-12 rounded-full overflow-hidden border border-[color:var(--blueprint-border)] bg-[color:var(--blueprint-glass-strong)] flex-shrink-0">
+        <div className="relative h-12 w-12 flex-shrink-0 overflow-hidden rounded-full border border-border/60 bg-muted">
           <Image
             src={testimonial.image}
             alt={testimonial.name}
@@ -31,8 +31,8 @@ const TestimonialCard: React.FC<TestimonialCardProps> = ({ testimonial }) => {
           />
         </div>
         <div>
-          <p className="font-semibold text-[color:var(--blueprint-foreground)]">{testimonial.name}</p>
-          <p className="text-sm text-[color:var(--blueprint-foreground)]/65">
+          <p className="font-semibold text-foreground">{testimonial.name}</p>
+          <p className="text-sm text-muted-foreground">
             {testimonial.title}
           </p>
         </div>

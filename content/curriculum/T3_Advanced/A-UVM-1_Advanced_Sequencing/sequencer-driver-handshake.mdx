@@ -1,5 +1,4 @@
 import { InfoPage } from "@/components/templates/InfoPage";
-import { InteractiveCode, Quiz } from "@/components/ui";
 import { AnimatedUvmSequenceDriverHandshakeDiagram } from "@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram";
 
 export const metadata = {
@@ -33,68 +32,64 @@ export const metadata = {
 
   ## Anatomy of the Calls
 
-  <InteractiveCode
-    language="systemverilog"
-    fileName="driver_and_sequence.sv"
-    code={`
-class my_driver extends uvm_driver#(my_item);
-  `uvm_component_utils(my_driver)
+  ```systemverilog
+  class my_driver extends uvm_driver#(my_item);
+    `uvm_component_utils(my_driver)
 
-  virtual task run_phase(uvm_phase phase);
-    forever begin
-      seq_item_port.get_next_item(req);             // 1. Wait
-      drive_transfer(req);                          // 2. Act on the DUT
-      if (needs_rsp(req)) begin
-        rsp = my_item::type_id::create("rsp");
-        rsp.copy(req);
-        rsp.status = OK;
-        seq_item_port.item_done(rsp);               // 3a. Reply with data
-      end else begin
-        seq_item_port.item_done();                  // 3b. Signal completion
+    virtual task run_phase(uvm_phase phase);
+      forever begin
+        seq_item_port.get_next_item(req);             // 1. Wait
+        drive_transfer(req);                          // 2. Act on the DUT
+        if (needs_rsp(req)) begin
+          rsp = my_item::type_id::create("rsp");
+          rsp.copy(req);
+          rsp.status = OK;
+          seq_item_port.item_done(rsp);               // 3a. Reply with data
+        end else begin
+          seq_item_port.item_done();                  // 3b. Signal completion
+        end
       end
-    end
-  endtask
-endclass
+    endtask
+  endclass
 
-class burst_sequence extends uvm_sequence#(my_item);
-  `uvm_object_utils(burst_sequence)
+  class burst_sequence extends uvm_sequence#(my_item);
+    `uvm_object_utils(burst_sequence)
 
-  virtual task body();
-    repeat (burst_len) begin
-      `uvm_do_with(req, { burst_mode == BURST; })  // Creates + start/finish
-    end
-  endtask
-endclass
+    virtual task body();
+      repeat (burst_len) begin
+        `uvm_do_with(req, { burst_mode == BURST; })  // Creates + start/finish
+      end
+    endtask
+  endclass
 
-class intrusive_sequence extends uvm_sequence#(my_item);
-  `uvm_object_utils(intrusive_sequence)
+  class intrusive_sequence extends uvm_sequence#(my_item);
+    `uvm_object_utils(intrusive_sequence)
 
-  uvm_semaphore grant_sem;
-  uvm_event     item_done_evt;
+    uvm_semaphore grant_sem;
+    uvm_event     item_done_evt;
 
-  function new(string name = "intrusive_sequence");
-    super.new(name);
-    grant_sem     = new(0);                        // Supplied by the environment
-    item_done_evt = new("item_done_evt");
-  endfunction
+    function new(string name = "intrusive_sequence");
+      super.new(name);
+      grant_sem     = new(0);                        // Supplied by the environment
+      item_done_evt = new("item_done_evt");
+    endfunction
 
-  virtual task body();
-    lock();                                        // Protect critical section
-    start_item(req);
-    assert(req.randomize() with { opcode == CLEAR; });
-    finish_item(req);
-    grant_sem.put(1);                              // Optional sync with monitors
-    item_done_evt.wait_on();                       // Wait for `item_done`
-    unlock();
-  endtask
-endclass
-    `}
-    explanationSteps={[
-      { target: "5-15", title: "Driver obligations", explanation: "Drivers must *always* pair `get_next_item()` with `item_done()`—with a response if the protocol expects one." },
-      { target: "17-23", title: "Macro shorthand", explanation: "`uvm_do_with` wraps `start_item`/`finish_item`. Even when hidden, the handshake timing is identical." },
-      { target: "25-35", title: "Critical ownership", explanation: "Lock/grab ensure other sequences queue behind you. Use events instead of delays to watch for completion." }
-    ]}
-  />
+    virtual task body();
+      lock();                                        // Protect critical section
+      start_item(req);
+      assert(req.randomize() with { opcode == CLEAR; });
+      finish_item(req);
+      grant_sem.put(1);                              // Optional sync with monitors
+      item_done_evt.wait_on();                       // Wait for `item_done`
+      unlock();
+    endtask
+  endclass
+  ```
+
+  **What to notice**
+  - Lines 2-17 show the driver blocking in `get_next_item()` and always pairing it with `item_done()` (with a response if the protocol expects data).
+  - Lines 19-25 highlight how `uvm_do_with` still performs `start_item`/`finish_item`; the macros merely compress the syntax.
+  - Lines 27-44 demonstrate using locks, semaphores, and events so intrusive sequences can coordinate closely with monitors without starving peers.
 
   ## Responses, Queues, and Observation Hooks
 
@@ -117,27 +112,16 @@ endclass
 
   ## Quiz Yourself
 
-  <Quiz questions={[
-    {
-      question: "A driver issues `get_next_item()` and nothing returns. What should you check first?",
-      answers: [
-        { text: "Whether the monitor saw any transactions", correct: false },
-        { text: "Whether a sequence called `start_item()` / `finish_item()`", correct: true },
-        { text: "If the sequencer's analysis port is connected", correct: false },
-        { text: "If the virtual interface has been set", correct: false }
-      ],
-      explanation: "`get_next_item()` blocks until a sequence completes the `start_item()`/`finish_item()` handoff. If no sequence ran, the driver will wait indefinitely." }
-    },
-    {
-      question: "When should a driver send a response object with `item_done(rsp)`?",
-      answers: [
-        { text: "Only when using `uvm_do` macros", correct: false },
-        { text: "Whenever the protocol returns read data or status that the sequence expects", correct: true },
-        { text: "Whenever the sequence locks the sequencer", correct: false },
-        { text: "Only if the sequence called `get_response()` first", correct: false }
-      ],
-      explanation: "Protocols with readbacks (register reads, DMA completions) rely on response objects so higher-level sequences can validate results." }
-    }
-  ]} />
+  **A driver issues `get_next_item()` and nothing returns. What should you check first?**
+  - Whether the monitor saw any transactions
+  - Whether a sequence called `start_item()` / `finish_item()` *(correct)*
+  - If the sequencer's analysis port is connected
+  - If the virtual interface has been set
+
+  **When should a driver send a response object with `item_done(rsp)`?**
+  - Only when using `uvm_do` macros
+  - Whenever the protocol returns read data or status that the sequence expects *(correct)*
+  - Whenever the sequence locks the sequencer
+  - Only if the sequence called `get_response()` first
 
 </InfoPage>

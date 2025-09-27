@@ -64,7 +64,7 @@ const CustomTooltipContent = ({ active, payload, label }: ComparisonCustomToolti
 
 const DataTypeComparisonChart: React.FC = () => {
   return (
-    <div style={{ width: '100%', height: 400 }} className="my-8">
+    <div data-testid="data-type-chart" style={{ width: '100%', height: 400 }} className="my-8">
       <ResponsiveContainer>
         <BarChart
           data={data}

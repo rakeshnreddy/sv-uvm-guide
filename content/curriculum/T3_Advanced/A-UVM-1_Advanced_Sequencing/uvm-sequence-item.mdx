@@ -1,5 +1,4 @@
 import { InfoPage } from "@/components/templates/InfoPage";
-import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
   title: "uvm_sequence_item Mastery | Advanced UVM Sequencing",
@@ -17,60 +16,55 @@ export const metadata = {
 
   ## Shape the Transaction Class
 
-  <InteractiveCode
-    language="systemverilog"
-    fileName="mem_item.sv"
-    code={`
-class mem_item extends uvm_sequence_item;
-  `uvm_object_utils_begin(mem_item)
-    `uvm_field_int(addr, UVM_ALL_ON | UVM_HEX)
-    `uvm_field_int(len,  UVM_ALL_ON)
-    `uvm_field_enum(op_t, op, UVM_ALL_ON)
-    `uvm_field_queue_int(data_q, UVM_ALL_ON)
-  `uvm_object_utils_end
+  ```systemverilog
+  class mem_item extends uvm_sequence_item;
+    `uvm_object_utils_begin(mem_item)
+      `uvm_field_int(addr, UVM_ALL_ON | UVM_HEX)
+      `uvm_field_int(len,  UVM_ALL_ON)
+      `uvm_field_enum(op_t, op, UVM_ALL_ON)
+      `uvm_field_queue_int(data_q, UVM_ALL_ON)
+    `uvm_object_utils_end
 
-  typedef enum bit [1:0] { READ, WRITE, FLUSH } op_t;
+    typedef enum bit [1:0] { READ, WRITE, FLUSH } op_t;
 
-  rand bit [31:0] addr;
-  rand int unsigned len;
-  rand op_t op;
-  rand byte data_q[$];
+    rand bit [31:0] addr;
+    rand int unsigned len;
+    rand op_t op;
+    rand byte data_q[$];
 
-  constraint c_len { len inside {[1:8]}; }
-  constraint c_write_payload { (op == WRITE) -> data_q.size() == len; }
-  constraint c_read_payload  { (op != WRITE) -> data_q.size() == 0; }
+    constraint c_len { len inside {[1:8]}; }
+    constraint c_write_payload { (op == WRITE) -> data_q.size() == len; }
+    constraint c_read_payload  { (op != WRITE) -> data_q.size() == 0; }
 
-  function new(string name = "mem_item");
-    super.new(name);
-  endfunction
+    function new(string name = "mem_item");
+      super.new(name);
+    endfunction
 
-  virtual function void do_copy(uvm_object rhs);
-    mem_item rhs_cast;
-    if (!$cast(rhs_cast, rhs))
-      `uvm_fatal("COPY", "Type mismatch in mem_item::do_copy")
-    super.do_copy(rhs);
-    data_q = rhs_cast.data_q;
-  endfunction
+    virtual function void do_copy(uvm_object rhs);
+      mem_item rhs_cast;
+      if (!$cast(rhs_cast, rhs))
+        `uvm_fatal("COPY", "Type mismatch in mem_item::do_copy")
+      super.do_copy(rhs);
+      data_q = rhs_cast.data_q;
+    endfunction
 
-  virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
-    mem_item rhs_cast;
-    if (!$cast(rhs_cast, rhs)) return 0;
-    if (!super.do_compare(rhs, comparer)) return 0;
-    return (data_q == rhs_cast.data_q);
-  endfunction
+    virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
+      mem_item rhs_cast;
+      if (!$cast(rhs_cast, rhs)) return 0;
+      if (!super.do_compare(rhs, comparer)) return 0;
+      return (data_q == rhs_cast.data_q);
+    endfunction
 
-  virtual function string convert2string();
-    return $sformatf("[%s addr=%h len=%0d data=%p]", op.name(), addr, len, data_q);
-  endfunction
-endclass
-    `}
-    explanationSteps={[
-      { target: "2-9", title: "Field automation", explanation: "Field macros register metadata for factory overrides, printing, recording, and comparison." },
-      { target: "11-20", title: "Protocol constraints", explanation: "Keep legality rules inside the item so any sequence or scoreboard clone inherits them automatically." },
-      { target: "22-35", title: "Deep copy/compare", explanation: "Queues need explicit copy + compare logic; default behaviour only performs shallow operations." },
-      { target: "37-39", title: "Readable logging", explanation: "Custom `convert2string()` output keeps run logs human friendly during debug." }
-    ]}
-  />
+    virtual function string convert2string();
+      return $sformatf("[%s addr=%h len=%0d data=%p]", op.name(), addr, len, data_q);
+    endfunction
+  endclass
+  ```
+
+  **What this covers**
+  - Lines 2-10 register every field so factory overrides, printing, and compare hooks “just work.”
+  - Lines 12-24 keep protocol legality with built-in constraints so every sequence inherits safe defaults.
+  - Lines 26-37 handle deep copy/compare for the byte queue and provide a readable `convert2string()` for log output.
 
   ## IDs, Responses, and Outstanding Traffic
 
@@ -92,27 +86,16 @@ endclass
 
   ## Quiz Yourself
 
-  <Quiz questions={[
-    {
-      question: "Why call `set_id_info(req)` on a response item?",
-      answers: [
-        { text: "To randomize the response again", correct: false },
-        { text: "To copy the sequence and transaction IDs so the sequencer can route it", correct: true },
-        { text: "To pack the data into bytes", correct: false },
-        { text: "To clear the request payload", correct: false }
-      ],
-      explanation: "`set_id_info` ensures responses flow back to the correct waiting sequence or response handler." }
-    },
-    {
-      question: "Your item owns a queue of bytes. What happens if you skip overriding `do_copy()`?",
-      answers: [
-        { text: "The clone receives an empty queue", correct: false },
-        { text: "Both the original and clone point to the same queue instance", correct: true },
-        { text: "The factory override fails", correct: false },
-        { text: "Compilation fails", correct: false }
-      ],
-      explanation: "Without a custom `do_copy`, the queue reference is duplicated, so mutating one transaction mutates the other." }
-    }
-  ]} />
+  **Why call `set_id_info(req)` on a response item?**
+  - To randomize the response again
+  - To copy the sequence and transaction IDs so the sequencer can route it *(correct)*
+  - To pack the data into bytes
+  - To clear the request payload
+
+  **Your item owns a queue of bytes. What happens if you skip overriding `do_copy()`?**
+  - The clone receives an empty queue
+  - Both the original and clone point to the same queue instance *(correct)*
+  - The factory override fails
+  - Compilation fails
 
 </InfoPage>

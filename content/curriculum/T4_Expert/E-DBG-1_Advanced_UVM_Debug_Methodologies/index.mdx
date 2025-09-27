@@ -1,156 +1,81 @@
 ---
 title: "E-DBG-1: Advanced UVM Debug Methodologies"
-description: "Instrument complex UVM environments with reporting, objections, and transaction timelines so failures localize themselves." 
-flashcards: "E-DBG-1_Advanced_Debug"
+description: "Instrument your UVM environment with traceability, telemetry, and heuristics so complex failures become explainable fast."
+flashcards: "E-DBG-1_Debug_Methodologies"
 ---
 
-import dynamic from 'next/dynamic';
-import { InteractiveCode } from '@/components/ui';
-import DebuggingSimulator from '@/components/ui/DebuggingSimulator';
-
-const VisualizationPlaceholder = () => (
-  <div className="flex h-48 items-center justify-center">Loading visualization...</div>
-);
-
-const UvmTestbenchVisualizer = dynamic(
-  () => import('@/components/diagrams/UvmTestbenchVisualizer'),
-  { ssr: false, loading: () => <VisualizationPlaceholder /> },
-);
-
 ## Quick Take
-- **What it is:** A stack of debug tactics—reporting filters, objection tracing, transaction recording, and performance profiling—for deep UVM environments.
-- **Why it matters:** Overnight regressions stall when hangs and race conditions hide; disciplined instrumentation surfaces root causes quickly.
-- **The Analogy:** Think of an air-traffic control center: correlated radar (transactions), radio transcripts (logs), and black boxes (waveforms) keep the investigation focused when something goes wrong.
+- **What it is:** A debugging playbook—structured logging, selective waveform capture, trace metadata—to tame large UVM environments.
+- **Why it matters:** Scale brings opaque failures. Rich debug hooks keep signal-to-noise high under tight schedules.
+- **The Analogy:** Think of an airliner flight recorder: every test run should leave breadcrumbs that explain what the bench did and why.
 
-> **Signal:** When your team relies on rerunning with `$display` to diagnose issues, upgrade the debug toolkit.
+> **Signal:** When triage meetings begin with “rerun with more logs,” your methodology needs stronger built-in instrumentation.
 
 ## Build Your Mental Model
-### Layered instrumentation
-- **Logs first:** Structured `uvm_info` with component IDs + verbosity controls.
-- **Objection tracing:** Watch the lifecycle of phase objections to pinpoint hangs.
-- **Transaction timelines:** Record sequence_items to waveform or database so cross-interface events align.
-- **Environment snapshotting:** Use factory prints, config dumps, and coverage checkpoints to verify setup.
+### Structured logging
+- Standardise log categories (`ENV`, `DRV`, `SEQ`, `DBG`) and verbosity levels across the team.
+- Use `uvm_report_object::set_report_id_action_hier()` to promote or demote categories at runtime.
+- Include correlation IDs: stamp sequence IDs, transaction handles, and timestamps into every message so logs join up with coverage and waveform captures.
 
-<figure className="my-8 flex flex-col items-center space-y-4">
-  <img
-    src="/visuals/tier-4/instrumentation-stack-blueprint.svg"
-    alt="Stacked cards representing logs, transactions, waveforms, and analytics layers"
-    className="w-full max-w-sm rounded-2xl border border-white/10 bg-white/5 p-4"
-  />
-  <figcaption className="text-sm text-muted-foreground">
-    Treat debug as a layered stack—logs, transactions, waveforms, and analytics build on each other to localize failures quickly.
-  </figcaption>
-</figure>
+### Trace metadata pipeline
+- Emit JSON or NDJSON trace files mapping test name → key events (reset done, handshake stalled, scoreboard mismatch).
+- Post-process traces into dashboards so regressions show high-level failure breadcrumbs before diving into waveforms.
+- Include links to source commits, config hashes, and git describe output for reproducibility.
 
-<InteractiveCode
-  language="systemverilog"
-  fileName="debug_instrumentation.sv"
-  code={`class debug_base_test extends uvm_test;
-  `uvm_component_utils(debug_base_test)
+### Selective waveform capture
+- Gate waveform dumping behind triggers (e.g., scoreboard error, watchdog timeout).
+- Use VDB/FSDB bookmarking or `.sv` tasks to mark interesting windows.
+- Include a “ring buffer” concept: keep the last N microseconds in memory and flush only when a trigger fires.
 
-  function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    uvm_config_db#(int)::set(null, "*", "recording_detail", UVM_HIGH);
-    uvm_report_server server = uvm_report_server::get_server();
-    server.set_max_quit_count(1);
+```systemverilog
+class debug_event_bus extends uvm_component;
+  `uvm_component_utils(debug_event_bus)
+
+  uvm_analysis_port#(debug_event) ap;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    ap = new("ap", this);
   endfunction
 
-  function void end_of_elaboration_phase(uvm_phase phase);
-    super.end_of_elaboration_phase(phase);
-    uvm_top.set_objection_trace(1);
-    factory.print(" +overrides");
+  function void publish(string tag, string detail);
+    debug_event evt = debug_event::type_id::create("evt");
+    evt.tag     = tag;
+    evt.detail  = detail;
+    ap.write(evt);
   endfunction
+endclass
+```
 
-  function void start_of_simulation_phase(uvm_phase phase);
-    super.start_of_simulation_phase(phase);
-    `uvm_info("DEBUG", "Transaction recording enabled", UVM_LOW)
-  endfunction
-endclass`}
-  explanationSteps={[
-    { target: "4-9", title: "Config-driven logging", explanation: "Set recording/detail knobs once in the base test so all components inherit the policy." },
-    { target: "11-16", title: "Objection trace & factory snapshot", explanation: "Enable objection trace and dump active overrides before stimulus starts." },
-    { target: "18-21", title: "Narrate instrumentation", explanation: "Log that recording is on so teammates know where to find timelines." }
-  ]}
-/>
-
-### Systematic hang triage
-Objection drains, watchdogs, and command-line tracing expose components that forget `item_done()` or leave objections raised. Pair with simulators’ live phase viewers (e.g., DVE, Verdi) for real-time insight.
-
-<figure className="my-8 flex flex-col items-center space-y-4">
-  <img
-    src="/visuals/tier-4/objection-cascade-timeline.svg"
-    alt="Swimlane timeline highlighting an objection stall across env, agent, driver, and monitor"
-    className="w-full max-w-4xl rounded-2xl border border-white/10 bg-white/5 p-4"
-  />
-  <figcaption className="text-sm text-muted-foreground">
-    Objection cascades reveal exactly where a phase stays raised—here the monitor stalls, helping you target the fix without guesswork.
-  </figcaption>
-</figure>
-
-<InteractiveCode
-  language="systemverilog"
-  fileName="hang_watchdog.sv"
-  code={`task debug_base_test::run_phase(uvm_phase phase);
-  phase.raise_objection(this);
-  fork
-    begin
-      #1ms;
-      `uvm_fatal("WATCHDOG", "Simulation exceeded 1ms without completing")
-    end
-    super.run_phase(phase);
-  join_any;
-  disable fork;
-  phase.drop_objection(this);
-endtask`}
-  explanationSteps={[
-    { target: "1-3", title: "Proactive objection", explanation: "Base test holds the run phase open while watchers execute." },
-    { target: "4-8", title: "Timeout thread", explanation: "Watchdog terminates runaway simulations instead of hanging regressions." },
-    { target: "10-11", title: "Clean exit", explanation: "Drop the objection once either branch completes." }
-  ]}
-/>
-
-### Transaction correlation
-Use UVM recording (`UVM_RECORD`) or tool-specific APIs (Verdi `FSDB`, DVE TCL) to align stimulus, monitor data, and scoreboard results. Visuals like `UvmTestbenchVisualizer` reinforce the data flow.
-
-<UvmTestbenchVisualizer />
-
-<figure className="my-8 flex flex-col items-center space-y-4">
-  <img
-    src="/visuals/tier-4/debug-control-room-mock.svg"
-    alt="Air-traffic-control themed debug control room visualization"
-    className="w-full max-w-5xl rounded-2xl border border-white/10 bg-white/5 p-4"
-  />
-  <figcaption className="text-sm text-muted-foreground">
-    Present logs, transaction timelines, and waveform probes together so engineers triage failures from a single “control room” dashboard.
-  </figcaption>
-</figure>
+**Why add an event bus?**
+- Centralises debug events, allowing multiple subscribers (log formatters, telemetry exporters, trigger logic) without rewiring drivers or monitors.
 
 ## Make It Work
-1. **Standardize logging:** Define report macros, verbosity defaults, and message IDs in a shared package; ban raw `$display` in code reviews.
-2. **Enable tracing knobs:** Always allow `+UVM_OBJECTION_TRACE`, `+UVM_VERBOSITY`, and transaction recording toggles; document recommended settings per debug scenario.
-3. **Record what matters:** Annotate sequence items with `UVM_RECORD`, sample analysis FIFOs into debug buffers, and limit waveform scope to reduce noise.
-4. **Automate watchdogs:** Install base-test timeouts and phase drains so hung tests fail quickly with actionable context.
+1. **Packaged utilities:** Ship a `debug_pkg` with macros (`DBG_TRACE(tag, detail)`), event bus definitions, and helper sequences for triggers.
+2. **Baseline dashboards:** Automate daily ingestion of trace metadata so failures show up with timeline cards, not raw logs.
+3. **Trigger-driven captures:** Pair debug events with vendor-specific waveform APIs (e.g., `$fsdbDumpvarsByFile`, VCS DVE bookmarks) to record only when needed.
+4. **Feedback loop:** Hold periodic “debug audit” reviews—inspect recent failures and update instrumentation gaps.
 
 **Checklist before moving on:**
-- [ ] Logs include component path + unique message IDs.
-- [ ] Objection trace plusargs are exercised regularly.
-- [ ] You can generate a merged transaction timeline across interfaces.
-- [ ] Watchdogs or drain times cap regression hangs.
+- [ ] Standard log categories and verbosity are documented and enforced via code review/lint.
+- [ ] Tests emit structured traces mapping key events to timestamps.
+- [ ] Waveform dumps are trigger-driven, not always-on.
+- [ ] Teams know where dashboards live and how to request new instrumentation.
 
 ## Push Further
-- **Tool scripts:** Integrate Verdi/DVE macros that auto-load relevant waveforms and bookmarks for failing seeds.
-- **Performance profiling:** Schedule regular simulator profiling runs to keep debug from introducing bottlenecks.
-- **Debug dashboards:** Stream key metrics (active objections, pending transactions) to a live dashboard during long runs.
-- **Cross-team playbooks:** Document debug recipes (hang triage, scoreboard mismatch, factory confusion) in a shared portal.
+- **Cross-domain correlation:** Tie sequences to firmware logs or emulator telemetry for holistic failure stories.
+- **Machine learning aids:** Feed trace metadata into clustering tools to spot recurring patterns automatically.
+- **Self-healing tests:** Use debug events to trigger automatic retries with extra instrumentation.
+- **Playbook culture:** Document past failures and the instrumentation that solved them so new engineers level up rapidly.
 
 ## Practice & Reinforce
-- Exercise objection tracing on a failing test and inspect the trace output.
-- Use `DebuggingSimulator` to rehearse hang resolution scenarios in [/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab](./hang-lab) (create as needed).
-- Configure transaction recording on one agent and replay the timeline in your waveform viewer.
-- Pair with [/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index](../E-PERF-1_UVM_Performance/index) to ensure debug instrumentation doesn’t tank performance.
+- Add a debug event when a driver retries a handshake; verify traces show the snapshot.
+- Script a command that extracts the last failing test’s trace into HTML for instant sharing.
+- Integrate the event bus with your waveform trigger logic so interesting windows dump automatically.
+- Run a “no extra logging” regression to ensure even the baseline instrumentation tells a coherent story.
 
 ## References & Next Topics
-- Accellera *UVM User Guide*, Appendix C (command-line processor) and debug sections.
-- Mentor/Siemens Verdi, Synopsys Verdi, Cadence SimVision user guides for UVM-aware debug.
-- Internal debug playbooks and regression dashboards.
-- Next: explore expert-level performance tuning (E-PERF-1) to keep instrumented benches fast.
+- UVM User Guide Appendix (debug and messaging).
+- EDA vendor docs on FSDB/VCD selective dumping APIs.
+- Internal debug retrospectives and incident review notes.
+- Next: Explore advanced performance profiling once debug instrumentation is mature.

@@ -81,7 +81,7 @@ const HistoryTimelineChart: React.FC = () => {
   const maxYear = Math.max(...years) + 2;
 
   return (
-    <div style={{ width: '100%', height: 500 }} className="my-8">
+    <div data-testid="history-timeline-chart" style={{ width: '100%', height: 500 }} className="my-8">
       <ResponsiveContainer>
         <ScatterChart
           margin={{

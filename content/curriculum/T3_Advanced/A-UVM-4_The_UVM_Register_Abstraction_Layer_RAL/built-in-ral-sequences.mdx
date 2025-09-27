@@ -1,5 +1,4 @@
 import { InfoPage } from "@/components/templates/InfoPage";
-import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
   title: "Built-in RAL Sequences & Utilities | Advanced UVM RAL",
@@ -17,38 +16,33 @@ export const metadata = {
 
   ## Reset & Mirror Validation
 
-  <InteractiveCode
-    language="systemverilog"
-    fileName="reset_seq.sv"
-    code={`
-class soc_reset_seq extends uvm_reg_hw_reset_seq;
-  `uvm_object_utils(soc_reset_seq)
+  ```systemverilog
+  class soc_reset_seq extends uvm_reg_hw_reset_seq;
+    `uvm_object_utils(soc_reset_seq)
 
-  constraint c_paths {
-    register_sequences == {"cfg_map"};
-  }
+    constraint c_paths {
+      register_sequences == {"cfg_map"};
+    }
 
-  virtual task body();
-    uvm_status_e status;
-    super.body();
-    // Optionally sanity-check mirrors after the base sequence completes
-    foreach (model.default_map.regs[i]) begin
-      uvm_reg rg = model.default_map.regs[i];
-      if (!rg.has_hdl_path("CFG")) continue;
-      rg.mirror(status, UVM_CHECK);
-    end
-  endtask
-endclass
-    `}
-    explanationSteps={[
-      { target: "1-9", title: "Extending reset sequence", explanation: "Subclass the built-in reset sequence to add constraints or post-processing." },
-      { target: "11-18", title: "Mirror after reset", explanation: "After the default run, mirror key registers with `UVM_CHECK` for additional assurance." }
-    ]}
-  />
+    virtual task body();
+      uvm_status_e status;
+      super.body();
+      foreach (model.default_map.regs[i]) begin
+        uvm_reg rg = model.default_map.regs[i];
+        if (!rg.has_hdl_path("CFG")) continue;
+        rg.mirror(status, UVM_CHECK);
+      end
+    endtask
+  endclass
+  ```
+
+  **How to extend it**
+  - Lines 2-8 show how to constrain which address maps the built-in reset sequence touches.
+  - Lines 10-17 add a post-reset mirror sweep so you catch registers that drift from their reset values immediately.
 
   ## Bit-Bash & Field Policies
 
-  - `uvm_reg_bit_bash_seq`: toggles W/R bits to validate access types. Override `is_legal` hook to skip write-one-to-clear (W1C) or reserved bits.
+  - `uvm_reg_bit_bash_seq`: toggles W/R bits to validate access types. Override `is_legal` to skip write-one-to-clear (W1C) or reserved bits.
   - `uvm_reg_access_seq`: simple sweeping read/write; great smoke test for new adapters.
   - `uvm_mem_walk_seq`: diag for memories; ensure the adapter handles bursts correctly.
 
@@ -63,24 +57,20 @@ endclass
     </figcaption>
   </figure>
 
-  <InteractiveCode
-    language="systemverilog"
-    fileName="bit_bash_override.sv"
-    code={`
-class filtered_bit_bash_seq extends uvm_reg_bit_bash_seq;
-  `uvm_object_utils(filtered_bit_bash_seq)
+  ```systemverilog
+  class filtered_bit_bash_seq extends uvm_reg_bit_bash_seq;
+    `uvm_object_utils(filtered_bit_bash_seq)
 
-  virtual function bit is_legal(uvm_reg_field field);
-    if (field.get_access() inside {"WO", "W1C"})
-      return 0;
-    return super.is_legal(field);
-  endfunction
-endclass
-    `}
-    explanationSteps={[
-      { target: "1-8", title: "Custom legality", explanation: "Skip fields that could disrupt DUT state while still leveraging the base bit-bash logic." }
-    ]}
-  />
+    virtual function bit is_legal(uvm_reg_field field);
+      if (field.get_access() inside {"WO", "W1C"})
+        return 0;
+      return super.is_legal(field);
+    endfunction
+  endclass
+  ```
+
+  **Why override legality**
+  - Lines 2-8 demonstrate skipping fields that could corrupt DUT state while still reusing the robust bit-bash engine.
 
   ## Checklist
 
@@ -90,27 +80,16 @@ endclass
 
   ## Quiz Yourself
 
-  <Quiz questions={[
-    {
-      question: "What does `uvm_reg_bit_bash_seq` primarily validate?",
-      answers: [
-        { text: "Adapters convert opcodes correctly", correct: false },
-        { text: "Register fields honor their access policies (RW/RO/etc.)", correct: true },
-        { text: "The DUT boots correctly", correct: false },
-        { text: "Scoreboards are connected", correct: false }
-      ],
-      explanation: "Bit-bash toggles each writable bit to confirm read/write semantics and mirroring." }
-    },
-    {
-      question: "How do you prevent a built-in sequence from corrupting W1C fields?",
-      answers: [
-        { text: "Disable mirroring", correct: false },
-        { text: "Override `is_legal()` and return 0 for those fields", correct: true },
-        { text: "Switch to backdoor", correct: false },
-        { text: "Use `set_sequencer(null)`", correct: false }
-      ],
-      explanation: "Customizing `is_legal` lets you skip sensitive fields while reusing the sequence logic." }
-    }
-  ]} />
+  **What does `uvm_reg_bit_bash_seq` primarily validate?**
+  - Adapters convert opcodes correctly
+  - Register fields honor their access policies (RW/RO/etc.) *(correct)*
+  - The DUT boots correctly
+  - Scoreboards are connected
+
+  **How do you prevent a built-in sequence from corrupting W1C fields?**
+  - Disable mirroring
+  - Override `is_legal()` and return 0 for those fields *(correct)*
+  - Switch to backdoor
+  - Use `set_sequencer(null)`
 
 </InfoPage>

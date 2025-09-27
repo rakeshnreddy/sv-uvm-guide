@@ -1,5 +1,4 @@
 import { InfoPage } from "@/components/templates/InfoPage";
-import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
   title: "UVM Scoreboard Patterns | Advanced UVM Sequencing",
@@ -17,63 +16,59 @@ export const metadata = {
 
   ## Predict vs. Observe
 
-<InteractiveCode
-    language="systemverilog"
-    fileName="mem_scoreboard.sv"
-    code={`
-`uvm_analysis_imp_decl(_exp)
-`uvm_analysis_imp_decl(_act)
+  ```systemverilog
+  `uvm_analysis_imp_decl(_exp)
+  `uvm_analysis_imp_decl(_act)
 
-class mem_scoreboard extends uvm_component;
-  `uvm_component_utils(mem_scoreboard)
+  class mem_scoreboard extends uvm_component;
+    `uvm_component_utils(mem_scoreboard)
 
-  uvm_analysis_imp_exp#(mem_item, mem_scoreboard) exp_export;
-  uvm_analysis_imp_act#(mem_item, mem_scoreboard) act_export;
+    uvm_analysis_imp_exp#(mem_item, mem_scoreboard) exp_export;
+    uvm_analysis_imp_act#(mem_item, mem_scoreboard) act_export;
 
-  typedef uvm_tlm_analysis_fifo#(mem_item) fifo_t;
-  fifo_t exp_fifo;
-  fifo_t act_fifo;
+    typedef uvm_tlm_analysis_fifo#(mem_item) fifo_t;
+    fifo_t exp_fifo;
+    fifo_t act_fifo;
 
-  function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    exp_export = new("exp_export", this);
-    act_export = new("act_export", this);
-    exp_fifo   = fifo_t::type_id::create("exp_fifo", this);
-    act_fifo   = fifo_t::type_id::create("act_fifo", this);
-  endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      exp_export = new("exp_export", this);
+      act_export = new("act_export", this);
+      exp_fifo   = fifo_t::type_id::create("exp_fifo", this);
+      act_fifo   = fifo_t::type_id::create("act_fifo", this);
+    endfunction
 
-  virtual function void write_exp(mem_item t);
-    exp_fifo.try_put(t.clone());
-  endfunction
+    virtual function void write_exp(mem_item t);
+      exp_fifo.try_put(t.clone());
+    endfunction
 
-  virtual function void write_act(mem_item t);
-    act_fifo.try_put(t.clone());
-  endfunction
+    virtual function void write_act(mem_item t);
+      act_fifo.try_put(t.clone());
+    endfunction
 
-  task run_phase(uvm_phase phase);
-    forever begin
-      mem_item exp, act;
-      exp_fifo.get(exp);
-      act_fifo.get(act);
+    task run_phase(uvm_phase phase);
+      forever begin
+        mem_item exp, act;
+        exp_fifo.get(exp);
+        act_fifo.get(act);
 
-      if (!compare(exp, act)) begin
-        `uvm_error("SCB", $sformatf("Mismatch exp=%s act=%s", exp.convert2string(), act.convert2string()))
+        if (!compare(exp, act)) begin
+          `uvm_error("SCB", $sformatf("Mismatch exp=%s act=%s", exp.convert2string(), act.convert2string()))
+        end
       end
-    end
-  endtask
+    endtask
 
-  function bit compare(mem_item exp, mem_item act);
-    if (!exp.do_compare(act, null)) return 0;
-    return 1;
-  endfunction
-endclass
-    `}
-    explanationSteps={[
-      { target: "1-16", title: "Analysis interfaces", explanation: "Separate expected/actual analysis imps feed dedicated FIFOs." },
-      { target: "18-33", title: "Cloning into FIFOs", explanation: "Scoreboard takes ownership of transactions—clone them before queuing." },
-      { target: "35-46", title: "Comparison loop", explanation: "Pull matching entries, compare with `do_compare`, and issue clear error logs when mismatched." }
-    ]}
-  />
+    function bit compare(mem_item exp, mem_item act);
+      if (!exp.do_compare(act, null)) return 0;
+      return 1;
+    endfunction
+  endclass
+  ```
+
+  **What to keep in mind**
+  - Lines 1-12 declare distinct analysis imps and FIFO handles so expected and actual data flow independently.
+  - Lines 14-24 clone incoming items before queuing, giving the scoreboard ownership of the objects it compares later.
+  - Lines 26-43 pull matching transactions, call `do_compare`, and log mismatches with `convert2string()` output for rapid triage.
 
   ## Design Considerations
 
@@ -91,27 +86,16 @@ endclass
 
   ## Quiz Yourself
 
-  <Quiz questions={[
-    {
-      question: "Why push transactions through `uvm_tlm_analysis_fifo`?",
-      answers: [
-        { text: "To randomize their order", correct: false },
-        { text: "To decouple producers and consumers with blocking semantics", correct: true },
-        { text: "Because monitors require it", correct: false },
-        { text: "To convert them to responses", correct: false }
-      ],
-      explanation: "FIFOs buffer bursts of activity and allow the scoreboard to process items at its own pace." }
-    },
-    {
-      question: "Your scoreboard logs mismatches but no context. What should you add first?",
-      answers: [
-        { text: "Grab the sequencer", correct: false },
-        { text: "A custom `convert2string()` on the sequence item", correct: true },
-        { text: "Randomize the expected item", correct: false },
-        { text: "Disable the scoreboard", correct: false }
-      ],
-      explanation: "Readable `convert2string()` output makes mismatch logs actionable." }
-    }
-  ]} />
+  **Why push transactions through `uvm_tlm_analysis_fifo`?**
+  - To randomize their order
+  - To decouple producers and consumers with blocking semantics *(correct)*
+  - Because monitors require it
+  - To convert them to responses
+
+  **Your scoreboard logs mismatches but no context. What should you add first?**
+  - Grab the sequencer
+  - A custom `convert2string()` on the sequence item *(correct)*
+  - Randomize the expected item
+  - Disable the scoreboard
 
 </InfoPage>

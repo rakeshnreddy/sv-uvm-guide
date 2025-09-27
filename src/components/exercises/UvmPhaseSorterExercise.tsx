@@ -279,6 +279,7 @@ const UvmPhaseSorterExercise: React.FC<UvmPhaseSorterExerciseProps> = ({ initial
           className={`mx-auto max-w-md rounded-lg border p-4 text-sm ${feedback.passed ? 'border-emerald-400/50 bg-emerald-400/10 text-emerald-100' : 'border-amber-400/50 bg-amber-500/10 text-amber-100'}`}
           role="status"
           aria-live="polite"
+          data-testid="exercise-feedback"
         >
           <p className="text-lg font-semibold">Score: {feedback.score}%</p>
           <p className="mt-1">{feedback.message}</p>

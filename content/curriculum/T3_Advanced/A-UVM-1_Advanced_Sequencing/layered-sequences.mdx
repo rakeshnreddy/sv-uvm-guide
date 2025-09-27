@@ -1,5 +1,4 @@
 import { InfoPage } from "@/components/templates/InfoPage";
-import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
   title: "Layered Sequences and p_sequencer | Advanced UVM Sequencing",
@@ -28,67 +27,63 @@ export const metadata = {
 
   ## p_sequencer in Practice
 
-  <InteractiveCode
-    language="systemverilog"
-    fileName="layered_sequences.sv"
-    code={`
-typedef uvm_sequencer#(mem_item) mem_sqr_t;
+  ```systemverilog
+  typedef uvm_sequencer#(mem_item) mem_sqr_t;
 
-class mem_atomic_write extends uvm_sequence#(mem_item);
-  `uvm_object_utils(mem_atomic_write)
+  class mem_atomic_write extends uvm_sequence#(mem_item);
+    `uvm_object_utils(mem_atomic_write)
 
-  rand bit [31:0] addr;
-  rand bit [63:0] data;
+    rand bit [31:0] addr;
+    rand bit [63:0] data;
 
-  virtual task body();
-    start_item(req);
-    assert(req.randomize() with { rw == WRITE; this.addr == addr; this.data == data; });
-    finish_item(req);
-  endtask
-endclass
+    virtual task body();
+      start_item(req);
+      assert(req.randomize() with { rw == WRITE; this.addr == addr; this.data == data; });
+      finish_item(req);
+    endtask
+  endclass
 
-class mem_burst_program extends uvm_sequence#(mem_item);
-  `uvm_object_utils(mem_burst_program)
+  class mem_burst_program extends uvm_sequence#(mem_item);
+    `uvm_object_utils(mem_burst_program)
 
-  rand bit [31:0] base_addr;
+    rand bit [31:0] base_addr;
 
-  virtual task body();
-    repeat (8) begin
-      `uvm_do_with(req, { rw == WRITE; addr == base_addr + idx * 8; })
-    end
-  endtask
-endclass
+    virtual task body();
+      repeat (8) begin
+        `uvm_do_with(req, { rw == WRITE; addr == base_addr + idx * 8; })
+      end
+    endtask
+  endclass
 
-class soc_init_vseq extends uvm_sequence;
-  `uvm_object_utils(soc_init_vseq)
+  class soc_init_vseq extends uvm_sequence;
+    `uvm_object_utils(soc_init_vseq)
 
-  typedef virtual_sequencer pseq_t;
-  pseq_t p_sequencer;
+    typedef virtual_sequencer pseq_t;
+    pseq_t p_sequencer;
 
-  virtual task body();
-    if (!$cast(p_sequencer, m_sequencer))
-      `uvm_fatal("VSEQ", "Unable to cast m_sequencer to virtual_sequencer")
+    virtual task body();
+      if (!$cast(p_sequencer, m_sequencer))
+        `uvm_fatal("VSEQ", "Unable to cast m_sequencer to virtual_sequencer")
 
-    mem_atomic_write   csr_seq;
-    mem_burst_program  boot_seq;
+      mem_atomic_write   csr_seq;
+      mem_burst_program  boot_seq;
 
-    csr_seq  = mem_atomic_write::type_id::create("csr_seq");
-    boot_seq = mem_burst_program::type_id::create("boot_seq");
+      csr_seq  = mem_atomic_write::type_id::create("csr_seq");
+      boot_seq = mem_burst_program::type_id::create("boot_seq");
 
-    csr_seq.addr = 'hFF00_0000;
-    csr_seq.data = 64'h1;
+      csr_seq.addr = 'hFF00_0000;
+      csr_seq.data = 64'h1;
 
-    csr_seq.start(p_sequencer.cfg_sqr);
-    boot_seq.start(p_sequencer.mem_sqr);
-  endtask
-endclass
-    `}
-    explanationSteps={[
-      { target: "1-20", title: "Atomic layer", explanation: "`mem_atomic_write` owns the minimal transaction logic; it can be reused by scoreboards or constrained randomly in tests." },
-      { target: "22-31", title: "Scenario layer", explanation: "`mem_burst_program` composes eight atomic writes—swapping in error injection is trivial." },
-      { target: "33-54", title: "Virtual orchestration", explanation: "The virtual sequence casts `m_sequencer` into a typed handle, then starts scenario sequences on specific agent sequencers." }
-    ]}
-  />
+      csr_seq.start(p_sequencer.cfg_sqr);
+      boot_seq.start(p_sequencer.mem_sqr);
+    endtask
+  endclass
+  ```
+
+  **Walkthrough highlights**
+  - Lines 1-20 form the atomic layer: `mem_atomic_write` owns the minimal transaction logic and can be reused across scenarios.
+  - Lines 22-31 compose a scenario layer that repeats the atomic write pattern—easy to swap for error injection or coverage sampling.
+  - Lines 33-54 showcase the virtual layer that casts `m_sequencer` into a typed handle and routes work to individual agent sequencers.
 
   **Tip:** Give each layer a naming convention (`*_atomic_seq`, `*_scenario_seq`, `*_vseq`) so it is obvious which level to modify.
 
@@ -106,27 +101,16 @@ endclass
 
   ## Quiz Yourself
 
-  <Quiz questions={[
-    {
-      question: "Where should coverage bins that span multiple transactions live?",
-      answers: [
-        { text: "Inside each atomic sequence", correct: false },
-        { text: "Inside the scenario sequence that composes the traffic", correct: true },
-        { text: "Inside the driver", correct: false },
-        { text: "In the monitor only", correct: false }
-      ],
-      explanation: "Scenario sequences understand the higher-level intent and can sample combined behavior without polluting protocol atomics." }
-    },
-    {
-      question: "What does `p_sequencer` provide in a virtual sequence?",
-      answers: [
-        { text: "A handle to the driver", correct: false },
-        { text: "A typed handle to the virtual sequencer so you can reach agent sequencers", correct: true },
-        { text: "A shortcut to the monitor", correct: false },
-        { text: "Nothing—it is optional sugar", correct: false }
-      ],
-      explanation: "Casting `m_sequencer` to a typed `p_sequencer` exposes member handles (e.g., `cfg_sqr`) used to launch scenario sequences." }
-    }
-  ]} />
+  **Where should coverage bins that span multiple transactions live?**
+  - Inside each atomic sequence
+  - Inside the scenario sequence that composes the traffic *(correct)*
+  - Inside the driver
+  - In the monitor only
+
+  **What does `p_sequencer` provide in a virtual sequence?**
+  - A handle to the driver
+  - A typed handle to the virtual sequencer so you can reach agent sequencers *(correct)*
+  - A shortcut to the monitor
+  - Nothing—it is optional sugar
 
 </InfoPage>

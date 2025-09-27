@@ -4,18 +4,6 @@ description: "Model DUT registers once, drive them through any bus, and balance 
 flashcards: "A-UVM-4_RAL"
 ---
 
-import dynamic from 'next/dynamic';
-import { InteractiveCode } from '@/components/ui';
-
-const VisualizationPlaceholder = () => (
-  <div className="flex h-48 items-center justify-center">Loading visualization...</div>
-);
-
-const UvmTestbenchVisualizer = dynamic(
-  () => import('@/components/diagrams/UvmTestbenchVisualizer'),
-  { ssr: false, loading: () => <VisualizationPlaceholder /> },
-);
-
 ## Quick Take
 - **What it is:** RAL turns the DUT register map into reusable objects (`uvm_reg`, `uvm_reg_block`) that sequences can read, write, poke, or peek.
 - **Why it matters:** One model feeds block-, subsystem-, and SoC-level tests while staying aligned with the spec—no more hand-coded addresses.
@@ -32,10 +20,8 @@ const UvmTestbenchVisualizer = dynamic(
 
 These classes are usually generated from IP-XACT/SystemRDL so verification, design, and documentation reference the same spec.
 
-<InteractiveCode
-  language="systemverilog"
-  fileName="codec_ral.sv"
-  code={`class codec_status_reg extends uvm_reg;
+```systemverilog
+class codec_status_reg extends uvm_reg;
   rand uvm_reg_field state;
   function new(); super.new("codec_status_reg", 8, UVM_NO_COVERAGE); endfunction
   virtual function void build();
@@ -67,20 +53,18 @@ class codec_reg_seq extends uvm_sequence#(uvm_reg_item);
     blk.status.read(s, data, UVM_FRONTDOOR);
     blk.status.peek(s, data); // backdoor read
   endtask
-endclass`}
-  explanationSteps={[
-    { target: "1-9", title: "Define the register", explanation: "Encapsulate width, access policy, and reset semantics." },
-    { target: "11-22", title: "Build the block", explanation: "Place registers into an address map so bus agents can discover them." },
-    { target: "24-33", title: "Sequence usage", explanation: "Same model supports frontdoor (bus) and backdoor (direct) transactions." }
-  ]}
-/>
+endclass
+```
+
+**Why this matters**
+- Lines 1-9 capture field configuration, access policy, and reset behaviour in one place.
+- Lines 11-23 place the register into an address map so bus agents can discover it.
+- Lines 25-33 show a reusable sequence exercising both frontdoor and backdoor paths.
 
 ### The adapter bridge
 `uvm_reg_adapter` is the translator between generic `uvm_reg_bus_op` requests and your bus transaction item (e.g., `axi_item`). It converts read/write intent into an actual sequence item and back. Each bus protocol needs its own adapter, often shared across environments.
 
 ### Visualize the flow
-<UvmTestbenchVisualizer />
-
 Frontdoor traffic flows through the bus agent and confirms interconnect logic; backdoor operations bypass the bus—ideal for quick initialization or scoreboards.
 
 <figure className="my-8 flex flex-col items-center space-y-4">

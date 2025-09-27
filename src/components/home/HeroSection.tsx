@@ -6,7 +6,7 @@ import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/Button';
 import TestimonialsCarousel from './TestimonialsCarousel';
 import StatsDisplay from './StatsDisplay';
-import { ArrowRight } from 'lucide-react';
+import { ArrowRight, Compass } from 'lucide-react';
 import Link from 'next/link';
 
 const VisualizationFallback = () => (
@@ -25,6 +25,21 @@ const taglines = [
   "The Ultimate Open-Source UVM Learning Hub",
 ];
 
+const highlights = [
+  {
+    title: 'Curated tiers',
+    description: 'Progress through four tiers that mirror real verification onboarding, from fundamentals to SoC strategy.',
+  },
+  {
+    title: 'Hands-on reinforcement',
+    description: 'Pair every concept with labs, flashcards, and quizzes so the knowledge sticks beyond the page.',
+  },
+  {
+    title: 'Reusable playbooks',
+    description: 'Lift checklists, diagrams, and best practices directly into your next project without hunting for context.',
+  },
+];
+
 const HeroSection = () => {
   const [taglineIndex, setTaglineIndex] = React.useState(0);
 
@@ -36,66 +51,94 @@ const HeroSection = () => {
   }, []);
 
   return (
-    <section className="relative w-full min-h-screen bg-[color:var(--blueprint-bg)] text-[color:var(--blueprint-foreground)] overflow-hidden py-24">
-      <div className="absolute inset-0 hero-gradient opacity-60" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(100,255,218,0.25),transparent_55%)]" />
-      <div className="absolute inset-0 bg-gradient-to-b from-[#050B1A]/70 via-transparent to-[#050B1A]" />
-
-      <div className="relative z-10 flex flex-col items-center gap-14 px-6">
+    <section className="relative isolate overflow-hidden bg-background text-foreground">
+      <div
+        className="absolute inset-x-0 top-0 h-64 bg-gradient-to-b from-primary/15 via-primary/5 to-transparent"
+        aria-hidden
+      />
+      <div
+        className="absolute -top-24 left-1/2 h-80 w-[55%] -translate-x-1/2 rounded-full bg-accent/15 blur-3xl"
+        aria-hidden
+      />
+      <div className="mx-auto flex max-w-6xl flex-col gap-16 px-6 pb-20 pt-28 lg:grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,0.95fr)] lg:items-center">
         <motion.div
-          initial={{ opacity: 0, y: -24 }}
+          initial={{ opacity: 0, y: 24 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8 }}
-          className="glass-card glow-border max-w-5xl w-full px-8 py-12 text-center"
+          transition={{ duration: 0.7 }}
+          className="flex flex-col gap-8 text-center lg:text-left"
         >
-          <motion.h1
-            className="text-5xl md:text-7xl font-bold mb-4 bg-clip-text text-transparent bg-gradient-to-b from-white/95 to-white/60"
-            initial={{ opacity: 0, y: -30 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8 }}
-          >
-            Master SystemVerilog & UVM
-          </motion.h1>
-
-          <AnimatePresence mode="wait">
-            <motion.p
-              key={taglineIndex}
-              initial={{ opacity: 0, y: -20 }}
+          <span className="inline-flex items-center gap-2 self-center rounded-full border border-primary/20 bg-primary/10 px-4 py-1 text-sm font-medium text-primary lg:self-start">
+            <Compass className="h-4 w-4" /> Complete SV/UVM roadmap
+          </span>
+          <div className="space-y-6">
+            <motion.h1
+              className="text-4xl font-bold leading-tight tracking-tight sm:text-5xl md:text-6xl"
+              initial={{ opacity: 0, y: 18 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 20 }}
-              transition={{ duration: 0.5 }}
-              className="text-xl md:text-2xl mb-8 text-[color:var(--blueprint-foreground)]/80 max-w-3xl mx-auto"
+              transition={{ duration: 0.6, delay: 0.1 }}
             >
-              {taglines[taglineIndex]}
-            </motion.p>
-          </AnimatePresence>
+              Master SystemVerilog & UVM with confidence
+            </motion.h1>
+            <AnimatePresence mode="wait">
+              <motion.p
+                key={taglineIndex}
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                transition={{ duration: 0.4 }}
+                className="mx-auto max-w-2xl text-lg text-muted-foreground sm:text-xl lg:mx-0"
+              >
+                {taglines[taglineIndex]}
+              </motion.p>
+            </AnimatePresence>
+          </div>
 
           <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.5, delay: 0.3 }}
+            className="flex flex-col items-center gap-3 sm:flex-row sm:justify-start"
+            initial={{ opacity: 0, y: 18 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: 0.2 }}
           >
             <Button size="lg" asChild>
-              <Link
-                href="/quiz/placement"
-                className="btn-gradient text-white font-bold text-lg px-8 py-6 rounded-full shadow-blueprint"
-              >
-                Take Skill Level Assessment
-                <ArrowRight className="ml-2" />
+              <Link href="/quiz/placement">
+                Take skill assessment
+                <ArrowRight className="ml-2 h-5 w-5" />
               </Link>
             </Button>
+            <Button size="lg" variant="secondary" asChild>
+              <Link href="/curriculum">Explore the curriculum</Link>
+            </Button>
           </motion.div>
+
+          <dl className="grid gap-4 sm:grid-cols-2">
+            {highlights.map((item) => (
+              <div
+                key={item.title}
+                className="rounded-2xl border border-border/60 bg-card/80 p-4 text-left shadow-sm"
+              >
+                <dt className="text-sm font-semibold text-primary">{item.title}</dt>
+                <dd className="mt-2 text-sm text-muted-foreground">{item.description}</dd>
+              </div>
+            ))}
+          </dl>
         </motion.div>
 
         <motion.div
-          className="glass-card max-w-4xl w-full px-4 py-6"
-          initial={{ opacity: 0, y: 50 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8, delay: 0.6 }}
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.6, delay: 0.2 }}
+          className="relative"
         >
-          <InteractiveUvmArchitectureDiagram />
+          <div className="relative rounded-3xl border border-border/60 bg-card/80 p-4 shadow-lg shadow-primary/10">
+            <InteractiveUvmArchitectureDiagram />
+          </div>
+          <p className="mt-4 text-center text-xs text-muted-foreground">
+            Explore the verification stack interactively—every node links to deeper lessons inside the curriculum.
+          </p>
         </motion.div>
+      </div>
 
+      <div className="mx-auto flex max-w-6xl flex-col gap-10 px-6 pb-24">
         <StatsDisplay />
         <TestimonialsCarousel />
       </div>

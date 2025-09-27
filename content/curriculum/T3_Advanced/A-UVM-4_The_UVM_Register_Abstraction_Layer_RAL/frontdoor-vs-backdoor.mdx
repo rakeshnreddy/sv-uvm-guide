@@ -1,111 +1,69 @@
 import { InfoPage } from "@/components/templates/InfoPage";
-import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
-  title: "Frontdoor vs. Backdoor RAL Access | Advanced UVM RAL",
-  description: "Balance realism and speed by choosing the right path for each register operation, and instrument both for coverage and debug.",
+  title: "Frontdoor vs. Backdoor Access | Advanced UVM RAL",
+  description: "Blend frontdoor realism with backdoor speed—learn when to poke directly and when to march through the bus for accurate checking.",
 };
 
 <InfoPage
   title="Frontdoor vs. Backdoor Access"
-  uvm_concept_tags={["frontdoor", "backdoor", "uvm_reg"]}
+  uvm_concept_tags={["frontdoor", "backdoor", "uvm_reg_sequence"]}
 >
 
   ## Elevator Pitch
 
-  Frontdoor hits the bus—great for validating interconnect and timing. Backdoor bypasses it—perfect for fast init, scoreboards, or unblocking deadlocks. Advanced environments blend both depending on phase, performance targets, and coverage goals.
+  Frontdoor access flows through the bus agent, exercising arbitration and verifying protocol logic. Backdoor access bypasses the bus for speed or early initialization. Most teams blend both: backdoor for bring-up, frontdoor for spot checks and coverage.
 
-  ## Decision Matrix
+  ## Trade-off Table
 
-  | Scenario | Preferred Path | Why |
+  | Mode | Pros | Cons |
   | --- | --- | --- |
-  | Power-on reset checks | Backdoor for initial load, then frontdoor for audits | Initialize quickly, then confirm bus connectivity |
-  | Bus protocol validation | Frontdoor | Exercises adapters, sequencers, monitors |
-  | Scoreboard mirroring | Backdoor `peek`/`poke` | Mirrors without altering DUT timing |
-  | Post-silicon bring-up | Frontdoor | Matches firmware behaviour |
-  | Mass register scrub | Backdoor | Faster than thousands of bus transactions |
+  | Frontdoor | Exercises full bus stack, triggers monitors/coverage, mirrors stay accurate automatically | Slower, requires adapters, may need elaborate sequences |
+  | Backdoor  | Instant pokes for reset or patching state, great for scoreboards/formal | Skips protocol, risk of divergence unless you update the mirror manually |
 
-  ## Implementation Pattern
+  ## Hybrid Sequence Example
 
-  <InteractiveCode
-    language="systemverilog"
-    fileName="hybrid_sequence.sv"
-    code={`
-class hybrid_reg_seq extends uvm_sequence#(uvm_reg_item);
-  `uvm_object_utils(hybrid_reg_seq)
-  codec_block blk;
+  ```systemverilog
+  class hybrid_reg_seq extends uvm_sequence#(uvm_reg_item);
+    `uvm_object_utils(hybrid_reg_seq)
+    codec_block blk;
 
-  rand bit use_frontdoor;
+    task body();
+      uvm_status_e s;
+      // Backdoor init for speed
+      blk.control_config.poke(s, 'h1);
+      blk.status.predict('h0);
 
-  constraint c_weights { use_frontdoor dist {1 := 3, 0 := 1}; }
+      // Frontdoor read to confirm interconnect and mirrors are correct
+      uvm_reg_data_t data;
+      blk.status.read(s, data, UVM_FRONTDOOR);
+      `uvm_info(get_type_name(), $sformatf("Status read via frontdoor = %h", data), UVM_LOW)
+    endtask
+  endclass
+  ```
 
-  virtual task body();
-    uvm_status_e status;
-    uvm_reg_data_t data;
-
-    if (use_frontdoor) begin
-      blk.status.write(status, 8'h3C, UVM_FRONTDOOR);
-    end else begin
-      blk.status.poke(status, 8'h3C); // backdoor write
-    end
-
-    blk.status.mirror(status, UVM_CHECK);
-  endtask
-endclass
-    `}
-    explanationSteps={[
-      { target: "1-9", title: "Hybrid control", explanation: "Randomize which path to use—weight toward frontdoor unless speed is critical." },
-      { target: "11-21", title: "Mirror verification", explanation: "Regardless of path, mirror the register to ensure model/DUT alignment." }
-    ]}
-  />
-
-  ## Tips
-
-  - Use plusargs or config objects (`cfg.force_frontdoor`) so tests can switch modes without recompiling.
-  - When using backdoor on memories, ensure the HDL paths are stable across synth/sim flows.
-  - Log access source (front/back) in scoreboards to trace mismatches to the correct path.
-  - Guard backdoor writes with semaphores if multiple sequences might touch the same field concurrently.
-
-  <figure className="my-8 flex flex-col items-center space-y-4">
-    <img
-      src="/visuals/tier-4/frontdoor-backdoor-timeline.svg"
-      alt="Timeline comparing the latency of frontdoor AXI access and backdoor register poke"
-      className="w-full max-w-3xl rounded-2xl border border-white/10 bg-white/5 p-4"
-    />
-    <figcaption className="text-sm text-muted-foreground">
-      Frontdoor validates the full bus stack, while the backdoor shortcut delivers rapid initialization—blend both paths to balance realism and throughput.
-    </figcaption>
-  </figure>
+  **Hybrid strategy**
+  - Lines 4-9: backdoor poke + manual predict keep the mirror up to date after instantaneous writes.
+  - Lines 11-16: follow with a frontdoor read to validate the bus path and ensure monitors/predictors saw the change.
 
   ## Checklist
 
-  - [ ] Each register has valid HDL paths if backdoor is enabled.
-  - [ ] Adapters and predictors are configured for frontdoor operations.
-  - [ ] Tests clearly document when they switch paths and why.
+  - [ ] Backdoor writes update the mirror (via `predict` or `mirror`) so scoreboards do not flag false deltas.
+  - [ ] Critical coverage goals (e.g., bus bursts) use frontdoor sequences.
+  - [ ] Regression plan documents which tests run in hybrid mode versus pure frontdoor.
 
   ## Quiz Yourself
 
-  <Quiz questions={[
-    {
-      question: "Why mirror after a backdoor poke?",
-      answers: [
-        { text: "To update the register model's mirror value", correct: true },
-        { text: "To randomize the field", correct: false },
-        { text: "To trigger callbacks", correct: false },
-        { text: "It's not needed", correct: false }
-      ],
-      explanation: "Backdoor writes bypass the frontdoor mirroring mechanism—call `mirror` or `update` to keep the model consistent." }
-    },
-    {
-      question: "When is frontdoor mandatory?",
-      answers: [
-        { text: "When validating bus protocols or firmware-equivalent flows", correct: true },
-        { text: "During reset", correct: false },
-        { text: "During scoreboarding", correct: false },
-        { text: "Never", correct: false }
-      ],
-      explanation: "Only frontdoor accesses exercise the actual bus logic and arbitration seen by firmware." }
-    }
-  ]} />
+  **Why combine frontdoor and backdoor access?**
+  - To get realistic bus coverage while keeping bring-up fast *(correct)*
+  - Because adapters are optional
+  - To avoid writing predictors
+  - To replace bit-bash sequences
+
+  **Backdoor writes require…**
+  - No extra steps
+  - Updating the mirror manually *(correct)*
+  - Turning off monitors
+  - Factory overrides
 
 </InfoPage>

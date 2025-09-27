@@ -9,8 +9,19 @@ const flagsEnabled =
 
 const describeOrSkip = flagsEnabled ? test.describe.skip : test.describe;
 
+let serverFlagsForceOn = false;
+
 describeOrSkip('feature flag defaults', () => {
+  test.beforeAll(async ({ request }) => {
+    const res = await request.get('/api/feature-flags');
+    if (res.ok()) {
+      const data = await res.json();
+      serverFlagsForceOn = Object.values(data).some(Boolean);
+    }
+  });
+
   test('dashboard route returns 404 when tracking flag is off', async ({ page }) => {
+    test.skip(serverFlagsForceOn, 'Feature flags are forced on for this environment');
     const response = await page.goto('/dashboard');
 
     expect(response?.status()).toBe(404);
@@ -18,6 +29,7 @@ describeOrSkip('feature flag defaults', () => {
   });
 
   test('community route returns 404 when community flag is off', async ({ page }) => {
+    test.skip(serverFlagsForceOn, 'Feature flags are forced on for this environment');
     const response = await page.goto('/community');
 
     expect(response?.status()).toBe(404);
@@ -25,6 +37,7 @@ describeOrSkip('feature flag defaults', () => {
   });
 
   test('notifications route falls back to placeholder copy', async ({ page }) => {
+    test.skip(serverFlagsForceOn, 'Feature flags are forced on for this environment');
     await page.goto('/notifications');
 
     await expect(
@@ -33,6 +46,7 @@ describeOrSkip('feature flag defaults', () => {
   });
 
   test('projects route surfaces placeholder guidance by default', async ({ page }) => {
+    test.skip(serverFlagsForceOn, 'Feature flags are forced on for this environment');
     await page.goto('/projects');
 
     await expect(

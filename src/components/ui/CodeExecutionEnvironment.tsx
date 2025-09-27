@@ -27,7 +27,7 @@ export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> =
   const waveRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (waveform && waveRef.current) {
+    if (waveform && waveRef.current && typeof WaveDrom?.renderWaveElement === 'function') {
       WaveDrom.renderWaveElement(waveRef.current, waveform);
     }
   }, [waveform]);
@@ -104,7 +104,10 @@ export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> =
       </div>
       <div className="output-section mb-4">
         <h3 className="text-lg font-semibold mb-2 text-foreground/90">Simulation Output</h3>
-        <pre className="bg-black text-white p-4 rounded-md text-sm whitespace-pre-wrap font-mono h-64 overflow-y-auto">
+        <pre
+          className="bg-black text-white p-4 rounded-md text-sm whitespace-pre-wrap font-mono h-64 overflow-y-auto"
+          data-testid="simulation-output"
+        >
           {output || 'Click "Run Simulation" to see the output.'}
         </pre>
       </div>

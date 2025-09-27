@@ -1,5 +1,4 @@
 import { InfoPage } from "@/components/templates/InfoPage";
-import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
   title: "uvm_monitor & Analysis Fabric | Advanced UVM Sequencing",
@@ -17,53 +16,49 @@ export const metadata = {
 
   ## Monitor Blueprint
 
-  <InteractiveCode
-    language="systemverilog"
-    fileName="axi_monitor.sv"
-    code={`
-class axi_monitor extends uvm_monitor;
-  `uvm_component_utils(axi_monitor)
+  ```systemverilog
+  class axi_monitor extends uvm_monitor;
+    `uvm_component_utils(axi_monitor)
 
-  virtual axi_if vif;
-  uvm_analysis_port#(axi_tr) ap;
+    virtual axi_if vif;
+    uvm_analysis_port#(axi_tr) ap;
 
-  function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    ap = new("ap", this);
-    if (!uvm_config_db#(virtual axi_if)::get(this, "", "vif", vif))
-      `uvm_fatal("MON", "No virtual interface supplied")
-  endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      ap = new("ap", this);
+      if (!uvm_config_db#(virtual axi_if)::get(this, "", "vif", vif))
+        `uvm_fatal("MON", "No virtual interface supplied")
+    endfunction
 
-  task run_phase(uvm_phase phase);
-    forever begin
-      axi_tr tr = axi_tr::type_id::create("tr");
-      collect_address_phase(tr);
-      collect_data_phase(tr);
-      ap.write(tr);
-    end
-  endtask
+    task run_phase(uvm_phase phase);
+      forever begin
+        axi_tr tr = axi_tr::type_id::create("tr");
+        collect_address_phase(tr);
+        collect_data_phase(tr);
+        ap.write(tr);
+      end
+    endtask
 
-  task collect_address_phase(axi_tr tr);
-    @(posedge vif.aclk iff vif.awvalid && vif.awready);
-    tr.addr = vif.awaddr;
-    tr.len  = vif.awlen;
-    tr.op   = WRITE;
-  endtask
+    task collect_address_phase(axi_tr tr);
+      @(posedge vif.aclk iff vif.awvalid && vif.awready);
+      tr.addr = vif.awaddr;
+      tr.len  = vif.awlen;
+      tr.op   = WRITE;
+    endtask
 
-  task collect_data_phase(axi_tr tr);
-    repeat (tr.len + 1) begin
-      @(posedge vif.aclk iff vif.wvalid && vif.wready);
-      tr.data_q.push_back(vif.wdata);
-    end
-  endtask
-endclass
-    `}
-    explanationSteps={[
-      { target: "1-11", title: "Setup", explanation: "Monitors grab a virtual interface and create an analysis port for downstream consumers." },
-      { target: "12-20", title: "Run loop", explanation: "Each transaction is reconstructed, then written to the analysis port." },
-      { target: "22-35", title: "Phase capture", explanation: "Dedicated tasks make it obvious which protocol phases are observed and when." }
-    ]}
-  />
+    task collect_data_phase(axi_tr tr);
+      repeat (tr.len + 1) begin
+        @(posedge vif.aclk iff vif.wvalid && vif.wready);
+        tr.data_q.push_back(vif.wdata);
+      end
+    endtask
+  endclass
+  ```
+
+  **Implementation highlights**
+  - Lines 2-12 show the monitor claiming a virtual interface and instantiating an analysis port so downstream components can subscribe.
+  - Lines 14-23 reconstruct each transaction and publish it exactly once through `ap.write()`.
+  - Lines 25-37 isolate address/data sampling into tasks, making the protocol timing crystal clear.
 
   ## Best Practices
 
@@ -81,28 +76,17 @@ endclass
 
   ## Quiz Yourself
 
-  <Quiz questions={[
-    {
-      question: "What happens if the monitor misses `awvalid`/`awready`?",
-      answers: [
-        { text: "The driver retries automatically", correct: false },
-        { text: "The transaction loses its address/length context", correct: true },
-        { text: "Nothing—data beats carry the info", correct: false },
-        { text: "The sequencer reports an error", correct: false }
-      ],
-      explanation: "Without the address phase, scoreboards and coverage have no idea what the subsequent data belongs to." }
-    },
-    {
-      question: "Where should monitors obtain their virtual interface?",
-      answers: [
-        { text: "By importing a global handle", correct: false },
-        { text: "From the config DB in `build_phase`", correct: true },
-        { text: "From the driver directly", correct: false },
-        { text: "They do not need one", correct: false }
-      ],
-      explanation: "Config DB keeps interface binding centralized and flexible." }
-    }
-  ]} />
+  **What happens if the monitor misses `awvalid`/`awready`?**
+  - The driver retries automatically
+  - The transaction loses its address/length context *(correct)*
+  - Nothing—data beats carry the info
+  - The sequencer reports an error
+
+  **Where should monitors obtain their virtual interface?**
+  - By importing a global handle
+  - From the config DB in `build_phase` *(correct)*
+  - From the driver directly
+  - They do not need one
 
   > **Keep going:** Once your monitor publishes transactions, plug them into the advanced scoreboard patterns in this module and sample them for functional coverage using the Tier-2 refresher on [coverage options](/curriculum/T2_Intermediate/I-SV-3_Functional_Coverage/coverage-options).
 

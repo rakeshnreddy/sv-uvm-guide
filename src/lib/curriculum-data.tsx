@@ -435,9 +435,9 @@ export const curriculumData: Module[] = [
             "description": "Choose the right prediction strategy so your RAL mirror tracks DUT state without redundant bus traffic."
           },
           {
-            "title": "Frontdoor vs. Backdoor RAL Access | Advanced UVM RAL",
+            "title": "Frontdoor vs. Backdoor Access | Advanced UVM RAL",
             "slug": "frontdoor-vs-backdoor",
-            "description": "Balance realism and speed by choosing the right path for each register operation, and instrument both for coverage and debug."
+            "description": "Blend frontdoor realism with backdoor speed—learn when to poke directly and when to march through the bus for accurate checking."
           }
         ]
       }
@@ -466,7 +466,7 @@ export const curriculumData: Module[] = [
           {
             "title": "E-DBG-1: Advanced UVM Debug Methodologies",
             "slug": "index",
-            "description": "Instrument complex UVM environments with reporting, objections, and transaction timelines so failures localize themselves."
+            "description": "Instrument your UVM environment with traceability, telemetry, and heuristics so complex failures become explainable fast."
           },
           {
             "title": "Effective Debug Techniques in UVM | The Professional Verification Craft",
@@ -524,7 +524,7 @@ export const curriculumData: Module[] = [
           {
             "title": "E-SOC-1: SoC-Level Verification Strategies",
             "slug": "index",
-            "description": "Coordinate vertical reuse, system scenarios, and cross-domain methodologies to validate complete SoCs."
+            "description": "Scale block-level infrastructure to SoC: plan reuse, configure virtual platforms, and coordinate cross-team stimulus."
           },
           {
             "title": "Coverage Closure and Metrics | The Professional Verification Craft",

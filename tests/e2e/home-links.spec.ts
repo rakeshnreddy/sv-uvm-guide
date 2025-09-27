@@ -1,4 +1,5 @@
-import { test, expect } from '@playwright/test';
+import { test } from '@playwright/test';
+import { assertNavigation } from './utils/navigation';
 
 // Ensure that each internal link on the home page is reachable
 // and supports navigating back to the starting page.
@@ -10,19 +11,24 @@ test('home page internal links are navigable and support back navigation', async
     const set = new Set<string>();
     anchors.forEach(a => {
       const href = a.getAttribute('href');
-      if (href && !href.startsWith('#')) {
-        set.add(href);
+      const target = a.getAttribute('target');
+      if (!href) {
+        return;
       }
+      if (href.startsWith('#')) {
+        return;
+      }
+      if (target && target.toLowerCase() === '_blank') {
+        return;
+      }
+      set.add(href);
     });
     return Array.from(set);
   });
 
   for (const href of links) {
     await test.step(`checking ${href}`, async () => {
-      const response = await page.goto(href);
-      expect(response?.status()).toBeLessThan(400);
-      await page.goBack();
-      await expect(page).toHaveURL(homeUrl);
+      await assertNavigation(page, href, homeUrl);
     });
   }
 });

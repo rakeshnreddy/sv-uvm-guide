@@ -1,5 +1,4 @@
 import { InfoPage } from "@/components/templates/InfoPage";
-import { InteractiveCode, Quiz } from "@/components/ui";
 
 export const metadata = {
   title: "Sequence Arbitration and Priority | Advanced UVM Sequencing",
@@ -52,42 +51,38 @@ export const metadata = {
 
   Sequences can override these hooks to veto requests or adjust priority dynamically.
 
-  <InteractiveCode
-    language="systemverilog"
-    fileName="priority_sequence.sv"
-    code={`
-class credit_sensitive_seq extends uvm_sequence#(my_item);
-  `uvm_object_utils(credit_sensitive_seq)
+  ```systemverilog
+  class credit_sensitive_seq extends uvm_sequence#(my_item);
+    `uvm_object_utils(credit_sensitive_seq)
 
-  int unsigned credits;
+    int unsigned credits;
 
-  virtual task body();
-    forever begin
-      start_item(req);
-      if (!credits_available()) begin
-        `uvm_info("CREDIT", "Stalled: waiting for credits", UVM_MEDIUM)
-        wait (credits_available());
+    virtual task body();
+      forever begin
+        start_item(req);
+        if (!credits_available()) begin
+          `uvm_info("CREDIT", "Stalled: waiting for credits", UVM_MEDIUM)
+          wait (credits_available());
+        end
+        assert(req.randomize() with { opcode inside { READ, WRITE }; });
+        finish_item(req);
       end
-      assert(req.randomize() with { opcode inside { READ, WRITE }; });
-      finish_item(req);
-    end
-  endtask
+    endtask
 
-  virtual function bit mid_do(uvm_sequence_item this_req);
-    if (!credits_available()) begin
-      set_priority(1);                         // deprioritize when empty
-      return 0;                                // veto until credits return
-    end
-    set_priority(10);                          // prioritize when ready
-    return 1;
-  endfunction
-endclass
-    `}
-    explanationSteps={[
-      { target: "6-18", title: "Dynamic throttling", explanation: "The sequence loops forever but only proceeds when flow-control credits exist." },
-      { target: "20-28", title: "mid_do veto", explanation: "`mid_do` runs after arbitration but before `start_item()` returns. Returning `0` re-queues the request without stalling the driver." }
-    ]}
-  />
+    virtual function bit mid_do(uvm_sequence_item this_req);
+      if (!credits_available()) begin
+        set_priority(1);                         // deprioritize when empty
+        return 0;                                // veto until credits return
+      end
+      set_priority(10);                          // prioritize when ready
+      return 1;
+    endfunction
+  endclass
+  ```
+
+  **Why it matters**
+  - Lines 5-19 show the body throttling itself until credits return, preventing overrun without blocking the driver.
+  - Lines 21-29 demonstrate how `mid_do` can both change priority and veto the current grant, letting the sequencer immediately reconsider other requests.
 
   ## Debugging Starvation
 
@@ -105,27 +100,16 @@ endclass
 
   ## Quiz Yourself
 
-  <Quiz questions={[
-    {
-      question: "A sequence needs five uninterrupted beats to program a mode register. What is the best tool?",
-      answers: [
-        { text: "Increase its priority with `set_priority(10)`", correct: false },
-        { text: "Call `lock()` before the burst and `unlock()` after", correct: true },
-        { text: "Call `grab()` at the start of the test", correct: false },
-        { text: "Switch the sequencer to `SEQ_ARB_RANDOM`", correct: false }
-      ],
-      explanation: "`lock()` lets the sequence finish a short critical section while other sequences queue behind it." }
-    },
-    {
-      question: "You enabled `SEQ_ARB_WEIGHTED` but traffic is still uniform. What is missing?",
-      answers: [
-        { text: "You must override `mid_do`", correct: false },
-        { text: "Call `set_priority()` on each sequence to supply weights", correct: true },
-        { text: "Switch the driver to `try_next_item()`", correct: false },
-        { text: "Enable the command line processor", correct: false }
-      ],
-      explanation: "Weighted arbitration only reacts to the priority value assigned to each sequence via `set_priority()`." }
-    }
-  ]} />
+  **A sequence needs five uninterrupted beats to program a mode register. What is the best tool?**
+  - Increase its priority with `set_priority(10)`
+  - Call `lock()` before the burst and `unlock()` after *(correct)*
+  - Call `grab()` at the start of the test
+  - Switch the sequencer to `SEQ_ARB_RANDOM`
+
+  **You enabled `SEQ_ARB_WEIGHTED` but traffic is still uniform. What is missing?**
+  - Override `mid_do`
+  - Call `set_priority()` on each sequence to supply weights *(correct)*
+  - Switch the driver to `try_next_item()`
+  - Enable the command line processor
 
 </InfoPage>

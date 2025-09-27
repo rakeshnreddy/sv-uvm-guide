@@ -243,6 +243,7 @@ const Navbar = () => {
                     exit={{ x: '100%' }}
                     transition={{ type: 'spring', stiffness: 300, damping: 30 }}
                     className="fixed top-0 right-0 z-50 flex h-full w-4/5 max-w-sm flex-col bg-[rgba(8,15,35,0.96)] shadow-[0_20px_60px_rgba(5,10,25,0.75)] backdrop-blur-2xl"
+                    data-testid="mobile-menu"
                 >
                     <div className="flex items-center justify-between border-b border-white/10 p-4">
                       <h2 className="text-lg font-semibold">Menu</h2>

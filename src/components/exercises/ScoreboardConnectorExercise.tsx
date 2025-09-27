@@ -247,6 +247,7 @@ const ScoreboardConnectorExercise: React.FC = () => {
           className={`rounded-lg border px-4 py-3 text-sm ${statusToneStyles[statusTone]}`}
           role="status"
           aria-live="polite"
+          data-testid="status-banner"
         >
           {statusMessage}
         </div>
@@ -345,6 +346,7 @@ const ScoreboardConnectorExercise: React.FC = () => {
           className={`rounded-lg border p-4 text-sm ${feedback.passed ? 'border-emerald-400/50 bg-emerald-400/10 text-emerald-100' : 'border-amber-400/50 bg-amber-500/10 text-amber-100'}`}
           role="status"
           aria-live="polite"
+          data-testid="exercise-feedback"
         >
           <p className="text-lg font-semibold">Score: {feedback.score}%</p>
           <p className="mt-1">{feedback.message}</p>
