@@ -1,12 +1,23 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import * as d3 from 'd3';
+import { select } from 'd3-selection';
+import {
+  forceCenter,
+  forceCollide,
+  forceLink,
+  forceManyBody,
+  forceSimulation,
+  Simulation,
+  SimulationLinkDatum,
+  SimulationNodeDatum,
+} from 'd3-force';
+import { drag, D3DragEvent } from 'd3-drag';
 import { getFullKnowledgeGraph, KnowledgeGraphData, ConceptNode, RelationshipEdge } from '@/lib/knowledge-graph-engine';
 
 // Extend D3's Node and Link interfaces for our data
-interface D3Node extends d3.SimulationNodeDatum, ConceptNode {}
-interface D3Link extends d3.SimulationLinkDatum<D3Node> {
+interface D3Node extends SimulationNodeDatum, ConceptNode {}
+interface D3Link extends SimulationLinkDatum<D3Node> {
   source: string | D3Node;
   target: string | D3Node;
   type: RelationshipEdge['type'];
@@ -37,7 +48,7 @@ const KnowledgeGraphVisualizer = ({ highlightedPath = [] }: KnowledgeGraphVisual
 
   useEffect(() => {
     if (graphData && svgRef.current) {
-      const svg = d3.select(svgRef.current);
+      const svg = select(svgRef.current);
       svg.selectAll("*").remove();
 
       const width = parseInt(svg.style('width'));
@@ -46,11 +57,11 @@ const KnowledgeGraphVisualizer = ({ highlightedPath = [] }: KnowledgeGraphVisual
       const nodes: D3Node[] = JSON.parse(JSON.stringify(graphData.nodes));
       const links: D3Link[] = JSON.parse(JSON.stringify(graphData.edges));
 
-      const simulation = d3.forceSimulation(nodes)
-        .force("link", d3.forceLink(links).id((d: any) => d.id).distance(100))
-        .force("charge", d3.forceManyBody().strength(-300))
-        .force("center", d3.forceCenter(width / 2, height / 2))
-        .force("collide", d3.forceCollide().radius(30));
+      const simulation = forceSimulation<D3Node>(nodes)
+        .force("link", forceLink<D3Node, D3Link>(links).id((d: any) => d.id).distance(100))
+        .force("charge", forceManyBody().strength(-300))
+        .force("center", forceCenter(width / 2, height / 2))
+        .force("collide", forceCollide().radius(30));
 
       const link = svg.append("g")
         .selectAll("line")
@@ -61,7 +72,7 @@ const KnowledgeGraphVisualizer = ({ highlightedPath = [] }: KnowledgeGraphVisual
         .selectAll("g")
         .data(nodes)
         .join("g")
-        .call(drag(simulation) as any);
+        .call(applyDrag(simulation) as any);
 
       const circles = node.append("circle")
         .attr("r", 20)
@@ -136,19 +147,19 @@ const KnowledgeGraphVisualizer = ({ highlightedPath = [] }: KnowledgeGraphVisual
         node.attr("transform", (d: any) => `translate(${d.x},${d.y})`);
       });
 
-      function drag(simulation: d3.Simulation<D3Node, D3Link>) {
-        function dragstarted(event: d3.D3DragEvent<SVGGElement, D3Node, D3Node>, d: D3Node) {
+      function applyDrag(simulation: Simulation<D3Node, D3Link>) {
+        function dragstarted(event: D3DragEvent<SVGGElement, D3Node, D3Node>, d: D3Node) {
           if (!event.active) simulation.alphaTarget(0.3).restart();
           d.fx = d.x; d.fy = d.y;
         }
-        function dragged(event: d3.D3DragEvent<SVGGElement, D3Node, D3Node>, d: D3Node) {
+        function dragged(event: D3DragEvent<SVGGElement, D3Node, D3Node>, d: D3Node) {
           d.fx = event.x; d.fy = event.y;
         }
-        function dragended(event: d3.D3DragEvent<SVGGElement, D3Node, D3Node>, d: D3Node) {
+        function dragended(event: D3DragEvent<SVGGElement, D3Node, D3Node>, d: D3Node) {
           if (!event.active) simulation.alphaTarget(0);
           d.fx = null; d.fy = null;
         }
-        return d3.drag<SVGGElement, D3Node>().on("start", dragstarted).on("drag", dragged).on("end", dragended);
+        return drag<SVGGElement, D3Node>().on("start", dragstarted).on("drag", dragged).on("end", dragended);
       }
     }
   }, [graphData, searchTerm, highlightedPath]);

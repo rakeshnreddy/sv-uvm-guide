@@ -141,6 +141,8 @@ interface UvmPhaseSorterExerciseProps {
   initialItems?: Phase[];
 }
 
+const instructionId = 'uvm-phase-sorter-instructions';
+
 const UvmPhaseSorterExercise: React.FC<UvmPhaseSorterExerciseProps> = ({ initialItems }) => {
   const [items, setItems] = useState<Phase[]>(initialItems || []);
   const [activeItem, setActiveItem] = useState<Phase | null>(null);
@@ -288,4 +290,3 @@ const UvmPhaseSorterExercise: React.FC<UvmPhaseSorterExerciseProps> = ({ initial
 };
 
 export default UvmPhaseSorterExercise;
-  const instructionId = 'uvm-phase-sorter-instructions';

@@ -1,7 +1,9 @@
 "use client";
 
 import React, { useEffect, useRef } from 'react';
-import * as d3 from 'd3';
+import { select } from 'd3-selection';
+import { scaleLinear } from 'd3-scale';
+import { lineRadial } from 'd3-shape';
 
 interface Skill {
   skill: string;
@@ -23,7 +25,7 @@ export const SkillMatrixVisualizer = () => {
   useEffect(() => {
     if (!svgRef.current) return;
 
-    const svg = d3.select(svgRef.current);
+    const svg = select(svgRef.current);
     const width = 400;
     const height = 400;
     const margin = { top: 50, right: 50, bottom: 50, left: 50 };
@@ -38,7 +40,7 @@ export const SkillMatrixVisualizer = () => {
 
     const g = svg.append('g').attr('transform', `translate(${width / 2}, ${height / 2})`);
 
-    const rScale = d3.scaleLinear().range([0, radius]).domain([0, 100]);
+    const rScale = scaleLinear().range([0, radius]).domain([0, 100]);
 
     // Draw grid lines (cobweb)
     const gridLevels = [25, 50, 75, 100];
@@ -78,7 +80,7 @@ export const SkillMatrixVisualizer = () => {
       .style('fill', 'rgba(255, 255, 255, 0.8)');
 
     // Draw the data shape
-    const radarLine = d3.lineRadial<Skill>()
+    const radarLine = lineRadial<Skill>()
       .radius(d => rScale(d.level))
       .angle((d, i) => i * angleSlice);
 

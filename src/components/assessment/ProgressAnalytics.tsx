@@ -1,7 +1,11 @@
 "use client";
 
 import React, { useEffect, useRef } from 'react';
-import * as d3 from 'd3';
+import { select } from 'd3-selection';
+import { scaleBand, scaleLinear, scaleTime } from 'd3-scale';
+import { axisBottom, axisLeft } from 'd3-axis';
+import { extent, max } from 'd3-array';
+import { line } from 'd3-shape';
 
 // Mock Data
 const completionData = [
@@ -36,16 +40,16 @@ export const ProgressAnalytics = () => {
   // Bar Chart for Module Completion
   useEffect(() => {
     if (!barChartRef.current) return;
-    const svg = d3.select(barChartRef.current);
+    const svg = select(barChartRef.current);
     const width = 350, height = 200, margin = { top: 20, right: 20, bottom: 30, left: 40 };
 
     svg.selectAll('*').remove();
 
-    const x = d3.scaleBand().domain(completionData.map(d => d.module)).range([margin.left, width - margin.right]).padding(0.1);
-    const y = d3.scaleLinear().domain([0, 100]).range([height - margin.bottom, margin.top]);
+    const x = scaleBand().domain(completionData.map(d => d.module)).range([margin.left, width - margin.right]).padding(0.1);
+    const y = scaleLinear().domain([0, 100]).range([height - margin.bottom, margin.top]);
 
-    svg.append('g').attr('transform', `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x));
-    svg.append('g').attr('transform', `translate(${margin.left},0)`).call(d3.axisLeft(y));
+    svg.append('g').attr('transform', `translate(0,${height - margin.bottom})`).call(axisBottom(x));
+    svg.append('g').attr('transform', `translate(${margin.left},0)`).call(axisLeft(y));
 
     svg.append('g')
       .selectAll('rect')
@@ -61,18 +65,18 @@ export const ProgressAnalytics = () => {
   // Line Chart for Engagement
   useEffect(() => {
     if (!lineChartRef.current) return;
-    const svg = d3.select(lineChartRef.current);
+    const svg = select(lineChartRef.current);
     const width = 350, height = 200, margin = { top: 20, right: 20, bottom: 30, left: 40 };
 
     svg.selectAll('*').remove();
 
-    const x = d3.scaleTime().domain(d3.extent(engagementData, d => d.date) as [Date, Date]).range([margin.left, width - margin.right]);
-    const y = d3.scaleLinear().domain([0, d3.max(engagementData, d => d.minutes) as number]).range([height - margin.bottom, margin.top]);
+    const x = scaleTime().domain(extent(engagementData, d => d.date) as [Date, Date]).range([margin.left, width - margin.right]);
+    const y = scaleLinear().domain([0, max(engagementData, d => d.minutes) as number]).range([height - margin.bottom, margin.top]);
 
-    svg.append('g').attr('transform', `translate(0,${height - margin.bottom})`).call(d3.axisBottom(x).ticks(5));
-    svg.append('g').attr('transform', `translate(${margin.left},0)`).call(d3.axisLeft(y));
+    svg.append('g').attr('transform', `translate(0,${height - margin.bottom})`).call(axisBottom(x).ticks(5));
+    svg.append('g').attr('transform', `translate(${margin.left},0)`).call(axisLeft(y));
 
-    const line = d3.line<{ date: Date, minutes: number }>()
+    const lineGenerator = line<{ date: Date, minutes: number }>()
       .x(d => x(d.date))
       .y(d => y(d.minutes));
 
@@ -81,7 +85,7 @@ export const ProgressAnalytics = () => {
       .attr('fill', 'none')
       .attr('stroke', 'rgba(59, 130, 246, 1)')
       .attr('stroke-width', 2)
-      .attr('d', line);
+      .attr('d', lineGenerator);
   }, []);
 
   return (

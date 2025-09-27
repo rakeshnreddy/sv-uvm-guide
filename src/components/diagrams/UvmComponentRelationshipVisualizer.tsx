@@ -1,6 +1,17 @@
 "use client";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import * as d3 from 'd3';
+import { select } from 'd3-selection';
+import {
+  forceCenter,
+  forceLink,
+  forceManyBody,
+  forceSimulation,
+  Simulation,
+  SimulationNodeDatum,
+} from 'd3-force';
+import { drag as d3Drag } from 'd3-drag';
+import { easeLinear } from 'd3-ease';
+import 'd3-transition';
 import { uvmComponents, uvmConnections } from './uvm-data-model';
 import { Button } from '@/components/ui/Button';
 
@@ -91,14 +102,16 @@ const UvmComponentRelationshipVisualizer = () => {
     return metrics;
   }, [linksFiltered]);
 
-  const nodes: (d3.SimulationNodeDatum & {
+  type GraphNode = SimulationNodeDatum & {
     id: string;
     name: string;
     type: string;
     description: string;
     parent?: string;
     children?: string[];
-  })[] = useMemo(() => nodesFiltered.map(c => ({ ...c })), [nodesFiltered]);
+  };
+
+  const nodes: GraphNode[] = useMemo(() => nodesFiltered.map(c => ({ ...c })), [nodesFiltered]);
 
   const links = useMemo(() => {
     const phaseCount: Record<string, number> = {};
@@ -151,8 +164,7 @@ const UvmComponentRelationshipVisualizer = () => {
     const width = 800;
     const height = 600;
 
-    const svg = d3
-      .select(svgRef.current)
+    const svg = select(svgRef.current)
       .attr('viewBox', `0 0 ${width} ${height}`)
       .attr('role', 'img')
       .attr('aria-label', 'UVM component relationships')
@@ -172,11 +184,10 @@ const UvmComponentRelationshipVisualizer = () => {
       .attr('d', 'M0,-5L10,0L0,5')
       .attr('fill', 'context-stroke');
 
-    const simulation = d3
-      .forceSimulation(nodes)
-      .force('link', d3.forceLink(links).id((d: any) => d.id).distance(100))
-      .force('charge', d3.forceManyBody().strength(-150))
-      .force('center', d3.forceCenter(width / 2, height / 2));
+    const simulation = forceSimulation<GraphNode>(nodes)
+      .force('link', forceLink(links).id((d: any) => d.id).distance(100))
+      .force('charge', forceManyBody().strength(-150))
+      .force('center', forceCenter(width / 2, height / 2));
 
     const link = svg.append('g')
       .attr('stroke-opacity', 0.6)
@@ -325,7 +336,7 @@ const UvmComponentRelationshipVisualizer = () => {
         circle
           .transition()
           .duration(800)
-          .ease(d3.easeLinear)
+          .ease(easeLinear)
           .attr('cx', to.x || 0)
           .attr('cy', to.y || 0)
           .on('end', () => {
@@ -337,7 +348,7 @@ const UvmComponentRelationshipVisualizer = () => {
       step();
     }
 
-    function drag(simulation: d3.Simulation<any, any>) {
+    function drag(simulation: Simulation<GraphNode, undefined>) {
       function dragstarted(event: any) {
         if (!event.active) simulation.alphaTarget(0.3).restart();
         event.subject.fx = event.subject.x;
@@ -355,7 +366,7 @@ const UvmComponentRelationshipVisualizer = () => {
         event.subject.fy = null;
       }
 
-      return d3.drag()
+      return d3Drag<SVGCircleElement, GraphNode>()
         .on('start', dragstarted)
         .on('drag', dragged)
         .on('end', dragended);

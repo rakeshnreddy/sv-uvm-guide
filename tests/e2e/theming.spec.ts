@@ -22,8 +22,8 @@ test.describe('Theme and Styling Verification', () => {
 
     // Check light theme
     await expect(page.locator('body')).not.toHaveAttribute('class', 'dark');
-    await expect(interactiveCode).toHaveCSS('background-color', 'rgba(255, 255, 255, 0.1)');
-    await expect(interactiveCode).toHaveCSS('border-color', 'rgba(255, 255, 255, 0.2)');
+    await expect(interactiveCode).toHaveCSS('background-color', 'rgba(2, 6, 23, 0.05)');
+    await expect(interactiveCode).toHaveCSS('border-color', 'rgba(203, 213, 225, 0.6)');
   });
 });
 

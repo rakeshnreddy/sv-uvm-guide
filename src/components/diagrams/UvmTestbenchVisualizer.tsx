@@ -1,7 +1,14 @@
 'use client';
 
 import React, { useEffect, useRef } from 'react';
-import * as d3 from 'd3';
+import { select } from 'd3-selection';
+import {
+  forceCenter,
+  forceLink,
+  forceManyBody,
+  forceSimulation,
+  SimulationNodeDatum,
+} from 'd3-force';
 import { uvmComponents, uvmConnections } from './uvm-data-model';
 import { UvmComponent } from './uvm-data-model';
 
@@ -14,15 +21,15 @@ const UvmTestbenchVisualizer = () => {
     const width = svgRef.current.clientWidth;
     const height = svgRef.current.clientHeight;
 
-    const svg = d3.select(svgRef.current);
+    const svg = select(svgRef.current);
     // Clear previous renders
     svg.selectAll('*').remove();
 
     // 1. Set up a force simulation
-    const simulation = d3.forceSimulation(uvmComponents as d3.SimulationNodeDatum[])
-      .force('link', d3.forceLink(uvmConnections).id(d => (d as UvmComponent).id).distance(100))
-      .force('charge', d3.forceManyBody().strength(-300))
-      .force('center', d3.forceCenter(width / 2, height / 2));
+    const simulation = forceSimulation(uvmComponents as SimulationNodeDatum[])
+      .force('link', forceLink(uvmConnections).id(d => (d as UvmComponent).id).distance(100))
+      .force('charge', forceManyBody().strength(-300))
+      .force('center', forceCenter(width / 2, height / 2));
 
     // 2. Create links (lines)
     const link = svg.append('g')

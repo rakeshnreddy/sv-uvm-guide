@@ -116,6 +116,11 @@
 **Effort:** M
 **Dependencies:** None
 
+**Status (2025-10-09):**
+- Replaced every `import * as d3` usage across `src/components/diagrams`, `src/components/assessment`, `src/components/animations`, `src/components/knowledge`, `src/hooks/useZoomPan.ts`, and `src/components/ui/InteractiveCode.tsx` with precise module imports (e.g., `d3-selection`, `d3-scale`, `d3-force`).
+- Removed the fallback dynamic `import('d3')` in `InteractiveCode` in favor of tree-shakeable module imports to keep the lazy-loaded surface lightweight.
+- Next step: capture bundle stats after the change to quantify the delta and ensure no regressions in runtime behaviour.
+
 #### [P3] Standardize on a Single Charting Library
 **Why:** The project uses both `d3` and `recharts`, which is redundant. Standardizing on one will simplify the codebase and reduce bundle size.
 **Scope:** All chart components.
@@ -157,6 +162,10 @@
 **Dependencies:** None
 
 ### Milestone 3: Local Dev & Navigation
+
+**Progress (2025-10-09):** Moved the exercise accessibility helpers (`instructionId` constants) ahead of their usages so the curriculum pages no longer trip runtime reference errors when the interactive widgets mount lazily.
+
+**Progress (2025-10-10):** Brought the `InteractiveCode` shell in line with the design system by swapping to theme-aware background and border tokens and tightened the Playwright theming spec to assert the light/dark contrast expectations that guard the new styles.
 
 #### [D1] Fix SSR `window is not defined` Error
 **Why:** A `ReferenceError: window is not defined` in `InteractiveCode.tsx` breaks server-side rendering for all curriculum pages, causing 500 errors and making local development impossible.
@@ -202,6 +211,8 @@
 ## Next
 
 ### Milestone 4: Maintainability
+
+**Progress (2025-10-09):** Realigned the Playwright exercise-flow specs with the latest UI copy (`Shuffle Again`, `Reset Board`, contextual feedback text) so those scenarios can pass once Playwright browser dependencies are available in CI/local images.
 
 #### [M1] Refactor E2E Tests to Use Unique Locators
 **Why:** The E2E tests are failing due to `strict mode violation`, meaning locators are not unique. This makes the test suite brittle and unreliable.

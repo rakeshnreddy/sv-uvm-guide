@@ -2,7 +2,9 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { DndContext } from '@dnd-kit/core';
 import { useDraggable } from '@dnd-kit/core';
-import * as d3 from 'd3';
+import { select } from 'd3-selection';
+import { line } from 'd3-shape';
+import 'd3-transition';
 import { motion, AnimatePresence } from 'framer-motion';
 import { stateMachineData, State, Transition } from './state-machine-data';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
@@ -211,9 +213,8 @@ const StateMachineDesigner = () => {
   useEffect(() => {
     if (!svgRef.current) return;
 
-    const svg = d3.select(svgRef.current);
-    const lineGenerator = d3
-      .line<{ x: number; y: number }>()
+    const svg = select(svgRef.current);
+    const lineGenerator = line<{ x: number; y: number }>()
       .x((d) => d.x)
       .y((d) => d.y);
 

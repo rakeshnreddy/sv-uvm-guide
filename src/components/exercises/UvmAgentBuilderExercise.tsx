@@ -37,6 +37,8 @@ export const REQUIRED_COMPONENTS: Item[] = [
   { id: 'monitor', name: 'Monitor' },
 ];
 
+const instructionId = 'uvm-agent-builder-instructions';
+
 // Helper used by the validate button and unit tests
 export function checkAgentComponents(agentComponents: Item[]) {
   const missing = REQUIRED_COMPONENTS.filter(
@@ -347,4 +349,3 @@ const UvmAgentBuilderExercise: React.FC = () => {
 };
 
 export default UvmAgentBuilderExercise;
-  const instructionId = 'uvm-agent-builder-instructions';

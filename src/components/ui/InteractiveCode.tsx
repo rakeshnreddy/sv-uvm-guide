@@ -3,11 +3,16 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import dynamic from 'next/dynamic';
 import { useTheme } from 'next-themes';
+import { cn } from '@/lib/utils';
 import { Button } from './Button';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { EditorProps, OnMount } from '@monaco-editor/react';
 import type * as monacoEditor from 'monaco-editor/esm/vs/editor/editor.api';
+import { select } from 'd3-selection';
+import { scaleBand, scaleLinear } from 'd3-scale';
+import { max } from 'd3-array';
+import { axisBottom, axisLeft } from 'd3-axis';
 
 type Monaco = typeof monacoEditor;
 type MonacoRange = monacoEditor.IRange;
@@ -301,7 +306,9 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   userId = 'local',
 }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(initialStep);
-  const { theme } = useTheme();
+  const { theme, resolvedTheme } = useTheme();
+  const effectiveTheme = (theme === 'system' ? resolvedTheme : theme) ?? 'dark';
+  const isDarkMode = effectiveTheme === 'dark';
   const editorRef = useRef<MonacoEditorInstance | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const decorationsRef = useRef<string[]>([]);
@@ -359,52 +366,33 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
 
   const svgRef = useRef<SVGSVGElement | null>(null);
   const flowRef = useRef<SVGSVGElement | null>(null);
-  const d3Ref = useRef<typeof import('d3') | null>(null);
 
   useEffect(() => {
-    let isMounted = true;
-    import('d3')
-      .then(module => {
-        if (isMounted) {
-          d3Ref.current = module;
-        }
-      })
-      .catch(() => {
-        d3Ref.current = null;
-      });
-    return () => {
-      isMounted = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    const d3 = d3Ref.current;
-    if (!analysis || !svgRef.current || !d3) return;
+    if (!analysis || !svgRef.current) return;
     const data = [
       { label: 'Lines', value: analysis.metrics.lines },
       { label: 'Modules', value: analysis.metrics.modules },
       { label: 'Always', value: analysis.metrics.alwaysBlocks },
     ];
-    const svg = d3.select(svgRef.current);
+    const svg = select(svgRef.current);
     const width = Number(svg.attr('width')) || 300;
     const height = Number(svg.attr('height')) || 120;
     svg.selectAll('*').remove();
-    const x = d3.scaleBand().domain(data.map(d => d.label)).range([0, width]).padding(0.1);
-    const y = d3.scaleLinear().domain([0, d3.max(data, d => d.value) || 1]).range([height, 0]);
+    const x = scaleBand().domain(data.map(d => d.label)).range([0, width]).padding(0.1);
+    const y = scaleLinear().domain([0, max(data, d => d.value) || 1]).range([height, 0]);
     svg.append('g').selectAll('rect').data(data).enter().append('rect')
       .attr('x', d => x(d.label) || 0)
       .attr('y', d => y(d.value))
       .attr('width', x.bandwidth())
       .attr('height', d => height - y(d.value))
       .attr('fill', '#3b82f6');
-    svg.append('g').attr('transform', `translate(0,${height})`).call(d3.axisBottom(x));
-    svg.append('g').call(d3.axisLeft(y).ticks(3));
+    svg.append('g').attr('transform', `translate(0,${height})`).call(axisBottom(x));
+    svg.append('g').call(axisLeft(y).ticks(3));
   }, [analysis]);
 
   useEffect(() => {
-    const d3 = d3Ref.current;
-    if (!analysis || !flowRef.current || !d3) return;
-    const svg = d3.select(flowRef.current);
+    if (!analysis || !flowRef.current) return;
+    const svg = select(flowRef.current);
     const width = Number(svg.attr('width')) || 300;
     const height = Number(svg.attr('height')) || 200;
     svg.selectAll('*').remove();
@@ -506,8 +494,21 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   };
 
   return (
-    <div data-testid="interactive-code" className="interactive-code my-6 p-4 border border-white/20 rounded-lg shadow-md bg-white/10 backdrop-blur-lg">
-      <div className="code-section mb-4 relative bg-transparent rounded-md overflow-hidden border border-white/20">
+    <div
+      data-testid="interactive-code"
+      className={cn(
+        'interactive-code my-6 rounded-lg border p-4 shadow-md backdrop-blur-lg transition-colors',
+        isDarkMode
+          ? 'border-white/20 bg-white/10 text-[rgba(230,241,255,0.85)]'
+          : 'border-slate-300/60 bg-slate-950/5 text-slate-800'
+      )}
+    >
+      <div
+        className={cn(
+          'code-section relative mb-4 overflow-hidden rounded-md border transition-colors',
+          isDarkMode ? 'border-white/20 bg-transparent' : 'border-slate-200/80 bg-white'
+        )}
+      >
         {fileName && (
             <div className="bg-gray-700 text-white text-sm py-1 px-4">{fileName}</div>
         )}
