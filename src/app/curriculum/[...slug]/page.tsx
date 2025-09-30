@@ -11,6 +11,7 @@ import FeynmanPromptWidget from '@/components/widgets/FeynmanPromptWidget';
 import Quiz from '@/components/ui/Quiz';
 import Panel from '@/components/ui/Panel';
 import { InfoPage } from '@/components/templates/InfoPage';
+import LessonVisitTracker from '@/components/curriculum/LessonVisitTracker';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/Accordion';
 import { Card } from '@/components/ui/Card';
 import { CodeBlock } from '@/components/ui/CodeBlock';
@@ -172,6 +173,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
 
   return (
     <div className="pb-16">
+      <LessonVisitTracker moduleId={sectionSlug} lessonSlug={topicSlug} />
       <Breadcrumbs slug={normalizedSlug} />
       <div className="mx-auto max-w-6xl px-4 pt-8 lg:px-8">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.35fr)]">

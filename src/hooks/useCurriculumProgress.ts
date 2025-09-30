@@ -1,13 +1,17 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { Tier, Topic, tiers, getModules } from '@/lib/curriculum-data';
+import { Tier, tiers, getModules } from '@/lib/curriculum-data';
 
 // Define the shape of our progress data
+export interface ModuleProgress {
+  completedLessons: string[];
+  lastVisitedAt?: number;
+  lastVisitedLesson?: string;
+}
+
 export interface ProgressData {
-  [moduleId: string]: {
-    completedLessons: string[];
-  };
+  [moduleId: string]: ModuleProgress;
 }
 
 const STORAGE_KEY = 'curriculumProgress';
@@ -71,19 +75,35 @@ export function useCurriculumProgress() {
 
 
   // This function would be called from a topic page to mark a lesson as complete
+  const touchModuleProgress = useCallback(
+    (moduleId: string, lessonSlug: string, { markComplete }: { markComplete: boolean }) => {
+      setProgress(prev => {
+        const existing = prev[moduleId] ?? { completedLessons: [] };
+        const completedLessons = markComplete && !existing.completedLessons.includes(lessonSlug)
+          ? [...existing.completedLessons, lessonSlug]
+          : existing.completedLessons;
+
+        return {
+          ...prev,
+          [moduleId]: {
+            ...existing,
+            completedLessons,
+            lastVisitedAt: Date.now(),
+            lastVisitedLesson: lessonSlug,
+          },
+        } satisfies ProgressData;
+      });
+    },
+    [],
+  );
+
+  const recordLessonVisit = useCallback((moduleId: string, lessonSlug: string) => {
+    touchModuleProgress(moduleId, lessonSlug, { markComplete: false });
+  }, [touchModuleProgress]);
+
   const completeLesson = useCallback((moduleId: string, lessonSlug: string) => {
-    setProgress(prev => {
-      const newProgress = { ...prev };
-      const moduleProgress = newProgress[moduleId] || { completedLessons: [] };
-
-      if (!moduleProgress.completedLessons.includes(lessonSlug)) {
-        moduleProgress.completedLessons = [...moduleProgress.completedLessons, lessonSlug];
-      }
-
-      newProgress[moduleId] = moduleProgress;
-      return newProgress;
-    });
-  }, []);
+    touchModuleProgress(moduleId, lessonSlug, { markComplete: true });
+  }, [touchModuleProgress]);
 
   // A helper to check if a specific module is locked
   // Modules are never locked so users can freely explore
@@ -103,6 +123,7 @@ export function useCurriculumProgress() {
     getTierProgress,
     isTierUnlocked,
     isModuleLocked,
+    recordLessonVisit,
     completeLesson,
     // A function to reset progress for testing
     _resetProgress: () => setProgress({}),

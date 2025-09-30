@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import React, { useEffect, useRef, useState, useCallback, useMemo, useTransition } from 'react';
 import { select } from 'd3-selection';
 import { stratify, tree } from 'd3-hierarchy';
 import { linkVertical } from 'd3-shape';
@@ -10,13 +10,14 @@ import type { UvmComponent } from './uvm-data-model';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { useZoomPan } from '@/hooks/useZoomPan';
-import { useKeyboardNavigation } from '@/hooks/useKeyboardNavigation';
 import useAsync from '@/hooks/useAsync';
 import useLazyRender from '@/hooks/useLazyRender';
 import useAccessibility from '@/hooks/useAccessibility';
 import { exportSvgAsPng, exportSvgAsPdf } from '@/lib/exportUtils';
 import { useTheme } from 'next-themes';
 import { useLocale } from '@/hooks/useLocale';
+import { useRouter } from 'next/navigation';
+import { componentLinkMap, resolveComponentLink } from './uvm-link-map';
 
 
 
@@ -41,6 +42,7 @@ const InteractiveUvmArchitectureDiagram = () => {
   const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
   const nodePositionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const { theme, setTheme } = useTheme();
+  const router = useRouter();
   const [activeComponent, setActiveComponent] = useState<UvmComponent | null>(null);
   const [highlightedType, setHighlightedType] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
@@ -56,6 +58,7 @@ const InteractiveUvmArchitectureDiagram = () => {
     driver: true,
     monitor: true,
   });
+  const [, startTransition] = useTransition();
 
   const { locale } = useLocale();
 
@@ -76,7 +79,27 @@ const InteractiveUvmArchitectureDiagram = () => {
     );
 
   const toggleLayer = (layer: keyof typeof layers) => {
-    setLayers(prev => ({ ...prev, [layer]: !prev[layer] }));
+    startTransition(() => {
+      setLayers(prev => ({ ...prev, [layer]: !prev[layer] }));
+    });
+  };
+
+  const toggleHighlightedType = (type: string) => {
+    startTransition(() => {
+      setHighlightedType(prev => (prev === type ? null : type));
+    });
+  };
+
+  const toggleDataFlow = () => {
+    startTransition(() => {
+      setShowDataFlow(prev => !prev);
+    });
+  };
+
+  const toggleControlFlow = () => {
+    startTransition(() => {
+      setShowControlFlow(prev => !prev);
+    });
   };
 
   const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -88,18 +111,24 @@ const InteractiveUvmArchitectureDiagram = () => {
     } else {
       const matches = compositionalComponents.filter(c => c.name.toLowerCase().includes(value.toLowerCase()));
       setSuggestions(matches);
-      setHighlightIndex(0);
-      setSelectedComponent(null);
+      startTransition(() => {
+        setHighlightIndex(0);
+        setSelectedComponent(null);
+      });
     }
   };
 
   const handleSearchKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown' && suggestions.length > 0) {
       e.preventDefault();
-      setHighlightIndex(i => (i + 1) % suggestions.length);
+      startTransition(() => {
+        setHighlightIndex(i => (i + 1) % suggestions.length);
+      });
     } else if (e.key === 'ArrowUp' && suggestions.length > 0) {
       e.preventDefault();
-      setHighlightIndex(i => (i - 1 + suggestions.length) % suggestions.length);
+      startTransition(() => {
+        setHighlightIndex(i => (i - 1 + suggestions.length) % suggestions.length);
+      });
     } else if (e.key === 'Enter' && suggestions.length > 0) {
       e.preventDefault();
       handleSelect(suggestions[highlightIndex]);
@@ -107,9 +136,11 @@ const InteractiveUvmArchitectureDiagram = () => {
   };
 
   const handleSelect = (component: UvmComponent) => {
-    setSearchTerm(component.name);
-    setSuggestions([]);
-    setSelectedComponent(component);
+    startTransition(() => {
+      setSearchTerm(component.name);
+      setSuggestions([]);
+      setSelectedComponent(component);
+    });
     zoomToComponent(component.id);
   };
 
@@ -177,6 +208,17 @@ const InteractiveUvmArchitectureDiagram = () => {
 
   useZoomPan(svgRef, zoomRef);
 
+  const handleNavigate = useCallback(
+    (id: string) => {
+      const path = resolveComponentLink(id);
+      if (!path) {
+        return;
+      }
+      router.push(path);
+    },
+    [router],
+  );
+
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -195,147 +237,182 @@ const InteractiveUvmArchitectureDiagram = () => {
   }, [handleExportPng, handleExportPdf]);
 
   useEffect(() => {
-    if (!visible || !svgRef.current || !model) return;
-
-    const width = 850;
-    const height = 650;
-
-    const svg = select(svgRef.current)
-      .attr('viewBox', `0 0 ${width} ${height}`)
-      .html(''); // Clear previous contents
-
-    const root = stratify<UvmComponent>()
-      .id(d => d.id)
-      .parentId(d => d.parent)
-      (compositionalComponents);
-
-    const treeLayout = tree<UvmComponent>().size([height - 100, width - 250]);
-    const treeData = treeLayout(root);
-
-    const g = svg.append('g').attr('transform', 'translate(125, 50)');
-
-    nodePositionsRef.current.clear();
-    const nodePositions = nodePositionsRef.current;
-
-    const controlLayer = g.append('g').attr('class', 'control-layer');
-    const nodeLayer = g.append('g').attr('class', 'node-layer');
-    const dataLayer = g.append('g').attr('class', 'data-flow-layer');
-
-    if (showControlFlow) {
-      const links = treeData.links().filter(l => {
-        const s = l.source.data.type.split('_')[0] as keyof typeof layers;
-        const t = l.target.data.type.split('_')[0] as keyof typeof layers;
-        return layers[s] && layers[t];
-      });
-      controlLayer.selectAll('.link')
-        .data(links)
-        .enter()
-        .append('path')
-        .attr('class', 'link')
-        .attr('d', linkVertical()
-          .x(d => (d as any).y)
-          .y(d => (d as any).x) as any
-        )
-        .attr('stroke', 'hsl(var(--muted-foreground))')
-        .attr('stroke-width', 1.5)
-        .attr('stroke-dasharray', '4 2')
-        .attr('fill', 'none')
-        .attr('pointer-events', 'none')
-        .append('title')
-        .text(d => `${(d.source as any).data.name} → ${(d.target as any).data.name}`);
+    if (!visible || !svgRef.current || !model) {
+      return;
     }
 
-    const nodes = nodeLayer.selectAll('.node')
-      .data(treeData.descendants())
-      .enter()
-      .append('g')
-      .attr('class', 'node')
-      .attr('tabindex', 0)
-      .attr('data-focusable', true)
-      .attr('aria-label', d => d.data.name)
-      .attr('transform', d => {
-        nodePositions.set(d.data.id, { x: d.x, y: d.y });
-        return `translate(${d.y},${d.x})`;
-      })
-      .style('display', d => layers[d.data.type.split('_')[0] as keyof typeof layers] ? null : 'none')
-      .on('mouseover', (_, d) => setActiveComponent(d.data))
-      .on('mouseout', () => setActiveComponent(null))
-      .on('focus', (_, d) => setActiveComponent(d.data))
-      .on('blur', () => setActiveComponent(null));
+    let cancelled = false;
 
-    nodes.append('rect')
-      .attr('width', 150)
-      .attr('height', 60)
-      .attr('x', -75)
-      .attr('y', -30)
-      .attr('rx', 5)
-      .attr('fill', d => {
-        const type = d.data.type.split('_')[0] as ComponentColorKey;
-        return componentColor[type] || componentColor.default;
-      })
-      .attr('stroke', 'hsl(var(--primary))')
-      .attr('stroke-width', d => selectedComponent && d.data.id === selectedComponent.id ? 3 : 1)
-      .style('opacity', d => {
-        const typeMatch = highlightedType === null || d.data.type.startsWith(highlightedType);
-        const searchMatch = searchTerm === '' || d.data.name.toLowerCase().includes(searchTerm.toLowerCase());
-        const selectedMatch = !selectedComponent || d.data.id === selectedComponent.id;
-        return typeMatch && searchMatch && selectedMatch ? 1 : 0.2;
-      })
-      .append('title')
-      .text(d => d.data.description);
+    const drawDiagram = () => {
+      if (cancelled || !svgRef.current) {
+        return;
+      }
 
-    nodes.append('text')
-      .attr('dy', '.35em')
-      .attr('text-anchor', 'middle')
-      .style('fill', 'hsl(var(--primary-foreground))')
-      .text(d => d.data.name);
+      const width = 850;
+      const height = 650;
 
-    if (showDataFlow) {
-      const defs = svg.append('defs');
-      defs.append('marker')
-        .attr('id', 'arrow')
-        .attr('viewBox', '0 -5 10 10')
-        .attr('refX', 10)
-        .attr('refY', 0)
-        .attr('markerWidth', 6)
-        .attr('markerHeight', 6)
-        .attr('orient', 'auto')
-        .append('path')
-        .attr('d', 'M0,-5L10,0L0,5')
-        .attr('fill', 'hsl(var(--muted-foreground))');
+      const svg = select(svgRef.current)
+        .attr('viewBox', `0 0 ${width} ${height}`)
+        .html('');
+
+      const root = stratify<UvmComponent>()
+        .id(d => d.id)
+        .parentId(d => d.parent)
+        (compositionalComponents);
+
+      const treeLayout = tree<UvmComponent>().size([height - 100, width - 250]);
+      const treeData = treeLayout(root);
+
+      const g = svg.append('g').attr('transform', 'translate(125, 50)');
+
+      nodePositionsRef.current.clear();
+      const nodePositions = nodePositionsRef.current;
+
+      const controlLayer = g.append('g').attr('class', 'control-layer');
+      const nodeLayer = g.append('g').attr('class', 'node-layer');
+      const dataLayer = g.append('g').attr('class', 'data-flow-layer');
+
+      if (showControlFlow) {
+        const links = treeData.links().filter(l => {
+          const s = l.source.data.type.split('_')[0] as keyof typeof layers;
+          const t = l.target.data.type.split('_')[0] as keyof typeof layers;
+          return layers[s] && layers[t];
+        });
+        controlLayer.selectAll('.link')
+          .data(links)
+          .enter()
+          .append('path')
+          .attr('class', 'link')
+          .attr('d', linkVertical()
+            .x(d => (d as any).y)
+            .y(d => (d as any).x) as any
+          )
+          .attr('stroke', 'hsl(var(--muted-foreground))')
+          .attr('stroke-width', 1.5)
+          .attr('stroke-dasharray', '4 2')
+          .attr('fill', 'none')
+          .attr('pointer-events', 'none')
+          .append('title')
+          .text(d => `${(d.source as any).data.name} → ${(d.target as any).data.name}`);
+      }
+
+      const nodes = nodeLayer.selectAll('.node')
+        .data(treeData.descendants())
+        .enter()
+        .append('g')
+        .attr('class', 'node')
+        .attr('tabindex', 0)
+        .attr('data-focusable', true)
+        .attr('aria-label', d => d.data.name)
+        .attr('transform', d => {
+          nodePositions.set(d.data.id, { x: d.x, y: d.y });
+          return `translate(${d.y},${d.x})`;
+        })
+        .style('display', d => layers[d.data.type.split('_')[0] as keyof typeof layers] ? null : 'none')
+        .on('mouseover', (_, d) => setActiveComponent(d.data))
+        .on('mouseout', () => setActiveComponent(null))
+        .on('focus', (_, d) => setActiveComponent(d.data))
+        .on('blur', () => setActiveComponent(null))
+        .on('click', (_, d) => handleNavigate(d.data.id));
+
+      nodes.append('rect')
+        .attr('width', 150)
+        .attr('height', 60)
+        .attr('x', -75)
+        .attr('y', -30)
+        .attr('rx', 5)
+        .attr('fill', d => {
+          const type = d.data.type.split('_')[0] as ComponentColorKey;
+          return componentColor[type] || componentColor.default;
+        })
+        .attr('stroke', 'hsl(var(--primary))')
+        .attr('stroke-width', d => selectedComponent && d.data.id === selectedComponent.id ? 3 : 1)
+        .style('opacity', d => {
+          const typeMatch = highlightedType === null || d.data.type.startsWith(highlightedType);
+          const searchMatch = searchTerm === '' || d.data.name.toLowerCase().includes(searchTerm.toLowerCase());
+          const selectedMatch = !selectedComponent || d.data.id === selectedComponent.id;
+          return typeMatch && searchMatch && selectedMatch ? 1 : 0.2;
+        })
+        .append('title')
+        .text(d => d.data.description);
+
+      nodes.append('text')
+        .attr('dy', '.35em')
+        .attr('text-anchor', 'middle')
+        .style('fill', 'hsl(var(--primary-foreground))')
+        .text(d => d.data.name);
+
+      if (showDataFlow) {
+        const defs = svg.append('defs');
+        defs.append('marker')
+          .attr('id', 'arrow')
+          .attr('viewBox', '0 -5 10 10')
+          .attr('refX', 10)
+          .attr('refY', 0)
+          .attr('markerWidth', 6)
+          .attr('markerHeight', 6)
+          .attr('orient', 'auto')
+          .append('path')
+          .attr('d', 'M0,-5L10,0L0,5')
+          .attr('fill', 'hsl(var(--muted-foreground))');
 
         const flows = uvmConnectionsList.filter(c => {
           if (c.type === 'composition') return false;
           const s = uvmComponentsList.find(x => x.id === c.source)!;
           const t = uvmComponentsList.find(x => x.id === c.target)!;
-        const sType = s.type.split('_')[0] as keyof typeof layers;
-        const tType = t.type.split('_')[0] as keyof typeof layers;
-        return layers[sType] && layers[tType] && nodePositions.has(c.source) && nodePositions.has(c.target);
-      });
+          const sType = s.type.split('_')[0] as keyof typeof layers;
+          const tType = t.type.split('_')[0] as keyof typeof layers;
+          return layers[sType] && layers[tType] && nodePositions.has(c.source) && nodePositions.has(c.target);
+        });
 
-      dataLayer.selectAll('.flow')
-        .data(flows)
-        .enter()
-        .append('path')
-        .attr('class', 'flow')
-        .attr('d', d => {
-          const s = nodePositions.get(d.source);
-          const t = nodePositions.get(d.target);
-          if (!s || !t) return '';
-          const midY = (s.y + t.y) / 2;
-          return `M${s.y},${s.x} C${midY},${s.x} ${midY},${t.x} ${t.y},${t.x}`;
-        })
-        .attr('stroke', d => d.type === 'analysis' ? 'hsl(var(--warning))' : 'hsl(var(--info))')
-        .attr('stroke-width', 2)
-        .attr('fill', 'none')
-        .attr('marker-end', 'url(#arrow)')
-        .attr('pointer-events', 'none')
-        .append('title')
-        .text(d => d.description);
-    }
+        dataLayer.selectAll('.flow')
+          .data(flows)
+          .enter()
+          .append('path')
+          .attr('class', 'flow')
+          .attr('d', d => {
+            const s = nodePositions.get(d.source);
+            const t = nodePositions.get(d.target);
+            if (!s || !t) return '';
+            const midY = (s.y + t.y) / 2;
+            return `M${s.y},${s.x} C${midY},${s.x} ${midY},${t.x} ${t.y},${t.x}`;
+          })
+          .attr('stroke', d => d.type === 'analysis' ? 'hsl(var(--warning))' : 'hsl(var(--info))')
+          .attr('stroke-width', 2)
+          .attr('fill', 'none')
+          .attr('marker-end', 'url(#arrow)')
+          .attr('pointer-events', 'none')
+          .append('title')
+          .text(d => d.description);
+      }
+    };
 
+    const schedule = () => {
+      if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+        const idleWindow = window as typeof window & {
+          requestIdleCallback(callback: IdleRequestCallback): number;
+          cancelIdleCallback?(handle: number): void;
+        };
+        const idleId = idleWindow.requestIdleCallback(() => drawDiagram());
+        return () => {
+          cancelled = true;
+          idleWindow.cancelIdleCallback?.(idleId);
+        };
+      }
 
-  }, [highlightedType, searchTerm, showDataFlow, showControlFlow, layers, selectedComponent, visible, model, compositionalComponents, uvmConnectionsList, uvmComponentsList]);
+      const rafId = requestAnimationFrame(() => drawDiagram());
+      return () => {
+        cancelled = true;
+        cancelAnimationFrame(rafId);
+      };
+    };
+
+    const cancel = schedule();
+    return () => {
+      cancelled = true;
+      cancel?.();
+    };
+  }, [highlightedType, searchTerm, showDataFlow, showControlFlow, layers, selectedComponent, visible, model, compositionalComponents, uvmConnectionsList, uvmComponentsList, handleNavigate]);
 
   if (loading || !visible) {
     return <div ref={containerRef}>Loading diagram...</div>;
@@ -377,7 +454,7 @@ const InteractiveUvmArchitectureDiagram = () => {
             key={type}
             variant={highlightedType === type ? 'default' : 'outline'}
             size="sm"
-            onClick={() => setHighlightedType(highlightedType === type ? null : type)}
+            onClick={() => toggleHighlightedType(type)}
           >
             {type}
           </Button>
@@ -395,14 +472,14 @@ const InteractiveUvmArchitectureDiagram = () => {
         <Button
           variant={showDataFlow ? 'default' : 'outline'}
           size="sm"
-          onClick={() => setShowDataFlow(!showDataFlow)}
+          onClick={toggleDataFlow}
         >
           Data Flow
         </Button>
         <Button
           variant={showControlFlow ? 'default' : 'outline'}
           size="sm"
-          onClick={() => setShowControlFlow(!showControlFlow)}
+          onClick={toggleControlFlow}
         >
           Control Flow
         </Button>

@@ -26,10 +26,6 @@ const LearningPathsSection = dynamic(() => import('@/components/home/LearningPat
 const InteractiveFeaturesSection = dynamic(() => import('@/components/home/InteractiveFeaturesSection'), {
   loading: () => <LoadingPlaceholder />,
 });
-const CommunitySection = dynamic(() => import('@/components/home/CommunitySection'), {
-  loading: () => <LoadingPlaceholder />,
-});
-
 export default function HomePage() {
   const { user: authUser, loading: authLoading } = useAuth();
   const [personalization, setPersonalization] = useState<PersonalizedHomeUser | null>(null);
@@ -109,7 +105,6 @@ export default function HomePage() {
 
       <LearningPathsSection />
       <InteractiveFeaturesSection />
-      <CommunitySection />
     </main>
   );
 }
