@@ -19,7 +19,7 @@ This guide consolidates the strategic, instructional, and visual references used
 
 ## 2. Experience Pillars
 - **Information architecture:** Four-tier curriculum (see §3) with persistent navigation, breadcrumbs, and related-topic cross-links.
-- **Learning surfaces:** Hero assessment CTA, personalized recommendations, interactive diagrams, labs, flashcards/quizzes, diagnostics.
+- **Learning surfaces:** Hero assessment CTA, personalized recommendations, curriculum quick links (interactive diagram optional), labs, flashcards/quizzes, diagnostics.
 - **Visual system:** Navy foundations, cyan accents, warm CTAs, glassmorphism cards, purposeful motion using Framer Motion.
 - **Quality bar:** Responsive on all breakpoints, keyboard accessible, linted/tested, telemetry-ready where relevant.
 

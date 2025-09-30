@@ -1,32 +1,14 @@
 "use client";
-import React from 'react';
-import { motion } from 'framer-motion';
 
-const phases = [
-  'build_phase',
-  'connect_phase',
-  'end_of_elaboration_phase',
-  'start_of_simulation_phase',
-  'run_phase',
-  'extract_phase',
-  'check_phase',
-  'report_phase'
-];
+import React from 'react';
+import DiagramPlaceholder from './DiagramPlaceholder';
 
 const UvmPhasingDiagram: React.FC = () => (
-  <div className="flex flex-col space-y-2">
-    {phases.map((p, i) => (
-      <motion.div
-        key={p}
-        className="px-4 py-2 rounded border border-primary/40 bg-primary/10"
-        initial={{ opacity: 0, x: -20 }}
-        animate={{ opacity: 1, x: 0 }}
-        transition={{ delay: i * 0.1 }}
-      >
-        {p}
-      </motion.div>
-    ))}
-  </div>
+  <DiagramPlaceholder
+    title="UVM Phasing Timeline"
+    description="Next iteration adds phasing cues to the architecture walkthrough. In the meantime, the phasing deep-dive lesson covers objections and sync points."
+    ctaHref="/curriculum/T2_Intermediate/I-UVM-5_Phasing_and_Sync/index"
+  />
 );
 
 export default UvmPhasingDiagram;

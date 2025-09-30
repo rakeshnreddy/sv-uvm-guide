@@ -1,4 +1,4 @@
-const componentLinkMap: Record<string, string | null> = {
+export const componentLinkMap: Record<string, string | null> = {
   test: '/curriculum/T2_Intermediate/I-UVM-1_UVM_Intro/index',
   env: '/curriculum/T2_Intermediate/I-UVM-2_Building_TB/index',
   agent_active: '/curriculum/T2_Intermediate/I-UVM-3_Sequences/index',
@@ -23,5 +23,3 @@ const componentLinkMap: Record<string, string | null> = {
 export const resolveComponentLink = (id: string): string | null => {
   return componentLinkMap[id] ?? null;
 };
-
-export { componentLinkMap };

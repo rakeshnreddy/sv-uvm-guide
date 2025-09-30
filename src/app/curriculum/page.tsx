@@ -1,27 +1,16 @@
 'use client';
 
 import React, { useState, useEffect, useMemo } from 'react';
-import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { curriculumData, getModules } from '@/lib/curriculum-data';
 import { TierSection } from '@/components/curriculum/TierSection';
 import { useCurriculumProgress } from '../../hooks/useCurriculumProgress';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Button } from '@/components/ui/Button';
-import { Search, List, GitMerge } from 'lucide-react';
+import { Search, List, GitMerge, ArrowRight } from 'lucide-react';
 import LearningPathDiagram from '@/components/curriculum/LearningPathDiagram';
 import { Recommendations } from '@/components/curriculum/Recommendations';
-
-const VisualizationFallback = () => (
-  <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
-    Loading verification stack…
-  </div>
-);
-
-const InteractiveUvmArchitectureDiagram = dynamic(
-  () => import('@/components/diagrams/InteractiveUvmArchitectureDiagram'),
-  { ssr: false, loading: () => <VisualizationFallback /> },
-);
+import { verificationStackLinks } from '@/components/diagrams/verification-stack-links';
 
 export default function CurriculumPage() {
   const {
@@ -146,24 +135,29 @@ export default function CurriculumPage() {
 
       <section className="mx-auto mb-12 max-w-6xl">
         <div className="rounded-3xl border border-border/60 bg-card/80 p-6 shadow-lg shadow-primary/10">
-          <div className="mb-5 flex flex-col gap-2 text-left">
+          <div className="mb-5 flex flex-col gap-3 text-left">
             <h2 className="text-xl font-semibold text-foreground sm:text-2xl">
-              Explore the verification stack visually
+              Explore the verification stack
             </h2>
-            <p className="text-sm text-muted-foreground sm:text-base">
-              Navigate each layer of UVM, understand how the components connect, and dive into deeper lessons from any node.
+            <p className="text-sm text-muted-foreground sm:text-base max-w-3xl">
+              Start from the test layer and follow the flow into environments, agents, analysis, and coverage. Each card opens the lesson that explains the implementation details, and the interactive walkthrough on `/practice/visualizations/uvm-architecture` stays in sync.
             </p>
           </div>
-          <div className="rounded-2xl border border-border/60 bg-background/70 p-4">
-            <InteractiveUvmArchitectureDiagram />
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 pt-2 text-xs text-muted-foreground">
-            <p className="max-w-[22rem]">
-              Every node links directly into the matching module, so you are always one click from the supporting theory and labs.
-            </p>
-            <Button variant="secondary" size="sm" asChild>
-              <Link href="/practice/visualizations/uvm-architecture">Open full diagram</Link>
-            </Button>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {verificationStackLinks.map(({ id, title, description, href }) => (
+              <Link
+                key={id}
+                data-node-id={id}
+                href={href}
+                className="group flex flex-col rounded-2xl border border-border/60 bg-background/70 p-4 transition-colors hover:border-primary/60 hover:bg-background/80"
+              >
+                <span className="flex items-center justify-between text-sm font-semibold text-primary">
+                  {title}
+                  <ArrowRight className="h-4 w-4 opacity-60 transition-colors group-hover:opacity-100" />
+                </span>
+                <span className="mt-2 text-sm text-muted-foreground">{description}</span>
+              </Link>
+            ))}
           </div>
         </div>
       </section>

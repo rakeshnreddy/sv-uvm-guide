@@ -11,7 +11,7 @@ This file consolidates open implementation and feedback items so the team has a 
 ## Active Tasks
 | ID | Status | Area | Summary | Notes |
 |----|--------|------|---------|-------|
-| L4 | ready-for-review | Curriculum UX | Stabilize `InteractiveUvmArchitectureDiagram` interactions on the curriculum landing page. | Idle rendering and deep links in place; confirm UX feels responsive across devices. |
+| L4 | completed | Curriculum UX | Restore a performant verification stack visualization or keep refining the quick-link fallback. | Lightweight interactive diagram shipped alongside upgraded placeholders and passing E2E coverage; curriculum quick links stay in sync with the visualization. |
 | NF-5 | todo | Curriculum UX | Replace temporary diagram link targets with real curriculum anchors. | Run after L4 so nodes resolve to finalized slugs. |
 | M1-1 | todo | Build Quality | Re-enable TypeScript error checking during builds. | Remove `ignoreBuildErrors`, fix outstanding TS errors, confirm `next build` fails on type issues. |
 | M1-2 | todo | Build Quality | Re-enable ESLint error checking during builds. | Remove `ignoreDuringBuilds`, clean lint errors once M1-1 succeeds. |
