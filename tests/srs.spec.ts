@@ -65,33 +65,41 @@ describe('SRS Actions', () => {
   });
 
   it('should review a flashcard and update its state', async () => {
-    const flashcardId = 'test-flashcard-id';
-    const initialFlashcard = {
-      id: flashcardId,
-      userId: 'test-user-id',
-      topicId: 'test-topic-id',
-      front: 'Test front',
-      back: 'Test back',
-      interval: 1,
-      easinessFactor: 2.5,
-      repetitions: 0,
-      nextReviewAt: new Date(),
-    };
+    vi.useFakeTimers();
+    const baseDate = new Date('2024-01-15T09:00:00.000Z');
+    vi.setSystemTime(baseDate);
 
-    (prisma.flashcard.findUnique as Mock).mockResolvedValue(initialFlashcard);
-    (prisma.flashcard.update as Mock).mockImplementation(async ({ data }: { data: any }) => ({
-      ...initialFlashcard,
-      ...data,
-    }));
+    try {
+      const flashcardId = 'test-flashcard-id';
+      const initialFlashcard = {
+        id: flashcardId,
+        userId: 'test-user-id',
+        topicId: 'test-topic-id',
+        front: 'Test front',
+        back: 'Test back',
+        interval: 1,
+        easinessFactor: 2.5,
+        repetitions: 0,
+        nextReviewAt: new Date(),
+      };
 
-    const quality = 4; // "Good"
-    const updatedFlashcard = await reviewFlashcard(flashcardId, quality);
+      (prisma.flashcard.findUnique as Mock).mockResolvedValue(initialFlashcard);
+      (prisma.flashcard.update as Mock).mockImplementation(async ({ data }: { data: any }) => ({
+        ...initialFlashcard,
+        ...data,
+      }));
 
-    expect(prisma.flashcard.findUnique).toHaveBeenCalledWith({ where: { id: flashcardId } });
-    expect(prisma.flashcard.update).toHaveBeenCalled();
-    expect(updatedFlashcard.repetitions).toBe(1);
-    expect(updatedFlashcard.interval).toBe(1); // First repetition
-    expect(updatedFlashcard.nextReviewAt.getDate()).toBe(new Date().getDate() + 1);
+      const quality = 4; // "Good"
+      const updatedFlashcard = await reviewFlashcard(flashcardId, quality);
+
+      expect(prisma.flashcard.findUnique).toHaveBeenCalledWith({ where: { id: flashcardId } });
+      expect(prisma.flashcard.update).toHaveBeenCalled();
+      expect(updatedFlashcard.repetitions).toBe(1);
+      expect(updatedFlashcard.interval).toBe(1); // First repetition
+      expect(updatedFlashcard.nextReviewAt.getTime()).toBe(baseDate.getTime() + 24 * 60 * 60 * 1000);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('should get due flashcards for a user', async () => {

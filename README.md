@@ -18,7 +18,7 @@ Follow these steps to spin up the project locally:
    npm install
    ```
 
-   The install step automatically downloads the Playwright browsers through the `postinstall` hook, so E2E tests are ready to run without any manual setup.
+   The install step runs `scripts/install-playwright-browsers.cjs`, which installs Playwright browsers and (on Linux) attempts to pull in the required system dependencies. If your environment manages system packages separately, export `PLAYWRIGHT_SKIP_INSTALL_DEPS=true` before running `npm install` and install them manually via `npx playwright install-deps`.
 
 2. **Configure environment variables**
 
@@ -44,7 +44,7 @@ Follow these steps to spin up the project locally:
    npm run test:e2e
    ```
 
-   The command builds the app and executes the Playwright suite using the browsers installed during `npm install`.
+   The command builds the app and executes the Playwright suite using the browsers installed during `npm install`. Rerun `node scripts/install-playwright-browsers.cjs` if you need to refresh the browser binaries.
 
 For a clean slate you can run `npm run clean-and-run`, which removes build artifacts, reinstalls dependencies, and restarts the dev server.
 

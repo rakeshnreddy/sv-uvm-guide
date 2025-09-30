@@ -13,7 +13,7 @@ test.describe('Interactive Lab Framework', () => {
     await page.waitForSelector('.monaco-editor', { timeout: 50000 });
 
     // Click the "Run Tests" button
-    await page.click('button:has-text("Run Tests")');
+    await page.getByRole('button', { name: 'Run Tests' }).click();
 
     // Assert that the mock test results are displayed correctly
     const consoleOutput = await page.locator('pre');

@@ -608,7 +608,12 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
             <Button onClick={handlePrevious} disabled={currentStepIndex === 0} variant="outline">
               <ArrowLeft className="w-4 h-4 mr-2" /> Previous
             </Button>
-            <span className="text-sm text-muted-foreground">
+            <span
+              className="text-sm text-muted-foreground"
+              data-testid="interactive-code-step-indicator"
+              role="status"
+              aria-live="polite"
+            >
               Step {currentStepIndex + 1} of {explanationSteps.length}
             </span>
             <Button onClick={handleNext} disabled={currentStepIndex === explanationSteps.length - 1} variant="outline">

@@ -1,3 +1,5 @@
+"use client";
+
 /**
  * @file EngagementEngine.tsx
  * @description This component is the core of the gamification system's engagement features.
@@ -6,12 +8,23 @@
  */
 
 import React, { useState, useEffect, useMemo } from 'react';
+import dynamic from 'next/dynamic';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Progress } from '@/components/ui/Progress';
 import { Button } from '@/components/ui/Button';
-import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { Award, Target, TrendingUp, UserCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+const EngagementActivityChart = dynamic(
+  () =>
+    import('./EngagementActivityChart').then((mod) => mod.EngagementActivityChart),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="h-52 w-full animate-pulse rounded-lg bg-muted" aria-busy="true" aria-live="polite" />
+    ),
+  },
+);
 
 // --- TYPE DEFINITIONS ---
 // These types define the data structures for engagement tracking.
@@ -420,15 +433,7 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId, useMockData
         {/* 2. Progress Visualization */}
         <div>
             <h3 className="text-lg font-semibold mb-2">Weekly Activity</h3>
-            <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={activityChart} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
-                    <XAxis dataKey="name" />
-                    <YAxis />
-                    <Tooltip contentStyle={{ backgroundColor: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}/>
-                    <Legend />
-                    <Bar dataKey="activity" fill="hsl(var(--primary))" name="Activity Units" />
-                </BarChart>
-            </ResponsiveContainer>
+            <EngagementActivityChart data={activityChart} />
         </div>
 
         {/* 3. Goal Setting Assistance & Progress Pacing */}

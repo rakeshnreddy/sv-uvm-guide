@@ -19,13 +19,13 @@ test.describe('Mobile Navigation', () => {
 
     // Test mobile sidebar
     const openSidebarButton = page.getByRole('button', { name: 'Open sidebar' });
-    if (await openSidebarButton.count() === 0) {
-      test.skip('Sidebar toggle not available on mobile navigation');
+    if ((await openSidebarButton.count()) === 0) {
+      test.skip(true, 'Sidebar toggle not available on mobile navigation');
     }
     await openSidebarButton.first().click({ force: true });
-    const quickAccessHeading = page.locator('h2:has-text("Quick Access")');
+    const quickAccessHeading = page.getByRole('heading', { name: 'Quick Access' });
     await expect(quickAccessHeading).toBeVisible();
-    await page.locator('h2:has-text("Quick Access") + button').click();
+    await page.getByRole('button', { name: 'Close quick access sidebar' }).click();
     await expect(quickAccessHeading).toHaveCount(0);
   });
 
