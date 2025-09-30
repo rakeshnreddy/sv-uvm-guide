@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 
 test('sequence config page next link navigates to resource DB page', async ({ page }) => {
   await page.goto('/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-config-db');
-  await page.click('a:has-text("uvm_resource_db")');
+  await page.getByRole('link', { name: /uvm_resource_db/i }).click();
   await expect(page).toHaveURL('/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-resource-db');
   await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('uvm_resource_db and Precedence');
 });
@@ -15,16 +15,16 @@ test.describe('Advanced Navigation Features', () => {
   });
 
   test('should toggle sidebar with navbar button', async ({ page }) => {
-    const quickAccessHeading = page.locator('h2:has-text("Quick Access")');
+    const quickAccessHeading = page.getByRole('heading', { name: 'Quick Access' });
     await expect(quickAccessHeading).toHaveCount(0);
     await page.getByLabel('Toggle Sidebar').click();
     await expect(quickAccessHeading).toBeVisible();
-    await page.locator('h2:has-text("Quick Access") + button').click();
+    await page.getByRole('button', { name: 'Close quick access sidebar' }).click();
     await expect(quickAccessHeading).toHaveCount(0);
   });
 
   test('should toggle sidebar with keyboard shortcut (Ctrl+B)', async ({ page }) => {
-    const quickAccessHeading = page.locator('h2:has-text("Quick Access")');
+    const quickAccessHeading = page.getByRole('heading', { name: 'Quick Access' });
     await expect(quickAccessHeading).toHaveCount(0);
     const modifier = process.platform === 'darwin' ? 'Meta' : 'Control';
     await page.keyboard.press(`${modifier}+KeyB`);
@@ -69,9 +69,9 @@ test.describe('Advanced Navigation Features', () => {
     const jumpToButton = page.getByRole('button', { name: 'Jump to' });
     await expect(jumpToButton).toBeVisible();
     await jumpToButton.click();
-    const jumpToDropdown = page.locator('div.absolute:has-text("Topics in F2: SystemVerilog Language Basics")');
+    const jumpToDropdown = page.getByRole('menu', { name: 'Topics in F2: SystemVerilog Language Basics' });
     await expect(jumpToDropdown).toBeVisible();
-    await expect(jumpToDropdown.getByRole('link', { name: 'F2: SystemVerilog Language Basics' })).toBeVisible();
+    await expect(jumpToDropdown.getByRole('menuitem', { name: 'F2: SystemVerilog Language Basics' })).toBeVisible();
   });
 
 });

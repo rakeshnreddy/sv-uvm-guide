@@ -183,7 +183,12 @@ const Sidebar = () => {
           >
             <div className="p-4 flex justify-between items-center border-b border-border/40 flex-shrink-0">
               <h2 className="text-lg font-semibold">Quick Access</h2>
-              <button onClick={toggleSidebar} className="p-1 rounded-md hover:bg-muted">
+              <button
+                type="button"
+                onClick={toggleSidebar}
+                className="p-1 rounded-md hover:bg-muted"
+                aria-label="Close quick access sidebar"
+              >
                 <X className="h-6 w-6" />
               </button>
             </div>

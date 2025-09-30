@@ -4,7 +4,7 @@ import Link from "next/link";
 import { getBreadcrumbs, curriculumData } from "@/lib/curriculum-data";
 import { buildCurriculumStatus, type TopicStatus } from "@/lib/curriculum-status";
 import { ChevronRight, ChevronsUpDown, CheckCircle, Circle, Clock } from "lucide-react";
-import { useState } from "react";
+import { useState, useId } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 type BreadcrumbsProps = {
@@ -61,6 +61,8 @@ const progressData: Record<string, ProgressState> = (() => {
 export default function Breadcrumbs({ slug }: BreadcrumbsProps) {
   const breadcrumbs = getBreadcrumbs(slug);
   const [isJumpToOpen, setJumpToOpen] = useState(false);
+  const jumpMenuId = useId();
+  const jumpMenuHeadingId = `${jumpMenuId}-heading`;
 
   if (breadcrumbs.length <= 1) { // Hide if only on main curriculum page
     return null;
@@ -111,7 +113,15 @@ export default function Breadcrumbs({ slug }: BreadcrumbsProps) {
                 )}
                 {currentSection && (
                     <div className="relative">
-                        <button onClick={() => setJumpToOpen(!isJumpToOpen)} className="flex items-center gap-1 text-xs font-semibold p-2 rounded-md hover:bg-muted/50 border border-transparent hover:border-border/40">
+                        <button
+                            id={`${jumpMenuId}-trigger`}
+                            type="button"
+                            onClick={() => setJumpToOpen(!isJumpToOpen)}
+                            className="flex items-center gap-1 text-xs font-semibold p-2 rounded-md hover:bg-muted/50 border border-transparent hover:border-border/40"
+                            aria-haspopup="menu"
+                            aria-expanded={isJumpToOpen}
+                            aria-controls={`${jumpMenuId}-menu`}
+                        >
                             Jump to
                             <ChevronsUpDown className="w-3 h-3" />
                         </button>
@@ -121,10 +131,15 @@ export default function Breadcrumbs({ slug }: BreadcrumbsProps) {
                                     initial={{ opacity: 0, y: -10 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     exit={{ opacity: 0, y: -10 }}
+                                    id={`${jumpMenuId}-menu`}
+                                    role="menu"
+                                    aria-labelledby={jumpMenuHeadingId}
                                     className="absolute top-full right-0 mt-2 w-72 bg-background border border-border/40 rounded-md shadow-lg z-10"
                                     onMouseLeave={() => setJumpToOpen(false)}
                                 >
-                                    <div className="p-2 font-semibold border-b border-border/40 text-sm">Topics in {currentSection.title}</div>
+                                    <div id={jumpMenuHeadingId} className="p-2 font-semibold border-b border-border/40 text-sm">
+                                        Topics in {currentSection.title}
+                                    </div>
                                     <div className="p-2 max-h-60 overflow-y-auto">
                                         {currentSection.topics.map(topic => (
                                             <Link
@@ -132,6 +147,7 @@ export default function Breadcrumbs({ slug }: BreadcrumbsProps) {
                                                 href={`/curriculum/${currentModule?.slug}/${currentSection?.slug}/${topic.slug}`}
                                                 onClick={() => setJumpToOpen(false)}
                                                 className={`block w-full text-left p-2 text-sm rounded-md hover:bg-muted ${slug[2] === topic.slug ? 'bg-muted font-semibold' : ''}`}
+                                                role="menuitem"
                                             >
                                                 {topic.title}
                                             </Link>

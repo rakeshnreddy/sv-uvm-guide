@@ -60,8 +60,8 @@ describeInteractive('Interactive Demo Page', () => {
 
   test('should display the main title', async ({ page }) => {
     // The page can be slow to load with the new components, so wait for a key element to be visible
-    await expect(page.locator('h2:has-text("Enhanced Interactive Code")')).toBeVisible({ timeout: 15000 });
-    await expect(page.locator('h1')).toContainText('Interactive Components Demo');
+    await expect(page.getByRole('heading', { level: 2, name: 'Enhanced Interactive Code' })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole('heading', { level: 1, name: 'Interactive Components Demo' })).toBeVisible();
   });
 
   test('should display and interact with the InteractiveCode component', async ({ page }) => {
@@ -73,11 +73,11 @@ describeInteractive('Interactive Demo Page', () => {
 
     await tour.getByRole('button', { name: 'Next' }).click();
     await expect(tour.getByText('This `initial` block creates a free-running clock with a 10ns period.')).toBeVisible();
-    await expect(tour.locator('span:has-text("Step 2 of 5")')).toBeVisible();
+    await expect(tour.getByTestId('interactive-code-step-indicator')).toHaveText('Step 2 of 5');
   });
 
   test('should run the simulation in the CodeExecutionEnvironment', async ({ page }) => {
-    await expect(page.locator('h2:has-text("Code Execution Environment")')).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'Code Execution Environment' })).toBeVisible();
 
     const outputPanel = page.getByTestId('simulation-output');
     await expect(outputPanel).toContainText('Click "Run Simulation" to see the output.');
@@ -105,8 +105,8 @@ describeInteractive('Interactive Demo Page', () => {
   });
 
   test('should display the placeholder components', async ({ page }) => {
-    await expect(page.locator('h2:has-text("Code Challenge System")')).toBeVisible();
-    await expect(page.locator('h2:has-text("Debugging Simulator")')).toBeVisible();
-    await expect(page.locator('h2:has-text("Code Review Assistant")')).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'Code Challenge System' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'Debugging Simulator' })).toBeVisible();
+    await expect(page.getByRole('heading', { level: 2, name: 'Code Review Assistant' })).toBeVisible();
   });
 });
