@@ -1,12 +1,11 @@
 'use server';
 
-import { PrismaClient } from '@prisma/client';
 import { getIronSession } from 'iron-session';
 import { sessionOptions } from '@/lib/session-options';
 import { revalidatePath } from 'next/cache.js';
 import { cookies } from 'next/headers.js';
 
-const prisma = new PrismaClient();
+import { prisma } from '@/lib/prisma';
 
 import { getSession } from '@/lib/session';
 
