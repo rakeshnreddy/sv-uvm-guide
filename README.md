@@ -78,6 +78,8 @@ npm run build
 npm start
 ```
 
+`npm run build` runs the TypeScript compiler before invoking `next build`; ESLint now executes during the build step, so any lint errors will fail the production build.
+
 ### Docker
 
 ```bash
