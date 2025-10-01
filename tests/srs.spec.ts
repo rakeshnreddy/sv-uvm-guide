@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, Mock } from 'vitest';
 import { createFlashcard, reviewFlashcard, getDueFlashcards } from '../src/app/actions/srs';
 import { PrismaClient } from '@prisma/client';
+import { withFrozenTime } from './setup/time-travel';
 
 // Mock Prisma Client
 vi.mock('@prisma/client', () => {
@@ -65,11 +66,7 @@ describe('SRS Actions', () => {
   });
 
   it('should review a flashcard and update its state', async () => {
-    vi.useFakeTimers();
-    const baseDate = new Date('2024-01-15T09:00:00.000Z');
-    vi.setSystemTime(baseDate);
-
-    try {
+    await withFrozenTime('2024-01-15T09:00:00.000Z', async ({ now }) => {
       const flashcardId = 'test-flashcard-id';
       const initialFlashcard = {
         id: flashcardId,
@@ -96,10 +93,9 @@ describe('SRS Actions', () => {
       expect(prisma.flashcard.update).toHaveBeenCalled();
       expect(updatedFlashcard.repetitions).toBe(1);
       expect(updatedFlashcard.interval).toBe(1); // First repetition
-      expect(updatedFlashcard.nextReviewAt.getTime()).toBe(baseDate.getTime() + 24 * 60 * 60 * 1000);
-    } finally {
-      vi.useRealTimers();
-    }
+      const baseTime = now().getTime();
+      expect(updatedFlashcard.nextReviewAt.getTime()).toBe(baseTime + 24 * 60 * 60 * 1000);
+    });
   });
 
   it('should get due flashcards for a user', async () => {
