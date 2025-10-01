@@ -1,21 +1,20 @@
 /// <reference types="vitest/globals" />
 import { describe, it, expect, vi, Mock } from 'vitest';
 import { createFlashcard, reviewFlashcard, getDueFlashcards } from '../src/app/actions/srs';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '@/lib/prisma';
 import { withFrozenTime } from './setup/time-travel';
 
-// Mock Prisma Client
-vi.mock('@prisma/client', () => {
-  const mPrismaClient = {
-    flashcard: {
-      create: vi.fn(),
-      findUnique: vi.fn(),
-      update: vi.fn(),
-      findMany: vi.fn(),
-    },
-  };
-  return { PrismaClient: vi.fn(() => mPrismaClient) };
-});
+const mPrismaClient = {
+  flashcard: {
+    create: vi.fn(),
+    findUnique: vi.fn(),
+    update: vi.fn(),
+    findMany: vi.fn(),
+  },
+};
+
+// Mock Prisma Client helper
+vi.mock('@/lib/prisma', () => ({ prisma: mPrismaClient }));
 
 // Mock iron-session
 vi.mock('iron-session', () => ({
@@ -34,8 +33,6 @@ vi.mock('next/cache', () => ({
 }));
 
 describe('SRS Actions', () => {
-  const prisma = new PrismaClient();
-
   it('should create a flashcard', async () => {
     const topicId = 'test-topic-id';
     const expectedFlashcard = {
