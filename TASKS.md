@@ -28,7 +28,7 @@ This file consolidates open implementation and feedback items so the team has a 
 | M4 | todo | Documentation | Write ADRs for routing, state management, and asset strategy. | Keep decisions lightweight but searchable. |
 | QA-4 | completed | Testing | Add or update unit, integration, and E2E tests alongside new features or feedback fixes. | Added a Vitest suite for the bundle guard CLI and refreshed E2E selectors to align with the new accessibility hooks. |
 | QA-5 | ready-for-review | Testing | Extract shared time mocking helpers for deterministic scheduling tests. | Added `tests/setup/time-travel.ts` with `withFrozenTime`; SRS actions spec now uses the shared helper. |
-| DX-2 | todo | DX | Consolidate Prisma client management for server actions. | Avoid per-action instantiation uncovered while expanding SRS coverage. |
+| DX-2 | ready-for-review | DX | Consolidate Prisma client management for server actions. | Avoid per-action instantiation uncovered while expanding SRS coverage. |
 | PROD-1 | todo | Product | Expand placement quiz into an interactive assessment with scoring/analytics. | Next evolution of `/quiz/placement`. |
 | PROD-2 | todo | Product | Power notifications with real activity events and user preferences. | Replace placeholders with real data. |
 | PROD-3 | todo | Product | Replace settings stub with persisted profile/theme/communication preferences. | Integrate with existing auth/session flows. |
