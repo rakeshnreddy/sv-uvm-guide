@@ -34,7 +34,7 @@ This file consolidates open implementation and feedback items so the team has a 
 | PROD-3 | todo | Product | Replace settings stub with persisted profile/theme/communication preferences. | Integrate with existing auth/session flows. |
 | OPS-1 | blocked | Tooling | Install Playwright system deps and rerun focused + full e2e suites. | Playwright browsers install automatically, but `npm run test:e2e` still fails in this container because required system libraries are missing (`npx playwright install-deps` hits proxy/apt restrictions). |
 | OPS-2 | todo | QA | Capture a new Playwright report once suites pass. | Share report and update Milestone 4 status. |
-| OPS-3 | todo | QA | Run `npm run lint && npm run test && npm run build` after major changes. | Keeps health checks green between sessions. |
+| OPS-3 | ready-for-review | QA | Run `npm run lint && npm run test && npm run build` after major changes. | Latest session verified all three checks (`npm run lint`, `npm test`, `CI=1 npm run build`) without issues. |
 
 ## Recently Completed
 - [2025-10-10] Replaced homepage community stats with curriculum-focused hero content (tracked in git history).
