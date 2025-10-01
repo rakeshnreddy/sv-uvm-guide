@@ -340,8 +340,19 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   const [reviewLog, setReviewLog] = useState<UserEdit[]>([]);
 
   useEffect(() => {
-    if (!collabUrl) return;
+    if (!collabUrl) {
+      socketRef.current?.close();
+      socketRef.current = null;
+      return;
+    }
+
     const socket = connectCollaboration(collabUrl);
+    if (!socket) {
+      socketRef.current?.close();
+      socketRef.current = null;
+      return;
+    }
+
     socketRef.current = socket;
     socket.onmessage = (event) => {
       try {
@@ -358,7 +369,12 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
         // ignore malformed messages
       }
     };
-    return () => socket.close();
+    return () => {
+      if (socketRef.current === socket) {
+        socketRef.current = null;
+      }
+      socket.close();
+    };
   }, [collabUrl, userId]);
 
   /* eslint-disable-next-line react-hooks/exhaustive-deps -- analyzeSystemVerilog is a stable helper */

@@ -8,8 +8,15 @@ export interface UserEdit {
  * Establish a simple WebSocket connection for collaboration. The URL is
  * expected to point to a collaboration service.
  */
-export function connectCollaboration(url: string): WebSocket {
-  const socket = new WebSocket(url);
+export function connectCollaboration(url: string): WebSocket | null {
+  if (
+    typeof window === 'undefined' ||
+    typeof window.WebSocket === 'undefined'
+  ) {
+    return null;
+  }
+
+  const socket = new window.WebSocket(url);
   return socket;
 }
 
