@@ -26,6 +26,9 @@ try {
 const nextConfig = {
   // Add your Next.js config options here
   output: 'standalone',
+  eslint: {
+    ignoreDuringBuilds: false,
+  },
 
   webpack(config) {
     config.module.rules.push({
