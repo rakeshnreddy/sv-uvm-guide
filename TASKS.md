@@ -20,7 +20,7 @@ This file consolidates open implementation and feedback items so the team has a 
 | P3 | todo | Performance | Standardize on a single charting library (prefer D3). | Re-implement Recharts surfaces or retire them. |
 | P4 | todo | Performance | Implement image optimization using `next/image`. | Audit `<img>` usage and prioritize LCP assets. |
 | P5 | todo | Performance | Optimize font loading with `next/font`. | Ensure `font-display: swap` and preload critical fonts. |
-| D1 | todo | Platform Stability | Guard `InteractiveCode` so SSR never touches `window`. | Confirm curriculum slugs render without 500s in `next build`. |
+| D1 | ready-for-review | Platform Stability | Guard `InteractiveCode` so SSR never touches `window`. | Confirm curriculum slugs render without 500s in `next build`. |
 | D3 | todo | DX | Automate local setup and document Playwright/browser prerequisites. | Add `.env.example`, README getting started, and `postinstall` hook for `npx playwright install`. |
 | M1 | completed | Testing | Refactor remaining Playwright specs to use unique, stable locators. | Updated navigation, labs, and interactive demo specs to rely on accessible roles/test ids with matching aria hooks in the UI. |
 | M2 | todo | Testing | Enforce code quality via Husky + lint-staged pre-commit hooks. | Depends on M1-1 and M1-2. |
