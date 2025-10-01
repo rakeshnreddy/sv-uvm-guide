@@ -1,6 +1,6 @@
 import React from 'react';
 import '@testing-library/jest-dom';
-import { render, screen, within } from '@testing-library/react';
+import { render, screen, within, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, it, expect, vi } from 'vitest';
 import CodeReviewAssistant from '../../src/components/ui/CodeReviewAssistant';
@@ -102,14 +102,15 @@ describe('CodeReviewAssistant component', () => {
     const textarea = screen.getByPlaceholderText(/leave a comment/i);
     const addButton = screen.getByRole('button', { name: /add comment/i });
 
-    await userEvent.type(textarea, 'hello\u0007world');
+    await userEvent.clear(textarea);
+    fireEvent.input(textarea, { target: { value: 'hello\u0007world' } });
     await userEvent.click(addButton);
     const list = screen.getByText('helloworld').closest('ul')!;
     expect(within(list).getByText('helloworld')).toBeInTheDocument();
 
     const longComment = 'a'.repeat(501);
     await userEvent.clear(textarea);
-    await userEvent.type(textarea, longComment);
+    fireEvent.input(textarea, { target: { value: longComment } });
     await userEvent.click(addButton);
     expect(screen.getByText(/500 characters or less/i)).toBeInTheDocument();
     expect(within(list).getAllByRole('listitem')).toHaveLength(1);

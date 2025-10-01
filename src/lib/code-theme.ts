@@ -4,11 +4,13 @@
 // from our Tailwind CSS config. This ensures that code blocks match the
 // application's theme.
 
+const monoStack = "var(--font-jetbrains-mono), ui-monospace, SFMono-Regular, monospace";
+
 export const lightTheme = {
   'code[class*="language-"]': {
     color: "hsl(var(--foreground))",
     background: "hsl(var(--background))",
-    fontFamily: "var(--font-mono)",
+    fontFamily: monoStack,
     textAlign: "left",
     whiteSpace: "pre",
     wordSpacing: "normal",
@@ -26,7 +28,7 @@ export const lightTheme = {
   'pre[class*="language-"]': {
     color: "hsl(var(--foreground))",
     background: "hsl(var(--background))",
-    fontFamily: "var(--font-mono)",
+    fontFamily: monoStack,
     textAlign: "left",
     whiteSpace: "pre",
     wordSpacing: "normal",
@@ -161,7 +163,7 @@ export const darkTheme = {
   'code[class*="language-"]': {
     color: "hsl(var(--foreground))",
     background: "hsl(var(--background))",
-    fontFamily: "var(--font-mono)",
+    fontFamily: monoStack,
     textAlign: "left",
     whiteSpace: "pre",
     wordSpacing: "normal",
@@ -179,7 +181,7 @@ export const darkTheme = {
   'pre[class*="language-"]': {
     color: "hsl(var(--foreground))",
     background: "hsl(var(--background))",
-    fontFamily: "var(--font-mono)",
+    fontFamily: monoStack,
     textAlign: "left",
     whiteSpace: "pre",
     wordSpacing: "normal",

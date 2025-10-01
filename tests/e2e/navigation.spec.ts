@@ -2,7 +2,9 @@ import { test, expect } from '@playwright/test';
 
 test('sequence config page next link navigates to resource DB page', async ({ page }) => {
   await page.goto('/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-config-db');
-  await page.getByRole('link', { name: /uvm_resource_db/i }).click();
+  const nextLessonLink = page.getByRole('link', { name: /^Next lesson uvm_resource_db/i });
+  await expect(nextLessonLink, 'Next lesson link should be rendered once').toHaveCount(1);
+  await nextLessonLink.click();
   await expect(page).toHaveURL('/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-resource-db');
   await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('uvm_resource_db and Precedence');
 });
