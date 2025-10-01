@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma';
 import { withFrozenTime } from './setup/time-travel';
 
 const mPrismaClient = vi.hoisted(() => ({
+
   flashcard: {
     create: vi.fn(),
     findUnique: vi.fn(),
@@ -12,6 +13,7 @@ const mPrismaClient = vi.hoisted(() => ({
     findMany: vi.fn(),
   },
 }));
+
 
 // Mock Prisma Client helper
 vi.mock('@/lib/prisma', () => ({ prisma: mPrismaClient }));
