@@ -1,12 +1,9 @@
 'use server';
 
-import { PrismaClient } from '@prisma/client';
 import { getIronSession } from 'iron-session';
 import { sessionOptions } from '@/lib/session-options';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
-
-const prisma = new PrismaClient();
 
 import { getSession } from '@/lib/session';
 
