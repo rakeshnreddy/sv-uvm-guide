@@ -12,11 +12,16 @@ function runPlaywrightCommand(args, { allowFailure = false, description } = {}) 
   if (result.status !== 0) {
     const message = `Failed to ${label}`;
     if (allowFailure) {
-      console.warn(`\n[playwright-setup] ${message}. This step can require elevated permissions.\n`);
+      console.warn(
+        `\n[playwright-setup] ${message}. This step can require elevated permissions or additional system packages.\n` +
+          '[playwright-setup] Refer to the README troubleshooting guide for the list of required libraries.\n'
+      );
     } else {
       console.error(`\n[playwright-setup] ${message}.`);
       process.exit(result.status ?? 1);
     }
+  } else {
+    console.log(`[playwright-setup] Successfully ran ${label}.`);
   }
 }
 
