@@ -49,8 +49,18 @@ const config: Config = {
         },
       },
       fontFamily: {
-        sans: ["var(--font-cal-sans)", "var(--font-inter)"],
-        mono: ["var(--font-jetbrains-mono)"],
+        sans: [
+          "var(--font-cal-sans)",
+          "var(--font-inter)",
+          "system-ui",
+          "sans-serif",
+        ],
+        mono: [
+          "var(--font-jetbrains-mono)",
+          "ui-monospace",
+          "SFMono-Regular",
+          "monospace",
+        ],
         serif: ["Georgia", "serif"],
       },
       borderRadius: {

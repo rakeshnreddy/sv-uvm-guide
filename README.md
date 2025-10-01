@@ -8,45 +8,64 @@ This repository provides a structured and comprehensive curriculum for learning 
 
 ## Getting Started
 
-Follow these steps to spin up the project locally:
+### Prerequisites
 
-1. **Clone and install dependencies**
+* **Node.js 18.18+** and **npm 9+** (Next.js 14 requires Node 18).
+* **Git** for cloning the repository.
+* **Playwright system packages** (Linux only). `npm install` attempts to run `npx playwright install-deps`; when that command fails because the host cannot access the necessary apt repositories, install the packages manually or rerun on a machine with desktop libraries available (see [Playwright setup](#playwright-setup--troubleshooting)).
 
-   ```bash
-   git clone https://github.com/<your-org>/sv-uvm-guide.git
-   cd sv-uvm-guide
-   npm install
-   ```
+### Quick start
 
-   The install step runs `scripts/install-playwright-browsers.cjs`, which installs Playwright browsers and (on Linux) attempts to pull in the required system dependencies. If your environment manages system packages separately, export `PLAYWRIGHT_SKIP_INSTALL_DEPS=true` before running `npm install` and install them manually via `npx playwright install-deps`.
+```bash
+git clone https://github.com/<your-org>/sv-uvm-guide.git
+cd sv-uvm-guide
+cp .env.example .env.local   # adjust secrets and feature flags as needed
+npm install                  # installs dependencies and Playwright browsers
+npm run dev                  # regenerates Prisma client and starts Next.js
+```
 
-2. **Configure environment variables**
+For a clean slate you can run `npm run clean-and-run`, which removes build artifacts, reinstalls dependencies, and restarts the dev server at <http://localhost:3000>.
 
-   Copy the provided example and adjust the values as needed:
+### Standard pre-commit loop
 
-   ```bash
-   cp .env.example .env.local
-   ```
+Before pushing changes, run the checks that back our CI gate:
 
-   For local development you can leave the Firebase keys blank to use the mocked configuration. See [Firebase Configuration](#firebase-configuration) for details.
+```bash
+npm run lint
+npm run test
+CI=1 ANALYZE=true npm run build
+npm run bundle:check
+npm run test:e2e
+```
 
-3. **Start the development server**
+If Playwright system dependencies are unavailable in your environment you can temporarily skip `npm run test:e2e`, but record the blocker (see [Playwright setup](#playwright-setup--troubleshooting)).
 
-   ```bash
-   npm run dev
-   ```
+### Environment variables
 
-   This command also runs `prisma generate` to keep the client in sync before launching Next.js on <http://localhost:3000>.
+The `.env.example` file in the project root documents all supported variables. Copy it to `.env.local` and update the values for your environment. Common settings include:
 
-4. **Run end-to-end tests (optional)**
+* `SESSION_SECRET` – required for authenticated sessions.
+* Firebase credentials (`NEXT_PUBLIC_FIREBASE_*`) – optional locally; leave blank to use the mocked client.
+* `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` – required to enable Google sign-in.
+* `GEMINI_API_KEY` – enables AI-driven helpers and feedback flows.
+* Feature flag overrides (`NEXT_PUBLIC_FEATURE_FLAG_*`, `FEATURE_FLAGS_FORCE_ON`) – useful for unlocking in-progress UI.
+* Build tooling flags (`ANALYZE`, `BUNDLE_ANALYZER_*`, `BUNDLE_BASELINE_PATH`) – power bundle reports and guard rails enforced by `npm run bundle:check`.
+* Commit metadata (`NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA`, `NEXT_PUBLIC_COMMIT_SHA`) – shown in dashboards/downloads when populated by CI.
 
-   ```bash
-   npm run test:e2e
-   ```
+Additional overrides for bundle analysis and Playwright automation are also included in `.env.example` with inline documentation.
 
-   The command builds the app and executes the Playwright suite using the browsers installed during `npm install`. Rerun `node scripts/install-playwright-browsers.cjs` if you need to refresh the browser binaries.
+### Playwright setup & troubleshooting
 
-For a clean slate you can run `npm run clean-and-run`, which removes build artifacts, reinstalls dependencies, and restarts the dev server.
+`npm install` automatically runs [`scripts/install-playwright-browsers.cjs`](scripts/install-playwright-browsers.cjs), which:
+
+1. Attempts to install Playwright's Linux system dependencies via `npx playwright install-deps` (skipped when `PLAYWRIGHT_SKIP_INSTALL_DEPS=true` or on non-Linux platforms). This step can fail on locked-down environments where `apt` access is unavailable. If that happens, install the missing libraries manually or rerun the command on a workstation with GUI dependencies available. Known blockers include `libatk-1.0-0`, `libxkbcommon0`, audio libraries, and related X11/GTK packages.
+2. Installs the Chromium/Firefox/WebKit browser binaries with `npx playwright install` so the E2E suite is ready immediately after dependency installation.
+
+You can rerun the setup at any time with `node scripts/install-playwright-browsers.cjs`. To skip the system dependency attempt (e.g., when corporate images provide them), export `PLAYWRIGHT_SKIP_INSTALL_DEPS=true` before running `npm install` or the setup script.
+
+### Fresh-clone validation & outstanding manual steps
+
+The onboarding flow was re-tested from a clean clone using Node 18.18 + npm 9. Running `npm install` triggers the Playwright browser install automation, and `npm run dev` starts the site once `.env.local` is populated. The only manual intervention still required on locked-down Linux environments is installing the GTK/X11/audio libraries that `npx playwright install-deps` cannot reach (documented above); once those packages are present, `npm run test:e2e` can run locally without skips.
 
 ## Curriculum Architecture
 
@@ -104,20 +123,7 @@ The script imports the latest curriculum structure and issues a `curl` request f
 
 ## Firebase Configuration
 
-The application expects Firebase credentials to be provided via environment variables. Create a `.env.local` file (or otherwise set these values) with the following keys:
-
-```
-NEXT_PUBLIC_FIREBASE_API_KEY=your_api_key
-NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN=your_auth_domain
-NEXT_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
-NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET=your_storage_bucket
-NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=your_messaging_sender_id
-NEXT_PUBLIC_FIREBASE_APP_ID=your_app_id
-```
-
-These variables are used during initialization in `src/lib/firebase.ts`.
-If they are not provided, the app falls back to a mock Firebase configuration
-so the site can still run locally, but data will not persist.
+The Firebase keys documented in `.env.example` map directly to the initialization logic in [`src/lib/firebase.ts`](src/lib/firebase.ts). Providing real project credentials enables persistence against your Firebase project. Leaving them blank uses a mocked configuration so the site can still run locally, but data will not persist across refreshes.
 
 ## Phase Deliverables
 
