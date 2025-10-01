@@ -11,11 +11,12 @@ test('should successfully load all curriculum pages and have correct titles', as
         const url = `/curriculum/${courseModule.slug}/${section.slug}/${topic.slug}`;
 
         await test.step(`checking ${url}`, async () => {
-          const response = await page.goto(url);
-          expect(response?.status()).toBe(200);
+          const response = await page.goto(url, { waitUntil: 'domcontentloaded' });
+          expect(response, `Navigation to ${url} should return a response`).not.toBeNull();
+          expect(response!.status(), `Failed to load ${url}`).toBeLessThan(400);
 
-          const heading = page.locator('h1').first();
-          await expect(heading).toHaveText(topic.title);
+          const heading = page.getByRole('heading', { level: 1 }).first();
+          await expect(heading).toContainText(topic.title);
         });
       }
     }

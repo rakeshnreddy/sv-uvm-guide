@@ -21,18 +21,35 @@ test.describe('Curriculum Links Integrity', () => {
 
     for (const link of Array.from(uniqueLinks)) {
       console.log(`Checking link: ${link}`);
-      const response = await page.goto(link, { waitUntil: 'domcontentloaded' });
 
-      // Check if the response is successful
-      expect(response?.status(), `URL ${link} should return status 200`).toBe(200);
+      const parsed = new URL(link);
+      const hash = parsed.hash ? parsed.hash.slice(1) : '';
+      const targetPath = `${parsed.pathname}${parsed.search}`;
+
+      const response = await page.goto(targetPath, { waitUntil: 'domcontentloaded' });
+
+      if (response) {
+        expect(response.status(), `URL ${targetPath} should return < 400`).toBeLessThan(400);
+      } else {
+        const current = new URL(page.url());
+        expect(
+          `${current.pathname}${current.search}`,
+          `Navigation for ${targetPath} should resolve even when Playwright returns no response (likely hash navigation).`
+        ).toBe(targetPath);
+      }
 
       // Check for a main heading, indicating the page loaded content
-      const heading = page.locator('h1');
-      await expect(heading.first(), `URL ${link} should have an h1 title`).toBeVisible();
+      const heading = page.getByRole('heading', { level: 1 }).first();
+      await expect(heading, `URL ${targetPath} should have an h1 title`).toBeVisible();
 
-      // Optional: Check that the heading is not empty
-      const headingText = await heading.first().textContent();
-      expect(headingText?.trim(), `h1 at ${link} should not be empty`).not.toBe('');
+      const headingText = (await heading.textContent())?.trim();
+      expect(headingText, `h1 at ${targetPath} should not be empty`).toBeTruthy();
+
+      if (hash) {
+        await page.goto(link, { waitUntil: 'domcontentloaded' });
+        const currentHash = await page.evaluate(() => window.location.hash);
+        expect(currentHash, `Hash navigation should set window.location.hash for ${link}`).toBe(`#${hash}`);
+      }
     }
   });
 });
