@@ -4,14 +4,16 @@ import { createFlashcard, reviewFlashcard, getDueFlashcards } from '../src/app/a
 import { prisma } from '@/lib/prisma';
 import { withFrozenTime } from './setup/time-travel';
 
-const mPrismaClient = {
+const mPrismaClient = vi.hoisted(() => ({
+
   flashcard: {
     create: vi.fn(),
     findUnique: vi.fn(),
     update: vi.fn(),
     findMany: vi.fn(),
   },
-};
+}));
+
 
 // Mock Prisma Client helper
 vi.mock('@/lib/prisma', () => ({ prisma: mPrismaClient }));
