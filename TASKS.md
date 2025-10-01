@@ -24,7 +24,7 @@ This file consolidates open implementation and feedback items so the team has a 
 | D3 | completed | DX | Automate local setup and document Playwright/browser prerequisites. | `.env.example`, refreshed onboarding docs, and postinstall Playwright install script now capture browser + troubleshooting guidance. |
 | M1 | completed | Testing | Refactor remaining Playwright specs to use unique, stable locators. | Updated navigation, labs, and interactive demo specs to rely on accessible roles/test ids with matching aria hooks in the UI. |
 | M2 | todo | Testing | Enforce code quality via Husky + lint-staged pre-commit hooks. | Depends on M1-1 and M1-2. |
-| M3 | todo | Testing | Add exemplar unit/integration tests and document strategy. | Seed Vitest coverage for utilities and UI components. |
+| M3 | completed | Testing | Add exemplar unit/integration tests and document strategy. | Seed Vitest coverage for utilities and UI components. |
 | M4 | todo | Documentation | Write ADRs for routing, state management, and asset strategy. | Keep decisions lightweight but searchable. |
 | QA-4 | completed | Testing | Add or update unit, integration, and E2E tests alongside new features or feedback fixes. | Added a Vitest suite for the bundle guard CLI and refreshed E2E selectors to align with the new accessibility hooks. |
 | QA-5 | completed | Testing | Extract shared time mocking helpers for deterministic scheduling tests. | Added `tests/setup/time-travel.ts` with `withFrozenTime`; SRS actions spec now uses the shared helper. |
