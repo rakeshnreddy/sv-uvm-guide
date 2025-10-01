@@ -24,8 +24,13 @@ describe('uvm-link-map', () => {
 
       expect(link.startsWith('/curriculum/'), `link for ${id} should target curriculum`).toBe(true);
       const relative = link.replace(/^\/curriculum\//, '');
-      const mdxPath = path.join(curriculumRoot, `${relative}.mdx`);
+      const [relativePath, fragment] = relative.split('#');
+      const mdxPath = path.join(curriculumRoot, `${relativePath}.mdx`);
       expect(fs.existsSync(mdxPath), `missing curriculum entry for ${id} at ${mdxPath}`).toBe(true);
+
+      if (fragment !== undefined) {
+        expect(fragment.length > 0, `fragment for ${id} should not be empty`).toBe(true);
+      }
     });
   });
 
