@@ -127,7 +127,7 @@ const MiniBarChart = ({
     .nice();
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="presentation" aria-label={ariaLabel}>
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="application" aria-label={ariaLabel}>
       <g transform={`translate(${margin.left}, ${margin.top})`}>
         <line x1={0} y1={innerHeight} x2={innerWidth} y2={innerHeight} stroke="currentColor" strokeOpacity={0.2} />
         {data.map((d) => {

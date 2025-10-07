@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useId } from "react";
 import { scaleLinear, scalePoint } from "d3-scale";
 import { extent } from "d3-array";
 
@@ -109,6 +109,7 @@ const HistoryTimelineChart: React.FC = () => {
   const { width, height, margin } = chartDimensions;
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
+  const titleId = useId();
 
   const [minYear, maxYear] = extent(timelineData, (d) => d.year) as [number, number];
   const xScale = scaleLinear()
@@ -129,8 +130,8 @@ const HistoryTimelineChart: React.FC = () => {
 
   return (
     <div className="w-full" data-testid="history-timeline-chart">
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="presentation">
-        <title>SystemVerilog and UVM timeline</title>
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="application" aria-labelledby={titleId}>
+        <title id={titleId}>SystemVerilog and UVM timeline</title>
         <g transform={`translate(${margin.left}, ${margin.top})`}>
           <line x1={0} y1={innerHeight} x2={innerWidth} y2={innerHeight} stroke="currentColor" strokeOpacity={0.2} />
 
@@ -173,7 +174,12 @@ const HistoryTimelineChart: React.FC = () => {
             const labelOffset = radius + 16;
             return (
               <g key={`${event.name}-${event.year}`} transform={`translate(${x}, ${y})`}>
-                <circle r={radius} fill={typeColors[event.type]} fillOpacity={0.85} />
+                <circle
+                  r={radius}
+                  fill={typeColors[event.type]}
+                  fillOpacity={0.85}
+                  data-role="timeline-point"
+                />
                 <line
                   x1={0}
                   y1={0}

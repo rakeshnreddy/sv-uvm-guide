@@ -13,6 +13,7 @@ This file consolidates open implementation and feedback items so the team has a 
 |----|--------|------|---------|-------|
 | L4 | completed | Curriculum UX | Restore a performant verification stack visualization or keep refining the quick-link fallback. | Lightweight interactive diagram shipped alongside upgraded placeholders and passing E2E coverage; curriculum quick links stay in sync with the visualization. |
 | NF-5 | completed | Curriculum UX | Replace temporary diagram link targets with real curriculum anchors. | Run after L4 so nodes resolve to finalized slugs. |
+| VIS-1 | todo | Curriculum UX | Replace generic curriculum bar charts with context-appropriate visuals. | Audit modules using legacy bar charts (e.g., data type comparison) and design richer diagrams/infographics aligned to pedagogy. |
 | M1-1 | completed | Build Quality | Re-enable TypeScript error checking during builds. | `npm run build` now gates on `tsc --noEmit` before `next build`, re-enabling the TypeScript fail-fast guard in CI. |
 | M1-2 | completed | Build Quality | Re-enable ESLint error checking during builds. | ESLint now runs (and fails) during `next build`; repo is lint-clean. |
 | P1 | completed | Performance | Finish lazy-loading remaining heavy components. | EngagementEngine now defers its Recharts activity graph via `next/dynamic`, keeping the dashboard shell lightweight until the chart loads. |

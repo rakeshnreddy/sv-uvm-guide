@@ -41,7 +41,7 @@ export const EngagementActivityChart: React.FC<EngagementActivityChartProps> = (
     <div className="w-full" aria-label="Engagement activity chart">
       <svg
         viewBox={`0 0 ${width} ${height}`}
-        role="presentation"
+        role="application"
         className="h-full w-full"
         style={{ maxHeight: 260 }}
       >

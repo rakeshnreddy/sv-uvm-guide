@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useId } from "react";
 import { scaleBand, scaleLinear } from "d3-scale";
 import { max } from "d3-array";
 
@@ -65,6 +65,7 @@ const DataTypeComparisonChart: React.FC = () => {
   const { width, height, margin } = chartDimensions;
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
+  const titleId = useId();
 
   const x0 = scaleBand<string>()
     .domain(data.map((d) => d.name))
@@ -86,8 +87,8 @@ const DataTypeComparisonChart: React.FC = () => {
 
   return (
     <div data-testid="data-type-chart" className="w-full">
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="presentation">
-        <title>SystemVerilog data type comparison</title>
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="application" aria-labelledby={titleId}>
+        <title id={titleId}>SystemVerilog data type comparison</title>
         <g transform={`translate(${margin.left}, ${margin.top})`}>
           {yTicks.map((tick) => {
             const y = yScale(tick);

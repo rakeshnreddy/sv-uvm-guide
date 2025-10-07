@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo } from "react";
+import React, { useMemo, useId } from "react";
 import { hierarchy, partition, type HierarchyRectangularNode } from "d3-hierarchy";
 import { arc as d3Arc } from "d3-shape";
 import { scaleOrdinal } from "d3-scale";
@@ -77,6 +77,7 @@ const chartDimensions = {
 const UvmHierarchySunburstChart: React.FC = () => {
   const { size, margin } = chartDimensions;
   const radius = size / 2 - margin;
+  const titleId = useId();
 
   const nodes = useMemo(() => {
     const root = hierarchy(uvmHierarchyData)
@@ -100,8 +101,8 @@ const UvmHierarchySunburstChart: React.FC = () => {
 
   return (
     <div className="w-full" aria-label="UVM hierarchy sunburst">
-      <svg viewBox={`0 0 ${size} ${size}`} className="h-full w-full" role="presentation">
-        <title>UVM hierarchy overview</title>
+      <svg viewBox={`0 0 ${size} ${size}`} className="h-full w-full" role="application" aria-labelledby={titleId}>
+        <title id={titleId}>UVM hierarchy overview</title>
         <g transform={`translate(${size / 2}, ${size / 2})`}>
           {nodes.map((node) => {
             const path = arcGenerator(node);

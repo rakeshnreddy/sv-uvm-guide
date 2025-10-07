@@ -58,7 +58,12 @@ const DistributionBarChart = ({ data }: { data: DistributionDatum[] }) => {
   const yTicks = yScale.ticks(4);
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="presentation" aria-label="Random value distribution">
+    <svg
+      viewBox={`0 0 ${width} ${height}`}
+      className="h-full w-full"
+      role="application"
+      aria-label="Random value distribution"
+    >
       <g transform={`translate(${margin.left}, ${margin.top})`}>
         {yTicks.map((tick) => {
           const y = yScale(tick);
@@ -120,7 +125,7 @@ const SolveTimeLineChart = ({ data }: { data: SolveTimeDatum[] }) => {
 
   if (data.length === 0) {
     return (
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="presentation">
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="application" aria-label="Solve time trend">
         <text x={width / 2} y={height / 2} textAnchor="middle" fontSize={12} fill="currentColor" fillOpacity={0.6}>
           No runs yet
         </text>
@@ -150,7 +155,7 @@ const SolveTimeLineChart = ({ data }: { data: SolveTimeDatum[] }) => {
   const yTicks = yScale.ticks(4);
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="presentation" aria-label="Solve time trend">
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="application" aria-label="Solve time trend">
       <g transform={`translate(${margin.left}, ${margin.top})`}>
         {yTicks.map((tick) => {
           const y = yScale(tick);

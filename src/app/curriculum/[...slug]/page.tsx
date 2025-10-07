@@ -22,6 +22,7 @@ import matter from 'gray-matter';
 import FlashcardWidget from '@/components/widgets/FlashcardWidget';
 import { ArrowLeft, ArrowRight, BookOpen, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import MdxImage from '@/components/mdx/Image';
 
 const VisualizationFallback = () => (
   <div className="flex h-48 items-center justify-center">Loading visualization...</div>
@@ -102,6 +103,7 @@ const components = {
   AssertionBuilder,
   DebuggingSimulator,
   ConceptLink,
+  Image: MdxImage,
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {
