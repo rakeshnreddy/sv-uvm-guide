@@ -6,12 +6,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Input } from '@/components/ui/Input';
 import { Label } from '@/components/ui/Label';
 import { Gauge, HardDrive, Zap } from 'lucide-react';
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-} from 'recharts';
+import { scaleBand, scaleLinear } from 'd3-scale';
+import { max } from 'd3-array';
 
 const stateColor = {
   '0': 'bg-green-500',
@@ -88,13 +84,95 @@ const SystemVerilogDataTypesAnimation = () => {
 
   const andOutput = computeAnd(inputA, inputB);
   const logicToInt = (val: StateColorKey): number => (val === '1' ? 1 : 0);
-  const logicToBit = (val: StateColorKey): StateColorKey => (val === '1' ? '1' : '0');
-  const intValue = logicToInt(logicValue);
-  const bitValue = logicToBit(logicBitValue);
-  const logicBitPerfData = [
-    { name: 'logic', memory: 2, speed: 1 },
-    { name: 'bit', memory: 1, speed: 2 },
-  ];
+const logicToBit = (val: StateColorKey): StateColorKey => (val === '1' ? '1' : '0');
+const intValue = logicToInt(logicValue);
+const bitValue = logicToBit(logicBitValue);
+const logicBitPerfData = [
+  { name: 'logic', memory: 2, speed: 1 },
+  { name: 'bit', memory: 1, speed: 2 },
+];
+
+type PerfMetricKey = 'memory' | 'speed';
+
+const miniChartDimensions = {
+  width: 240,
+  height: 100,
+  margin: { top: 12, right: 12, bottom: 28, left: 28 },
+};
+
+const MiniBarChart = ({
+  data,
+  dataKey,
+  color,
+  ariaLabel,
+}: {
+  data: typeof logicBitPerfData;
+  dataKey: PerfMetricKey;
+  color: string;
+  ariaLabel: string;
+}) => {
+  const { width, height, margin } = miniChartDimensions;
+  const innerWidth = width - margin.left - margin.right;
+  const innerHeight = height - margin.top - margin.bottom;
+
+  const xScale = scaleBand<string>()
+    .domain(data.map((d) => d.name))
+    .range([0, innerWidth])
+    .padding(0.35);
+
+  const maxValue = max(data, (d) => d[dataKey]) ?? 1;
+  const yScale = scaleLinear()
+    .domain([0, maxValue])
+    .range([innerHeight, 0])
+    .nice();
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="presentation" aria-label={ariaLabel}>
+      <g transform={`translate(${margin.left}, ${margin.top})`}>
+        <line x1={0} y1={innerHeight} x2={innerWidth} y2={innerHeight} stroke="currentColor" strokeOpacity={0.2} />
+        {data.map((d) => {
+          const x = xScale(d.name);
+          if (x == null) return null;
+          const value = d[dataKey];
+          const barHeight = innerHeight - yScale(value);
+          return (
+            <g key={`${d.name}-${dataKey}`} transform={`translate(${x}, ${yScale(value)})`}>
+              <rect width={xScale.bandwidth()} height={Math.max(0, barHeight)} fill={color} rx={4} />
+              <text
+                x={xScale.bandwidth() / 2}
+                y={-6}
+                textAnchor="middle"
+                fontSize={11}
+                fill="currentColor"
+                fillOpacity={0.75}
+              >
+                {value}
+              </text>
+              <title>{`${d.name} ${dataKey}: ${value}`}</title>
+            </g>
+          );
+        })}
+        {data.map((d) => {
+          const x = xScale(d.name);
+          if (x == null) return null;
+          return (
+            <text
+              key={`label-${d.name}`}
+              x={x + xScale.bandwidth() / 2}
+              y={innerHeight + 16}
+              textAnchor="middle"
+              fontSize={11}
+              fill="currentColor"
+              fillOpacity={0.7}
+            >
+              {d.name}
+            </text>
+          );
+        })}
+      </g>
+    </svg>
+  );
+};
 
   return (
     <Card className="w-full">
@@ -620,24 +698,14 @@ const SystemVerilogDataTypesAnimation = () => {
             <HardDrive className="w-4 h-4 mr-2" />
             Memory
           </div>
-          <ResponsiveContainer width="100%" height={80}>
-            <BarChart data={logicBitPerfData}>
-              <XAxis dataKey="name" hide />
-              <Bar dataKey="memory" fill="#8884d8" />
-            </BarChart>
-          </ResponsiveContainer>
+          <MiniBarChart data={logicBitPerfData} dataKey="memory" color="#6366f1" ariaLabel="Memory comparison" />
         </div>
         <div>
           <div className="flex items-center mb-2 text-sm font-medium">
             <Zap className="w-4 h-4 mr-2" />
             Speed
           </div>
-          <ResponsiveContainer width="100%" height={80}>
-            <BarChart data={logicBitPerfData}>
-              <XAxis dataKey="name" hide />
-              <Bar dataKey="speed" fill="#82ca9d" />
-            </BarChart>
-          </ResponsiveContainer>
+          <MiniBarChart data={logicBitPerfData} dataKey="speed" color="#22c55e" ariaLabel="Speed comparison" />
         </div>
       </aside>
     </div>

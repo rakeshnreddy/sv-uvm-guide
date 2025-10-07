@@ -8,16 +8,9 @@ import { CodeBlock } from '@/components/ui/CodeBlock';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 import { Label } from '@/components/ui/Label';
 import { Input } from '@/components/ui/Input';
-import {
-  ResponsiveContainer,
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  Tooltip,
-  LineChart,
-  Line,
-} from 'recharts';
+import { scaleBand, scaleLinear } from 'd3-scale';
+import { line as d3Line, curveMonotoneX } from 'd3-shape';
+import { extent, max } from 'd3-array';
 
 type SolveResult = {
   values: Record<string, number>;
@@ -30,6 +23,189 @@ type SolveResult = {
 
 const MAX_ATTEMPTS = 20;
 const MAX_HISTORY = 200;
+
+type DistributionDatum = { range: string; count: number };
+type SolveTimeDatum = { run: number; time: number };
+
+const distributionChartDimensions = {
+  width: 520,
+  height: 220,
+  margin: { top: 16, right: 16, bottom: 52, left: 52 },
+};
+
+const solveTimeChartDimensions = {
+  width: 520,
+  height: 220,
+  margin: { top: 16, right: 24, bottom: 48, left: 60 },
+};
+
+const DistributionBarChart = ({ data }: { data: DistributionDatum[] }) => {
+  const { width, height, margin } = distributionChartDimensions;
+  const innerWidth = width - margin.left - margin.right;
+  const innerHeight = height - margin.top - margin.bottom;
+
+  const xScale = scaleBand<string>()
+    .domain(data.map((d) => d.range))
+    .range([0, innerWidth])
+    .padding(0.2);
+
+  const maxValue = max(data, (d) => d.count) ?? 0;
+  const yScale = scaleLinear()
+    .domain([0, maxValue === 0 ? 1 : maxValue])
+    .range([innerHeight, 0])
+    .nice();
+
+  const yTicks = yScale.ticks(4);
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="presentation" aria-label="Random value distribution">
+      <g transform={`translate(${margin.left}, ${margin.top})`}>
+        {yTicks.map((tick) => {
+          const y = yScale(tick);
+          return (
+            <g key={tick} transform={`translate(0, ${y})`}>
+              <line x1={0} x2={innerWidth} stroke="currentColor" strokeOpacity={0.06} />
+              <text
+                x={-10}
+                dy="0.32em"
+                textAnchor="end"
+                fontSize={11}
+                fill="currentColor"
+                fillOpacity={0.6}
+              >
+                {tick}
+              </text>
+            </g>
+          );
+        })}
+
+        {data.map((d) => {
+          const x = xScale(d.range);
+          if (x == null) return null;
+          const barHeight = innerHeight - yScale(d.count);
+          return (
+            <g key={d.range} transform={`translate(${x}, ${yScale(d.count)})`}>
+              <rect width={xScale.bandwidth()} height={Math.max(0, barHeight)} fill="hsl(var(--primary))" rx={4} fillOpacity={0.85} />
+              <title>{`${d.range}: ${d.count}`}</title>
+            </g>
+          );
+        })}
+
+        {data.map((d) => {
+          const x = xScale(d.range);
+          if (x == null) return null;
+          return (
+            <text
+              key={`label-${d.range}`}
+              x={x + xScale.bandwidth() / 2}
+              y={innerHeight + 18}
+              textAnchor="middle"
+              fontSize={11}
+              fill="currentColor"
+              fillOpacity={0.7}
+            >
+              {d.range}
+            </text>
+          );
+        })}
+      </g>
+    </svg>
+  );
+};
+
+const SolveTimeLineChart = ({ data }: { data: SolveTimeDatum[] }) => {
+  const { width, height, margin } = solveTimeChartDimensions;
+  const innerWidth = width - margin.left - margin.right;
+  const innerHeight = height - margin.top - margin.bottom;
+
+  if (data.length === 0) {
+    return (
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="presentation">
+        <text x={width / 2} y={height / 2} textAnchor="middle" fontSize={12} fill="currentColor" fillOpacity={0.6}>
+          No runs yet
+        </text>
+      </svg>
+    );
+  }
+
+  const [minRun, maxRun] = extent(data, (d) => d.run) as [number, number];
+  const maxTime = max(data, (d) => d.time) ?? 0;
+
+  const xScale = scaleLinear()
+    .domain([minRun, maxRun])
+    .nice()
+    .range([0, innerWidth]);
+
+  const yScale = scaleLinear()
+    .domain([0, maxTime === 0 ? 1 : maxTime])
+    .range([innerHeight, 0])
+    .nice();
+
+  const lineGenerator = d3Line<SolveTimeDatum>()
+    .x((d) => xScale(d.run))
+    .y((d) => yScale(d.time))
+    .curve(curveMonotoneX);
+
+  const path = lineGenerator(data) ?? undefined;
+  const yTicks = yScale.ticks(4);
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="presentation" aria-label="Solve time trend">
+      <g transform={`translate(${margin.left}, ${margin.top})`}>
+        {yTicks.map((tick) => {
+          const y = yScale(tick);
+          return (
+            <g key={tick} transform={`translate(0, ${y})`}>
+              <line x1={0} x2={innerWidth} stroke="currentColor" strokeOpacity={0.06} />
+              <text
+                x={-10}
+                dy="0.32em"
+                textAnchor="end"
+                fontSize={11}
+                fill="currentColor"
+                fillOpacity={0.6}
+              >
+                {tick.toFixed(0)}
+              </text>
+            </g>
+          );
+        })}
+
+        {path ? <path d={path} fill="none" stroke="hsl(var(--primary))" strokeWidth={2} strokeOpacity={0.85} /> : null}
+
+        {data.map((d) => (
+          <circle
+            key={d.run}
+            cx={xScale(d.run)}
+            cy={yScale(d.time)}
+            r={4}
+            fill="hsl(var(--primary))"
+            fillOpacity={0.9}
+          >
+            <title>{`Run ${d.run}: ${d.time.toFixed(2)} ms`}</title>
+          </circle>
+        ))}
+
+        <g transform={`translate(0, ${innerHeight})`}>
+          <line x1={0} x2={innerWidth} stroke="currentColor" strokeOpacity={0.2} />
+          {data.map((d) => (
+            <text
+              key={`run-${d.run}`}
+              x={xScale(d.run)}
+              y={32}
+              textAnchor="middle"
+              fontSize={11}
+              fill="currentColor"
+              fillOpacity={0.7}
+            >
+              {d.run}
+            </text>
+          ))}
+        </g>
+      </g>
+    </svg>
+  );
+};
 
 const RandomizationExplorer = () => {
   const [exampleIndex, setExampleIndex] = useState(0);
@@ -205,7 +381,7 @@ const RandomizationExplorer = () => {
   }, []);
 
   const currentStep = currentExample.steps[currentStepIndex];
-  const distributionChartData = useMemo(
+  const distributionChartData = useMemo<DistributionDatum[]>(
     () =>
       distribution.map((count, index) => ({
         range: `${index * 16}-${index * 16 + 15}`,
@@ -214,7 +390,7 @@ const RandomizationExplorer = () => {
     [distribution]
   );
 
-  const solveTimeChartData = useMemo(
+  const solveTimeChartData = useMemo<SolveTimeDatum[]>(
     () => solveTimes.map((time, index) => ({ run: index + 1, time })),
     [solveTimes]
   );
@@ -441,14 +617,7 @@ const RandomizationExplorer = () => {
 
             <div className="w-full mt-4">
               <h3 className="mb-2 font-semibold">Distribution</h3>
-              <ResponsiveContainer width="100%" height={200}>
-                <BarChart data={distributionChartData}>
-                  <XAxis dataKey="range" />
-                  <YAxis allowDecimals={false} />
-                  <Tooltip />
-                  <Bar dataKey="count" fill="#8884d8" />
-                </BarChart>
-              </ResponsiveContainer>
+              <DistributionBarChart data={distributionChartData} />
             </div>
 
             <div className="w-full mt-4">
@@ -498,14 +667,7 @@ const RandomizationExplorer = () => {
               <p className="text-sm mb-2">
                 Last solve time: {solveTimes.length ? `${latestSolveTime.toFixed(2)} ms` : '–'}
               </p>
-              <ResponsiveContainer width="100%" height={200}>
-                <LineChart data={solveTimeChartData}>
-                  <XAxis dataKey="run" />
-                  <YAxis />
-                  <Tooltip />
-                  <Line type="monotone" dataKey="time" stroke="#82ca9d" />
-                </LineChart>
-              </ResponsiveContainer>
+              <SolveTimeLineChart data={solveTimeChartData} />
             </div>
           </div>
         </div>
