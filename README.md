@@ -38,6 +38,8 @@ npm run bundle:check
 npm run test:e2e
 ```
 
+Husky installs a pre-commit hook (via `npm install`) that runs `lint-staged` with `next lint --file` and `vitest related --run` so source changes meet the lint/test bar before they land.
+
 If Playwright system dependencies are unavailable in your environment you can temporarily skip `npm run test:e2e`, but record the blocker (see [Playwright setup](#playwright-setup--troubleshooting)).
 
 ### Environment variables
