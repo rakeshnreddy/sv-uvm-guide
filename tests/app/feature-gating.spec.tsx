@@ -105,14 +105,14 @@ describe('feature-flag gated routes', () => {
   });
 
   it('notifications page shows placeholder when account UI flag is disabled', async () => {
-    const pageModule = await loadRoute<{ default: () => React.ReactElement }>(
+    const pageModule = await loadRoute<{ default: () => Promise<React.ReactElement> }>(
       '@/app/notifications/page',
       {
         defaultValue: false,
       },
     );
 
-    const element = pageModule.default();
+    const element = await pageModule.default();
     render(element);
 
     expect(
@@ -121,7 +121,7 @@ describe('feature-flag gated routes', () => {
   });
 
   it('notifications page renders full feed when account UI flag is enabled', async () => {
-    const pageModule = await loadRoute<{ default: () => React.ReactElement }>(
+    const pageModule = await loadRoute<{ default: () => Promise<React.ReactElement> }>(
       '@/app/notifications/page',
       {
         defaultValue: false,
@@ -129,10 +129,10 @@ describe('feature-flag gated routes', () => {
       },
     );
 
-    const element = pageModule.default();
+    const element = await pageModule.default();
     render(element);
 
-    expect(screen.getByText(/Tier 3 sequencing review ready/i)).toBeInTheDocument();
+    expect(screen.getByText(/Nice work finishing UVM Basics/i)).toBeInTheDocument();
     expect(screen.queryByText(/Notifications will launch once account preferences are wired up./i)).not.toBeInTheDocument();
   });
 });

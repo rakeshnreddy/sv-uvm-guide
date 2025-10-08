@@ -52,7 +52,8 @@ test.describe('Advanced Navigation Features', () => {
 
     // Test Notification Center
     await page.getByTestId('notification-button').click();
-    await expect(page.getByText('Achievement Unlocked!')).toBeVisible();
+    await expect(page.getByText('Notifications')).toBeVisible();
+    await expect(page.getByText(/View all/)).toBeVisible();
   });
 
   test('should show enhanced breadcrumbs on a curriculum page', async ({ page }) => {

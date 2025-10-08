@@ -31,8 +31,8 @@ This file consolidates open implementation and feedback items so the team has a 
 | QA-5 | 🟢 completed | Testing | Extract shared time mocking helpers for deterministic scheduling tests. | Added `tests/setup/time-travel.ts` with `withFrozenTime`; SRS actions spec now uses the shared helper. |
 | DX-2 | 🟢 completed | DX | Consolidate Prisma client management for server actions. | Avoid per-action instantiation uncovered while expanding SRS coverage. |
 | PROD-1 | 🟢 completed | Product | Expand placement quiz into an interactive assessment with scoring/analytics. | `/quiz/placement` now delivers a 10-question assessment with weighted scoring, tier recommendations, category breakdowns, and follow-up resource links. |
-| PROD-2 | ⚪ todo | Product | Power notifications with real activity events and user preferences. | Replace placeholders with real data. |
-| PROD-3 | ⚪ todo | Product | Replace settings stub with persisted profile/theme/communication preferences. | Integrate with existing auth/session flows. |
+| PROD-2 | 🟢 completed | Product | Power notifications with real activity events and user preferences. | Notifications feed now derives from engagement activity + preferences, with API + tests wired into navbar and /notifications. |
+| PROD-3 | 🟢 completed | Product | Replace settings stub with persisted profile/theme/communication preferences. | Session-backed preferences now power /settings, the notifications feed, and the navbar badge (API + tests). |
 | OPS-1 | 🔴 blocked | Tooling | Install Playwright system deps and rerun focused + full e2e suites. | Playwright browsers install automatically, but `npm run test:e2e` still fails in this container because required system libraries are missing (`npx playwright install-deps` hits proxy/apt restrictions). |
 | OPS-2 | ⚪ todo | QA | Capture a new Playwright report once suites pass. | Share report and update Milestone 4 status. |
 | OPS-3 | 🟢 completed | QA | Run `npm run lint && npm run test && npm run build` after major changes. | Latest session verified all three checks (`npm run lint`, `npm test`, `CI=1 npm run build`) without issues. |

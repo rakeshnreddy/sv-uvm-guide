@@ -7,6 +7,10 @@ import { motion, AnimatePresence } from "framer-motion";
 import Logo from "@/components/ui/Logo";
 import { ThemeSwitcher } from "@/components/ui/ThemeSwitcher";
 import { useNavigation } from "@/contexts/NavigationContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { formatTimestamp, type NotificationItem, NOTIFICATION_CATEGORY_META } from "@/lib/notifications";
+import { featureFlags } from "@/tools/featureFlags";
+import { cn } from "@/lib/utils";
 
 interface NavLink {
   label: string;
@@ -63,39 +67,164 @@ const UserProfileDropdown = () => {
 }
 
 const NotificationCenter = () => {
-    const [isOpen, setIsOpen] = useState(false);
-    return (
-        <div className="relative">
-             <button
-                onClick={() => setIsOpen(!isOpen)}
-                className="relative rounded-2xl border border-white/10 bg-white/5 p-2 text-[var(--blueprint-foreground)] transition hover:border-white/20 hover:bg-white/10"
-                data-testid="notification-button"
-            >
-                <Bell className="h-6 w-6" />
-                <span className="absolute top-2 right-2 block h-2 w-2 rounded-full bg-[var(--blueprint-accent)] ring-2 ring-[rgba(8,15,35,0.95)]"></span>
-            </button>
-             <AnimatePresence>
-                {isOpen && (
-                    <motion.div
-                        initial={{ opacity: 0, y: -10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -10 }}
-                        className="absolute top-full right-0 mt-3 w-80 overflow-hidden rounded-2xl border border-white/10 bg-[var(--blueprint-glass)] shadow-[0_25px_60px_rgba(5,15,35,0.55)] backdrop-blur-2xl"
-                    >
-                        <div className="border-b border-white/10 p-3 text-sm font-semibold text-[var(--blueprint-foreground)]">Notifications</div>
-                        <div className="p-4 text-center text-sm text-[rgba(230,241,255,0.72)]">
-                            <p className="font-semibold mb-1">Achievement Unlocked!</p>
-                            <p className="text-xs">You completed the 'UVM Basics' module.</p>
+  const [isOpen, setIsOpen] = useState(false);
+  const [items, setItems] = useState<NotificationItem[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { user } = useAuth();
+  const accountUiEnabled = featureFlags.accountUI;
+  const userId = user?.uid ?? "demo-user";
+  const hasUnread = items.some((notification) => notification.unread);
+
+  useEffect(() => {
+    if (!accountUiEnabled) {
+      setItems([]);
+      return;
+    }
+
+    let isMounted = true;
+    const controller = new AbortController();
+
+    const loadNotifications = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(`/api/notifications/${encodeURIComponent(userId)}?limit=4`, {
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw new Error('Failed to load notifications');
+        }
+        const payload = await response.json();
+        if (isMounted) {
+          setItems(Array.isArray(payload.notifications) ? payload.notifications : []);
+        }
+      } catch (err) {
+        if (!isMounted || (err as Error).name === 'AbortError') {
+          return;
+        }
+        setError('Unable to load notifications');
+        setItems([]);
+      } finally {
+        if (isMounted) {
+          setLoading(false);
+        }
+      }
+    };
+
+    loadNotifications();
+
+    return () => {
+      isMounted = false;
+      controller.abort();
+    };
+  }, [accountUiEnabled, userId]);
+
+  const badgeClass = cn(
+    "absolute top-2 right-2 block h-2 w-2 rounded-full bg-[var(--blueprint-accent)] ring-2 ring-[rgba(8,15,35,0.95)]",
+    { hidden: !accountUiEnabled || (!hasUnread && items.length === 0) },
+  );
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setIsOpen((prev) => !prev)}
+        className="relative rounded-2xl border border-white/10 bg-white/5 p-2 text-[var(--blueprint-foreground)] transition hover:border-white/20 hover:bg-white/10"
+        data-testid="notification-button"
+      >
+        <Bell className="h-6 w-6" />
+        <span className={badgeClass} aria-hidden={!hasUnread} />
+      </button>
+      <AnimatePresence>
+        {isOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="absolute top-full right-0 mt-3 w-80 overflow-hidden rounded-2xl border border-white/10 bg-[var(--blueprint-glass)] shadow-[0_25px_60px_rgba(5,15,35,0.55)] backdrop-blur-2xl"
+          >
+            <div className="border-b border-white/10 p-3 text-sm font-semibold text-[var(--blueprint-foreground)]">
+              Notifications
+            </div>
+            <div className="max-h-80 overflow-y-auto">
+              {!accountUiEnabled && (
+                <div className="p-4 text-sm text-[rgba(230,241,255,0.72)]">
+                  <p className="font-semibold mb-1">Account experiments disabled</p>
+                  <p className="text-xs">
+                    Turn on the account UI flag to preview the real-time notification feed.
+                  </p>
+                </div>
+              )}
+              {accountUiEnabled && loading && (
+                <div className="p-4 text-sm text-[rgba(230,241,255,0.72)]">Loading notifications…</div>
+              )}
+              {accountUiEnabled && !loading && error && (
+                <div className="p-4 text-sm text-rose-200">{error}</div>
+              )}
+              {accountUiEnabled && !loading && !error && items.length === 0 && (
+                <div className="p-4 text-sm text-[rgba(230,241,255,0.72)]">
+                  <p className="font-semibold mb-1">You’re all caught up</p>
+                  <p className="text-xs">We’ll nudge you when new activity arrives.</p>
+                </div>
+              )}
+              {accountUiEnabled && !loading && !error && items.length > 0 && (
+                <div className="divide-y divide-white/10">
+                  {items.map((notification) => {
+                    const meta = NOTIFICATION_CATEGORY_META[notification.category];
+                    return (
+                      <article key={notification.id} className="p-4 text-left">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold text-[var(--blueprint-foreground)]">
+                              {notification.title}
+                            </p>
+                            <p className="mt-1 text-xs text-[rgba(230,241,255,0.65)]">
+                              {notification.description}
+                            </p>
+                          </div>
+                          <span
+                            className={cn(
+                              "rounded-full px-2 py-0.5 text-[10px] font-semibold",
+                              meta?.badgeClass ?? "bg-white/10 text-[rgba(230,241,255,0.8)]",
+                            )}
+                          >
+                            {meta?.label ?? 'Update'}
+                          </span>
                         </div>
-                         <div className="border-t border-white/10 p-2 text-center">
-                            <Link href="/notifications" className="text-xs text-[var(--blueprint-accent)] hover:underline">View all</Link>
+                        <div className="mt-3 flex items-center justify-between text-[11px] text-[rgba(230,241,255,0.45)]">
+                          <span>{formatTimestamp(notification.timestamp)}</span>
+                          {notification.href && (
+                            <Link
+                              href={notification.href}
+                              className="text-xs text-[var(--blueprint-accent)] hover:underline"
+                            >
+                              Open
+                            </Link>
+                          )}
                         </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
-        </div>
-    )
-}
+                      </article>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="border-t border-white/10 p-2 text-center">
+              {accountUiEnabled ? (
+                <Link href="/notifications" className="text-xs text-[var(--blueprint-accent)] hover:underline">
+                  View all
+                </Link>
+              ) : (
+                <span className="text-[10px] text-[rgba(230,241,255,0.45)]">
+                  Enable accountUI to access the notifications hub.
+                </span>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+};
 
 
 const Navbar = () => {
