@@ -33,8 +33,8 @@ This file consolidates open implementation and feedback items so the team has a 
 | PROD-1 | 🟢 completed | Product | Expand placement quiz into an interactive assessment with scoring/analytics. | `/quiz/placement` now delivers a 10-question assessment with weighted scoring, tier recommendations, category breakdowns, and follow-up resource links. |
 | PROD-2 | 🟢 completed | Product | Power notifications with real activity events and user preferences. | Notifications feed now derives from engagement activity + preferences, with API + tests wired into navbar and /notifications. |
 | PROD-3 | 🟢 completed | Product | Replace settings stub with persisted profile/theme/communication preferences. | Session-backed preferences now power /settings, the notifications feed, and the navbar badge (API + tests). |
-| OPS-1 | 🔴 blocked | Tooling | Install Playwright system deps and rerun focused + full e2e suites. | Playwright config now runs the dev server on port 3100 with only the account UI flag (`playwright.config.ts`); sandbox still blocks binding to localhost so suites must run on a full machine until OPS-1 provisions the deps/permissions. |
-| OPS-2 | ⚪ todo | QA | Capture a new Playwright report once suites pass. | Share report and update Milestone 4 status. |
+| OPS-1 | 🟢 completed | Tooling | Install Playwright system deps and rerun focused + full e2e suites. | Playwright suite executes against `npm run dev -- --hostname 127.0.0.1 --port 3100`; local run (`NEXT_PUBLIC_FEATURE_FLAG_ACCOUNT_UI=true npx playwright test --reporter=line,html`) passes and serves as the reference command until CI perms land. |
+| OPS-2 | 🟢 completed | QA | Capture a new Playwright report once suites pass. | Report archived at `test-results/playwright-10_8/`; include artifact when publishing Milestone 4 status. |
 | OPS-3 | 🟢 completed | QA | Run `npm run lint && npm run test && npm run build` after major changes. | Latest session verified all three checks (`npm run lint`, `npm test`, `CI=1 npm run build`) without issues. |
 
 ## Recently Completed
