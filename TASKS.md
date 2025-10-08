@@ -17,12 +17,6 @@ This file consolidates open implementation and feedback items so the team has a 
 
 | Task ID | Summary | Status |
 |---|---|---|
-| `CURR-REFACTOR-F3` | Deprecate F3 lesson and merge into F2 | `todo` |
-| `CURR-REFACTOR-I-UVM-4` | Deprecate I-UVM-4 lesson and merge into I-UVM-1B | `todo` |
-| `CURR-REFACTOR-I-UVM-5` | Deprecate I-UVM-5 lesson and merge into I-UVM-1C | `todo` |
-| `CURR-REFACTOR-A-UVM-1` | Deprecate A-UVM-1 lesson and merge into I-UVM-3B | `todo` |
-| `CURR-REFACTOR-A-UVM-2` | Deprecate A-UVM-2 lesson and merge into I-UVM-1B | `todo` |
-| `CURR-REFACTOR-A-UVM-3` | Deprecate A-UVM-3 lesson and create new Callbacks lesson | `todo` |
 | `CURR-SPLIT-F2` | Split F2 lesson (SV Basics) into four parts | `todo` |
 | `CURR-SPLIT-F4` | Split F4 lesson (RTL Constructs) into three parts | `todo` |
 | `CURR-SPLIT-I-UVM-1` | Split I-UVM-1 lesson (UVM Intro) into three parts | `todo` |
@@ -32,6 +26,12 @@ This file consolidates open implementation and feedback items so the team has a 
 | `CURR-SPLIT-I-SV-3` | Split I-SV-3 lesson (Coverage) into two parts | `todo` |
 | `CURR-SPLIT-I-SV-4` | Split I-SV-4 lesson (Assertions) into two parts | `todo` |
 | `CURR-SPLIT-A-UVM-4` | Split A-UVM-4 lesson (RAL) into two parts | `todo` |
+| `CURR-REFACTOR-F3` | Deprecate F3 lesson and merge into F2 | `todo` |
+| `CURR-REFACTOR-I-UVM-4` | Deprecate I-UVM-4 lesson and merge into I-UVM-1B | `todo` |
+| `CURR-REFACTOR-I-UVM-5` | Deprecate I-UVM-5 lesson and merge into I-UVM-1C | `todo` |
+| `CURR-REFACTOR-A-UVM-1` | Deprecate A-UVM-1 lesson and merge into I-UVM-3B | `todo` |
+| `CURR-REFACTOR-A-UVM-2` | Deprecate A-UVM-2 lesson and merge into I-UVM-1B | `todo` |
+| `CURR-REFACTOR-A-UVM-3` | Deprecate A-UVM-3 lesson and create new Callbacks lesson | `todo` |
 | `CURR-MODERNIZE-F1` | Modernize F1 lesson (Why Verification?) | `todo` |
 | `CURR-MODERNIZE-I-SV-1` | Modernize I-SV-1 lesson (OOP) | `todo` |
 | `CURR-MODERNIZE-E-PERF-1` | Modernize E-PERF-1 lesson (UVM Performance) | `todo` |

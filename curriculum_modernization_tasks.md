@@ -1,214 +1,6 @@
 # Curriculum Modernization Tasks
 
-This file contains a series of prompts for a coding agent to modernize the curriculum lessons based on the SystemVerilog and UVM Language Reference Manuals. The tasks are ordered logically, with structural refactoring (merges, splits) placed before content enhancement.
-
----
-
-### Task: Deprecate "F3: Procedural Constructs" and Merge Content
-
-**Agent Instructions:**
-1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
-2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-REFACTOR-F3` and changing its status from `todo` to `complete`.
-
-- **Status:** `todo`
-- **Lesson:** F3: Procedural Constructs
-- **Path:** `content/curriculum/T1_Foundational/F3_Procedural_Constructs/index.mdx`
-- **SystemVerilog LRM clauses:** N/A (This is a refactoring task)
-
-#### 1. Proposed Action: Deprecate and Merge
-
-The content in this lesson is highly redundant with the material in `F2: SystemVerilog Language Basics`. As part of the modernization of `F2`, it was proposed to split it into four new, focused lessons. This `F3` lesson should be deprecated, and its unique assets and explanations merged into those new lessons.
-
-**Merge Plan:**
-- The core concepts (`initial`, `always`, blocking/non-blocking, flow control) will be covered by the new **`F2C: Procedural Code and Flow Control`** lesson.
-- The `fork-join` content will be moved to the new **`F2D: Reusable Code and Parallelism`** lesson.
-- The excellent `ProceduralBlocksSimulator` component should be moved from `F3` and embedded into the new `F2C` lesson to explain blocking vs. non-blocking assignments.
-- The `F3_Behavioral_RTL_Modeling` file, which already redirects here, should be updated to point to the new `F2C` lesson.
-
-#### 2. Rationale
-- **Reduces Redundancy:** Eliminates significant content overlap between `F2` and `F3`.
-- **Improves Learning Flow:** Creates a more logical and granular learning path where students learn about data types first, then how to manipulate them with procedural code.
-- **Consolidates Assets:** Moves the high-value `ProceduralBlocksSimulator` visual to the most relevant new lesson.
-
-#### 3. Task Backlog Entries
-
-| Task ID | Status | Summary | Acceptance Criteria |
-|---|---|---|---|
-| `CURR-F3-MERGE` | `todo` | Merge content from F3 into the new F2A-F2D lessons. | - The `ProceduralBlocksSimulator` component is moved from the `F3` directory/lesson and integrated into the new `F2C` lesson.<br>- Any unique explanations or examples from `F3` are migrated into the appropriate `F2C` or `F2D` lesson files.<br>- The `F3_Procedural_Constructs` directory and its `index.mdx` file are deleted. |
-| `CURR-F3-REDIRECT` | `todo` | Update redirects to point to the new consolidated lesson. | - The redirect in `content/curriculum/T1_Foundational/F3_Behavioral_RTL_Modeling/index.mdx` is updated to point to `/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/`.<br>- A new redirect is added from the old `F3` path to the new `F2C` path in `next.config.mjs` to preserve any external links. |
-| `CURR-F3-REVIEW` | `todo` | Review all related lessons and navigation. | - The curriculum's `_category_.json` file is updated to remove the `F3` lesson.<br>- The `F2` lessons are reviewed to ensure the merged content is well-integrated.<br>- **Unit Tests:** N/A for this refactoring.<br>- **E2E Tests:** Verify that the old `F3` URL correctly redirects to the new `F2C` URL.<br>- All internal links are verified. |
-
----
-
-### Task: Deprecate "I-UVM-4: UVM Factory and Overrides" and Merge Content
-
-**Agent Instructions:**
-1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
-2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-REFACTOR-I-UVM-4` and changing its status from `todo` to `complete`.
-
-- **Status:** `todo`
-- **Lesson:** I-UVM-4: UVM Factory and Overrides
-- **Path:** `content/curriculum/T2_Intermediate/I-UVM-4_Factory_and_Overrides/index.mdx`
-- **UVM LRM clauses:** N/A (This is a refactoring task)
-
-#### 1. Proposed Action: Deprecate and Merge
-
-The content in this lesson is entirely redundant with the factory-related material in `I-UVM-1: UVM Introduction`. As part of the modernization of `I-UVM-1`, it was proposed to create a new, dedicated lesson: **`I-UVM-1B: The UVM Factory`**. This `I-UVM-4` lesson should be deprecated, and its content merged into that new lesson.
-
-**Merge Plan:**
-- Any unique examples, explanations, or quiz questions from `I-UVM-4` should be migrated into the new `I-UVM-1B` lesson file.
-- The `I-UVM-4_Factory_and_Overrides` directory and its `index.mdx` file should be deleted.
-- A redirect should be added from the old `I-UVM-4` path to the new `I-UVM-1B` path to preserve any external links.
-
-#### 2. Rationale
-- **Eliminates Redundancy:** Prevents having two separate lessons on the exact same topic (the UVM factory).
-- **Improves Learning Path:** Creates a single, clear, authoritative lesson on the factory within the introductory UVM module, which is the most logical place for it.
-
-#### 3. Task Backlog Entries
-
-| Task ID | Status | Summary | Acceptance Criteria |
-|---|---|---|---|
-| `CURR-I-UVM-4-MERGE` | `todo` | Merge content from I-UVM-4 into the new I-UVM-1B lesson. | - Unique examples and quiz questions from `I-UVM-4` are identified and moved into the `I-UVM-1B` lesson file.<br>- The `I-UVM-4_Factory_and_Overrides` directory is deleted. |
-| `CURR-I-UVM-4-REDIRECT` | `todo` | Add a redirect from the old I-UVM-4 path to the new I-UVM-1B path. | - A redirect is added to `next.config.mjs` for the old path.<br>- The curriculum's `_category_.json` file is updated to remove the `I-UVM-4` lesson. |
-| `CURR-I-UVM-4-REVIEW` | `todo` | Review the consolidated factory lesson (I-UVM-1B). | - The `I-UVM-1B` lesson is reviewed to ensure the merged content is well-integrated and there are no contradictions.<br>- **Unit Tests:** N/A for this refactoring.<br>- **E2E Tests:** Verify that the old `I-UVM-4` URL correctly redirects to the new `I-UVM-1B` URL.<br>- All internal links are verified. |
-
----
-
-### Task: Deprecate "I-UVM-5: UVM Phasing and Synchronization" and Merge Content
-
-**Agent Instructions:**
-1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
-2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-REFACTOR-I-UVM-5` and changing its status from `todo` to `complete`.
-
-- **Status:** `todo`
-- **Lesson:** I-UVM-5: UVM Phasing and Synchronization
-- **Path:** `content/curriculum/T2_Intermediate/I-UVM-5_Phasing_and_Synchronization/index.mdx`
-- **UVM LRM clauses:** N/A (This is a refactoring task)
-
-#### 1. Proposed Action: Deprecate and Merge
-
-The content in this lesson is entirely redundant with the phasing-related material in `I-UVM-1: UVM Introduction`. As part of the modernization of `I-UVM-1`, it was proposed to create a new, dedicated lesson: **`I-UVM-1C: UVM Phasing`**. This `I-UVM-5` lesson should be deprecated, and its content merged into that new lesson.
-
-**Merge Plan:**
-- Any unique examples, explanations, or quiz questions from `I-UVM-5` should be migrated into the new `I-UVM-1C` lesson file.
-- The `UvmPhasingDiagram` component from this lesson should be used as the primary visual for the new `I-UVM-1C` lesson.
-- The `I-UVM-5_Phasing_and_Synchronization` directory and its `index.mdx` file should be deleted.
-- A redirect should be added from the old `I-UVM-5` path to the new `I-UVM-1C` path to preserve any external links.
-
-#### 2. Rationale
-- **Eliminates Redundancy:** Prevents having two separate lessons on the exact same topic (UVM phasing).
-- **Improves Learning Path:** Creates a single, clear, authoritative lesson on phasing within the introductory UVM module.
-
-#### 3. Task Backlog Entries
-
-| Task ID | Status | Summary | Acceptance Criteria |
-|---|---|---|---|
-| `CURR-I-UVM-5-MERGE` | `todo` | Merge content from I-UVM-5 into the new I-UVM-1C lesson. | - Unique examples and quiz questions from `I-UVM-5` are identified and moved into the `I-UVM-1C` lesson file.<br>- The `I-UVM-5_Phasing_and_Synchronization` directory is deleted. |
-| `CURR-I-UVM-5-REDIRECT` | `todo` | Add a redirect from the old I-UVM-5 path to the new I-UVM-1C path. | - A redirect is added to `next.config.mjs` for the old path.<br>- The curriculum's `_category_.json` file is updated to remove the `I-UVM-5` lesson. |
-| `CURR-I-UVM-5-REVIEW` | `todo` | Review the consolidated phasing lesson (I-UVM-1C). | - The `I-UVM-1C` lesson is reviewed to ensure the merged content is well-integrated and there are no contradictions.<br>- **Unit Tests:** N/A for this refactoring.<br>- **E2E Tests:** Verify that the old `I-UVM-5` URL correctly redirects to the new `I-UVM-1C` URL.<br>- All internal links are verified. |
-
----
-
-### Task: Deprecate "A-UVM-1: Advanced UVM Sequencing" and Merge Content
-
-**Agent Instructions:**
-1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
-2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-REFACTOR-A-UVM-1` and changing its status from `todo` to `complete`.
-
-- **Status:** `todo`
-- **Lesson:** A-UVM-1: Advanced UVM Sequencing
-- **Path:** `content/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/index.mdx`
-- **UVM LRM clauses:** N/A (This is a refactoring task)
-
-#### 1. Proposed Action: Deprecate and Merge
-
-The content in this lesson directly covers the topics planned for the proposed **`I-UVM-3B: Advanced Sequencing and Layering`** lesson, which was created by splitting the basic `I-UVM-3` sequences lesson. This `A-UVM-1` lesson should be deprecated, and its content used as the primary source material for the new `I-UVM-3B` lesson.
-
-**Merge Plan:**
-- The content on virtual sequences, arbitration (`lock`/`grab`), and sequence layering from `A-UVM-1` will form the body of the new `I-UVM-3B` lesson.
-- The `A-UVM-1_Advanced_Sequencing` directory and its `index.mdx` file should be deleted.
-- A redirect should be added from the old `A-UVM-1` path to the new `I-UVM-3B` path to preserve any external links.
-
-#### 2. Rationale
-- **Consolidates Learning Path:** Creates a single, two-part module for UVM sequences (`I-UVM-3A` and `I-UVM-3B`), taking the learner from fundamentals to advanced topics in a logical progression.
-- **Reduces Fragmentation:** Avoids having introductory and advanced topics for the same feature in different tiers of the curriculum (Intermediate vs. Advanced).
-
-#### 3. Task Backlog Entries
-
-| Task ID | Status | Summary | Acceptance Criteria |
-|---|---|---|---|
-| `CURR-A-UVM-1-MERGE` | `todo` | Merge content from A-UVM-1 into the new I-UVM-3B lesson. | - The content from `A-UVM-1/index.mdx` is moved to `I-UVM-3B_Advanced_Sequencing/index.mdx`.<br>- The `A-UVM-1_Advanced_Sequencing` directory is deleted. |
-| `CURR-A-UVM-1-REDIRECT` | `todo` | Add a redirect from the old A-UVM-1 path to the new I-UVM-3B path. | - A redirect is added to `next.config.mjs` for the old path.<br>- The curriculum's `_category_.json` file for the T3_Advanced tier is updated to remove the `A-UVM-1` lesson. |
-| `CURR-A-UVM-1-REVIEW` | `todo` | Review the consolidated advanced sequencing lesson (I-UVM-3B). | - The `I-UVM-3B` lesson is reviewed to ensure the merged content is well-integrated with the `I-UVM-3A` lesson and that all enhancement tasks (visuals, lab) are still applicable.<br>- **Unit Tests:** N/A for this refactoring.<br>- **E2E Tests:** Verify that the old `A-UVM-1` URL correctly redirects to the new `I-UVM-3B` URL.<br>- All internal links are verified. |
-
----
-
-### Task: Deprecate "A-UVM-2: The UVM Factory In-Depth" and Merge Content
-
-**Agent Instructions:**
-1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
-2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-REFACTOR-A-UVM-2` and changing its status from `todo` to `complete`.
-
-- **Status:** `todo`
-- **Lesson:** A-UVM-2: The UVM Factory In-Depth
-- **Path:** `content/curriculum/T3_Advanced/A-UVM-2_The_UVM_Factory_In-Depth/index.mdx`
-- **UVM LRM clauses:** N/A (This is a refactoring task)
-
-#### 1. Proposed Action: Deprecate and Merge
-
-This is the third lesson covering the UVM Factory, creating a fragmented and redundant learning path. The content in this lesson should be merged into the single, authoritative factory lesson proposed earlier: **`I-UVM-1B: The UVM Factory`**. 
-
-**Merge Plan:**
-- The more advanced examples, the "accuracy toolkit" table, and any unique explanations from `A-UVM-2` should be migrated into the new `I-UVM-1B` lesson file to enrich it.
-- The `A-UVM-2_The_UVM_Factory_In-Depth` directory and its `index.mdx` file should be deleted.
-- A redirect should be added from the old `A-UVM-2` path to the new `I-UVM-1B` path.
-
-#### 2. Rationale
-- **Consolidates Learning:** Creates a single, comprehensive lesson on the UVM factory, preventing student confusion and improving the curriculum structure.
-- **Enriches Content:** Uses the "in-depth" material from this lesson to make the single, consolidated lesson more valuable.
-
-#### 3. Task Backlog Entries
-
-| Task ID | Status | Summary | Acceptance Criteria |
-|---|---|---|---|
-| `CURR-A-UVM-2-MERGE` | `todo` | Merge content from A-UVM-2 into the new I-UVM-1B lesson. | - Unique examples and the "accuracy toolkit" from `A-UVM-2` are identified and moved into the `I-UVM-1B` lesson file.<br>- The `A-UVM-2_The_UVM_Factory_In-Depth` directory is deleted. |
-| `CURR-A-UVM-2-REDIRECT` | `todo` | Add a redirect from the old A-UVM-2 path to the new I-UVM-1B path. | - A redirect is added to `next.config.mjs` for the old path.<br>- The curriculum's `_category_.json` file for the T3_Advanced tier is updated to remove the `A-UVM-2` lesson. |
-| `CURR-A-UVM-2-REVIEW` | `todo` | Review the consolidated factory lesson (I-UVM-1B). | - The `I-UVM-1B` lesson is reviewed to ensure the merged "in-depth" content is well-integrated.<br>- **Unit Tests:** N/A for this refactoring.<br>- **E2E Tests:** Verify that the old `A-UVM-2` URL correctly redirects to the new `I-UVM-1B` URL.<br>- All internal links are verified. |
-
----
-
-### Task: Deprecate "A-UVM-3: Advanced UVM Techniques" and Create New Callbacks Lesson
-
-**Agent Instructions:**
-1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
-2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-REFACTOR-A-UVM-3` and changing its status from `todo` to `complete`.
-
-- **Status:** `todo`
-- **Lesson:** A-UVM-3: Advanced UVM Techniques & Strategy
-- **Path:** `content/curriculum/T3_Advanced/A-UVM-3_Advanced_UVM_Techniques/index.mdx`
-- **UVM LRM clauses:** N/A (This is a refactoring task)
-
-#### 1. Proposed Action: Deprecate, Merge, and Create
-
-This lesson is a high-level summary of other advanced topics, creating redundancy. It should be deprecated. Its content on RAL and virtual sequences should be merged into the already-proposed lessons (`A-UVM-4A/B` and `I-UVM-3B`). The brief mention of **callbacks** should be expanded into its own new, dedicated lesson, as it's a critical advanced UVM topic.
-
-**Merge & Create Plan:**
-- The RAL and virtual sequence examples from `A-UVM-3` will be used as source material for the new `A-UVM-4A/B` and `I-UVM-3B` lessons.
-- A new lesson, **`A-UVM-5: UVM Callbacks`**, will be created to provide a deep dive into the callback mechanism.
-- The `A-UVM-3` directory will be deleted and a redirect added.
-
-#### 2. Rationale
-- **Reduces Redundancy:** Eliminates a summary lesson in favor of detailed, focused lessons on each topic.
-- **Fills a Gap:** Creates a much-needed, dedicated lesson on UVM callbacks, a powerful and often misunderstood feature.
-
-#### 3. Task Backlog Entries
-
-| Task ID | Status | Summary | Acceptance Criteria |
-|---|---|---|---|
-| `CURR-A-UVM-3-MERGE` | `todo` | Merge content from A-UVM-3 into other advanced lessons. | - RAL and virtual sequence examples from `A-UVM-3` are moved to the appropriate new lesson files (`A-UVM-4A/B`, `I-UVM-3B`).<br>- The `A-UVM-3` directory is deleted. |
-| `CURR-A-UVM-3-REDIRECT` | `todo` | Add a redirect from the old A-UVM-3 path. | - A redirect is added to `next.config.mjs` for the old path to an appropriate new lesson (e.g., the virtual sequences lesson). |
-| `CURR-A-UVM-5-CREATE` | `todo` | Create a new lesson on UVM Callbacks. | - A new directory `A-UVM-5_UVM_Callbacks` is created with an `index.mdx` file.<br>- The lesson explains `uvm_callback`, the `uvm_register_cb` macro, and how to add/delete callbacks.<br>- The lesson includes a lab where a user adds a callback to a driver to inject an error without subclassing. |
-| `CURR-A-UVM-3-REVIEW` | `todo` | Review all related lessons and navigation. | - The curriculum's `_category_.json` file is updated to remove `A-UVM-3` and add `A-UVM-5`.<br>- **Unit Tests:** N/A for this refactoring.<br>- **E2E Tests:** Verify that the old `A-UVM-3` URL correctly redirects.<br>- All internal links are verified. |
+This file contains a series of prompts for a coding agent to modernize the curriculum lessons based on the SystemVerilog and UVM Language Reference Manuals. The tasks are ordered logically: prerequisite split work comes first, followed by deprecation/merge clean-up, and finally content modernization.
 
 ---
 
@@ -708,6 +500,214 @@ The topic is substantial and should be split into two lessons:
 | `CURR-A-UVM-4A-LORE` | `todo` | Integrate LRM references and add the interactive visual to the Fundamentals lesson. | - The `RALHierarchy.tsx` component is built and embedded.<br>- All RAL classes mentioned are cross-referenced to UVM LRM Appendix F.<br>- `npm run lint` and `npm run test` pass. |
 | `CURR-A-UVM-4B-LAB` | `todo` | Create the "Mirror Bug Lab" and write the Advanced RAL lesson content. | - The `labs/ral_advanced/lab1_mirror_bug` is created with a `README`, buggy code, and a solution.<br>- The `A-UVM-4B` `index.mdx` is written, focusing on prediction, backdoor access, and built-in sequences.<br>- The lesson embeds and explains the lab. |
 | `CURR-A-UVM-4-REVIEW` | `todo` | Review both new RAL lessons and update navigation/linking. | - Both lessons are reviewed for accuracy and clarity.<br>- The curriculum's `_category_.json` is updated to reflect the new two-part lesson structure.<br>- **Unit Tests:** Add a Vitest unit test for the new `RALHierarchy` component.<br>- **E2E Tests:** Add a Playwright test for the new `A-UVM-4B` lesson page.<br>- All internal links are verified. |
+
+---
+
+### Task: Deprecate "F3: Procedural Constructs" and Merge Content
+
+**Agent Instructions:**
+1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
+2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-REFACTOR-F3` and changing its status from `todo` to `complete`.
+
+- **Status:** `todo`
+- **Lesson:** F3: Procedural Constructs
+- **Path:** `content/curriculum/T1_Foundational/F3_Procedural_Constructs/index.mdx`
+- **SystemVerilog LRM clauses:** N/A (This is a refactoring task)
+
+#### 1. Proposed Action: Deprecate and Merge
+
+The content in this lesson is highly redundant with the material in `F2: SystemVerilog Language Basics`. As part of the modernization of `F2`, it was proposed to split it into four new, focused lessons. This `F3` lesson should be deprecated, and its unique assets and explanations merged into those new lessons.
+
+**Merge Plan:**
+- The core concepts (`initial`, `always`, blocking/non-blocking, flow control) will be covered by the new **`F2C: Procedural Code and Flow Control`** lesson.
+- The `fork-join` content will be moved to the new **`F2D: Reusable Code and Parallelism`** lesson.
+- The excellent `ProceduralBlocksSimulator` component should be moved from `F3` and embedded into the new `F2C` lesson to explain blocking vs. non-blocking assignments.
+- The `F3_Behavioral_RTL_Modeling` file, which already redirects here, should be updated to point to the new `F2C` lesson.
+
+#### 2. Rationale
+- **Reduces Redundancy:** Eliminates significant content overlap between `F2` and `F3`.
+- **Improves Learning Flow:** Creates a more logical and granular learning path where students learn about data types first, then how to manipulate them with procedural code.
+- **Consolidates Assets:** Moves the high-value `ProceduralBlocksSimulator` visual to the most relevant new lesson.
+
+#### 3. Task Backlog Entries
+
+| Task ID | Status | Summary | Acceptance Criteria |
+|---|---|---|---|
+| `CURR-F3-MERGE` | `todo` | Merge content from F3 into the new F2A-F2D lessons. | - The `ProceduralBlocksSimulator` component is moved from the `F3` directory/lesson and integrated into the new `F2C` lesson.<br>- Any unique explanations or examples from `F3` are migrated into the appropriate `F2C` or `F2D` lesson files.<br>- The `F3_Procedural_Constructs` directory and its `index.mdx` file are deleted. |
+| `CURR-F3-REDIRECT` | `todo` | Update redirects to point to the new consolidated lesson. | - The redirect in `content/curriculum/T1_Foundational/F3_Behavioral_RTL_Modeling/index.mdx` is updated to point to `/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/`.<br>- A new redirect is added from the old `F3` path to the new `F2C` path in `next.config.mjs` to preserve any external links. |
+| `CURR-F3-REVIEW` | `todo` | Review all related lessons and navigation. | - The curriculum's `_category_.json` file is updated to remove the `F3` lesson.<br>- The `F2` lessons are reviewed to ensure the merged content is well-integrated.<br>- **Unit Tests:** N/A for this refactoring.<br>- **E2E Tests:** Verify that the old `F3` URL correctly redirects to the new `F2C` URL.<br>- All internal links are verified. |
+
+---
+
+### Task: Deprecate "I-UVM-4: UVM Factory and Overrides" and Merge Content
+
+**Agent Instructions:**
+1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
+2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-REFACTOR-I-UVM-4` and changing its status from `todo` to `complete`.
+
+- **Status:** `todo`
+- **Lesson:** I-UVM-4: UVM Factory and Overrides
+- **Path:** `content/curriculum/T2_Intermediate/I-UVM-4_Factory_and_Overrides/index.mdx`
+- **UVM LRM clauses:** N/A (This is a refactoring task)
+
+#### 1. Proposed Action: Deprecate and Merge
+
+The content in this lesson is entirely redundant with the factory-related material in `I-UVM-1: UVM Introduction`. As part of the modernization of `I-UVM-1`, it was proposed to create a new, dedicated lesson: **`I-UVM-1B: The UVM Factory`**. This `I-UVM-4` lesson should be deprecated, and its content merged into that new lesson.
+
+**Merge Plan:**
+- Any unique examples, explanations, or quiz questions from `I-UVM-4` should be migrated into the new `I-UVM-1B` lesson file.
+- The `I-UVM-4_Factory_and_Overrides` directory and its `index.mdx` file should be deleted.
+- A redirect should be added from the old `I-UVM-4` path to the new `I-UVM-1B` path to preserve any external links.
+
+#### 2. Rationale
+- **Eliminates Redundancy:** Prevents having two separate lessons on the exact same topic (the UVM factory).
+- **Improves Learning Path:** Creates a single, clear, authoritative lesson on the factory within the introductory UVM module, which is the most logical place for it.
+
+#### 3. Task Backlog Entries
+
+| Task ID | Status | Summary | Acceptance Criteria |
+|---|---|---|---|
+| `CURR-I-UVM-4-MERGE` | `todo` | Merge content from I-UVM-4 into the new I-UVM-1B lesson. | - Unique examples and quiz questions from `I-UVM-4` are identified and moved into the `I-UVM-1B` lesson file.<br>- The `I-UVM-4_Factory_and_Overrides` directory is deleted. |
+| `CURR-I-UVM-4-REDIRECT` | `todo` | Add a redirect from the old I-UVM-4 path to the new I-UVM-1B path. | - A redirect is added to `next.config.mjs` for the old path.<br>- The curriculum's `_category_.json` file is updated to remove the `I-UVM-4` lesson. |
+| `CURR-I-UVM-4-REVIEW` | `todo` | Review the consolidated factory lesson (I-UVM-1B). | - The `I-UVM-1B` lesson is reviewed to ensure the merged content is well-integrated and there are no contradictions.<br>- **Unit Tests:** N/A for this refactoring.<br>- **E2E Tests:** Verify that the old `I-UVM-4` URL correctly redirects to the new `I-UVM-1B` URL.<br>- All internal links are verified. |
+
+---
+
+### Task: Deprecate "I-UVM-5: UVM Phasing and Synchronization" and Merge Content
+
+**Agent Instructions:**
+1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
+2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-REFACTOR-I-UVM-5` and changing its status from `todo` to `complete`.
+
+- **Status:** `todo`
+- **Lesson:** I-UVM-5: UVM Phasing and Synchronization
+- **Path:** `content/curriculum/T2_Intermediate/I-UVM-5_Phasing_and_Synchronization/index.mdx`
+- **UVM LRM clauses:** N/A (This is a refactoring task)
+
+#### 1. Proposed Action: Deprecate and Merge
+
+The content in this lesson is entirely redundant with the phasing-related material in `I-UVM-1: UVM Introduction`. As part of the modernization of `I-UVM-1`, it was proposed to create a new, dedicated lesson: **`I-UVM-1C: UVM Phasing`**. This `I-UVM-5` lesson should be deprecated, and its content merged into that new lesson.
+
+**Merge Plan:**
+- Any unique examples, explanations, or quiz questions from `I-UVM-5` should be migrated into the new `I-UVM-1C` lesson file.
+- The `UvmPhasingDiagram` component from this lesson should be used as the primary visual for the new `I-UVM-1C` lesson.
+- The `I-UVM-5_Phasing_and_Synchronization` directory and its `index.mdx` file should be deleted.
+- A redirect should be added from the old `I-UVM-5` path to the new `I-UVM-1C` path to preserve any external links.
+
+#### 2. Rationale
+- **Eliminates Redundancy:** Prevents having two separate lessons on the exact same topic (UVM phasing).
+- **Improves Learning Path:** Creates a single, clear, authoritative lesson on phasing within the introductory UVM module.
+
+#### 3. Task Backlog Entries
+
+| Task ID | Status | Summary | Acceptance Criteria |
+|---|---|---|---|
+| `CURR-I-UVM-5-MERGE` | `todo` | Merge content from I-UVM-5 into the new I-UVM-1C lesson. | - Unique examples and quiz questions from `I-UVM-5` are identified and moved into the `I-UVM-1C` lesson file.<br>- The `I-UVM-5_Phasing_and_Synchronization` directory is deleted. |
+| `CURR-I-UVM-5-REDIRECT` | `todo` | Add a redirect from the old I-UVM-5 path to the new I-UVM-1C path. | - A redirect is added to `next.config.mjs` for the old path.<br>- The curriculum's `_category_.json` file is updated to remove the `I-UVM-5` lesson. |
+| `CURR-I-UVM-5-REVIEW` | `todo` | Review the consolidated phasing lesson (I-UVM-1C). | - The `I-UVM-1C` lesson is reviewed to ensure the merged content is well-integrated and there are no contradictions.<br>- **Unit Tests:** N/A for this refactoring.<br>- **E2E Tests:** Verify that the old `I-UVM-5` URL correctly redirects to the new `I-UVM-1C` URL.<br>- All internal links are verified. |
+
+---
+
+### Task: Deprecate "A-UVM-1: Advanced UVM Sequencing" and Merge Content
+
+**Agent Instructions:**
+1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
+2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-REFACTOR-A-UVM-1` and changing its status from `todo` to `complete`.
+
+- **Status:** `todo`
+- **Lesson:** A-UVM-1: Advanced UVM Sequencing
+- **Path:** `content/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/index.mdx`
+- **UVM LRM clauses:** N/A (This is a refactoring task)
+
+#### 1. Proposed Action: Deprecate and Merge
+
+The content in this lesson directly covers the topics planned for the proposed **`I-UVM-3B: Advanced Sequencing and Layering`** lesson, which was created by splitting the basic `I-UVM-3` sequences lesson. This `A-UVM-1` lesson should be deprecated, and its content used as the primary source material for the new `I-UVM-3B` lesson.
+
+**Merge Plan:**
+- The content on virtual sequences, arbitration (`lock`/`grab`), and sequence layering from `A-UVM-1` will form the body of the new `I-UVM-3B` lesson.
+- The `A-UVM-1_Advanced_Sequencing` directory and its `index.mdx` file should be deleted.
+- A redirect should be added from the old `A-UVM-1` path to the new `I-UVM-3B` path to preserve any external links.
+
+#### 2. Rationale
+- **Consolidates Learning Path:** Creates a single, two-part module for UVM sequences (`I-UVM-3A` and `I-UVM-3B`), taking the learner from fundamentals to advanced topics in a logical progression.
+- **Reduces Fragmentation:** Avoids having introductory and advanced topics for the same feature in different tiers of the curriculum (Intermediate vs. Advanced).
+
+#### 3. Task Backlog Entries
+
+| Task ID | Status | Summary | Acceptance Criteria |
+|---|---|---|---|
+| `CURR-A-UVM-1-MERGE` | `todo` | Merge content from A-UVM-1 into the new I-UVM-3B lesson. | - The content from `A-UVM-1/index.mdx` is moved to `I-UVM-3B_Advanced_Sequencing/index.mdx`.<br>- The `A-UVM-1_Advanced_Sequencing` directory is deleted. |
+| `CURR-A-UVM-1-REDIRECT` | `todo` | Add a redirect from the old A-UVM-1 path to the new I-UVM-3B path. | - A redirect is added to `next.config.mjs` for the old path.<br>- The curriculum's `_category_.json` file for the T3_Advanced tier is updated to remove the `A-UVM-1` lesson. |
+| `CURR-A-UVM-1-REVIEW` | `todo` | Review the consolidated advanced sequencing lesson (I-UVM-3B). | - The `I-UVM-3B` lesson is reviewed to ensure the merged content is well-integrated with the `I-UVM-3A` lesson and that all enhancement tasks (visuals, lab) are still applicable.<br>- **Unit Tests:** N/A for this refactoring.<br>- **E2E Tests:** Verify that the old `A-UVM-1` URL correctly redirects to the new `I-UVM-3B` URL.<br>- All internal links are verified. |
+
+---
+
+### Task: Deprecate "A-UVM-2: The UVM Factory In-Depth" and Merge Content
+
+**Agent Instructions:**
+1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
+2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-REFACTOR-A-UVM-2` and changing its status from `todo` to `complete`.
+
+- **Status:** `todo`
+- **Lesson:** A-UVM-2: The UVM Factory In-Depth
+- **Path:** `content/curriculum/T3_Advanced/A-UVM-2_The_UVM_Factory_In-Depth/index.mdx`
+- **UVM LRM clauses:** N/A (This is a refactoring task)
+
+#### 1. Proposed Action: Deprecate and Merge
+
+This is the third lesson covering the UVM Factory, creating a fragmented and redundant learning path. The content in this lesson should be merged into the single, authoritative factory lesson proposed earlier: **`I-UVM-1B: The UVM Factory`**. 
+
+**Merge Plan:**
+- The more advanced examples, the "accuracy toolkit" table, and any unique explanations from `A-UVM-2` should be migrated into the new `I-UVM-1B` lesson file to enrich it.
+- The `A-UVM-2_The_UVM_Factory_In-Depth` directory and its `index.mdx` file should be deleted.
+- A redirect should be added from the old `A-UVM-2` path to the new `I-UVM-1B` path.
+
+#### 2. Rationale
+- **Consolidates Learning:** Creates a single, comprehensive lesson on the UVM factory, preventing student confusion and improving the curriculum structure.
+- **Enriches Content:** Uses the "in-depth" material from this lesson to make the single, consolidated lesson more valuable.
+
+#### 3. Task Backlog Entries
+
+| Task ID | Status | Summary | Acceptance Criteria |
+|---|---|---|---|
+| `CURR-A-UVM-2-MERGE` | `todo` | Merge content from A-UVM-2 into the new I-UVM-1B lesson. | - Unique examples and the "accuracy toolkit" from `A-UVM-2` are identified and moved into the `I-UVM-1B` lesson file.<br>- The `A-UVM-2_The_UVM_Factory_In-Depth` directory is deleted. |
+| `CURR-A-UVM-2-REDIRECT` | `todo` | Add a redirect from the old A-UVM-2 path to the new I-UVM-1B path. | - A redirect is added to `next.config.mjs` for the old path.<br>- The curriculum's `_category_.json` file for the T3_Advanced tier is updated to remove the `A-UVM-2` lesson. |
+| `CURR-A-UVM-2-REVIEW` | `todo` | Review the consolidated factory lesson (I-UVM-1B). | - The `I-UVM-1B` lesson is reviewed to ensure the merged "in-depth" content is well-integrated.<br>- **Unit Tests:** N/A for this refactoring.<br>- **E2E Tests:** Verify that the old `A-UVM-2` URL correctly redirects to the new `I-UVM-1B` URL.<br>- All internal links are verified. |
+
+---
+
+### Task: Deprecate "A-UVM-3: Advanced UVM Techniques" and Create New Callbacks Lesson
+
+**Agent Instructions:**
+1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
+2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-REFACTOR-A-UVM-3` and changing its status from `todo` to `complete`.
+
+- **Status:** `todo`
+- **Lesson:** A-UVM-3: Advanced UVM Techniques & Strategy
+- **Path:** `content/curriculum/T3_Advanced/A-UVM-3_Advanced_UVM_Techniques/index.mdx`
+- **UVM LRM clauses:** N/A (This is a refactoring task)
+
+#### 1. Proposed Action: Deprecate, Merge, and Create
+
+This lesson is a high-level summary of other advanced topics, creating redundancy. It should be deprecated. Its content on RAL and virtual sequences should be merged into the already-proposed lessons (`A-UVM-4A/B` and `I-UVM-3B`). The brief mention of **callbacks** should be expanded into its own new, dedicated lesson, as it's a critical advanced UVM topic.
+
+**Merge & Create Plan:**
+- The RAL and virtual sequence examples from `A-UVM-3` will be used as source material for the new `A-UVM-4A/B` and `I-UVM-3B` lessons.
+- A new lesson, **`A-UVM-5: UVM Callbacks`**, will be created to provide a deep dive into the callback mechanism.
+- The `A-UVM-3` directory will be deleted and a redirect added.
+
+#### 2. Rationale
+- **Reduces Redundancy:** Eliminates a summary lesson in favor of detailed, focused lessons on each topic.
+- **Fills a Gap:** Creates a much-needed, dedicated lesson on UVM callbacks, a powerful and often misunderstood feature.
+
+#### 3. Task Backlog Entries
+
+| Task ID | Status | Summary | Acceptance Criteria |
+|---|---|---|---|
+| `CURR-A-UVM-3-MERGE` | `todo` | Merge content from A-UVM-3 into other advanced lessons. | - RAL and virtual sequence examples from `A-UVM-3` are moved to the appropriate new lesson files (`A-UVM-4A/B`, `I-UVM-3B`).<br>- The `A-UVM-3` directory is deleted. |
+| `CURR-A-UVM-3-REDIRECT` | `todo` | Add a redirect from the old A-UVM-3 path. | - A redirect is added to `next.config.mjs` for the old path to an appropriate new lesson (e.g., the virtual sequences lesson). |
+| `CURR-A-UVM-5-CREATE` | `todo` | Create a new lesson on UVM Callbacks. | - A new directory `A-UVM-5_UVM_Callbacks` is created with an `index.mdx` file.<br>- The lesson explains `uvm_callback`, the `uvm_register_cb` macro, and how to add/delete callbacks.<br>- The lesson includes a lab where a user adds a callback to a driver to inject an error without subclassing. |
+| `CURR-A-UVM-3-REVIEW` | `todo` | Review all related lessons and navigation. | - The curriculum's `_category_.json` file is updated to remove `A-UVM-3` and add `A-UVM-5`.<br>- **Unit Tests:** N/A for this refactoring.<br>- **E2E Tests:** Verify that the old `A-UVM-3` URL correctly redirects.<br>- All internal links are verified. |
 
 ---
 
