@@ -1,14 +1,13 @@
 "use client";
 
-import React, { useId } from "react";
-import { scaleBand, scaleLinear } from "d3-scale";
-import { max } from "d3-array";
+import React, { useEffect, useId, useState } from "react";
+import { scalePoint } from "d3-scale";
 
 interface DataTypeFeature {
   name: string;
   states: number;
-  isNet: number;
-  allowsMultipleDrivers: number;
+  isNet: boolean;
+  allowsMultipleDrivers: boolean;
   primaryUseContext: string;
 }
 
@@ -16,183 +15,239 @@ const data: DataTypeFeature[] = [
   {
     name: "logic",
     states: 4,
-    isNet: 0,
-    allowsMultipleDrivers: 0,
-    primaryUseContext: "General purpose variable, single driver (procedural or continuous)",
+    isNet: false,
+    allowsMultipleDrivers: false,
+    primaryUseContext: "General-purpose variable for single procedural or continuous assignments.",
   },
   {
     name: "wire",
     states: 4,
-    isNet: 1,
-    allowsMultipleDrivers: 1,
-    primaryUseContext: "Net for connecting components, supports multiple drivers",
+    isNet: true,
+    allowsMultipleDrivers: true,
+    primaryUseContext: "Resolved connectivity between modules; ideal for structural wiring.",
   },
   {
     name: "reg",
     states: 4,
-    isNet: 0,
-    allowsMultipleDrivers: 0,
-    primaryUseContext: "Legacy variable for procedural assignment memory (largely replaceable by logic in SV)",
+    isNet: false,
+    allowsMultipleDrivers: false,
+    primaryUseContext: "Legacy procedural storage kept for compatibility; replaced by logic in new code.",
   },
   {
     name: "bit",
     states: 2,
-    isNet: 0,
-    allowsMultipleDrivers: 0,
-    primaryUseContext: "2-state variable, memory efficient, faster simulation",
+    isNet: false,
+    allowsMultipleDrivers: false,
+    primaryUseContext: "Two-state storage for performance-critical modelling (no X/Z).",
   },
 ];
 
-const series = [
-  { key: "states", label: "Number of States", color: "#6366f1" },
-  { key: "isNet", label: "Is Net (1=Yes)", color: "#10b981" },
-  {
-    key: "allowsMultipleDrivers",
-    label: "Allows Multiple Drivers (1=Yes)",
-    color: "#f59e0b",
-  },
-] as const;
-
-const chartDimensions = {
-  width: 760,
-  height: 420,
-  margin: { top: 36, right: 24, bottom: 88, left: 64 },
+const stateSymbols = ["0", "1", "X", "Z"];
+const card = {
+  width: 280,
+  height: 220,
+  gutterX: 48,
+  gutterY: 56,
+  padding: 24,
 };
 
-const toTitle = (name: string) => name.toUpperCase();
+const layout = {
+  maxColumns: 2,
+  margin: { top: 32, right: 32, bottom: 32, left: 32 },
+};
+
+const stateActiveColor = "#6366f1";
+const stateInactiveColor = "#c7d2fe";
+const netColor = "#0ea5e9";
+const variableColor = "#8b5cf6";
+const driverColor = "#f59e0b";
+const labelClass = "fill-slate-700 dark:fill-slate-200";
 
 const DataTypeComparisonChart: React.FC = () => {
-  const { width, height, margin } = chartDimensions;
-  const innerWidth = width - margin.left - margin.right;
-  const innerHeight = height - margin.top - margin.bottom;
   const titleId = useId();
+  const [columns, setColumns] = useState(() =>
+    typeof window !== "undefined" && window.innerWidth < 768 ? 1 : layout.maxColumns,
+  );
 
-  const x0 = scaleBand<string>()
-    .domain(data.map((d) => d.name))
-    .range([0, innerWidth])
-    .padding(0.25);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const handleResize = () => {
+      const nextColumns = window.innerWidth < 768 ? 1 : layout.maxColumns;
+      setColumns((prev) => (prev === nextColumns ? prev : nextColumns));
+    };
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
 
-  const x1 = scaleBand<string>()
-    .domain(series.map((s) => s.key))
-    .range([0, x0.bandwidth()])
-    .padding(0.15);
-
-  const maxValue = max(series, (s) => max(data, (d) => d[s.key]) ?? 0) ?? 1;
-  const yScale = scaleLinear()
-    .domain([0, Math.max(4, maxValue)])
-    .range([innerHeight, 0])
-    .nice();
-
-  const yTicks = yScale.ticks(4);
+  const rows = Math.ceil(data.length / columns);
+  const innerWidth = columns * card.width + (columns - 1) * card.gutterX;
+  const innerHeight = rows * card.height + (rows - 1) * card.gutterY;
+  const width = innerWidth + layout.margin.left + layout.margin.right;
+  const height = innerHeight + layout.margin.top + layout.margin.bottom;
 
   return (
     <div data-testid="data-type-chart" className="w-full">
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-full w-full" role="application" aria-labelledby={titleId}>
-        <title id={titleId}>SystemVerilog data type comparison</title>
-        <g transform={`translate(${margin.left}, ${margin.top})`}>
-          {yTicks.map((tick) => {
-            const y = yScale(tick);
-            return (
-              <g key={tick} transform={`translate(0, ${y})`}>
-                <line x1={0} x2={innerWidth} stroke="currentColor" strokeOpacity={0.05} />
-                <text
-                  x={-12}
-                  dy="0.32em"
-                  fontSize={12}
-                  textAnchor="end"
-                  fill="currentColor"
-                  fillOpacity={0.7}
-                >
-                  {tick}
-                </text>
-              </g>
-            );
-          })}
-
-          {data.map((datum) => {
-            const xGroup = x0(datum.name);
-            if (xGroup == null) return null;
-            return (
-              <g key={datum.name} transform={`translate(${xGroup}, 0)`}>
-                <title>{`${toTitle(datum.name)} — ${datum.primaryUseContext}`}</title>
-                {series.map((serie) => {
-                  const xBar = x1(serie.key);
-                  if (xBar == null) return null;
-                  const value = datum[serie.key];
-                  const barHeight = innerHeight - yScale(value);
-                  return (
-                    <g key={serie.key} transform={`translate(${xBar}, ${yScale(value)})`}>
-                      <rect
-                        width={x1.bandwidth()}
-                        height={Math.max(0, barHeight)}
-                        fill={serie.color}
-                        rx={4}
-                      >
-                        <title>
-                          {`${toTitle(datum.name)} – ${serie.label}: ${value}`}
-                        </title>
-                      </rect>
-                      <text
-                        x={x1.bandwidth() / 2}
-                        y={-6}
-                        textAnchor="middle"
-                        fontSize={11}
-                        fill="currentColor"
-                        fillOpacity={0.75}
-                      >
-                        {value}
-                      </text>
-                    </g>
-                  );
-                })}
-
-                <text
-                  x={x0.bandwidth() / 2}
-                  y={innerHeight + 12}
-                  dy={20}
-                  textAnchor="middle"
-                  fontSize={12}
-                  fill="currentColor"
-                  fillOpacity={0.8}
-                  fontWeight={600}
-                >
-                  {datum.name}
-                </text>
-              </g>
-            );
-          })}
-
-          <text
-            x={-margin.left + 14}
-            y={-16}
-            fontSize={12}
-            fill="currentColor"
-            fillOpacity={0.75}
-            textAnchor="start"
-          >
-            Feature value
+      <svg
+        viewBox={`0 0 ${width} ${height}`}
+        className="h-full w-full"
+        role="application"
+        aria-labelledby={titleId}
+      >
+        <title id={titleId}>SystemVerilog data type guide</title>
+        <g transform={`translate(${layout.margin.left}, ${layout.margin.top})`}>
+          <text x={0} y={-12} fontSize={16} fontWeight={600} className={labelClass}>
+            Storage semantics across common SystemVerilog types
           </text>
 
-          <g transform={`translate(0, ${innerHeight + 56})`}>
-            {series.map((serie, index) => (
-              <g key={serie.key} transform={`translate(${index * 180}, 0)`}>
-                <rect width={14} height={14} fill={serie.color} rx={3} />
-                <text
-                  x={20}
-                  y={11}
-                  fontSize={12}
-                  fill="currentColor"
-                  fillOpacity={0.75}
+          {data.map((datum, index) => {
+            const row = Math.floor(index / columns);
+            const column = index % columns;
+            const x = column * (card.width + card.gutterX);
+            const y = row * (card.height + card.gutterY);
+            const activeStates = datum.states === 2 ? 2 : stateSymbols.length;
+            const stateScale = scalePoint<string>()
+              .domain(stateSymbols)
+              .range([card.padding, card.width - card.padding]);
+            const cardTitleId = `${titleId}-${datum.name}`;
+
+            return (
+              <g key={datum.name} transform={`translate(${x}, ${y})`} aria-labelledby={cardTitleId}>
+                <rect
+                  width={card.width}
+                  height={card.height}
+                  rx={18}
+                  className="fill-white dark:fill-slate-900 stroke-slate-300/60 dark:stroke-slate-600/50"
+                  strokeWidth={1.5}
+                />
+                <text id={cardTitleId} x={card.padding} y={card.padding} fontSize={18} fontWeight={700} className={labelClass}>
+                  {datum.name.toUpperCase()}
+                </text>
+                <foreignObject
+                  x={card.padding}
+                  y={card.padding + 12}
+                  width={card.width - card.padding * 2}
+                  height={56}
                 >
-                  {serie.label}
+                  <div
+                    className="text-xs leading-relaxed text-slate-600 dark:text-slate-300"
+                  >
+                    {datum.primaryUseContext}
+                  </div>
+                </foreignObject>
+
+                <text
+                  x={card.padding}
+                  y={card.padding + 84}
+                  fontSize={12}
+                  fontWeight={600}
+                  className={labelClass}
+                >
+                  State space
+                </text>
+                <g transform={`translate(0, ${card.padding + 92})`}>
+                  {stateSymbols.map((symbol, symbolIndex) => {
+                    const cx = stateScale(symbol) ?? card.width / 2;
+                    const active = symbolIndex < activeStates;
+                    return (
+                      <g key={symbol} transform={`translate(${cx}, 0)`}>
+                        <circle
+                          r={18}
+                          fill={active ? stateActiveColor : stateInactiveColor}
+                          fillOpacity={active ? 1 : 0.4}
+                          stroke={active ? stateActiveColor : stateInactiveColor}
+                          strokeWidth={active ? 2 : 1}
+                        />
+                        <text
+                          y={4}
+                          textAnchor="middle"
+                          fontSize={13}
+                          fontWeight={600}
+                          fill={active ? "#ffffff" : stateActiveColor}
+                        >
+                          {symbol}
+                        </text>
+                      </g>
+                    );
+                  })}
+                </g>
+
+                <text
+                  x={card.padding}
+                  y={card.padding + 142}
+                  fontSize={12}
+                  fontWeight={600}
+                  className={labelClass}
+                >
+                  Signal model
+                </text>
+                <g transform={`translate(${card.width / 2}, ${card.padding + 152})`}>
+                  <rect
+                    x={-38}
+                    y={18}
+                    width={76}
+                    height={20}
+                    rx={10}
+                    fill={datum.isNet ? netColor : variableColor}
+                    fillOpacity={0.18}
+                    stroke={datum.isNet ? netColor : variableColor}
+                    strokeDasharray={datum.isNet ? "0" : "6 4"}
+                    strokeWidth={datum.isNet ? 2 : 1.5}
+                  />
+                  <text
+                    y={22}
+                    fontSize={11}
+                    textAnchor="middle"
+                    fill={datum.isNet ? netColor : variableColor}
+                    fontWeight={600}
+                  >
+                    {datum.isNet ? "Resolved net" : "Variable"}
+                  </text>
+                  {datum.allowsMultipleDrivers ? [-34, 34].map((offset) => (
+                    <g key={offset}>
+                      <line
+                        x1={offset}
+                        y1={-8}
+                        x2={0}
+                        y2={28}
+                        stroke={driverColor}
+                        strokeWidth={2}
+                        strokeLinecap="round"
+                      />
+                      <circle cx={offset} cy={-12} r={8} fill={driverColor} fillOpacity={0.9} />
+                    </g>
+                  )) : (
+                    <g>
+                      <line x1={0} y1={-12} x2={0} y2={28} stroke={driverColor} strokeWidth={2} strokeLinecap="round" />
+                      <circle cx={0} cy={-16} r={9} fill={driverColor} fillOpacity={0.9} />
+                    </g>
+                  )}
+                  <circle cx={0} cy={40} r={10} fill={datum.isNet ? netColor : variableColor} />
+                </g>
+
+                <text
+                  x={card.padding}
+                  y={card.padding + 188}
+                  fontSize={12}
+                  className="fill-slate-600 dark:fill-slate-300"
+                >
+                  {datum.isNet ? "Supports connect-by-resolution semantics." : "Treated as single-source storage."}
+                </text>
+                <text
+                  x={card.padding}
+                  y={card.padding + 204}
+                  fontSize={12}
+                  className="fill-slate-600 dark:fill-slate-300"
+                >
+                  {datum.allowsMultipleDrivers ? "Multiple structural drivers permitted." : "Single driver enforced."}
                 </text>
               </g>
-            ))}
-          </g>
+            );
+          })}
         </g>
       </svg>
       <p className="mt-2 text-center text-xs text-muted-foreground">
-        The chart highlights how each SystemVerilog type differs in state space, net behaviour, and driver rules. Values are simplified for instruction.
+        Each card highlights how the type stores values, resolves drivers, and why you would choose it in a verification environment.
       </p>
     </div>
   );

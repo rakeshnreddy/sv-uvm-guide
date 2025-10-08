@@ -1,6 +1,6 @@
 import Link from 'next/link';
-import { Button } from '@/components/ui/Button';
 import { ArrowRight } from 'lucide-react';
+import { PlacementQuiz } from '@/components/assessment/PlacementQuiz';
 
 const quizSections = [
   {
@@ -29,23 +29,7 @@ const readinessSignals = [
 export default function PlacementQuizPage() {
   return (
     <div className="space-y-12">
-      <header className="glass-card border border-white/10 bg-[var(--blueprint-glass)] p-8 shadow-xl">
-        <p className="text-xs uppercase tracking-[0.35em] text-[rgba(230,241,255,0.65)]">Skill placement</p>
-        <h1 className="mt-4 text-4xl font-semibold text-[var(--blueprint-foreground)]">Find the right starting tier</h1>
-        <p className="mt-3 max-w-2xl text-sm text-[rgba(230,241,255,0.75)]">
-          Answer a focused set of questions so we can recommend the correct blend of curriculum pages, labs, and
-          practice drills. Expect ten questions—five multiple choice and five scenario responses.
-        </p>
-        <div className="mt-6 flex flex-wrap items-center gap-4">
-          <Button asChild size="lg">
-            <Link href="/assessment">
-              Begin the quiz
-              <ArrowRight className="ml-2" />
-            </Link>
-          </Button>
-          <span className="text-xs text-[rgba(230,241,255,0.6)]">Average completion time: 6 minutes</span>
-        </div>
-      </header>
+      <PlacementQuiz />
 
       <section className="grid gap-6 lg:grid-cols-3">
         {quizSections.map((section) => (
@@ -77,6 +61,15 @@ export default function PlacementQuizPage() {
             </li>
           ))}
         </ul>
+        <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4 text-xs text-[rgba(230,241,255,0.7)]">
+          Want to dive deeper without the placement quiz? Head straight to the
+          {' '}
+          <Link href="/assessment" className="inline-flex items-center gap-1 underline-offset-2 hover:underline">
+            assessment center
+            <ArrowRight className="h-3 w-3" />
+          </Link>
+          {' '} to explore practice tabs, analytics, and project-style evaluations.
+        </div>
       </section>
     </div>
   );
