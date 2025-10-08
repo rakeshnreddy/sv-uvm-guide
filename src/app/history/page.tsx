@@ -1,6 +1,11 @@
 import dynamic from 'next/dynamic';
+import { cookies } from 'next/headers';
 import { InfoPage } from '@/components/templates/InfoPage';
 import { isFeatureEnabled } from '@/tools/featureFlags';
+import { normalizeUserPreferences } from '@/lib/user-preferences';
+import { resolveNotificationPreferences } from '@/lib/notifications';
+import { getIronSession } from 'iron-session';
+import { sessionOptions } from '@/lib/session-options';
 
 const VisualizationFallback = () => (
   <div className="flex h-48 items-center justify-center">Loading visualization...</div>
@@ -11,8 +16,30 @@ const HistoryTimelineChart = dynamic(
   { ssr: false, loading: () => <VisualizationFallback /> },
 );
 
-export default async function HistoryPage() {
+const loadTrackingAvailability = async () => {
   if (!isFeatureEnabled('tracking')) {
+    return false;
+  }
+
+  try {
+    const session = await getIronSession(await cookies(), sessionOptions);
+    const preferences = normalizeUserPreferences(
+      session.preferences,
+      resolveNotificationPreferences(session.userId ?? 'demo-user'),
+    );
+    return preferences.shareTelemetry;
+  } catch (error) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.warn('HistoryPage: falling back to tracking disabled', error);
+    }
+    return false;
+  }
+};
+
+export default async function HistoryPage() {
+  const trackingEnabled = await loadTrackingAvailability();
+
+  if (!trackingEnabled) {
     return (
       <InfoPage title="History of SystemVerilog & UVM">
         <p className="text-sm text-muted-foreground">
