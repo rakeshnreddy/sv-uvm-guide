@@ -43,15 +43,71 @@ test.describe('Tier 1 F2 micro-lessons', () => {
 
   test('F2B dynamic structures explorer responds to interactions', async ({ page }) => {
     await page.goto('/curriculum/T1_Foundational/F2B_Dynamic_Structures/');
-    const explorer = page.getByTestId('data-type-explorer');
-    await expect(explorer).toBeVisible();
+    const visualizer = page.getByTestId('dynamic-structure-visualizer');
+    await expect(visualizer).toBeVisible();
 
-    await page.getByTestId('dynamic-push-back').click();
-    await expect(page.getByTestId('dynamic-array-console-log')).toContainText('arr.push_back');
+    await page.getByTestId('dynamic-array-input').fill('72');
+    await page.getByTestId('dynamic-array-push').click();
+    await expect(page.getByTestId('dynamic-array-info')).toContainText('size()4');
+    await page.getByTestId('dynamic-array-resize-input').fill('6');
+    await page.getByTestId('dynamic-array-resize').click();
+    await expect(page.getByTestId('dynamic-array-info')).toContainText('sum()');
 
-    await page.getByRole('button', { name: /queue/i }).click();
-    await page.getByTestId('queue-pop-front').click();
-    await expect(page.getByTestId('queue-console-log')).toContainText('q.pop_front');
+    await page.getByTestId('tab-queue').click();
+    await page.getByTestId('queue-bounded-switch').click();
+    await page.getByTestId('queue-bound-input').fill('3');
+    await page.getByTestId('queue-push').click();
+    await expect(page.getByTestId('queue-warning')).toContainText('Queue Full');
+    await page.getByTestId('queue-pop').click();
+    await page.getByTestId('queue-bounded-switch').click();
+    await page.getByTestId('queue-input').fill('260');
+    await page.getByTestId('queue-push-front').click();
+    await page.getByTestId('queue-index').fill('1');
+    await page.getByTestId('queue-insert').click();
+    await expect(page.getByTestId('queue-info')).toContainText('insert(1)');
+    await page.getByTestId('queue-delete').click();
+    await expect(page.getByTestId('queue-info')).toContainText('delete(1)');
+
+    await page.getByTestId('tab-associative').click();
+    await page.getByTestId('associative-key').fill('packet_1300');
+    await page.getByTestId('associative-value').fill('DONE');
+    await page.getByTestId('associative-add').click();
+    await expect(page.getByTestId('associative-count')).toContainText('3');
+
+    await page.getByTestId('tab-packed').click();
+    await expect(page.getByTestId('packed-scenario-title')).toContainText('Burst Payload');
+    await expect(page.getByTestId('packed-advance')).toBeDisabled();
+    await page.getByTestId('packed-option-packed-bit-position').click();
+    await expect(page.getByTestId('packed-feedback')).toContainText('Correct');
+    await expect(page.getByTestId('packed-advance')).toBeEnabled();
+    await page.getByTestId('packed-advance').click();
+
+    const game = page.getByTestId('packet-sorter-game');
+    await expect(game).toBeVisible();
+
+    const packetFlow: Array<{ prompt: RegExp; option: string }> = [
+      { prompt: /100 packets/i, option: 'packet-option-queue' },
+      { prompt: /error packets/i, option: 'packet-option-associative-array' },
+      { prompt: /packet lengths/i, option: 'packet-option-dynamic-array' },
+      { prompt: /register mirror/i, option: 'packet-option-packed-array' },
+      { prompt: /diagnostics bursts/i, option: 'packet-option-queue' },
+    ];
+
+    for (const step of packetFlow) {
+      await expect(page.getByTestId('packet-sorter-prompt')).toContainText(step.prompt);
+      await page.getByTestId(step.option).click();
+      await expect(page.getByTestId('packet-sorter-feedback')).toContainText('Correct');
+      await page.getByTestId('packet-next').click();
+    }
+
+    const rewardModal = page.getByTestId('packet-sorter-modal');
+    await expect(rewardModal).toBeVisible();
+    await expect(rewardModal).toContainText('+150 XP');
+    await page.evaluate(() => {
+      const button = document.querySelector('[data-testid="packet-modal-close"]') as HTMLButtonElement | null;
+      button?.click();
+    });
+    await expect(page.getByTestId('packet-sorter-modal')).toHaveCount(0);
   });
 
   test('F2C blocking simulator toggles modes', async ({ page }) => {

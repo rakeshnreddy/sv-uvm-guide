@@ -13,3 +13,5 @@ export { Progress } from './Progress';
 export { Input } from './Input';
 export { Label } from './Label';
 export { Select, SelectGroup, SelectValue, SelectTrigger, SelectContent, SelectLabel, SelectItem, SelectSeparator } from './Select';
+export { Switch } from './Switch';
+export { Badge } from './Badge';
