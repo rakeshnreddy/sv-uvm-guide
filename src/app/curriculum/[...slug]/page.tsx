@@ -79,6 +79,22 @@ const BlockingSimulator = dynamic(
   () => import('@/components/animations/BlockingSimulator'),
   { ssr: false, loading: () => <VisualizationFallback /> },
 );
+const InteractiveCostOfBugGraph = dynamic(
+  () => import('@/components/curriculum/f1/InteractiveCostOfBugGraph'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
+const HallOfShameCarousel = dynamic(
+  () => import('@/components/curriculum/f1/HallOfShameCarousel'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
+const VerificationMethodologiesDiagram = dynamic(
+  () => import('@/components/curriculum/f1/VerificationMethodologiesDiagram'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
+const FirstBugHuntGame = dynamic(
+  () => import('@/components/curriculum/f1/FirstBugHuntGame'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -116,6 +132,10 @@ const components = {
   DataTypeExplorer,
   BlockingSimulator,
   ConceptLink,
+  InteractiveCostOfBugGraph,
+  HallOfShameCarousel,
+  VerificationMethodologiesDiagram,
+  FirstBugHuntGame,
   Image: MdxImage,
 };
 

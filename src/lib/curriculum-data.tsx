@@ -32,7 +32,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F1: Why Verification?",
             "slug": "index",
-            "description": "An introduction to the world of hardware verification."
+            "description": "Experience the stakes of verification through interactive stories, graphs, and your first bug hunt."
           }
         ]
       },
