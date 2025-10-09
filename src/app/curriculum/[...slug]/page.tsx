@@ -103,6 +103,14 @@ const CurriculumDataTypeQuiz = dynamic(
   () => import('@/components/curriculum/f2/CurriculumDataTypeQuiz'),
   { ssr: false, loading: () => <VisualizationFallback /> },
 );
+const DynamicStructureVisualizer = dynamic(
+  () => import('@/components/curriculum/f2/DynamicStructureVisualizer'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
+const PacketSorterGame = dynamic(
+  () => import('@/components/curriculum/f2/PacketSorterGame'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -146,6 +154,8 @@ const components = {
   HallOfShameCarousel,
   VerificationMethodologiesDiagram,
   FirstBugHuntGame,
+  DynamicStructureVisualizer,
+  PacketSorterGame,
   Image: MdxImage,
 };
 
