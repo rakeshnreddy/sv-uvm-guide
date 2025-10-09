@@ -37,13 +37,46 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "F2: SystemVerilog Language Basics",
-        "slug": "F2_SystemVerilog_Basics",
+        "title": "F2A: Core Data Types",
+        "slug": "F2A_Core_Data_Types",
         "topics": [
           {
-            "title": "F2: SystemVerilog Language Basics",
+            "title": "F2A: Core Data Types",
             "slug": "index",
-            "description": "A comprehensive introduction to the fundamental building blocks of the SystemVerilog language."
+            "description": "Understand the SystemVerilog value system, vectors, and user-defined types with IEEE 1800-2023 grounding."
+          }
+        ]
+      },
+      {
+        "title": "F2B: Dynamic Data Structures",
+        "slug": "F2B_Dynamic_Structures",
+        "topics": [
+          {
+            "title": "F2B: Dynamic Data Structures",
+            "slug": "index",
+            "description": "Manipulate dynamic arrays, queues, and associative arrays with an IEEE 1800-2023 guided workflow."
+          }
+        ]
+      },
+      {
+        "title": "F2C: Procedural Code and Flow Control",
+        "slug": "F2C_Procedural_Code",
+        "topics": [
+          {
+            "title": "F2C: Procedural Code and Flow Control",
+            "slug": "index",
+            "description": "Author deterministic `initial`/`always` blocks, choose the right assignment style, and master control flow."
+          }
+        ]
+      },
+      {
+        "title": "F2D: Reusable Code and Parallelism",
+        "slug": "F2D_Reusable_and_Parallel",
+        "topics": [
+          {
+            "title": "F2D: Reusable Code and Parallelism",
+            "slug": "index",
+            "description": "Factor stimulus into tasks/functions and coordinate parallel threads with fork-join semantics."
           }
         ]
       },

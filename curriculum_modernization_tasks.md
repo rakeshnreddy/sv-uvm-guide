@@ -10,7 +10,7 @@ This file contains a series of prompts for a coding agent to modernize the curri
 1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
 2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-SPLIT-F2` and changing its status from `todo` to `complete`.
 
-- **Status:** `todo`
+- **Status:** `complete ✅`
 - **Lesson:** F2: SystemVerilog Language Basics
 - **Path:** `content/curriculum/T1_Foundational/F2_SystemVerilog_Basics/index.mdx`
 - **SystemVerilog LRM clauses:** 6 (Data types), 7 (Aggregate data types), 9 (Procedural blocks), 10 (Assignments), 11 (Operators), 12 (Flow control), 13 (Tasks and functions)
@@ -57,12 +57,12 @@ This monolithic lesson must be split into four focused micro-lessons:
 
 | Task ID | Status | Summary | Acceptance Criteria |
 |---|---|---|---|
-| `CURR-F2-SPLIT` | `todo` | Split the F2 lesson into four parts (Data Types, Dynamic Structures, Procedural Code, Reusable/Parallel Code). | - The existing `F2` directory is renamed to `F2A_Core_Data_Types`.<br>- New directories `F2B`, `F2C`, and `F2D` are created.<br>- Content is refactored and moved to the appropriate new lessons. |
-| `CURR-F2A-LORE` | `todo` | Modernize the Data Types lesson with LRM references. | - All concepts are cross-referenced to IEEE 1800-2023 (Clauses 6, 7).<br>- `npm run lint` and `npm run test` pass. |
-| `CURR-F2B-VISUAL` | `todo` | Create the `DataTypeExplorer` visual and write the Dynamic Structures lesson. | - The `DataTypeExplorer.tsx` component is built and embedded in the `F2B` lesson.<br>- The lesson content is written, referencing LRM Clause 7. |
-| `CURR-F2C-VISUAL` | `todo` | Create the `BlockingSimulator` visual and write the Procedural Code lesson. | - The `BlockingSimulator.tsx` component is built and embedded in the `F2C` lesson.<br>- The lesson content is written, referencing LRM Clauses 9, 10, 12. |
-| `CURR-F2D-LAB` | `todo` | Create the "Refactoring Challenge" lab and write the Reusable/Parallel Code lesson. | - The `labs/basics/lab1_refactoring` is created.<br>- The `F2D` lesson is written, explaining tasks, functions, and fork-join, and embedding the lab. |
-| `CURR-F2-REVIEW` | `todo` | Review all four new lessons and update site navigation. | - All four lessons are reviewed for accuracy.<br>- The curriculum's `_category_.json` is updated for the new structure.<br>- **Unit Tests:** Add Vitest unit tests for the new `DataTypeExplorer` and `BlockingSimulator` components.<br>- **E2E Tests:** Add Playwright tests for the new lesson pages to ensure interactive components load and are usable.<br>- All internal links are verified. |
+| `CURR-F2-SPLIT` | `complete ✅` | Split the F2 lesson into four parts (Data Types, Dynamic Structures, Procedural Code, Reusable/Parallel Code). | - The existing `F2` directory is renamed to `F2A_Core_Data_Types`.<br>- New directories `F2B`, `F2C`, and `F2D` are created.<br>- Content is refactored and moved to the appropriate new lessons. |
+| `CURR-F2A-LORE` | `complete ✅` | Modernize the Data Types lesson with LRM references. | - All concepts are cross-referenced to IEEE 1800-2023 (Clauses 6, 7).<br>- `npm run lint` and `npm run test` pass. |
+| `CURR-F2B-VISUAL` | `complete ✅` | Create the `DataTypeExplorer` visual and write the Dynamic Structures lesson. | - The `DataTypeExplorer.tsx` component is built and embedded in the `F2B` lesson.<br>- The lesson content is written, referencing LRM Clause 7. |
+| `CURR-F2C-VISUAL` | `complete ✅` | Create the `BlockingSimulator` visual and write the Procedural Code lesson. | - The `BlockingSimulator.tsx` component is built and embedded in the `F2C` lesson.<br>- The lesson content is written, referencing LRM Clauses 9, 10, 12. |
+| `CURR-F2D-LAB` | `complete ✅` | Create the "Refactoring Challenge" lab and write the Reusable/Parallel Code lesson. | - The `labs/basics/lab1_refactoring` is created.<br>- The `F2D` lesson is written, explaining tasks, functions, and fork-join, and embedding the lab. |
+| `CURR-F2-REVIEW` | `complete ✅` | Review all four new lessons and update site navigation. | - All four lessons are reviewed for accuracy.<br>- The curriculum's `_category_.json` is updated for the new structure.<br>- **Unit Tests:** Add Vitest unit tests for the new `DataTypeExplorer` and `BlockingSimulator` components.<br>- **E2E Tests:** Add Playwright tests for the new lesson pages to ensure interactive components load and are usable.<br>- All internal links are verified. |
 
 ---
 

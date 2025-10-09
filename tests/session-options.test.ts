@@ -18,6 +18,6 @@ describe('sessionOptions', () => {
 
   it('falls back to test-secret when SESSION_SECRET missing', async () => {
     const mod = await loadModule();
-    expect(mod.sessionOptions.password).toBe('test-secret');
+    expect(mod.sessionOptions.password).toBe('test-secret-development-key-that-is-32-bytes-long');
   });
 });

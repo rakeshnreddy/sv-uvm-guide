@@ -1,0 +1,84 @@
+---
+title: "F2B: Dynamic Data Structures"
+description: "Manipulate dynamic arrays, queues, and associative arrays with an IEEE 1800-2023 guided workflow."
+flashcards: "F2_Data_Types"
+---
+
+import { InteractiveCode, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
+import DataTypeExplorer from '@/components/animations/DataTypeExplorer';
+
+## Quick Take
+- **Why it matters:** Testbench stimulus and scoreboards rarely know every transaction count in advance—dynamic storage keeps you agile (§7.5, §7.8, §7.10).
+- **Key insight:** SystemVerilog layers array methods (`push_back`, `pop_front`, `delete`, `exists`) directly onto the data structures, so your code reads like intent instead of plumbing (IEEE 1800-2023 §7.5.5, §7.8.3, §7.10.3).
+- **Verification payoff:** Flexible containers map naturally to mailboxes, queues of outstanding transactions, and associative caches keyed by address or ID.
+
+## Build Your Mental Model
+Dynamic structures extend packed/unpacked arrays by letting you size storage during runtime. They live in simulation only—perfect for verification scaffolding that must respond to randomized stimulus.
+
+### Dynamic Arrays (`logic [7:0] data[]`)
+- Resizable at runtime via `new[]`, `.delete()`, and `.size()` (IEEE 1800-2023 §7.5).
+- Allocate contiguous storage—ideal for scoreboards that store expected packets.
+- Use with 4-state element types if you need to model unknown values.
+
+### Queues (`int q[$]`)
+- Ordered FIFO/LIFO container with methods like `push_front`, `push_back`, `pop_front`, `pop_back`, and `insert` (IEEE 1800-2023 §7.8).
+- Perfect for driver wait-lists or outstanding responses. Combine with `foreach` loops (§12.7.3) for iteration.
+
+### Associative Arrays (`bit [31:0] cache[string]`)
+- Indexed by arbitrary key types (integer, string, class handle) and queried with `.exists()` and `.first()`/`.next()` (IEEE 1800-2023 §7.10).
+- Use for sparse memories, scoreboard mirrors, and configuration maps.
+
+<DataTypeExplorer />
+
+### Example: Tracking Outstanding Transactions
+<InteractiveCode
+  language="systemverilog"
+  code={`
+class outstanding_tracker;
+  typedef struct packed {
+    logic [31:0] addr;
+    logic [7:0]  byte_en;
+    logic        is_write;
+  } txn_t; // Reuse typedef from F2A (§7.3)
+
+  txn_t pending_q[$];            // Queue of FIFO-ordered transactions (§7.8)
+  txn_t scoreboard[int unsigned]; // Associative array keyed by ID (§7.10)
+
+  function void remember(txn_t txn, int unsigned id);
+    pending_q.push_back(txn);
+    scoreboard[id] = txn;
+  endfunction
+
+  function txn_t pop_next();
+    return pending_q.pop_front();
+  endfunction
+
+  function bit exists(int unsigned id);
+    return scoreboard.exists(id);
+  endfunction
+endclass
+  `}
+/>
+
+### Method Reference Highlights
+<Card className="my-6 border-secondary/40 bg-secondary/5">
+  <CardHeader>
+    <CardTitle>Array Method Behavior (IEEE 1800-2023)</CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-2 text-sm">
+    <p><strong>Dynamic arrays</strong> — `arr = new[N];` resizes and zero-fills 2-state elements; call `arr.delete()` to release memory (§7.5.3).</p>
+    <p><strong>Queues</strong> — `queue.push_back(item);` appends; `queue.pop_front();` removes and returns the first element (§7.8.3).</p>
+    <p><strong>Associative arrays</strong> — `aa.exists(key)` returns `1` if the key is present; `aa.delete(key);` removes entries without reallocating (§7.10.3).</p>
+  </CardContent>
+</Card>
+
+## Practice Prompts
+1. Refactor a mailbox-driven driver to use a queue so you can peek at the next transaction before sending it.
+2. Mirror DUT register writes inside an associative array and cross-check reads.
+3. Use a dynamic array to accumulate coverage hits, then `sort()` the array to report top offenders (IEEE 1800-2023 §7.5.5).
+
+## LRM References
+- IEEE Std 1800-2023 §7.5 — Dynamic arrays and the `new[]` constructor.
+- IEEE Std 1800-2023 §7.8 — Queues and their built-in methods.
+- IEEE Std 1800-2023 §7.10 — Associative arrays and key iteration helpers.
+- IEEE Std 1800-2023 §12.7 — `foreach` loop traversal of dynamic containers.
