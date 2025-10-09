@@ -75,6 +75,10 @@ const DataTypeExplorer = dynamic(
   () => import('@/components/animations/DataTypeExplorer'),
   { ssr: false, loading: () => <VisualizationFallback /> },
 );
+const CurriculumDataTypeExplorer = dynamic(
+  () => import('@/components/curriculum/f2/DataTypeExplorer'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 const BlockingSimulator = dynamic(
   () => import('@/components/animations/BlockingSimulator'),
   { ssr: false, loading: () => <VisualizationFallback /> },
@@ -93,6 +97,10 @@ const VerificationMethodologiesDiagram = dynamic(
 );
 const FirstBugHuntGame = dynamic(
   () => import('@/components/curriculum/f1/FirstBugHuntGame'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
+const CurriculumDataTypeQuiz = dynamic(
+  () => import('@/components/curriculum/f2/CurriculumDataTypeQuiz'),
   { ssr: false, loading: () => <VisualizationFallback /> },
 );
 
@@ -130,6 +138,8 @@ const components = {
   AssertionBuilder,
   DebuggingSimulator,
   DataTypeExplorer,
+  CurriculumDataTypeExplorer,
+  CurriculumDataTypeQuiz,
   BlockingSimulator,
   ConceptLink,
   InteractiveCostOfBugGraph,

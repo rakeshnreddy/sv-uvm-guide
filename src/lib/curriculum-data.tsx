@@ -43,7 +43,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F2A: Core Data Types",
             "slug": "index",
-            "description": "Understand the SystemVerilog value system, vectors, and user-defined types with IEEE 1800-2023 grounding."
+            "description": "Dive deep into SystemVerilog nets, variables, and value systems with interactive explorers grounded in IEEE 1800-2023."
           }
         ]
       },
@@ -77,6 +77,17 @@ export const curriculumData: Module[] = [
             "title": "F2D: Reusable Code and Parallelism",
             "slug": "index",
             "description": "Factor stimulus into tasks/functions and coordinate parallel threads with fork-join semantics."
+          }
+        ]
+      },
+      {
+        "title": "F2: SystemVerilog Language Basics",
+        "slug": "F2_SystemVerilog_Basics",
+        "topics": [
+          {
+            "title": "F2: SystemVerilog Language Basics",
+            "slug": "index",
+            "description": "Orient yourself across the F2A–F2D lessons and understand how each builds core SystemVerilog intuition before diving deeper."
           }
         ]
       },
