@@ -13,7 +13,7 @@ import Panel from '@/components/ui/Panel';
 import { InfoPage } from '@/components/templates/InfoPage';
 import LessonVisitTracker from '@/components/curriculum/LessonVisitTracker';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/Accordion';
-import { Card } from '@/components/ui/Card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { CodeBlock } from '@/components/ui/CodeBlock';
 import { Alert } from '@/components/ui/Alert';
 import dynamic from 'next/dynamic';
@@ -71,6 +71,14 @@ const AssertionBuilder = dynamic(
 );
 const DebuggingSimulator = dynamic(() => import('@/components/ui/DebuggingSimulator'));
 const InteractiveCode = dynamic(() => import('@/components/ui/InteractiveCode').then(mod => mod.InteractiveCode), { ssr: false });
+const DataTypeExplorer = dynamic(
+  () => import('@/components/animations/DataTypeExplorer'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
+const BlockingSimulator = dynamic(
+  () => import('@/components/animations/BlockingSimulator'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -84,6 +92,9 @@ const components = {
   Accordion,
   AccordionItem,
   Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
   CodeBlock,
   AnimatedUvmSequenceDriverHandshakeDiagram,
   DataTypeComparisonChart,
@@ -102,6 +113,8 @@ const components = {
   ProceduralBlocksSimulator,
   AssertionBuilder,
   DebuggingSimulator,
+  DataTypeExplorer,
+  BlockingSimulator,
   ConceptLink,
   Image: MdxImage,
 };

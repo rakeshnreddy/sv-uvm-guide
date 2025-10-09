@@ -1,0 +1,126 @@
+---
+title: "F2A: Core Data Types"
+description: "Understand the SystemVerilog value system, vectors, and user-defined types with IEEE 1800-2023 grounding."
+flashcards: "F2_Data_Types"
+---
+
+import { InteractiveCode, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
+
+## Quick Take
+- **Why it matters:** Choosing the correct type ensures the simulator can represent unknown hardware states while keeping verification math efficient (IEEE 1800-2023 §6.1).
+- **4-state vs. 2-state:** Use `logic` when you need `0/1/X/Z` fidelity; reach for `bit` or `int` when you only need `0/1` and want faster operations (IEEE 1800-2023 §6.3, §6.4).
+- **Structuring data:** Packed vectors, unpacked arrays, `struct`, and `enum` let you model buses and protocols with readable intent (IEEE 1800-2023 §7.2, §7.3, §6.19).
+
+> **Keep handy:** The IEEE clause numbers next to each concept—citing them in code reviews shortens debates about what is or isn't legal SystemVerilog.
+
+## Build Your Mental Model
+
+SystemVerilog extends Verilog's type system with strong typing, 4-state awareness, and composite types. The simulator tracks both value and strength; designers decide whether a signal can float, go unknown, or stay strictly binary. Verification code leans on these semantics to flag DUT bugs instead of masking them with default zeros.
+
+### 4-State and 2-State Value Systems
+- **4-state types (`logic`, `reg`, `wire`)** track `0`, `1`, high-impedance `Z`, and unknown `X` (IEEE 1800-2023 §6.1, §6.3).
+- **2-state types (`bit`, `byte`, `int`, `longint`)** track `0/1` only but simulate faster because they skip X/Z resolution (IEEE 1800-2023 §6.4).
+- **`logic` vs. `wire`:** `logic` is a single-driver variable type intended for procedural assignments, while `wire` is a net that resolves multiple drivers via strength rules—use `wire` for DUT ports with fan-in (IEEE 1800-2023 §6.6).
+
+<Card className="my-6 border-primary/40 bg-primary/5">
+  <CardHeader>
+    <CardTitle>Reference Cheat Sheet</CardTitle>
+  </CardHeader>
+  <CardContent className="grid gap-2 text-sm md:grid-cols-3">
+    <div>
+      <p className="font-semibold">4-state (`logic`)</p>
+      <ul className="list-disc pl-5 space-y-1">
+        <li>Declares variables driven by procedural code.</li>
+        <li>Default initializer `'x` exposes uninitialized usage.</li>
+        <li>Supports packed/unpacked dimensions (§7.2, §7.4).</li>
+      </ul>
+    </div>
+    <div>
+      <p className="font-semibold">2-state (`bit`/`int`)</p>
+      <ul className="list-disc pl-5 space-y-1">
+        <li>Ideal for scoreboards and stimulus math.</li>
+        <li>Arithmetic uses standard integer promotion rules (§11.5).</li>
+        <li>Unknown values collapse to `0`/`1` on assignment (§6.4).</li>
+      </ul>
+    </div>
+    <div>
+      <p className="font-semibold">`wire` nets</p>
+      <ul className="list-disc pl-5 space-y-1">
+        <li>Resolve multiple continuous assignments (§6.6).</li>
+        <li>Cannot be targets of blocking/non-blocking assignments.</li>
+        <li>Convert to `logic` when there is a single driver.</li>
+      </ul>
+    </div>
+  </CardContent>
+</Card>
+
+### Packed vs. Unpacked Arrays
+- **Packed arrays** describe bit-accurate buses and are treated as vectors in expressions (IEEE 1800-2023 §7.2).
+- **Unpacked arrays** allocate discrete elements—think mailboxes, register files, or scoreboard memories (§7.4).
+- Combine them to create multidimensional memories, e.g., `logic [31:0] fifo_mem [0:15];` where `[31:0]` is packed and `[0:15]` is unpacked.
+
+<InteractiveCode
+  language="systemverilog"
+  code={`
+module vector_examples;
+  logic [3:0] nibble;          // Packed vector (§7.2)
+  logic [3:0][7:0] pixels;      // Packed array of bytes (§7.2.1)
+  bit   [0:15] flags;           // 2-state packed vector (§6.4)
+  logic [7:0] frame [0:1023];   // Unpacked array (§7.4)
+
+  initial begin
+    nibble = 4'b10xz;           // Preserve X/Z semantics
+    pixels = '{default:8'h00};  // Packed array literal (§10.9)
+    frame[0] = 8'hff;
+  end
+endmodule
+  `}
+/>
+
+### User-Defined Types with `struct` and `enum`
+- **`typedef struct packed`** groups bit-fields into a single packed vector—perfect for bus transactions (IEEE 1800-2023 §7.3).
+- **`typedef enum`** replaces magic numbers with named states; specify encodings to align with protocol documentation (IEEE 1800-2023 §6.19).
+- Mix enums and structs to build type-safe configuration objects for sequences.
+
+<InteractiveCode
+  language="systemverilog"
+  code={`
+typedef enum logic [1:0] {
+  IDLE = 2'b00,
+  BUSY = 2'b01,
+  ERROR = 2'b10
+} state_e; // Named states (§6.19)
+
+typedef struct packed {
+  logic [7:0]  cmd;
+  logic [15:0] addr;
+  logic [31:0] data;
+  state_e      status;
+} packet_s; // Aggregates related fields (§7.3)
+
+module packet_decode;
+  packet_s pkt;
+
+  always_comb begin
+    if (pkt.status == ERROR) begin
+      $display("Fault @%h", pkt.addr);
+    end
+  end
+endmodule
+  `}
+/>
+
+## Make It Stick
+1. **Audit your declarations:** Ensure stimulus variables that never require `X/Z` use 2-state types to speed up simulations (§6.4).
+2. **Reserve `wire` for multiple drivers:** Use it at DUT boundaries with tri-state busses; everywhere else prefer `logic` (§6.6).
+3. **Carry protocol meaning in types:** Wrap bus fields inside `struct`s and enumerations so that code documents itself (§7.3, §6.19).
+
+**Checklist before moving on**
+- [ ] You can explain when to select `logic` versus `bit` for a given signal.
+- [ ] You can declare packed and unpacked arrays and describe how they behave in expressions.
+- [ ] You can sketch a `struct`/`enum` that mirrors a transaction format from your project spec.
+
+## LRM References
+- IEEE Std 1800-2023 §6 — Data Types (`logic`, `bit`, nets, and single-driver vs. resolved semantics).
+- IEEE Std 1800-2023 §7 — Arrays and user-defined types (packed vectors, unpacked arrays, structs).
+- IEEE Std 1800-2023 §11 — Operators and the integer promotion rules that apply to 2-state arithmetic.

@@ -1,11 +1,9 @@
 import dynamic from 'next/dynamic';
-import { cookies } from 'next/headers';
 import { InfoPage } from '@/components/templates/InfoPage';
 import { isFeatureEnabled } from '@/tools/featureFlags';
 import { normalizeUserPreferences } from '@/lib/user-preferences';
 import { resolveNotificationPreferences } from '@/lib/notifications';
-import { getIronSession } from 'iron-session';
-import { sessionOptions } from '@/lib/session-options';
+import { getSession } from '@/lib/session';
 
 const VisualizationFallback = () => (
   <div className="flex h-48 items-center justify-center">Loading visualization...</div>
@@ -22,7 +20,7 @@ const loadTrackingAvailability = async () => {
   }
 
   try {
-    const session = await getIronSession(await cookies(), sessionOptions);
+    const session = await getSession();
     const preferences = normalizeUserPreferences(
       session.preferences,
       resolveNotificationPreferences(session.userId ?? 'demo-user'),
