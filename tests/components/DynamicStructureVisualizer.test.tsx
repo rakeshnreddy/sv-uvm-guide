@@ -1,5 +1,6 @@
 import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import DynamicStructureVisualizer from '@/components/curriculum/f2/DynamicStructureVisualizer';
 
@@ -24,6 +25,7 @@ describe('DynamicStructureVisualizer', () => {
   });
 
   it('handles queue limits, packed mapping, and associative array updates', async () => {
+  it('handles queue limits, packed mapping, and associative array updates', () => {
     render(<DynamicStructureVisualizer />);
 
     fireEvent.click(screen.getByTestId('tab-queue'));

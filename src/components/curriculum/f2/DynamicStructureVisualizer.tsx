@@ -207,6 +207,11 @@ const packedScenarios: PackedScenario[] = [
         },
       ],
     },
+      { label: "payload[0]", bits: ["7", "6", "5", "4", "3", "2", "1", "0"] },
+      { label: "payload[1]", bits: ["7", "6", "5", "4", "3", "2", "1", "0"] },
+      { label: "payload[2]", bits: ["7", "6", "5", "4", "3", "2", "1", "0"] },
+      { label: "payload[3]", bits: ["7", "6", "5", "4", "3", "2", "1", "0"] },
+    ],
     challenge: {
       question: "Which index toggles fastest as the simulator walks memory?",
       options: ["Packed bit position", "Unpacked payload index"],
@@ -296,6 +301,14 @@ const packedScenarios: PackedScenario[] = [
         },
       ],
     },
+        label: "lane_matrix[0]",
+        bits: ["[3][1]", "[3][0]", "[2][1]", "[2][0]", "[1][1]", "[1][0]", "[0][1]", "[0][0]"],
+      },
+      {
+        label: "lane_matrix[1]",
+        bits: ["[3][1]", "[3][0]", "[2][1]", "[2][0]", "[1][1]", "[1][0]", "[0][1]", "[0][0]"],
+      },
+    ],
     challenge: {
       question: "Which dimension flips first when walking bits inside lane_matrix[0]?",
       options: ["Packed [1:0] lane", "Packed [3:0] nibble", "Unpacked channel"],
@@ -413,6 +426,13 @@ const packedScenarios: PackedScenario[] = [
         },
       ],
     },
+      { label: "scoreboard[0][0]", bits: ["3", "2", "1", "0"] },
+      { label: "scoreboard[0][1]", bits: ["3", "2", "1", "0"] },
+      { label: "scoreboard[0][2]", bits: ["3", "2", "1", "0"] },
+      { label: "scoreboard[1][0]", bits: ["3", "2", "1", "0"] },
+      { label: "scoreboard[1][1]", bits: ["3", "2", "1", "0"] },
+      { label: "scoreboard[1][2]", bits: ["3", "2", "1", "0"] },
+    ],
     challenge: {
       question: "After scoreboard[0][1], which unpacked element comes next in memory?",
       options: ["scoreboard[0][2]", "scoreboard[1][0]", "scoreboard[1][1]"],
@@ -1276,6 +1296,7 @@ const PackedUnpackedTab: React.FC = () => {
                       <div
                         key={`${row.label}-${bitLabel}-${index}`}
                         className="flex min-h-[2.5rem] min-w-[6rem] items-center justify-center rounded-md border border-border/40 bg-muted/40 px-3 text-[0.7rem] font-semibold text-center"
+                        className="flex h-8 min-w-[2.5rem] items-center justify-center rounded-md border border-border/40 bg-muted/40 px-2 text-xs font-semibold"
                       >
                         {bitLabel}
                       </div>
