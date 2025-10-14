@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Switch } from "@/components/ui/Switch";
 import { Label } from "@/components/ui/Label";
+import { Badge } from "@/components/ui/Badge";
 import { cn } from "@/lib/utils";
 
 type DynamicArrayState = {
@@ -40,6 +41,17 @@ type PackedDimension = {
   detail: string;
 };
 
+type IndexGuideStep = {
+  kind: "packed" | "unpacked";
+  label: string;
+  detail: string;
+};
+
+type IndexGuideExample = {
+  code: string;
+  insight: string;
+};
+
 type PackedScenario = {
   id: string;
   title: string;
@@ -48,6 +60,11 @@ type PackedScenario = {
   packedDimensions: PackedDimension[];
   unpackedDimensions: PackedDimension[];
   memoryRows: Array<{ label: string; bits: string[] }>;
+  indexGuide: {
+    description: string;
+    steps: IndexGuideStep[];
+    examples: IndexGuideExample[];
+  };
   challenge: {
     question: string;
     options: string[];
@@ -58,6 +75,38 @@ type PackedScenario = {
 
 const initialArrayValues = [8, 16, 24];
 const initialQueueValues = [101, 102, 103];
+
+const createPackedCubeMemory = (
+  u1Count: number,
+  u2Count: number,
+  u3Count: number,
+  p1Count: number,
+  p2Count: number,
+  p3Count: number,
+) => {
+  const rows: Array<{ label: string; bits: string[] }> = [];
+  for (let u1 = 0; u1 < u1Count; u1 += 1) {
+    for (let u2 = 0; u2 < u2Count; u2 += 1) {
+      for (let u3 = 0; u3 < u3Count; u3 += 1) {
+        const bits: string[] = [];
+        for (let p1 = p1Count - 1; p1 >= 0; p1 -= 1) {
+          for (let p2 = p2Count - 1; p2 >= 0; p2 -= 1) {
+            for (let p3 = p3Count - 1; p3 >= 0; p3 -= 1) {
+              bits.push(
+                `my_array[u1=${u1}][u2=${u2}][u3=${u3}][p1=${p1}][p2=${p2}][p3=${p3}]`,
+              );
+            }
+          }
+        }
+        rows.push({
+          label: `my_array[u1=${u1}][u2=${u2}][u3=${u3}] (Unpacked order U1 → U2 → U3)`,
+          bits,
+        });
+      }
+    }
+  }
+  return rows;
+};
 
 const packedScenarios: PackedScenario[] = [
   {
@@ -79,6 +128,85 @@ const packedScenarios: PackedScenario[] = [
       },
     ],
     memoryRows: [
+      {
+        label: "payload[0] (unpacked slot 0)",
+        bits: [
+          "payload[0][7]",
+          "payload[0][6]",
+          "payload[0][5]",
+          "payload[0][4]",
+          "payload[0][3]",
+          "payload[0][2]",
+          "payload[0][1]",
+          "payload[0][0]",
+        ],
+      },
+      {
+        label: "payload[1] (unpacked slot 1)",
+        bits: [
+          "payload[1][7]",
+          "payload[1][6]",
+          "payload[1][5]",
+          "payload[1][4]",
+          "payload[1][3]",
+          "payload[1][2]",
+          "payload[1][1]",
+          "payload[1][0]",
+        ],
+      },
+      {
+        label: "payload[2] (unpacked slot 2)",
+        bits: [
+          "payload[2][7]",
+          "payload[2][6]",
+          "payload[2][5]",
+          "payload[2][4]",
+          "payload[2][3]",
+          "payload[2][2]",
+          "payload[2][1]",
+          "payload[2][0]",
+        ],
+      },
+      {
+        label: "payload[3] (unpacked slot 3)",
+        bits: [
+          "payload[3][7]",
+          "payload[3][6]",
+          "payload[3][5]",
+          "payload[3][4]",
+          "payload[3][3]",
+          "payload[3][2]",
+          "payload[3][1]",
+          "payload[3][0]",
+        ],
+      },
+    ],
+    indexGuide: {
+      description:
+        "Index the unpacked dimension first, then dive into the packed bits. Each payload slot returns a packed byte you can subscript again.",
+      steps: [
+        {
+          kind: "unpacked",
+          label: "payload[slot]",
+          detail: "The first brackets pick which payload entry (0..3) you are referencing.",
+        },
+        {
+          kind: "packed",
+          label: "[bit]",
+          detail: "Immediately follow with a packed bit index 7..0 to grab the exact bit inside that byte.",
+        },
+      ],
+      examples: [
+        {
+          code: "payload[2][5]",
+          insight: "Selects unpacked entry 2, then bit 5 within that packed byte.",
+        },
+        {
+          code: "payload[3]",
+          insight: "Reads the entire packed byte for slot 3 without drilling into individual bits.",
+        },
+      ],
+    },
       { label: "payload[0]", bits: ["7", "6", "5", "4", "3", "2", "1", "0"] },
       { label: "payload[1]", bits: ["7", "6", "5", "4", "3", "2", "1", "0"] },
       { label: "payload[2]", bits: ["7", "6", "5", "4", "3", "2", "1", "0"] },
@@ -116,6 +244,63 @@ const packedScenarios: PackedScenario[] = [
     ],
     memoryRows: [
       {
+        label: "lane_matrix[0] (channel 0)",
+        bits: [
+          "lane_matrix[0][3][1]",
+          "lane_matrix[0][3][0]",
+          "lane_matrix[0][2][1]",
+          "lane_matrix[0][2][0]",
+          "lane_matrix[0][1][1]",
+          "lane_matrix[0][1][0]",
+          "lane_matrix[0][0][1]",
+          "lane_matrix[0][0][0]",
+        ],
+      },
+      {
+        label: "lane_matrix[1] (channel 1)",
+        bits: [
+          "lane_matrix[1][3][1]",
+          "lane_matrix[1][3][0]",
+          "lane_matrix[1][2][1]",
+          "lane_matrix[1][2][0]",
+          "lane_matrix[1][1][1]",
+          "lane_matrix[1][1][0]",
+          "lane_matrix[1][0][1]",
+          "lane_matrix[1][0][0]",
+        ],
+      },
+    ],
+    indexGuide: {
+      description:
+        "Unpacked channel first, then packed dimensions from left to right. Remember that the right-most packed dimension is the least significant lane bit.",
+      steps: [
+        {
+          kind: "unpacked",
+          label: "lane_matrix[channel]",
+          detail: "Pick channel 0 or 1 before touching the packed nibble.",
+        },
+        {
+          kind: "packed",
+          label: "[nibble]",
+          detail: "The outer packed dimension [3:0] picks which nibble (3 down to 0).",
+        },
+        {
+          kind: "packed",
+          label: "[lane]",
+          detail: "The inner packed dimension [1:0] flips fastest, choosing lane 1 or 0 for that nibble.",
+        },
+      ],
+      examples: [
+        {
+          code: "lane_matrix[1][2][0]",
+          insight: "Channel 1 → nibble index 2 → lane 0 bit within that nibble.",
+        },
+        {
+          code: "lane_matrix[0][3]",
+          insight: "Returns the two-lane packed vector for channel 0 nibble 3.",
+        },
+      ],
+    },
         label: "lane_matrix[0]",
         bits: ["[3][1]", "[3][0]", "[2][1]", "[2][0]", "[1][1]", "[1][0]", "[0][1]", "[0][0]"],
       },
@@ -155,6 +340,92 @@ const packedScenarios: PackedScenario[] = [
       },
     ],
     memoryRows: [
+      {
+        label: "scoreboard[0][0] (row 0, column 0)",
+        bits: [
+          "scoreboard[0][0][3]",
+          "scoreboard[0][0][2]",
+          "scoreboard[0][0][1]",
+          "scoreboard[0][0][0]",
+        ],
+      },
+      {
+        label: "scoreboard[0][1] (row 0, column 1)",
+        bits: [
+          "scoreboard[0][1][3]",
+          "scoreboard[0][1][2]",
+          "scoreboard[0][1][1]",
+          "scoreboard[0][1][0]",
+        ],
+      },
+      {
+        label: "scoreboard[0][2] (row 0, column 2)",
+        bits: [
+          "scoreboard[0][2][3]",
+          "scoreboard[0][2][2]",
+          "scoreboard[0][2][1]",
+          "scoreboard[0][2][0]",
+        ],
+      },
+      {
+        label: "scoreboard[1][0] (row 1, column 0)",
+        bits: [
+          "scoreboard[1][0][3]",
+          "scoreboard[1][0][2]",
+          "scoreboard[1][0][1]",
+          "scoreboard[1][0][0]",
+        ],
+      },
+      {
+        label: "scoreboard[1][1] (row 1, column 1)",
+        bits: [
+          "scoreboard[1][1][3]",
+          "scoreboard[1][1][2]",
+          "scoreboard[1][1][1]",
+          "scoreboard[1][1][0]",
+        ],
+      },
+      {
+        label: "scoreboard[1][2] (row 1, column 2)",
+        bits: [
+          "scoreboard[1][2][3]",
+          "scoreboard[1][2][2]",
+          "scoreboard[1][2][1]",
+          "scoreboard[1][2][0]",
+        ],
+      },
+    ],
+    indexGuide: {
+      description:
+        "Both unpacked indices appear before the packed bits when you reference scoreboard cells. The left-most unpacked dimension (row) is indexed first, followed by the right-most unpacked dimension (column), and finally the packed nibble bits.",
+      steps: [
+        {
+          kind: "unpacked",
+          label: "scoreboard[row]",
+          detail: "Choose the row (0..1) corresponding to the scoreboard phase.",
+        },
+        {
+          kind: "unpacked",
+          label: "[column]",
+          detail: "Next, pick the column (0..2). This right-most unpacked dimension walks first in memory.",
+        },
+        {
+          kind: "packed",
+          label: "[bit]",
+          detail: "Finally, subscript 3..0 to select a bit inside that packed nibble.",
+        },
+      ],
+      examples: [
+        {
+          code: "scoreboard[1][0][2]",
+          insight: "Row 1, column 0, bit 2—useful when checking for sticky status bits.",
+        },
+        {
+          code: "scoreboard[0][2]",
+          insight: "Returns the full packed nibble for row 0 column 2.",
+        },
+      ],
+    },
       { label: "scoreboard[0][0]", bits: ["3", "2", "1", "0"] },
       { label: "scoreboard[0][1]", bits: ["3", "2", "1", "0"] },
       { label: "scoreboard[0][2]", bits: ["3", "2", "1", "0"] },
@@ -167,6 +438,101 @@ const packedScenarios: PackedScenario[] = [
       options: ["scoreboard[0][2]", "scoreboard[1][0]", "scoreboard[1][1]"],
       answer: "scoreboard[0][2]",
       explanation: "The right-most unpacked dimension (column) increments before the row advances.",
+    },
+  },
+  {
+    id: "packed-cube",
+    title: "Packed Cube Index Order",
+    declaration: "logic [P1-1:0][P2-1:0][P3-1:0] my_array [U1][U2][U3];",
+    description:
+      "Three packed dimensions live inside three unpacked ones. The declaration keeps packed brackets on the left so the bits stay contiguous while the unpacked indices fan out around the vector.",
+    packedDimensions: [
+      {
+        label: "Packed [P1-1:0]",
+        detail:
+          "Most-significant packed slice (for example, a vector lane group). It only advances after the inner packed dimensions roll over.",
+      },
+      {
+        label: "Packed [P2-1:0]",
+        detail: "Middle packed slice. It increments after every complete sweep of the [P3-1:0] dimension.",
+      },
+      {
+        label: "Packed [P3-1:0]",
+        detail: "Least-significant packed slice—the right-most packed brackets that flip fastest inside each unpacked location.",
+      },
+    ],
+    unpackedDimensions: [
+      {
+        label: "Unpacked [U1]",
+        detail: "Outer unpacked dimension. Selects the broad bucket (for example, socket or engine) before other unpacked indices.",
+      },
+      {
+        label: "Unpacked [U2]",
+        detail: "Middle unpacked dimension that steps after U3 completes its cycle.",
+      },
+      {
+        label: "Unpacked [U3]",
+        detail: "Innermost unpacked dimension and the fastest-changing unpacked index.",
+      },
+    ],
+    memoryRows: createPackedCubeMemory(2, 2, 2, 2, 2, 2),
+    indexGuide: {
+      description:
+        "Access unpacked dimensions from left to right (U1 → U2 → U3) and then the packed dimensions from left to right (P1 → P2 → P3). Keep the packed slices on the right so their bits stay contiguous.",
+      steps: [
+        {
+          kind: "unpacked",
+          label: "my_array[u1]",
+          detail: "Choose the outermost unpacked index first (0 .. U1-1).",
+        },
+        {
+          kind: "unpacked",
+          label: "[u2]",
+          detail: "Second bracket selects the next unpacked dimension before touching packed bits.",
+        },
+        {
+          kind: "unpacked",
+          label: "[u3]",
+          detail: "Right-most unpacked dimension toggles fastest and completes the unpacked selection.",
+        },
+        {
+          kind: "packed",
+          label: "[p1]",
+          detail: "First packed bracket slices the most-significant packed dimension, matching [P1-1:0] in the declaration.",
+        },
+        {
+          kind: "packed",
+          label: "[p2]",
+          detail: "Next packed index drills into [P2-1:0].",
+        },
+        {
+          kind: "packed",
+          label: "[p3]",
+          detail: "Final bracket selects the least-significant packed bits from [P3-1:0].",
+        },
+      ],
+      examples: [
+        {
+          code: "my_array[u1][u2][u3][p1][p2][p3]",
+          insight:
+            "Full access order: unpacked indices first, then packed indices. The expression mirrors the declaration's dimension order.",
+        },
+        {
+          code: "my_array[u1][u2][u3]",
+          insight: "Returns the entire packed payload for the selected unpacked coordinates.",
+        },
+      ],
+    },
+    challenge: {
+      question: "Which expression respects the declaration's index ordering?",
+      options: [
+        "my_array[u1][u2][u3][p1][p2][p3]",
+        "my_array[p1][p2][p3][u1][u2][u3]",
+        "my_array[u3][u2][u1][p1][p3][p2]",
+      ],
+      answer: "my_array[u1][u2][u3][p1][p2][p3]",
+      explanation:
+        "SystemVerilog expects unpacked indices before packed ones. Keeping the packed dimensions on the right preserves contiguous bit slices.",
     },
   },
 ];
@@ -879,6 +1245,46 @@ const PackedUnpackedTab: React.FC = () => {
           transition={{ duration: 0.25 }}
           className="space-y-4"
         >
+          <div
+            className="space-y-3 rounded-xl border border-border/60 bg-background/80 p-4"
+            data-testid="packed-index-guide"
+          >
+            <div className="text-sm font-semibold">Index placement map</div>
+            <p className="text-sm text-muted-foreground">{scenario.indexGuide.description}</p>
+            <div className="grid gap-3 sm:grid-cols-2" data-testid="packed-index-order">
+              {scenario.indexGuide.steps.map((step, index) => (
+                <motion.div
+                  key={`${scenario.id}-step-${step.label}`}
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2, delay: index * 0.05 }}
+                  className="space-y-2 rounded-lg border border-border/50 bg-muted/30 p-3 dark:bg-muted/20"
+                >
+                  <div className="flex items-center gap-2">
+                    <Badge variant={step.kind === "packed" ? "default" : "secondary"}>
+                      {index + 1}. {step.label}
+                    </Badge>
+                    <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      {step.kind === "packed" ? "Packed" : "Unpacked"}
+                    </span>
+                  </div>
+                  <p className="text-sm text-muted-foreground">{step.detail}</p>
+                </motion.div>
+              ))}
+            </div>
+            <div className="space-y-2" data-testid="packed-index-examples">
+              {scenario.indexGuide.examples.map((example) => (
+                <div
+                  key={`${scenario.id}-example-${example.code}`}
+                  className="space-y-1 rounded-lg border border-border/50 bg-background/70 p-3"
+                >
+                  <code className="block text-sm">{example.code}</code>
+                  <p className="text-xs text-muted-foreground">{example.insight}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+
           <div className="space-y-3 rounded-xl border border-border/60 bg-background/80 p-4" data-testid="packed-memory">
             <div className="text-sm font-semibold">Memory walk</div>
             <div className="space-y-3">
@@ -889,6 +1295,7 @@ const PackedUnpackedTab: React.FC = () => {
                     {row.bits.map((bitLabel, index) => (
                       <div
                         key={`${row.label}-${bitLabel}-${index}`}
+                        className="flex min-h-[2.5rem] min-w-[6rem] items-center justify-center rounded-md border border-border/40 bg-muted/40 px-3 text-[0.7rem] font-semibold text-center"
                         className="flex h-8 min-w-[2.5rem] items-center justify-center rounded-md border border-border/40 bg-muted/40 px-2 text-xs font-semibold"
                       >
                         {bitLabel}

@@ -36,13 +36,44 @@ Explore the **DynamicStructureVisualizer** to watch each data structure react to
 ### Packed vs. Unpacked Tab
 
 - Packed arrays keep contiguous bits together and map directly to hardware vectors. Unpacked arrays add higher-level dimensions—perfect for modeling buffers or scoreboards. Use the **Packed vs. Unpacked** tab to step through memory walks that show how each dimension maps onto linear storage.
+- The **Index placement map** highlights the order you apply indices when writing expressions like `payload[slot][bit]` or `lane_matrix[channel][nibble][lane]`, so you can see which brackets represent unpacked or packed dimensions before you click the quiz.
+
 - A built-in quiz locks in the rules: inner packed dimensions toggle fastest, right-most unpacked dimensions advance before outer ones, and entire packed payloads stay together for each unpacked index.
 
 <DynamicStructureVisualizer />
 
 ## Packed vs. Unpacked: Mapping Bits to Memory
 
-Packed arrays behave like vectors—each packed dimension represents contiguous bits stored in order from the most-significant dimension (left-most) down to the least. Unpacked dimensions add array indices around those vectors, and they map in order from right to left when the simulator linearizes memory. The **Packed vs. Unpacked** tab provides three scenarios:
+Packed arrays behave like vectors—each packed dimension represents contiguous bits stored in order from the most-significant dimension (left-most) down to the least. Unpacked dimensions add array indices around those vectors, and they map in order from right to left when the simulator linearizes memory. The **Packed vs. Unpacked** tab now includes an **Index placement map** that spells out which brackets correspond to which part of the declaration. A reliable mental model: when you reference a variable, index every unpacked dimension from left to right first, then every packed dimension from left to right. The right-most dimension—packed or unpacked—always toggles fastest in memory.
+
+### Declaration vs. Access Order
+
+Take the multi-dimensional declaration the UVM coding guidelines lean on for layered scoreboards:
+
+```systemverilog showLineNumbers
+logic [P1-1:0][P2-1:0][P3-1:0] my_array [U1][U2][U3];
+```
+
+- The brackets on the **right** (`[U1][U2][U3]`) are **unpacked** dimensions. They wrap whole vectors and control the outer container order: `U1` toggles slowest, `U3` toggles fastest.
+- The brackets on the **left** (`[P1-1:0][P2-1:0][P3-1:0]`) are **packed** dimensions. They describe contiguous bits inside each element, with `[P3-1:0]` (the right-most packed dimension) flipping fastest.
+
+Because declarations list packed dimensions first, your accesses reverse the pattern. Index the unpacked dimensions first and keep the packed ones on the end so the simulator can hand you contiguous bit slices:
+
+```systemverilog showLineNumbers
+// Correct access order
+my_array[u1][u2][u3][p1][p2][p3];
+```
+
+- `my_array[u1]` picks the outer unpacked bucket (0 .. U1-1).
+- `[u2]` and `[u3]` finish the unpacked selection, from slowest changing to fastest changing unpacked dimension.
+- `[p1]`, `[p2]`, and `[p3]` then walk the packed vector from the most-significant slice to the least.
+
+If you try to access `my_array[p1][p2][p3][u1][u2][u3]`, SystemVerilog complains—the packed brackets must stay on the right so the compiler knows you are slicing contiguous bits. Leaving off the trailing packed indices returns the entire packed payload, so `my_array[u1][u2][u3]` hands back all `[P1][P2][P3]` bits in one shot.
+
+### Visual Memory Walks
+
+Memorize the pattern with the index legend inside the visualizer:
+
 
 - **Burst Payload Buffer** — `logic [7:0] payload [0:3];` shows that the packed `[7:0]` byte stays intact while the unpacked payload index advances to the next element.
 - **Lane Matrix** — `bit [3:0][1:0] lane_matrix [0:1];` highlights two packed dimensions: the innermost `[1:0]` flips fastest (lane 1 then lane 0) while the outer `[3:0]` nibble changes more slowly. Only after the packed bits finish does the unpacked channel index increment.

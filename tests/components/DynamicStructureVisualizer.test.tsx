@@ -1,4 +1,5 @@
 import React from 'react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { describe, it, expect } from 'vitest';
 import DynamicStructureVisualizer from '@/components/curriculum/f2/DynamicStructureVisualizer';
@@ -23,6 +24,7 @@ describe('DynamicStructureVisualizer', () => {
     expect(infoPanel.textContent).toContain('size()0');
   });
 
+  it('handles queue limits, packed mapping, and associative array updates', async () => {
   it('handles queue limits, packed mapping, and associative array updates', () => {
     render(<DynamicStructureVisualizer />);
 
@@ -53,9 +55,42 @@ describe('DynamicStructureVisualizer', () => {
 
     fireEvent.click(screen.getByTestId('tab-packed'));
     expect(screen.getByTestId('packed-scenario-title').textContent).toMatch(/burst payload/i);
+    expect(screen.getByTestId('packed-index-guide').textContent).toContain('payload[slot]');
+    expect(screen.getByTestId('packed-index-examples').textContent).toContain('payload[2][5]');
     expect(screen.getByTestId('packed-advance')).toBeDisabled();
     fireEvent.click(screen.getByTestId('packed-option-packed-bit-position'));
     expect(screen.getByTestId('packed-feedback').textContent).toMatch(/correct/i);
     expect(screen.getByTestId('packed-advance')).not.toBeDisabled();
+
+    fireEvent.click(screen.getByTestId('packed-advance'));
+    await waitFor(() =>
+      expect(screen.getByTestId('packed-scenario-title').textContent).toMatch(/lane matrix/i),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: /Packed \[1:0\] lane/i }));
+    expect(screen.getByTestId('packed-feedback').textContent).toMatch(/correct/i);
+
+    fireEvent.click(screen.getByTestId('packed-advance'));
+    await waitFor(() =>
+      expect(screen.getByTestId('packed-scenario-title').textContent).toMatch(/scoreboard grid/i),
+    );
+    fireEvent.click(await screen.findByRole('button', { name: 'scoreboard[0][2]' }));
+    expect(screen.getByTestId('packed-feedback').textContent).toMatch(/correct/i);
+
+    fireEvent.click(screen.getByTestId('packed-advance'));
+    await waitFor(() =>
+      expect(screen.getByTestId('packed-scenario-title').textContent).toMatch(/packed cube/i),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('packed-index-guide').textContent).toContain('my_array[u1]'),
+    );
+    await waitFor(() =>
+      expect(screen.getByTestId('packed-index-examples').textContent).toContain(
+        'my_array[u1][u2][u3][p1][p2][p3]',
+      ),
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'my_array[u1][u2][u3][p1][p2][p3]' }),
+    );
+    expect(screen.getByTestId('packed-feedback').textContent).toMatch(/correct/i);
   });
 });

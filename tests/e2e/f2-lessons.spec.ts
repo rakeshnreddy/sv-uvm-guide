@@ -75,6 +75,65 @@ test.describe('Tier 1 F2 micro-lessons', () => {
     await expect(page.getByTestId('associative-count')).toContainText('3');
 
     await page.getByTestId('tab-packed').click();
+    const packedTitle = page.getByTestId('packed-scenario-title');
+    const advanceButton = page.getByTestId('packed-advance');
+    await expect(packedTitle).toContainText('Burst Payload');
+    await expect(page.getByTestId('packed-index-order')).toContainText('payload[slot]');
+    await expect(page.getByTestId('packed-index-examples')).toContainText('payload[2][5]');
+    await expect(advanceButton).toBeDisabled();
+    await page.getByRole('button', { name: 'Packed bit position' }).click();
+    await expect(page.getByTestId('packed-feedback')).toContainText('Correct');
+    await expect(advanceButton).toBeEnabled();
+    await advanceButton.click();
+
+    const packedScenarios = [
+      { title: /Lane Matrix/i, optionLabel: 'Packed [1:0] lane' },
+      { title: /Scoreboard Grid/i, optionLabel: 'scoreboard[0][2]' },
+      {
+        title: /Packed Cube Index Order/i,
+        optionLabel: 'my_array[u1][u2][u3][p1][p2][p3]',
+        beforeSelect: async () => {
+          await expect(page.getByTestId('packed-index-order')).toContainText('my_array[u1]');
+          await expect(page.getByTestId('packed-index-examples')).toContainText('my_array[u1][u2][u3][p1][p2][p3]');
+        },
+      },
+    ] as const;
+
+    for (const [index, scenarioStep] of packedScenarios.entries()) {
+      await expect(packedTitle).toContainText(scenarioStep.title);
+      await expect(advanceButton).toBeDisabled();
+      if (scenarioStep.beforeSelect) {
+        await scenarioStep.beforeSelect();
+      }
+      await page.getByRole('button', { name: scenarioStep.optionLabel }).click();
+      await expect(page.getByTestId('packed-feedback')).toContainText('Correct');
+      if (index === packedScenarios.length - 1) {
+        await expect(advanceButton).toBeEnabled();
+        break;
+      }
+      await expect(advanceButton).toBeEnabled();
+      await advanceButton.click();
+    }
+
+    const game = page.getByTestId('packet-sorter-game');
+    await expect(game).toBeVisible();
+
+    const packetFlow: Array<{ prompt: RegExp; option: string }> = [
+      { prompt: /100 packets/i, option: 'packet-option-queue' },
+      { prompt: /error packets/i, option: 'packet-option-associative-array' },
+      { prompt: /packet lengths/i, option: 'packet-option-dynamic-array' },
+      { prompt: /register mirror/i, option: 'packet-option-packed-array' },
+      { prompt: /diagnostics bursts/i, option: 'packet-option-queue' },
+    ];
+
+
+    await page.getByTestId('tab-associative').click();
+    await page.getByTestId('associative-key').fill('packet_1300');
+    await page.getByTestId('associative-value').fill('DONE');
+    await page.getByTestId('associative-add').click();
+    await expect(page.getByTestId('associative-count')).toContainText('3');
+
+    await page.getByTestId('tab-packed').click();
     await expect(page.getByTestId('packed-scenario-title')).toContainText('Burst Payload');
     await expect(page.getByTestId('packed-advance')).toBeDisabled();
     await page.getByTestId('packed-option-packed-bit-position').click();
