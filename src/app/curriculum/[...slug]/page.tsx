@@ -111,6 +111,10 @@ const PacketSorterGame = dynamic(
   () => import('@/components/curriculum/f2/PacketSorterGame'),
   { ssr: false, loading: () => <VisualizationFallback /> },
 );
+const SystemVerilog3DVisualizer = dynamic(
+  () => import('@/components/curriculum/f2/SystemVerilog3DVisualizer'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -156,6 +160,7 @@ const components = {
   FirstBugHuntGame,
   DynamicStructureVisualizer,
   PacketSorterGame,
+  SystemVerilog3DVisualizer,
   Image: MdxImage,
 };
 

@@ -1,0 +1,834 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SystemVerilog Data Structures Visualizer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            margin: 0;
+            overflow: hidden;
+            background-color: #111827;
+            color: #e5e7eb;
+        }
+        canvas { display: block; }
+        .info-panel {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background-color: rgba(17, 24, 39, 0.85);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            width: 450px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+            transition: transform 0.3s ease-in-out;
+            z-index: 10;
+        }
+        .info-panel.collapsed {
+            transform: translateX(calc(-100% + 40px));
+        }
+        .panel-toggle-btn {
+            position: absolute;
+            top: 50%;
+            right: -20px;
+            transform: translateY(-50%);
+            width: 40px;
+            height: 40px;
+            background-color: #374151;
+            border: 1px solid #4b5563;
+            color: white;
+            border-radius: 0 50% 50% 0;
+            cursor: pointer;
+            font-size: 24px;
+            display: grid;
+            place-items: center;
+            line-height: 1;
+            padding-left: 2px;
+            transition: transform 0.3s;
+        }
+        .info-panel.collapsed .panel-toggle-btn {
+            transform: translateY(-50%) rotate(180deg);
+        }
+        .control-group, .dim-input-group, .highlight-input-group {
+            display: grid;
+            grid-template-columns: 1fr 100px;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .control-group.single { grid-template-columns: 1fr; }
+        .control-group.triple { grid-template-columns: 1fr 80px 80px; }
+        .dim-input-group { grid-template-columns: auto 1fr auto; }
+        .highlight-input-group { grid-template-columns: 40px 1fr; }
+
+        .control-group input, .dim-input-group input, .highlight-input-group input {
+            padding: 8px;
+            background-color: #374151;
+            border: 1px solid #4b5563;
+            border-radius: 6px;
+            color: white;
+            text-align: center;
+            width: 100%;
+        }
+        .control-group button, .add-dim-btn, .remove-dim-btn {
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background-color 0.2s;
+            border: 1px solid transparent;
+            text-align: center;
+        }
+        .btn-green { background-color: #166534; color: white; border-color: #16a34a; }
+        .btn-green:hover { background-color: #15803d; }
+        .btn-red { background-color: #991b1b; color: white; border-color: #ef4444; }
+        .btn-red:hover { background-color: #b91c1c; }
+        .btn-blue { background-color: #1e40af; color: white; border-color: #3b82f6; }
+        .btn-blue:hover { background-color: #1d4ed8; }
+        .btn-yellow { background-color: #b45309; color: white; border-color: #f59e0b; }
+        .btn-yellow:hover { background-color: #d97706; }
+        .add-dim-btn { background-color: #374151; border: 1px solid #4b5563; padding: 4px 8px; font-size: 12px; }
+        .add-dim-btn:hover { background-color: #4b5563; }
+        .remove-dim-btn { background-color: #991b1b; color: white; }
+
+        code { background-color: #374151; color: #a5b4fc; padding: 3px 6px; border-radius: 4px; font-family: 'Courier New', Courier, monospace; }
+        .tooltip { position: absolute; background-color: rgba(0, 0, 0, 0.8); color: white; padding: 8px 12px; border-radius: 5px; pointer-events: none; opacity: 0; transition: opacity 0.2s; font-size: 14px; white-space: pre; line-height: 1.6; z-index: 20; }
+        .explanation { font-size: 14px; line-height: 1.6; }
+        .explanation ul { list-style-type: disc; padding-left: 20px; }
+        .explanation li { margin-bottom: 10px; }
+        .status-display { background-color: #1f2937; padding: 10px; border-radius: 8px; border: 1px solid #374151;}
+        .status-display p { margin: 4px 0; }
+        .tabs { display: flex; gap: 4px; margin-bottom: 16px; border-bottom: 1px solid #374151; }
+        .tab-btn {
+            padding: 8px 16px;
+            cursor: pointer;
+            border: none;
+            background: none;
+            color: #9ca3af;
+            border-bottom: 2px solid transparent;
+            transition: color 0.2s, border-color 0.2s;
+        }
+        .tab-btn.active { color: #6366f1; border-color: #6366f1; font-weight: 600; }
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+    </style>
+</head>
+<body>
+
+    <div id="info-panel" class="info-panel">
+        <button id="panel-toggle-btn" class="panel-toggle-btn">&lt;</button>
+        <h1 class="text-2xl font-bold mb-4 text-white">SV Data Structures</h1>
+
+        <div class="tabs">
+            <button class="tab-btn" data-tab="fixed">Fixed Array</button>
+            <button class="tab-btn active" data-tab="dynamic">Dynamic Array</button>
+            <button class="tab-btn" data-tab="queue">Queue</button>
+            <button class="tab-btn" data-tab="assoc">Associative Array</button>
+        </div>
+
+        <!-- Fixed Array Content -->
+        <div id="tab-content-fixed" class="tab-content">
+             <div class="mb-4">
+                <h3 class="font-bold text-lg mb-2 text-indigo-400">Packed Dimensions</h3>
+                <div id="packed-dims-container"></div>
+                <button id="add-packed-dim" class="add-dim-btn">+ Add Dimension</button>
+            </div>
+            <div class="mb-4">
+                <h3 class="font-bold text-lg mb-2 text-indigo-400">Unpacked Dimensions</h3>
+                <div id="unpacked-dims-container"></div>
+                <button id="add-unpacked-dim" class="add-dim-btn">+ Add Dimension</button>
+            </div>
+            <button id="fixed-visualize-btn" class="btn-blue w-full">Update View</button>
+            <hr class="my-4 border-gray-600">
+            <div class="mb-4">
+                <h3 class="font-bold text-lg mb-2 text-green-400">Highlight Bit by Index</h3>
+                <p id="access-example" class="text-sm text-gray-400 mb-2"></p>
+                <div id="highlight-controls-container" class="grid grid-cols-2 gap-x-4"></div>
+                <button id="find-bit-btn" class="mt-2 btn-green w-full">Find Bit</button>
+            </div>
+            <hr class="my-4 border-gray-600">
+            <h3 class="font-bold text-lg mb-2 text-indigo-400">Declaration</h3>
+            <p id="declaration-code" class="mb-4 text-lg"></p>
+             <div class="explanation">
+                <ul>
+                    <li>Combines packed (memory layout) and unpacked (addressable elements) dimensions.</li>
+                    <li><b>Packed:</b> Bits stored contiguously, accessed via bit-selects. e.g., <code>[7:0]</code>.</li>
+                    <li><b>Unpacked:</b> Addressable elements, each containing the packed data type. e.g., <code>[4]</code>.</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Dynamic Array Content -->
+        <div id="tab-content-dynamic" class="tab-content active">
+            <h3 class="font-bold text-lg mb-2 text-indigo-400">Declaration: <code>int dyn_array[];</code></h3>
+            <div class="my-4">
+                <h4 class="font-bold text-md mb-2 text-indigo-400">Controls</h4>
+                <div class="control-group">
+                    <button id="dyn-new-btn" class="btn-green">new [ size ]</button>
+                    <input type="number" id="dyn-size-input" value="8" min="1" max="50">
+                </div>
+                <div class="control-group single">
+                    <button id="dyn-delete-btn" class="btn-red">delete()</button>
+                </div>
+            </div>
+            <div class="mb-4 status-display">
+                <p>Last Op: <code id="dyn-last-op">null</code></p>
+                <p>Size: <code id="dyn-size">dyn_array.size() = 0</code></p>
+            </div>
+            <div class="explanation">
+                <ul>
+                    <li>Unsized array that can be resized at runtime. Stored in a contiguous block of memory.</li>
+                    <li><b>new[]:</b> Allocates storage. Can be called again to resize (existing elements are copied).</li>
+                    <li><b>delete():</b> Frees all memory, setting the array size to 0.</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Queue Content -->
+        <div id="tab-content-queue" class="tab-content">
+            <h3 class="font-bold text-lg mb-2 text-indigo-400">Declaration: <code>int q[$] = { ... };</code></h3>
+             <div class="my-4">
+                <h4 class="font-bold text-md mb-2 text-indigo-400">Controls</h4>
+                <div class="control-group">
+                    <button id="q-push-back-btn" class="btn-green">push_back(val)</button>
+                    <input type="number" id="q-value-input" value="10">
+                </div>
+                <div class="control-group single"><button id="q-push-front-btn" class="btn-green">push_front(val)</button></div>
+                <div class="control-group single"><button id="q-pop-back-btn" class="btn-red">pop_back()</button></div>
+                <div class="control-group single"><button id="q-pop-front-btn" class="btn-red">pop_front()</button></div>
+                 <div class="control-group triple">
+                    <button id="q-insert-btn" class="btn-blue">insert(idx, val)</button>
+                    <input type="number" id="q-insert-idx" value="1" min="0">
+                    <input type="number" id="q-insert-val" value="99">
+                </div>
+                 <div class="control-group">
+                    <button id="q-delete-idx-btn" class="btn-red">delete(idx)</button>
+                    <input type="number" id="q-delete-idx" value="1" min="0">
+                </div>
+            </div>
+            <div class="mb-4 status-display">
+                <p>Last Op: <code id="q-last-op">null</code></p>
+                <p>Size: <code id="q-size">q.size() = 0</code></p>
+            </div>
+             <div class="explanation">
+                <ul>
+                    <li>A variable-size, ordered collection of elements, like a linked-list. Efficient insertion/deletion at the front or back.</li>
+                    <li>Index <code>$</code> refers to the last element.</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Associative Array Content -->
+        <div id="tab-content-assoc" class="tab-content">
+            <h3 class="font-bold text-lg mb-2 text-indigo-400">Declaration: <code>int aa[string];</code></h3>
+            <div class="my-4">
+                <h4 class="font-bold text-md mb-2 text-indigo-400">Controls</h4>
+                 <div class="control-group triple">
+                    <button id="aa-assign-btn" class="btn-green">aa[key] = val</button>
+                    <input type="text" id="aa-key-input" value="apple">
+                    <input type="number" id="aa-val-input" value="5">
+                </div>
+                <div class="control-group">
+                    <button id="aa-delete-key-btn" class="btn-red">delete(key)</button>
+                    <input type="text" id="aa-key-delete" value="apple">
+                </div>
+                 <div class="control-group">
+                    <button id="aa-exists-btn" class="btn-blue">exists(key)</button>
+                    <input type="text" id="aa-key-exists" value="apple">
+                </div>
+                <h4 class="font-bold text-md mt-4 mb-2 text-indigo-400">Traversal</h4>
+                 <div class="grid grid-cols-2 gap-2">
+                    <button id="aa-first-btn" class="btn-yellow">first()</button>
+                    <button id="aa-last-btn" class="btn-yellow">last()</button>
+                    <button id="aa-prev-btn" class="btn-yellow">prev()</button>
+                    <button id="aa-next-btn" class="btn-yellow">next()</button>
+                 </div>
+            </div>
+            <div class="mb-4 status-display">
+                <p>Last Op: <code id="aa-last-op">null</code></p>
+                <p>Entries: <code id="aa-size">aa.num() = 0</code></p>
+            </div>
+            <div class="explanation">
+                <ul>
+                    <li>A key-value map, similar to a dictionary or hash table. Allows efficient lookups using a key of any data type. Not stored contiguously.</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+    
+    <div id="tooltip" class="tooltip"></div>
+
+    <script type="importmap">{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/" } }</script>
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import { FontLoader } from 'three/addons/loaders/FontLoader.js';
+        import { TextGeometry } from 'three/addons/geometries/TextGeometry.js';
+
+        // --- Basic Setup ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(10, 8, 10);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x111827);
+        document.body.appendChild(renderer.domElement);
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+
+        // --- Scene Enhancements ---
+        scene.add(new THREE.GridHelper(50, 50, 0x444444, 0x444444));
+        scene.add(new THREE.AxesHelper(5));
+        scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        dirLight.position.set(5, 10, 7.5);
+        scene.add(dirLight);
+        
+        // --- UI Elements ---
+        const panel = document.getElementById('info-panel');
+        const toggleBtn = document.getElementById('panel-toggle-btn');
+        const tooltipEl = document.getElementById('tooltip');
+        const tabs = document.querySelectorAll('.tab-btn');
+        const tabContents = document.querySelectorAll('.tab-content');
+        
+        // --- Global State ---
+        let objectsGroup = new THREE.Group();
+        scene.add(objectsGroup);
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        let hoveredObject = null;
+        let font;
+        const loader = new FontLoader();
+        let currentMode = 'dynamic'; 
+        const materials = {
+            blue: new THREE.MeshStandardMaterial({ color: 0x0891b2, roughness: 0.5 }),
+            pink: new THREE.MeshStandardMaterial({ color: 0xbe185d, roughness: 0.5 }),
+            green: new THREE.MeshStandardMaterial({ color: 0x059669, roughness: 0.5 }),
+            hover: new THREE.MeshStandardMaterial({ color: 0xffff00, emissive: 0xccaa00 }),
+            highlight: new THREE.MeshStandardMaterial({ color: 0xdb2777, emissive: 0xc11767 }),
+        };
+        const state = {
+            dynamic: [],
+            queue: [],
+            assoc: new Map(),
+            assoc_keys_in_order: [],
+            assoc_iterator_key: null,
+            fixed: {
+                permanentlyHighlightedBit: null,
+                defaultMaterials: new Map(),
+            }
+        };
+
+        // --- Core Visualization & Animation Logic ---
+        function animate() {
+            requestAnimationFrame(animate);
+            if (window.TWEEN) window.TWEEN.update();
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        function clearScene(callback, isFixed = false) {
+             if (isFixed) {
+                while(objectsGroup.children.length > 0){ 
+                    objectsGroup.remove(objectsGroup.children[0]); 
+                }
+                state.fixed.defaultMaterials.clear();
+                state.fixed.permanentlyHighlightedBit = null;
+                if(callback) callback();
+                return;
+            }
+
+            const children = [...objectsGroup.children];
+            if (children.length === 0) {
+                if (callback) callback();
+                return;
+            }
+            let completed = 0;
+            children.forEach(child => {
+                new window.TWEEN.Tween(child.scale)
+                    .to({ x: 0.01, y: 0.01, z: 0.01 }, 300)
+                    .easing(window.TWEEN.Easing.Quadratic.In)
+                    .onComplete(() => {
+                        objectsGroup.remove(child);
+                        if(child.geometry) child.geometry.dispose();
+                        if(child.material) child.material.dispose();
+                        if (++completed === children.length && callback) callback();
+                    })
+                    .start();
+            });
+        }
+        
+        function centerCamera(duration = 800) {
+            if (objectsGroup.children.length === 0) {
+                new window.TWEEN.Tween(controls.target).to(new THREE.Vector3(0,0,0), duration).easing(window.TWEEN.Easing.Quadratic.Out).start();
+                return;
+            }
+            const box = new THREE.Box3().setFromObject(objectsGroup);
+            const center = box.getCenter(new THREE.Vector3());
+            new window.TWEEN.Tween(controls.target).to(center, duration).easing(window.TWEEN.Easing.Quadratic.Out).start();
+        }
+
+        // --- Data Structure Specific Logic ---
+        
+        // FIXED ARRAY
+        const fixed = {
+            ui: {
+                packedContainer: document.getElementById('packed-dims-container'),
+                unpackedContainer: document.getElementById('unpacked-dims-container'),
+                addPackedBtn: document.getElementById('add-packed-dim'),
+                addUnpackedBtn: document.getElementById('add-unpacked-dim'),
+                visualizeBtn: document.getElementById('fixed-visualize-btn'),
+                highlightContainer: document.getElementById('highlight-controls-container'),
+                findBitBtn: document.getElementById('find-bit-btn'),
+                declarationCodeEl: document.getElementById('declaration-code'),
+                accessExampleEl: document.getElementById('access-example'),
+            },
+            getDimensionsFromUI: () => {
+                const packed = Array.from(fixed.ui.packedContainer.querySelectorAll('input')).map(inp => parseInt(inp.value) || 1);
+                const unpacked = Array.from(fixed.ui.unpackedContainer.querySelectorAll('input')).map(inp => parseInt(inp.value) || 1);
+                return { packed, unpacked };
+            },
+            updateUI: () => {
+                const dims = fixed.getDimensionsFromUI();
+                const packedStr = dims.packed.map(p => `[${p-1}:0]`).join('');
+                const unpackedStr = dims.unpacked.map(u => `[${u}]`).join('');
+                fixed.ui.declarationCodeEl.innerHTML = `<code>logic ${packedStr} my_array ${unpackedStr};</code>`;
+
+                const unpackedAccess = dims.unpacked.map((_, i) => `[u${i+1}]`).join('');
+                const packedAccess = dims.packed.map((_, i) => `[p${i+1}]`).join('');
+                fixed.ui.accessExampleEl.innerHTML = `Access Order: <code>my_array${unpackedAccess}${packedAccess}</code>`;
+
+                fixed.ui.highlightContainer.innerHTML = '';
+                dims.unpacked.forEach((dim, i) => {
+                    const group = document.createElement('div');
+                    group.className = 'highlight-input-group';
+                    group.innerHTML = `<label class="text-sm">u${i+1}:</label><input type="number" id="h-u${i}" value="0" min="0" max="${dim-1}">`;
+                    fixed.ui.highlightContainer.appendChild(group);
+                });
+                dims.packed.forEach((dim, i) => {
+                    const group = document.createElement('div');
+                    group.className = 'highlight-input-group';
+                    group.innerHTML = `<label class="text-sm">p${i+1}:</label><input type="number" id="h-p${i}" value="0" min="0" max="${dim-1}">`;
+                    fixed.ui.highlightContainer.appendChild(group);
+                });
+            },
+            addDimInput: (container, value) => {
+                const group = document.createElement('div');
+                group.className = 'dim-input-group';
+                const input = document.createElement('input');
+                input.type = 'number'; input.min = 1; input.max = 32; input.value = value;
+                const isPacked = container.id.includes('packed');
+
+                if (isPacked) {
+                    const rangeSpan = document.createElement('code');
+                    const recompute = () => { rangeSpan.textContent = `[${Math.max(1, input.value)-1}:0]`; fixed.updateUI(); };
+                    input.addEventListener('input', recompute);
+                    group.appendChild(rangeSpan);
+                    group.insertBefore(input, rangeSpan);
+                    recompute();
+                } else {
+                    input.addEventListener('input', fixed.updateUI);
+                    group.innerHTML = `<code>[</code><span class="input-placeholder"></span><code>]</code>`;
+                    group.querySelector('.input-placeholder').appendChild(input);
+                }
+                const removeBtn = document.createElement('button');
+                removeBtn.className = 'remove-dim-btn btn-red';
+                removeBtn.textContent = 'X';
+                removeBtn.onclick = () => { group.remove(); fixed.updateUI(); };
+                group.appendChild(removeBtn);
+                container.appendChild(group);
+                fixed.updateUI();
+            },
+             visualize: () => {
+                clearScene(() => {
+                    const dims = fixed.getDimensionsFromUI();
+                    const bitSize = { w: 1, h: 1, d: 1 };
+                    const unpackedSpacing = 1.5, packedSpacing = 0.15;
+                    const pDimsRaw = dims.packed, uDimsRaw = dims.unpacked;
+                    const isSinglePacked = pDimsRaw.length === 1;
+
+                    const pDims = [isSinglePacked ? 1 : (pDimsRaw[0] || 1), isSinglePacked ? (pDimsRaw[0] || 1) : (pDimsRaw[1] || 1), isSinglePacked ? 1 : (pDimsRaw[2] || 1)];
+                    const uDims = [uDimsRaw[0] || 1, uDimsRaw[1] || 1, uDimsRaw[2] || 1];
+                    
+                    const elementSize = { w: pDims[1] * (bitSize.w + packedSpacing), h: pDims[0] * (bitSize.h + packedSpacing), d: pDims[2] * (bitSize.d + packedSpacing) };
+                    const totalPackedBits = pDimsRaw.reduce((a, b) => a * b, 1);
+                    const colors = [0x0891b2, 0xbe185d, 0x059669, 0xb45309, 0x5b21b6, 0x4d7c0f, 0x9f1239, 0x1d4ed8];
+                    
+                    for (let u0=0; u0<uDims[0]; u0++) { for (let u1=0; u1<uDims[1]; u1++) { for (let u2=0; u2<uDims[2]; u2++) {
+                        const elementGroup = new THREE.Group();
+                        const colorIndex = (u0*uDims[1]*uDims[2] + u1*uDims[2] + u2) % colors.length;
+                        elementGroup.position.set(u1*(elementSize.w+unpackedSpacing), u0*(elementSize.h+unpackedSpacing), u2*(elementSize.d+unpackedSpacing));
+
+                        for (let p0=0; p0<pDims[0]; p0++) { for (let p1=0; p1<pDims[1]; p1++) { for (let p2=0; p2<pDims[2]; p2++) {
+                            const geometry = new THREE.BoxGeometry(bitSize.w, bitSize.h, bitSize.d);
+                            const material = new THREE.MeshStandardMaterial({ color: new THREE.Color(colors[colorIndex]), roughness: 0.5 });
+                            const bit = new THREE.Mesh(geometry, material);
+                            bit.position.set(p1*(bitSize.w+packedSpacing), p0*(bitSize.h+packedSpacing), p2*(bitSize.d+packedSpacing));
+
+                            const uIndices = [u0,u1,u2].slice(0, uDimsRaw.length);
+                            const pIndices = isSinglePacked ? [p1] : [p0,p1,p2].slice(0, pDimsRaw.length);
+                            
+                            const uStrides = uDimsRaw.map((_, i) => uDimsRaw.slice(i+1).reduce((a,b)=>a*b,1));
+                            const pStrides = pDimsRaw.map((_, i) => pDimsRaw.slice(i+1).reduce((a,b)=>a*b,1));
+                            const uOffset = uIndices.reduce((acc,idx,i)=>acc+idx*uStrides[i],0);
+                            const pOffset = pIndices.reduce((acc,idx,i)=>acc+idx*pStrides[i],0);
+                            
+                            bit.userData = { type: 'fixed', accessName: 'my_array'+uIndices.map(i=>`[${i}]`).join('')+pIndices.map(i=>`[${i}]`).join(''), globalLinearAddress: uOffset * totalPackedBits + pOffset, uIndices, pIndices };
+                            state.fixed.defaultMaterials.set(bit, material);
+                            elementGroup.add(bit);
+                        }}}
+                        objectsGroup.add(elementGroup);
+                    }}}
+                    const box = new THREE.Box3().setFromObject(objectsGroup);
+                    const center = box.getCenter(new THREE.Vector3());
+                    objectsGroup.position.sub(center);
+                    camera.position.set(15,12,15);
+                    controls.target.copy(center);
+                }, true);
+            },
+            highlightBitByIndex: () => {
+                if (state.fixed.permanentlyHighlightedBit) {
+                    state.fixed.permanentlyHighlightedBit.material = state.fixed.defaultMaterials.get(state.fixed.permanentlyHighlightedBit);
+                    state.fixed.permanentlyHighlightedBit = null;
+                }
+                const dims = fixed.getDimensionsFromUI();
+                const targetU = dims.unpacked.map((_, i) => parseInt(document.getElementById(`h-u${i}`).value) || 0);
+                const targetP = dims.packed.map((_, i) => parseInt(document.getElementById(`h-p${i}`).value) || 0);
+
+                objectsGroup.traverse(obj => {
+                    if (obj.isMesh && obj.userData.uIndices) {
+                        const uMatch = obj.userData.uIndices.every((v,i) => v === targetU[i]);
+                        const pMatch = obj.userData.pIndices.every((v,i) => v === targetP[i]);
+                        if (uMatch && pMatch) {
+                            state.fixed.permanentlyHighlightedBit = obj;
+                            obj.material = materials.highlight;
+                        }
+                    }
+                });
+            },
+            init: () => {
+                fixed.ui.addPackedBtn.onclick = () => fixed.addDimInput(fixed.ui.packedContainer, 8);
+                fixed.ui.addUnpackedBtn.onclick = () => fixed.addDimInput(fixed.ui.unpackedContainer, 4);
+                fixed.ui.visualizeBtn.onclick = fixed.visualize;
+                fixed.ui.findBitBtn.onclick = fixed.highlightBitByIndex;
+                fixed.addDimInput(fixed.ui.packedContainer, 4);
+                fixed.addDimInput(fixed.ui.unpackedContainer, 2);
+            }
+        };
+
+        // DYNAMIC ARRAY
+        const dyn = { /* ... same as before ... */
+            ui: {
+                newBtn: document.getElementById('dyn-new-btn'),
+                deleteBtn: document.getElementById('dyn-delete-btn'),
+                sizeInput: document.getElementById('dyn-size-input'),
+                lastOpEl: document.getElementById('dyn-last-op'),
+                sizeEl: document.getElementById('dyn-size'),
+            },
+            visualize: () => {
+                const elementSize = 1, spacing = 0.5;
+                state.dynamic.forEach((val, i) => {
+                    const el = createCube(materials.blue, { type: 'dynamic', index: i, value: val }, `dyn_array[${i}]`);
+                    el.position.set(i * (elementSize + spacing), 0, 0);
+                    el.scale.set(0.01, 0.01, 0.01);
+                    objectsGroup.add(el);
+                    new window.TWEEN.Tween(el.scale).to({ x: 1, y: 1, z: 1 }, 500).delay(i * 50).easing(window.TWEEN.Easing.Elastic.Out).start();
+                });
+                centerCamera();
+            },
+            updateUI: (op = '', size = state.dynamic.length) => {
+                if (op) dyn.ui.lastOpEl.textContent = op;
+                dyn.ui.sizeEl.textContent = `dyn_array.size() = ${size}`;
+            },
+            init: () => {
+                dyn.ui.newBtn.onclick = () => {
+                    const newSize = parseInt(dyn.ui.sizeInput.value);
+                    clearScene(() => {
+                        state.dynamic = new Array(newSize).fill(0).map((_, i) => i + 1);
+                        dyn.visualize();
+                        dyn.updateUI(`dyn_array = new[${newSize}];`);
+                    });
+                };
+                dyn.ui.deleteBtn.onclick = () => {
+                    clearScene(() => {
+                        state.dynamic = [];
+                        dyn.updateUI('dyn_array.delete();');
+                    });
+                };
+            }
+        };
+
+        // QUEUE
+        const queue = { /* ... same as before ... */
+            ui: {
+                pushBackBtn: document.getElementById('q-push-back-btn'),
+                pushFrontBtn: document.getElementById('q-push-front-btn'),
+                popBackBtn: document.getElementById('q-pop-back-btn'),
+                popFrontBtn: document.getElementById('q-pop-front-btn'),
+                insertBtn: document.getElementById('q-insert-btn'),
+                deleteBtn: document.getElementById('q-delete-idx-btn'),
+                valInput: document.getElementById('q-value-input'),
+                insertIdx: document.getElementById('q-insert-idx'),
+                insertVal: document.getElementById('q-insert-val'),
+                deleteIdx: document.getElementById('q-delete-idx'),
+                lastOpEl: document.getElementById('q-last-op'),
+                sizeEl: document.getElementById('q-size'),
+            },
+            visualize: () => {
+                clearScene(() => {
+                    const elementSize = 1, spacing = 0.5;
+                    state.queue.forEach((val, i) => {
+                        const el = createCube(materials.pink, { type: 'queue', index: i, value: val }, `q[${i}] = ${val}`);
+                        el.position.set(i * (elementSize + spacing), 0, 0);
+                        el.scale.set(0.01, 0.01, 0.01);
+                        objectsGroup.add(el);
+                        new window.TWEEN.Tween(el.scale).to({x:1,y:1,z:1}, 500).delay(i*50).easing(window.TWEEN.Easing.Elastic.Out).start();
+                    });
+                    centerCamera();
+                });
+            },
+            updateUI: (op = '') => {
+                 if (op) queue.ui.lastOpEl.textContent = op;
+                 queue.ui.sizeEl.textContent = `q.size() = ${state.queue.length}`;
+            },
+            init: () => {
+                const getVal = () => parseInt(queue.ui.valInput.value);
+                queue.ui.pushBackBtn.onclick = () => { const v = getVal(); state.queue.push(v); queue.visualize(); queue.updateUI(`q.push_back(${v});`); };
+                queue.ui.pushFrontBtn.onclick = () => { const v = getVal(); state.queue.unshift(v); queue.visualize(); queue.updateUI(`q.push_front(${v});`); };
+                queue.ui.popBackBtn.onclick = () => { if(state.queue.length) { state.queue.pop(); queue.visualize(); queue.updateUI(`q.pop_back();`); }};
+                queue.ui.popFrontBtn.onclick = () => { if(state.queue.length) { state.queue.shift(); queue.visualize(); queue.updateUI(`q.pop_front();`); }};
+                queue.ui.insertBtn.onclick = () => {
+                    const idx = parseInt(queue.ui.insertIdx.value), val = parseInt(queue.ui.insertVal.value);
+                    if (idx >= 0 && idx <= state.queue.length) {
+                        state.queue.splice(idx, 0, val);
+                        queue.visualize();
+                        queue.updateUI(`q.insert(${idx}, ${val});`);
+                    }
+                };
+                queue.ui.deleteBtn.onclick = () => {
+                    const idx = parseInt(queue.ui.deleteIdx.value);
+                     if (idx >= 0 && idx < state.queue.length) {
+                        state.queue.splice(idx, 1);
+                        queue.visualize();
+                        queue.updateUI(`q.delete(${idx});`);
+                    }
+                };
+            }
+        };
+
+        // ASSOCIATIVE ARRAY
+        const assoc = { /* ... same as before ... */
+             ui: {
+                assignBtn: document.getElementById('aa-assign-btn'),
+                deleteBtn: document.getElementById('aa-delete-key-btn'),
+                existsBtn: document.getElementById('aa-exists-btn'),
+                keyInput: document.getElementById('aa-key-input'),
+                valInput: document.getElementById('aa-val-input'),
+                keyDelete: document.getElementById('aa-key-delete'),
+                keyExists: document.getElementById('aa-key-exists'),
+                firstBtn: document.getElementById('aa-first-btn'),
+                lastBtn: document.getElementById('aa-last-btn'),
+                prevBtn: document.getElementById('aa-prev-btn'),
+                nextBtn: document.getElementById('aa-next-btn'),
+                lastOpEl: document.getElementById('aa-last-op'),
+                sizeEl: document.getElementById('aa-size'),
+            },
+            visualize: (highlightKey = null) => {
+                 clearScene(() => {
+                    const radius = Math.max(4, state.assoc.size * 1.2);
+                    const angleStep = state.assoc.size > 0 ? (2 * Math.PI) / state.assoc.size : 0;
+                    state.assoc_keys_in_order = Array.from(state.assoc.keys()).sort();
+
+                    state.assoc_keys_in_order.forEach((key, i) => {
+                        const val = state.assoc.get(key);
+                        const angle = i * angleStep;
+                        const x = radius * Math.cos(angle);
+                        const z = radius * Math.sin(angle);
+
+                        const keyCube = createCube(materials.green, { type: 'assoc_key', key }, `key: "${key}"`);
+                        keyCube.position.set(x, 1.5, z);
+                        const valCube = createCube(materials.blue, { type: 'assoc_val', key, value: val }, `val: ${val}`);
+                        valCube.position.set(x, 0, z);
+                        
+                        if (font) {
+                            const keyLabel = createText(key, {x, y: 2.5, z});
+                            objectsGroup.add(keyLabel);
+                        }
+
+                        if (key === highlightKey) {
+                            keyCube.material = materials.highlight;
+                            valCube.material = materials.highlight;
+                        }
+
+                        keyCube.scale.set(0.01, 0.01, 0.01);
+                        valCube.scale.set(0.01, 0.01, 0.01);
+                        objectsGroup.add(keyCube, valCube);
+                        new window.TWEEN.Tween(keyCube.scale).to({x:1,y:1,z:1}, 500).delay(i*80).easing(window.TWEEN.Easing.Elastic.Out).start();
+                        new window.TWEEN.Tween(valCube.scale).to({x:1,y:1,z:1}, 500).delay(i*80).easing(window.TWEEN.Easing.Elastic.Out).start();
+                    });
+                     centerCamera();
+                 });
+            },
+            updateUI: (op = '') => {
+                if(op) assoc.ui.lastOpEl.textContent = op;
+                assoc.ui.sizeEl.textContent = `aa.num() = ${state.assoc.size}`;
+            },
+            init: () => {
+                assoc.ui.assignBtn.onclick = () => {
+                    const key = assoc.ui.keyInput.value, val = parseInt(assoc.ui.valInput.value);
+                    if (key) {
+                        state.assoc.set(key, val);
+                        assoc.visualize();
+                        assoc.updateUI(`aa["${key}"] = ${val};`);
+                    }
+                };
+                assoc.ui.deleteBtn.onclick = () => {
+                    const key = assoc.ui.keyDelete.value;
+                    if(state.assoc.has(key)) {
+                        state.assoc.delete(key);
+                        if (state.assoc_iterator_key === key) state.assoc_iterator_key = null;
+                        assoc.visualize();
+                        assoc.updateUI(`aa.delete("${key}");`);
+                    }
+                };
+                assoc.ui.existsBtn.onclick = () => {
+                    const key = assoc.ui.keyExists.value;
+                    assoc.visualize(state.assoc.has(key) ? key : null);
+                    assoc.updateUI(`aa.exists("${key}")`);
+                };
+                const traversal = (op, logic) => {
+                    assoc.ui[`${op}Btn`].onclick = () => {
+                        if (state.assoc.size > 0) {
+                            state.assoc_iterator_key = logic();
+                            assoc.visualize(state.assoc_iterator_key);
+                            assoc.updateUI(`key = aa.${op}(key);`);
+                        }
+                    };
+                };
+                traversal('first', () => state.assoc_keys_in_order[0]);
+                traversal('last', () => state.assoc_keys_in_order[state.assoc_keys_in_order.length - 1]);
+                traversal('next', () => {
+                    const idx = state.assoc_keys_in_order.indexOf(state.assoc_iterator_key);
+                    return state.assoc_keys_in_order[idx + 1] || state.assoc_iterator_key;
+                });
+                traversal('prev', () => {
+                    const idx = state.assoc_keys_in_order.indexOf(state.assoc_iterator_key);
+                    return state.assoc_keys_in_order[idx - 1] || state.assoc_iterator_key;
+                });
+            }
+        };
+
+        // --- Helper Functions ---
+        function createCube(material, userData, tooltipText) {
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            const cube = new THREE.Mesh(geometry, material.clone());
+            cube.userData = { ...userData, tooltip: tooltipText };
+            return cube;
+        }
+
+        function createText(text, pos) {
+             const textGeo = new TextGeometry(text.toString(), { font, size: 0.5, height: 0.1 });
+             const textMesh = new THREE.Mesh(textGeo, new THREE.MeshStandardMaterial({color: 0xffffff}));
+             textMesh.position.set(pos.x, pos.y, pos.z);
+             textMesh.geometry.center();
+             return textMesh;
+        }
+
+        // --- Event Handlers & Initialization ---
+        function switchMode(newMode) {
+            if (currentMode === newMode) return;
+            currentMode = newMode;
+            
+            tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === newMode));
+            tabContents.forEach(c => c.classList.toggle('active', c.id.includes(newMode)));
+            
+            clearScene(() => {
+                if (newMode === 'dynamic') { dyn.visualize(); dyn.updateUI(); }
+                else if (newMode === 'queue') { queue.visualize(); queue.updateUI(); }
+                else if (newMode === 'assoc') { assoc.visualize(); assoc.updateUI(); }
+                else if (newMode === 'fixed') { fixed.visualize(); }
+            }, newMode === 'fixed');
+        }
+        
+        tabs.forEach(tab => tab.addEventListener('click', () => switchMode(tab.dataset.tab)));
+        toggleBtn.addEventListener('click', () => panel.classList.toggle('collapsed'));
+        
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        window.addEventListener('mousemove', (event) => {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(objectsGroup.children, true);
+
+            if (hoveredObject) {
+                 if (currentMode === 'fixed') {
+                    if (hoveredObject !== state.fixed.permanentlyHighlightedBit) {
+                         hoveredObject.material = state.fixed.defaultMaterials.get(hoveredObject);
+                    }
+                 } else {
+                    const ud = hoveredObject.userData;
+                    let mat = materials.blue;
+                    if(ud.type === 'queue') mat = materials.pink;
+                    else if(ud.type?.startsWith('assoc')) mat = ud.type.endsWith('key') ? materials.green : materials.blue;
+                    if (hoveredObject.material !== materials.highlight) hoveredObject.material = mat;
+                }
+            }
+            hoveredObject = null;
+            tooltipEl.style.opacity = '0';
+
+            if (intersects.length > 0) {
+                let target = intersects[0].object;
+                if(target.parent !== objectsGroup && target.parent.userData.tooltip) target = target.parent;
+
+                if (target.userData.tooltip || target.userData.accessName) {
+                    hoveredObject = target;
+                    if (currentMode === 'fixed') {
+                        if(hoveredObject !== state.fixed.permanentlyHighlightedBit) hoveredObject.material = materials.hover;
+                        tooltipEl.innerHTML = `<code>${target.userData.accessName}</code>\nAddr: ${target.userData.globalLinearAddress}`;
+                    } else {
+                        if(hoveredObject.material !== materials.highlight) hoveredObject.material = materials.hover;
+                         tooltipEl.innerHTML = `<code>${target.userData.tooltip}</code>`;
+                    }
+                    tooltipEl.style.opacity = '1';
+                    tooltipEl.style.left = `${event.clientX + 15}px`;
+                    tooltipEl.style.top = `${event.clientY}px`;
+                }
+            }
+        });
+
+        const tweenScript = document.createElement('script');
+        tweenScript.src = 'https://cdnjs.cloudflare.com/ajax/libs/tween.js/20.0.3/tween.umd.js';
+        document.body.appendChild(tweenScript);
+        
+        tweenScript.onload = () => {
+            loader.load('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/fonts/helvetiker_regular.typeface.json', (loadedFont) => {
+                font = loadedFont;
+                dyn.init();
+                queue.init();
+                assoc.init();
+                fixed.init();
+                
+                // Initial state
+                state.dynamic = [1, 2, 3, 4, 5];
+                state.queue = [10, 20, 30];
+                state.assoc.set('apple', 5).set('banana', 8).set('cherry', 3);
+
+                switchMode('dynamic');
+                animate();
+            });
+        };
+    </script>
+</body>
+</html>
+

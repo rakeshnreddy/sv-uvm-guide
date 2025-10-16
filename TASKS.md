@@ -11,7 +11,12 @@ This file consolidates open implementation and feedback items so the team has a 
 ## Active Tasks
 | ID | Status | Area | Summary | Notes |
 |----|--------|------|---------|-------|
-| — | — | — | All milestones delivered. | See "Feature Log" below for the complete record of shipped work. |
+| `VIS-3D-MAILBOX` | `todo` | Visualizations | Build 3D mailbox vs queue arbitration scene showing head/tail pressure and outstanding transactions. | Mirror queue semantics and highlight backpressure cues before integrating into Practice. |
+| `VIS-3D-COVERAGE` | `todo` | Visualizations | Create 3D coverage bin heat-map towers to illustrate sampling progress over time. | Reuse coverage data from Coverage Analyzer to drive bar heights and color intensity. |
+| `VIS-3D-ANALYSIS` | `todo` | Visualizations | Model UVM analysis fan-out as a layered 3D lattice linking monitors, scoreboards, and subscribers. | Should pair with component relationships lesson to emphasize TLM connections. |
+| `VIS-3D-DATAFLOW` | `todo` | Visualizations | Build a 3D UVM data-flow pipeline that traces transactions from sequencer to driver to monitor to scoreboard. | Include animated arrows and latency cues to highlight hand-offs across TLM ports. |
+| `VIS-3D-CONSTRAINT` | `todo` | Visualizations | Prototype a 3D constraint solver state tree that highlights active branches during randomize() calls. | Use branching transparency to depict pruned paths and constraint weighting. |
+| `VIS-3D-PHASE-TIMELINE` | `todo` | Visualizations | Animate phase timelines in 3D to show overlapping run/cleanup windows across components. | Could extend the blocking simulator with depth to convey phasing concurrency. |
 
 ## Curriculum Modernization Tasks
 

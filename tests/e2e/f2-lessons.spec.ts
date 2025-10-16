@@ -102,7 +102,7 @@ test.describe('Tier 1 F2 micro-lessons', () => {
     for (const [index, scenarioStep] of packedScenarios.entries()) {
       await expect(packedTitle).toContainText(scenarioStep.title);
       await expect(advanceButton).toBeDisabled();
-      if (scenarioStep.beforeSelect) {
+      if ("beforeSelect" in scenarioStep) {
         await scenarioStep.beforeSelect();
       }
       await page.getByRole('button', { name: scenarioStep.optionLabel }).click();
@@ -115,31 +115,11 @@ test.describe('Tier 1 F2 micro-lessons', () => {
       await advanceButton.click();
     }
 
-    const game = page.getByTestId('packet-sorter-game');
-    await expect(game).toBeVisible();
-
-    const packetFlow: Array<{ prompt: RegExp; option: string }> = [
-      { prompt: /100 packets/i, option: 'packet-option-queue' },
-      { prompt: /error packets/i, option: 'packet-option-associative-array' },
-      { prompt: /packet lengths/i, option: 'packet-option-dynamic-array' },
-      { prompt: /register mirror/i, option: 'packet-option-packed-array' },
-      { prompt: /diagnostics bursts/i, option: 'packet-option-queue' },
-    ];
-
-
-    await page.getByTestId('tab-associative').click();
-    await page.getByTestId('associative-key').fill('packet_1300');
-    await page.getByTestId('associative-value').fill('DONE');
-    await page.getByTestId('associative-add').click();
-    await expect(page.getByTestId('associative-count')).toContainText('3');
-
-    await page.getByTestId('tab-packed').click();
-    await expect(page.getByTestId('packed-scenario-title')).toContainText('Burst Payload');
-    await expect(page.getByTestId('packed-advance')).toBeDisabled();
-    await page.getByTestId('packed-option-packed-bit-position').click();
-    await expect(page.getByTestId('packed-feedback')).toContainText('Correct');
-    await expect(page.getByTestId('packed-advance')).toBeEnabled();
-    await page.getByTestId('packed-advance').click();
+    const visualizer3D = page.getByTestId('sv-3d-visualizer');
+    await expect(visualizer3D).toBeVisible();
+    await expect(page.getByTestId('sv-3d-summary')).toContainText('dynamic array expands');
+    await page.getByTestId('sv-3d-select-queue').click();
+    await expect(page.getByTestId('sv-3d-summary')).toContainText('head and tail');
 
     const game = page.getByTestId('packet-sorter-game');
     await expect(game).toBeVisible();
@@ -151,7 +131,6 @@ test.describe('Tier 1 F2 micro-lessons', () => {
       { prompt: /register mirror/i, option: 'packet-option-packed-array' },
       { prompt: /diagnostics bursts/i, option: 'packet-option-queue' },
     ];
-
     for (const step of packetFlow) {
       await expect(page.getByTestId('packet-sorter-prompt')).toContainText(step.prompt);
       await page.getByTestId(step.option).click();
