@@ -52,7 +52,7 @@ test.describe('Advanced Navigation Features', () => {
 
     // Test Notification Center
     await page.getByTestId('notification-button').click();
-    await expect(page.getByText('Notifications')).toBeVisible();
+    await expect(page.getByText('Notifications', { exact: true }).first()).toBeVisible();
     await expect(page.getByText(/View all/)).toBeVisible();
   });
 

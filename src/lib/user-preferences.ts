@@ -70,7 +70,7 @@ export function mergeNotificationPreferences(
 
 export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   theme: 'dark',
-  shareTelemetry: true,
+  shareTelemetry: false,
   notifications: cloneNotificationPreferences(DEFAULT_NOTIFICATION_PREFERENCES),
 };
 

@@ -1,43 +1,30 @@
-import React from "react";
+import React, { Suspense } from "react";
 import type { Metadata } from "next";
-import Link from "next/link";
 
-import { SystemVerilog3DVisualizer } from "@/components/curriculum/f2";
+import SystemVerilog3DVisualizer from "@/components/curriculum/f2/SystemVerilog3DVisualizer";
 
 export const metadata: Metadata = {
-  title: "SystemVerilog Data Structures 3D Explorer",
+  title: "SystemVerilog 3D Data Structure Explorer",
   description:
-    "Walk through SystemVerilog dynamic arrays, queues, associative arrays, and packed layouts in an animated 3D environment.",
+    "Interactive 3D visualization of SystemVerilog data structures including dynamic arrays, queues, associative arrays, and packed/unpacked memory layouts.",
 };
 
-const SystemVerilog3DPage = () => {
+export default function SystemVerilog3DVisualizationPage() {
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col gap-8 px-4 py-10 lg:px-8">
-      <div className="space-y-3">
-        <Link href="/curriculum/T1_Foundational/F2B_Dynamic_Structures/" className="text-sm text-muted-foreground hover:text-primary">
-          ← Back to F2B lesson
-        </Link>
-        <h1 className="text-3xl font-bold tracking-tight">SystemVerilog Data Structures 3D Explorer</h1>
-        <p className="max-w-3xl text-base text-muted-foreground">
-          This immersive view mirrors the interactive widgets from the F2B lesson. Rotate around dynamic arrays, queues, associative arrays,
-          and packed/unpacked combinations to see head and tail markers, reserved capacity, hash collisions, and packed lane ordering at a
-          glance.
-        </p>
-      </div>
-
-      <SystemVerilog3DVisualizer />
-
-      <div className="rounded-3xl border border-border/60 bg-muted/20 p-6 text-sm text-muted-foreground">
-        <p>
-          Ready to apply the concepts? Visit the <Link href="/practice/visualizations/uvm-architecture" className="text-primary underline">
-            UVM Architecture Visualizer
-          </Link>{" "}
-          or the <Link href="/practice/visualizations/memory-hub" className="text-primary underline">Memory Hub</Link> to connect these data
-          structures to full environments.
-        </p>
-      </div>
+    <div className="min-h-screen bg-slate-950">
+      <Suspense
+        fallback={
+          <div className="container mx-auto px-4 py-8">
+            <div className="animate-pulse">
+              <div className="mb-4 h-8 w-1/3 rounded bg-muted"></div>
+              <div className="mb-8 h-4 w-2/3 rounded bg-muted"></div>
+              <div className="h-96 rounded bg-muted"></div>
+            </div>
+          </div>
+        }
+      >
+        <SystemVerilog3DVisualizer height="calc(100vh - 6rem)" />
+      </Suspense>
     </div>
   );
-};
-
-export default SystemVerilog3DPage;
+}

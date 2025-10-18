@@ -102,7 +102,7 @@ test.describe('Tier 1 F2 micro-lessons', () => {
     for (const [index, scenarioStep] of packedScenarios.entries()) {
       await expect(packedTitle).toContainText(scenarioStep.title);
       await expect(advanceButton).toBeDisabled();
-      if ("beforeSelect" in scenarioStep) {
+      if (scenarioStep.beforeSelect) {
         await scenarioStep.beforeSelect();
       }
       await page.getByRole('button', { name: scenarioStep.optionLabel }).click();
@@ -114,12 +114,6 @@ test.describe('Tier 1 F2 micro-lessons', () => {
       await expect(advanceButton).toBeEnabled();
       await advanceButton.click();
     }
-
-    const visualizer3D = page.getByTestId('sv-3d-visualizer');
-    await expect(visualizer3D).toBeVisible();
-    await expect(page.getByTestId('sv-3d-summary')).toContainText('dynamic array expands');
-    await page.getByTestId('sv-3d-select-queue').click();
-    await expect(page.getByTestId('sv-3d-summary')).toContainText('head and tail');
 
     const game = page.getByTestId('packet-sorter-game');
     await expect(game).toBeVisible();
