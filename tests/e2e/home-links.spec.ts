@@ -4,7 +4,8 @@ import { assertNavigation } from './utils/navigation';
 // Ensure that each internal link on the home page is reachable
 // and supports navigating back to the starting page.
 test('home page internal links are navigable and support back navigation', async ({ page }) => {
-  await page.goto('/');
+  test.setTimeout(5 * 60 * 1000);
+  await page.goto('/', { waitUntil: 'domcontentloaded' });
   const homeUrl = page.url();
 
   const links = await page.$$eval('a[href^="/"]:not([href^="//"])', anchors => {

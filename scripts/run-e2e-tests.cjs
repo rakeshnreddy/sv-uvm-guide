@@ -27,7 +27,8 @@ if (result.status !== 0) {
 
 const testEnv = {
   ...buildEnv,
-  SESSION_SECRET: process.env.SESSION_SECRET ?? 'dummy_secret_for_testing_purposes',
+  SESSION_SECRET:
+    process.env.SESSION_SECRET ?? 'test-session-secret-32-characters-long!!',
 };
 
 result = spawnSync('npx', ['playwright', 'test'], {

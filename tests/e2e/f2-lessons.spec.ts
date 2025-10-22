@@ -86,7 +86,11 @@ test.describe('Tier 1 F2 micro-lessons', () => {
     await expect(advanceButton).toBeEnabled();
     await advanceButton.click();
 
-    const packedScenarios = [
+    const packedScenarios: ReadonlyArray<{
+      title: RegExp;
+      optionLabel: string;
+      beforeSelect?: () => Promise<void>;
+    }> = [
       { title: /Lane Matrix/i, optionLabel: 'Packed [1:0] lane' },
       { title: /Scoreboard Grid/i, optionLabel: 'scoreboard[0][2]' },
       {
@@ -97,7 +101,7 @@ test.describe('Tier 1 F2 micro-lessons', () => {
           await expect(page.getByTestId('packed-index-examples')).toContainText('my_array[u1][u2][u3][p1][p2][p3]');
         },
       },
-    ] as const;
+    ];
 
     for (const [index, scenarioStep] of packedScenarios.entries()) {
       await expect(packedTitle).toContainText(scenarioStep.title);
