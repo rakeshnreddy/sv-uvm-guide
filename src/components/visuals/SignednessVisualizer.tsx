@@ -55,7 +55,7 @@ export default function SignednessVisualizer() {
                 {/* Controls */}
                 <div className="flex flex-wrap gap-6 p-4 bg-black/20 rounded-lg border border-white/5">
                     <div className="space-y-2">
-                        <Label>Bit Width: {width}</Label>
+                        <Label className="text-slate-200">Bit Width: {width}</Label>
                         <div className="flex gap-2">
                             {[4, 8, 16].map(w => (
                                 <Button
@@ -71,7 +71,7 @@ export default function SignednessVisualizer() {
                     </div>
 
                     <div className="space-y-2 flex-1">
-                        <Label>Raw Bits (Value: {safeValue})</Label>
+                        <Label className="text-slate-200">Raw Bits (Value: {safeValue})</Label>
                         <input
                             type="range"
                             min="0"
@@ -112,7 +112,7 @@ export default function SignednessVisualizer() {
 
                     <div className="grid md:grid-cols-2 gap-8">
                         <div className="space-y-2">
-                            <div className="font-mono text-sm text-slate-500 text-center">Zero Extension</div>
+                            <div className="font-mono text-sm text-slate-400 text-center">Zero Extension</div>
                             <div className="font-mono text-lg text-center bg-black/40 p-2 rounded border border-emerald-500/20">
                                 <span className="text-emerald-500">{unsignedExtBin.slice(0, 4)}</span>
                                 <span className="text-white">{unsignedExtBin.slice(4)}</span>
@@ -121,7 +121,7 @@ export default function SignednessVisualizer() {
                         </div>
 
                         <div className="space-y-2">
-                            <div className="font-mono text-sm text-slate-500 text-center">Sign Extension</div>
+                            <div className="font-mono text-sm text-slate-400 text-center">Sign Extension</div>
                             <div className="font-mono text-lg text-center bg-black/40 p-2 rounded border border-amber-500/20">
                                 <span className="text-amber-500">{signedExtBin.slice(0, 4)}</span>
                                 <span className="text-white">{signedExtBin.slice(4)}</span>
