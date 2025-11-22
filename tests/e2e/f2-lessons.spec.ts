@@ -91,17 +91,17 @@ test.describe('Tier 1 F2 micro-lessons', () => {
       optionLabel: string;
       beforeSelect?: () => Promise<void>;
     }> = [
-      { title: /Lane Matrix/i, optionLabel: 'Packed [1:0] lane' },
-      { title: /Scoreboard Grid/i, optionLabel: 'scoreboard[0][2]' },
-      {
-        title: /Packed Cube Index Order/i,
-        optionLabel: 'my_array[u1][u2][u3][p1][p2][p3]',
-        beforeSelect: async () => {
-          await expect(page.getByTestId('packed-index-order')).toContainText('my_array[u1]');
-          await expect(page.getByTestId('packed-index-examples')).toContainText('my_array[u1][u2][u3][p1][p2][p3]');
+        { title: /Lane Matrix/i, optionLabel: 'Packed [1:0] lane' },
+        { title: /Scoreboard Grid/i, optionLabel: 'scoreboard[0][2]' },
+        {
+          title: /Packed Cube Index Order/i,
+          optionLabel: 'my_array[u1][u2][u3][p1][p2][p3]',
+          beforeSelect: async () => {
+            await expect(page.getByTestId('packed-index-order')).toContainText('my_array[u1]');
+            await expect(page.getByTestId('packed-index-examples')).toContainText('my_array[u1][u2][u3][p1][p2][p3]');
+          },
         },
-      },
-    ];
+      ];
 
     for (const [index, scenarioStep] of packedScenarios.entries()) {
       await expect(packedTitle).toContainText(scenarioStep.title);
@@ -146,22 +146,5 @@ test.describe('Tier 1 F2 micro-lessons', () => {
     await expect(page.getByTestId('packet-sorter-modal')).toHaveCount(0);
   });
 
-  test('F2C blocking simulator toggles modes', async ({ page }) => {
-    await page.goto('/curriculum/T1_Foundational/F2C_Procedural_Code/');
-    const simulator = page.getByTestId('blocking-simulator');
-    await expect(simulator).toBeVisible();
 
-    await simulator.getByRole('button', { name: /next/i }).click();
-    await expect(page.getByTestId('timeline-panel')).toContainText('Step 2');
-
-    await simulator.getByRole('button', { name: /non-blocking mode/i }).click();
-    await expect(page.getByTestId('blocking-code')).toContainText('out <= shared');
-  });
-
-  test('F2D lesson links to the refactoring lab', async ({ page }) => {
-    await page.goto('/curriculum/T1_Foundational/F2D_Reusable_and_Parallel/');
-    const labLink = page.getByRole('link', { name: /labs\/basics\/lab1_refactoring/i });
-    await expect(labLink).toBeVisible();
-    await expect(labLink).toHaveAttribute('href', '/labs/basics/lab1_refactoring/');
-  });
 });

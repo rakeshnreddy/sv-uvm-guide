@@ -1,57 +1,161 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import { Quiz } from "@/components/ui";
+---
+title: "Fork-Join and Process Control"
+description: "Launch parallel threads and synchronize them with join variants."
+flashcards: "F3_Procedural_Constructs"
+---
 
-export const metadata = {
-  title: "Fork-Join and Process Control | SystemVerilog Language Foundations",
-  description: "Launch parallel threads and synchronize them with join variants.",
-};
+import { InteractiveCode, Card, CardContent, CardHeader, CardTitle, Quiz } from '@/components/ui';
 
-<InfoPage
-  title="Fork-Join and Process Control"
-  sv_concept_tags={["fork-join", "process control"]}
->
+## Quick Take
+- **Parallelism:** `fork...join` blocks spawn concurrent threads.
+- **Synchronization:** The flavor of `join` determines when the parent process resumes.
+- **Control:** Use `disable fork` or the `process` class to kill threads that are no longer needed (e.g., after a timeout).
 
-  ## Elevator Pitch
+## The Fork-Join Family
 
-  `fork...join` lets multiple threads run in parallel. It's the scheduler of SystemVerilog, allowing simultaneous tasks to coordinate and complete before moving on.
+SystemVerilog offers three ways to synchronize threads. Choosing the right one is critical for testbench timing.
 
-  ## Practical Explanation
+| Construct | Behavior | Use Case |
+| :--- | :--- | :--- |
+| **`join`** | Waits for **ALL** threads to complete. | Forking independent drivers that must finish before the test proceeds. |
+| **`join_any`** | Waits for **ANY** one thread to complete. | Watchdogs, timeouts, or racing a transaction against an error event. |
+| **`join_none`** | Waits for **NONE** (continues immediately). | Spawning background monitors, scoreboards, or "fire-and-forget" stimulus. |
 
-  ```systemverilog
-  initial begin
-    fork
-      begin
-        // Task A
-        #10 $display("A done");
-      end
-      begin
-        // Task B
-        #5  $display("B done");
-      end
-    join
-    $display("Both finished");
+### Visualizing the Timeline
+
+```mermaid
+sequenceDiagram
+    participant Parent
+    participant Thread1
+    participant Thread2
+
+    Note over Parent: fork...join
+    par Parallel Execution
+        Parent->>Thread1: Start
+        Parent->>Thread2: Start
+    end
+    activate Thread1
+    activate Thread2
+    Thread1-->>Parent: Finish (Time 10)
+    deactivate Thread1
+    Thread2-->>Parent: Finish (Time 20)
+    deactivate Thread2
+    Note over Parent: Resumes at Time 20
+```
+
+## Process Control
+
+Spawning threads is easy; cleaning them up is the hard part. If you don't manage your threads, they can run forever and hang the simulation.
+
+### The `disable fork` Statement
+Kill all active children of the current process.
+
+```systemverilog
+initial begin
+  fork
+    bus_driver();   // Thread A
+    error_injector(); // Thread B
+  join_any
+  
+  disable fork; // Kill the remaining thread (whichever didn't finish first)
+end
+```
+
+### The `process` Class
+For fine-grained control, use the built-in `process` class to manage individual threads.
+
+```systemverilog
+process p_job;
+
+initial begin
+  fork
+    begin
+      p_job = process::self(); // Get handle to this thread
+      heavy_computation();
+    end
+  join_none
+  
+  #1000;
+  if (p_job.status() != process::FINISHED) begin
+    p_job.kill(); // Terminate specific thread
+    $display("Job timed out!");
   end
-  ```
+end
+```
 
-  `join_any` returns when any branch finishes; `join_none` lets the parent continue while children run. Combine with <Link href="/curriculum/T1_Foundational/F3_Procedural_Constructs/tasks-functions">tasks and functions</Link> for structured parallel activity.
+## Interactive Example: Timeout Watchdog
+This example uses `fork...join_any` to race a task against a timer. This is a fundamental pattern in verification.
 
-  ## Advanced Notes
+<InteractiveCode
+  language="systemverilog"
+  fileName="timeout_example.sv"
+  code={`
+module timeout_example;
 
-  * Use `disable fork` to stop all child processes.
-  * `fork...join_none` is handy for testbench stimulus that doesn't block the main thread.
-  * Remember: **fork = parallel start, join = synchronization point**.
+  task automatic wait_for_signal(ref logic sig);
+    wait(sig === 1'b1);
+    $display("@%0t: Signal received!", $time);
+  endtask
 
-  <Quiz questions={[
+  logic start_sig = 0;
+
+  initial begin
+    $display("@%0t: Starting race...", $time);
+    
+    fork : timeout_race
+      wait_for_signal(start_sig); // Thread 1: The job
+      #100 $display("@%0t: Timeout!", $time); // Thread 2: The timer
+    join_any
+
+    disable timeout_race; // Kill the loser
+    $display("@%0t: Race over.", $time);
+  end
+
+  // Stimulus (Try changing delay to > 100)
+  initial begin
+    #50 start_sig = 1;
+  end
+
+endmodule
+  `}
+  explanationSteps={[
+    { target: "13-16", title: "The Race", explanation: "`fork...join_any` launches the wait task and the timer in parallel. The parent pauses until the *first* one finishes." },
+    { target: "18-18", title: "Cleanup", explanation: "`disable timeout_race` ensures that if the signal arrives, the timer is cancelled (and vice versa)." }
+  ]}
+/>
+
+## Practice Prompts
+1.  **Experiment**: Change the delay in the stimulus block to `#150` and observe the timeout message.
+2.  **Refactor**: Change `join_any` to `join` and see how the behavior changes (it will wait for BOTH, defeating the purpose of a timeout).
+3.  **Advanced**: Create a "heartbeat" monitor using `fork...join_none` that prints a message every 100ns until a test_done flag is set.
+
+## References
+- IEEE Std 1800-2023 §9.3.2 (Parallel blocks)
+- IEEE Std 1800-2023 §9.6 (Process control)
+
+<Quiz
+  questions={[
     {
-      question: "Which variant waits for all child processes to finish?",
+      question: 'Which join type allows the parent process to continue without waiting for any threads?',
       answers: [
-        { text: "join_any", correct: false },
-        { text: "join_none", correct: false },
-        { text: "join", correct: true },
-        { text: "disable fork", correct: false }
+        { text: '`join`', correct: false },
+        { text: '`join_any`', correct: false },
+        { text: '`join_none`', correct: true },
+        { text: '`fork_none`', correct: false }
       ],
-      explanation: "`join` blocks until every forked process completes." 
+      explanation:
+        '`join_none` schedules the threads and immediately resumes the parent process. It is essential for non-blocking background tasks.'
+    },
+    {
+      question: 'What happens if you forget `disable fork` after a `join_any`?',
+      answers: [
+        { text: 'The simulation crashes', correct: false },
+        { text: 'The remaining threads continue running in the background', correct: true },
+        { text: 'The remaining threads are automatically paused', correct: false },
+        { text: 'The compiler issues an error', correct: false }
+      ],
+      explanation:
+        'SystemVerilog does not auto-kill threads. If you use `join_any` for a race, the loser keeps running unless you explicitly kill it.'
     }
-  ]} />
-
-</InfoPage>
+  ]}
+/>

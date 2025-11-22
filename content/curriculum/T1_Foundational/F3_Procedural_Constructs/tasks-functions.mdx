@@ -1,57 +1,166 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import { Quiz } from "@/components/ui";
+---
+title: "Tasks and Functions"
+description: "Compare callable blocks with and without timing to structure reusable code."
+flashcards: "F3_Procedural_Constructs"
+---
 
-export const metadata = {
-  title: "Tasks and Functions: Scoping and Lifetimes | SystemVerilog Language Foundations",
-  description: "Compare callable blocks with and without timing to structure reusable code.",
-};
+import { InteractiveCode, Card, CardContent, CardHeader, CardTitle, Quiz } from '@/components/ui';
 
-<InfoPage
-  title="Tasks and Functions: Scoping and Lifetimes"
-  sv_concept_tags={["tasks", "functions", "scoping", "lifetimes"]}
->
-  ## Elevator Pitch
+## Quick Take
+- **Functions:** Execute in zero time. Use them for math, data conversion, or non-blocking operations.
+- **Tasks:** Can consume time (wait for clocks, delays). Use them for driving stimulus or modeling bus cycles.
+- **Lifetimes:** Always use `automatic` (or declare inside a class) to ensure variables are fresh for each call.
 
-  Tasks and functions are reusable blocks of code: functions return a value and execute instantly; tasks can consume time and handle more complex behavior. Think of them as recipes—functions are quick snacks, while tasks are multi-step meals.
+## Choosing the Right Tool
 
-  ## Practical Explanation
+SystemVerilog splits subroutines into two types based on their relationship with simulation time.
 
-  ```systemverilog
-  function int add(input int a, b);
-    return a + b;        // no timing allowed
-  endfunction
+<Card className="my-6 border-sky-400/40 bg-sky-500/5">
+  <CardHeader>
+    <CardTitle>Comparison (IEEE 1800-2023 §13)</CardTitle>
+  </CardHeader>
+  <CardContent className="grid gap-4 md:grid-cols-2 text-sm">
+    <div>
+      <p className="font-semibold text-sky-300">Functions</p>
+      <ul className="list-disc pl-5 space-y-1">
+        <li>**Time:** Must execute in 0 simulation time.</li>
+        <li>**Restrictions:** Cannot call tasks or use `@`, `#`, `wait`.</li>
+        <li>**Returns:** Can return a value (or `void`).</li>
+        <li>**Use Case:** Scoreboards, calculations, getters/setters.</li>
+      </ul>
+    </div>
+    <div>
+      <p className="font-semibold text-indigo-300">Tasks</p>
+      <ul className="list-disc pl-5 space-y-1">
+        <li>**Time:** Can consume time.</li>
+        <li>**Capabilities:** Can call other tasks and functions.</li>
+        <li>**Returns:** No return value; use `output` or `ref` args.</li>
+        <li>**Use Case:** Bus drivers, reset sequences, main test flows.</li>
+      </ul>
+    </div>
+  </CardContent>
+</Card>
 
-  task automatic delay_and_print(input int val);
-    #5 $display("val=%0d", val); // tasks may include delays
+## Lifetimes: `static` vs `automatic`
+
+This is a classic "gotcha." By default in modules, subroutines are `static`, meaning they share variables across all calls. This breaks recursion and concurrent usage.
+
+> **Best Practice:** Always declare tasks and functions as `automatic` (or put them in a `class`, where they are automatic by default).
+
+```systemverilog
+// BAD: Static by default. Concurrent calls will corrupt 'i'.
+task drive_bus;
+  int i; // Shared memory address!
+  // ...
+endtask
+
+// GOOD: Fresh 'i' for every call.
+task automatic drive_bus;
+  int i; // Allocated on stack
+  // ...
+endtask
+```
+
+## Argument Passing
+
+How you pass data matters for performance and correctness.
+
+| Direction | Behavior | Note |
+| :--- | :--- | :--- |
+| **`input`** | Copy-in on start. | Default. Safe but copies data. |
+| **`output`** | Copy-out on return. | Value updates only when routine finishes. |
+| **`inout`** | Copy-in start, Copy-out return. | Legacy; rarely used in modern TBs. |
+| **`ref`** | Reference (pointer). | **Zero-copy.** Updates are visible immediately. Use `const ref` for large arrays. |
+
+## Interactive Example: Refactoring Stimulus
+We start with a messy `initial` block and refactor it into a clean, reusable `task`.
+
+<InteractiveCode
+  language="systemverilog"
+  fileName="refactoring_demo.sv"
+  code={`
+module refactoring_demo;
+  logic clk;
+  logic [7:0] data;
+  logic valid;
+
+  // 1. Define a reusable task
+  task automatic send_packet(input byte payload, input int repeat_count);
+    $display("@%0t: Sending payload %h", $time, payload);
+    for (int i = 0; i < repeat_count; i++) begin
+      @(posedge clk);
+      data  <= payload;
+      valid <= 1'b1;
+      @(posedge clk);
+      valid <= 1'b0;
+    end
   endtask
 
+  // 2. Helper function for calculation
+  function automatic bit parity(input byte payload);
+    return ^payload; // XOR reduce
+  endfunction
+
+  // Clock gen
   initial begin
-    int result = add(2,3);
-    delay_and_print(result);
+    clk = 0;
+    forever #5 clk = ~clk;
   end
-  ```
 
-  *Functions* must finish without timing controls and return a single value. *Tasks* may contain delays and spawn parallel processes. Declaring them `automatic` ensures each call has its own storage, avoiding race conditions.
+  // 3. Clean Main Flow
+  initial begin
+    valid = 0;
+    data = 0;
+    
+    // Call the task multiple times
+    send_packet(8'hA5, 2);
+    send_packet(8'h5A, 1);
+    
+    $display("Parity check: %b", parity(8'hA5));
+    $finish;
+  end
+endmodule
+  `}
+  explanationSteps={[
+    { target: "7-16", title: "The Task", explanation: "Encapsulates the bus protocol. Notice it consumes time (`@posedge clk`) and uses `automatic` for safety." },
+    { target: "19-21", title: "The Function", explanation: "Pure logic calculation. Executes instantly. Perfect for data transformation." },
+    { target: "30-40", title: "The Test", explanation: "The main block is now readable and focuses on *what* to do, not *how* to wiggle the pins." }
+  ]}
+/>
 
-  For organized code, place common tasks/functions inside <Link href="/curriculum/T1_Foundational/F4A_Modules_and_Packages">packages</Link> so multiple modules can share them.
+## Practice Prompts
+1.  **Refactor**: Take a block of code that waits for a reset signal and turn it into a `task wait_for_reset()`.
+2.  **Optimize**: Change a function that takes a large array as `input` to use `const ref` instead.
+3.  **Debug**: Remove the `automatic` keyword from a recursive function (like factorial) and see it fail.
 
-  ## Advanced Notes
+## References
+- IEEE Std 1800-2023 §13.3 (Tasks)
+- IEEE Std 1800-2023 §13.4 (Functions)
+- IEEE Std 1800-2023 §13.5.2 (Pass by reference)
 
-  * `automatic` vs `static` controls re-entrancy and variable lifetime.
-  * Use `void'(function_call())` to ignore return values.
-  * Tasks can be declared `forkjoin` style to wait for parallel operations to complete.
-
-  <Quiz questions={[
+<Quiz
+  questions={[
     {
-      question: "Which construct can include `#5` delays?",
+      question: 'Why can a function NOT call a task?',
       answers: [
-        { text: "function", correct: false },
-        { text: "task", correct: true },
-        { text: "enum", correct: false },
-        { text: "module", correct: false }
+        { text: 'Because functions are not synthesizable', correct: false },
+        { text: 'Because tasks might consume time, and functions must be zero-time', correct: true },
+        { text: 'Because tasks do not return values', correct: false },
+        { text: 'Because functions are static by default', correct: false }
       ],
-      explanation: "Tasks may consume simulation time, while functions must execute without delays."
+      explanation:
+        'The fundamental rule of functions is that they execute in zero simulation time. Calling a task (which might block) would violate this.'
+    },
+    {
+      question: 'What is the benefit of passing arguments by `ref`?',
+      answers: [
+        { text: 'It is required for synthesis', correct: false },
+        { text: 'It automatically makes the variable static', correct: false },
+        { text: 'It avoids copying large data structures, improving performance', correct: true },
+        { text: 'It allows the routine to consume time', correct: false }
+      ],
+      explanation:
+        '`ref` passes a handle/pointer to the original data rather than copying it. This is crucial for performance when passing large arrays or objects.'
     }
-  ]} />
-
-</InfoPage>
+  ]}
+/>

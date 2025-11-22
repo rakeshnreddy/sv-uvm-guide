@@ -4,7 +4,7 @@ description: "Master the procedural heart of SystemVerilog—initial/always/fina
 flashcards: "F3_Procedural_Constructs"
 ---
 
-import { InteractiveCode, Quiz } from '@/components/ui';
+import { InteractiveCode, Quiz, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
 import ProceduralBlocksSimulator from '@/components/animations/ProceduralBlocksSimulator';
 
 ## Quick Take
@@ -15,19 +15,52 @@ import ProceduralBlocksSimulator from '@/components/animations/ProceduralBlocksS
 > **Visual cue:** This page pairs simulators, code overlays, and animated timelines with the narrative so you can *see* how procedural elements run frame by frame.
 
 ## Build Your Mental Model
+
 ### Timeline of a Simulation Tick
 <div className="my-8 rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur shadow-2xl">
   <ProceduralBlocksSimulator />
 </div>
 
-SystemVerilog simulators run every timestep through distinct event regions: **active** (procedural code executes), **inactive** (zero-delay updates), **NBA** (non-blocking assignments commit), and **postponed** (assertion sampling & `final`). Knowing where your code lands explains why a `<=` update appears “later” than a blocking `=`—the simulator is honoring those regions. Internalizing that timeline eliminates the feeling that the tool is acting randomly.
+SystemVerilog simulators run every timestep through distinct event regions. Internalizing this timeline eliminates the feeling that the tool is acting randomly.
 
 | Region | Who runs here | Debug cue |
 | --- | --- | --- |
-| Active | `initial`, blocking assignments, tasks | Watch waveform edges jump immediately |
-| Inactive | Zero-delay updates (`#0`), event rescheduling | Rare today, but legacy code may rely on it |
-| NBA (non-blocking assign) | Sequential `<=` updates | Values “snap” after the active region finishes |
-| Postponed | Assertions, `final`, `$strobe` | Perfect spot for end-of-tick checks |
+| **Active** | `initial`, `always`, blocking assignments (`=`) | Watch waveform edges jump immediately. |
+| **Inactive** | Zero-delay updates (`#0`) | Rare today; legacy code only. |
+| **NBA** | Non-blocking assignments (`<=`) | Values "snap" to their new state *after* all active code finishes. |
+| **Postponed** | `final`, `$strobe`, assertions | Perfect spot for end-of-tick checks. |
+
+### Challenge: The Scheduler Game
+<EventRegionGame />
+
+### The Golden Rule: Blocking vs. Non-Blocking
+One of the most common sources of race conditions is using the wrong assignment type.
+
+<Card className="my-6 border-amber-400/40 bg-amber-500/5">
+  <CardHeader>
+    <CardTitle>Assignment Semantics (IEEE 1800-2023 §10.4)</CardTitle>
+  </CardHeader>
+  <CardContent className="grid gap-4 md:grid-cols-2 text-sm">
+    <div>
+      <p className="font-semibold text-amber-300">Blocking (`=`)</p>
+      <p className="italic text-xs mb-2">"Do this NOW."</p>
+      <ul className="list-disc pl-5 space-y-1">
+        <li>Executes sequentially.</li>
+        <li>Blocks the process until complete.</li>
+        <li>**Use for:** Combinational logic (`always_comb`), testbench variables, and functions.</li>
+      </ul>
+    </div>
+    <div>
+      <p className="font-semibold text-emerald-300">Non-Blocking (`<=`)</p>
+      <p className="italic text-xs mb-2">"Schedule this for LATER."</p>
+      <ul className="list-disc pl-5 space-y-1">
+        <li>Schedules update for the NBA region.</li>
+        <li>Allows parallel blocks to read old values safely.</li>
+        <li>**Use for:** Sequential logic (`always_ff`) and clock-driven stimulus.</li>
+      </ul>
+    </div>
+  </CardContent>
+</Card>
 
 ### Interactive Core Patterns
 <InteractiveCode
@@ -101,9 +134,9 @@ join_none
 ```
 
 ### Common Pitfalls
-- Mixing blocking and non-blocking assignments to the same signal, causing races. **Fix:** pick one style per signal—`<=` for sequential flops, `=` for combinational/testbench code.
-- Using `always` instead of `always_ff`/`always_comb`, hiding missing signals in sensitivity lists. **Fix:** swap to the intent-specific variants so the compiler enforces reset/clock rules for you.
-- Forgetting to terminate `fork/join` threads, leaving simulations hanging. **Fix:** manage spawned processes with `join`, `disable fork`, or `process::kill()` from a handle.
+- **Mixing assignments:** Never mix `=` and `<=` on the same signal. It creates unpredictable races.
+- **Implicit Latches:** Using `always @(*)` instead of `always_comb` can hide missing default cases, leading to unwanted latches.
+- **Zombie Threads:** Forgetting to terminate `fork/join` threads leaves them running forever, potentially hanging the simulation.
 
 ### Case Study: Sequence Detector FSM
 Put the guidelines into context with a classic problem: detect the bit pattern `101` on a serial input. A clean implementation separates sequential state updates (`always_ff`) from combinational next-state logic.
@@ -158,11 +191,6 @@ endmodule
 - The combinational block seeds `state_next` and `detected` with safe defaults, preventing unintended latches.
 - Using `unique case` catches missing branches while documenting intent for tools and reviewers.
 
-### Flow-Control Building Blocks
-- **Conditionals (`if`, `case`, `unique case`)** gate behavior inside procedural blocks. Use `unique`/`priority` to signal intent to tools and catch missing branches.
-- **Loops (`for`, `foreach`, `while`, `repeat`)** generate structured stimulus. `foreach` shines with dynamic arrays, while `repeat` crafts reset pulses or pattern bursts.
-- **Tasks & Functions** wrap procedural logic for reuse. Functions must stay side-effect free; tasks can launch timing controls. Distinguish them so your scoreboard or sequence code remains predictable.
-
 ## Make It Work
 1. **Set the stage:** Draft a timing diagram for your DUT, marking where sequential and combinational regions live. Annotate which constructs you’ll use (`always_ff`, `always_comb`, `initial`).
 2. **Instrument aggressively:** Add assertions that fail if a sequential block uses `=` or if a combinational block uses `<=`. Tools like Verilator and SpyGlass can automate these checks.
@@ -188,7 +216,7 @@ endmodule
 - Spear & Tumbush, *SystemVerilog for Verification*, Chapter 3.
 - Accellera, *SystemVerilog LRM*, sections on process scheduling.
 - Verification Academy session: “Avoiding Race Conditions in SystemVerilog.”
-- Next: [`/curriculum/T1_Foundational/F4_RTL_and_Testbench_Constructs`](../F4_RTL_and_Testbench_Constructs/).
+- Next: [Procedural Flow Control](./flow-control)
 
 <Quiz
   questions={[

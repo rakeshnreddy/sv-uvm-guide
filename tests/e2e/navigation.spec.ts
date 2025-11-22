@@ -57,13 +57,13 @@ test.describe('Advanced Navigation Features', () => {
   });
 
   test('should show enhanced breadcrumbs on a curriculum page', async ({ page }) => {
-    await page.goto('/curriculum/T1_Foundational/F2_SystemVerilog_Basics');
+    await page.goto('/curriculum/T1_Foundational/F2A_Core_Data_Types');
 
     // Check for progress indicator sourced from curriculum status
     await expect(
       page
         .locator('nav')
-        .filter({ hasText: 'SystemVerilog Language Basics' })
+        .filter({ hasText: 'Core Data Types' })
         .locator('svg.lucide-clock.text-amber-500')
         .first(),
     ).toBeVisible();
@@ -72,9 +72,9 @@ test.describe('Advanced Navigation Features', () => {
     const jumpToButton = page.getByRole('button', { name: 'Jump to' });
     await expect(jumpToButton).toBeVisible();
     await jumpToButton.click();
-    const jumpToDropdown = page.getByRole('menu', { name: 'Topics in F2: SystemVerilog Language Basics' });
+    const jumpToDropdown = page.getByRole('menu', { name: 'Topics in F2A: Core Data Types' });
     await expect(jumpToDropdown).toBeVisible();
-    await expect(jumpToDropdown.getByRole('menuitem', { name: 'F2: SystemVerilog Language Basics' })).toBeVisible();
+    await expect(jumpToDropdown.getByRole('menuitem', { name: 'F2A: Core Data Types' })).toBeVisible();
   });
 
 });

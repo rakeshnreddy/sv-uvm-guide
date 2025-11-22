@@ -59,35 +59,23 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "F2C: Procedural Code and Flow Control",
-        "slug": "F2C_Procedural_Code",
+        "title": "F2: Data Types & Structures",
+        "slug": "F2_Data_Types_and_Structures",
         "topics": [
           {
-            "title": "F2C: Procedural Code and Flow Control",
+            "title": "F2: Data Types & Structures",
             "slug": "index",
-            "description": "Author deterministic `initial`/`always` blocks, choose the right assignment style, and master control flow."
-          }
-        ]
-      },
-      {
-        "title": "F2D: Reusable Code and Parallelism",
-        "slug": "F2D_Reusable_and_Parallel",
-        "topics": [
+            "description": "Master SystemVerilog's type system, from physical nets to dynamic collections."
+          },
           {
-            "title": "F2D: Reusable Code and Parallelism",
-            "slug": "index",
-            "description": "Factor stimulus into tasks/functions and coordinate parallel threads with fork-join semantics."
-          }
-        ]
-      },
-      {
-        "title": "F2: SystemVerilog Language Basics",
-        "slug": "F2_SystemVerilog_Basics",
-        "topics": [
+            "title": "F2A: Core Data Types",
+            "slug": "core_types",
+            "description": "Dive deep into SystemVerilog nets, variables, and value systems with interactive explorers grounded in IEEE 1800-2023."
+          },
           {
-            "title": "F2: SystemVerilog Language Basics",
-            "slug": "index",
-            "description": "Orient yourself across the F2A–F2D lessons and understand how each builds core SystemVerilog intuition before diving deeper."
+            "title": "F2B: Dynamic Data Structures",
+            "slug": "dynamic_structures",
+            "description": "Manipulate dynamic arrays, queues, and associative arrays with an IEEE 1800-2023 guided workflow."
           }
         ]
       },
@@ -101,17 +89,17 @@ export const curriculumData: Module[] = [
             "description": "Master the procedural heart of SystemVerilog—initial/always/final blocks, flow control, and assignment semantics that drive every testbench."
           },
           {
-            "title": "Procedural Flow Control | SystemVerilog Language Foundations",
+            "title": "Procedural Flow Control",
             "slug": "flow-control",
             "description": "Guide decisions with if, case, and loop constructs to steer simulation flow."
           },
           {
-            "title": "Fork-Join and Process Control | SystemVerilog Language Foundations",
+            "title": "Fork-Join and Process Control",
             "slug": "fork-join",
             "description": "Launch parallel threads and synchronize them with join variants."
           },
           {
-            "title": "Tasks and Functions: Scoping and Lifetimes | SystemVerilog Language Foundations",
+            "title": "Tasks and Functions",
             "slug": "tasks-functions",
             "description": "Compare callable blocks with and without timing to structure reusable code."
           }

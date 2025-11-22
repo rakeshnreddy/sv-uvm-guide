@@ -1,62 +1,210 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import { Quiz } from "@/components/ui";
+---
+title: "Procedural Flow Control"
+description: "Guide decisions with if, case, and loop constructs to steer simulation flow."
+flashcards: "F3_Procedural_Constructs"
+---
 
-export const metadata = {
-  title: "Procedural Flow Control | SystemVerilog Language Foundations",
-  description: "Guide decisions with if, case, and loop constructs to steer simulation flow.",
-};
+import { InteractiveCode, Card, CardContent, CardHeader, CardTitle, Quiz } from '@/components/ui';
 
-<InfoPage
-  title="Procedural Flow Control"
-  sv_concept_tags={["procedural flow control", "if", "case", "loops"]}
->
-  ## Elevator Pitch
+## Quick Take
+- **Conditionals:** Use `if/else` for binary checks and `case` for multi-way branching.
+- **Safety:** Prefer `unique case` or `priority case` over plain `case` to catch missing branches and unintended latches (IEEE 1800-2023 §12.5).
+- **Loops:** `foreach` is your workhorse for arrays; `repeat` is great for simple delays; `for` handles standard iteration.
 
-  Flow control statements decide which lines of code run and how often—much like traffic lights and roundabouts directing cars on a road.
+## Decision Making: `if` vs. `case`
 
-  ## Practical Explanation
+SystemVerilog provides two primary ways to make decisions. While they often compile to similar logic, their intent differs.
 
-  ```systemverilog
-  int i;
+### The `if-else` Ladder
+Best for checking ranges, boolean flags, or prioritized conditions.
 
-  if (i == 0) begin
-    $display("zero");
-  end else begin
-    $display("non-zero");
+```systemverilog
+if (!reset_n) begin
+  state <= IDLE;
+end else if (enable && ready) begin
+  state <= ACTIVE;
+end else begin
+  state <= WAIT;
+end
+```
+
+### The `case` Statement
+Best for checking a single expression against multiple discrete values, like a state machine or an opcode decoder.
+
+<div className="grid gap-6 md:grid-cols-2 my-6">
+  <Card className="border-red-400/20 bg-red-500/5">
+    <CardHeader>
+      <CardTitle>Legacy `case` (Avoid)</CardTitle>
+    </CardHeader>
+    <CardContent>
+      <p className="text-sm text-muted-foreground mb-2">
+        Standard `case` does not enforce completeness. If you miss a value, it might infer a latch or do nothing.
+      </p>
+      <pre className="text-xs bg-black/20 p-2 rounded">
+{`case (state) // Dangerous!
+  IDLE: next = START;
+  // Missing other states...
+endcase`}
+      </pre>
+    </CardContent>
+  </Card>
+
+  <Card className="border-emerald-400/20 bg-emerald-500/5">
+    <CardHeader>
+      <CardTitle>Modern `unique case` (Prefer)</CardTitle>
+    </CardHeader>
+    <CardContent>
+      <p className="text-sm text-muted-foreground mb-2">
+        `unique` tells the tool: "I promise one and only one branch matches." It warns if you miss a case or have overlaps.
+      </p>
+      <pre className="text-xs bg-black/20 p-2 rounded">
+{`unique case (state)
+  IDLE: next = START;
+  RUN:  next = STOP;
+  default: next = IDLE;
+endcase`}
+      </pre>
+    </CardContent>
+  </Card>
+</div>
+
+### `unique` vs. `priority`
+- **`unique case`**: Assumes parallel evaluation. No overlaps allowed. Great for one-hot decoders.
+- **`priority case`**: Assumes sequential evaluation (like an if-else ladder). First match wins.
+
+## Looping Constructs
+
+Verification often involves iterating over data. SystemVerilog adds powerful loops on top of the standard C-style `for`.
+
+### The `foreach` Loop
+The MVP of verification. It automatically iterates over every element of an array, queue, or associative array.
+
+```systemverilog
+int payload_q[$] = {10, 20, 30, 40};
+
+// "i" is automatically declared as the index type
+foreach (payload_q[i]) begin
+  $display("Packet %0d: Data = %0h", i, payload_q[i]);
+end
+```
+
+### `repeat` and `forever`
+Simplified loops for testbench timing.
+
+- **`repeat (N)`**: Execute exactly N times. Perfect for driving clocks or waiting for cycles.
+- **`forever`**: Infinite loop. Must contain a timing control (`#` or `@`) to avoid hanging the simulation.
+
+```systemverilog
+initial begin
+  clk = 0;
+  forever #5 clk = ~clk; // 100MHz clock
+end
+
+task drive_bus;
+  repeat (10) @(posedge clk); // Wait 10 cycles
+  enable = 1;
+endtask
+```
+
+## Interactive Example: Traffic Light Controller
+This example combines `unique case` for the state machine and `repeat` for timing delays.
+
+<InteractiveCode
+  language="systemverilog"
+  fileName="traffic_light.sv"
+  code={`
+module traffic_light (
+  input logic clk,
+  input logic reset,
+  output logic [2:0] light // R, Y, G
+);
+
+  typedef enum logic [1:0] {RED, GREEN, YELLOW} state_t;
+  state_t state, next_state;
+  int timer;
+
+  // State Transition Logic
+  always_comb begin
+    unique case (state)
+      RED:    next_state = (timer == 0) ? GREEN : RED;
+      GREEN:  next_state = (timer == 0) ? YELLOW : GREEN;
+      YELLOW: next_state = (timer == 0) ? RED : YELLOW;
+      default: next_state = RED;
+    endcase
   end
 
-  case (i)
-    1: $display("one");
-    2,3: $display("two or three");
-    default: $display("other");
-  endcase
-
-  repeat (4) begin
-    i++;
+  // Output Logic
+  always_comb begin
+    unique case (state)
+      RED:    light = 3'b100;
+      YELLOW: light = 3'b010;
+      GREEN:  light = 3'b001;
+      default: light = 3'b100; // Safe default
+    endcase
   end
-  ```
 
-  * `if/else` chooses between branches.
-  * `case` matches against multiple values.
-  * Loops like `for`, `repeat`, and `while` run code repeatedly. Use them inside <Link href="/curriculum/T1_Foundational/F3_Procedural_Constructs/tasks-functions">tasks or functions</Link> to build reusable behavior.
+  // Timer & State Update
+  always_ff @(posedge clk or posedge reset) begin
+    if (reset) begin
+      state <= RED;
+      timer <= 50;
+    end else begin
+      state <= next_state;
+      if (state != next_state) begin
+        // Reset timer on transition
+        priority case (next_state)
+          GREEN:  timer <= 40;
+          YELLOW: timer <= 5;
+          default: timer <= 50;
+        endcase
+      end else if (timer > 0) begin
+        timer <= timer - 1;
+      end
+    end
+  end
 
-  ## Advanced Notes
+endmodule
+  `}
+  explanationSteps={[
+    { target: "12-17", title: "Unique Case", explanation: "Using `unique case` ensures we've covered all state transitions and that states are mutually exclusive." },
+    { target: "39-43", title: "Priority Case", explanation: "Here we use `priority case` to assign timer values. It behaves like an if-else if chain." },
+    { target: "30-46", title: "Timer Logic", explanation: "A countdown timer drives the state transitions, demonstrating how data path and control path interact." }
+  ]}
+/>
 
-  * The `unique`/`priority` keywords warn about overlapping or missing `case` branches.
-  * `forever` loops require an explicit `break` or `disable` to exit.
-  * Avoid unintended latches by covering every branch in combinational always blocks.
+## Practice Prompts
+1.  **Refactor**: Take a nested `if-else` block and convert it to a `priority case`.
+2.  **Iterate**: Create a dynamic array of random integers and use `foreach` to find the maximum value.
+3.  **Debug**: Write a `case` statement without a `default` and see if your tool warns you (it should!).
 
-  <Quiz questions={[
+## References
+- IEEE Std 1800-2023 §12.4 (Conditional if-else)
+- IEEE Std 1800-2023 §12.5 (Case statements)
+- IEEE Std 1800-2023 §12.7 (Loop statements)
+
+<Quiz
+  questions={[
     {
-      question: "Which loop guarantees at least one iteration?",
+      question: 'What is the main advantage of `unique case` over standard `case`?',
       answers: [
-        { text: "for", correct: false },
-        { text: "repeat", correct: false },
-        { text: "do...while", correct: true },
-        { text: "while", correct: false }
+        { text: 'It runs faster in simulation', correct: false },
+        { text: 'It warns if multiple cases match or if no case matches', correct: true },
+        { text: 'It allows overlapping case items', correct: false },
+        { text: 'It is required for synthesis', correct: false }
       ],
-      explanation: "A do...while loop executes its body before checking the condition."
+      explanation:
+        '`unique case` adds safety checks. It asserts that exactly one case item matches the expression, catching bugs early.'
+    },
+    {
+      question: 'Which loop is best suited for iterating over a dynamic array?',
+      answers: [
+        { text: '`repeat`', correct: false },
+        { text: '`forever`', correct: false },
+        { text: '`foreach`', correct: true },
+        { text: '`do...while`', correct: false }
+      ],
+      explanation:
+        '`foreach` automatically handles array bounds and index variable declaration, making it the safest choice for collections.'
     }
-  ]} />
-
-</InfoPage>
+  ]}
+/>

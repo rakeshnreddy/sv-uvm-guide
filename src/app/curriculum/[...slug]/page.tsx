@@ -163,6 +163,8 @@ const components = {
   SystemVerilog3DVisualizer,
   Image: MdxImage,
   ModportExplorer: dynamic(() => import('@/components/visuals/ModportExplorer').then(mod => mod.ModportExplorer), { ssr: false }),
+  EventRegionGame: dynamic(() => import('@/components/visuals/EventRegionGame'), { ssr: false }),
+  SignednessVisualizer: dynamic(() => import('@/components/visuals/SignednessVisualizer'), { ssr: false }),
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {

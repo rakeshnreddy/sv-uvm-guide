@@ -6,6 +6,8 @@ test.describe('Foundational Lessons F1-F3', () => {
         await expect(page.getByRole('heading', { name: 'F1: Why Verification?' })).toBeVisible();
         // Check for interactive component
         await expect(page.getByText('Design vs. Verification')).toBeVisible();
+        // Check for Bug Hunt Game
+        await expect(page.getByText('Bug Hunt: Diagnose the Counter')).toBeVisible();
     });
 
     test('F2: Data Types loads correctly', async ({ page }) => {
@@ -17,6 +19,23 @@ test.describe('Foundational Lessons F1-F3', () => {
     test('F3: Procedural Blocks loads correctly', async ({ page }) => {
         await page.goto('/curriculum/T1_Foundational/F3_Procedural_Constructs');
         await expect(page.getByRole('heading', { name: /Procedural Constructs/i })).toBeVisible();
+        // Check for Event Region Game
+        await expect(page.getByText('Event Region Scheduler')).toBeVisible();
+    });
+
+    test('F3: Flow Control loads correctly', async ({ page }) => {
+        await page.goto('/curriculum/T1_Foundational/F3_Procedural_Constructs/flow-control');
+        await expect(page.getByRole('heading', { name: /Procedural Flow Control/i })).toBeVisible();
+    });
+
+    test('F3: Fork-Join loads correctly', async ({ page }) => {
+        await page.goto('/curriculum/T1_Foundational/F3_Procedural_Constructs/fork-join');
+        await expect(page.getByRole('heading', { name: /Fork-Join and Process Control/i })).toBeVisible();
+    });
+
+    test('F3: Tasks & Functions loads correctly', async ({ page }) => {
+        await page.goto('/curriculum/T1_Foundational/F3_Procedural_Constructs/tasks-functions');
+        await expect(page.getByRole('heading', { name: /Tasks and Functions/i })).toBeVisible();
     });
 });
 
