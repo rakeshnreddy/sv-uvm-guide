@@ -1,0 +1,121 @@
+---
+title: "F4C: Synchronizing with Clocking and Program Blocks"
+description: "Understand how clocking blocks help create race-free testbenches by defining clear timing for signal interaction."
+flashcards: "F4C_Clocking_Blocks"
+---
+
+import { InteractiveCode, Quiz } from '@/components/ui';
+
+## Quick Take
+- **What it is:** **Clocking blocks** define a timing discipline for driving and sampling signals relative to a clock edge. **Program blocks** are a legacy construct for separating testbench events from DUT events.
+- **Why it matters:** Without clocking blocks, you risk "race conditions" where the testbench and DUT try to read/write a signal at the exact same simulation time, leading to unpredictable results.
+- **The Analogy:** A clocking block is like an airlock. It ensures that data only enters or leaves the clean room (the testbench) at specific, safe times, preventing contamination (race conditions).
+
+## Build Your Mental Model
+
+### The Race Condition Problem
+In a standard Verilog simulation, if a `DUT` updates a signal at the rising edge of `clk`, and the `Testbench` reads it at the same rising edge, the order of execution is undefined. You might read the *old* value or the *new* value.
+
+**Clocking blocks solve this by:**
+1.  **Sampling** inputs just *before* the clock edge (Preponed region).
+2.  **Driving** outputs just *after* the clock edge (Observed/Reactive region).
+
+### Interactive Example: The Clocking Block Solution
+<InteractiveCode
+  language="systemverilog"
+  fileName="clocking_block_demo.sv"
+  code={`
+interface memory_if (input logic clk);
+  logic [31:0] data_in;
+  logic [31:0] data_out;
+  logic        we;
+
+  // LRM Clause 14: Clocking Blocks
+  clocking drv_cb @(posedge clk);
+    default input #1step output #2ns; // Skews
+    output data_in, we;
+    input  data_out;
+  endclocking
+
+  clocking mon_cb @(posedge clk);
+    default input #1step;
+    input data_in, we, data_out;
+  endclocking
+endinterface
+
+module testbench (memory_if vif);
+  initial begin
+    // Drive via clocking block
+    vif.drv_cb.we <= 1; 
+    vif.drv_cb.data_in <= 32'hDEAD_BEEF;
+    
+    // Wait for edge
+    @(vif.drv_cb); 
+    
+    // Sample via clocking block
+    $display("Read Data: %h", vif.drv_cb.data_out);
+  end
+endmodule
+  `}
+  explanationSteps={[
+    { target: "7-11", title: "Driver Clocking Block", explanation: "Defines timing for the driver. Inputs are sampled 1 step before the edge. Outputs are driven 2ns after the edge." },
+    { target: "13-16", title: "Monitor Clocking Block", explanation: "Monitors only need to read. They sample everything 1 step before the edge to get stable values." },
+    { target: "22-23", title: "Synchronous Drive", explanation: "Using `vif.drv_cb.signal <= val` schedules the drive to happen at the specified skew (2ns after clock), ensuring no race with the DUT." },
+    { target: "29", title: "Synchronous Sample", explanation: "Reading `vif.drv_cb.data_out` returns the value sampled in the Preponed region, guaranteeing the stable 'old' value." }
+  ]}
+/>
+
+## Key Concepts
+
+### Clocking Blocks (LRM Clause 14)
+- **Input Skew:** When to sample inputs relative to the clock (default: `#1step`).
+- **Output Skew:** When to drive outputs relative to the clock (default: `#0`).
+- **Cycle Delay:** `##N` waits for N clocking block events.
+
+### Program Blocks (LRM Clause 24)
+- **Purpose:** Originally designed to separate testbench execution (Reactive region) from DUT execution (Active region).
+- **Modern Usage:** largely deprecated in UVM. UVM uses phases and clocking blocks to achieve the same isolation without the limitations of program blocks.
+- **Recommendation:** Avoid `program` blocks for new UVM testbenches. Use `module` for the top-level testbench and `clocking` blocks for timing.
+
+## Make It Work
+1.  **Define Clocking:** Add a `clocking` block to your interface for each agent (Driver, Monitor).
+2.  **Set Skews:** Use `default input #1step output #1ns;` to be safe.
+3.  **Drive/Sample:** In your testbench/UVM driver, *always* access signals through the clocking block handle (e.g., `vif.cb.req`).
+4.  **Wait for Events:** Use `@(vif.cb)` to wait for the clock edge.
+
+## Practice & Reinforce
+- **Lab:** "The Race Condition Lab" - Fix a racy testbench using clocking blocks.
+- **Quiz:** Check your understanding of timing regions.
+
+## References & Next Topics
+- **IEEE 1800-2023 Standard:**
+    - Clause 14: Clocking Blocks
+    - Clause 24: Programs
+- **Next:** [I-SV-1: Object-Oriented Programming for Verification](../../T2_Intermediate/I-SV-1_OOP)
+
+<Quiz
+  questions={[
+    {
+      question: 'What is the default input skew for a clocking block?',
+      answers: [
+        { text: '#0', correct: false },
+        { text: '#1step', correct: true },
+        { text: '#1ns', correct: false },
+        { text: 'Undefined', correct: false }
+      ],
+      explanation:
+        '#1step means the signal is sampled in the Preponed region, just before the clock edge, ensuring the stable previous value is read.'
+    },
+    {
+      question: 'Why are program blocks less common in modern UVM?',
+      answers: [
+        { text: 'They are not supported by simulators', correct: false },
+        { text: 'They cannot contain classes', correct: false },
+        { text: 'Clocking blocks and UVM phasing handle the race avoidance better', correct: true },
+        { text: 'They are too slow', correct: false }
+      ],
+      explanation:
+        'UVM achieves race freedom through the use of clocking blocks (for signal timing) and phasing (for execution ordering), making the special scheduling semantics of program blocks unnecessary.'
+    }
+  ]}
+/>

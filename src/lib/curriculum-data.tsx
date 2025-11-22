@@ -118,28 +118,35 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "F4: RTL and Testbench Constructs",
-        "slug": "F4_RTL_and_Testbench_Constructs",
+        "title": "F4A: Structuring Designs with Modules and Packages",
+        "slug": "F4A_Modules_and_Packages",
         "topics": [
           {
-            "title": "F4: RTL and Testbench Constructs",
+            "title": "F4A: Structuring Designs with Modules and Packages",
             "slug": "index",
-            "description": "Wire up designs and verification harnesses with modules, interfaces, packages, and clocking blocks that keep signal intent crystal clear."
-          },
+            "description": "Wire up designs and verification harnesses with modules and packages that keep signal intent crystal clear."
+          }
+        ]
+      },
+      {
+        "title": "F4B: Bundling Signals with Interfaces and Modports",
+        "slug": "F4B_Interfaces_and_Modports",
+        "topics": [
           {
-            "title": "F4: Interfaces and Modports",
-            "slug": "interfaces",
+            "title": "F4B: Bundling Signals with Interfaces and Modports",
+            "slug": "index",
             "description": "Learn how to use SystemVerilog interfaces and modports to simplify connections and create reusable verification components."
-          },
+          }
+        ]
+      },
+      {
+        "title": "F4C: Synchronizing with Clocking and Program Blocks",
+        "slug": "F4C_Clocking_Blocks",
+        "topics": [
           {
-            "title": "Packages and Compilation Scopes | SystemVerilog Language Foundations",
-            "slug": "packages",
-            "description": "Group shared declarations into reusable namespaces and manage visibility."
-          },
-          {
-            "title": "F4: Program and Clocking Blocks",
-            "slug": "program-clocking",
-            "description": "Understand how program and clocking blocks help create race-free testbenches by separating the testbench from the DUT and defining clear timing for signal interaction."
+            "title": "F4C: Synchronizing with Clocking and Program Blocks",
+            "slug": "index",
+            "description": "Understand how clocking blocks help create race-free testbenches by defining clear timing for signal interaction."
           }
         ]
       }

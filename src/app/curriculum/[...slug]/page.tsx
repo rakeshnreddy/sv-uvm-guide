@@ -162,6 +162,7 @@ const components = {
   PacketSorterGame,
   SystemVerilog3DVisualizer,
   Image: MdxImage,
+  ModportExplorer: dynamic(() => import('@/components/visuals/ModportExplorer').then(mod => mod.ModportExplorer), { ssr: false }),
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {

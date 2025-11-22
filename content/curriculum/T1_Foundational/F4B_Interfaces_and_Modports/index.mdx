@@ -1,0 +1,133 @@
+---
+title: "F4B: Bundling Signals with Interfaces and Modports"
+description: "Learn how to use SystemVerilog interfaces and modports to simplify connections and create reusable verification components."
+flashcards: "F4B_Interfaces_and_Modports"
+---
+
+import { InteractiveCode, Quiz } from '@/components/ui';
+
+## Quick Take
+- **What it is:** An **interface** is a bundle of signals that connects modules together. A **modport** (module port) defines the direction of those signals from a specific perspective (e.g., master vs. slave).
+- **Why it matters:** Interfaces replace error-prone, wire-by-wire connections with a single handle. Modports enforce directionality, preventing a monitor from accidentally driving the bus.
+- **The Analogy:** An interface is like a USB cable—it bundles power, ground, and data lines. The modport is the connector type (Type-A vs. Type-B) that ensures you plug it in correctly.
+
+## Build Your Mental Model
+
+### The Connection Bundle
+<div className="my-8 rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur shadow-2xl">
+  <ModportExplorer />
+</div>
+
+### Interactive Example: Interface with Modports
+<InteractiveCode
+  language="systemverilog"
+  fileName="interface_modports.sv"
+  code={`
+interface simple_bus_if (input logic clk);
+  // LRM Clause 25: Interfaces
+  logic [31:0] addr;
+  logic [31:0] data;
+  logic        rw;    // 1=read, 0=write
+  logic        valid;
+  logic        ready;
+
+  // Master View (Driver)
+  modport master (
+    input  clk, ready,
+    output addr, data, rw, valid
+  );
+
+  // Slave View (DUT)
+  modport slave (
+    input  clk, addr, data, rw, valid,
+    output ready
+  );
+
+  // Monitor View (Passive)
+  modport monitor (
+    input clk, addr, data, rw, valid, ready
+  );
+endinterface
+
+module master_driver (simple_bus_if.master bus);
+  always @(posedge bus.clk) begin
+    if (bus.ready) begin
+      bus.valid <= 1;
+      bus.addr  <= 32'h1000;
+      // bus.ready <= 0; // Error: ready is input in master modport
+    end
+  end
+endmodule
+
+module slave_dut (simple_bus_if.slave bus);
+  always @(posedge bus.clk) begin
+    if (bus.valid) begin
+      bus.ready <= 1;
+    end
+  end
+endmodule
+  `}
+  explanationSteps={[
+    { target: "1-8", title: "Signal Bundle", explanation: "The interface defines the wires once. No need to repeat `logic [31:0] addr` in every module." },
+    { target: "10-14", title: "Master Modport", explanation: "Defines the driver's perspective. It drives `addr` and `valid`, and reads `ready`." },
+    { target: "16-20", title: "Slave Modport", explanation: "Defines the DUT's perspective. It reads `addr` and `valid`, and drives `ready`." },
+    { target: "22-25", title: "Monitor Modport", explanation: "A passive view where everything is an input. Crucial for scoreboards to avoid interfering with the bus." },
+    { target: "28-36", title: "Enforced Direction", explanation: "The compiler enforces the modport directions. Trying to drive an input signal will result in a compilation error." }
+  ]}
+/>
+
+## Key Concepts
+
+### Interfaces (LRM Clause 25)
+An `interface` is a named bundle of nets and variables. It can also contain:
+- **Tasks and Functions:** To encapsulate bus protocols (e.g., `read()`, `write()`).
+- **Assertions:** To verify protocol compliance directly on the bus.
+- **Parameters:** To make the interface reusable (e.g., `ADDR_WIDTH`).
+
+### Modports (LRM Clause 25.5)
+`modport` lists provide directional views of the interface signals.
+- **Safety:** Prevents accidental multiple drivers.
+- **Clarity:** Documents the intent of the connection.
+- **Synthesis:** Helps synthesis tools understand the data flow.
+
+## Make It Work
+1.  **Define the Signals:** List all wires in the interface.
+2.  **Define Modports:** Create a modport for each type of component that connects to the interface (Master, Slave, Monitor).
+3.  **Instantiate:** Create an instance of the interface in your top-level testbench.
+4.  **Connect:** Pass the interface instance to the module ports. Use the modport name in the module definition: `module m (my_if.master ifc);`.
+
+## Practice & Reinforce
+- **Quiz:** Test your knowledge of interfaces and modports.
+- **Lab:** Refactor a legacy testbench to use interfaces.
+
+## References & Next Topics
+- **IEEE 1800-2023 Standard:**
+    - Clause 25: Interfaces
+- **Next:** [F4C: Synchronizing with Clocking and Program Blocks](../F4C_Clocking_Blocks)
+
+<Quiz
+  questions={[
+    {
+      question: 'What is the primary purpose of a modport?',
+      answers: [
+        { text: 'To define the clock frequency', correct: false },
+        { text: 'To define signal directions for a specific connection', correct: true },
+        { text: 'To group signals together', correct: false },
+        { text: 'To create a new hierarchy', correct: false }
+      ],
+      explanation:
+        'Modports (module ports) restrict access to interface signals, defining them as inputs, outputs, or inouts for the connected module.'
+    },
+    {
+      question: 'Can an interface contain assertions?',
+      answers: [
+        { text: 'No, assertions must be in modules', correct: false },
+        { text: 'Yes, this is a great place for protocol checks', correct: true },
+        { text: 'Only if it has no modports', correct: false },
+        { text: 'Only concurrent assertions', correct: false }
+      ],
+      explanation:
+        'Interfaces are ideal for protocol assertions (SVA) because they see all the relevant signals in one place.'
+    }
+  ]}
+/>

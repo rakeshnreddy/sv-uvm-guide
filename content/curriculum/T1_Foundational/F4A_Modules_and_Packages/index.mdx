@@ -1,0 +1,149 @@
+---
+title: "F4A: Structuring Designs with Modules and Packages"
+description: "Wire up designs and verification harnesses with modules and packages that keep signal intent crystal clear."
+flashcards: "F4A_Modules_and_Packages"
+---
+
+import { InteractiveCode, Quiz } from '@/components/ui';
+
+## Quick Take
+- **What it is:** The fundamental building blocks of SystemVerilog—**modules** for hierarchy and **packages** for shared definitions.
+- **Why it matters:** Modules encapsulate behavior and structure, while packages prevent "copy-paste" errors by centralizing types and constants.
+- **The Analogy:** Think of a **module** as a circuit board with specific inputs and outputs. A **package** is the technical manual or standard library that defines the connectors and protocols used across all those boards.
+
+## Build Your Mental Model
+### The Hierarchy and the Library
+<div className="my-8 rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur shadow-2xl">
+  <Image
+    src="/visuals/rtl-testbench-blueprint.svg"
+    alt="Diagram showing module and package relationships"
+    width={720}
+    height={360}
+    sizes="(min-width: 1024px) 720px, 100vw"
+    className="w-full"
+  />
+</div>
+
+### Interactive Example: Shared Definitions
+<InteractiveCode
+  language="systemverilog"
+  fileName="modules_and_packages.sv"
+  code={`
+package bus_pkg;
+  // LRM Clause 26: Packages
+  typedef enum logic [1:0] {IDLE, READ, WRITE} bus_cmd_e;
+  
+  typedef struct packed {
+    bus_cmd_e cmd;
+    logic [31:0] addr;
+    logic [31:0] data;
+  } bus_txn_s;
+  
+  function automatic logic [31:0] get_default_addr();
+    return 32'h1000_0000;
+  endfunction
+endpackage
+
+module dut (
+  input logic clk,
+  input bus_pkg::bus_txn_s txn, // Direct package reference
+  output logic ready
+);
+  // LRM Clause 23: Modules
+  import bus_pkg::*; // Wildcard import for convenience
+  
+  always_ff @(posedge clk) begin
+    if (txn.cmd == WRITE) begin
+      // ... handle write ...
+    end
+  end
+endmodule
+
+module tb_top;
+  import bus_pkg::*;
+  
+  logic clk = 0;
+  bus_txn_s txn; // Type available via import
+  logic ready;
+  
+  always #5 clk = ~clk;
+  
+  dut u_dut (
+    .clk(clk),
+    .txn(txn),
+    .ready(ready)
+  );
+  
+  initial begin
+    txn.addr = get_default_addr(); // Function from package
+    txn.cmd = READ;
+    // ...
+  end
+endmodule
+  `}
+  explanationSteps={[
+    { target: "1-14", title: "Packages Centralize Knowledge", explanation: "Instead of redefining `bus_cmd_e` in every file, we define it once in `bus_pkg`. This ensures the DUT and Testbench agree on the protocol." },
+    { target: "16-29", title: "Modules Encapsulate Behavior", explanation: "The `dut` module defines a hardware boundary. It uses types from `bus_pkg` to define its ports, ensuring type safety." },
+    { target: "31-51", title: "Top-Level Integration", explanation: "`tb_top` imports the package to drive the DUT. Note how `bus_txn_s` is used for the connection signal `txn`." }
+  ]}
+/>
+
+## Key Concepts
+
+### Modules (LRM Clause 23)
+The `module` is the basic unit of hierarchy in SystemVerilog. It can contain:
+- **Ports:** Inputs, outputs, and inouts.
+- **Parameters:** Constants to customize the module instance.
+- **Processes:** `initial`, `always`, `always_ff`, `always_comb`.
+- **Instances:** Sub-modules.
+
+### Packages (LRM Clause 26)
+A `package` is a namespace for shared declarations. It allows you to:
+- **Share Types:** `typedef`, `enum`, `struct`.
+- **Share Constants:** `parameter`, `localparam`.
+- **Share Logic:** `function`, `task`.
+
+**Best Practice:** Always put user-defined types in a package. Never define a `struct` or `enum` inside a port list or module if it needs to be shared.
+
+## Make It Work
+1.  **Identify Shared Types:** Look for `struct`s, `enum`s, or `const`s that are used in multiple modules or the testbench.
+2.  **Create a Package:** Move these definitions into a `package my_pkg; ... endpackage` block.
+3.  **Import:** Use `import my_pkg::*;` in your modules or interfaces to access the definitions.
+4.  **Compile Order:** Ensure the package file is compiled *before* any file that imports it.
+
+## Practice & Reinforce
+- **Quiz:** Check your understanding of modules and packages.
+- **Refactor:** Take a legacy design with scattered `typedef`s and consolidate them into a package.
+
+## References & Next Topics
+- **IEEE 1800-2023 Standard:**
+    - Clause 23: Modules and Hierarchy
+    - Clause 26: Packages
+- **Next:** [F4B: Bundling Signals with Interfaces and Modports](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports)
+
+<Quiz
+  questions={[
+    {
+      question: 'Why should you use a package for struct definitions?',
+      answers: [
+        { text: 'It makes the simulation run faster', correct: false },
+        { text: 'It ensures the DUT and Testbench use the exact same type definition', correct: true },
+        { text: 'It is required by the syntax', correct: false },
+        { text: 'It allows you to use the struct in a clocking block', correct: false }
+      ],
+      explanation:
+        'Defining types in a package prevents "type incompatibility" errors and ensures that the producer and consumer of data agree on its format.'
+    },
+    {
+      question: 'How do you make package contents available in a module?',
+      answers: [
+        { text: 'Using the `include` keyword', correct: false },
+        { text: 'Using the `import` keyword', correct: true },
+        { text: 'Instantiating the package', correct: false },
+        { text: 'Packages are automatically available', correct: false }
+      ],
+      explanation:
+        'The `import` keyword brings package identifiers into the current scope. `import pkg::*` imports everything, while `import pkg::item` imports a specific item.'
+    }
+  ]}
+/>
