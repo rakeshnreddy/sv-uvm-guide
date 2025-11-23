@@ -165,6 +165,13 @@ const components = {
   ModportExplorer: dynamic(() => import('@/components/visuals/ModportExplorer').then(mod => mod.ModportExplorer), { ssr: false }),
   EventRegionGame: dynamic(() => import('@/components/visuals/EventRegionGame'), { ssr: false }),
   SignednessVisualizer: dynamic(() => import('@/components/visuals/SignednessVisualizer'), { ssr: false }),
+  DesignGapChart: dynamic(() => import('@/components/visuals/DesignGapChart'), { ssr: false }),
+  LogicStateDiagram: dynamic(() => import('@/components/visuals/LogicStateDiagram'), { ssr: false }),
+  StringMethodExplorer: dynamic(() => import('@/components/visuals/StringMethodExplorer'), { ssr: false }),
+  EnumMethodVisualizer: dynamic(() => import('@/components/visuals/EnumMethodVisualizer'), { ssr: false }),
+  OperatorVisualizer: dynamic(() => import('@/components/visuals/OperatorVisualizer'), { ssr: false }),
+  ArrayMethodExplorer: dynamic(() => import('@/components/visuals/ArrayMethodExplorer'), { ssr: false }),
+  MailboxSemaphoreGame: dynamic(() => import('@/components/visuals/MailboxSemaphoreGame'), { ssr: false }),
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {

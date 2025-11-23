@@ -96,7 +96,7 @@ const SystemVerilog3DVisualizer: React.FC<SystemVerilog3DVisualizerProps> = ({
       navigationMethod(nextUrl, { scroll: false });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [scene]);
+  }, [scene, searchParams]);
 
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {

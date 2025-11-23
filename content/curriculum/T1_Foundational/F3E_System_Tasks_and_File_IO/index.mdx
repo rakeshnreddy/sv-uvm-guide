@@ -1,0 +1,143 @@
+---
+title: "F3E: System Tasks and File I/O"
+description: "Interact with the simulator kernel: print messages, cast types, generate random numbers, and read/write files."
+flashcards: "F3E_System_Tasks"
+---
+
+import { InteractiveCode, Quiz } from '@/components/ui';
+
+## Quick Take
+- **What it is:** Built-in functions starting with `$` that perform system-level operations.
+- **Why it matters:** You can't verify what you can't see. System tasks are your window into the simulation (printing logs) and your bridge to the outside world (reading test vectors).
+- **The Analogy:** If SystemVerilog is the engine, system tasks are the dashboard gauges and the fuel port.
+
+## Build Your Mental Model
+
+### 1. Printing and Formatting
+- **`$display`**: Prints a line to the console (like `printf` + `\n`).
+- **`$write`**: Prints without a newline.
+- **`$monitor`**: Prints *whenever* a signal in the argument list changes. (Use sparingly!).
+- **`$error`, `$fatal`**: Report severity levels.
+
+```systemverilog
+initial begin
+  int val = 42;
+  $display("Value is %0d", val); // %0d removes leading spaces
+  $display("Hex: %h, Bin: %b", val, val);
+  $error("Something went wrong!"); // Increments error count
+end
+```
+
+### 2. Dynamic Casting (`$cast`)
+Safely converts between types, especially useful for class polymorphism (Downcasting).
+
+```systemverilog
+BaseClass base_h;
+DerivedClass derived_h;
+
+if (!$cast(derived_h, base_h)) begin
+  $error("Cast failed! base_h does not point to a DerivedClass object");
+end
+```
+
+### 3. Randomization (`$urandom`)
+Generates random numbers without the overhead of a class.
+
+- **`$urandom`**: Returns a 32-bit unsigned random integer.
+- **`$urandom_range(max, min)`**: Returns a number in the specified range.
+
+```systemverilog
+int delay;
+delay = $urandom_range(10, 5); // Random between 5 and 10
+#(delay);
+```
+
+### 4. File I/O
+Read and write files directly from the testbench.
+
+- **`$fopen`**: Open a file.
+- **`$fdisplay`**: Write to a file.
+- **`$fscanf`**: Read formatted data.
+- **`$fclose`**: Close the file.
+
+## Interactive Example: The Logger
+<InteractiveCode
+  language="systemverilog"
+  fileName="file_io_demo.sv"
+  code={`
+module file_io_demo;
+  int file_h;
+  int read_val;
+  int status;
+
+  initial begin
+    // 1. Write to a file
+    file_h = $fopen("log.txt", "w");
+    if (file_h == 0) $fatal("Could not open file!");
+    
+    $fdisplay(file_h, "Timestamp: %0t, Data: %h", $time, 32'hAABBCCDD);
+    $fdisplay(file_h, "12345"); // Write a number
+    
+    $fclose(file_h);
+    
+    // 2. Read back from the file
+    file_h = $fopen("log.txt", "r");
+    
+    // Skip first line (just a demo hack, normally use fgets)
+    void'($fscanf(file_h, "%s %s %s %s", status, status, status, status)); 
+    
+    // Read the number
+    status = $fscanf(file_h, "%d", read_val);
+    if (status == 1)
+      $display("Read back value: %0d", read_val);
+      
+    $fclose(file_h);
+  end
+endmodule
+`}
+  explanationSteps={[
+    { target: "8-9", title: "Opening Files", explanation: "Always check if the file handle is non-zero. 0 means failure." },
+    { target: "11-12", title: "Writing", explanation: "`$fdisplay` works exactly like `$display` but targets a file handle." },
+    { target: "23", title: "Reading", explanation: "`$fscanf` parses the file content into variables. It returns the number of items successfully matched." }
+  ]}
+/>
+
+## Common Pitfalls
+- **`$monitor` Spam:** `$monitor` runs forever in the background. Having multiple active monitors can clutter logs. Prefer explicit `$display` in loops.
+- **File Handles:** Forgetting to `$fclose` can lead to resource leaks or incomplete writes (buffering).
+- **`$cast` Return Value:** Always check the return value of `$cast`. If you ignore it and the cast fails, the destination variable remains unchanged (potentially null), leading to crashes later.
+
+## Interview Questions
+
+<Card className="mt-8 border-slate-700 bg-slate-900">
+  <CardHeader>
+    <CardTitle>Ready for the Interview?</CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-4">
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        What is the difference between `$display`, `$strobe`, and `$monitor`?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p><strong>`$display`</strong> executes immediately in the Active region.</p>
+        <p><strong>`$strobe`</strong> executes at the end of the time step (Postponed region), ensuring all assignments for that time are done. Useful for debugging race conditions.</p>
+        <p><strong>`$monitor`</strong> is a background process that prints whenever its arguments change, also at the end of the time step.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        How do you generate a random number within a class constraint vs. procedurally?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>Inside a class, you use `rand` variables and `obj.randomize()`. Procedurally (e.g., in a module or simple function), you use system tasks like `$urandom` or `$urandom_range`. The class-based solver is much more powerful (supports complex constraints), while `$urandom` is faster for simple needs.</p>
+      </div>
+    </details>
+  </CardContent>
+</Card>
+
+## References
+- IEEE 1800-2023 §20 (System Tasks)
+- IEEE 1800-2023 §21 (I/O System Tasks)

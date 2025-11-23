@@ -1,0 +1,119 @@
+---
+title: "F3D: Interprocess Communication"
+description: "Coordinate parallel threads safely using Semaphores and Mailboxes."
+flashcards: "F3D_IPC"
+---
+
+import { InteractiveCode, Quiz } from '@/components/ui';
+import MailboxSemaphoreGame from '@/components/visuals/MailboxSemaphoreGame';
+
+## Quick Take
+- **What it is:** Mechanisms for threads to talk to each other (`mailbox`) or share resources (`semaphore`).
+- **Why it matters:** In a real testbench, your Driver needs to get data from the Sequencer, and multiple Drivers might need to access the same Bus. You need thread-safe ways to handle this.
+- **The Analogy:**
+    - **Semaphore:** A single bathroom key. Only one person can use it at a time.
+    - **Mailbox:** A physical mailbox. The postman puts letters in, you take them out. If it's full, the postman waits. If it's empty, you wait.
+
+## Build Your Mental Model
+
+### The Traffic Controller
+Visualize how threads block and unblock based on resource availability.
+
+<MailboxSemaphoreGame />
+
+### 1. Semaphores (The Key)
+Used for **mutual exclusion**.
+- `new(n)`: Create with `n` keys.
+- `get(n)`: Grab `n` keys (blocks if not available).
+- `put(n)`: Return `n` keys.
+- `try_get(n)`: Non-blocking attempt.
+
+```systemverilog
+semaphore key = new(1); // Single key
+
+initial begin
+  fork
+    begin
+      key.get(1); // Grab key
+      // Critical Section: Drive Bus
+      #10;
+      key.put(1); // Return key
+    end
+    begin
+      #2;
+      key.get(1); // BLOCKS here until Thread 1 is done
+      // Critical Section
+      key.put(1);
+    end
+  join
+end
+```
+
+### 2. Mailboxes (The Pipe)
+Used for **data transfer** between threads.
+- `new(bound)`: Create with size `bound` (0 = infinite).
+- `put(obj)`: Place object (blocks if full).
+- `get(obj)`: Retrieve object (blocks if empty).
+- `peek(obj)`: Look at data without removing.
+
+```systemverilog
+mailbox #(int) mbx = new(2); // Capacity 2
+
+initial begin
+  fork
+    // Producer
+    begin
+      for (int i=0; i<5; i++) begin
+        mbx.put(i); // Blocks if full
+        $display("Sent %0d", i);
+      end
+    end
+    // Consumer
+    begin
+      int val;
+      forever begin
+        mbx.get(val); // Blocks if empty
+        $display("Got %0d", val);
+      end
+    end
+  join
+end
+```
+
+## Common Pitfalls
+- **Deadlock:** Thread A has Key 1 and wants Key 2. Thread B has Key 2 and wants Key 1. Both wait forever.
+- **Type Safety:** Always use parameterized mailboxes (`mailbox #(type)`) instead of generic ones to avoid runtime casting errors.
+- **Zero-Size Mailbox:** `new(0)` creates an unbounded mailbox. It never blocks on `put()`, which can lead to memory exhaustion if the consumer is too slow.
+
+## Interview Questions
+
+<Card className="mt-8 border-slate-700 bg-slate-900">
+  <CardHeader>
+    <CardTitle>Ready for the Interview?</CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-4">
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        What is the difference between a mailbox and a queue?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>A <strong>queue</strong> is just a data structure; pushing/popping is non-blocking. A <strong>mailbox</strong> is a synchronization primitive; `put/get` are blocking tasks that suspend the thread until the operation is possible. Use mailboxes for IPC; use queues for local storage.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        How does `try_get()` differ from `get()`?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>`get()` is a blocking task. `try_get()` is a function that returns 1 (success) or 0 (failure) immediately. It allows a thread to do something else if the resource isn't ready, rather than sleeping.</p>
+      </div>
+    </details>
+  </CardContent>
+</Card>
+
+## References
+- IEEE 1800-2023 §15.3 (Semaphores)
+- IEEE 1800-2023 §15.4 (Mailboxes)

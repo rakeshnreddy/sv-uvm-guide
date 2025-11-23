@@ -59,6 +59,17 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "F2C: Operators and Expressions",
+        "slug": "F2C_Operators_and_Expressions",
+        "topics": [
+          {
+            "title": "F2C: Operators and Expressions",
+            "slug": "index",
+            "description": "Master the art of bit manipulation with SystemVerilog's powerful operator set."
+          }
+        ]
+      },
+      {
         "title": "F2: Data Types & Structures",
         "slug": "F2_Data_Types_and_Structures",
         "topics": [
@@ -76,6 +87,28 @@ export const curriculumData: Module[] = [
             "title": "F2B: Dynamic Data Structures",
             "slug": "dynamic_structures",
             "description": "Manipulate dynamic arrays, queues, and associative arrays with an IEEE 1800-2023 guided workflow."
+          }
+        ]
+      },
+      {
+        "title": "F3D: Interprocess Communication",
+        "slug": "F3D_Interprocess_Communication",
+        "topics": [
+          {
+            "title": "F3D: Interprocess Communication",
+            "slug": "index",
+            "description": "Coordinate parallel threads safely using Semaphores and Mailboxes."
+          }
+        ]
+      },
+      {
+        "title": "F3E: System Tasks and File I/O",
+        "slug": "F3E_System_Tasks_and_File_IO",
+        "topics": [
+          {
+            "title": "F3E: System Tasks and File I/O",
+            "slug": "index",
+            "description": "Interact with the simulator kernel: print messages, cast types, generate random numbers, and read/write files."
           }
         ]
       },

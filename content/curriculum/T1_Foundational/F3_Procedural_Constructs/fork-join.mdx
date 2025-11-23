@@ -83,6 +83,41 @@ initial begin
 end
 ```
 
+```
+
+## Synchronization with Events
+_The lightweight handshake._
+
+Sometimes you don't need a full channel to talk between threads—you just need a signal flare. SystemVerilog `event`s are perfect for this.
+
+- **`-> e`**: Trigger the event (fire the flare).
+- **`@e`**: Wait for the event edge (watch for the flare).
+- **`wait(e.triggered)`**: Wait until the event *has been triggered* in the current time step.
+
+> [!WARNING]
+> **The "Missed Event" Race**
+> If the trigger `-> e` happens *before* the listener executes `@e` (even by a delta cycle), the listener will wait forever. Use `wait(e.triggered)` if the order is uncertain within the same timestep.
+
+```systemverilog
+event handshake;
+
+initial begin
+  fork
+    begin
+      // Thread 1: Producer
+      #10;
+      $display("Producer ready");
+      -> handshake; // Trigger
+    end
+    begin
+      // Thread 2: Consumer
+      wait(handshake.triggered); // Safe wait
+      $display("Consumer received handshake");
+    end
+  join
+end
+```
+
 ## Interactive Example: Timeout Watchdog
 This example uses `fork...join_any` to race a task against a timer. This is a fundamental pattern in verification.
 
@@ -128,6 +163,36 @@ endmodule
 1.  **Experiment**: Change the delay in the stimulus block to `#150` and observe the timeout message.
 2.  **Refactor**: Change `join_any` to `join` and see how the behavior changes (it will wait for BOTH, defeating the purpose of a timeout).
 3.  **Advanced**: Create a "heartbeat" monitor using `fork...join_none` that prints a message every 100ns until a test_done flag is set.
+
+## Interview Questions
+
+<Card className="mt-8 border-slate-700 bg-slate-900">
+  <CardHeader>
+    <CardTitle>Ready for the Interview?</CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-4">
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        What is the difference between `fork...join` and `fork...join_any`?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p><strong>`fork...join`</strong> blocks the parent process until <strong>ALL</strong> spawned threads complete.</p>
+        <p><strong>`fork...join_any`</strong> blocks the parent process until <strong>ANY ONE</strong> of the spawned threads completes. The remaining threads continue running in the background unless explicitly disabled.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        How do you ensure a `fork...join_none` block doesn't create a race condition with the code immediately following it?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>Threads spawned by `fork...join_none` do not start executing until the parent process hits a blocking statement (like `#` or `@`). If you need them to start "immediately" but still return control, you might need an explicit `#0` delay, though this is rare in modern UVM which handles phasing for you.</p>
+      </div>
+    </details>
+  </CardContent>
+</Card>
 
 ## References
 - IEEE Std 1800-2023 §9.3.2 (Parallel blocks)
