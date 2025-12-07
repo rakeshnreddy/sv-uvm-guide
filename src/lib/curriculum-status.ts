@@ -48,9 +48,20 @@ const tierDefaults: Record<Module['tier'], StatusMetadata> = {
 };
 
 const overrides: Record<string, Partial<StatusMetadata>> = {
-  'T1_Foundational/F1_Why_Verification/index': {
-    lastUpdated: '2025-09-23',
-    notes: 'Industry impact data refreshed with 2024/2025 studies; queue SME fact-check.',
+  'T1_Foundational/F1A_The_Cost_of_Bugs/index': {
+    status: 'complete',
+    lastUpdated: '2025-11-23',
+    notes: 'Revamped with interactive cost-of-bug graph and carousel.',
+  },
+  'T1_Foundational/F1B_The_Verification_Mindset/index': {
+    status: 'complete',
+    lastUpdated: '2025-11-23',
+    notes: 'Added verification methodologies diagram and bug hunt game.',
+  },
+  'T1_Foundational/F1C_Why_SystemVerilog/index': {
+    status: 'complete',
+    lastUpdated: '2025-11-23',
+    notes: 'Includes interactive Verilog vs SV comparison.',
   },
   'T1_Foundational/F2_SystemVerilog_Basics/index': {
     status: 'in-review',

@@ -172,6 +172,7 @@ const components = {
   OperatorVisualizer: dynamic(() => import('@/components/visuals/OperatorVisualizer'), { ssr: false }),
   ArrayMethodExplorer: dynamic(() => import('@/components/visuals/ArrayMethodExplorer'), { ssr: false }),
   MailboxSemaphoreGame: dynamic(() => import('@/components/visuals/MailboxSemaphoreGame'), { ssr: false }),
+  VerilogVsSystemVerilog: dynamic(() => import('@/components/visuals/VerilogVsSystemVerilog'), { ssr: false }),
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {

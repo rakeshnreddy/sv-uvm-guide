@@ -86,7 +86,7 @@ The curriculum is organized into a four-tiered structure, based on the principle
 
 If you are new to SystemVerilog and verification, we recommend starting with the first module of Tier 1:
 
-[/T1_Foundational/F1_Why_Verification/](/T1_Foundational/F1_Why_Verification/)
+[/T1_Foundational/F1A_The_Cost_of_Bugs/](/T1_Foundational/F1A_The_Cost_of_Bugs/)
 
 ## Deployment
 

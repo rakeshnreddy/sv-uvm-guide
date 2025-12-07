@@ -39,7 +39,7 @@ const FirstBugHuntGame = () => {
   };
 
   return (
-    <div className="relative grid gap-6 rounded-3xl border border-emerald-400/40 bg-slate-950/80 p-6 text-white shadow-xl lg:grid-cols-[1.2fr,1fr]">
+    <div className="relative grid gap-6 rounded-3xl border border-emerald-400/40 bg-slate-950/80 p-6 text-white shadow-xl lg:grid-cols-[1.2fr,1fr]" data-testid="first-bug-hunt-game">
       <div className="space-y-5">
         <h3 className="text-sm font-semibold uppercase tracking-[0.35em] text-emerald-300">
           Your First Mission, Should You Choose to Accept It...
@@ -55,9 +55,8 @@ const FirstBugHuntGame = () => {
           <button
             type="button"
             onClick={() => triggerSuccess("spec")}
-            className={`mt-2 w-full rounded-xl border px-4 py-3 text-left text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 ${
-              highlight === "spec" ? "border-emerald-400 bg-emerald-500/20" : "border-white/10 bg-white/5 hover:bg-white/10"
-            }`}
+            className={`mt-2 w-full rounded-xl border px-4 py-3 text-left text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 ${highlight === "spec" ? "border-emerald-400 bg-emerald-500/20" : "border-white/10 bg-white/5 hover:bg-white/10"
+              }`}
           >
             The counter shall increment once per cycle and produce the sequence 0 → 1 → … → 7 before wrapping to 0.
           </button>
@@ -76,11 +75,10 @@ const FirstBugHuntGame = () => {
                   key={`sample-${index}`}
                   type="button"
                   onClick={() => triggerSuccess("waveform")}
-                  className={`flex h-14 flex-col items-center justify-center rounded-xl border text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 ${
-                    isFault
+                  className={`flex h-14 flex-col items-center justify-center rounded-xl border text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 ${isFault
                       ? "border-rose-400/70 bg-rose-500/10 text-rose-100 hover:bg-rose-500/20"
                       : "border-white/10 bg-white/5 text-slate-100 hover:bg-white/10"
-                  } ${highlight === "waveform" && isFault ? "ring-2 ring-rose-400" : ""}`}
+                    } ${highlight === "waveform" && isFault ? "ring-2 ring-rose-400" : ""}`}
                   aria-label={isFault ? "Wraps early at 6" : `Sample ${value}`}
                 >
                   <span className="text-xs uppercase tracking-[0.2em]">Cycle {index}</span>
@@ -102,11 +100,10 @@ const FirstBugHuntGame = () => {
           <button
             type="button"
             onClick={() => triggerSuccess("code")}
-            className={`mt-3 w-full rounded-xl border px-4 py-3 text-left text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 ${
-              highlight === "code"
+            className={`mt-3 w-full rounded-xl border px-4 py-3 text-left text-sm transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-400 ${highlight === "code"
                 ? "border-emerald-400 bg-emerald-500/20"
                 : "border-white/10 bg-white/5 hover:bg-white/10"
-            }`}
+              }`}
           >
             🔍 Highlight the condition <code className="ml-1 rounded bg-black/50 px-1">count &lt; 3'd7</code>
           </button>

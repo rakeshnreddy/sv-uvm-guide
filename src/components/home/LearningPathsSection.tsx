@@ -16,7 +16,7 @@ const learningPathConfigs = [
     time: '20-30 hours',
     skills: ['SystemVerilog Basics', 'Data Types', 'Procedural Blocks', 'Your First Testbench'],
     description: 'Start from scratch. No prior verification knowledge needed.',
-    slug: ['T1_Foundational', 'F1_Why_Verification'],
+    slug: ['T1_Foundational', 'F1A_The_Cost_of_Bugs'],
   },
   {
     tier: 'Intermediate',

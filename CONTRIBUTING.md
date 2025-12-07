@@ -17,7 +17,7 @@ Our vision is to be the world's leading open-source, curriculum-based guide for 
 All new content should be created as `.mdx` files within the `content/curriculum/` directory. The content is organized into a three-level hierarchy:
 
 1.  **Tier:** The top-level directory, representing a broad level of expertise (e.g., `T1_Foundational`, `T2_Intermediate`).
-2.  **Module:** A subdirectory within a tier, representing a specific topic (e.g., `F1_Why_Verification`).
+2.  **Module:** A subdirectory within a tier, representing a specific topic (e.g., `F1A_The_Cost_of_Bugs`).
 3.  **Topic:** An `.mdx` file within a module, representing a specific sub-topic (e.g., `index.mdx`).
 
 All new content must follow this structure.

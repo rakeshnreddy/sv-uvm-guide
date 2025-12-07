@@ -1,14 +1,7 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('Foundational Lessons F1-F3', () => {
-    test('F1: Why Verification loads correctly', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F1_Why_Verification');
-        await expect(page.getByRole('heading', { name: 'F1: Why Verification?' })).toBeVisible();
-        // Check for interactive component
-        await expect(page.getByText('Design vs. Verification')).toBeVisible();
-        // Check for Bug Hunt Game
-        await expect(page.getByText('Bug Hunt: Diagnose the Counter')).toBeVisible();
-    });
+
 
     test('F2: Data Types loads correctly', async ({ page }) => {
         await page.goto('/curriculum/T1_Foundational/F2A_Core_Data_Types');

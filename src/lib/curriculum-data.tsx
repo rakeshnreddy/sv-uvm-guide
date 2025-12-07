@@ -26,13 +26,35 @@ export const curriculumData: Module[] = [
     "tier": "T1",
     "sections": [
       {
-        "title": "F1: Why Verification?",
-        "slug": "F1_Why_Verification",
+        "title": "F1A: The Cost of Bugs",
+        "slug": "F1A_The_Cost_of_Bugs",
         "topics": [
           {
-            "title": "F1: Why Verification?",
+            "title": "F1A: The Cost of Bugs",
             "slug": "index",
-            "description": "Experience the stakes of verification through interactive stories, graphs, and your first bug hunt."
+            "description": "Understand the economic and reputational stakes of verification in the semiconductor industry."
+          }
+        ]
+      },
+      {
+        "title": "F1B: The Verification Mindset",
+        "slug": "F1B_The_Verification_Mindset",
+        "topics": [
+          {
+            "title": "F1B: The Verification Mindset",
+            "slug": "index",
+            "description": "Adopt the destructive testing philosophy and explore the methodologies used to break designs."
+          }
+        ]
+      },
+      {
+        "title": "F1C: Why SystemVerilog?",
+        "slug": "F1C_Why_SystemVerilog",
+        "topics": [
+          {
+            "title": "F1C: Why SystemVerilog?",
+            "slug": "index",
+            "description": "Discover why SystemVerilog replaced Verilog as the industry standard for verification."
           }
         ]
       },
