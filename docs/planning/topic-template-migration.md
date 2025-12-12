@@ -4,7 +4,9 @@ Use this table to track adoption of the Quick Take → References & Next Topics 
 
 | Tier | Module | Topic Path | Template Updated? | Notes |
 | --- | --- | --- | --- | --- |
-| T1 | F1: Why Verification? | `content/curriculum/T1_Foundational/F1_Why_Verification/index.mdx` | ✅ | Converted on 2025-09-17 |
+| T1 | F1A: The Cost of Bugs | `content/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index.mdx` | ✅ | Created on 2025-11-23 |
+| T1 | F1B: The Verification Mindset | `content/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index.mdx` | ✅ | Created on 2025-11-23 |
+| T1 | F1C: Why SystemVerilog | `content/curriculum/T1_Foundational/F1C_Why_SystemVerilog/index.mdx` | ✅ | Created on 2025-11-23 |
 | T1 | F2: Data Types | `content/curriculum/T1_Foundational/F2_SystemVerilog_Basics/index.mdx` | ✅ | Merged into the language basics module on 2025-09-22 |
 | T1 | F2: Digital Logic & HDL Primer | `content/curriculum/T1_Foundational/F2_SystemVerilog_Primer/index.mdx` | 🔁 | Retired module; content folded into F2 SystemVerilog Basics on 2025-09-23 |
 | T1 | F3: Procedural Constructs | `content/curriculum/T1_Foundational/F3_Procedural_Constructs/index.mdx` | ✅ | Updated with animated timeline + expanded narrative on 2025-09-17 |
