@@ -10,153 +10,73 @@ import SignednessVisualizer from '@/components/visuals/SignednessVisualizer';
 import StringMethodExplorer from '@/components/visuals/StringMethodExplorer';
 import EnumMethodVisualizer from '@/components/visuals/EnumMethodVisualizer';
 
-## The Atoms of Hardware - More Than Just Bits
-_In hardware, every “bit” has a story._
+## Quick Take
+- **What it is:** Nets, variables, and value systems that define how signals resolve, store, and surface contention.
+- **Why it matters:** Using 2-state math for DUT busses hides X/Z; driving a net procedurally masks contention bugs. Type intent makes verification observability possible.
+- **The Analogy:** Nets are copper traces; variables are flip-flops and RAM cells. Pick the right material before you solder the circuit together.
 
-SystemVerilog data types are not abstract software variables—they are blueprints for transistors, wires, and storage. Each declaration tells the synthesis tool whether to emit a routed net, a bank of flip-flops, or arithmetic hardware. Make the wrong choice and you either hide a real bug behind forced zeros or fabricate logic the chip never needed (IEEE 1800-2023 §6).
-
-- **Nets (e.g., `wire`, `tri`)** represent physical connections continuously driven by other elements. They resolve conflicts, surface floating nodes, and happily take on `Z` when nobody is home (§6.6–§6.7).
-- **Variables (e.g., `logic`, `bit`, `int`, `byte`, `reg`)** model storage written procedurally inside `always` blocks or class methods. Their initial value and value system determine how quickly an uninitialised bug becomes visible (§6.8–§6.10).
-
-Use this mental model: nets are the copper traces on a board, while variables are the latches and registers feeding those traces.
-
-## The Two Universes: 2-State vs. 4-State Logic
-_Embracing the unknown: why `X` is your best friend._
-
-The simulator tracks more than binary `0` and `1`. Four-state types surface hardware realities that software programmers rarely face—contention (`X`) and high impedance (`Z`). Choosing the wrong value system can either hide faults or slow verification to a crawl.
-
-- **2-state types (`bit`, `int`, `byte`, `shortint`, …)** only take `0/1`. They simulate fast and map neatly to arithmetic hardware, but any attempt to assign `X/Z` collapses to `0` (§6.4).
-- **4-state types (`logic`, `reg`, `wire`, `tri`, …)** represent `0/1/X/Z`. They are essential for verification and for modeling shared resources. Their defaults (`'x` for variables, `'z` for nets) force you to handle reset and contention deliberately (§6.1, §6.6).
-
+## Build Your Mental Model
+### Value Systems at a Glance
 <LogicStateDiagram />
 
-## Interactive Data Type Explorer (Core Component)
-_Get your hands dirty: a data type sandbox._
+- **2-state (`bit`, `int`, `byte`):** Fast math, no unknowns. Great for counters, scoreboard arithmetic, and randomization helpers.
+- **4-state (`logic`, `wire`, `tri`):** Surfaces contention and float. Use on DUT interfaces, resets, and any shared resource.
+- Default values are teaching moments: variables start as `'x`, nets as `'z`. They force you to design reset and drive strategy early.
 
-Meet the explorer: pick a type, click through its legal values, and watch the properties panel update in real time. Each selection is backed by the IEEE 1800-2023 LRM, so you always know which clause defends your coding choice.
-
-<CurriculumDataTypeExplorer />
-
-## Signed vs. Unsigned: The Silent Killer
-_Positive or negative? Your ALU cares._
-
-Signedness changes how the simulator interprets the exact same bits. Forgetting that `logic [3:0]` is unsigned burns many first-time SystemVerilog authors.
-
-```systemverilog
-int signed_var = -4;
-logic [3:0] unsigned_var = 4'b1100;
-
-display_signed_and_unsigned();
-// signed_var   = -4  // two's complement 32-bit signed
-// unsigned_var = 12  // 4'b1100 interpreted as unsigned (IEEE 1800-2023 §6.10)
-```
-
-<SignednessVisualizer />
-
-<div className="my-8 space-y-6">
-  <div className="grid gap-4 md:grid-cols-2">
-    <Card className="bg-background">
-      <CardHeader>
-        <CardTitle className="text-base">Two’s complement intuition</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-muted-foreground">`-4` in a signed `int` expands to 32 bits: `1111_..._1100`. Arithmetic treats the MSB as negative weight.</p>
-      </CardContent>
-    </Card>
-    <Card className="bg-background">
-      <CardHeader>
-        <CardTitle className="text-base">Unsigned nibble reality</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-muted-foreground">`logic [3:0] = 4'b1100` keeps the same bits, but `12` is the only legal interpretation unless you recast with `$signed`.</p>
-      </CardContent>
-    </Card>
-  </div>
+### Nets vs. Variables—Pick the Right Driver
+<div className="grid gap-4 md:grid-cols-2">
+  <Card className="bg-background">
+    <CardHeader>
+      <CardTitle className="text-base">Nets (structural)</CardTitle>
+    </CardHeader>
+    <CardContent className="space-y-2 text-sm text-muted-foreground">
+      <p>Continuously driven, allow multiple drivers, resolve to `X` on conflict, default to `'z`.</p>
+      <p>Examples: `wire`, `tri`, `wand` for shared buses or pad rings.</p>
+    </CardContent>
+  </Card>
+  <Card className="bg-background">
+    <CardHeader>
+      <CardTitle className="text-base">Variables (procedural)</CardTitle>
+    </CardHeader>
+    <CardContent className="space-y-2 text-sm text-muted-foreground">
+      <p>Written in `always_comb`/`always_ff` or class methods. Single driver, default to `'x`.</p>
+      <p>Examples: `logic`, `bit`, `int`, `byte` for registers, scoreboards, and transactions.</p>
+    </CardContent>
+  </Card>
 </div>
 
-Use these tactics:
+### Signedness and Type Families
+<SignednessVisualizer />
 
-- Declare `logic signed [WIDTH-1:0]` or cast with `$signed()` when negative arithmetic matters.
-- Keep scoreboard math in `int`/`longint`; convert to packed logic only when you must match a bus width.
-- Remember that assignments between 4-state and 2-state types can lose `X/Z`, so guard the conversion with assertions (§6.4).
+- Declare intent up front: `logic signed [WIDTH-1:0] data_s;` or cast with `$signed()` when mixing arithmetic and packed busses.
+- Keep math in `int/longint` and only slice into packed logic at the edges. It keeps overflow and sign extension predictable.
 
-## Strings: The Unsung Hero
-_More than just testbench logs._
-
-Unlike C, SystemVerilog strings are dynamic, resizeable, and packed with built-in methods. They are essential for parsing register names, formatting reports, and manipulating file paths in UVM.
+### Strings and Enums That Pull Their Weight
 
 <StringMethodExplorer />
 
-## Enumerations: Type-Safe States
-_Stop using magic numbers._
-
-Enumerations (`enum`) define a set of named values. Unlike `parameter` constants, enums are strongly typed (mostly), preventing you from accidentally assigning a state machine variable to a FIFO depth. They also come with built-in methods for iteration, which is a lifesaver for coverage.
-
-```systemverilog
-typedef enum logic [1:0] {
-  IDLE  = 2'b00,
-  START = 2'b01,
-  BUSY  = 2'b10,
-  ERROR = 2'b11
-} state_e;
-
-state_e current_state = IDLE;
-```
+- Strings are dynamic—perfect for report formatting and path manipulation.
 
 <EnumMethodVisualizer />
 
-## Common Pitfalls
+- Enums give type safety and built-in iterators (`first()`, `next()`). They beat magic numbers for FSMs and coverage bins.
 
-> [!WARNING]
-> **X-Optimism in `if` Statements**
-> Be careful with `if (signal)` when `signal` is `X`. SystemVerilog treats `X` as false in boolean contexts.
-> ```systemverilog
-> logic a = 1'bx;
-> if (a) $display("True"); else $display("False"); // Prints "False"!
-> ```
-> This can hide bugs where an uninitialized signal causes the design to take the "safe" default path.
+## Make It Work
+- Use the explorer to test your choices against the simulator:
 
-> [!TIP]
-> **Use `===` for Exact Matching**
-> When verifying resets or checking for X propagation, use the case equality operator `===` which treats `X` and `Z` as literal values to match, unlike `==` which treats them as "don't care" or returns `X`.
+<CurriculumDataTypeExplorer />
 
-## Interview Questions
+- **Pattern:** 4-state at the interfaces, 2-state in math-heavy logic, cast when crossing the boundary.
+- **Guardrails:** Prefer `===`/`!==` for reset checks so X/Z stays visible. Add assertions when collapsing 4-state to 2-state types.
+- **Audit:** Does every signal have a reason to be packed or unpacked? If not, clarify now to avoid later lint churn.
 
-<Card className="mt-8 border-slate-700 bg-slate-900">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        What is the difference between `logic` and `wire`?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
-      </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p><strong>`wire`</strong> is a net type used to model physical connections. It resolves multiple drivers (e.g., `0` and `1` driving the same wire results in `X`).</p>
-        <p className="mt-2"><strong>`logic`</strong> is a variable type (mostly). It can be driven by procedural blocks (`always`, `initial`) or continuous assignments, but it <em>cannot</em> have multiple structural drivers. In modern SystemVerilog, `logic` is used for almost everything except tri-state buses.</p>
-      </div>
-    </details>
-
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        Why might you use a 2-state type like `bit` in a testbench?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
-      </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p><strong>Performance & Convenience:</strong> 2-state types simulate faster and consume less memory. They are ideal for loop counters, randomized data fields, and transaction handles where `X` or `Z` states are not expected or relevant.</p>
-      </div>
-    </details>
-  </CardContent>
-</Card>
-
-## Challenge: The Data Type Detective (Gamified Component)
-_Put your knowledge to the test._
-
-Earn the “Data Architect” badge by scoring at least 4 out of 5. Every answer—right or wrong—reveals the reasoning so you cement the nuances before moving to the next module.
+## Practice & Reinforce
+- Run the quiz before moving on—explanations tie back to the explorer so you see why each answer holds up under the LRM.
 
 <CurriculumDataTypeQuiz />
 
-<div className="my-8 space-y-6">
-  <p className="mt-4 text-sm text-muted-foreground">Pro tip: rerun this challenge whenever you tackle a new block. If you cannot justify why every signal is 2-state or 4-state, the DataTypeExplorer above is your debugging buddy.</p>
-</div>
+- Interview drill: explain why `logic` is safer than `reg`, and when `bit` is the right call for counters.
+
+## References & Next Topics
+- IEEE 1800-2023 §6–§7 (Nets, variables, value systems)
+- Next: [Dynamic Structures](../F2B_Dynamic_Structures/)

@@ -24,8 +24,8 @@ const tierDefaults: Record<Module['tier'], StatusMetadata> = {
   T1: {
     status: 'in-review',
     owner: 'Content Ops',
-    lastUpdated: '2025-09-22',
-    notes: 'F2/F3 refreshed—route SME accuracy + accessibility sign-off.',
+    lastUpdated: '2025-11-24',
+    notes: 'F1 completed; F2 quick-take refresh with new visuals ready for SME + accessibility pass.',
   },
   T2: {
     status: 'complete',
@@ -63,10 +63,25 @@ const overrides: Record<string, Partial<StatusMetadata>> = {
     lastUpdated: '2025-11-23',
     notes: 'Includes interactive Verilog vs SV comparison.',
   },
-  'T1_Foundational/F2_SystemVerilog_Basics/index': {
-    status: 'in-review',
-    lastUpdated: '2025-09-23',
-    notes: 'Synth vs. verification reference, datatype drill, and digital logic primer folded in; await SME review.',
+  'T1_Foundational/F2_Data_Types_and_Structures/index': {
+    status: 'complete',
+    lastUpdated: '2025-11-24',
+    notes: 'Quick Take hub rewritten with practice pathways across data type micro-lessons.',
+  },
+  'T1_Foundational/F2A_Core_Data_Types/index': {
+    status: 'complete',
+    lastUpdated: '2025-11-24',
+    notes: 'Quick Take + explorer-centered rewrite with signedness, enums, and quiz alignment.',
+  },
+  'T1_Foundational/F2B_Dynamic_Structures/index': {
+    status: 'complete',
+    lastUpdated: '2025-11-24',
+    notes: 'Queue lab, packed/unpacked playground, and 3D explorer guide dynamic storage choices.',
+  },
+  'T1_Foundational/F2C_Operators_and_Expressions/index': {
+    status: 'complete',
+    lastUpdated: '2025-11-24',
+    notes: 'Operator drill, precedence guidance, and ALU walkthrough migrated to Quick Take format.',
   },
   'T1_Foundational/F3_Procedural_Constructs/index': {
     status: 'in-review',

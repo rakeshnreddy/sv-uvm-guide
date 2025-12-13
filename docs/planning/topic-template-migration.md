@@ -7,7 +7,10 @@ Use this table to track adoption of the Quick Take → References & Next Topics 
 | T1 | F1A: The Cost of Bugs | `content/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index.mdx` | ✅ | Created on 2025-11-23 |
 | T1 | F1B: The Verification Mindset | `content/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index.mdx` | ✅ | Created on 2025-11-23 |
 | T1 | F1C: Why SystemVerilog | `content/curriculum/T1_Foundational/F1C_Why_SystemVerilog/index.mdx` | ✅ | Created on 2025-11-23 |
-| T1 | F2: Data Types | `content/curriculum/T1_Foundational/F2_SystemVerilog_Basics/index.mdx` | ✅ | Merged into the language basics module on 2025-09-22 |
+| T1 | F2: Data Types & Structures (hub) | `content/curriculum/T1_Foundational/F2_Data_Types_and_Structures/index.mdx` | ✅ | Quick Take hub with practice pathways refreshed on 2025-11-24 |
+| T1 | F2A: Core Data Types | `content/curriculum/T1_Foundational/F2A_Core_Data_Types/index.mdx` | ✅ | Quick Take rewrite with explorer + quiz alignment on 2025-11-24 |
+| T1 | F2B: Dynamic Data Structures | `content/curriculum/T1_Foundational/F2B_Dynamic_Structures/index.mdx` | ✅ | Added queue operations lab + packed/unpacked playground on 2025-11-24 |
+| T1 | F2C: Operators and Expressions | `content/curriculum/T1_Foundational/F2C_Operators_and_Expressions/index.mdx` | ✅ | Operator drill and precedence guidance migrated on 2025-11-24 |
 | T1 | F2: Digital Logic & HDL Primer | `content/curriculum/T1_Foundational/F2_SystemVerilog_Primer/index.mdx` | 🔁 | Retired module; content folded into F2 SystemVerilog Basics on 2025-09-23 |
 | T1 | F3: Procedural Constructs | `content/curriculum/T1_Foundational/F3_Procedural_Constructs/index.mdx` | ✅ | Updated with animated timeline + expanded narrative on 2025-09-17 |
 | T1 | F4: Verification Basics without UVM | `content/curriculum/T1_Foundational/F4_Verification_Basics_without_UVM/index.mdx` | 🔁 | Redirects to F1 (Verification Essentials) as of 2025-09-22 |

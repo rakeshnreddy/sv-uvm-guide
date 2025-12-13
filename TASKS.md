@@ -37,7 +37,8 @@ This file consolidates open implementation and feedback items so the team has a 
 | `CURR-REFACTOR-A-UVM-1` | Deprecate A-UVM-1 lesson and merge into I-UVM-3B | `todo` |
 | `CURR-REFACTOR-A-UVM-2` | Deprecate A-UVM-2 lesson and merge into I-UVM-1B | `todo` |
 | `CURR-REFACTOR-A-UVM-3` | Deprecate A-UVM-3 lesson and create new Callbacks lesson | `todo` |
-| `CURR-MODERNIZE-F1` | Modernize F1 lesson (Why Verification?) | `todo` |
+| `CURR-MODERNIZE-F1` | Modernize F1 lesson (Why Verification?) | `ready-for-review` |
+| `CURR-MODERNIZE-F2` | Modernize F2 data types & structures into Quick Take flow with interactives. | `ready-for-review` |
 | `CURR-MODERNIZE-I-SV-1` | Modernize I-SV-1 lesson (OOP) | `todo` |
 | `CURR-MODERNIZE-E-PERF-1` | Modernize E-PERF-1 lesson (UVM Performance) | `todo` |
 

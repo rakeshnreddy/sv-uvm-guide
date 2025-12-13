@@ -4,131 +4,72 @@ description: "Master the art of bit manipulation with SystemVerilog's powerful o
 flashcards: "F2C_Operators"
 ---
 
-import { InteractiveCode, Quiz } from '@/components/ui';
+import { InteractiveCode } from '@/components/ui';
 import OperatorVisualizer from '@/components/visuals/OperatorVisualizer';
+import { OperatorDrill } from '@/components/curriculum/f2';
 
 ## Quick Take
-- **What it is:** The syntax for manipulating bits—from simple AND/OR to complex streaming and set membership.
-- **Why it matters:** Hardware design is fundamentally about bit manipulation. SystemVerilog adds powerful operators (like `inside` and streaming `<<`) that Verilog lacked, making code more concise and readable.
-- **The Analogy:** If variables are the nouns of the language, operators are the verbs. You can't write a sentence without them.
+- **What it is:** The verbs of SystemVerilog—bitwise vs. logical operators, reductions, set membership, and streaming concatenations.
+- **Why it matters:** Misusing `==` vs `===` or `&` vs `&&` hides X-propagation bugs and breaks control flow. Precise operators make intent obvious to readers and tools.
+- **The Analogy:** Operators are the choreography that moves bits around; the same dancers perform very different routines depending on the steps you call.
 
 ## Build Your Mental Model
-
 ### The Bitwise Playground
-Visualize how bits interact. Unlike software integers, hardware vectors operate bit-by-bit.
-
 <OperatorVisualizer />
 
-### Key Operator Categories
+- Use bitwise operators when you mean per-bit math; use logical operators when you’re steering control flow with truthiness.
+- Reductions collapse vectors to parity, OR, or AND checks—perfect for flags.
 
-#### 1. Bitwise vs. Logical
-- **Bitwise (`&`, `|`, `^`, `~`)**: Operates on each bit independently. Returns a vector of the same width.
-- **Logical (`&&`, `||`, `!`)**: Treats the entire value as True (non-zero) or False (zero). Returns a 1-bit result (0 or 1).
+### Precedence and Exact Matching
+- `==`/`!=` return `X` on unknowns; `===`/`!==` treat X/Z as data and return 0/1. Reach for case equality on resets and CDC monitors.
+- Parentheses beat precedence surprises: `a & b == c` parses as `a & (b == c)`.
 
-> [!WARNING]
-> **The Classic Bug**
-> `if (a & b)` is NOT the same as `if (a && b)`.
-> - `4'b1010 & 4'b0101` is `4'b0000` (False).
-> - `4'b1010 && 4'b0101` is `True && True` -> `True`.
+### Set Membership and Streaming
+- `inside` expresses range checks concisely and uses case equality semantics. Great for opcode guards and constraint clauses.
+- Streaming concatenations (`{<<{payload}}`) reshape buses without manual slicing; specify direction (`<<` or `>>`) to keep bit order explicit.
 
-#### 2. Reduction Operators
-Collapse a vector into a single bit.
-- `&a`: AND all bits of `a` (Are all bits 1?).
-- `|a`: OR all bits of `a` (Is any bit 1?).
-- `^a`: XOR all bits of `a` (Parity check).
+### Operator Drill Station
+<OperatorDrill />
 
-#### 3. Concatenation and Replication
-- **Concatenation (`{a, b}`)**: Joins vectors together.
-- **Replication (`{n{a}}`)**: Repeats vector `a`, `n` times.
+- Click through scenarios to compare bitwise vs logical, case equality, set membership, and streaming concatenations with ready-made operands.
 
+## Make It Work
+<InteractiveCode>
 ```systemverilog
-logic [3:0] a = 4'hA; // 1010
-logic [7:0] b;
-
-b = {a, a};       // 10101010
-b = {2{a}};       // 10101010 (Same as above)
-b = {4{2'b01}};   // 01010101
-```
-
-#### 4. Set Membership (`inside`)
-Checks if a value exists in a set or range.
-
-```systemverilog
-if (val inside {1, 3, 5, [10:15]}) begin
-  // Executed if val is 1, 3, 5, or between 10 and 15 (inclusive)
-end
-```
-
-## Interactive Example: The ALU
-<InteractiveCode
-  language="systemverilog"
-  fileName="alu.sv"
-  code={`
 module alu (
-  input logic [3:0] a,
-  input logic [3:0] b,
-  input logic [2:0] op,
+  input  logic [3:0] a,
+  input  logic [3:0] b,
+  input  logic [2:0] op,
   output logic [3:0] result,
-  output logic zero
+  output logic       zero
 );
 
   always_comb begin
-    case (op)
-      3'b000: result = a + b;       // Add
-      3'b001: result = a - b;       // Sub
-      3'b010: result = a & b;       // Bitwise AND
-      3'b011: result = a | b;       // Bitwise OR
-      3'b100: result = a ^ b;       // XOR
-      3'b101: result = {a[2:0], b[3]}; // Mix (Concat)
+    unique case (op)
+      3'b000: result = a + b;                 // Add
+      3'b001: result = a - b;                 // Sub
+      3'b010: result = a & b;                 // Bitwise AND
+      3'b011: result = a | b;                 // Bitwise OR
+      3'b100: result = a ^ b;                 // XOR
+      3'b101: result = {a[2:0], b[3]};        // Concatenate slices
       default: result = '0;
     endcase
-    
+
     // Reduction operator for zero flag
     zero = ~(|result); // NOR reduction: 1 if result is 0
   end
 endmodule
-`}
-  explanationSteps={[
-    { target: "12-17", title: "Arithmetic & Bitwise", explanation: "Standard operations. Note that 'a + b' handles overflow by wrapping around unless you use an extra bit." },
-    { target: "18", title: "Concatenation", explanation: "Slicing and joining bits. Here we take lower 3 bits of A and MSB of B." },
-    { target: "23", title: "Reduction NOR", explanation: "`|result` is 1 if ANY bit is 1. Inverting it gives us the Zero flag." }
-  ]}
-/>
+```
+</InteractiveCode>
 
-## Common Pitfalls
-- **Operator Precedence:** `a & b == c` evaluates as `a & (b == c)` because `==` has higher precedence than `&`. **Always use parentheses!** `(a & b) == c`.
-- **Signed Arithmetic:** `>>>` (arithmetic shift) preserves the sign bit only if the operand is declared `signed`.
-- **Width Mismatch:** Assigning a 32-bit sum to a 16-bit wire truncates the MSBs without warning.
+- Prefer `unique/priority` cases with `inside` when opcodes live in ranges.
+- Use arithmetic shifts (`>>>`) only on signed operands; logical shifts (`>>`) fill with zeros.
+- Keep intermediate math in wider, signed types to avoid truncation before assigning back to packed logic.
 
-## Interview Questions
+## Practice & Reinforce
+- Rework a scoreboard compare to use `===` and `inside` so X/Z is never dropped silently.
+- Sketch precedence ladders for a favorite expression, then simplify with parentheses or helper wires.
 
-<Card className="mt-8 border-slate-700 bg-slate-900">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        What is the difference between `==` and `===`?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
-      </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p><strong>`==` (Logical Equality)</strong>: If either operand contains X or Z, the result is X (unknown).</p>
-        <p><strong>`===` (Case Equality)</strong>: Checks for exact bit match, including X and Z. Returns 0 or 1. Essential for verifying reset states or X-propagation checks.</p>
-      </div>
-    </details>
-
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        How does the `inside` operator handle X and Z?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
-      </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p>The `inside` operator uses <strong>case equality (`===`)</strong> semantics. If you check `if (val inside {4'b10x1})`, it will match only if `val` actually has an X in that position.</p>
-      </div>
-    </details>
-  </CardContent>
-</Card>
-
-## References
+## References & Next Topics
 - IEEE 1800-2023 §11 (Operators and Expressions)
+- Next: [`F3: Procedural Constructs`](../F3_Procedural_Constructs/)
