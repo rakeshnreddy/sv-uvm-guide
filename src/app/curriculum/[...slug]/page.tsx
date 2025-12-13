@@ -107,6 +107,18 @@ const DynamicStructureVisualizer = dynamic(
   () => import('@/components/curriculum/f2/DynamicStructureVisualizer'),
   { ssr: false, loading: () => <VisualizationFallback /> },
 );
+const QueueOperationLab = dynamic(
+  () => import('@/components/curriculum/f2/QueueOperationLab'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
+const PackedUnpackedPlayground = dynamic(
+  () => import('@/components/curriculum/f2/PackedUnpackedPlayground'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
+const OperatorDrill = dynamic(
+  () => import('@/components/curriculum/f2/OperatorDrill'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 const PacketSorterGame = dynamic(
   () => import('@/components/curriculum/f2/PacketSorterGame'),
   { ssr: false, loading: () => <VisualizationFallback /> },
@@ -159,6 +171,9 @@ const components = {
   VerificationMethodologiesDiagram,
   FirstBugHuntGame,
   DynamicStructureVisualizer,
+  QueueOperationLab,
+  PackedUnpackedPlayground,
+  OperatorDrill,
   PacketSorterGame,
   SystemVerilog3DVisualizer,
   Image: MdxImage,

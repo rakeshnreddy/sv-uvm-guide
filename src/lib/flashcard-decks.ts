@@ -2,6 +2,7 @@ import F1A_Cost_of_Bugs from '../../content/flashcards/F1A_Cost_of_Bugs.json';
 import F1B_Verification_Mindset from '../../content/flashcards/F1B_Verification_Mindset.json';
 import F1C_Why_SystemVerilog from '../../content/flashcards/F1C_Why_SystemVerilog.json';
 import F2_Data_Types from '../../content/flashcards/F2_Data_Types.json';
+import F2C_Operators from '../../content/flashcards/F2C_Operators.json';
 import F3_Procedural_Constructs from '../../content/flashcards/F3_Procedural_Constructs.json';
 import F4_RTL_and_Testbench_Constructs from '../../content/flashcards/F4_RTL_and_Testbench_Constructs.json';
 import F2_HDL_Primer from '../../content/flashcards/F2_HDL_Primer.json';
@@ -26,6 +27,7 @@ export const flashcardDecks: Record<string, RawFlashcard[]> = {
   F1B_Verification_Mindset,
   F1C_Why_SystemVerilog,
   F2_Data_Types,
+  F2C_Operators,
   F3_Procedural_Constructs,
   F4_RTL_and_Testbench_Constructs,
   F2_HDL_Primer,

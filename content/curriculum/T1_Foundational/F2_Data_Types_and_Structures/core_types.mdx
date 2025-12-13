@@ -5,126 +5,78 @@ flashcards: "F2_Data_Types"
 ---
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import LogicStateDiagram from '@/components/visuals/LogicStateDiagram';
+import SignednessVisualizer from '@/components/visuals/SignednessVisualizer';
+import StringMethodExplorer from '@/components/visuals/StringMethodExplorer';
+import EnumMethodVisualizer from '@/components/visuals/EnumMethodVisualizer';
 
-## The Atoms of Hardware - More Than Just Bits
-_In hardware, every “bit” has a story._
+## Quick Take
+- **What it is:** Nets, variables, and value systems that define how signals resolve, store, and surface contention.
+- **Why it matters:** Using 2-state math for DUT busses hides X/Z; driving a net procedurally masks contention bugs. Type intent makes verification observability possible.
+- **The Analogy:** Nets are copper traces; variables are flip-flops and RAM cells. Pick the right material before you solder the circuit together.
 
-SystemVerilog data types are not abstract software variables—they are blueprints for transistors, wires, and storage. Each declaration tells the synthesis tool whether to emit a routed net, a bank of flip-flops, or arithmetic hardware. Make the wrong choice and you either hide a real bug behind forced zeros or fabricate logic the chip never needed (IEEE 1800-2023 §6).
+## Build Your Mental Model
+### Value Systems at a Glance
+<LogicStateDiagram />
 
-- **Nets (e.g., `wire`, `tri`)** represent physical connections continuously driven by other elements. They resolve conflicts, surface floating nodes, and happily take on `Z` when nobody is home (§6.6–§6.7).
-- **Variables (e.g., `logic`, `bit`, `int`, `byte`, `reg`)** model storage written procedurally inside `always` blocks or class methods. Their initial value and value system determine how quickly an uninitialised bug becomes visible (§6.8–§6.10).
+- **2-state (`bit`, `int`, `byte`):** Fast math, no unknowns. Great for counters, scoreboard arithmetic, and randomization helpers.
+- **4-state (`logic`, `wire`, `tri`):** Surfaces contention and float. Use on DUT interfaces, resets, and any shared resource.
+- Default values are teaching moments: variables start as `'x`, nets as `'z`. They force you to design reset and drive strategy early.
 
-Use this mental model: nets are the copper traces on a board, while variables are the latches and registers feeding those traces.
-
-## The Two Universes: 2-State vs. 4-State Logic
-_Embracing the unknown: why `X` is your best friend._
-
-The simulator tracks more than binary `0` and `1`. Four-state types surface hardware realities that software programmers rarely face—contention (`X`) and high impedance (`Z`). Choosing the wrong value system can either hide faults or slow verification to a crawl.
-
-- **2-state types (`bit`, `int`, `byte`, `shortint`, …)** only take `0/1`. They simulate fast and map neatly to arithmetic hardware, but any attempt to assign `X/Z` collapses to `0` (§6.4).
-- **4-state types (`logic`, `reg`, `wire`, `tri`, …)** represent `0/1/X/Z`. They are essential for verification and for modeling shared resources. Their defaults (`'x` for variables, `'z` for nets) force you to handle reset and contention deliberately (§6.1, §6.6).
-
-<div className="my-8 space-y-6">
-  <div className="grid gap-6 md:grid-cols-2">
-    <Card className="border-orange-300 bg-orange-100 shadow-sm dark:border-orange-500/70 dark:bg-[#331800]">
-      <CardHeader>
-        <CardTitle className="text-base text-orange-900 dark:text-orange-50">`X` — contention made visible</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-orange-900/80 mb-4 dark:text-orange-100/90">Two blocks drive the same net with different values. The simulator resolves the fight to `X`, exactly how silicon would behave until one driver wins.</p>
-        <svg viewBox="0 0 360 175" className="w-full text-orange-600 dark:text-orange-200" role="img" aria-label="Two drivers colliding on a net">
-          <defs>
-            <marker id="ribbon" markerWidth="10" markerHeight="10" viewBox="0 0 10 10" refX="6" refY="5" orient="auto-start-reverse">
-              <path d="M 0 0 L 10 5 L 0 10 z" className="fill-current" />
-            </marker>
-          </defs>
-          <rect x="18" y="32" width="120" height="52" rx="14" className="fill-white stroke-orange-500 dark:fill-orange-800/40 dark:stroke-orange-200" strokeWidth="3" />
-          <text x="78" y="60" textAnchor="middle" className="fill-orange-900 text-sm font-semibold dark:fill-orange-50">Driver A = 0</text>
-          <rect x="18" y="98" width="120" height="52" rx="14" className="fill-white stroke-orange-500 dark:fill-orange-800/40 dark:stroke-orange-200" strokeWidth="3" />
-          <text x="78" y="126" textAnchor="middle" className="fill-orange-900 text-sm font-semibold dark:fill-orange-50">Driver B = 1</text>
-          <line x1="138" y1="58" x2="250" y2="58" className="stroke-current" strokeWidth="7" markerEnd="url(#ribbon)" strokeLinecap="round" />
-          <line x1="138" y1="124" x2="250" y2="124" className="stroke-current" strokeWidth="7" markerEnd="url(#ribbon)" strokeLinecap="round" />
-          <rect x="240" y="78" width="120" height="52" rx="14" className="fill-white stroke-orange-500 dark:fill-orange-800/40 dark:stroke-orange-200" strokeWidth="3" />
-          <text x="300" y="106" textAnchor="middle" className="fill-orange-900 text-lg font-semibold dark:fill-orange-50">Bus → `X`</text>
-        </svg>
-      </CardContent>
-    </Card>
-    <Card className="border-blue-300 bg-blue-50 shadow-sm dark:border-blue-500/70 dark:bg-[#041f37]">
-      <CardHeader>
-        <CardTitle className="text-base text-slate-900 dark:text-blue-100">`Z` — floating but intentional</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-blue-900/80 mb-4 dark:text-blue-100/90">No driver is active, so the bus floats. That `Z` reminds you to enable a pull-up, keeper, or the next driver before sampling.</p>
-        <svg viewBox="0 0 360 175" className="w-full text-blue-600 dark:text-blue-200" role="img" aria-label="Floating wire with pull-up">
-          <rect x="210" y="22" width="115" height="48" rx="14" className="fill-white stroke-blue-400 dark:fill-blue-500/25 dark:stroke-blue-200" strokeWidth="3" />
-          <text x="268" y="50" textAnchor="middle" className="fill-blue-700 text-xs font-semibold dark:fill-blue-100">Pull-up / keeper</text>
-          <line x1="60" y1="92" x2="268" y2="92" className="stroke-current" strokeOpacity="0.9" strokeWidth="7" strokeDasharray="16 11" strokeLinecap="round" />
-          <circle cx="268" cy="92" r="8" className="fill-current" />
-          <line x1="268" y1="92" x2="268" y2="58" className="stroke-current" strokeWidth="7" strokeLinecap="round" />
-          <text x="120" y="84" textAnchor="middle" className="fill-blue-700 text-lg font-semibold dark:fill-blue-100">`Z`</text>
-          <rect x="40" y="122" width="160" height="48" rx="14" className="fill-white stroke-blue-400 dark:fill-blue-500/25 dark:stroke-blue-200" strokeWidth="3" />
-          <text x="120" y="150" textAnchor="middle" className="fill-blue-700 text-sm font-semibold dark:fill-blue-100">No active drivers</text>
-        </svg>
-      </CardContent>
-    </Card>
-  </div>
+### Nets vs. Variables—Pick the Right Driver
+<div className="grid gap-4 md:grid-cols-2">
+  <Card className="bg-background">
+    <CardHeader>
+      <CardTitle className="text-base">Nets (structural)</CardTitle>
+    </CardHeader>
+    <CardContent className="space-y-2 text-sm text-muted-foreground">
+      <p>Continuously driven, allow multiple drivers, resolve to `X` on conflict, default to `'z`.</p>
+      <p>Examples: `wire`, `tri`, `wand` for shared buses or pad rings.</p>
+    </CardContent>
+  </Card>
+  <Card className="bg-background">
+    <CardHeader>
+      <CardTitle className="text-base">Variables (procedural)</CardTitle>
+    </CardHeader>
+    <CardContent className="space-y-2 text-sm text-muted-foreground">
+      <p>Written in `always_comb`/`always_ff` or class methods. Single driver, default to `'x`.</p>
+      <p>Examples: `logic`, `bit`, `int`, `byte` for registers, scoreboards, and transactions.</p>
+    </CardContent>
+  </Card>
 </div>
 
-## Interactive Data Type Explorer (Core Component)
-_Get your hands dirty: a data type sandbox._
+### Signedness and Type Families
+<SignednessVisualizer />
 
-Meet the explorer: pick a type, click through its legal values, and watch the properties panel update in real time. Each selection is backed by the IEEE 1800-2023 LRM, so you always know which clause defends your coding choice.
+- Declare intent up front: `logic signed [WIDTH-1:0] data_s;` or cast with `$signed()` when mixing arithmetic and packed busses.
+- Keep math in `int/longint` and only slice into packed logic at the edges. It keeps overflow and sign extension predictable.
+
+### Strings and Enums That Pull Their Weight
+
+<StringMethodExplorer />
+
+- Strings are dynamic—perfect for report formatting and path manipulation.
+
+<EnumMethodVisualizer />
+
+- Enums give type safety and built-in iterators (`first()`, `next()`). They beat magic numbers for FSMs and coverage bins.
+
+## Make It Work
+- Use the explorer to test your choices against the simulator:
 
 <CurriculumDataTypeExplorer />
 
-## Signed vs. Unsigned: The Silent Killer
-_Positive or negative? Your ALU cares._
+- **Pattern:** 4-state at the interfaces, 2-state in math-heavy logic, cast when crossing the boundary.
+- **Guardrails:** Prefer `===`/`!==` for reset checks so X/Z stays visible. Add assertions when collapsing 4-state to 2-state types.
+- **Audit:** Does every signal have a reason to be packed or unpacked? If not, clarify now to avoid later lint churn.
 
-Signedness changes how the simulator interprets the exact same bits. Forgetting that `logic [3:0]` is unsigned burns many first-time SystemVerilog authors.
-
-```systemverilog
-int signed_var = -4;
-logic [3:0] unsigned_var = 4'b1100;
-
-display_signed_and_unsigned();
-// signed_var   = -4  // two's complement 32-bit signed
-// unsigned_var = 12  // 4'b1100 interpreted as unsigned (IEEE 1800-2023 §6.10)
-```
-
-<div className="my-8 space-y-6">
-  <div className="grid gap-4 md:grid-cols-2">
-    <Card className="bg-background">
-      <CardHeader>
-        <CardTitle className="text-base">Two’s complement intuition</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-muted-foreground">`-4` in a signed `int` expands to 32 bits: `1111_..._1100`. Arithmetic treats the MSB as negative weight.</p>
-      </CardContent>
-    </Card>
-    <Card className="bg-background">
-      <CardHeader>
-        <CardTitle className="text-base">Unsigned nibble reality</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <p className="text-sm text-muted-foreground">`logic [3:0] = 4'b1100` keeps the same bits, but `12` is the only legal interpretation unless you recast with `$signed`.</p>
-      </CardContent>
-    </Card>
-  </div>
-</div>
-
-Use these tactics:
-
-- Declare `logic signed [WIDTH-1:0]` or cast with `$signed()` when negative arithmetic matters.
-- Keep scoreboard math in `int`/`longint`; convert to packed logic only when you must match a bus width.
-- Remember that assignments between 4-state and 2-state types can lose `X/Z`, so guard the conversion with assertions (§6.4).
-
-## Challenge: The Data Type Detective (Gamified Component)
-_Put your knowledge to the test._
-
-Earn the “Data Architect” badge by scoring at least 4 out of 5. Every answer—right or wrong—reveals the reasoning so you cement the nuances before moving to the next module.
+## Practice & Reinforce
+- Run the quiz before moving on—explanations tie back to the explorer so you see why each answer holds up under the LRM.
 
 <CurriculumDataTypeQuiz />
 
-<div className="my-8 space-y-6">
-  <p className="mt-4 text-sm text-muted-foreground">Pro tip: rerun this challenge whenever you tackle a new block. If you cannot justify why every signal is 2-state or 4-state, the DataTypeExplorer above is your debugging buddy.</p>
-</div>
+- Interview drill: explain why `logic` is safer than `reg`, and when `bit` is the right call for counters.
+
+## References & Next Topics
+- IEEE 1800-2023 §6–§7 (Nets, variables, value systems)
+- Next: [Dynamic Structures](./dynamic_structures)
