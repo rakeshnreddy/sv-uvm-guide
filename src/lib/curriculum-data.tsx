@@ -92,27 +92,6 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "F2: Data Types & Structures",
-        "slug": "F2_Data_Types_and_Structures",
-        "topics": [
-          {
-            "title": "F2: Data Types & Structures",
-            "slug": "index",
-            "description": "Master SystemVerilog's type system, from physical nets to dynamic collections."
-          },
-          {
-            "title": "F2A: Core Data Types",
-            "slug": "core_types",
-            "description": "Dive deep into SystemVerilog nets, variables, and value systems with interactive explorers grounded in IEEE 1800-2023."
-          },
-          {
-            "title": "F2B: Dynamic Data Structures",
-            "slug": "dynamic_structures",
-            "description": "Manipulate dynamic arrays, queues, and associative arrays with an IEEE 1800-2023 guided workflow."
-          }
-        ]
-      },
-      {
         "title": "F3A: Procedural Blocks and Flow Control",
         "slug": "F3A_Procedural_Blocks_and_Flow_Control",
         "topics": [
