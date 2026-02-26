@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useCurriculumProgress } from '@/hooks/useCurriculumProgress';
 
-const MODULE_ID = 'F3_Procedural_Constructs';
-const LESSON_SLUG = 'flow-control';
-const SECOND_LESSON_SLUG = 'tasks-functions';
+const MODULE_ID = 'I-SV-2_Constrained_Randomization';
+const LESSON_SLUG = 'index';
+const SECOND_LESSON_SLUG = 'advanced-constraints';
 
 describe('useCurriculumProgress', () => {
   let nowSpy: ReturnType<typeof vi.spyOn>;

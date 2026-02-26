@@ -70,10 +70,10 @@ const mdxFiles: string[] = [
   "content/curriculum/T1_Foundational/F4_RTL_and_Testbench_Constructs/packages.mdx",
   "content/curriculum/T1_Foundational/F4_RTL_and_Testbench_Constructs/interfaces.mdx",
   "content/curriculum/T1_Foundational/F4_RTL_and_Testbench_Constructs/index.mdx",
-  "content/curriculum/T1_Foundational/F3_Procedural_Constructs/tasks-functions.mdx",
-  "content/curriculum/T1_Foundational/F3_Procedural_Constructs/flow-control.mdx",
-  "content/curriculum/T1_Foundational/F3_Procedural_Constructs/fork-join.mdx",
-  "content/curriculum/T1_Foundational/F3_Procedural_Constructs/index.mdx",
+  "content/curriculum/T1_Foundational/F3B_Tasks_and_Functions/index.mdx",
+  "content/curriculum/T1_Foundational/F3A_Procedural_Blocks_and_Flow_Control/flow-control.mdx",
+  "content/curriculum/T1_Foundational/F3C_Processes_and_Synchronization/index.mdx",
+  "content/curriculum/T1_Foundational/F3A_Procedural_Blocks_and_Flow_Control/index.mdx",
 ];
 
 const allTopics: any[] = [];

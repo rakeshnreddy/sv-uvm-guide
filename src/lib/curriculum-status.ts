@@ -83,10 +83,25 @@ const overrides: Record<string, Partial<StatusMetadata>> = {
     lastUpdated: '2025-11-24',
     notes: 'Operator drill, precedence guidance, and ALU walkthrough migrated to Quick Take format.',
   },
-  'T1_Foundational/F3_Procedural_Constructs/index': {
+  'T1_Foundational/F3A_Procedural_Blocks_and_Flow_Control/index': {
     status: 'in-review',
     lastUpdated: '2025-09-22',
     notes: 'Event-region timeline + accessibility notes ready for SME pass.',
+  },
+  'T1_Foundational/F4A_Modules_and_Packages/index': {
+    status: 'complete',
+    lastUpdated: '2025-11-26',
+    notes: 'RTL Constructs split into three navigatable parts.',
+  },
+  'T1_Foundational/F4B_Interfaces_and_Modports/index': {
+    status: 'complete',
+    lastUpdated: '2025-11-26',
+    notes: 'RTL Constructs split into three navigatable parts.',
+  },
+  'T1_Foundational/F4C_Clocking_Blocks/index': {
+    status: 'complete',
+    lastUpdated: '2025-11-26',
+    notes: 'RTL Constructs split into three navigatable parts.',
   },
   'T2_Intermediate/I-UVM-2_Building_TB/index': {
     notes: 'Confirm UVM testbench visualizer embed after cleanup.',

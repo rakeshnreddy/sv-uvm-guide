@@ -3,7 +3,7 @@ import F1B_Verification_Mindset from '../../content/flashcards/F1B_Verification_
 import F1C_Why_SystemVerilog from '../../content/flashcards/F1C_Why_SystemVerilog.json';
 import F2_Data_Types from '../../content/flashcards/F2_Data_Types.json';
 import F2C_Operators from '../../content/flashcards/F2C_Operators.json';
-import F3_Procedural_Constructs from '../../content/flashcards/F3_Procedural_Constructs.json';
+import F3A_Procedural_Blocks_and_Flow_Control from '../../content/flashcards/F3A_Procedural_Blocks_and_Flow_Control.json';
 import F4_RTL_and_Testbench_Constructs from '../../content/flashcards/F4_RTL_and_Testbench_Constructs.json';
 import F2_HDL_Primer from '../../content/flashcards/F2_HDL_Primer.json';
 import I_SV_1_OOP from '../../content/flashcards/I-SV-1_OOP.json';
@@ -28,7 +28,7 @@ export const flashcardDecks: Record<string, RawFlashcard[]> = {
   F1C_Why_SystemVerilog,
   F2_Data_Types,
   F2C_Operators,
-  F3_Procedural_Constructs,
+  F3A_Procedural_Blocks_and_Flow_Control,
   F4_RTL_and_Testbench_Constructs,
   F2_HDL_Primer,
   'I-SV-1_OOP': I_SV_1_OOP,

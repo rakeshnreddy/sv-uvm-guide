@@ -113,33 +113,11 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "F3D: Interprocess Communication",
-        "slug": "F3D_Interprocess_Communication",
+        "title": "F3A: Procedural Blocks and Flow Control",
+        "slug": "F3A_Procedural_Blocks_and_Flow_Control",
         "topics": [
           {
-            "title": "F3D: Interprocess Communication",
-            "slug": "index",
-            "description": "Coordinate parallel threads safely using Semaphores and Mailboxes."
-          }
-        ]
-      },
-      {
-        "title": "F3E: System Tasks and File I/O",
-        "slug": "F3E_System_Tasks_and_File_IO",
-        "topics": [
-          {
-            "title": "F3E: System Tasks and File I/O",
-            "slug": "index",
-            "description": "Interact with the simulator kernel: print messages, cast types, generate random numbers, and read/write files."
-          }
-        ]
-      },
-      {
-        "title": "F3: Procedural Constructs",
-        "slug": "F3_Procedural_Constructs",
-        "topics": [
-          {
-            "title": "F3: Procedural Constructs",
+            "title": "F3A: Procedural Blocks and Flow Control",
             "slug": "index",
             "description": "Master the procedural heart of SystemVerilog—initial/always/final blocks, flow control, and assignment semantics that drive every testbench."
           },
@@ -147,16 +125,44 @@ export const curriculumData: Module[] = [
             "title": "Procedural Flow Control",
             "slug": "flow-control",
             "description": "Guide decisions with if, case, and loop constructs to steer simulation flow."
-          },
+          }
+        ]
+      },
+      {
+        "title": "F3B: Tasks and Functions",
+        "slug": "F3B_Tasks_and_Functions",
+        "topics": [
           {
-            "title": "Fork-Join and Process Control",
-            "slug": "fork-join",
+            "title": "F3B: Tasks and Functions",
+            "slug": "index",
+            "description": "Compare callable blocks with and without timing to structure reusable code."
+          }
+        ]
+      },
+      {
+        "title": "F3C: Processes and Synchronization",
+        "slug": "F3C_Processes_and_Synchronization",
+        "topics": [
+          {
+            "title": "F3C: Processes and Synchronization",
+            "slug": "index",
             "description": "Launch parallel threads and synchronize them with join variants."
           },
           {
-            "title": "Tasks and Functions",
-            "slug": "tasks-functions",
-            "description": "Compare callable blocks with and without timing to structure reusable code."
+            "title": "F3D: Interprocess Communication",
+            "slug": "ipc",
+            "description": "Coordinate parallel threads safely using Semaphores and Mailboxes."
+          }
+        ]
+      },
+      {
+        "title": "F3D: System Tasks and File I/O",
+        "slug": "F3D_System_Tasks_and_File_IO",
+        "topics": [
+          {
+            "title": "F3D: System Tasks and File I/O",
+            "slug": "index",
+            "description": "Interact with the simulator kernel: print messages, cast types, generate random numbers, and read/write files."
           }
         ]
       },

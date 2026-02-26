@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 
@@ -39,7 +41,7 @@ const scenarios: DrillScenario[] = [
     id: 'inside',
     title: 'Set Membership',
     description: 'Find whether a value is in a set or range.',
-    a: 4,
+    a: 'X',
     b: 0,
     op: 'inside {1,3,[4:6]}',
     evaluate: () => '4 inside {1,3,[4:6]} → 1 (match range)',
@@ -76,11 +78,10 @@ export const OperatorDrill: React.FC = () => {
               key={option.id}
               type="button"
               onClick={() => setActiveId(option.id)}
-              className={`rounded-full px-3 py-2 text-sm font-semibold shadow ${
-                option.id === scenario.id
-                  ? 'bg-primary text-primary-foreground'
-                  : 'bg-muted text-foreground hover:bg-muted/80'
-              }`}
+              className={`rounded-full px-3 py-2 text-sm font-semibold shadow ${option.id === scenario.id
+                ? 'bg-primary text-primary-foreground'
+                : 'bg-muted text-foreground hover:bg-muted/80'
+                }`}
               role="tab"
               aria-selected={option.id === scenario.id}
             >

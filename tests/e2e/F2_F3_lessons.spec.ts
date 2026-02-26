@@ -10,24 +10,24 @@ test.describe('Foundational Lessons F1-F3', () => {
     });
 
     test('F3: Procedural Blocks loads correctly', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F3_Procedural_Constructs');
-        await expect(page.getByRole('heading', { name: /Procedural Constructs/i })).toBeVisible();
+        await page.goto('/curriculum/T1_Foundational/F3A_Procedural_Blocks_and_Flow_Control');
+        await expect(page.getByRole('heading', { name: /Procedural Blocks and Flow Control/i })).toBeVisible();
         // Check for Event Region Game
         await expect(page.getByText('Event Region Scheduler')).toBeVisible();
     });
 
     test('F3: Flow Control loads correctly', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F3_Procedural_Constructs/flow-control');
+        await page.goto('/curriculum/T1_Foundational/F3A_Procedural_Blocks_and_Flow_Control/flow-control');
         await expect(page.getByRole('heading', { name: /Procedural Flow Control/i })).toBeVisible();
     });
 
     test('F3: Fork-Join loads correctly', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F3_Procedural_Constructs/fork-join');
-        await expect(page.getByRole('heading', { name: /Fork-Join and Process Control/i })).toBeVisible();
+        await page.goto('/curriculum/T1_Foundational/F3C_Processes_and_Synchronization');
+        await expect(page.getByRole('heading', { name: /Processes and Synchronization/i })).toBeVisible();
     });
 
     test('F3: Tasks & Functions loads correctly', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F3_Procedural_Constructs/tasks-functions');
+        await page.goto('/curriculum/T1_Foundational/F3B_Tasks_and_Functions');
         await expect(page.getByRole('heading', { name: /Tasks and Functions/i })).toBeVisible();
     });
 });

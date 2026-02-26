@@ -1,3 +1,5 @@
+'use client';
+
 import React, { useMemo, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 
@@ -86,11 +88,10 @@ export const PackedUnpackedPlayground: React.FC = () => {
                 setCurrentId(option.id);
                 setStep(0);
               }}
-              className={`rounded-full px-4 py-2 text-sm font-semibold shadow ${
-                scenario.id === option.id
+              className={`rounded-full px-4 py-2 text-sm font-semibold shadow ${scenario.id === option.id
                   ? 'bg-primary text-primary-foreground'
                   : 'bg-muted text-foreground hover:bg-muted/80'
-              }`}
+                }`}
               data-testid={`packed-unpacked-${option.id}`}
               role="tab"
               aria-selected={scenario.id === option.id}

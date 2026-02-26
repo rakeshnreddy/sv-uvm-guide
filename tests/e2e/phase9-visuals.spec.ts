@@ -35,7 +35,7 @@ test.describe('Phase 9 Visualizations', () => {
     });
 
     test('MailboxSemaphoreGame in F3D renders and switches modes', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F3D_Interprocess_Communication');
+        await page.goto('/curriculum/T1_Foundational/F3C_Processes_and_Synchronization/ipc');
 
         // Check Visualizer presence
         const visualizer = page.getByTestId('mailbox-semaphore-game');

@@ -23,7 +23,7 @@ This file consolidates open implementation and feedback items so the team has a 
 | Task ID | Summary | Status |
 |---|---|---|
 | `CURR-SPLIT-F2` | Split F2 lesson (SV Basics) into four parts | `complete` |
-| `CURR-SPLIT-F4` | Split F4 lesson (RTL Constructs) into three parts | `todo` |
+| `CURR-SPLIT-F4` | Split F4 lesson (RTL Constructs) into three parts | `complete` |
 | `CURR-SPLIT-I-UVM-1` | Split I-UVM-1 lesson (UVM Intro) into three parts | `todo` |
 | `CURR-SPLIT-I-UVM-2` | Split I-UVM-2 lesson (Build TB) into two parts | `todo` |
 | `CURR-SPLIT-I-UVM-3` | Split I-UVM-3 lesson (Sequences) into two parts | `todo` |
