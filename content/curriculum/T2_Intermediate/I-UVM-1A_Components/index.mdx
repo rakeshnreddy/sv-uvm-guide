@@ -1,0 +1,98 @@
+---
+title: "I-UVM-1A: UVM Objects and Components"
+description: "Understand the fundamental split between data containers and structural elements in UVM testbenches."
+flashcards: "I-UVM-1A_Components"
+---
+
+import { InteractiveCode, Quiz } from '@/components/ui';
+import UVMTreeExplorer from '@/components/curriculum/interactives/UVMTreeExplorer';
+
+## Quick Take
+- **What it is:** UVM splits reusable testbench logic into `uvm_object` data containers and `uvm_component` hierarchy infrastructure.
+- **Why it matters:** Clearly separating data (transactions, configurations) from structure (drivers, monitors) makes your environment predictable and phase-aware.
+- **The Analogy:** Think of a delivery network. Objects are “packages” moving through the mail; components are the “buildings” wired into the city infrastructure. One moves, one stays put.
+
+> **Retention Hook:** Objects travel. Components anchor. 
+
+## Build Your Mental Model
+### Objects Travel, Components Stay Anchored
+`uvm_object` derivatives (sequence items, configs) travel between components. `uvm_component` derivatives (agents, drivers, envs) stay anchored in the hierarchy and join UVM phasing.
+
+<UVMTreeExplorer />
+
+- **Phase Participation:** A `uvm_component` participates in build, connect, and run phases. If you forget to call `super.build_phase`, child components never instantiate.
+- **Instantiation Context:** A `uvm_component` must have a name and a parent. A `uvm_object` just has a name.
+- **Copying Semantics:** `uvm_object` copies should go through `clone()` to preserve factory type information. Components are never copied mid-simulation.
+
+### Syntax Breakdown
+
+```systemverilog
+import uvm_pkg::*;
+`include "uvm_macros.svh"
+
+// -----------------------------------------------------------------
+// uvm_object: The Package
+// -----------------------------------------------------------------
+class my_packet extends uvm_sequence_item;
+  `uvm_object_utils(my_packet)
+  
+  // Notice: no parent argument in the constructor!
+  function new(string name = "my_packet");
+    super.new(name);
+  endfunction
+endclass
+
+// -----------------------------------------------------------------
+// uvm_component: The Building
+// -----------------------------------------------------------------
+class my_env extends uvm_env;
+  `uvm_component_utils(my_env)
+  
+  // Notice: name AND parent argument in the constructor!
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+endclass
+```
+
+## Make It Work
+1. **Choose the proper base class:** Use `uvm_object` (or `uvm_sequence_item`) for data, configuration, or transactions. Use `uvm_component` (or `uvm_driver`, `uvm_env`) for structure.
+2. **Implement correct constructors:**
+   - Object: `function new(string name = "name");`
+   - Component: `function new(string name, uvm_component parent);`
+3. **Use the appropriate registration macro:** `uvm_object_utils` for objects, `uvm_component_utils` for components.
+
+## Interview Pitfalls
+**The `uvm_component` without a Phase Trap:**
+Interviewers will often present code where a component doesn't implement a `build_phase` or forgets to call `super.build_phase`. They will ask why child components aren't showing up in the hierarchy. The answer is always: "Because the base class `build_phase` propagates the tree construction via the factory. If you override it without calling `super`, construction stops."
+
+**The Copied Component Trap:**
+If someone asks "How do you `clone()` a `uvm_component`?", the answer is "You don't." Components are built during the elaboration phase and cannot be deep-copied or cloned dynamically during runtime like objects.
+
+## Practice & Reinforce
+
+<Quiz questions={[
+    {
+      "question": "Which of the following classes is designed to be cloned and passed around dynamically during the simulation?",
+      "answers": [
+        {"text": "uvm_driver", "correct": false},
+        {"text": "uvm_env", "correct": false},
+        {"text": "uvm_sequence_item", "correct": true},
+        {"text": "uvm_agent", "correct": false}
+      ],
+      "explanation": "`uvm_sequence_item` extends `uvm_object` and is designed to represent transient data like transactions."
+    },
+    {
+      "question": "What happens if you omit the `uvm_component parent` argument from a component constructor?",
+      "answers": [
+        {"text": "The compilation fails.", "correct": true},
+        {"text": "It attaches to uvm_top automatically.", "correct": false},
+        {"text": "It acts as a uvm_object.", "correct": false}
+      ],
+      "explanation": "A component constructor strictly requires a string name and a `uvm_component parent` handle. A mismatch will cause a SV compilation error."
+    }
+]} />
+
+## References & Next Topics
+- IEEE 1800.2-2020 UVM LRM: Clause 5.3 (uvm_object) and Clause 13.1 (uvm_component).
+- Next: [/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory](../I-UVM-1B_The_UVM_Factory/index).

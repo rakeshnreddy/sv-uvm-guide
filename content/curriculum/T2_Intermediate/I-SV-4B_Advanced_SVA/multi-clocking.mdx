@@ -1,0 +1,82 @@
+import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, Quiz, InterviewQuestionPlayground } from "@/components/ui";
+
+export const metadata = {
+  title: "Multi-Clocking and disable-iff | Advanced SystemVerilog for Verification",
+  description: "Coordinate assertions across clock domains and mask reset behavior with disable iff.",
+};
+
+<InfoPage
+  title="Multi-Clocking and disable-iff"
+  sv_concept_tags={["multi-clocking", "disable-iff"]}
+>
+
+  ## Multi-Clocking and disable-iff
+  *IEEE 1800-2023, Clause 16.13: Multiclock support, and Clause 16.12: Disable iff*
+
+  Designs often cross clock domains. SVA lets you relate events on different clocks within one property.
+
+  <InteractiveCode>
+  ```systemverilog
+  // Write on wr_clk must be followed by a read on rd_clk
+  sequence s_wr_then_rd;
+    @(posedge wr_clk) wr_en ##1 @(posedge rd_clk) rd_en;
+  endsequence
+
+  property p_wr_followed_by_rd;
+    disable iff (!rst_n)
+      s_wr_then_rd;
+  endproperty
+
+  assert property (p_wr_followed_by_rd)
+    else $error("Read did not follow write across clocks");
+  ```
+  </InteractiveCode>
+
+  ### Understanding `disable iff`
+
+  `disable iff` temporarily turns off an assertion when its expression is true, typically during reset.
+
+  <InteractiveCode>
+  ```systemverilog
+  property p_ack_within3;
+    @(posedge clk) disable iff (!rst_n)
+      req |-> ##[1:3] ack;
+  endproperty
+  ```
+  </InteractiveCode>
+
+  ### Tips
+
+  - Use multiple `@` event controls in a sequence to hop between clocks.
+  - A `##0` delay switches clocks without advancing time.
+  - Always guard cross-domain assertions with `disable iff` for asynchronous resets.
+
+  ## Check Your Understanding
+
+  <Quiz questions={[
+    {
+      question: "What does `disable iff (!rst_n)` do in an assertion?",
+      answers: [
+        { text: "Pauses the assertion when reset is asserted", correct: true },
+        { text: "Delays the assertion by one cycle", correct: false },
+        { text: "Changes the clock", correct: false },
+        { text: "Makes the assertion immediate", correct: false }
+      ],
+      explanation: "`disable iff` disables the assertion when its expression evaluates to true."
+    }
+  ]} />
+
+  <div className="mt-8">
+    <InterviewQuestionPlayground
+      question="A multi-clock assertion uses `##1` to transition from checking a trigger on `clkA` to checking a response on `clkB`. An engineer complains that the assertion sometimes misses the very first `clkB` edge that happens immediately after `clkA`. Why?"
+      options={[
+        { text: "Multi-clock assertions are not supported in SystemVerilog.", isCorrect: false, feedback: "They absolutely are." },
+        { text: "The `##1` operator in a multi-clock context waits for the next occurrence of the *target* clock (`clkB`). If `clkB` ticks at exactly the same time as `clkA`, or extremely close to it, that edge might be missed depending on alignment. `##0` should be used to allow synchronization on the *current* tick if clocks overlap.", isCorrect: true, feedback: "Correct! In multi-clock SVA, `##1` means 'move to the strictly subsequent tick of the new clock'. If you want to allow the new clock to match coincidentally with the first clock, you must use `##0` as the clock-crossing operator." },
+        { text: "The assertion needs `disable iff`.", isCorrect: false, feedback: "`disable iff` handles asynchronous resets, not clock alignment." },
+        { text: "`clkA` and `clkB` must be defined as integer multiples of each other.", isCorrect: false, feedback: "SVA multiclock handles fully asynchronous clocks." }
+      ]}
+    />
+  </div>
+
+</InfoPage>

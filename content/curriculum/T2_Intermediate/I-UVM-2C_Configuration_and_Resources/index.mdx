@@ -1,0 +1,112 @@
+---
+title: "I-UVM-2C: Configuration and Resources"
+description: "Use uvm_config_db and uvm_resource_db to pass settings and virtual interface handles down the hierarchy without tight coupling."
+flashcards: "I-UVM-2C_Configuration_and_Resources"
+---
+
+import { InteractiveCode, Quiz } from '@/components/ui';
+
+## Quick Take
+- **What it is:** The `uvm_config_db` (and its underlying database `uvm_resource_db`) allows tests and top-level modules to distribute settings, virtual interfaces, and handles precisely through the component tree.
+- **Why it matters:** It breaks hardcoded dependencies. A driver doesn't need to know where its virtual interface comes from; it just asks the config database.
+- **The Analogy:** The `config_db` is the testbench's DNS service. A test publishes a value (e.g., `is_active=0`) under a specific hierarchal path string. Later, when the agent wakes up, it queries that path to decide its role.
+
+> **Retention Hook:** `set()` pushes from the top down. `get()` pulls from the bottom up. 
+
+## Build Your Mental Model
+### The Database Mechanics (Clause 23)
+The UVM configuration DB is essentially a strongly-typed string-keyed dictionary that respects testbench hierarchy.
+
+```systemverilog
+class soc_base_test extends uvm_test;
+  soc_config cfg;
+  
+  function void build_phase(uvm_phase phase);
+    // 1. Create and randomize a configuration object
+    cfg = soc_config::type_id::create("cfg");
+    cfg.randomize() with { active_lanes == 4; };
+    
+    // 2. Publish it! 
+    // Type: soc_config
+    // Target Context: this (uvm_test_top)
+    // Target Path: "*" (everything below the test)
+    // Field Name: "cfg"
+    // Value: cfg
+    uvm_config_db#(soc_config)::set(this, "*", "cfg", cfg);
+  endfunction
+endclass
+```
+
+Deep in the hierarchy, an agent or driver queries the exact same database.
+
+```systemverilog
+class my_agent extends uvm_agent;
+  soc_config cfg;
+  
+  function void build_phase(uvm_phase phase);
+    // 3. Retrieve it!
+    // If getting the config fails, raise a fatal error.
+    if (!uvm_config_db#(soc_config)::get(this, "", "cfg", cfg)) begin
+      `uvm_fatal("NOCFG", "Agent requires a soc_config object!")
+    end
+    
+    // Configure agent based on the retrieved data
+    is_active = cfg.is_tx_active ? UVM_ACTIVE : UVM_PASSIVE;
+  endfunction
+```
+
+### Passing Virtual Interfaces
+The most common use-case for the config DB is passing the `virtual interface` from the static SystemVerilog `module top` into the dynamic OOP-based UVM testbench.
+
+```systemverilog
+module top;
+  // Static interface instance
+  apb_if apb_vif(clk, rst);
+  
+  initial begin
+    // Pass the interface to the UVM world before run_test!
+    uvm_config_db#(virtual apb_if)::set(null, "uvm_test_top.*", "vif", apb_vif);
+    run_test("my_test");
+  end
+endmodule
+```
+
+### uvm_config_db vs uvm_resource_db
+`uvm_resource_db` is the lower-level foundation of `uvm_config_db`. While `config_db` enforces hierarchy precedence (a `uvm_env`'s `set()` overrides an `uvm_agent`'s `set()`), `resource_db` relies strictly on a chronological or explicit precedence value.
+- **Rule of Thumb:** Use `uvm_config_db` for 99% of settings. Fall back to `resource_db` only if you need exotic globally-scoped precedence control that defies standard testbench hierarchy.
+
+## Make It Work
+1. **Combine variables into Config Objects:** Instead of 10 `set()` calls for 10 integers, pack them into a `uvm_object` config class, and set the handle once. It creates a single source of truth.
+2. **Wildcards are powerful, but dangerous:** Passing to `"uvm_test_top.env.agent.drv"` is extremely safe. Passing to `"*"` puts that setting into the global namespace where it might accidentally override another agent's parameters.
+3. **Handle failed gets:** ALWAYS wrap your `get()` in an `if (!)` statement and `uvm_fatal` out. The worst bugs come from an uninitialized config variable silently falling back to a default value value of 0.
+
+## Interview Pitfalls
+**The Missing Virtual Interface Issue:**
+You may be given code that has a `null pointer exception` inside the driver's `run_phase` when it tries to wiggle a pin. Look for the `uvm_config_db::set` in the top module and the `get` in the driver's `build_phase`. Typographical errors in the string names (e.g. `"viif"` vs `"vif"`) are a classic bug pattern tested in interviews.
+
+## Practice & Reinforce
+
+<Quiz questions={[
+    {
+      "question": "Where is `uvm_config_db::set` typically called to pass a virtual interface handle?",
+      "answers": [
+        { text: "In a lower-level driver", correct: false },
+        { text: "In the top-level testbench module", correct: true },
+        { text: "Inside the sequence item", correct: false }
+      ],
+      "explanation": "Because interfaces live in the static module domain and UVM lives in the dynamic class domain, the top module must bridge them by setting the `vif` in the config DB."
+    },
+    {
+      "question": "If `uvm_test_top` sets an integer 'speed' to 10, and `uvm_test_top.env` sets 'speed' to 20 for the exact same path, what value does the driver receive?",
+      "answers": [
+        { text: "10, because components higher in the hierarchy win.", correct: true },
+        { text: "20, because env is closer to the driver.", correct: false },
+        { text: "An error occurs due to conflicts.", correct: false }
+      ],
+      "explanation": "`uvm_config_db` resolves conflicts top-down. The test is the ultimate authority, so its settings always override its children's settings."
+    }
+  ]} />
+
+## References & Next Topics
+- IEEE 1800.2-2020 LRM: Clause 23 (Configuration and Resource Classes).
+- Next: [/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals](../../T2_Intermediate/I-UVM-3A_Fundamentals/index).

@@ -1,0 +1,129 @@
+---
+title: "I-UVM-1B: The UVM Factory"
+description: "Swap component and object implementations dynamically using UVM's factory registry without touching your testbench wiring."
+flashcards: "I-UVM-1B_The_UVM_Factory"
+---
+
+import { InteractiveCode, Quiz } from '@/components/ui';
+import FactoryOverrideVisualizer from '@/components/curriculum/interactives/FactoryOverrideVisualizer';
+
+## Quick Take
+- **What it is:** The UVM factory is a centralized registry where types are recorded so tests can substitute concrete implementations (overrides) at runtime.
+- **Why it matters:** Overrides enable A/B testing, negative fault injection, and mock instrumentation without editing the environment that instantiates the components.
+- **The Analogy:** Think of the factory as a casting director—register every actor, then swap who plays the role on the day of the shoot without rewriting the script.
+
+> **Retention Hook:** Repeat “register → create → override” every time you implement a new testbench class.
+
+## Build Your Mental Model
+### Registration & Creation Rules (Clause 8)
+Every class you want to override must register with the factory and be constructed through `type_id::create()`.
+
+<InteractiveCode>
+```systemverilog
+class base_driver extends uvm_driver#(seq_item);
+  `uvm_component_utils(base_driver) // 1. Register
+endclass
+
+class mock_driver extends base_driver;
+  `uvm_component_utils(mock_driver) // 1. Register the alternative
+endclass
+
+class my_env extends uvm_env;
+  `uvm_component_utils(my_env)
+  base_driver drv;
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    // 2. Create using factory, not `new()`
+    drv = base_driver::type_id::create("drv", this); 
+  endfunction
+endclass
+```
+</InteractiveCode>
+
+If you skip the registration macro (`uvm_component_utils` / `uvm_object_utils`) or call `new()` directly, the factory loses visibility—no overrides can be applied.
+
+### Type vs. Instance Overrides
+- **Type overrides** replace *every* creation of a specified class with another class globally.
+- **Instance overrides** target a specific hierarchical path (with wildcards if needed), replacing only that specific instantiation.
+
+<InteractiveCode>
+```systemverilog
+class my_test extends uvm_test;
+  `uvm_component_utils(my_test)
+  my_env env;
+  
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    
+    // 3. Global swap: every base_driver becomes a mock_driver
+    base_driver::type_id::set_type_override(mock_driver::get_type());
+    
+    // OR Instance swap: only env.drv (and matching wildcards) is swapped
+    // base_driver::type_id::set_inst_override(mock_driver::get_type(), "*.env.drv");
+    
+    env = my_env::type_id::create("env", this);
+  endfunction
+endclass
+```
+</InteractiveCode>
+
+## Make It Work
+1. **Centralize overrides:** Collect factory policy in base tests or configuration modules.
+2. **Prefer handles over strings:** Use `<type>::get_type()` (e.g. `mock_driver::get_type()`) for compile-time safety instead of `set_type_override_by_name`.
+3. **Instrument debugging:** Call `factory.print()` or `uvm_top.print_topology()` during `end_of_elaboration_phase` to audit active overrides.
+
+<FactoryOverrideVisualizer />
+
+## Advanced Factory Dynamics
+### Override Precedence
+When multiple overrides compete for the same type/instance creation:
+1. **Instance overrides beat Type overrides.**
+2. Among instance overrides, **the highest component in the hierarchy wins** (e.g., `uvm_test` beats `uvm_env`).
+3. If multiple type overrides exist for the same exact target, the **last one executed wins**.
+
+### uvm_root and uvm_report_server Interplay
+Advanced environments often override the core UVM reporting mechanism. Because `uvm_report_server` is a global object, you can't use standard component overrides. Instead, you register your custom server globally with `uvm_report_server::set_server(...)` to control testbench-wide logging formats. `uvm_root` (`uvm_top`) implicitly oversees this global state and hierarchy.
+
+## Interview Pitfalls
+**The `new()` Keyword Trap:**
+Interviewers will often ask you to debug a testbench where an override isn't taking effect. Always look for the `new()` keyword. If a component is instantiated via `new("name", this);`, the factory is completely bypassed!
+
+**The Base Class Fallback:**
+If you set a type override, but the type you're overriding to isn't registered with the factory (missing `uvm_component_utils`), what happens? A runtime UVM fatal error typically occurs when the factory tries to fetch the proxy object.
+
+## Practice & Reinforce
+
+<Quiz questions={[
+  {
+    question: 'Which method replaces every instance of a class with another type globally?',
+    answers: [
+      { text: 'set_inst_override', correct: false },
+      { text: 'set_type_override', correct: true },
+      { text: 'clone', correct: false }
+    ],
+    explanation: '`set_type_override` globally swaps one class for another during factory creation.'
+  },
+  {
+    question: 'Why must a class include `uvm_component_utils` for factory overrides to work?',
+    answers: [
+      { text: 'It enables the class to be randomized.', correct: false },
+      { text: 'It registers the class string name and type proxy with the factory.', correct: true },
+      { text: 'It creates the `build_phase`.', correct: false }
+    ],
+    explanation: 'Registration macros insert the static hooks the factory uses to map the type and create it via proxy.'
+  },
+  {
+    question: 'If `uvm_test` sets an instance override for a driver, and `uvm_env` sets a different instance override for the exact same driver, which one wins?',
+    answers: [
+      { text: 'uvm_env, because it is closer to the driver.', correct: false },
+      { text: 'uvm_test, because higher-level component overrides take precedence.', correct: true },
+      { text: 'Neither, it produces a UVM fatal error.', correct: false }
+    ],
+    explanation: 'In UVM, higher up the component tree wins in the case of conflicting instance overrides.'
+  }
+]} />
+
+## References & Next Topics
+- IEEE 1800.2-2020 UVM LRM: Clause 8 (Factory Classes).
+- Next: [/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing](../I-UVM-1C_UVM_Phasing/index).

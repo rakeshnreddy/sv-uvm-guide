@@ -1,0 +1,123 @@
+---
+title: "I-UVM-3A: Basic UVM Sequences and Items"
+description: "Model robust transaction items and author reusable UVM sequences that drive the sequencer ↔ driver handshake."
+flashcards: "I-UVM-3A_Fundamentals"
+---
+
+import { InteractiveCode, Quiz } from '@/components/ui';
+import { AnimatedUvmSequenceDriverHandshakeDiagram } from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram';
+
+## Quick Take
+- **What it is:** `uvm_sequence_item` models the transaction data; `uvm_sequence` holds the procedural logic that generates and sends those items to the driver via the sequencer.
+- **Why it matters:** Sequencing separates the *what* from the *how*. You can reuse the "memory read" sequence across fifty tests without rewriting the driver that wiggles the pins.
+- **The Analogy:** The `sequence_item` is the letter. The `sequence` is the boss writing letters. The `driver` is the mail carrier walking the route. The `sequencer` is the outbox holding the letters until the carrier is ready.
+
+> **Retention Hook:** Whisper “start_item, drive, item_done” until the handshake cadence sticks.
+
+## Build Your Mental Model
+### The Payload: `uvm_sequence_item` (Clause 14.3)
+The sequence item is an object that contains randomized fields, deep-copy hooks, and comparison logic. Since sequence items travel across analysis ports and into scoreboards, proper modeling here saves hours of debug later.
+
+<InteractiveCode>
+```systemverilog
+class mem_item extends uvm_sequence_item;
+  // 1. Register fields for printing, copying, and comparing
+  `uvm_object_utils_begin(mem_item)
+    `uvm_field_int(addr, UVM_ALL_ON | UVM_HEX)
+    `uvm_field_int(data, UVM_ALL_ON | UVM_HEX)
+    `uvm_field_enum(op_t, op, UVM_ALL_ON)
+  `uvm_object_utils_end
+
+  typedef enum { READ, WRITE } op_t;
+
+  // 2. Add randomized fields
+  rand bit [31:0] addr;
+  rand bit [31:0] data;
+  rand op_t op;
+
+  // 3. Constrain for legal protocol boundaries
+  constraint c_addr_align { addr % 4 == 0; }
+  
+  function new(string name = "mem_item");
+    super.new(name);
+  endfunction
+  
+  // NOTE: If you have dynamic arrays/queues, you MUST override do_copy() 
+  // and do_compare() to ensure deep copies, or use `uvm_field_queue_int`.
+endclass
+```
+</InteractiveCode>
+
+### The Handshake: `uvm_sequence` and the Driver
+Sequences execute inside `task body()`. They generate items and hand them off.
+
+<AnimatedUvmSequenceDriverHandshakeDiagram />
+
+```systemverilog
+// THE SEQUENCE
+class my_simple_sequence extends uvm_sequence#(mem_item);
+  `uvm_object_utils(my_simple_sequence)
+
+  virtual task body();
+    mem_item req;
+    repeat (5) begin
+      // `uvm_do creates, randomizes, and sends the item to the driver
+      `uvm_do_with(req, { op == WRITE; })
+    end
+  endtask
+endclass
+
+// THE DRIVER
+class my_driver extends uvm_driver#(mem_item);
+  `uvm_component_utils(my_driver)
+
+  virtual task run_phase(uvm_phase phase);
+    forever begin
+      seq_item_port.get_next_item(req); // Block until sequence provides item
+      drive_transfer(req);              // Translate to interface pins
+      seq_item_port.item_done();        // Unblock sequence
+    end
+  endtask
+endclass
+```
+
+### Breaking Down `uvm_do`
+The `uvm_do` macro hides the actual 4-step blocking API that sequences use:
+1. `req = mem_item::type_id::create("req");` (Create the object)
+2. `start_item(req);` (Wait for sequencer arbitration and driver readiness)
+3. `req.randomize();` (Randomize the fields)
+4. `finish_item(req);` (Send to driver and wait for `item_done()`)
+
+## Interview Pitfalls
+**The Shallow Copy Trap:**
+Interviewers will present a sequence item with a queue of bytes (`rand byte data_q[$];`), but no `do_copy` override or `uvm_field_queue` macro. They will ask what happens when the scoreboard compares two clones. The clones share the EXACT SAME queue pointer in memory; modifying one modifies the other! Always deep-copy dynamic arrays/queues.
+
+**The Missing `item_done()`:**
+If the driver loops but never calls `item_done()`, the sequence blocks forever waiting for acknowledgment. The simulation time hangs. 
+
+## Practice & Reinforce
+
+<Quiz questions={[
+    {
+      "question": "What happens during the execution of `start_item(req)` in a sequence?",
+      "answers": [
+        {"text": "The item is randomized and immediately driven to the pins.", "correct": false},
+        {"text": "The sequence blocks, waiting for the sequencer to grant it arbitration AND for the driver to call `get_next_item()`.", "correct": true},
+        {"text": "The sequencer queues the item in a FIFO for the driver.", "correct": false}
+      ],
+      "explanation": "Because `start_item` checks arbitration and waits for the driver, UVM sequences are fundamentally 'pull' driven. The driver's readiness pulls the next item through the sequencer."
+    },
+    {
+      "question": "A sequence item gets altered unexpectedly inside the scoreboard after being generated by a monitor. What is the most likely cause?",
+      "answers": [
+        {"text": "The sequencer mutated it.", "correct": false},
+        {"text": "The monitor did not `clone()` the item before writing it to the analysis port.", "correct": true},
+        {"text": "The factory overrode it.", "correct": false}
+      ],
+      "explanation": "Items passed via TLM are handles. If the monitor reuses the same handle without calling `clone()`, all subscribers are reading the same fluctuating object in memory."
+    }
+  ]} />
+
+## References & Next Topics
+- IEEE 1800.2-2020 LRM: Clause 14.3 (`uvm_sequence_item`) and Clause 15.3 (`uvm_sequence`).
+- Next: [/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering](../../T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index).

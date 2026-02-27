@@ -1,0 +1,96 @@
+import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, InterviewQuestionPlayground } from "@/components/ui";
+
+export const metadata = {
+  title: "Polymorphism Pitfalls and Type Casting | SystemVerilog OOP",
+  description: "Learn how virtual method resolution works, upcasting vs. downcasting, and how to safely use $cast.",
+};
+
+<InfoPage
+  title="Polymorphism Pitfalls and Type Casting"
+  sv_concept_tags={["polymorphism", "$cast", "virtual methods", "downcasting"]}
+>
+
+  ## Method Resolution: Virtual vs Non-Virtual
+  *IEEE 1800-2023, Clause 8.20: Virtual methods*
+
+  When you call a method through a base class handle, SystemVerilog must decide which version of the method to execute.
+  - If the method is **non-virtual**, the compiler looks at the **type of the handle**.
+  - If the method is **virtual**, the simulator looks at the **type of the actual object** in memory.
+
+  <InteractiveCode>
+  ```systemverilog
+  class Base;
+    function void print(); $display("Base print"); endfunction
+    virtual function void v_print(); $display("Base v_print"); endfunction
+  endclass
+
+  class Child extends Base;
+    function void print(); $display("Child print"); endfunction
+    virtual function void v_print(); $display("Child v_print"); endfunction
+  endclass
+
+  program demo;
+    initial begin
+      Base b;
+      Child c = new();
+      b = c; // Upcast: b points to a Child object
+
+      b.print();   // Prints "Base print" (Resolved by handle type)
+      b.v_print(); // Prints "Child v_print" (Resolved by object type)
+    end
+  endprogram
+  ```
+  </InteractiveCode>
+
+  ## Upcasting vs. Downcasting
+
+  ### Upcasting (Safe)
+  Assigning a derived class handle to a base class handle is always safe and happens automatically.
+
+  ```systemverilog
+  Base b = new Child(); // Implicit upcast
+  ```
+
+  ### Downcasting (Dangerous)
+  Assigning a base class handle back to a derived class handle is unsafe, because the base handle might not actually point to a derived object. You must use the `$cast` system task to attempt this safely.
+
+  *IEEE 1800-2023, Clause 8.16: Object assignment and copying (Dynamic casting)*
+
+  <InteractiveCode>
+  ```systemverilog
+  Base b1 = new Child(); // b1 holds a Child
+  Base b2 = new Base();  // b2 holds a Base
+  Child c;
+
+  // c = b1; // Compile error! Cannot implicitly downcast
+
+  if ($cast(c, b1)) begin
+    $display("Cast successful! c now holds the Child object.");
+  end else begin
+    $fatal(1, "Cast failed!");
+  end
+
+  if (!$cast(c, b2)) begin
+    $display("Cast failed! b2 does not hold a Child object.");
+  end
+  ```
+  </InteractiveCode>
+
+  ## Interview Pitfall: Default Virtual Arguments
+
+  A common trick question tests your knowledge of how arguments are resolved when overriding virtual methods. If a base class provides default arguments, and the derived class provides different default arguments, which ones are used?
+
+  SystemVerilog resolves default arguments based on the **handle type**, even for virtual methods!
+
+  <InterviewQuestionPlayground
+    question="Given a base virtual method `task send(int delay = 10);` overridden in a child as `task send(int delay = 50);`. If you call `b.send()` where `b` is a base handle pointing to a child object, what is the value of delay?"
+    options={[
+      { text: "delay = 50, because the method is virtual and the object is a Child.", isCorrect: false, feedback: "This is true for the method body, but not for default arguments." },
+      { text: "delay = 10, because default arguments are evaluated at compile time based on the handle type.", isCorrect: true, feedback: "Correct! The compiler evaluates default arguments based on the `Base` handle type before dynamically dispatching the virtual method. Therefore, the Child's `send()` is executed, but with the Base's default argument of 10." },
+      { text: "Compile error, because virtual overrides cannot change default arguments.", isCorrect: false, feedback: "They can change them, but doing so leads to confusing behavior like this." },
+      { text: "delay = 0, because default arguments are ignored in polymorphism.", isCorrect: false, feedback: "Default arguments are evaluated and passed to the method." }
+    ]}
+  />
+
+</InfoPage>

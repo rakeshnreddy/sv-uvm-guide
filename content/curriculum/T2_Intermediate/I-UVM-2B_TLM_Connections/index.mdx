@@ -1,0 +1,130 @@
+---
+title: "I-UVM-2B: TLM Connections and Analysis Fabric"
+description: "Wire sequencers, drivers, monitors, and scoreboards using UVM's Transaction-Level Modeling (TLM) components."
+flashcards: "I-UVM-2B_TLM_Connections"
+---
+
+import { InteractiveCode, Quiz } from '@/components/ui';
+import { AnimatedUvmSequenceDriverHandshakeDiagram } from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram';
+import dynamic from 'next/dynamic';
+
+const Dataflow3D = dynamic(() => import('@/components/curriculum/interactives/3d/Dataflow3D'), { ssr: false });
+const Analysis3D = dynamic(() => import('@/components/curriculum/interactives/3d/Analysis3D'), { ssr: false });
+
+## Quick Take
+- **What it is:** Transaction-Level Modeling (TLM) is the UVM standard for moving objects between components without hardcoding pin wiggles.
+- **Why it matters:** By decoupling *what* data is moving from *how* it's carried, you can swap drivers or scoreboards freely as long as they speak the same TLM contract.
+- **The Analogy:** Think of TLM as pneumatic tubes in a pneumatic dispatch system. You define the tube shape (the TLM port) and drop the payload (the object); the infrastructure handles the delivery.
+
+> **Retention Hook:** Ports send, exports receive. Analysis ports yell, analysis imps listen.
+
+## Build Your Mental Model
+### Three Types of TLM Connections
+In typical UVM testbenches, you'll encounter three common TLM usage patterns:
+1. **The Sequencer-Driver Handshake:** Bidirectional communication specifically designed for stimulus.
+2. **Point-to-Point TLM (Put/Get/FIFO):** Used less frequently in modern environments, but standard blocking/non-blocking FIFO interfaces.
+3. **The Analysis Fabric (Publish/Subscribe):** Used by monitors to fan-out data to 0-to-N listeners (scoreboards, coverage).
+
+### Sequencer ↔ Driver Handshake
+Sequencers manage high-level intent, drivers translate that intent into pin-wiggles. Their protocol keeps stimulus moving.
+
+<AnimatedUvmSequenceDriverHandshakeDiagram />
+
+<Dataflow3D />
+
+```systemverilog
+class my_driver extends uvm_driver#(my_txn);
+  `uvm_component_utils(my_driver)
+  
+  task run_phase(uvm_phase phase);
+    forever begin
+      seq_item_port.get_next_item(req); // Block until sequence generates an item
+      drive_transfer(req);              // Translate to pins
+      seq_item_port.item_done();        // Unblock the sequence
+    end
+  endtask
+endclass
+
+// In the agent's connect_phase:
+function void connect_phase(uvm_phase phase);
+  drv.seq_item_port.connect(sqr.seq_item_export);
+endfunction
+```
+
+### The Analysis Fabric (Publish/Subscribe)
+Monitors reconstruct transactions and broadcast them. They use a `uvm_analysis_port`, which expects listeners to provide a `uvm_analysis_export` connected to an `imp` (implementation) providing the `write()` function.
+
+<Analysis3D />
+
+```systemverilog
+// 1. The Broadcaster (Monitor)
+class my_monitor extends uvm_monitor;
+  uvm_analysis_port#(my_txn) ap;
+  // ... inside run_phase after observing bus:
+  // ap.write(txn_clone);
+endclass
+
+// 2. The Subscriber (Scoreboard/Coverage)
+class my_scoreboard extends uvm_component;
+  uvm_analysis_imp#(my_txn, my_scoreboard) analysis_export;
+  
+  // Must implement the write() method!
+  virtual function void write(my_txn t);
+    // process the transaction ...
+  endfunction
+endclass
+
+// 3. The Connection (Environment)
+function void connect_phase(uvm_phase phase);
+  agent.monitor.ap.connect(scb.analysis_export);
+endfunction
+```
+
+## Make It Work
+1. **Connect everything in `connect_phase`**: Ports exist after the `build_phase` completes. Connect them before `run_phase` wakes up.
+2. **Analysis Ports support 0-to-N connections**: You can wire an agent's `analysis_port` to a scoreboard, a coverage collector, and a debug logger simultaneously.
+3. **Use FIFOs for decoupling**: If your driver operates on a completely different clock than your sequencer, or your scoreboard is slow, place a `uvm_tlm_analysis_fifo` between them.
+4. **Be careful with references**: Items passed via TLM are handles. Always `clone()` items in the monitor before calling `write()` so that multiple subscribers don't accidentally mutate shared data.
+
+## Interview Pitfalls
+**Missing the `connect_phase` Hierarchy Rule:**
+You can only connect components going UP or DOWN the hierarchy. `child_port.connect(parent_export)` is valid. `peerA_port.connect(peerB_export)` is valid. But you cannot bypass hierarchy boundaries. 
+
+**Missing `item_done()`:**
+Interviewers will present a testbench that runs exactly one transaction and hangs. If the driver loops but never calls `item_done()`, the sequence blocks forever waiting for acknowledgment.
+
+## Practice & Reinforce
+
+<Quiz questions={[
+    {
+      "question": "Which phase is the only correct place to resolve TLM port connections?",
+      "answers": [
+        {"text": "build_phase", "correct": false},
+        {"text": "connect_phase", "correct": true},
+        {"text": "run_phase", "correct": false}
+      ],
+      "explanation": "Because ports and components are instantiated via factory rules top-down during build_phase, they can only be successfully wired bottom-up in the connect_phase."
+    },
+    {
+      "question": "How many subscribers can connect to a single `uvm_analysis_port`?",
+      "answers": [
+        {"text": "Exactly 1", "correct": false},
+        {"text": "0 or more (unlimited)", "correct": true},
+        {"text": "A maximum of 2", "correct": false}
+      ],
+      "explanation": "Analysis ports implement publish/subscribe logic. If no one connects, the `write()` call is safely ignored. If 10 components connect, `write()` runs for all 10."
+    }
+  ]} />
+
+<div className="my-6 rounded-2xl border border-muted bg-muted/40 p-6">
+  <h3 className="text-lg font-semibold">TLM Connection Mini-Lab</h3>
+  <p className="mt-2 text-sm text-muted-foreground">
+    Practice wiring `uvm_analysis_port`s to `uvm_tlm_analysis_fifo`s in the 
+    <a href="/exercises/scoreboard-connector" className="mx-1 text-primary hover:underline">Scoreboard Connector Exercise</a>. 
+    It focuses exactly on the dual-path setup used in modern checking modules.
+  </p>
+</div>
+
+## References & Next Topics
+- IEEE 1800.2-2020 LRM: Clause 12 (TLM Interfaces).
+- Next: [/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources](../I-UVM-2C_Configuration_and_Resources/index).

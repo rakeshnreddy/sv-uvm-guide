@@ -1,0 +1,103 @@
+import { InfoPage } from "@/components/templates/InfoPage";
+import { Quiz, InteractiveCode, InterviewQuestionPlayground } from "@/components/ui";
+
+export const metadata = {
+  title: "Coverage Options and Sampling | Advanced UVM Techniques & Strategy",
+  description: "Learn how covergroup options influence when and how data is sampled.",
+};
+
+<InfoPage
+  title="Coverage Options and Sampling"
+  uvm_concept_tags={["coverage options", "sampling"]}
+>
+
+  ## Level 1: The Big Idea
+  *IEEE 1800-2023, Clause 19.7: Covergroup options*
+
+  Coverage points only help if they sample at the right moment. SystemVerilog covergroups provide **options** to control when sampling happens and how results are reported.
+
+  **The Analogy:** A covergroup is like a camera. Sampling options decide when the shutter clicks and how the photos are cataloged.
+
+  ## Level 2: Practical Usage
+
+  ### Automatic vs. Manual Sampling
+
+  -   Define an event to sample automatically: `covergroup cg @(posedge clk);`
+  -   Call `cg.sample()` manually when your monitor observes a transaction. See the [analysis components](/curriculum/T2_Intermediate/I-UVM-2_Building_TB/index#monitors-scoreboards-and-the-analysis-fabric) section for how monitors publish transactions through analysis ports.
+
+  ### Useful Options
+
+  | Setting | Applies to | Why you use it |
+  | --- | --- | --- |
+  | `option.per_instance` | Covergroup instance | Keep coverage per agent, channel, or configuration. |
+  | `option.goal` | Covergroup instance | Define completion targets (e.g., 90%) for dashboards and regressions. |
+  | `option.comment` | Covergroup instance | Tag requirements or Jira IDs next to the data. |
+  | `option.weight` | Covergroup instance | Make high-value coverage count more in aggregate metrics. |
+  | `type_option.merge_instances` | Covergroup type | Merge per-instance data when you want a global view. |
+  | `type_option.auto_bin_max` | Coverpoint | Clamp auto bin creation so reports stay readable. |
+  | `option.at_least` | Coverpoint / cross | Require each bin to hit N times before counting as covered. |
+
+  <InteractiveCode>
+  ```systemverilog
+  covergroup cg_pkt @(posedge clk);
+    option.per_instance = 1;
+    option.goal = 90;
+    option.weight = 2;
+    option.comment = "VP-3.1";
+    type_option.auto_bin_max = 16;
+
+    cp_kind: coverpoint pkt.kind iff pkt.valid;
+    cp_len: coverpoint pkt.length {
+      bins small[] = {[0:63]};
+      bins large[] = {[64:255]};
+      option.at_least = 3;
+    }
+  endgroup
+
+  initial begin
+    cg_pkt cov = new;
+    // Manual sampling example
+    @(posedge clk);
+    cov.sample();
+  end
+  ```
+  </InteractiveCode>
+
+  ## Level 3: Expert Insights
+
+  **Gating and Conditional Sampling:** Use `iff` guards (as in the example above) or call `cov.sample()` only when transactions are valid—otherwise you dilute your metrics with idle cycles.
+
+  **Per-Instance vs. Merge:** Keep `option.per_instance = 1` for insight, but remember you can enable `cg_pkt.type_option.merge_instances = 1;` during reporting if you need a global roll-up.
+
+  **Runtime Introspection:** Query `cov.get_inst_coverage()` or `cov.find()` to build live dashboards, and use `set_inst_name()` so reports align with DUT hierarchy.
+
+  **Coverage Closure Loop:** Feed uncovered bins back into constraint randomization (see [Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2_Constrained_Randomization)) or targeted sequences until `option.goal` is satisfied.
+
+  ## Quiz
+
+  <Quiz questions={[
+    {
+      question: "Which option allows each instance of a covergroup to maintain its own coverage results?",
+      answers: [
+        { text: "`option.per_instance`", correct: true },
+        { text: "`option.goal`", correct: false },
+        { text: "`option.weight`", correct: false },
+        { text: "`option.comment`", correct: false }
+      ],
+      explanation: "`option.per_instance` ensures coverage is tracked separately for each covergroup instance."
+    }
+  ]} />
+
+  <div className="mt-8">
+    <InterviewQuestionPlayground
+      question="What is the difference between `option.weight` and `type_option.weight`?"
+      options={[
+        { text: "`option` applies only to cross-coverage, while `type_option` applies to coverpoints.", isCorrect: false, feedback: "Both can apply universally to the structure they are declared in." },
+        { text: "`option` configures the specific instance of the covergroup, while `type_option` configures the global type's aggregated reporting.", isCorrect: true, feedback: "Correct! `option.*` configures the individual object instance (e.g., this specific agent's coverage), while `type_option.*` configures the global type definition (the total coverage aggregated across all instances of that class)." },
+        { text: "There is no difference; they are aliases for the same underlying property.", isCorrect: false, feedback: "They control distinct scopes: instance vs. type." },
+        { text: "`option.weight` sets the sampling probability, while `type_option.weight` sets the reporting priority.", isCorrect: false, feedback: "Neither affect the probability; they both affect how coverage percentages are calculated in the final report." }
+      ]}
+    />
+  </div>
+
+</InfoPage>

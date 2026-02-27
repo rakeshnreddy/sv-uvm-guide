@@ -1,0 +1,72 @@
+import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, Quiz, InterviewQuestionPlayground } from "@/components/ui";
+
+export const metadata = {
+  title: "Local Variables in Sequences | Advanced SystemVerilog for Verification",
+  description: "Capture and reuse values within sequences to create robust properties.",
+};
+
+<InfoPage
+  title="Local Variables in Sequences"
+  sv_concept_tags={["local variables", "sequences"]}
+>
+
+  ## Local Variables in Sequences
+  *IEEE 1800-2023, Clause 16.10: Local variables*
+
+  Local variables let a sequence remember data from an earlier match and compare it later in the evaluation.
+
+  <InteractiveCode>
+  ```systemverilog
+  sequence s_store_then_compare;
+    logic [7:0] first_data;
+    (req, first_data = data) ##1 (ack && data == first_data);
+  endsequence
+
+  property p_store_compare;
+    @(posedge clk) s_store_then_compare;
+  endproperty
+
+  assert property (p_store_compare)
+    else $error("Data changed between request and ack");
+  ```
+  </InteractiveCode>
+
+  ### Why Use Local Variables?
+
+  - Each assertion thread gets its own copy, preventing unintended data sharing.
+  - They make it easy to check relationships across time without global state.
+
+  ### Advanced Tips
+
+  - Local variables can be declared `static` if multiple threads must share the same value.
+  - Pair local variables with `default clocking` to simplify multi-signal sequences.
+
+  ## Check Your Understanding
+
+  <Quiz questions={[
+    {
+      question: "What is a key benefit of using local variables inside a sequence?",
+      answers: [
+        { text: "They share the same value across all assertions", correct: false },
+        { text: "Each assertion evaluation has its own copy of the variable", correct: true },
+        { text: "They are visible to the entire design", correct: false },
+        { text: "They must be declared as `static`", correct: false }
+      ],
+      explanation: "Local variables are unique per assertion thread, avoiding race conditions."
+    }
+  ]} />
+
+  <div className="mt-8">
+    <InterviewQuestionPlayground
+      question="An assertion checks that a burst read returns the exact same address that was requested. However, if two read requests happen back-to-back, the assertion fails on the second read, incorrectly checking against the first request's address. What is the most likely cause?"
+      options={[
+        { text: "`|=>` was used instead of `|->`.", isCorrect: false, feedback: "Overlapping vs non-overlapping implication just shifts the check by one cycle, it doesn't cause data corruption between threads." },
+        { text: "The assertion used a module-level variable to store the address instead of an SVA local variable inside the sequence.", isCorrect: true, feedback: "Correct! If a normal `logic` variable in the module is used to store state, a second request will overwrite the first request's data before the first request finishes checking. SVA local variables (`logic [31:0] addr;` declared *inside* the property/sequence) dynamically allocate a new private copy for *every* attempt that starts." },
+        { text: "The property was evaluated in the reactive region rather than the observed region.", isCorrect: false, feedback: "This relates to scheduling semantics, not data shadowing." },
+        { text: "The local variable was not explicitly typed as `automatic`.", isCorrect: false, feedback: "Local variables in SVA are automatically dynamically allocated per-attempt; `static` is the keyword used if you actually want them shared." }
+      ]}
+    />
+  </div>
+
+</InfoPage>

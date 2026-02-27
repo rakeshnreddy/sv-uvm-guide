@@ -1,0 +1,73 @@
+---
+title: "A-UVM-5: UVM Callbacks"
+description: "Inject optional behavior into components without exploding your class hierarchy or hacking the base code."
+flashcards: "A-UVM-5_Callbacks"
+---
+
+## Quick Take
+- **What it is:** A standardized mechanism (`uvm_callback_iter`, `uvm_callback`) exposing safe extension points within a UVM component's main execution loop.
+- **Why it matters:** It prevents the need to aggressively subclass drivers/monitors just to inject a specific error, delay, or scoring hook for a single test.
+- **The Standard:** IEEE 1800.2-2020 Clause 10.7 (`uvm_callback`) and Clause 10.8 (`uvm_callback_iter`).
+
+## Build Your Mental Model
+### The Callback Mechanism
+To use callbacks, you first define the hook (`uvm_callback` virtual class), register it in the target component type, and invoke it via `uvm_do_callbacks` during the target's `run_phase`. A specific test can then instantiate and append a concrete callback derived from the interface to the component's queue.
+
+```systemverilog
+// 1. Define the callback interface
+class my_driver_cb extends uvm_callback;
+  virtual task pre_send(my_driver driver, ref packet pkt);
+  endtask
+endclass
+
+// 2. Register the callback in the component
+class my_driver extends uvm_driver#(packet);
+  `uvm_component_utils(my_driver)
+  `uvm_register_cb(my_driver, my_driver_cb)
+
+  task run_phase(uvm_phase phase);
+    packet pkt;
+    forever begin
+      seq_item_port.get_next_item(pkt);
+      
+      // Execute all registered callbacks
+      `uvm_do_callbacks(my_driver, my_driver_cb, pre_send(this, pkt))
+      
+      send_to_dut(pkt);
+      seq_item_port.item_done();
+    end
+  endtask
+endclass
+
+// 3. Implement and attach the optional behavior from a test
+class inject_error_cb extends my_driver_cb;
+  `uvm_object_utils(inject_error_cb)
+  virtual task pre_send(my_driver driver, ref packet pkt);
+    pkt.crc = ~pkt.crc; // Inject CRC error
+  endtask
+endclass
+
+// Inside test build_phase:
+// inject_error_cb err_cb = inject_error_cb::type_id::create("err_cb");
+// uvm_callbacks#(my_driver, my_driver_cb)::add(drv, err_cb);
+```
+
+## Push Further: Interview Prep (Callbacks vs Factory Overrides)
+
+> **Interview Question:** When should you use a factory override versus a callback to change a component's behavior?
+
+Use a **Factory Override** when:
+- The change is fundamental and replaces the default behavior entirely.
+- You need a persistent change mapping to the entire test life cycle.
+- You only need one active overriding variation of the target class at any given time.
+
+Use a **Callback** when:
+- You need to cleanly *append* or *prepend* behavior to existing logic (for instance, altering a packet right before the pin wiggle).
+- Multiple, independent extensions (e.g., scoreboard eavesdropping, error injection, random delay insertion) might be active simultaneously in the same transaction loop.
+- You want to dynamically toggle the behavior on and off during `run_phase` (a callback implementation can be trivially removed or bypassed).
+
+**Performance Impact Check:** Callbacks introduce a slight overhead due to the `uvm_callback_iter` tracking loop at runtime. Be incredibly careful invoking them inside sub-nanosecond signal loops or per-bit driver loops, where this runtime penalty can compound massively across regression runs.
+
+## Practice & Reinforce
+- Review the `uvm_callback` system task APIs for adding and deleting active callback hooks.
+- Create an `inject_delay_cb` hook to hold off the driver's response arbitrarily.

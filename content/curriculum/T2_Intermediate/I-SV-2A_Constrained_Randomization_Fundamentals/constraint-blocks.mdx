@@ -1,0 +1,84 @@
+import { InfoPage } from "@/components/templates/InfoPage";
+import InteractiveCode from "@/components/ui/InteractiveCode";
+import Quiz from "@/components/ui/Quiz";
+import { InterviewQuestionPlayground } from "@/components/ui";
+
+export const metadata = {
+  title: "Constraint Blocks, soft, and solve...before | Advanced SystemVerilog for Verification",
+  description: "Control dependencies and defaults using constraint blocks, soft values, and solve-before ordering.",
+};
+
+<InfoPage
+  title="Constraint Blocks, soft, and solve...before"
+  sv_concept_tags={["constraint blocks", "soft", "solve...before"]}
+>
+
+## Level 1: Defaults and Dependencies
+*IEEE 1800-2023, Clause 18.5.14: soft constraints*
+
+**The Analogy:** A constraint block is like a set of road signs guiding traffic. A `soft` sign is a suggestion that can be overridden, and `solve...before` sets the order of the traffic lights.
+
+## Level 2: Core Mechanics
+
+### Basic Constraint Block
+
+<InteractiveCode language="systemverilog" code={`class addr_range;
+  rand bit [7:0] low, high;
+  constraint c_order { low < high; }
+endclass`} />
+
+### Soft Constraints
+
+<InteractiveCode language="systemverilog" code={`class cfg;
+  rand bit [7:0] timeout;
+  constraint c_default { soft timeout == 8'd16; }
+endclass
+
+program test;
+  cfg c = new();
+  initial begin
+    c.randomize();
+    $display("timeout=%0d", c.timeout); // uses soft default
+    c.randomize() with { timeout == 8'd4; }; // override default
+    $display("timeout=%0d", c.timeout);
+  end
+endprogram`} />
+
+### Ordering with `solve...before`
+
+<InteractiveCode language="systemverilog" code={`class packet;
+  rand int size;
+  rand bit [7:0] data[];
+  constraint c_order { solve size before data; data.size() == size; }
+endclass`} />
+
+## Level 3: Expert Tips
+
+- `soft` gives a fallback value but disappears when a stronger constraint is present.
+- Overusing `solve...before` can slow the solver; use it only when a variable's legal range depends on another's value.
+
+<Quiz questions={[
+  {
+    question: "What happens when an inline constraint sets `timeout` to 4 in the example?",
+    answers: [
+      { text: "Randomization fails", correct: false },
+      { text: "The `soft` constraint is ignored", correct: true },
+      { text: "Timeout stays at 16", correct: false }
+    ],
+    explanation: "A `soft` constraint acts as a default and is overridden by the inline constraint."
+  }
+]} />
+
+<div className="mt-8">
+  <InterviewQuestionPlayground
+    question="Why do we sometimes need `solve A before B` in constraints?"
+    options={[
+      { text: "It causes A to be randomized before B, which makes the simulation run faster.", isCorrect: false, feedback: "It can actually make simulation slower, as the solver order is restricted." },
+      { text: "It changes the probability distribution so that values of B are chosen uniformly across the subset of valid values determined by A.", isCorrect: true, feedback: "Correct! Without `solve...before`, the solver picks a solution uniformly from the ENTIRE joint solution space. This often heavily skews the distribution of A. `solve A before B` forces it to pick A first, then pick B, changing the statistical distribution." },
+      { text: "It is required if B's value mathematically depends on A.", isCorrect: false, feedback: "The solver handles bidirectional dependencies automatically; `solve...before` is strictly about changing the probability distribution." },
+      { text: "It guarantees that A is randomized before pre_randomize() is called.", isCorrect: false, feedback: "`pre_randomize` runs before ANY variables are randomized." }
+    ]}
+  />
+</div>
+
+</InfoPage>

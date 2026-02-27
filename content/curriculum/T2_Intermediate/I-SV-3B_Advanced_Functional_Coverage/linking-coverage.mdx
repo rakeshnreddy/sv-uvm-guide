@@ -1,0 +1,99 @@
+import { InfoPage } from "@/components/templates/InfoPage";
+import { Quiz, InteractiveCode, InterviewQuestionPlayground } from "@/components/ui";
+
+export const metadata = {
+  title: "Linking Coverage to the V-Plan | Advanced UVM Techniques & Strategy",
+  description: "Tie functional coverage points back to verification plan items.",
+};
+
+<InfoPage
+  title="Linking Coverage to the V-Plan"
+  uvm_concept_tags={["coverage", "v-plan"]}
+>
+
+  ## Level 1: Why Link Coverage?
+  *IEEE 1800-2023, Clause 19.7.1: Predefined coverage options*
+
+  A verification plan (V-Plan) lists the features the design must support. Linking **covergroups** to plan items proves that each requirement has been exercised in simulation.
+
+  **The Analogy:** Imagine a checklist for a road trip. Each time you visit a landmark, you tick it off. Coverage-to-V-Plan linkage is that checklist for verification.
+
+  ## Level 2: Practical Method
+
+  ### Tagging Covergroups
+
+  Use options to embed plan information:
+
+  <InteractiveCode>
+  ```systemverilog
+  covergroup cg_mode @(posedge clk);
+    option.comment = "VPLAN-5.2"; // link to plan item
+    cp_mode: coverpoint mode;
+  endgroup
+  ```
+  </InteractiveCode>
+
+  ```systemverilog
+class mode_coverage extends uvm_component;
+  localparam string PLAN_ID = "VPLAN-5.2";
+  virtual interface mode_if vif;
+
+  covergroup cg_mode @(posedge vif.clk);
+    option.comment = PLAN_ID;
+    cp_mode: coverpoint vif.mode;
+  endgroup
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    cg_mode = new();
+    cg_mode.set_inst_name({PLAN_ID, "::", get_full_name()});
+  endfunction
+
+  function void sample();
+    cg_mode.sample();
+  endfunction
+endclass
+  ```
+
+  Instantiate the helper with `mode_coverage cov = mode_coverage::type_id::create("mode_cov", this);` and you automatically bake the plan ID into both the covergroup comment and its instance name.
+
+Coverage collectors often subscribe to monitor analysis ports. See [analysis components](/curriculum/T2_Intermediate/I-UVM-2_Building_TB/index#monitors-scoreboards-and-the-analysis-fabric) for how transactions reach these covergroups.
+
+  Reports can then filter coverage by `option.comment`, giving traceability back to the V-Plan. When holes appear, adjust stimulus using [Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2_Constrained_Randomization).
+
+  ## Level 3: Expert Insights
+
+  **Tool integration:** UCIS/UCDB databases preserve `option.comment` and instance names. Feed them into scripts (see `scripts/check-titles.*`) or dashboards so coverage badges line up with the plan hierarchy automatically.
+
+  **Granularity:** Tag the bin level when requirements are nuanced—e.g., `illegal_bins` for forbidden modes vs. `bins` for required ones. Traceability works best when the V-Plan mirrors this structure.
+
+  **Process guardrails:** Schedule periodic coverage reviews with the plan owners. Any time a requirement changes, update both the plan YAML and the covergroup options together so the linkage never drifts.
+
+  ## Quiz
+
+  <Quiz questions={[
+    {
+      question: "Why link coverage data to the V-Plan?",
+      answers: [
+        { text: "To speed up simulations", correct: false },
+        { text: "To prove each requirement has been exercised", correct: true },
+        { text: "To reduce code size", correct: false },
+        { text: "To enable automatic reset", correct: false }
+      ],
+      explanation: "Linking coverage to the plan demonstrates that every planned feature was verified."
+    }
+  ]} />
+
+  <div className="mt-8">
+    <InterviewQuestionPlayground
+      question="A verification engineer has 10 instances of `cg_mode`, representing 10 different channels. They want to ensure they see in the final report which specific channel missed a coverage bin. Which setup step is critical to make this report readable?"
+      options={[
+        { text: "They must set type_option.merge_instances = 1.", isCorrect: false, feedback: "Merging instances destroys visibility into *which* specific channel missed the bin." },
+        { text: "They must call cg_mode.set_inst_name() with a unique string for each instance.", isCorrect: true, feedback: "Correct! Without calling `set_inst_name()`, all instances might just appear as `cg_mode` in the database, making it impossible to know which of the 10 channels failed." },
+        { text: "They need to use cross-coverage instead of option.per_instance.", isCorrect: false, feedback: "Cross coverage links features, not instances." },
+        { text: "They must set option.goal = 100 for every instance.", isCorrect: false, feedback: "Goal setting doesn't help identify which instance is failing." }
+      ]}
+    />
+  </div>
+
+</InfoPage>

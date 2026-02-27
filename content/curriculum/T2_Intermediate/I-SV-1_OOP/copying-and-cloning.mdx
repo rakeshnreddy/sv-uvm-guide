@@ -1,0 +1,106 @@
+import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, InterviewQuestionPlayground } from "@/components/ui";
+
+export const metadata = {
+  title: "Copying and Cloning Objects | SystemVerilog OOP",
+  description: "Understand shallow vs. deep copy in SystemVerilog, and how to implement robust copy() and clone() methods.",
+};
+
+<InfoPage
+  title="Copying and Cloning Objects"
+  sv_concept_tags={["shallow copy", "deep copy", "clone"]}
+>
+
+  ## The Assignment Operator vs. Copying
+  *IEEE 1800-2023, Clause 8.16: Object assignment and copying*
+
+  In SystemVerilog, assigning one object handle to another (`p2 = p1`) **does not** copy the object. It only copies the memory address. Both handles now point to the exact same physical object.
+
+  <InteractiveCode>
+  ```systemverilog
+  class Packet;
+    int data = 10;
+  endclass
+
+  Packet p1 = new();
+  Packet p2 = p1; // p2 points to the SAME object
+
+  p2.data = 20;
+  $display(p1.data); // Prints 20!
+  ```
+  </InteractiveCode>
+
+  ## Shallow Copy
+  SystemVerilog provides the `new` operator with an argument for shallow copying: `p2 = new p1;`.
+  This creates a *new* object, but only copies properties at the top level. If the object contains handles to *other* objects, only the handles are copied, not the underlying objects.
+
+  <InteractiveCode>
+  ```systemverilog
+  class Header;
+    int id = 1;
+  endclass
+
+  class Packet;
+    int data = 10;
+    Header hdr = new();
+  endclass
+
+  Packet p1 = new();
+  Packet p2 = new p1; // Shallow copy
+
+  p2.data = 20;       // Safe: p2 has its own 'data'
+  p2.hdr.id = 5;      // Danger: p1.hdr and p2.hdr point to the SAME Header object!
+  $display(p1.hdr.id); // Prints 5!
+  ```
+  </InteractiveCode>
+
+  ## Deep Copy and the `copy()` Method
+  To properly duplicate an object and all its nested objects, we must write a custom `copy()` method. This is standard methodology in verification frameworks like UVM.
+
+  <InteractiveCode>
+  ```systemverilog
+  class Header;
+    int id = 1;
+
+    function void copy(Header rhs);
+      this.id = rhs.id;
+    endfunction
+  endclass
+
+  class Packet;
+    int data = 10;
+    Header hdr = new();
+
+    function void copy(Packet rhs);
+      this.data = rhs.data;
+      // Deep copy: we must call copy() on the child object!
+      this.hdr.copy(rhs.hdr);
+    endfunction
+  endclass
+  ```
+  </InteractiveCode>
+
+  ## The `clone()` Method
+  While `copy()` updates an *existing* object, `clone()` allocates a *new* object and then copies the data into it. UVM defines clone using virtual methods to ensure the correct derived type is instantiated.
+
+  ```systemverilog
+  virtual function Packet clone();
+    Packet p = new();
+    p.copy(this);
+    return p;
+  endfunction
+  ```
+
+  ## Interview Pitfall: Shallow Copy Leak
+
+  <InterviewQuestionPlayground
+    question="Given `obj2 = new obj1`, where `obj1` contains a mailbox handle, what happens if `obj2` puts a transaction into the mailbox?"
+    options={[
+      { text: "It causes a runtime error because mailboxes cannot be shallow copied.", isCorrect: false, feedback: "A mailbox is just an object handle. It copies fine." },
+      { text: "It is put into `obj2`'s distinct mailbox; `obj1`'s mailbox is unaffected.", isCorrect: false, feedback: "Shallow copy only copies the handle. Both point to the same mailbox." },
+      { text: "It is put into the shared mailbox; both `obj1` and `obj2` see the transaction.", isCorrect: true, feedback: "Correct! Shallow copy copies the object handles. System resources like mailboxes, semaphores, and sub-objects thus become shared, which is a common source of unintended side-effects." },
+      { text: "The compiler flags a warning for unsafe copy.", isCorrect: false, feedback: "SystemVerilog legally allows shallow copies of handles without warnings." }
+    ]}
+  />
+
+</InfoPage>

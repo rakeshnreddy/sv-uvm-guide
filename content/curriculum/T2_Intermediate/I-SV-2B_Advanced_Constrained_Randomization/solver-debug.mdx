@@ -1,0 +1,76 @@
+import { InfoPage } from "@/components/templates/InfoPage";
+import InteractiveCode from "@/components/ui/InteractiveCode";
+import { InterviewQuestionPlayground } from "@/components/ui";
+
+export const metadata = {
+  title: "Solver Debug and Failure Triage | Advanced SystemVerilog for Verification",
+  description: "Learn how to approach constraint solver failures, debug conflicting constraints, and use built-in simulator tools.",
+};
+
+<InfoPage
+  title="Solver Debug and Failure Triage"
+  sv_concept_tags={["solver failures", "debug", "randomization"]}
+>
+
+## The Problem: When `.randomize()` Fails
+*IEEE 1800-2023, Clause 18.6: Randomization methods*
+
+When you call `obj.randomize()`, you are asking the constraint solver (often an SAT or BDD solver under the hood) to find a set of values for your random variables that satisfies ALL active constraints.
+
+If it cannot find a solution, the solver gives up and returns `0`. **This is a critical failure.** If you do not check the return value, your testbench will continue running using stale, non-randomized data!
+
+<InteractiveCode language="systemverilog" code={`class Packet;
+  rand bit [3:0] size;
+  rand bit [7:0] payload[];
+
+  constraint c_size { size > 10; }
+  constraint c_len  { payload.size() < 5; }
+
+  // A subtle conflict: we want the payload size to equal 'size'
+  constraint c_match { payload.size() == size; }
+endclass
+
+program test;
+  initial begin
+    Packet p = new();
+    
+    // ALWAYS CHECK THE RETURN VALUE!
+    if (!p.randomize()) begin
+      $fatal(1, "Randomization failed! Testbench cannot proceed.");
+    end
+  end
+endprogram`} />
+
+## Triage Strategies
+
+### 1. Read the Solver Output
+Modern simulators (VCS, Xcelium, Questa) will print a detailed "constraint contradiction" report when randomization fails. It will list the exact variable values and constraints that couldn't be satisfied together. Read this first!
+
+### 2. Disable Constraints Incrementally
+If the solver output is too complex, use `constraint_mode(0)` to turn off constraints one by one until randomization succeeds. The last constraint you turned off is part of the contradiction.
+
+```systemverilog
+// Turn off the suspicious constraint
+p.c_size.constraint_mode(0); 
+if (!p.randomize()) $display("Still failing...");
+```
+
+### 3. Disable Random Variables
+You can also use `rand_mode(0)` to turn off randomization for specific variables. This treats them as state variables (constants during the solve phase) based on their current value.
+
+### 4. Beware of Signed Math
+A massive source of subtle solver failures is signed vs. unsigned math. Random variables are `unsigned` by default unless explicitly declared `signed`. Doing math with negative numbers in constraints when variables are unsigned will cause terrible wrap-around bugs.
+
+## Interview Pitfall: The Silent Failure
+
+<InterviewQuestionPlayground
+  question="You run a UVM test overnight and notice that while the test passed, every single generated transaction had the exact same payload (all zeros). What is the most likely cause?"
+  options={[
+    { text: "The random seed was kept constant.", isCorrect: false, feedback: "Even with a constant seed, successive calls to randomize() on the same object will produce different values." },
+    { text: "The generator forgot to check the return value of randomize(), and the randomization was failing.", isCorrect: true, feedback: "Correct! This is the classic 'silent failure'. If randomize() fails, the object variables are left untouched (usually 0s or whatever they were initialized to). If the sequence doesn't check the return value and raise a fatal error, it just drives the same default values forever." },
+    { text: "The constraints were too loose, so the solver defaulted to 0.", isCorrect: false, feedback: "Solvers don't default to 0; they pick uniformly distributed values in the legal space." },
+    { text: "UVM doesn't support SystemVerilog randomization natively.", isCorrect: false, feedback: "UVM heavily relies on SV randomization." }
+  ]}
+/>
+
+</InfoPage>

@@ -1,0 +1,78 @@
+import { InfoPage } from "@/components/templates/InfoPage";
+import InteractiveCode from "@/components/ui/InteractiveCode";
+import Quiz from "@/components/ui/Quiz";
+import { InterviewQuestionPlayground } from "@/components/ui";
+
+export const metadata = {
+  title: "Controlling Randomization: pre_randomize and post_randomize | Advanced SystemVerilog for Verification",
+  description: "Hook solver callbacks with pre_randomize and post_randomize to prepare and finalize objects.",
+};
+
+<InfoPage
+  title="Controlling Randomization: pre_randomize and post_randomize"
+  sv_concept_tags={["pre_randomize", "post_randomize"]}
+>
+
+## Level 1: Hooking the Solver
+*IEEE 1800-2023, Clause 18.11: pre_randomize() and post_randomize()*
+
+**The Analogy:** `pre_randomize` sets the table before guests arrive; `post_randomize` checks the dishes after the meal.
+
+## Level 2: Core Mechanics
+
+<InteractiveCode language="systemverilog" code={`class frame;
+  rand bit [7:0] len;
+  rand bit [7:0] payload[];
+
+  function void pre_randomize();
+    // Clear existing payload before generating new values
+    payload.delete();
+  endfunction
+
+  function void post_randomize();
+    // Allocate payload after len is known
+    payload = new[len];
+    foreach (payload[i]) payload[i] = i;
+  endfunction
+endclass
+
+program test;
+  frame f = new();
+  initial begin
+    repeat (2) begin
+      assert(f.randomize());
+      $display("len=%0d payload=%p", f.len, f.payload);
+    end
+  end
+endprogram`} />
+
+## Level 3: Expert Tips
+
+- Use `pre_randomize` to enable/disable constraints with `constraint_mode(0)` or to set up dynamic arrays.
+- Keep work in `post_randomize` lightweight; heavy processing can impact simulation time.
+
+<Quiz questions={[
+  {
+    question: "When is `pre_randomize` executed?",
+    answers: [
+      { text: "After new values are generated", correct: false },
+      { text: "Immediately before the solver runs", correct: true },
+      { text: "Only at time 0", correct: false }
+    ],
+    explanation: "`pre_randomize` gives you a chance to prepare the object before solving."
+  }
+]} />
+
+<div className="mt-8">
+  <InterviewQuestionPlayground
+    question="You need to calculate a CRC parity bit that depends on a randomly generated payload. In which method should you compute this CRC?"
+    options={[
+      { text: "pre_randomize()", isCorrect: false, feedback: "The payload isn't randomized yet!" },
+      { text: "Inside a constraint block", isCorrect: false, feedback: "Constraints are for solving, not for calculating procedural algorithms like CRC." },
+      { text: "post_randomize()", isCorrect: true, feedback: "Correct! `post_randomize()` runs immediately after the solver succeeds, making it the perfect place to calculate parity, CRCs, or other dependent fields that don't need to be solved by the solver." },
+      { text: "In the constructor (new)", isCorrect: false, feedback: "The constructor runs exactly once, but the object might be randomized multiple times." }
+    ]}
+  />
+</div>
+
+</InfoPage>

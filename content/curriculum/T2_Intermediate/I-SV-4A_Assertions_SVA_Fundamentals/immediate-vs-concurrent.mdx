@@ -1,0 +1,117 @@
+import { InfoPage } from "@/components/templates/InfoPage";
+import { InteractiveCode, Quiz, InterviewQuestionPlayground } from "@/components/ui";
+
+
+export const metadata = {
+  title: "Immediate vs. Concurrent Assertions | Advanced SystemVerilog for Verification",
+  description: "Compare procedural checks with temporal properties through hands-on examples.",
+};
+
+<InfoPage
+  title="Immediate vs. Concurrent Assertions"
+  sv_concept_tags={["immediate assertions", "concurrent assertions"]}
+>
+
+  ## Elevator Pitch
+  *IEEE 1800-2023, Clauses 16.3 and 16.4: Immediate and Concurrent assertions*
+
+  Immediate assertions execute like regular procedural statements and check a condition at the exact time they run.
+
+  Assertions catch bugs by checking that design behavior meets expectations. **Immediate** assertions fire instantly within procedural code, while **concurrent** assertions monitor signal relationships over time.
+
+  ## Practical Explanation
+
+  ```systemverilog
+  // Immediate assertion: procedural
+  always_ff @(posedge clk) begin
+    assert (req == 0) else $error("Req high during reset");
+  end
+
+  // Concurrent assertion: temporal
+  property hold_until_ack;
+    req |-> ##[1:3] ack;
+  endproperty
+  assert property (hold_until_ack);
+  ```
+
+  Immediate assertions live in [procedural blocks](/curriculum/T1_Foundational/F3A_Procedural_Blocks_and_Flow_Control). Concurrent assertions sit outside and observe signal sequences, enabling checks like "req must be followed by ack within 3 cycles." See [multi-clocking](../I-SV-4B_Advanced_SVA/multi-clocking) for multi-clock properties.
+
+  ## Advanced Notes
+
+  * Concurrent assertions support sampling with `##` delays and repetition operators.
+  * Use `disable iff` to mask assertions during reset.
+  * Remember: **Immediate = instant; Concurrent = temporal watchdog**.
+
+  <Quiz questions={[
+    {
+      question: "Where do immediate assertions execute?",
+      answers: [
+        { text: "Inside procedural code", correct: true },
+        { text: "In modules only", correct: false },
+        { text: "As stand-alone properties", correct: false },
+        { text: "In covergroups", correct: false }
+      ],
+      explanation: "Immediate assertions are statements inside procedural code and are evaluated when the code executes."
+    }
+  ]} />
+
+  <InteractiveCode>
+  ```systemverilog
+  always_ff @(posedge clk) begin
+    // Fail if address is misaligned on this cycle
+    assert (!(addr[1:0])) else
+      $error("Address %h is not word aligned", addr);
+  end
+  ```
+  </InteractiveCode>
+
+  Concurrent assertions monitor temporal behavior across clock cycles using sequences and properties.
+
+  <InteractiveCode>
+  ```systemverilog
+  sequence s_req_then_ack;
+    req ##1 ack;
+  endsequence
+
+  property p_req_ack;
+    @(posedge clk) req |-> s_req_then_ack;
+  endproperty
+
+  assert_req_ack: assert property (p_req_ack)
+    else $error("Ack did not follow req");
+  ```
+  </InteractiveCode>
+
+  ### Advanced Tips
+
+  - Use immediate assertions for quick sanity checks inside procedural code.
+  - Concurrent assertions can be reused across modules by placing them in interfaces or packages.
+
+  ## Check Your Understanding
+
+  <Quiz questions={[
+    {
+      question: "Where do immediate assertions execute?",
+      answers: [
+        { text: "Only in interfaces", correct: false },
+        { text: "Inside procedural code such as always blocks", correct: true },
+        { text: "In a separate assertion block", correct: false },
+        { text: "Only during reset", correct: false }
+      ],
+      explanation: "Immediate assertions behave like procedural statements."
+    }
+  ]} />
+
+  <div className="mt-8">
+    <InterviewQuestionPlayground
+      question="A verification engineer writes a checker to verify sequential logic inside an `always_comb` block using a simple immediate assertion: `assert (a == b)`. However, it fires multiple times with false failures during a single delta cycle before signals settle. What is the modern solution to this problem?"
+      options={[
+        { text: "Wrap the assertion in an `always_ff @(posedge clk)` block.", isCorrect: false, feedback: "That turns it into a synchronous check, but the goal was to check combinational logic." },
+        { text: "Change it to a deferred assertion using `assert #0` or `assert final`.", isCorrect: true, feedback: "Correct! Standard immediate assertions execute exactly when reached, risking 'glitch' failures in combinational blocks. Deferred assertions (`assert #0` or `assert final`) wait until the end of the time step (after signals settle) to evaluate, preventing false glitch reports." },
+        { text: "Use a concurrent assertion (`assert property`).", isCorrect: false, feedback: "Concurrent assertions evaluate on clock sequences, not for continuous combinational checks." },
+        { text: "Add a `#1` artificial delay before the `assert`.", isCorrect: false, feedback: "Adding timing delays inside `always_comb` breaks synthesis and simulation semantics." }
+      ]}
+    />
+  </div>
+
+</InfoPage>

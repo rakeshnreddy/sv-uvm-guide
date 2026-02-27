@@ -1,0 +1,119 @@
+---
+title: "I-UVM-1C: UVM Phasing and Synchronization"
+description: "Orchestrate build, run, and cleanup with UVM phases, domains, objections, and synchronization primitives so every component stays in lockstep."
+flashcards: "I-UVM-1C_UVM_Phasing"
+---
+
+import { InteractiveCode, Quiz } from '@/components/ui';
+import UvmPhasingDiagram from '@/components/diagrams/UvmPhasingDiagram';
+import dynamic from 'next/dynamic';
+
+const PhaseTimeline3D = dynamic(() => import('@/components/curriculum/interactives/3d/PhaseTimeline3D'), { ssr: false });
+
+## Quick Take
+- **What it is:** UVM phasing defines the sequence of build, run, and cleanup steps each component follows. Objections, events, and barriers control when phases end or when threads sync.
+- **Why it matters:** Consistent phasing keeps agents, scoreboards, and tests synchronized—no component starts driving before everything is connected.
+- **The Analogy:** Think of phases as a rehearsal schedule: setup, sound check, showtime, encore. Objections are the stage manager holding the curtain until performers finish.
+
+> **Retention Hook:** Say “build → connect → run → report” and picture objections as the brake pedal on `run_phase`.
+
+## Build Your Mental Model
+### Three Buckets of Phases
+Phases fall into predictable groups (Clause 9 of the IEEE 1800.2-2020 LRM):
+- **Build-time (functions, top-down):** `build` (creates components), `connect` (wires ports/exports), `end_of_elaboration` (final checks).
+- **Run-time (tasks, parallel):** `run_phase` is the workhorse. (Optional runtime phases like `reset`, `configure`, `main`, `shutdown` execute sequentially but run in parallel across all components.)
+- **Cleanup (functions, bottom-up):** `extract`, `check`, `report` gather results and print summaries.
+
+<UvmPhasingDiagram />
+
+<PhaseTimeline3D />
+
+### Objection Flow
+Task-based phases (like `run_phase`) end only when all raised objections drop.
+
+<InteractiveCode>
+```systemverilog
+class my_driver extends uvm_driver#(my_txn);
+  `uvm_component_utils(my_driver)
+
+  virtual task run_phase(uvm_phase phase);
+    // 1. Raise objection to keep simulation alive
+    phase.raise_objection(this, "Driver warming up");
+
+    repeat (10) begin
+      drive_one_transaction();
+    end
+
+    // 2. Drop objection when work is complete
+    phase.drop_objection(this, "Driver finished");
+  endtask
+endclass
+```
+</InteractiveCode>
+
+If you forget to drop an objection, your simulation hangs. Automate safety nets with `uvm_objection::set_drain_time` to let sequences drain gracefully.
+
+## Advanced Mechanics
+### Domains and Phase Jumping
+Phases execute in a **domain**. The default *common* domain runs all components together. You can create additional domains to run a subset of components on their own schedule (e.g., a configuration agent that stays alive while the rest of the test jumps phases).
+
+UVM components can **jump** to another phase using `phase.jump()`. This is helpful to skip remaining runtime phases when a stopping condition is met, but use it sparingly! Skipping cleanup phases can leave files open or threads running.
+
+```systemverilog
+task run_phase(uvm_phase phase);
+  if (stop_simulation)
+    phase.jump(uvm_shutdown_phase::get()); // Jump forward
+endtask
+```
+
+### uvm_event and uvm_barrier (Clause 10)
+Beyond phase objections, you often need cross-component signaling:
+- **`uvm_event`**: A simple trigger/wait synchronization. One process calls `trigger()` and another waits with `wait_trigger()`.
+- **`uvm_barrier`**: Blocks progress until a specified number of processes reach it via `wait_for()`. The barrier then "opens" and all waiting processes continue simultaneously.
+
+## Interview Pitfalls
+**The `build_phase` vs `connect_phase` Mix-Up:**
+If you try to call `<port>.connect(<export>)` inside the `build_phase`, you will face null pointer exceptions. `build_phase` builds from the top-down, meaning peer components might not exist yet when you try to connect them. Always wait for `connect_phase` (which resolves bottom-up) to wire ports.
+
+**The Hanging Simulation:**
+"My test says time 0 and never finishes."
+1. Did you raise an objection but never drop it?
+2. Did you forget to consume time in a `run_phase` loop? If you raise an objection and enter a loop without `#` delays or `@(posedge clk)`, simulation time freezes.
+
+## Practice & Reinforce
+
+<Quiz questions={[
+  {
+    question: 'Which UVM phase executes top-down and is responsible for instantiating components?',
+    answers: [
+      { text: 'connect_phase', correct: false },
+      { text: 'run_phase', correct: false },
+      { text: 'build_phase', correct: true },
+      { text: 'report_phase', correct: false }
+    ],
+    explanation: 'The `build_phase` walks the hierarchy top-down, giving each parent the chance to create its children before those children run.'
+  },
+  {
+    question: 'What is the primary role of the objection mechanism in UVM?',
+    answers: [
+      { text: 'To configure components before build', correct: false },
+      { text: 'To keep a run-time phase active while work remains', correct: true },
+      { text: 'To report scoreboard mismatches', correct: false },
+      { text: 'To randomize sequences', correct: false }
+    ],
+    explanation: 'Objections are cooperative counters; `run_phase` ends only after every component that raised an objection drops it.'
+  },
+  {
+    question: 'If you want 3 independent parallel monitoring loops to pause until all 3 have reached the same synchronization point, what primitive should you use?',
+    answers: [
+      { text: 'uvm_event', correct: false },
+      { text: 'uvm_barrier', correct: true },
+      { text: 'phase.jump()', correct: false }
+    ],
+    explanation: 'A `uvm_barrier` configured with a threshold of 3 will block `wait_for()` calls until 3 processes arrive.'
+  }
+]} />
+
+## References & Next Topics
+- IEEE 1800.2-2020 LRM: Clause 9 (Phasing) and Clause 10 (Synchronization).
+- Next: [/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles](../../T2_Intermediate/I-UVM-2A_Component_Roles/index).
