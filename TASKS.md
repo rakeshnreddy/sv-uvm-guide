@@ -74,14 +74,16 @@ Because this guide is too large to modernize in a single chat session, use the f
 > 3. Locate the `Wave 5 Priority Backlog` in `TASKS.md` and find the first Sub-Task containing an item marked as `todo`.
 > 4. Read the explicitly provided Agent Instructions for that exact Sub-Task ID.
 > 5. Execute the structural changes, create the React interactives, and author the labs as described. Use tools like `grep_search` and `list_dir` to understand the files before modifying them.
-> 6. **Crucial (QA Integration):** There is a parallel QA agent reviewing your work. You must ensure your code is clean, robust, and handles errors gracefully so the QA agent can successfully write tests for it. Run `npx tsx scripts/generate-curriculum-data.ts` and `npx vitest --run` to verify the build before handoff.
-> 7. Change the task from `todo` to `complete` in `TASKS.md`, commit your changes, and instruct the user to use this exact prompt again when opening the next session.
+6. **Crucial Testing Step:** Before you mark any task as complete, **YOU MUST** run the test suite to verify your own work has not broken the build. Run `npx tsx scripts/generate-curriculum-data.ts` and `npx vitest --run`. If tests fail, FIX THEM.
+> 7. **QA Integration:** There is a parallel QA agent reviewing your work. You must ensure your code is clean, robust, and handles errors gracefully so the QA agent can successfully write tests for it. Do not mark the task complete until *your* tests pass.
+> 8. Change the task from `todo` to `complete` in `TASKS.md`, commit your changes, and instruct the user to use this exact prompt again when opening the next session.
 
 ### Agent Workflow (Internal Guidelines)
 **If you (the agent) are reading this file:**
 1. **Always read this file (`TASKS.md`) FIRST.** Do *not* rely on `curriculum_modernization_tasks.md` for active status tracking.
 2. Find the first `todo` in the Priority Backlog.
 3. Call standard repository tools (`grep_search`, `list_dir`) to verify the file state before and after you modify anything.
-4. **Testing & QA Support:** Before marking any task as complete, you MUST verify the build. Run `npx tsx scripts/generate-curriculum-data.ts`. Then run `npm run lint` and `npx vitest --run`. If tests fail, FIX THEM. Ensure your component structure is modular and testable, because a parallel QA agent will be writing comprehensive automated tests for all features you build. 
-5. **Updating State:** Once a task is complete and tests pass, change its status in this file (`TASKS.md`) from `todo` to `complete`. 
-6. **Handoff:** If you are nearing the end of your token limit, update `TASKS.md`, commit your work, and provide the user with the "📋 THE GENERIC PROMPT TO RESUME WORK" above.
+4. **Testing is Mandatory:** Before marking any task as complete, you MUST verify the build. Run `npx tsx scripts/generate-curriculum-data.ts`. Then run `npm run lint` and `npx vitest --run`. If tests fail, FIX THEM. Do not rely on the QA agent to fix your bugs.
+5. **QA Support:** Ensure your component structure is modular and testable, because a parallel QA agent will be writing comprehensive automated tests for all features you build. 
+6. **Updating State:** Once a task is complete and tests pass, change its status in this file (`TASKS.md`) from `todo` to `complete`. 
+7. **Handoff:** If you are nearing the end of your token limit, update `TASKS.md`, commit your work, and provide the user with the "📋 THE GENERIC PROMPT TO RESUME WORK" above.
