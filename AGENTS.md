@@ -15,8 +15,9 @@
 ## Coding Style & Naming Conventions
 Favor modern TypeScript, React Server Components when useful, and Tailwind utilities. Stick to 2-space indentation. Components use `PascalCase.tsx`, hooks `useName.ts`, curriculum `kebab-case.mdx`. Share types from `src/types/`, avoid `any`, and follow the Quick Take → References flow in `PROJECT_GUIDE.md`.
 
-## Testing Guidelines
-Vitest specs live in `tests/` and feature-aligned `__tests__/`; snapshots stay in `tests/__snapshots__/`. Core Playwright suites (`curriculum-links`, `curriculum-nav`, `curriculum-diagram`, `uvm-architecture-visual`) share helpers in `tests/fixtures/`. Until `npx playwright install-deps` succeeds (`OPS-1`), document e2e failures and rerun when libraries install. Store Playwright, bundle, and audit outputs in `test-results/`; run `npm run audit:uvm-factory` after UVM changes.
+## Testing Guidelines & QA Agent Integration
+Vitest specs live in `tests/` and feature-aligned `__tests__/`; snapshots stay in `tests/__snapshots__/`. Core Playwright suites (`curriculum-links`, `curriculum-nav`, `curriculum-diagram`, `uvm-architecture-visual`) share helpers in `tests/fixtures/`. 
+**QA Agent Integration:** A parallel QA agent is actively reviewing this repository to ensure quality is maintained and to write comprehensive automated tests for all new features (React interactives, labs, etc.). All executing agents *must* write clean, modular, and easily testable code to support the QA agent. Store Playwright, bundle, and audit outputs in `test-results/`; run `npm run audit:uvm-factory` after UVM changes.
 
 ## Task Tracking & Session Handoffs
 `TASKS.md` is the high-level backlog. For curriculum work, a more detailed workflow is defined below.
