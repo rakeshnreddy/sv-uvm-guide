@@ -1,48 +1,67 @@
-# Next Action Tracker
+# SV-UVM Guide Modernization Tracker
 
-This file consolidates open implementation and feedback items so the team has a single queue to reference between sessions. Update the status column as items progress and prune tasks once they are delivered.
+This is the single source of truth for the curriculum modernization effort.
 
-## Status Legend
-- `todo`: Not started.
-- `in-progress`: Work underway or partially delivered.
-- `blocked`: Waiting on another task or external dependency.
-- `ready-for-review`: Awaiting verification/approval.
+## Current Repository Status
 
-## Active Tasks
-| ID | Status | Area | Summary | Notes |
-|----|--------|------|---------|-------|
-| `VIS-3D-MAILBOX` | `complete` | Visualizations | Build 3D mailbox vs queue arbitration scene showing head/tail pressure and outstanding transactions. | Mirror queue semantics and highlight backpressure cues before integrating into Practice. |
-| `VIS-3D-COVERAGE` | `complete` | Visualizations | Create 3D coverage bin heat-map towers to illustrate sampling progress over time. | Reuse coverage data from Coverage Analyzer to drive bar heights and color intensity. |
-| `VIS-3D-ANALYSIS` | `complete` | Visualizations | Model UVM analysis fan-out as a layered 3D lattice linking monitors, scoreboards, and subscribers. | Should pair with component relationships lesson to emphasize TLM connections. |
-| `VIS-3D-DATAFLOW` | `complete` | Visualizations | Build a 3D UVM data-flow pipeline that traces transactions from sequencer to driver to monitor to scoreboard. | Include animated arrows and latency cues to highlight hand-offs across TLM ports. |
-| `VIS-3D-CONSTRAINT` | `complete` | Visualizations | Prototype a 3D constraint solver state tree that highlights active branches during randomize() calls. | Use branching transparency to depict pruned paths and constraint weighting. |
-| `VIS-3D-PHASE-TIMELINE` | `complete` | Visualizations | Animate phase timelines in 3D to show overlapping run/cleanup windows across components. | Could extend the blocking simulator with depth to convey phasing concurrency. |
+The repository has passed through Waves 1-4 of the modernization plan defined in `comprehensive_lrm_audit_report.md`. 
 
-## Curriculum Modernization Tasks
+**The following modules are 100% COMPLETE, with structural splits, LRM anchoring, and 3D/2D interactives integrated:**
+- All 6 deep 3D visualizations (`VIS-3D-MAILBOX`, `VIS-3D-COVERAGE`, `VIS-3D-ANALYSIS`, `VIS-3D-DATAFLOW`, `VIS-3D-CONSTRAINT`, `VIS-3D-PHASE-TIMELINE`).
+- `F1: Why Verification` & `F2: SV Language Basics` (Fully modernized & split into F2A-F2D).
+- `F4: RTL and Testbench Constructs` (Fully modernized & split into F4A-F4C).
+- `I-SV-1: Object-Oriented Programming` (Rewritten, interview-focused, IEEE 1800-2023 backed).
+- `E-PERF-1: UVM Performance` (Modernized with `SVEventScheduler` and Bottleneck Lab).
+- Standards Closure: Stale 1800-2017 references removed globally.
 
-| Task ID | Summary | Status |
-|---|---|---|
-| `CURR-SPLIT-F2` | Split F2 lesson (SV Basics) into four parts | `complete` |
-| `CURR-SPLIT-F4` | Split F4 lesson (RTL Constructs) into three parts | `complete` |
-| `CURR-SPLIT-I-UVM-1` | Split I-UVM-1 lesson (UVM Intro) into three parts | `todo` |
-| `CURR-SPLIT-I-UVM-2` | Split I-UVM-2 lesson (Build TB) into two parts | `todo` |
-| `CURR-SPLIT-I-UVM-3` | Split I-UVM-3 lesson (Sequences) into two parts | `todo` |
-| `CURR-SPLIT-I-SV-2` | Split I-SV-2 lesson (Randomization) into two parts | `todo` |
-| `CURR-SPLIT-I-SV-3` | Split I-SV-3 lesson (Coverage) into two parts | `todo` |
-| `CURR-SPLIT-I-SV-4` | Split I-SV-4 lesson (Assertions) into two parts | `todo` |
-| `CURR-SPLIT-A-UVM-4` | Split A-UVM-4 lesson (RAL) into two parts | `todo` |
-| `CURR-REFACTOR-F3` | Deprecate F3 lesson and merge into F2 | `todo` |
-| `CURR-REFACTOR-I-UVM-4` | Deprecate I-UVM-4 lesson and merge into I-UVM-1B | `todo` |
-| `CURR-REFACTOR-I-UVM-5` | Deprecate I-UVM-5 lesson and merge into I-UVM-1C | `todo` |
-| `CURR-REFACTOR-A-UVM-1` | Deprecate A-UVM-1 lesson and merge into I-UVM-3B | `todo` |
-| `CURR-REFACTOR-A-UVM-2` | Deprecate A-UVM-2 lesson and merge into I-UVM-1B | `todo` |
-| `CURR-REFACTOR-A-UVM-3` | Deprecate A-UVM-3 lesson and create new Callbacks lesson | `todo` |
-| `CURR-MODERNIZE-F1` | Modernize F1 lesson (Why Verification?) | `ready-for-review` |
-| `CURR-MODERNIZE-F2` | Modernize F2 data types & structures into Quick Take flow with interactives. | `ready-for-review` |
-| `CURR-MODERNIZE-I-SV-1` | Modernize I-SV-1 lesson (OOP) | `complete` |
-| `CURR-MODERNIZE-E-PERF-1` | Modernize E-PERF-1 lesson (UVM Performance) | `complete` |
+---
 
-## Recently Completed
-- See `docs/feature-log.md` for the running history of shipped work.
+## Wave 5 Priority Backlog (Pending Execution)
 
-Update this section as additional work ships.
+Below are the remaining requirements from the `comprehensive_lrm_audit_report.md` and `curriculum_modernization_tasks.md` that must be executed to achieve 100% modernization.
+
+### Sub-Task 1: Deprecate `F3` and Consolidate Basics
+| ID | Status | Summary | Agent Instructions |
+|---|---|---|---|
+| `W5-F3-MERGE` | `complete` | Deprecate F3 and merge into F2C/F2D | Move `ProceduralBlocksSimulator.tsx` to `F2C`. Move unique `F3` concepts to `F2C` (procedural code) or `F2D` (fork-join). Delete the `F3_Procedural_Constructs` directory. Update `next.config.mjs` to redirect the old F3 path to F2C. Redirect `F3_Behavioral_RTL_Modeling` to F2C. |
+
+### Sub-Task 2: Ship Remaining I-SV Structural Splits
+| ID | Status | Summary | Agent Instructions |
+|---|---|---|---|
+| `W5-ISV2-SPLIT` | `todo` | Split `I-SV-2` (Randomization) into A & B | Create `I-SV-2A_Randomization_Fundamentals` and `I-SV-2B_Advanced_Constraint_Techniques`. Build `ConstraintSolverExplorer.tsx` for 2B. Build "Dependent Fields Challenge" lab for 2B. |
+| `W5-ISV3-SPLIT` | `todo` | Split `I-SV-3` (Coverage) into A & B | Create `I-SV-3A_Coverage_Fundamentals` and `I-SV-3B_Advanced_Coverage_Modeling`. Remove sync/IPC content (mailboxes/semaphores) from here. Build `CovergroupBuilder.tsx` for 3A. Build "State Machine Bug Hunt" lab for 3B. |
+| `W5-ISV4-SPLIT` | `todo` | Split `I-SV-4` (Assertions) into A & B | Create `I-SV-4A_SVA_Fundamentals` and `I-SV-4B_Advanced_Temporal_Logic`. Build `TemporalLogicExplorer.tsx` for 4B. Build "Data Integrity Challenge" lab for 4B. |
+
+### Sub-Task 3: Ship Remaining I-UVM Structural Splits & Merges
+| ID | Status | Summary | Agent Instructions |
+|---|---|---|---|
+| `W5-IUVM1-SPLIT-MERGE` | `todo` | Spilt `I-UVM-1` (Intro) and merge `I-UVM-4`/`I-UVM-5`/`A-UVM-2` | Create `I-UVM-1A_Components_and_Objects`, `I-UVM-1B_The_UVM_Factory`, and `I-UVM-1C_UVM_Phasing`. Merge contents of `I-UVM-4` and `A-UVM-2` into `I-UVM-1B` and delete them. Merge `I-UVM-5` into `I-UVM-1C` and delete it. Set up redirects. Build `UVMTreeExplorer.tsx` (1A) and `FactoryOverrideVisualizer.tsx` (1B). Create "Error Injection Override" lab (1B). |
+| `W5-IUVM2-SPLIT` | `todo` | Split `I-UVM-2` (TB) into A & B | Create `I-UVM-2A_Component_Roles` and `I-UVM-2B_Connecting_with_TLM`. Build `TLMPortConnector.tsx` (2B). Create "Wire It Up!" lab (2B). |
+| `W5-IUVM3-SPLIT-MERGE` | `todo` | Split `I-UVM-3` (Sequences) and merge `A-UVM-1` | Create `I-UVM-3A_Sequence_Fundamentals` and `I-UVM-3B_Advanced_Sequencing_and_Layering`. Merge `A-UVM-1` into `3B` and delete it. Relocate `config_db` out of sequencing. Build `VirtualSequencerExplorer.tsx` (3B). Create "Coordinated Attack" lab (3B). |
+
+### Sub-Task 4: Advanced UVM Deprecations & Splits
+| ID | Status | Summary | Agent Instructions |
+|---|---|---|---|
+| `W5-AUVM4-SPLIT` | `todo` | Split `A-UVM-4` (RAL) into A & B | Create `A-UVM-4A_RAL_Fundamentals` and `A-UVM-4B_Advanced_RAL_Techniques`. Build `RALHierarchy.tsx` (4A) and `RALPredictorVisualizer.tsx` (4B). Create "Mirror Bug Lab" (4B). |
+| `W5-AUVM3-DEPRECATE` | `todo` | Deprecate `A-UVM-3` and create Callbacks lesson | Delete `A-UVM-3`. Create `A-UVM-5_UVM_Callbacks`. |
+
+### Sub-Task 5: DPI Boundary Inspector
+| ID | Status | Summary | Agent Instructions |
+|---|---|---|---|
+| `W5-EINT1-DPI` | `complete` | Build DPI Interactive for `E-INT-1` | Build `DPIBoundaryInspector.tsx` and embed it in `E-INT-1`. |
+
+---
+
+## Agent Handoff Protocol (How to Resume Work)
+
+Because this guide is too large to modernize in a single chat session, use the following `Agent Handoff Protocol` to safely yield work and allow a future agent to resume:
+
+**If you are starting a new session or resuming an existing one:**
+1. **Always read this file (`TASKS.md`) FIRST.** This is your sole source of truth for repository state. Do *not* rely on `curriculum_modernization_tasks.md` anymore (it's kept for historical context but is superseded by this unified tracker).
+2. Look at the `Wave 5 Priority Backlog` above. Find the first Sub-Task containing items marked as `todo`.
+3. Read the `Agent Instructions` for that specific task ID.
+4. Call standard repository tools (`grep_search`, `list_dir`) to verify the file state before and after you modify anything.
+5. Create you structural files, rewrite MDX, author React components, and build the labs.
+6. **Testing:** Before marking any task as complete, you MUST verify the build. Run `npx tsx scripts/generate-curriculum-data.ts`. Then run `npm run lint` and `npx vitest --run`. If tests fail, FIX THEM before updating `TASKS.md`.
+7. **Updating State:** Once a task is complete and tests pass, change its status in this file (`TASKS.md`) from `todo` to `complete`. 
+8. **Handoff:** If you are nearing the end of your token/time limit, ensure the codebase compiles cleanly (tests pass). Commit your work. Update `TASKS.md` so the next agent knows exactly where you stopped. Instruct the user to open a new session and tell the new agent to "Read TASKS.md and continue execution".
