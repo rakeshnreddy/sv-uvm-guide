@@ -52,16 +52,36 @@ Below are the remaining requirements from the `comprehensive_lrm_audit_report.md
 
 ---
 
+## Context File References
+The modernization tasks in this document are derived from two foundational audits. Future coding agents should refer to these files if additional context is needed:
+1. `comprehensive_lrm_audit_report.md`: Contains the system-wide LRM deficiency analysis and the original blueprint for the 3D interactives.
+2. `curriculum_modernization_tasks.md`: An older tracker file that contains highly detailed, step-by-step acceptance criteria for some of the earlier tasks. **Note:** Active status tracking has been moved entirely to *this* `TASKS.md` file.
+
+---
+
 ## Agent Handoff Protocol (How to Resume Work)
 
-Because this guide is too large to modernize in a single chat session, use the following `Agent Handoff Protocol` to safely yield work and allow a future agent to resume:
+Because this guide is too large to modernize in a single chat session, use the following `Agent Handoff Protocol` to safely yield work and allow a future agent to resume.
 
-**If you are starting a new session or resuming an existing one:**
-1. **Always read this file (`TASKS.md`) FIRST.** This is your sole source of truth for repository state. Do *not* rely on `curriculum_modernization_tasks.md` anymore (it's kept for historical context but is superseded by this unified tracker).
-2. Look at the `Wave 5 Priority Backlog` above. Find the first Sub-Task containing items marked as `todo`.
-3. Read the `Agent Instructions` for that specific task ID.
-4. Call standard repository tools (`grep_search`, `list_dir`) to verify the file state before and after you modify anything.
-5. Create you structural files, rewrite MDX, author React components, and build the labs.
-6. **Testing:** Before marking any task as complete, you MUST verify the build. Run `npx tsx scripts/generate-curriculum-data.ts`. Then run `npm run lint` and `npx vitest --run`. If tests fail, FIX THEM before updating `TASKS.md`.
-7. **Updating State:** Once a task is complete and tests pass, change its status in this file (`TASKS.md`) from `todo` to `complete`. 
-8. **Handoff:** If you are nearing the end of your token/time limit, ensure the codebase compiles cleanly (tests pass). Commit your work. Update `TASKS.md` so the next agent knows exactly where you stopped. Instruct the user to open a new session and tell the new agent to "Read TASKS.md and continue execution".
+### 📋 THE GENERIC PROMPT TO RESUME WORK
+**Users: Copy and paste the block below into your AI chat when starting a new session or handing off work.**
+
+> **Role**: You are Agent 7, tasked with executing "Wave 5: Mop-up & Infrastructure" of the SV-UVM Guide modernization.
+> 
+> **Instructions for the Agent:**
+> 1. Read `TASKS.md` in the root of the repository. This is your single source of truth for the curriculum state and the Agent Handoff Protocol.
+> 2. For deeper context on *why* these tasks exist, you may optionally read `comprehensive_lrm_audit_report.md` and `curriculum_modernization_tasks.md`, but remember that `TASKS.md` is the only active tracker.
+> 3. Locate the `Wave 5 Priority Backlog` in `TASKS.md` and find the first Sub-Task containing an item marked as `todo`.
+> 4. Read the explicitly provided Agent Instructions for that exact Sub-Task ID.
+> 5. Execute the structural changes, create the React interactives, and author the labs as described. Use tools like `grep_search` and `list_dir` to understand the files before modifying them.
+> 6. **Crucial:** Run `npx tsx scripts/generate-curriculum-data.ts` and `npx vitest --run` to verify the build.
+> 7. Change the task from `todo` to `complete` in `TASKS.md`, commit your changes, and instruct the user to use this exact prompt again when opening the next session.
+
+### Agent Workflow (Internal Guidelines)
+**If you (the agent) are reading this file:**
+1. **Always read this file (`TASKS.md`) FIRST.** Do *not* rely on `curriculum_modernization_tasks.md` for active status tracking.
+2. Find the first `todo` in the Priority Backlog.
+3. Call standard repository tools (`grep_search`, `list_dir`) to verify the file state before and after you modify anything.
+4. **Testing:** Before marking any task as complete, you MUST verify the build. Run `npx tsx scripts/generate-curriculum-data.ts`. Then run `npm run lint` and `npx vitest --run`. If tests fail, FIX THEM.
+5. **Updating State:** Once a task is complete and tests pass, change its status in this file (`TASKS.md`) from `todo` to `complete`. 
+6. **Handoff:** If you are nearing the end of your token limit, update `TASKS.md`, commit your work, and provide the user with the "📋 THE GENERIC PROMPT TO RESUME WORK" above.

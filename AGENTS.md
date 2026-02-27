@@ -23,16 +23,18 @@ Vitest specs live in `tests/` and feature-aligned `__tests__/`; snapshots stay i
 
 ## Curriculum Modernization Workflow
 
-The modernization of the curriculum is managed through two key files:
-1.  **`TASKS.md`**: This file contains a high-level table of all refactoring and modernization tasks. Use it to get a strategic overview of the project and see the status of major work items.
-2.  **`curriculum_modernization_tasks.md`**: This file contains detailed, self-contained prompts for each task listed in `TASKS.md`. Each prompt is designed to be given directly to a coding agent.
+The modernization of the curriculum is strictly managed through a unified process to prevent state fragmentation across multi-agent sessions:
+
+1.  **`TASKS.md`**: This file is the **Single Source of Truth** for the entire modernization backlog. It contains the priority table and the exact instructional prompt to resume work.
+2.  **Supporting Documents**: `comprehensive_lrm_audit_report.md` and `curriculum_modernization_tasks.md` contain historical context, detailed analysis, and granular acceptance criteria. Agents should read these for deep context, but must *never* rely on them for active task status.
 
 **Workflow:**
-1.  Consult `TASKS.md` to identify a task with the status `todo`.
-2.  Locate the corresponding detailed prompt in `curriculum_modernization_tasks.md`.
-3.  Provide the entire text of that prompt to the coding agent.
-4.  The agent will follow the instructions within the prompt, which include creating or modifying lessons, adding labs, creating visuals, and running all required tests.
-5.  Upon completion, the agent is instructed to update the status in both `curriculum_modernization_tasks.md` and `TASKS.md`.
+1.  Read `TASKS.md` to identify the first task with the status `todo`.
+2.  Optionally consult the supporting documents for additional architectural context on the specific task.
+3.  Execute the instructions (creating MDX lessons, React interactives, labs).
+4.  Run validation tests (`npx tsx scripts/generate-curriculum-data.ts` and `npx vitest --run`).
+5.  Update the status to `complete` **only in `TASKS.md`**.
+6.  Yield using the `Agent Handoff Protocol` documented at the bottom of `TASKS.md`.
 
 ## Commit & Pull Request Workflow
 Keep commits focused and imperative, referencing relevant task IDs. PRs should summarize learner impact, link `TASKS.md`, and list executed checks (`npm run lint`, `npm run type-check`, `npm run test`, targeted Playwright runs). Follow `.github/PULL_REQUEST_TEMPLATE.md` and `docs/pr-checklist.md`: update trackers, attach UI evidence, refresh `docs/topic-template-migration.md`, confirm automation status.
