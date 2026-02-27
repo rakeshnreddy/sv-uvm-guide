@@ -94,7 +94,7 @@ export function generateCurriculumData(baseDir = path.join(process.cwd(), 'conte
   const represented = new Set<string>();
   const allFiles = getAllMdxFiles(baseDir).map(p => path.relative(baseDir, p).replace(/\\/g, '/').replace(/\.mdx$/, ''));
 
-  const moduleDirs = fs.readdirSync(baseDir).filter(d => fs.statSync(path.join(baseDir, d)).isDirectory()).sort();
+  const moduleDirs = fs.readdirSync(baseDir).filter(d => fs.statSync(path.join(baseDir, d)).isDirectory() && d !== 'labs').sort();
 
   for (const moduleDir of moduleDirs) {
     const modulePath = path.join(baseDir, moduleDir);

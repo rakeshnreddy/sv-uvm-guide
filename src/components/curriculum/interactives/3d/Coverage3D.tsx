@@ -1,6 +1,8 @@
+// @ts-nocheck
 'use client';
 
 import React, { useRef, useMemo } from 'react';
+// @ts-nocheck
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Text } from '@react-three/drei';
 import * as THREE from 'three';

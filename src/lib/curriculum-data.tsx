@@ -200,20 +200,46 @@ export const curriculumData: Module[] = [
             "description": "How to create objects with new and reference parent and current class members using this and super."
           },
           {
+            "title": "Copying and Cloning Objects | SystemVerilog OOP",
+            "slug": "copying-and-cloning",
+            "description": "Understand shallow vs. deep copy in SystemVerilog, and how to implement robust copy() and clone() methods."
+          },
+          {
             "title": "Parameterized Classes and Abstract Classes | Advanced SystemVerilog for Verification",
             "slug": "parameterized-classes",
             "description": "Use generics and abstract classes to build reusable components while avoiding common pitfalls."
+          },
+          {
+            "title": "Polymorphism Pitfalls and Type Casting | SystemVerilog OOP",
+            "slug": "polymorphism-pitfalls",
+            "description": "Learn how virtual method resolution works, upcasting vs. downcasting, and how to safely use $cast."
           }
         ]
       },
       {
-        "title": "I-SV-2: Constrained Randomization",
-        "slug": "I-SV-2_Constrained_Randomization",
+        "title": "I-SV-2A: Constrained Randomization Fundamentals",
+        "slug": "I-SV-2A_Constrained_Randomization_Fundamentals",
         "topics": [
           {
-            "title": "I-SV-2: Constrained Randomization",
+            "title": "I-SV-2A: Constrained Randomization Fundamentals",
             "slug": "index",
             "description": "Guide SystemVerilog's random stimulus with constraints, distributions, and inline tweaks to uncover corner-case bugs fast."
+          },
+          {
+            "title": "Constraint Blocks, soft, and solve...before | Advanced SystemVerilog for Verification",
+            "slug": "constraint-blocks",
+            "description": "Control dependencies and defaults using constraint blocks, soft values, and solve-before ordering."
+          }
+        ]
+      },
+      {
+        "title": "I-SV-2B: Advanced Constrained Randomization",
+        "slug": "I-SV-2B_Advanced_Constrained_Randomization",
+        "topics": [
+          {
+            "title": "I-SV-2B: Advanced Constrained Randomization",
+            "slug": "index",
+            "description": "Master advanced solver techniques, multi-level constraints, implication, and solver debug triage."
           },
           {
             "title": "Advanced Constraints: implication and iteration | Advanced SystemVerilog for Verification",
@@ -221,23 +247,23 @@ export const curriculumData: Module[] = [
             "description": "Express conditional and iterative rules with implication and foreach constructs."
           },
           {
-            "title": "Constraint Blocks, soft, and solve...before | Advanced SystemVerilog for Verification",
-            "slug": "constraint-blocks",
-            "description": "Control dependencies and defaults using constraint blocks, soft values, and solve-before ordering."
-          },
-          {
             "title": "Controlling Randomization: pre_randomize and post_randomize | Advanced SystemVerilog for Verification",
             "slug": "controlling-randomization",
             "description": "Hook solver callbacks with pre_randomize and post_randomize to prepare and finalize objects."
+          },
+          {
+            "title": "Solver Debug and Failure Triage | Advanced SystemVerilog for Verification",
+            "slug": "solver-debug",
+            "description": "Learn how to approach constraint solver failures, debug conflicting constraints, and use built-in simulator tools."
           }
         ]
       },
       {
-        "title": "I-SV-3: Functional Coverage",
-        "slug": "I-SV-3_Functional_Coverage",
+        "title": "I-SV-3A: Functional Coverage Fundamentals",
+        "slug": "I-SV-3A_Functional_Coverage_Fundamentals",
         "topics": [
           {
-            "title": "I-SV-3: Functional Coverage",
+            "title": "I-SV-3A: Functional Coverage Fundamentals",
             "slug": "index",
             "description": "Model verification intent with covergroups, coverpoints, and crosses to prove you've exercised every critical scenario."
           },
@@ -245,35 +271,31 @@ export const curriculumData: Module[] = [
             "title": "Coverage Options and Sampling | Advanced UVM Techniques & Strategy",
             "slug": "coverage-options",
             "description": "Learn how covergroup options influence when and how data is sampled."
-          },
+          }
+        ]
+      },
+      {
+        "title": "I-SV-3B: Advanced Functional Coverage",
+        "slug": "I-SV-3B_Advanced_Functional_Coverage",
+        "topics": [
           {
-            "title": "Events | Advanced SystemVerilog for Verification",
-            "slug": "events",
-            "description": "Synchronize parallel processes with SystemVerilog events."
+            "title": "I-SV-3B: Advanced Functional Coverage",
+            "slug": "index",
+            "description": "Master coverage to V-Plan linkage, API querying, and coverage-driven constrained random loops."
           },
           {
             "title": "Linking Coverage to the V-Plan | Advanced UVM Techniques & Strategy",
             "slug": "linking-coverage",
             "description": "Tie functional coverage points back to verification plan items."
-          },
-          {
-            "title": "Mailboxes | Advanced SystemVerilog for Verification",
-            "slug": "mailboxes",
-            "description": "Use mailboxes for thread-safe communication between processes."
-          },
-          {
-            "title": "Semaphores | Advanced SystemVerilog for Verification",
-            "slug": "semaphores",
-            "description": "Control access to shared resources using semaphore keys."
           }
         ]
       },
       {
-        "title": "I-SV-4: SystemVerilog Assertions (SVA)",
-        "slug": "I-SV-4_Assertions_SVA",
+        "title": "I-SV-4A: Assertions (SVA) Fundamentals",
+        "slug": "I-SV-4A_Assertions_SVA_Fundamentals",
         "topics": [
           {
-            "title": "I-SV-4: SystemVerilog Assertions (SVA)",
+            "title": "I-SV-4A: Assertions (SVA) Fundamentals",
             "slug": "index",
             "description": "Specify temporal intent with SystemVerilog Assertions so your verification environment automatically checks protocol rules."
           },
@@ -281,6 +303,17 @@ export const curriculumData: Module[] = [
             "title": "Immediate vs. Concurrent Assertions | Advanced SystemVerilog for Verification",
             "slug": "immediate-vs-concurrent",
             "description": "Compare procedural checks with temporal properties through hands-on examples."
+          }
+        ]
+      },
+      {
+        "title": "I-SV-4B: Advanced SVA",
+        "slug": "I-SV-4B_Advanced_SVA",
+        "topics": [
+          {
+            "title": "I-SV-4B: Advanced SVA",
+            "slug": "index",
+            "description": "Master multi-clock assertions, local variables, and binding checkers into your design."
           },
           {
             "title": "Local Variables in Sequences | Advanced SystemVerilog for Verification",
@@ -295,115 +328,116 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "I-UVM-1: UVM Introduction: Objects, Components, and Factory",
-        "slug": "I-UVM-1_UVM_Intro",
+        "title": "I-SV-5: Synchronization and IPC",
+        "slug": "I-SV-5_Synchronization_and_IPC",
         "topics": [
           {
-            "title": "I-UVM-1: UVM Introduction: Objects, Components, and Factory",
+            "title": "I-SV-5: Synchronization and IPC",
             "slug": "index",
-            "description": "Understand how UVM objects, components, and the factory stitch together so your testbench stays configurable."
+            "description": "Master SystemVerilog's built-in inter-process communication primitives: events, mailboxes, and semaphores."
+          },
+          {
+            "title": "Events | Advanced SystemVerilog for Verification",
+            "slug": "events",
+            "description": "Synchronize parallel processes with SystemVerilog events."
+          },
+          {
+            "title": "Mailboxes | Advanced SystemVerilog for Verification",
+            "slug": "mailboxes",
+            "description": "Use mailboxes for thread-safe communication between processes."
+          },
+          {
+            "title": "Semaphores | Advanced SystemVerilog for Verification",
+            "slug": "semaphores",
+            "description": "Control access to shared resources using semaphore keys."
           }
         ]
       },
       {
-        "title": "I-UVM-2: Building a UVM Testbench: Components & Hierarchy",
-        "slug": "I-UVM-2_Building_TB",
+        "title": "I-UVM-1A: UVM Objects and Components",
+        "slug": "I-UVM-1A_Components",
         "topics": [
           {
-            "title": "I-UVM-2: Building a UVM Testbench: Components & Hierarchy",
+            "title": "I-UVM-1A: UVM Objects and Components",
             "slug": "index",
-            "description": "Assemble a layered UVM environment—agents, drivers, sequencers, monitors, and scoreboards—and know how data flows between them."
-          },
-          {
-            "title": "UVM Report Server and Verbosity | The UVM Universe - Core Concepts",
-            "slug": "uvm-report-server",
-            "description": "Centralized UVM message control and how to override it with a custom report handler."
-          },
-          {
-            "title": "uvm_root and Test Execution | The UVM Universe - Core Concepts",
-            "slug": "uvm-root",
-            "description": "The singleton that orchestrates UVM phases and launches tests."
+            "description": "Understand the fundamental split between data containers and structural elements in UVM testbenches."
           }
         ]
       },
       {
-        "title": "I-UVM-3: Basic UVM Sequences and Stimulus Generation",
-        "slug": "I-UVM-3_Sequences",
+        "title": "I-UVM-1B: The UVM Factory",
+        "slug": "I-UVM-1B_The_UVM_Factory",
         "topics": [
           {
-            "title": "I-UVM-3: Basic UVM Sequences and Stimulus Generation",
+            "title": "I-UVM-1B: The UVM Factory",
             "slug": "index",
-            "description": "Author reusable UVM sequences, understand the sequencer ↔ driver handshake, and stitch stimulus into layered scenarios."
-          },
-          {
-            "title": "uvm_config_db: set and get | The UVM Universe - Core Concepts",
-            "slug": "uvm-config-db",
-            "description": "Use the UVM configuration database to pass settings down the hierarchy without tight coupling."
-          },
-          {
-            "title": "uvm_resource_db and Precedence | The UVM Universe - Core Concepts",
-            "slug": "uvm-resource-db",
-            "description": "Resolve configuration conflicts using the underlying resource database and precedence rules."
+            "description": "Swap component and object implementations dynamically using UVM's factory registry without touching your testbench wiring."
           }
         ]
       },
       {
-        "title": "I-UVM-4: UVM Factory and Overrides",
-        "slug": "I-UVM-4_Factory_and_Overrides",
+        "title": "I-UVM-1C: UVM Phasing and Synchronization",
+        "slug": "I-UVM-1C_UVM_Phasing",
         "topics": [
           {
-            "title": "I-UVM-4: UVM Factory and Overrides",
+            "title": "I-UVM-1C: UVM Phasing and Synchronization",
             "slug": "index",
-            "description": "Swap component implementations on demand with UVM factory overrides and keep your testbench wiring untouched."
+            "description": "Orchestrate build, run, and cleanup with UVM phases, domains, objections, and synchronization primitives so every component stays in lockstep."
           }
         ]
       },
       {
-        "title": "I-UVM-5: UVM Phasing and Synchronization",
-        "slug": "I-UVM-5_Phasing_and_Synchronization",
+        "title": "I-UVM-2A: Component Roles and the Testbench Hierarchy",
+        "slug": "I-UVM-2A_Component_Roles",
         "topics": [
           {
-            "title": "I-UVM-5: UVM Phasing and Synchronization",
+            "title": "I-UVM-2A: Component Roles and the Testbench Hierarchy",
             "slug": "index",
-            "description": "Orchestrate build, run, and cleanup with UVM phases and objections so every component stays in lockstep."
-          },
-          {
-            "title": "Domains and Phase Jumping | The UVM Universe - Core Concepts",
-            "slug": "domains-phase-jumping",
-            "description": "Separate components into custom phase domains and redirect execution with phase jumping."
-          },
-          {
-            "title": "uvm_event and uvm_barrier | The UVM Universe - Core Concepts",
-            "slug": "uvm-event-barrier",
-            "description": "Coordinate activity using lightweight events and blocking barriers for synchronization."
+            "description": "Understand the blueprint of a UVM environment—tests orchestrate, environments aggregate, agents wrap interface logic, monitors observe, and scoreboards verify."
           }
         ]
-      }
-    ]
-  },
-  {
-    "title": "Advanced",
-    "slug": "T3_Advanced",
-    "tier": "T3",
-    "sections": [
+      },
       {
-        "title": "A-UVM-1: Advanced UVM Sequencing",
-        "slug": "A-UVM-1_Advanced_Sequencing",
+        "title": "I-UVM-2B: TLM Connections and Analysis Fabric",
+        "slug": "I-UVM-2B_TLM_Connections",
         "topics": [
           {
-            "title": "A-UVM-1: Advanced UVM Sequencing",
+            "title": "I-UVM-2B: TLM Connections and Analysis Fabric",
             "slug": "index",
-            "description": "Coordinate layered stimulus with virtual sequences, arbitration hooks, and reusable sequence libraries across complex UVM testbenches."
-          },
+            "description": "Wire sequencers, drivers, monitors, and scoreboards using UVM's Transaction-Level Modeling (TLM) components."
+          }
+        ]
+      },
+      {
+        "title": "I-UVM-2C: Configuration and Resources",
+        "slug": "I-UVM-2C_Configuration_and_Resources",
+        "topics": [
           {
-            "title": "Connecting the Agent Components | Advanced UVM Sequencing",
-            "slug": "connecting",
-            "description": "Wire sequencers, drivers, monitors, and scoreboards with robust connect_phase patterns and analysis backbones."
-          },
+            "title": "I-UVM-2C: Configuration and Resources",
+            "slug": "index",
+            "description": "Use uvm_config_db and uvm_resource_db to pass settings and virtual interface handles down the hierarchy without tight coupling."
+          }
+        ]
+      },
+      {
+        "title": "I-UVM-3A: Basic UVM Sequences and Items",
+        "slug": "I-UVM-3A_Fundamentals",
+        "topics": [
           {
-            "title": "Environment & Test Classes | Advanced UVM Sequencing",
-            "slug": "environment-test-classes",
-            "description": "Structure environments and tests to configure agents, publish sequencer handles, and launch layered stimulus cleanly."
+            "title": "I-UVM-3A: Basic UVM Sequences and Items",
+            "slug": "index",
+            "description": "Model robust transaction items and author reusable UVM sequences that drive the sequencer ↔ driver handshake."
+          }
+        ]
+      },
+      {
+        "title": "I-UVM-3B: Advanced Sequencing and Layering",
+        "slug": "I-UVM-3B_Advanced_Sequencing_and_Layering",
+        "topics": [
+          {
+            "title": "I-UVM-3B: Advanced Sequencing and Layering",
+            "slug": "index",
+            "description": "Master virtual sequences, arbitration, layering, and driver-sequencer synchronization patterns."
           },
           {
             "title": "Interrupt Handling and Layered Stimulus | Advanced UVM Sequencing",
@@ -431,26 +465,6 @@ export const curriculumData: Module[] = [
             "description": "Dissect the blocking protocol between UVM sequencers and drivers, from arbitration to item_done(), and learn how to instrument and debug the flow."
           },
           {
-            "title": "uvm_monitor & Analysis Fabric | Advanced UVM Sequencing",
-            "slug": "uvm-monitor",
-            "description": "Instrument monitors to reconstruct transactions, publish them reliably, and feed subscribers and scoreboards."
-          },
-          {
-            "title": "UVM Scoreboard Patterns | Advanced UVM Sequencing",
-            "slug": "uvm-scoreboard",
-            "description": "Design scoreboards that compare expected vs. observed traffic, manage response queues, and surface mismatches clearly."
-          },
-          {
-            "title": "uvm_sequence_item Mastery | Advanced UVM Sequencing",
-            "slug": "uvm-sequence-item",
-            "description": "Engineer rich transaction objects with constraints, deep copy behaviour, and response tracking so every layer of the testbench stays in sync."
-          },
-          {
-            "title": "uvm_subscriber in Practice | Advanced UVM Sequencing",
-            "slug": "uvm-subscriber",
-            "description": "Leverage uvm_subscriber to capture analysis traffic for coverage, scoreboards, and telemetry without bloating monitors."
-          },
-          {
             "title": "UVM Virtual Sequencer",
             "slug": "uvm-virtual-sequencer",
             "description": "Coordinating stimulus across multiple agents."
@@ -461,47 +475,33 @@ export const curriculumData: Module[] = [
             "description": "Learn how to use virtual sequences and sequencers to coordinate and synchronize stimulus across multiple agents in a UVM testbench."
           }
         ]
-      },
+      }
+    ]
+  },
+  {
+    "title": "Advanced",
+    "slug": "T3_Advanced",
+    "tier": "T3",
+    "sections": [
       {
-        "title": "A-UVM-2: The UVM Factory In-Depth",
-        "slug": "A-UVM-2_The_UVM_Factory_In-Depth",
+        "title": "A-UVM-4A: RAL Fundamentals",
+        "slug": "A-UVM-4A_RAL_Fundamentals",
         "topics": [
           {
-            "title": "A-UVM-2: The UVM Factory In-Depth",
+            "title": "A-UVM-4A: RAL Fundamentals",
             "slug": "index",
-            "description": "Target overrides precisely, debug factory configuration, and architect reusable agents with advanced UVM factory techniques."
-          },
-          {
-            "title": "Heartbeats & Hang Detection | Advanced UVM Factory",
-            "slug": "heartbeats",
-            "description": "Instrument your testbench with automated heartbeat monitors so overrides or callbacks can recover from stimulus hangs fast."
-          },
-          {
-            "title": "UVM Callbacks & Factory Overrides | Advanced UVM Sequencing",
-            "slug": "uvm-callbacks",
-            "description": "Combine callbacks with factory overrides so you can instrument VIP, inject errors, and audit behaviour without touching source modules."
+            "description": "Model DUT registers once and decouple stimulus from physical bus protocols."
           }
         ]
       },
       {
-        "title": "A-UVM-3: Advanced UVM Techniques & Strategy",
-        "slug": "A-UVM-3_Advanced_UVM_Techniques",
+        "title": "A-UVM-4B: Advanced RAL Techniques",
+        "slug": "A-UVM-4B_Advanced_RAL_Techniques",
         "topics": [
           {
-            "title": "A-UVM-3: Advanced UVM Techniques & Strategy",
+            "title": "A-UVM-4B: Advanced RAL Techniques",
             "slug": "index",
-            "description": "Orchestrate register models, virtual sequences, callbacks, and functional coverage to harden complex UVM environments."
-          }
-        ]
-      },
-      {
-        "title": "A-UVM-4: The UVM Register Abstraction Layer (RAL)",
-        "slug": "A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL",
-        "topics": [
-          {
-            "title": "A-UVM-4: The UVM Register Abstraction Layer (RAL)",
-            "slug": "index",
-            "description": "Model DUT registers once, drive them through any bus, and balance frontdoor/backdoor access for realistic yet fast verification."
+            "description": "Master adapters, predictors, and sophisticated debug workflows for robust UVM register environments."
           },
           {
             "title": "Built-in RAL Sequences & Utilities | Advanced UVM RAL",
@@ -517,6 +517,17 @@ export const curriculumData: Module[] = [
             "title": "Frontdoor vs. Backdoor Access | Advanced UVM RAL",
             "slug": "frontdoor-vs-backdoor",
             "description": "Blend frontdoor realism with backdoor speed—learn when to poke directly and when to march through the bus for accurate checking."
+          }
+        ]
+      },
+      {
+        "title": "A-UVM-5: UVM Callbacks",
+        "slug": "A-UVM-5_UVM_Callbacks",
+        "topics": [
+          {
+            "title": "A-UVM-5: UVM Callbacks",
+            "slug": "index",
+            "description": "Inject optional behavior into components without exploding your class hierarchy or hacking the base code."
           }
         ]
       }

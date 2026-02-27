@@ -57,6 +57,6 @@ describe('InteractiveUvmArchitectureDiagram', () => {
     fireEvent.click(coverageButton);
 
     const cta = screen.getByRole('link', { name: /Open lesson/i });
-    expect(cta.getAttribute('href')).toBe('/curriculum/T2_Intermediate/I-SV-3_Functional_Coverage/index#core-constructs-in-action');
+    expect(cta.getAttribute('href')).toBe('/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index#core-constructs-in-action');
   });
 });

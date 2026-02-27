@@ -2,9 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { renderHook, act, waitFor } from '@testing-library/react';
 import { useCurriculumProgress } from '@/hooks/useCurriculumProgress';
 
-const MODULE_ID = 'I-SV-2_Constrained_Randomization';
+const MODULE_ID = 'I-SV-2A_Constrained_Randomization_Fundamentals';
 const LESSON_SLUG = 'index';
-const SECOND_LESSON_SLUG = 'advanced-constraints';
+const SECOND_LESSON_SLUG = 'constraint-blocks';
 
 describe('useCurriculumProgress', () => {
   let nowSpy: ReturnType<typeof vi.spyOn>;
@@ -58,6 +58,6 @@ describe('useCurriculumProgress', () => {
     expect(result.current.progress[MODULE_ID]?.completedLessons).toEqual(
       expect.arrayContaining([LESSON_SLUG, SECOND_LESSON_SLUG]),
     );
-    expect(result.current.getModuleProgress(MODULE_ID)).toBe(50);
+    expect(result.current.getModuleProgress(MODULE_ID)).toBe(100);
   });
 });

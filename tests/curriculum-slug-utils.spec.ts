@@ -31,18 +31,18 @@ describe('curriculum slug utilities', () => {
   });
 
   it('maps to curriculum paths for UI surfaces', () => {
-    const path = resolveCurriculumPath(['T3_Advanced', 'A-UVM-1_Advanced_Sequencing']);
+    const path = resolveCurriculumPath(['T2_Intermediate', 'I-SV-2A_Constrained_Randomization_Fundamentals']);
     expect(path).toMatch(/^\/curriculum\//);
     expect(path.endsWith('/index')).toBe(true);
   });
 
   it('resolves nested lesson slugs for Tier 2 sequences', () => {
-    const path = resolveCurriculumPath(['T2_Intermediate', 'I-UVM-3_Sequences', 'uvm-config-db']);
-    expect(path).toBe('/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-config-db');
+    const path = resolveCurriculumPath(['T2_Intermediate', 'I-SV-2A_Constrained_Randomization_Fundamentals', 'constraint-blocks']);
+    expect(path).toBe('/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/constraint-blocks');
   });
 
   it('falls back gracefully when a slug cannot be resolved', () => {
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => { });
     expect(resolveCurriculumPath(['unknown'], '/fallback')).toBe('/fallback');
     expect(resolveCurriculumPath(['unknown'])).toBe('#');
     warn.mockRestore();
