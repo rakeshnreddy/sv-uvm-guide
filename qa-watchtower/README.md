@@ -21,6 +21,7 @@ This directory is the independent QA workspace for validating all new features b
 - `TEST_INTENT_MATRIX.md`: Mapping from feature type to test strategy.
 - `ANALYSIS_LOG.md`: Historical run log and QA decisions.
 - `TEST_SUITE_LINKAGE.md`: Where QA-authored tests live in the shared suite.
+- `RESTART_QA.md`: Single-file periodic restart instructions and checkpoint.
 - `findings/`: Defect reports and feedback for the implementation agent.
 
 ## Quick Start (Per Feature)
