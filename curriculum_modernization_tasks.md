@@ -509,7 +509,7 @@ The topic is substantial and should be split into two lessons:
 1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
 2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-REFACTOR-F3` and changing its status from `todo` to `complete`.
 
-- **Status:** `todo`
+- **Status:** `complete ✅`
 - **Lesson:** F3: Procedural Constructs
 - **Path:** `content/curriculum/T1_Foundational/F3_Procedural_Constructs/index.mdx`
 - **SystemVerilog LRM clauses:** N/A (This is a refactoring task)
@@ -533,9 +533,9 @@ The content in this lesson is highly redundant with the material in `F2: SystemV
 
 | Task ID | Status | Summary | Acceptance Criteria |
 |---|---|---|---|
-| `CURR-F3-MERGE` | `todo` | Merge content from F3 into the new F2A-F2D lessons. | - The `ProceduralBlocksSimulator` component is moved from the `F3` directory/lesson and integrated into the new `F2C` lesson.<br>- Any unique explanations or examples from `F3` are migrated into the appropriate `F2C` or `F2D` lesson files.<br>- The `F3_Procedural_Constructs` directory and its `index.mdx` file are deleted. |
-| `CURR-F3-REDIRECT` | `todo` | Update redirects to point to the new consolidated lesson. | - The redirect in `content/curriculum/T1_Foundational/F3_Behavioral_RTL_Modeling/index.mdx` is updated to point to `/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/`.<br>- A new redirect is added from the old `F3` path to the new `F2C` path in `next.config.mjs` to preserve any external links. |
-| `CURR-F3-REVIEW` | `todo` | Review all related lessons and navigation. | - The curriculum's `_category_.json` file is updated to remove the `F3` lesson.<br>- The `F2` lessons are reviewed to ensure the merged content is well-integrated.<br>- **Unit Tests:** N/A for this refactoring.<br>- **E2E Tests:** Verify that the old `F3` URL correctly redirects to the new `F2C` URL.<br>- All internal links are verified. |
+| `CURR-F3-MERGE` | `complete ✅` | Merge content from F3 into the new F2A-F2D lessons. | - The `ProceduralBlocksSimulator` component is moved from the `F3` directory/lesson and integrated into the new `F2C` lesson.<br>- Any unique explanations or examples from `F3` are migrated into the appropriate `F2C` or `F2D` lesson files.<br>- The `F3_Procedural_Constructs` directory and its `index.mdx` file are deleted. |
+| `CURR-F3-REDIRECT` | `complete ✅` | Update redirects to point to the new consolidated lesson. | - The redirect in `content/curriculum/T1_Foundational/F3_Behavioral_RTL_Modeling/index.mdx` is updated to point to `/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/`.<br>- A new redirect is added from the old `F3` path to the new `F2C` path in `next.config.mjs` to preserve any external links. |
+| `CURR-F3-REVIEW` | `complete ✅` | Review all related lessons and navigation. | - The curriculum's `_category_.json` file is updated to remove the `F3` lesson.<br>- The `F2` lessons are reviewed to ensure the merged content is well-integrated.<br>- **Unit Tests:** N/A for this refactoring.<br>- **E2E Tests:** Verify that the old `F3` URL correctly redirects to the new `F2C` URL.<br>- All internal links are verified. |
 
 ---
 

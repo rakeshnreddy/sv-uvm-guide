@@ -28,8 +28,8 @@ Below are the remaining requirements from the `comprehensive_lrm_audit_report.md
 ### Sub-Task 2: Ship Remaining I-SV Structural Splits
 | ID | Status | Summary | Agent Instructions |
 |---|---|---|---|
-| `W5-ISV2-SPLIT` | `todo` | Split `I-SV-2` (Randomization) into A & B | Create `I-SV-2A_Randomization_Fundamentals` and `I-SV-2B_Advanced_Constraint_Techniques`. Build `ConstraintSolverExplorer.tsx` for 2B. Build "Dependent Fields Challenge" lab for 2B. |
-| `W5-ISV3-SPLIT` | `todo` | Split `I-SV-3` (Coverage) into A & B | Create `I-SV-3A_Coverage_Fundamentals` and `I-SV-3B_Advanced_Coverage_Modeling`. Remove sync/IPC content (mailboxes/semaphores) from here. Build `CovergroupBuilder.tsx` for 3A. Build "State Machine Bug Hunt" lab for 3B. |
+| `W5-ISV2-SPLIT` | `complete` | Split `I-SV-2` (Randomization) into A & B | Create `I-SV-2A_Randomization_Fundamentals` and `I-SV-2B_Advanced_Constraint_Techniques`. Build `ConstraintSolverExplorer.tsx` for 2B. Build "Dependent Fields Challenge" lab for 2B. |
+| `W5-ISV3-SPLIT` | `complete` | Split `I-SV-3` (Coverage) into A & B | Create `I-SV-3A_Coverage_Fundamentals` and `I-SV-3B_Advanced_Coverage_Modeling`. Remove sync/IPC content (mailboxes/semaphores) from here. Build `CovergroupBuilder.tsx` for 3A. Build "State Machine Bug Hunt" lab for 3B. |
 | `W5-ISV4-SPLIT` | `todo` | Split `I-SV-4` (Assertions) into A & B | Create `I-SV-4A_SVA_Fundamentals` and `I-SV-4B_Advanced_Temporal_Logic`. Build `TemporalLogicExplorer.tsx` for 4B. Build "Data Integrity Challenge" lab for 4B. |
 
 ### Sub-Task 3: Ship Remaining I-UVM Structural Splits & Merges

@@ -38,6 +38,36 @@ const nextConfig = {
         permanent: true,
       },
       {
+        source: '/curriculum/T1_Foundational/F3_Behavioral_RTL_Modeling(/:slug*)',
+        destination: '/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control',
+        permanent: true,
+      },
+      {
+        source: '/curriculum/T1_Foundational/F3_Procedural_Constructs(/:slug*)',
+        destination: '/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control',
+        permanent: true,
+      },
+      {
+        source: '/curriculum/T1_Foundational/F3A_Procedural_Blocks_and_Flow_Control(/:slug*)',
+        destination: '/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control',
+        permanent: true,
+      },
+      {
+        source: '/curriculum/T1_Foundational/F3B_Tasks_and_Functions(/:slug*)',
+        destination: '/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism',
+        permanent: true,
+      },
+      {
+        source: '/curriculum/T1_Foundational/F3C_Processes_and_Synchronization(/:slug*)',
+        destination: '/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism',
+        permanent: true,
+      },
+      {
+        source: '/curriculum/T1_Foundational/F3D_System_Tasks_and_File_IO(/:slug*)',
+        destination: '/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism',
+        permanent: true,
+      },
+      {
         source: '/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-resource-db',
         destination: '/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources',
         permanent: true,

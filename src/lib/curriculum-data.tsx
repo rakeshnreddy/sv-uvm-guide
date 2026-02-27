@@ -81,19 +81,8 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "F2C: Operators and Expressions",
-        "slug": "F2C_Operators_and_Expressions",
-        "topics": [
-          {
-            "title": "F2C: Operators and Expressions",
-            "slug": "index",
-            "description": "Master the art of bit manipulation with SystemVerilog's powerful operator set."
-          }
-        ]
-      },
-      {
         "title": "F3A: Procedural Blocks and Flow Control",
-        "slug": "F3A_Procedural_Blocks_and_Flow_Control",
+        "slug": "F2C_Procedural_Code_and_Flow_Control",
         "topics": [
           {
             "title": "F3A: Procedural Blocks and Flow Control",
@@ -108,40 +97,18 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "F3B: Tasks and Functions",
-        "slug": "F3B_Tasks_and_Functions",
-        "topics": [
-          {
-            "title": "F3B: Tasks and Functions",
-            "slug": "index",
-            "description": "Compare callable blocks with and without timing to structure reusable code."
-          }
-        ]
-      },
-      {
-        "title": "F3C: Processes and Synchronization",
-        "slug": "F3C_Processes_and_Synchronization",
-        "topics": [
-          {
-            "title": "F3C: Processes and Synchronization",
-            "slug": "index",
-            "description": "Launch parallel threads and synchronize them with join variants."
-          },
-          {
-            "title": "F3D: Interprocess Communication",
-            "slug": "ipc",
-            "description": "Coordinate parallel threads safely using Semaphores and Mailboxes."
-          }
-        ]
-      },
-      {
         "title": "F3D: System Tasks and File I/O",
-        "slug": "F3D_System_Tasks_and_File_IO",
+        "slug": "F2D_Reusable_Code_and_Parallelism",
         "topics": [
           {
             "title": "F3D: System Tasks and File I/O",
             "slug": "index",
             "description": "Interact with the simulator kernel: print messages, cast types, generate random numbers, and read/write files."
+          },
+          {
+            "title": "F3D: Interprocess Communication",
+            "slug": "ipc",
+            "description": "Coordinate parallel threads safely using Semaphores and Mailboxes."
           }
         ]
       },
