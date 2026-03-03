@@ -8,11 +8,11 @@ In a new Codex session, send exactly:
 `Read and execute /Users/Rakesh/Projects/sv-uvm-guide/qa-watchtower/RESTART_QA.md`
 
 ## Current Checkpoint (Update Before Run)
-- Last Checked Commit: `a82a4c2d1b26840b71321469656c60c3d1ab687e`
+- Last Checked Commit: `30efbd78a9a794796540f02ac63129973acdb8e0`
 - Last Checked Date: `2026-03-03`
 - Focus Areas: `curriculum|navigation|visualizations|qa`
 - Run E2E: `no`
-- Checkpoint Note: `Last Checked Commit` tracks the last implementation baseline. QA-only maintenance commits under `qa-watchtower/` and `tests/` may appear after it; prioritize product/content deltas under `src/`, `content/`, `labs/`, and `public/`.
+- Checkpoint Note: This checkpoint now includes the latest reviewed implementation commit (`8e391801`) and the QA follow-up commit (`30efbd78`). On restart, review new changes after `Last Checked Commit`, then use open findings in `qa-watchtower/findings/` plus `qa-watchtower/IMPLEMENTATION_HANDOFF_2026-03-03.md` as the active follow-up queue. If the diff is empty, do not re-audit old commits; only validate new work or explicitly requested regressions.
 
 ## Execution Instructions (for Codex)
 Role: You are the QA Watchtower agent for this repository. Your job is strict QA only.
@@ -76,7 +76,7 @@ Workflow:
 
 ## Checkpoint Update After Run
 After each completed periodic run, update this section in this same file:
-- Last Checked Commit: `a82a4c2d1b26840b71321469656c60c3d1ab687e`
+- Last Checked Commit: `30efbd78a9a794796540f02ac63129973acdb8e0`
 - Last Checked Date: `2026-03-03`
 - Focus Areas: `curriculum|navigation|visualizations|qa`
 - Run E2E: `no`
