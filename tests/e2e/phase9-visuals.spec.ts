@@ -2,21 +2,18 @@ import { test, expect } from '@playwright/test';
 
 test.describe('Phase 9 Visualizations', () => {
 
-    test('OperatorVisualizer in F2C renders and interacts', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F2C_Operators_and_Expressions');
+    test('EventRegionGame in F2C renders and interacts', async ({ page }) => {
+        await page.goto('/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control');
 
         // Check title
-        await expect(page.getByRole('heading', { name: 'F2C: Operators and Expressions' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: /Procedural Blocks and Flow Control/i })).toBeVisible();
 
-        // Check Visualizer presence
-        const visualizer = page.getByTestId('operator-visualizer');
-        await expect(visualizer).toBeVisible();
-
-        // Interact: Click OR button (|)
-        await visualizer.getByRole('button', { name: '|', exact: true }).click();
-
-        // Check explanation update
-        await expect(visualizer).toContainText('Bitwise OR: Result is 1 if either bit is 1');
+        // Start the challenge and answer the first prompt
+        const startButton = page.getByRole('button', { name: 'Start Challenge' });
+        await expect(startButton).toBeVisible();
+        await startButton.click();
+        await page.getByRole('button', { name: /Active/i }).click();
+        await expect(page.getByText('Correct!')).toBeVisible();
     });
 
     test('ArrayMethodExplorer in F2B renders and interacts', async ({ page }) => {
@@ -35,7 +32,7 @@ test.describe('Phase 9 Visualizations', () => {
     });
 
     test('MailboxSemaphoreGame in F3D renders and switches modes', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F3C_Processes_and_Synchronization/ipc');
+        await page.goto('/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/ipc');
 
         // Check Visualizer presence
         const visualizer = page.getByTestId('mailbox-semaphore-game');

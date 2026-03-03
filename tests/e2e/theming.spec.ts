@@ -9,7 +9,7 @@ test.describe('Theme and Styling Verification', () => {
   });
 
   test('should toggle theme and apply correct styles to InteractiveCode', async ({ page }) => {
-    await page.goto('/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/index');
+    await page.goto('/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences');
 
     const html = page.locator('html');
     await expect(html).toHaveClass(/dark/);
@@ -19,4 +19,3 @@ test.describe('Theme and Styling Verification', () => {
     await expect(html).not.toHaveClass(/dark/);
   });
 });
-

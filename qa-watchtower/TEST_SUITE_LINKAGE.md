@@ -13,6 +13,9 @@ QA tracking and findings live in `qa-watchtower/`, but executable tests are adde
 
 ## Current QA-Authored Shared Tests
 - `tests/components/visuals/ConstraintSolverExplorer.test.tsx`
+- `tests/components/visuals/EventRegionGame.test.tsx`
+- `tests/components/visuals/MailboxSemaphoreGame.test.tsx`
+- `tests/qa/curriculumCoverageAudit.spec.ts`
 
 ## Rule
 Do not place executable test files under `qa-watchtower/`. Keep them in `tests/` or `tests/e2e/` and reference them from QA trackers.

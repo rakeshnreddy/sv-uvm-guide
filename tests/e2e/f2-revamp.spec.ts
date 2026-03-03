@@ -1,16 +1,13 @@
 import { test, expect } from '@playwright/test';
 
 test.describe('F2 Revamp', () => {
-  test('F2 hub surfaces Quick Take and learning path', async ({ page }) => {
-    await page.goto('/curriculum/T1_Foundational/F2_Data_Types_and_Structures/');
+  test('F2C hub surfaces Quick Take and chapter linking', async ({ page }) => {
+    await page.goto('/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/');
 
-    await expect(page.getByRole('heading', { name: 'F2: Data Types & Structures' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Procedural Blocks and Flow Control/i })).toBeVisible();
     await expect(page.getByText('Quick Take')).toBeVisible();
-    await expect(page.getByText('Value Systems')).toBeVisible();
-    await expect(page.getByText('Structures That Flex')).toBeVisible();
-    await expect(page.getByRole('link', { name: /Core Data Types/ })).toBeVisible();
-    await expect(page.getByRole('link', { name: /Dynamic Structures/ })).toBeVisible();
-    await expect(page.getByRole('link', { name: /Operators/ })).toBeVisible();
+    await expect(page.getByText('Timeline of a Simulation Tick')).toBeVisible();
+    await expect(page.getByRole('link', { name: /Procedural Flow Control/ })).toBeVisible();
   });
 
   test('F2A quick take pairs with explorer and quiz', async ({ page }) => {
@@ -46,15 +43,14 @@ test.describe('F2 Revamp', () => {
     await expect(page.getByTestId('packed-unpacked-step')).not.toHaveText('');
   });
 
-  test('F2C operator drills highlight precedence and equality', async ({ page }) => {
-    await page.goto('/curriculum/T1_Foundational/F2C_Operators_and_Expressions/');
+  test('F2D index keeps the sibling chapter reachable', async ({ page }) => {
+    await page.goto('/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/');
 
     await expect(page.getByText('Quick Take')).toBeVisible();
-    const drill = page.getByTestId('operator-drill');
-    await expect(drill).toBeVisible();
-    await page.getByRole('tab', { name: /Case Equality/ }).click();
-    await expect(page.getByTestId('drill-expression')).toContainText('Case Equality');
-    await page.getByRole('tab', { name: /Streaming Concatenation/ }).click();
-    await expect(page.getByTestId('drill-result')).toContainText("16'hA55A");
+    await expect(page.getByText('Interactive Example: The Logger')).toBeVisible();
+    const ipcLink = page.getByRole('link', { name: /Interprocess Communication/ });
+    await expect(ipcLink).toBeVisible();
+    await ipcLink.click();
+    await expect(page).toHaveURL(/F2D_Reusable_Code_and_Parallelism\/ipc$/);
   });
 });

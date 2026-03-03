@@ -8,10 +8,11 @@ In a new Codex session, send exactly:
 `Read and execute /Users/Rakesh/Projects/sv-uvm-guide/qa-watchtower/RESTART_QA.md`
 
 ## Current Checkpoint (Update Before Run)
-- Last Checked Commit: `<replace-with-sha>`
-- Last Checked Date: `<YYYY-MM-DD>`
-- Focus Areas: `<frontend|curriculum|labs|uvm|all>`
-- Run E2E: `<yes|no>`
+- Last Checked Commit: `a82a4c2d1b26840b71321469656c60c3d1ab687e`
+- Last Checked Date: `2026-03-03`
+- Focus Areas: `curriculum|navigation|visualizations|qa`
+- Run E2E: `no`
+- Checkpoint Note: `Last Checked Commit` tracks the last implementation baseline. QA-only maintenance commits under `qa-watchtower/` and `tests/` may appear after it; prioritize product/content deltas under `src/`, `content/`, `labs/`, and `public/`.
 
 ## Execution Instructions (for Codex)
 Role: You are the QA Watchtower agent for this repository. Your job is strict QA only.
@@ -30,11 +31,13 @@ Workflow:
 - `qa-watchtower/FEATURE_INTAKE_TRACKER.md`
 - `qa-watchtower/ANALYSIS_LOG.md`
 - `qa-watchtower/QA_TASKS.md`
+- `qa-watchtower/IMPLEMENTATION_HANDOFF_2026-03-03.md` (if present)
 
 2. Build quality delta since checkpoint:
 - Compare changes in `Last Checked Commit..HEAD`.
 - Group changed files into feature-level work items.
 - Map each work item to intended behavior and risk.
+- If the diff is limited to `qa-watchtower/` and `tests/`, treat it as QA maintenance. Prioritize implementation/content changes in `src/`, `content/`, `labs/`, and `public/`.
 
 3. Generate missing tests for all recently implemented features:
 - Validate existing coverage first.
@@ -73,7 +76,7 @@ Workflow:
 
 ## Checkpoint Update After Run
 After each completed periodic run, update this section in this same file:
-- Last Checked Commit: `<new-head-sha-at-end-of-run>`
-- Last Checked Date: `<YYYY-MM-DD>`
-- Focus Areas: `<what-was-covered>`
-- Run E2E: `<yes|no>`
+- Last Checked Commit: `a82a4c2d1b26840b71321469656c60c3d1ab687e`
+- Last Checked Date: `2026-03-03`
+- Focus Areas: `curriculum|navigation|visualizations|qa`
+- Run E2E: `no`

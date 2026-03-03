@@ -1,9 +1,9 @@
 import { test, expect } from '@playwright/test';
 
 test('Module 5 code sample renders SystemVerilog snippet', async ({ page }) => {
-  await page.goto('/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/index');
+  await page.goto('/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences');
 
   const codeSnippet = page.locator('pre').first();
-  await expect(codeSnippet).toContainText('class soc_virtual_seq');
-  await expect(codeSnippet).toContainText('`uvm_object_utils(soc_virtual_seq)');
+  await expect(codeSnippet).toContainText('class virtual_sequence extends uvm_sequence;');
+  await expect(codeSnippet).toContainText('class virtual_sequencer extends uvm_sequencer;');
 });

@@ -1,6 +1,6 @@
 import { test, expect } from '@playwright/test';
 
-test.describe('Foundational Lessons F1-F3', () => {
+test.describe('Foundational Lessons F2-F3', () => {
 
 
     test('F2: Data Types loads correctly', async ({ page }) => {
@@ -9,26 +9,26 @@ test.describe('Foundational Lessons F1-F3', () => {
         // Check for interactive component if known, otherwise just heading
     });
 
-    test('F3: Procedural Blocks loads correctly', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F3A_Procedural_Blocks_and_Flow_Control');
+    test('F3A content route loads correctly', async ({ page }) => {
+        await page.goto('/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control');
         await expect(page.getByRole('heading', { name: /Procedural Blocks and Flow Control/i })).toBeVisible();
         // Check for Event Region Game
         await expect(page.getByText('Event Region Scheduler')).toBeVisible();
     });
 
-    test('F3: Flow Control loads correctly', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F3A_Procedural_Blocks_and_Flow_Control/flow-control');
+    test('F3A flow-control chapter loads correctly', async ({ page }) => {
+        await page.goto('/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/flow-control');
         await expect(page.getByRole('heading', { name: /Procedural Flow Control/i })).toBeVisible();
     });
 
-    test('F3: Fork-Join loads correctly', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F3C_Processes_and_Synchronization');
-        await expect(page.getByRole('heading', { name: /Processes and Synchronization/i })).toBeVisible();
+    test('F3D system-task route loads correctly', async ({ page }) => {
+        await page.goto('/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism');
+        await expect(page.getByRole('heading', { name: /System Tasks and File I\/O/i })).toBeVisible();
     });
 
-    test('F3: Tasks & Functions loads correctly', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F3B_Tasks_and_Functions');
-        await expect(page.getByRole('heading', { name: /Tasks and Functions/i })).toBeVisible();
+    test('F3D IPC chapter loads correctly', async ({ page }) => {
+        await page.goto('/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/ipc');
+        await expect(page.getByRole('heading', { name: /Interprocess Communication/i })).toBeVisible();
     });
 });
 

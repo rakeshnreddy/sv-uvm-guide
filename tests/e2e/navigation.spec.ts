@@ -1,12 +1,12 @@
 import { test, expect } from '@playwright/test';
 
-test('sequence config page next link navigates to resource DB page', async ({ page }) => {
-  await page.goto('/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-config-db');
-  const nextLessonLink = page.getByRole('link', { name: /^Next lesson uvm_resource_db/i });
+test('sequence arbitration page next link navigates to sequence libraries', async ({ page }) => {
+  await page.goto('/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration');
+  const nextLessonLink = page.getByRole('link', { name: /^Next lesson Sequence Libraries & Arbitration Control/i });
   await expect(nextLessonLink, 'Next lesson link should be rendered once').toHaveCount(1);
   await nextLessonLink.click();
-  await expect(page).toHaveURL('/curriculum/T2_Intermediate/I-UVM-3_Sequences/uvm-resource-db');
-  await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('uvm_resource_db and Precedence');
+  await expect(page).toHaveURL('/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-libraries');
+  await expect(page.getByRole('heading', { level: 1 }).first()).toContainText('Sequence Libraries & Arbitration Control');
 });
 
 

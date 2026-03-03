@@ -12,3 +12,6 @@ Use this file to register every feature delivered by the implementation agent be
 - `in_test`: Tests being authored or executed.
 - `blocked`: Waiting on missing dependency or upstream fix.
 - `complete`: Tests merged and all acceptance checks pass.
+
+## Periodic Check Notes
+- 2026-03-03: No implementation-agent commits were present after checkpoint `a82a4c2d1b26840b71321469656c60c3d1ab687e`; QA expanded regression coverage instead via `tests/qa/curriculumCoverageAudit.spec.ts`, `tests/components/visuals/EventRegionGame.test.tsx`, and `tests/components/visuals/MailboxSemaphoreGame.test.tsx`, surfacing open curriculum defects for implementation follow-up.
