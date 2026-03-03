@@ -116,7 +116,7 @@ const FALLBACK_DATA = {
       timestamp: new Date(Date.now() - 86400000 * 1),
       details: {
         lesson: 'UVM Basics',
-        lessonSlug: ['T2_Intermediate', 'I-UVM-1_UVM_Intro', 'index'],
+        lessonSlug: ['T2_Intermediate', 'I-UVM-1A_Components', 'index'],
       },
     },
     {
@@ -126,7 +126,7 @@ const FALLBACK_DATA = {
       timestamp: new Date(Date.now() - 86400000 * 2),
       details: {
         challenge: 'FIFO Sequencer',
-        lessonSlug: ['T3_Advanced', 'A-UVM-1_Advanced_Sequencing', 'sequence-arbitration'],
+        lessonSlug: ['T2_Intermediate', 'I-UVM-3B_Advanced_Sequencing_and_Layering', 'sequence-arbitration'],
       },
     },
     {
@@ -136,7 +136,7 @@ const FALLBACK_DATA = {
       timestamp: new Date(Date.now() - 86400000 * 3),
       details: {
         lesson: 'SystemVerilog Assertions',
-        lessonSlug: ['T2_Intermediate', 'I-SV-4_Assertions_and_SVA', 'index'],
+        lessonSlug: ['T2_Intermediate', 'I-SV-4A_SVA_Fundamentals', 'index'],
       },
     },
     {
@@ -146,7 +146,7 @@ const FALLBACK_DATA = {
       timestamp: new Date(Date.now() - 86400000 * 4),
       details: {
         postTitle: 'Question about RAL',
-        lessonSlug: ['T3_Advanced', 'A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL', 'index'],
+        lessonSlug: ['T3_Advanced', 'A-UVM-4A_RAL_Fundamentals', 'index'],
       },
     },
   ] as ActivityLog[],
@@ -356,7 +356,7 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId, useMockData
         });
       }
       if (metrics.timeSpentMinutes < 30) {
-         newStrategies.push({
+        newStrategies.push({
           id: 'quick_boost',
           title: 'Quick Boost',
           description: `Just 15 minutes can make a difference. Try a quick flashcard session!`,
@@ -432,8 +432,8 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId, useMockData
 
         {/* 2. Progress Visualization */}
         <div>
-            <h3 className="text-lg font-semibold mb-2">Weekly Activity</h3>
-            <EngagementActivityChart data={activityChart} />
+          <h3 className="text-lg font-semibold mb-2">Weekly Activity</h3>
+          <EngagementActivityChart data={activityChart} />
         </div>
 
         {/* 3. Goal Setting Assistance & Progress Pacing */}
@@ -465,8 +465,8 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId, useMockData
           {profile && (
             <div className="mt-2 text-xs">
               <span className="mr-2">Reward preference:</span>
-              {(['badges','certificates','career','tools'] as const).map(p => (
-                <button key={p} onClick={() => updateRewardPreference(p)} className={cn('px-2 py-1 rounded border text-xs', profile.rewardPreference===p?'bg-primary text-primary-foreground':'bg-transparent')}>{p}</button>
+              {(['badges', 'certificates', 'career', 'tools'] as const).map(p => (
+                <button key={p} onClick={() => updateRewardPreference(p)} className={cn('px-2 py-1 rounded border text-xs', profile.rewardPreference === p ? 'bg-primary text-primary-foreground' : 'bg-transparent')}>{p}</button>
               ))}
             </div>
           )}
@@ -491,15 +491,15 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId, useMockData
 
         {/* 6. Retention Optimization & Personalized Content */}
         <div className="p-4 bg-accent/50 rounded-lg text-center">
-            <h4 className="font-bold mb-2">Did you know?</h4>
-            {patterns && <p className="text-sm">You're most active on {patterns.mostActiveDay}s. Plan a deep-dive session then!</p>}
-            <p className="text-sm mt-1">Based on your progress, you might enjoy our section on <a href="#" className="underline">Advanced UVM Sequencing</a>.</p>
+          <h4 className="font-bold mb-2">Did you know?</h4>
+          {patterns && <p className="text-sm">You're most active on {patterns.mostActiveDay}s. Plan a deep-dive session then!</p>}
+          <p className="text-sm mt-1">Based on your progress, you might enjoy our section on <a href="#" className="underline">Advanced UVM Sequencing</a>.</p>
         </div>
 
         {/* 7. Virtual Mentor */}
         {mentorMessage && (
           <div className="p-4 bg-primary/10 rounded-lg">
-            <h4 className="font-bold mb-1 flex items-center"><UserCheck className="mr-2"/>Your Mentor</h4>
+            <h4 className="font-bold mb-1 flex items-center"><UserCheck className="mr-2" />Your Mentor</h4>
             <p className="text-sm text-muted-foreground">{mentorMessage}</p>
           </div>
         )}

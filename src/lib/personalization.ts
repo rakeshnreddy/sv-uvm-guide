@@ -43,7 +43,7 @@ interface DerivePersonalizationOptions {
   fallbackSlug?: string[];
 }
 
-const DEFAULT_SLUG: string[] = ['T2_Intermediate', 'I-UVM-2_Building_TB', 'index'];
+const DEFAULT_SLUG: string[] = ['T2_Intermediate', 'I-UVM-1A_Components', 'index'];
 
 export const DEFAULT_ENGAGEMENT_SNAPSHOT: EngagementSnapshot = {
   metrics: {
@@ -78,7 +78,7 @@ export const DEFAULT_ENGAGEMENT_SNAPSHOT: EngagementSnapshot = {
       timestamp: new Date(Date.now() - 86400000 * 3).toISOString(),
       details: {
         challenge: 'FIFO Sequencer',
-        lessonSlug: ['T3_Advanced', 'A-UVM-1_Advanced_Sequencing', 'sequence-arbitration'],
+        lessonSlug: ['T2_Intermediate', 'I-UVM-3B_Advanced_Sequencing_and_Layering', 'sequence-arbitration'],
       },
     },
   ],

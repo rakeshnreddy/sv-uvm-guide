@@ -9,9 +9,9 @@ import { resolveCurriculumPath } from '@/lib/curriculum-path';
 import type { PersonalizedHomeUser } from '@/lib/personalization';
 
 const recommendationConfigs = [
-  { title: 'Advanced Sequences', slug: ['T3_Advanced', 'A-UVM-1_Advanced_Sequencing'] },
-  { title: 'The UVM Factory In-Depth', slug: ['T3_Advanced', 'A-UVM-2_The_UVM_Factory_In-Depth'] },
-  { title: 'Building a RAL Model', slug: ['T3_Advanced', 'A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL'] },
+  { title: 'Advanced Sequences', slug: ['T2_Intermediate', 'I-UVM-3B_Advanced_Sequencing_and_Layering'] },
+  { title: 'The UVM Factory In-Depth', slug: ['T2_Intermediate', 'I-UVM-1B_The_UVM_Factory'] },
+  { title: 'Building a RAL Model', slug: ['T3_Advanced', 'A-UVM-4A_RAL_Fundamentals'] },
 ];
 
 interface PersonalizationSectionProps {
@@ -76,45 +76,45 @@ const PersonalizationSection = ({ user, isLoading }: PersonalizationSectionProps
         </motion.div>
 
         <div className="grid lg:grid-cols-3 gap-8">
-            <motion.div
-              className="lg:col-span-2 bg-card p-6 rounded-xl border flex flex-col"
-              initial={{ opacity: 0, x: -50 }}
-              whileInView={{ opacity: 1, x: 0 }}
-              viewport={{ once: true, amount: 0.3 }}
-              transition={{ duration: 0.6 }}
-            >
-                <h3 className="text-2xl font-bold text-primary mb-2">Continue Learning</h3>
-                <p className="text-muted-foreground mb-4">Pick up where you left off:</p>
-                <div className="p-4 rounded-lg border bg-muted/50 flex-grow flex items-center">
-                    <h4 className="text-xl font-semibold text-foreground">{user.lastLesson.title}</h4>
-                </div>
-                <Button asChild size="lg" className="mt-6 w-full md:w-auto">
-                    <Link href={lastLessonHref}>
-                        Jump Back In <ArrowRight className="ml-2"/>
-                    </Link>
-                </Button>
-            </motion.div>
+          <motion.div
+            className="lg:col-span-2 bg-card p-6 rounded-xl border flex flex-col"
+            initial={{ opacity: 0, x: -50 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={{ once: true, amount: 0.3 }}
+            transition={{ duration: 0.6 }}
+          >
+            <h3 className="text-2xl font-bold text-primary mb-2">Continue Learning</h3>
+            <p className="text-muted-foreground mb-4">Pick up where you left off:</p>
+            <div className="p-4 rounded-lg border bg-muted/50 flex-grow flex items-center">
+              <h4 className="text-xl font-semibold text-foreground">{user.lastLesson.title}</h4>
+            </div>
+            <Button asChild size="lg" className="mt-6 w-full md:w-auto">
+              <Link href={lastLessonHref}>
+                Jump Back In <ArrowRight className="ml-2" />
+              </Link>
+            </Button>
+          </motion.div>
 
-            <motion.div
-              className="bg-card p-6 rounded-xl border"
-              initial={{ opacity: 0, x: 50 }}
-              whileInView={{ opacity: 1, x: 0 }}
-              viewport={{ once: true, amount: 0.3 }}
-              transition={{ duration: 0.6, delay: 0.2 }}
-            >
-                <h3 className="text-2xl font-bold text-primary mb-4">Recommended For You</h3>
-                <ul className="space-y-3">
-                    {recommendations.map(rec => (
-                        <li key={rec.href}>
-                            <Link href={rec.href} className="flex items-center group text-foreground/80 hover:text-primary transition-colors">
-                                <Book className="mr-3 w-4 h-4 flex-shrink-0"/>
-                                <span>{rec.title}</span>
-                                <ArrowRight className="ml-auto w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity"/>
-                            </Link>
-                        </li>
-                    ))}
-                </ul>
-            </motion.div>
+          <motion.div
+            className="bg-card p-6 rounded-xl border"
+            initial={{ opacity: 0, x: 50 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            viewport={{ once: true, amount: 0.3 }}
+            transition={{ duration: 0.6, delay: 0.2 }}
+          >
+            <h3 className="text-2xl font-bold text-primary mb-4">Recommended For You</h3>
+            <ul className="space-y-3">
+              {recommendations.map(rec => (
+                <li key={rec.href}>
+                  <Link href={rec.href} className="flex items-center group text-foreground/80 hover:text-primary transition-colors">
+                    <Book className="mr-3 w-4 h-4 flex-shrink-0" />
+                    <span>{rec.title}</span>
+                    <ArrowRight className="ml-auto w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </motion.div>
         </div>
       </div>
     </section>

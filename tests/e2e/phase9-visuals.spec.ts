@@ -3,7 +3,9 @@ import { test, expect } from '@playwright/test';
 test.describe('Phase 9 Visualizations', () => {
 
     test('EventRegionGame in F2C renders and interacts', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control');
+        page.on('console', msg => console.log('BROWSER CONSOLE:', msg.type(), msg.text()));
+        page.on('pageerror', error => console.log('BROWSER ERROR:', error.message));
+        await page.goto('/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index');
 
         // Check title
         await expect(page.getByRole('heading', { name: /Procedural Blocks and Flow Control/i })).toBeVisible();
@@ -12,12 +14,12 @@ test.describe('Phase 9 Visualizations', () => {
         const startButton = page.getByRole('button', { name: 'Start Challenge' });
         await expect(startButton).toBeVisible();
         await startButton.click();
-        await page.getByRole('button', { name: /Active/i }).click();
+        await page.getByRole('button', { name: /^Active/i }).click();
         await expect(page.getByText('Correct!')).toBeVisible();
     });
 
     test('ArrayMethodExplorer in F2B renders and interacts', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F2B_Dynamic_Structures');
+        await page.goto('/curriculum/T1_Foundational/F2B_Dynamic_Structures/index');
 
         // Check Visualizer presence
         const visualizer = page.getByTestId('array-method-explorer');
@@ -45,7 +47,7 @@ test.describe('Phase 9 Visualizations', () => {
         await expect(visualizer).toContainText('Mailbox (Data Flow)');
 
         // Interact: Put mail
-        await visualizer.getByRole('button', { name: 'Put()' }).click();
+        await visualizer.getByRole('button', { name: 'Put()' }).click({ force: true });
         await expect(visualizer).toContainText('Producer put data');
     });
 

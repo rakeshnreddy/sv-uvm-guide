@@ -4,6 +4,18 @@ import { afterAll, beforeAll, vi } from 'vitest';
 const originalWarn = console.warn;
 let warnSpy: ReturnType<typeof vi.spyOn> | undefined;
 
+if (typeof document !== 'undefined' && !document.queryCommandSupported) {
+  document.queryCommandSupported = () => false;
+}
+if (typeof globalThis !== 'undefined') {
+  if (!(globalThis as any).postMessage) {
+    (globalThis as any).postMessage = () => { };
+  }
+  if (!(globalThis as any).CSS) {
+    (globalThis as any).CSS = { escape: (v: string) => v };
+  }
+}
+
 beforeAll(() => {
   warnSpy = vi.spyOn(console, 'warn').mockImplementation((...args) => {
     const [first] = args;

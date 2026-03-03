@@ -36,7 +36,7 @@ const learningPathConfigs = [
     time: '80-100 hours',
     skills: ['Advanced Sequencing', 'Register Layer (RAL)', 'Factory & Overrides', 'Functional Coverage'],
     description: 'Deepen UVM expertise and tackle complex verification scenarios.',
-    slug: ['T3_Advanced', 'A-UVM-1_Advanced_Sequencing'],
+    slug: ['T2_Intermediate', 'I-UVM-3B_Advanced_Sequencing_and_Layering'],
   },
   {
     tier: 'Expert',

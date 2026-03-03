@@ -83,7 +83,7 @@ const overrides: Record<string, Partial<StatusMetadata>> = {
     lastUpdated: '2025-11-24',
     notes: 'Operator drill, precedence guidance, and ALU walkthrough migrated to Quick Take format.',
   },
-  'T1_Foundational/F3A_Procedural_Blocks_and_Flow_Control/index': {
+  'T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index': {
     status: 'in-review',
     lastUpdated: '2025-09-22',
     notes: 'Event-region timeline + accessibility notes ready for SME pass.',
@@ -103,9 +103,7 @@ const overrides: Record<string, Partial<StatusMetadata>> = {
     lastUpdated: '2025-11-26',
     notes: 'RTL Constructs split into three navigatable parts.',
   },
-  'T2_Intermediate/I-UVM-2_Building_TB/index': {
-    notes: 'Confirm UVM testbench visualizer embed after cleanup.',
-  },
+
   'T2_Intermediate/I-UVM-3_Sequences/index': {
     notes: 'New arbitration sandbox live—collect learner telemetry.',
   },
@@ -114,36 +112,32 @@ const overrides: Record<string, Partial<StatusMetadata>> = {
     lastUpdated: '2025-09-22',
     notes: 'Foundation refresh merged from Tier-1; ready for SME review sign-off.',
   },
-  'T3_Advanced/A-UVM-1_Advanced_Sequencing/index': {
+  'T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index': {
     status: 'in-review',
     lastUpdated: '2025-09-23',
     notes: 'Arbitration toolkit + sandbox reference added; log fairness coverage expectations for SME pass.',
   },
-  'T3_Advanced/A-UVM-1_Advanced_Sequencing/sequence-arbitration': {
+  'T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration': {
     status: 'in-review',
     lastUpdated: '2025-09-22',
     notes: 'Sandbox links and debugging checklist refreshed.',
   },
-  'T3_Advanced/A-UVM-1_Advanced_Sequencing/uvm-monitor': {
+  'T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-monitor': {
     status: 'in-review',
     lastUpdated: '2025-09-22',
     notes: 'Monitor best practices now reference Scoreboard Connector exercise.',
   },
-  'T3_Advanced/A-UVM-1_Advanced_Sequencing/uvm-scoreboard': {
+  'T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-scoreboard': {
     status: 'in-review',
     lastUpdated: '2025-09-22',
     notes: 'Design checklist tied to interactive wiring drill; SME to confirm patterns.',
   },
-  'T3_Advanced/A-UVM-1_Advanced_Sequencing/uvm-subscriber': {
+  'T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-subscriber': {
     status: 'in-review',
     lastUpdated: '2025-09-22',
     notes: 'Coverage guidance cross-links to Tier-2 refresh.',
   },
-  'T3_Advanced/A-UVM-2_The_UVM_Factory_In-Depth/index': {
-    status: 'in-review',
-    lastUpdated: '2025-09-24',
-    notes: 'Accuracy toolkit + override evidence pack drafted; await SME validation of metrics.',
-  },
+
   'T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab': {
     status: 'in-review',
     owner: 'Experiences',

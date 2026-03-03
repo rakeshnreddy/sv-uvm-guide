@@ -9,7 +9,7 @@ interface LearningPathCardProps {
   path: {
     tier: string;
     title: string;
-    icon: React.ElementType;
+    icon: any;
     color: string;
     time: string;
     skills: string[];
@@ -55,13 +55,15 @@ const LearningPathCard: React.FC<LearningPathCardProps> = ({ path }) => {
   };
   const colors = colorMap[path.color];
 
+  const Icon = path.icon;
+
   return (
     <motion.div
       className={`rounded-xl p-6 border ${colors.bg} ${colors.border} flex flex-col h-full transition-all duration-300 ${colors.shadow}`}
       whileHover={{ y: -8, boxShadow: `0px 20px 30px -10px var(--tw-shadow-color)` }}
     >
       <div className={`flex items-center mb-4 ${colors.text}`}>
-        <path.icon className="w-8 h-8 mr-3" />
+        <Icon className="w-8 h-8 mr-3" />
         <h3 className="text-2xl font-bold">{path.tier}</h3>
       </div>
       <h4 className="text-xl font-semibold text-foreground mb-2">{path.title}</h4>

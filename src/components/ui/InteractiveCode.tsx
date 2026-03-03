@@ -8,7 +8,7 @@ import { Button } from './Button';
 import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { EditorProps, OnMount } from '@monaco-editor/react';
-import type * as monacoEditor from 'monaco-editor/esm/vs/editor/editor.api';
+import type * as monacoEditor from 'monaco-editor';
 import { select } from 'd3-selection';
 import { scaleBand, scaleLinear } from 'd3-scale';
 import { max } from 'd3-array';
@@ -34,82 +34,82 @@ const MonacoEditor = dynamic<EditorProps>(
 // macros and comments so that the editor can properly highlight typical
 // SystemVerilog source files.
 export const registerSystemVerilogLanguage = (monacoInstance: Monaco) => {
-    const langId = 'systemverilog';
-    if (
-      monacoInstance.languages
-        .getLanguages()
-        .some((lang: MonacoLanguageExtension) => lang.id === langId)
-    ) {
-        return;
-    }
+  const langId = 'systemverilog';
+  if (
+    monacoInstance.languages
+      .getLanguages()
+      .some((lang: MonacoLanguageExtension) => lang.id === langId)
+  ) {
+    return;
+  }
 
-    monacoInstance.languages.register({ id: langId });
-    monacoInstance.languages.setMonarchTokensProvider(langId, {
-        defaultToken: '',
-        tokenPostfix: '.sv',
+  monacoInstance.languages.register({ id: langId });
+  monacoInstance.languages.setMonarchTokensProvider(langId, {
+    defaultToken: '',
+    tokenPostfix: '.sv',
 
-        // Keywords taken from the SystemVerilog specification
-        keywords: [
-            'module', 'endmodule', 'logic', 'reg', 'wire', 'initial', 'always',
-            'begin', 'end', 'if', 'else', 'case', 'endcase', 'parameter',
-            'localparam', 'assign', 'always_ff', 'always_comb', 'function',
-            'task', 'class', 'extends', 'super', 'new', 'virtual', 'interface',
-            'modport', 'program', 'package', 'import', 'export', 'typedef',
-            'struct', 'union', 'enum', 'string', 'integer', 'bit', 'byte', 'int',
-            'shortint', 'longint', 'time', 'real', 'shortreal', 'generate',
-            'endgenerate', 'typedef', 'return', 'void'
-        ],
+    // Keywords taken from the SystemVerilog specification
+    keywords: [
+      'module', 'endmodule', 'logic', 'reg', 'wire', 'initial', 'always',
+      'begin', 'end', 'if', 'else', 'case', 'endcase', 'parameter',
+      'localparam', 'assign', 'always_ff', 'always_comb', 'function',
+      'task', 'class', 'extends', 'super', 'new', 'virtual', 'interface',
+      'modport', 'program', 'package', 'import', 'export', 'typedef',
+      'struct', 'union', 'enum', 'string', 'integer', 'bit', 'byte', 'int',
+      'shortint', 'longint', 'time', 'real', 'shortreal', 'generate',
+      'endgenerate', 'typedef', 'return', 'void'
+    ],
 
-        operators: [
-            '=', '>', '<', '!', '~', '?', ':', '==', '<=', '>=', '!=',
-            '&&', '||', '++', '--', '+', '-', '*', '/', '&', '|', '^', '%',
-            '<<', '>>', '<<<', '>>>', '->', '<->'
-        ],
+    operators: [
+      '=', '>', '<', '!', '~', '?', ':', '==', '<=', '>=', '!=',
+      '&&', '||', '++', '--', '+', '-', '*', '/', '&', '|', '^', '%',
+      '<<', '>>', '<<<', '>>>', '->', '<->'
+    ],
 
-        // regular expressions used by the tokenizer
-        symbols: /[=><!~?:&|+\-*\/^%]+/,
-        escapes: /\\(?:[abfnrtv"'\\]|x[0-9A-Fa-f]{1,4})/,
+    // regular expressions used by the tokenizer
+    symbols: /[=><!~?:&|+\-*\/^%]+/,
+    escapes: /\\(?:[abfnrtv"'\\]|x[0-9A-Fa-f]{1,4})/,
 
-        tokenizer: {
-            root: [
-                { include: '@whitespace' },
-                [/`define|`ifdef|`ifndef|`else|`elsif|`endif|`timescale|`include/, 'keyword.directive'],
-                [/`[a-zA-Z_][\w$]*/, 'macro'],
-                [/[a-zA-Z_][\w$]*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
-                [/\/\*/, 'comment', '@comment'],
-                [/\/\/.*$/, 'comment'],
-                [/#?\d+'[bodhBODH][0-9a-fA-F_xzXZ?]+/, 'number'],
-                [/#?\d+/, 'number'],
-                [/"/, { token: 'string.quote', bracket: '@open', next: '@string_dq' }],
-                [/'/, { token: 'string.quote', bracket: '@open', next: '@string_sq' }],
-                [/@symbols/, { cases: { '@operators': 'operator', '@default': '' } }],
-                [/[{}()\[\]]/, '@brackets'],
-            ],
+    tokenizer: {
+      root: [
+        { include: '@whitespace' },
+        [/`define|`ifdef|`ifndef|`else|`elsif|`endif|`timescale|`include/, 'keyword.directive'],
+        [/`[a-zA-Z_][\w$]*/, 'macro'],
+        [/[a-zA-Z_][\w$]*/, { cases: { '@keywords': 'keyword', '@default': 'identifier' } }],
+        [/\/\*/, 'comment', '@comment'],
+        [/\/\/.*$/, 'comment'],
+        [/#?\d+'[bodhBODH][0-9a-fA-F_xzXZ?]+/, 'number'],
+        [/#?\d+/, 'number'],
+        [/"/, { token: 'string.quote', bracket: '@open', next: '@string_dq' }],
+        [/'/, { token: 'string.quote', bracket: '@open', next: '@string_sq' }],
+        [/@symbols/, { cases: { '@operators': 'operator', '@default': '' } }],
+        [/[{}()\[\]]/, '@brackets'],
+      ],
 
-            // whitespace, including newlines
-            whitespace: [
-                [/[ \t\r\n]+/, 'white'],
-            ],
+      // whitespace, including newlines
+      whitespace: [
+        [/[ \t\r\n]+/, 'white'],
+      ],
 
-            comment: [
-                [/[^/*]+/, 'comment'],
-                [/\*\//, 'comment', '@pop'],
-                [/./, 'comment'],
-            ],
+      comment: [
+        [/[^/*]+/, 'comment'],
+        [/\*\//, 'comment', '@pop'],
+        [/./, 'comment'],
+      ],
 
-            string_dq: [
-                [/[^\\"\n]+/, 'string'],
-                [/\\./, 'string.escape'],
-                [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' }],
-            ],
+      string_dq: [
+        [/[^\\"\n]+/, 'string'],
+        [/\\./, 'string.escape'],
+        [/"/, { token: 'string.quote', bracket: '@close', next: '@pop' }],
+      ],
 
-            string_sq: [
-                [/[^\\'\n]+/, 'string'],
-                [/\\./, 'string.escape'],
-                [/'/, { token: 'string.quote', bracket: '@close', next: '@pop' }],
-            ],
-        },
-    });
+      string_sq: [
+        [/[^\\'\n]+/, 'string'],
+        [/\\./, 'string.escape'],
+        [/'/, { token: 'string.quote', bracket: '@close', next: '@pop' }],
+      ],
+    },
+  });
 };
 
 
@@ -320,12 +320,12 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
         codeString += child;
       } else if (React.isValidElement(child) && child.props.children) {
         if (child.props.mdxType === 'pre') {
-            const codeChild = React.Children.toArray(child.props.children).find(c => React.isValidElement(c) && c.props.mdxType === 'code');
-            if(codeChild && React.isValidElement(codeChild)) {
-                codeString += React.Children.toArray(codeChild.props.children).join('');
-            }
+          const codeChild = React.Children.toArray(child.props.children).find(c => React.isValidElement(c) && c.props.mdxType === 'code');
+          if (codeChild && React.isValidElement(codeChild)) {
+            codeString += React.Children.toArray(codeChild.props.children).join('');
+          }
         } else {
-            codeString += React.Children.toArray(child.props.children).join('');
+          codeString += React.Children.toArray(child.props.children).join('');
         }
       }
     });
@@ -526,7 +526,7 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
         )}
       >
         {fileName && (
-            <div className="bg-gray-700 text-white text-sm py-1 px-4">{fileName}</div>
+          <div className="bg-gray-700 text-white text-sm py-1 px-4">{fileName}</div>
         )}
         <MonacoEditor
           height="400px"

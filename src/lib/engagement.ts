@@ -66,7 +66,7 @@ export const ENGAGEMENT_FALLBACK_RESPONSE: EngagementResponse = {
       timestamp: new Date(Date.now() - 86400000 * 1).toISOString(),
       details: {
         lesson: 'UVM Basics',
-        lessonSlug: ['T2_Intermediate', 'I-UVM-1_UVM_Intro', 'index'],
+        lessonSlug: ['T2_Intermediate', 'I-UVM-1A_Components', 'index'],
       },
     },
     {
@@ -76,7 +76,7 @@ export const ENGAGEMENT_FALLBACK_RESPONSE: EngagementResponse = {
       timestamp: new Date(Date.now() - 86400000 * 2).toISOString(),
       details: {
         challenge: 'FIFO Sequencer',
-        lessonSlug: ['T3_Advanced', 'A-UVM-1_Advanced_Sequencing', 'sequence-arbitration'],
+        lessonSlug: ['T2_Intermediate', 'I-UVM-3B_Advanced_Sequencing_and_Layering', 'sequence-arbitration'],
       },
     },
     {
@@ -86,7 +86,7 @@ export const ENGAGEMENT_FALLBACK_RESPONSE: EngagementResponse = {
       timestamp: new Date(Date.now() - 86400000 * 3).toISOString(),
       details: {
         lesson: 'SystemVerilog Assertions',
-        lessonSlug: ['T2_Intermediate', 'I-SV-4_Assertions_and_SVA', 'index'],
+        lessonSlug: ['T2_Intermediate', 'I-SV-4A_SVA_Fundamentals', 'index'],
       },
     },
     {
@@ -96,7 +96,7 @@ export const ENGAGEMENT_FALLBACK_RESPONSE: EngagementResponse = {
       timestamp: new Date(Date.now() - 86400000 * 4).toISOString(),
       details: {
         postTitle: 'Question about RAL',
-        lessonSlug: ['T3_Advanced', 'A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL', 'index'],
+        lessonSlug: ['T3_Advanced', 'A-UVM-4A_RAL_Fundamentals', 'index'],
       },
     },
   ],

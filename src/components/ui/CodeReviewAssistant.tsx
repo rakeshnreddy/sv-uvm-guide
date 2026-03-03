@@ -20,7 +20,7 @@ import { useTimedCheck, CheckResult } from "./useTimedCheck";
  * Each verification uses custom hooks returning a `{status, details}` object.
  *
  * @example
- * <CodeReviewAssistant /> // see `src/app/practice/interactive-demo/page.tsx`
+ * <CodeReviewAssistant />
  */
 export const CodeReviewAssistant = () => {
   // Automated check results

@@ -18,7 +18,7 @@ const featureConfigs = [
     title: 'UVM Diagram Explorer',
     description: 'Visualize complex UVM hierarchies and understand component relationships with our interactive diagrams.',
     icon: Share2,
-    href: '/curriculum/T2_Intermediate/I-UVM-2_Building_TB/index#layered-environment-snapshot',
+    href: '/curriculum/T2_Intermediate/I-UVM-1A_Components/index#layered-environment-snapshot',
     imageUrl: '/images/feature-uvm-explorer.png'
   },
   {

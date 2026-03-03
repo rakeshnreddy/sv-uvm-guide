@@ -188,6 +188,22 @@ const components = {
   ArrayMethodExplorer: dynamic(() => import('@/components/visuals/ArrayMethodExplorer'), { ssr: false }),
   MailboxSemaphoreGame: dynamic(() => import('@/components/visuals/MailboxSemaphoreGame'), { ssr: false }),
   VerilogVsSystemVerilog: dynamic(() => import('@/components/visuals/VerilogVsSystemVerilog'), { ssr: false }),
+  Analysis3D: dynamic(() => import('@/components/curriculum/interactives/3d/Analysis3D'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  Constraint3D: dynamic(() => import('@/components/curriculum/interactives/3d/Constraint3D'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  ConstraintSolverExplorer: dynamic(() => import('@/components/visuals/ConstraintSolverExplorer').then(mod => mod.ConstraintSolverExplorer), { ssr: false, loading: () => <VisualizationFallback /> }),
+  ConstraintSolverVisualizer: dynamic(() => import('@/components/curriculum/interactives/ConstraintSolverVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  Coverage3D: dynamic(() => import('@/components/curriculum/interactives/3d/Coverage3D'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  CovergroupBuilder: dynamic(() => import('@/components/visuals/CovergroupBuilder').then(mod => mod.CovergroupBuilder), { ssr: false, loading: () => <VisualizationFallback /> }),
+  DPIBoundaryInspector: dynamic(() => import('@/components/visuals/DPIBoundaryInspector'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  Dataflow3D: dynamic(() => import('@/components/curriculum/interactives/3d/Dataflow3D'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  EventSchedulerVisualizer: dynamic(() => import('@/components/visualizers/EventSchedulerVisualizer').then(mod => mod.SVEventScheduler), { ssr: false, loading: () => <VisualizationFallback /> }),
+  FactoryOverrideVisualizer: dynamic(() => import('@/components/curriculum/interactives/FactoryOverrideVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  InterviewQuestionPlayground: dynamic(() => import('@/components/curriculum/interactives/InterviewQuestionPlayground'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  Mailbox3D: dynamic(() => import('@/components/curriculum/interactives/3d/Mailbox3D'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  PhaseTimeline3D: dynamic(() => import('@/components/curriculum/interactives/3d/PhaseTimeline3D'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  RALPredictorVisualizer: dynamic(() => import('@/components/visuals/RALPredictorVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  TemporalLogicExplorer: dynamic(() => import('@/components/curriculum/interactives/TemporalLogicExplorer'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  UVMTreeExplorer: dynamic(() => import('@/components/curriculum/interactives/UVMTreeExplorer'), { ssr: false, loading: () => <VisualizationFallback /> }),
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {

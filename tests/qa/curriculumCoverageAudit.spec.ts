@@ -157,6 +157,24 @@ describe('Curriculum coverage audit', () => {
     });
   });
 
+  it('keeps hard-coded curriculum routes in UI fallbacks aligned with current lesson paths', () => {
+    const curriculumRoutes = buildCurriculumRoutes();
+
+    const expectedFallbackRoutes = [
+      '/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering',
+      '/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory',
+      '/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals',
+      '/curriculum/T2_Intermediate/I-UVM-1A_Components/index',
+      '/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration',
+      '/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index',
+      '/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index',
+    ];
+
+    expectedFallbackRoutes.forEach(route => {
+      expect(curriculumRoutes.has(route), `Fallback UI route ${route} must exist in the curriculum`).toBe(true);
+    });
+  });
+
   const strictLinkAudit = process.env.QA_STRICT_LINK_AUDIT === '1';
   (strictLinkAudit ? it : it.skip)('has no broken authored coursework links in strict mode', () => {
     expect(collectBrokenInternalLinks()).toEqual([]);

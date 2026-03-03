@@ -4,13 +4,13 @@ test.describe('Foundational Lessons F2-F3', () => {
 
 
     test('F2: Data Types loads correctly', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F2A_Core_Data_Types');
+        await page.goto('/curriculum/T1_Foundational/F2A_Core_Data_Types/index');
         await expect(page.getByRole('heading', { name: /Core Data Types/i })).toBeVisible();
         // Check for interactive component if known, otherwise just heading
     });
 
     test('F3A content route loads correctly', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control');
+        await page.goto('/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index');
         await expect(page.getByRole('heading', { name: /Procedural Blocks and Flow Control/i })).toBeVisible();
         // Check for Event Region Game
         await expect(page.getByText('Event Region Scheduler')).toBeVisible();
@@ -22,11 +22,13 @@ test.describe('Foundational Lessons F2-F3', () => {
     });
 
     test('F3D system-task route loads correctly', async ({ page }) => {
-        await page.goto('/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism');
+        await page.goto('/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index');
         await expect(page.getByRole('heading', { name: /System Tasks and File I\/O/i })).toBeVisible();
     });
 
     test('F3D IPC chapter loads correctly', async ({ page }) => {
+        page.on('console', msg => console.log('BROWSER CONSOLE:', msg.type(), msg.text()));
+        page.on('pageerror', error => console.log('BROWSER ERROR:', error.message));
         await page.goto('/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/ipc');
         await expect(page.getByRole('heading', { name: /Interprocess Communication/i })).toBeVisible();
     });
