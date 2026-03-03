@@ -258,11 +258,11 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "I-SV-4A: Assertions (SVA) Fundamentals",
-        "slug": "I-SV-4A_Assertions_SVA_Fundamentals",
+        "title": "I-SV-4A: SVA Fundamentals",
+        "slug": "I-SV-4A_SVA_Fundamentals",
         "topics": [
           {
-            "title": "I-SV-4A: Assertions (SVA) Fundamentals",
+            "title": "I-SV-4A: SVA Fundamentals",
             "slug": "index",
             "description": "Specify temporal intent with SystemVerilog Assertions so your verification environment automatically checks protocol rules."
           },
@@ -274,21 +274,21 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "I-SV-4B: Advanced SVA",
-        "slug": "I-SV-4B_Advanced_SVA",
+        "title": "I-SV-4B: Advanced Temporal Logic",
+        "slug": "I-SV-4B_Advanced_Temporal_Logic",
         "topics": [
           {
-            "title": "I-SV-4B: Advanced SVA",
+            "title": "I-SV-4B: Advanced Temporal Logic",
             "slug": "index",
             "description": "Master multi-clock assertions, local variables, and binding checkers into your design."
           },
           {
-            "title": "Local Variables in Sequences | Advanced SystemVerilog for Verification",
+            "title": "Local Variables in Sequences | Advanced Temporal Logic",
             "slug": "local-variables",
             "description": "Capture and reuse values within sequences to create robust properties."
           },
           {
-            "title": "Multi-Clocking and disable-iff | Advanced SystemVerilog for Verification",
+            "title": "Multi-Clocking and disable-iff | Advanced Temporal Logic",
             "slug": "multi-clocking",
             "description": "Coordinate assertions across clock domains and mask reset behavior with disable iff."
           }
