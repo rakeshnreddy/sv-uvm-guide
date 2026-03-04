@@ -111,6 +111,42 @@ function collectBrokenInternalLinks(): string[] {
   return brokenLinks;
 }
 
+function collectCustomMdxTags(): Set<string> {
+  const tags = new Set<string>();
+  const mdxFiles = walkFiles(contentRoot, (filePath) => filePath.endsWith('.mdx'));
+
+  mdxFiles.forEach((filePath) => {
+    const source = fs.readFileSync(filePath, 'utf8').replace(/```[\s\S]*?```/g, '');
+
+    for (const match of source.matchAll(/<([A-Z][A-Za-z0-9]*)\b/g)) {
+      tags.add(match[1]);
+    }
+  });
+
+  return tags;
+}
+
+function collectRegisteredMdxComponents(): Set<string> {
+  const rendererPath = path.join(appRoot, 'curriculum', '[...slug]', 'page.tsx');
+  const source = fs.readFileSync(rendererPath, 'utf8');
+  const componentsBlock = source.match(/const components = \{([\s\S]*?)\n};/);
+
+  if (!componentsBlock) {
+    throw new Error('Curriculum topic renderer should define an MDX components map');
+  }
+
+  const registered = new Set<string>();
+
+  componentsBlock[1].split('\n').forEach((line) => {
+    const match = line.match(/^\s*([A-Z][A-Za-z0-9]*)\s*(?::|,)/);
+    if (match) {
+      registered.add(match[1]);
+    }
+  });
+
+  return registered;
+}
+
 describe('Curriculum coverage audit', () => {
   it('gives every curriculum section a stable landing lesson and titled chapters', () => {
     const data = generateCurriculumData();
@@ -173,6 +209,43 @@ describe('Curriculum coverage audit', () => {
     expectedFallbackRoutes.forEach(route => {
       expect(curriculumRoutes.has(route), `Fallback UI route ${route} must exist in the curriculum`).toBe(true);
     });
+  });
+
+  it('registers every custom MDX component tag used in curriculum content', () => {
+    const usedTags = collectCustomMdxTags();
+    const registeredComponents = collectRegisteredMdxComponents();
+    const missingRegistrations = Array.from(usedTags)
+      .filter((tag) => !registeredComponents.has(tag))
+      .sort();
+
+    expect(missingRegistrations, `Missing MDX component registrations: ${missingRegistrations.join(', ')}`).toEqual([]);
+  });
+
+  it('keeps retained learner-facing practice routes discoverable from the practice hub', () => {
+    const practiceHubSource = fs.readFileSync(path.join(repoRoot, 'src', 'components', 'practice', 'PracticeHub.tsx'), 'utf8');
+    const navbarSource = fs.readFileSync(path.join(repoRoot, 'src', 'components', 'Navbar.tsx'), 'utf8');
+    const sidebarSource = fs.readFileSync(path.join(repoRoot, 'src', 'components', 'layout', 'Sidebar.tsx'), 'utf8');
+    const retainedPracticeRoutes = [
+      '/practice/visualizations/randomization-explorer',
+      '/practice/visualizations/assertion-builder',
+      '/practice/visualizations/uvm-phasing',
+      '/practice/visualizations/uvm-component-relationships',
+      '/practice/visualizations/systemverilog-data-types',
+      '/practice/visualizations/concurrency',
+      '/practice/visualizations/procedural-blocks',
+      '/practice/visualizations/coverage-analyzer',
+      '/practice/visualizations/data-type-comparison',
+      '/practice/visualizations/interface-signal-flow',
+      '/practice/visualizations/state-machine-designer',
+      '/exercises/uvm-agent-builder',
+    ];
+
+    retainedPracticeRoutes.forEach((route) => {
+      expect(practiceHubSource).toContain(route);
+    });
+
+    expect(navbarSource).toContain('/practice');
+    expect(sidebarSource).toContain('/practice');
   });
 
   const strictLinkAudit = process.env.QA_STRICT_LINK_AUDIT === '1';

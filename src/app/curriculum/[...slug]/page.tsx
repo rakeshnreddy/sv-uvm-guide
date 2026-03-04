@@ -203,6 +203,7 @@ const components = {
   PhaseTimeline3D: dynamic(() => import('@/components/curriculum/interactives/3d/PhaseTimeline3D'), { ssr: false, loading: () => <VisualizationFallback /> }),
   RALPredictorVisualizer: dynamic(() => import('@/components/visuals/RALPredictorVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   TemporalLogicExplorer: dynamic(() => import('@/components/curriculum/interactives/TemporalLogicExplorer'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  TLMPortConnector: dynamic(() => import('@/components/curriculum/interactives/TLMPortConnector'), { ssr: false, loading: () => <VisualizationFallback /> }),
   UVMTreeExplorer: dynamic(() => import('@/components/curriculum/interactives/UVMTreeExplorer'), { ssr: false, loading: () => <VisualizationFallback /> }),
 };
 

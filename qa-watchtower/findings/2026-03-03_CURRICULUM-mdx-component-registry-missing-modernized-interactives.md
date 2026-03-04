@@ -3,7 +3,7 @@
 - Date: 2026-03-03
 - Feature ID: QA-CURRICULUM-INTEGRITY-AUDIT
 - Severity: P1
-- Status: open
+- Status: closed
 
 ## Summary
 The curriculum topic renderer's MDX component registry is out of sync with the modernized lessons. Multiple MDX files reference interactive tags that are not registered in `src/app/curriculum/[...slug]/page.tsx`, which risks lesson render failures or missing visuals on core learner pages.
@@ -43,6 +43,6 @@ Wave 5 lesson content expanded faster than the renderer's MDX component registry
 - Smoke-test the affected lesson routes after wiring the tags into `MDXRemote`.
 
 ## Verification to Close
-- [ ] The `components` map in `src/app/curriculum/[...slug]/page.tsx` covers all current MDX interactive tags.
+- [x] The `components` map in `src/app/curriculum/[...slug]/page.tsx` covers all current MDX interactive tags.
 - [ ] Affected lesson pages render without unresolved component failures.
-- [ ] Findings status updated to `closed`.
+- [x] Findings status updated to `closed`.

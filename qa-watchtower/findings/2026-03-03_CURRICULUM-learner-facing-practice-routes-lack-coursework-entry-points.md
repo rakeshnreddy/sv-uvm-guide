@@ -3,7 +3,7 @@
 - Date: 2026-03-03
 - Feature ID: QA-CURRICULUM-INTEGRITY-AUDIT
 - Severity: P2
-- Status: open
+- Status: closed
 
 ## Summary
 Several practice visualization and exercise routes are implemented but have no clear inbound path from curriculum lessons or learner-facing hubs, so the features are effectively hidden unless a user guesses the URL.
@@ -47,6 +47,6 @@ Standalone practice pages were added incrementally without corresponding lesson 
 - If a route is not intended for learners, remove it or mark it as internal-only.
 
 ## Verification to Close
-- [ ] Each retained learner-facing route has at least one clear inbound path from coursework or a learner-facing hub.
-- [ ] Route coverage is updated where needed.
-- [ ] Findings status updated to `closed`.
+- [x] Each retained learner-facing route has at least one clear inbound path from coursework or a learner-facing hub.
+- [x] Route coverage is updated where needed.
+- [x] Findings status updated to `closed`.

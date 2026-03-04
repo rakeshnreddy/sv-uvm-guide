@@ -10,7 +10,4 @@
 | QA-006 | in_progress | medium | Verify coverage of SV/UVM content accuracy checks and labs | Test/finding updates tied to curriculum modules |
 
 ## Open Findings
-- `P1`: `2026-03-03_CURRICULUM-stale-internal-links-break-modernized-learning-paths.md`
-- `P1`: `2026-03-03_CURRICULUM-mdx-component-registry-missing-modernized-interactives.md`
-- `P2`: `2026-03-03_CURRICULUM-learner-facing-practice-routes-lack-coursework-entry-points.md`
-- `P3`: `2026-03-03_TESTING-interactive-demo-e2e-suite-disabled.md`
+- `P1`: `2026-02-27_INFRA-npx-tsx-generate-curriculum-data-fails-offline.md`

@@ -3,7 +3,7 @@
 - Date: 2026-03-03
 - Feature ID: QA-CURRICULUM-INTEGRITY-AUDIT
 - Severity: P1
-- Status: open
+- Status: closed
 
 ## Summary
 Multiple curriculum lessons still link to deprecated pre-split module routes (`F3A`, `I-SV-2`, `I-UVM-2_Building_TB`), which breaks learner navigation after the Wave 5 curriculum restructures and leaves "next topic" guidance pointing at dead pages.
@@ -46,6 +46,6 @@ Curriculum split/rename work landed, but dependent cross-links in neighboring le
 - Rewrite deprecated `I-UVM-2_Building_TB` analysis-fabric links to `I-UVM-2B_TLM_Connections`, and add a stable section anchor if the existing prose expects a deep link into the analysis-fabric section.
 
 ## Verification to Close
-- [ ] `QA_STRICT_LINK_AUDIT=1 npx vitest --run tests/qa/curriculumCoverageAudit.spec.ts` passes.
+- [x] `QA_STRICT_LINK_AUDIT=1 npx vitest --run tests/qa/curriculumCoverageAudit.spec.ts` passes.
 - [ ] Spot-check the repaired lesson links in the browser.
-- [ ] Findings status updated to `closed`.
+- [x] Findings status updated to `closed`.

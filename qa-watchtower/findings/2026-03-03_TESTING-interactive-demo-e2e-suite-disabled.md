@@ -3,7 +3,7 @@
 - Date: 2026-03-03
 - Feature ID: QA-CURRICULUM-INTEGRITY-AUDIT
 - Severity: P3
-- Status: open
+- Status: closed
 
 ## Summary
 The Playwright coverage for the interactive demo surface is currently disabled via `test.describe.skip`, so a learner-facing demo route can regress without end-to-end detection.
@@ -36,6 +36,6 @@ The suite was disabled during a prior stabilization effort and never re-enabled 
 - If the route is no longer part of the intended product surface, remove the dead test and clean up the route.
 
 ## Verification to Close
-- [ ] The suite runs successfully, or the route/test is intentionally removed.
-- [ ] QA documentation reflects the chosen disposition.
-- [ ] Findings status updated to `closed`.
+- [x] The suite runs successfully, or the route/test is intentionally removed.
+- [x] QA documentation reflects the chosen disposition.
+- [x] Findings status updated to `closed`.

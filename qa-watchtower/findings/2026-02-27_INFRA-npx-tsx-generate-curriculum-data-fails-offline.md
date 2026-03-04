@@ -6,7 +6,7 @@
 - Status: open
 
 ## Summary
-The pre-submit command `npx tsx scripts/generate-curriculum-data.ts` remains unreliable in network-restricted or non-interactive environments, which blocks the documented pre-commit flow used by the implementation agent. The 2026-03-03 revalidation reproduced the failure and again required a fallback to `npm run generate:curriculum`.
+The pre-submit command `npx tsx scripts/generate-curriculum-data.ts` remains unreliable in network-restricted or non-interactive environments, which blocks the documented pre-commit flow used by the implementation agent. The 2026-03-04 periodic QA run again required the `npm run generate:curriculum` fallback because `npx tsx` could not execute locally in this restricted shell.
 
 ## Affected Area
 - Files:
@@ -20,7 +20,7 @@ The pre-submit command `npx tsx scripts/generate-curriculum-data.ts` remains unr
 ## Reproduction
 1. Run `npx tsx scripts/generate-curriculum-data.ts`.
 2. Observe command behavior in an environment without npm registry network access.
-3. Command exits with `ENOTFOUND` on `registry.npmjs.org`.
+3. Command either stalls while attempting package resolution or exits with a network-resolution failure.
 
 ## Expected
 Curriculum generation command should run from local project dependencies without requiring network fetch during normal pre-submit validation.
@@ -32,6 +32,11 @@ Curriculum generation command should run from local project dependencies without
 
 On 2026-03-03 revalidation in this restricted non-interactive session:
 - `npx tsx scripts/generate-curriculum-data.ts` exited with `ENOTFOUND` for `registry.npmjs.org`.
+
+On 2026-03-04 revalidation in this restricted non-interactive session:
+- `./node_modules/.bin/tsx` was not present locally.
+- `npx tsx scripts/generate-curriculum-data.ts` hung without producing output.
+- `npm run generate:curriculum` succeeded and rewrote the generated curriculum data as expected.
 
 Observed local alternative:
 - `npm run generate:curriculum` succeeds (uses `ts-node --project tsconfig.scripts.json scripts/generate-curriculum-data.ts`).

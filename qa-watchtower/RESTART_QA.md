@@ -8,11 +8,11 @@ In a new Codex session, send exactly:
 `Read and execute /Users/Rakesh/Projects/sv-uvm-guide/qa-watchtower/RESTART_QA.md`
 
 ## Current Checkpoint (Update Before Run)
-- Last Checked Commit: `30efbd78a9a794796540f02ac63129973acdb8e0`
-- Last Checked Date: `2026-03-03`
-- Focus Areas: `curriculum|navigation|visualizations|qa`
+- Last Checked Commit: `00928a1cb9777c44bb573c36c61b50767d3cc0c6`
+- Last Checked Date: `2026-03-04`
+- Focus Areas: `curriculum|navigation|practice|qa`
 - Run E2E: `no`
-- Checkpoint Note: This checkpoint now includes the latest reviewed implementation commit (`8e391801`) and the QA follow-up commit (`30efbd78`). On restart, review new changes after `Last Checked Commit`, then use open findings in `qa-watchtower/findings/` plus `qa-watchtower/IMPLEMENTATION_HANDOFF_2026-03-03.md` as the active follow-up queue. If the diff is empty, do not re-audit old commits; only validate new work or explicitly requested regressions.
+- Checkpoint Note: This checkpoint now includes the implementation follow-up commit (`e3a38991`) and the latest reviewed curriculum merge commit (`00928a1c`). The stale-link, MDX registry, learner-path, and interactive-demo findings were revalidated and closed on 2026-03-04; the only active blocker is the infrastructure finding for `npx tsx scripts/generate-curriculum-data.ts` in restricted/offline shells. On restart, review new changes after `Last Checked Commit`, prioritize implementation/content deltas, and keep the remaining infra finding in the follow-up queue if the documented `npx tsx` command still hangs or reaches for the network. If the diff is empty, do not re-audit old commits; only validate new work or explicitly requested regressions.
 
 ## Execution Instructions (for Codex)
 Role: You are the QA Watchtower agent for this repository. Your job is strict QA only.
@@ -76,7 +76,7 @@ Workflow:
 
 ## Checkpoint Update After Run
 After each completed periodic run, update this section in this same file:
-- Last Checked Commit: `30efbd78a9a794796540f02ac63129973acdb8e0`
-- Last Checked Date: `2026-03-03`
-- Focus Areas: `curriculum|navigation|visualizations|qa`
+- Last Checked Commit: `00928a1cb9777c44bb573c36c61b50767d3cc0c6`
+- Last Checked Date: `2026-03-04`
+- Focus Areas: `curriculum|navigation|practice|qa`
 - Run E2E: `no`
