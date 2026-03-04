@@ -13,9 +13,11 @@ QA tracking and findings live in `qa-watchtower/`, but executable tests are adde
 
 ## Current QA-Authored Shared Tests
 - `tests/components/TLMPortConnector.test.tsx`
+- `tests/components/WebGLFallbackBoundary.test.tsx`
 - `tests/components/visuals/ConstraintSolverExplorer.test.tsx`
 - `tests/components/visuals/EventRegionGame.test.tsx`
 - `tests/components/visuals/MailboxSemaphoreGame.test.tsx`
+- `tests/e2e/canvas-health-check.spec.ts`
 - `tests/qa/curriculumCoverageAudit.spec.ts`
 
 ## Rule

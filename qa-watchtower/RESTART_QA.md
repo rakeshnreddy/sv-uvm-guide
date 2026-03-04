@@ -8,11 +8,11 @@ In a new Codex session, send exactly:
 `Read and execute /Users/Rakesh/Projects/sv-uvm-guide/qa-watchtower/RESTART_QA.md`
 
 ## Current Checkpoint (Update Before Run)
-- Last Checked Commit: `c50d78788045de96e49248f470a212c001e87aba`
+- Last Checked Commit: `4f260dcb67e9ba0a63eefb1094215d3fa7818f36`
 - Last Checked Date: `2026-03-04`
-- Focus Areas: `curriculum|navigation|accessibility|qa`
+- Focus Areas: `visualizations|webgl|curriculum-routes|qa`
 - Run E2E: `no`
-- Checkpoint Note: This checkpoint now includes the `W5-IUVM2-SPLIT` QA-fix commit (`c50d7878`). The TLM anchor and accessibility regressions are resolved and closed. Shared-suite coverage for `TLMPortConnector` remains in place, and the only active blocker is still the infrastructure finding for `npx tsx scripts/generate-curriculum-data.ts` in restricted/offline shells. On restart, review new changes after `Last Checked Commit`, prioritize implementation/content deltas, and keep the remaining infra finding in the active follow-up queue if the documented `npx tsx` command still hangs or reaches for the network. If the diff is empty, do not re-audit old commits; only validate new work or explicitly requested regressions.
+- Checkpoint Note: This checkpoint includes post-`W5-IUVM2-SPLIT` WebGL/canvas stability work (`aa53a8c2`, `aa11c4a0`, `4f260dcb`) and QA follow-up. QA added `WebGLFallbackBoundary` intent coverage and repaired stale curriculum routing in `tests/e2e/canvas-health-check.spec.ts` after the route-integrity audit failed on a retired `A-SV-1` path. Full `npx vitest --run` and `npm run build` pass from this state. The only active blocker remains the infrastructure finding for `npx tsx scripts/generate-curriculum-data.ts` in restricted/offline shells; continue fallback `npm run generate:curriculum` and track infra status on each restart.
 
 ## Execution Instructions (for Codex)
 Role: You are the QA Watchtower agent for this repository. Your job is strict QA only.
@@ -76,7 +76,7 @@ Workflow:
 
 ## Checkpoint Update After Run
 After each completed periodic run, update this section in this same file:
-- Last Checked Commit: `c50d78788045de96e49248f470a212c001e87aba`
+- Last Checked Commit: `4f260dcb67e9ba0a63eefb1094215d3fa7818f36`
 - Last Checked Date: `2026-03-04`
-- Focus Areas: `curriculum|navigation|accessibility|qa`
+- Focus Areas: `visualizations|webgl|curriculum-routes|qa`
 - Run E2E: `no`

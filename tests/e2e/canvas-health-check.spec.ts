@@ -3,10 +3,10 @@ import { test, expect } from '@playwright/test';
 // List of curriculum pages that have 3D/WebGL interactives
 const canvas3DPages = [
     '/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/ipc', // Mailbox3D
+    '/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index', // Constraint3D
     '/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index', // Coverage3D
     '/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index', // PhaseTimeline3D
     '/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index', // Analysis3D, Dataflow3D
-    '/curriculum/T3_Advanced/A-SV-1_Advanced_Constraints/index' // Constraint3D
 ];
 
 test.describe('Canvas 3D Health Checks', () => {
