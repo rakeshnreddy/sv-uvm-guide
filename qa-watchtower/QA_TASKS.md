@@ -11,5 +11,3 @@
 
 ## Open Findings
 - `P1`: `2026-02-27_INFRA-npx-tsx-generate-curriculum-data-fails-offline.md`
-- `P2`: `2026-03-04_CURRICULUM-hash-links-point-to-missing-analysis-fabric-anchor.md`
-- `P2`: `2026-03-04_ACCESSIBILITY-tlm-port-connector-connect-button-lacks-accessible-name.md`

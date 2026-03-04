@@ -8,11 +8,11 @@ In a new Codex session, send exactly:
 `Read and execute /Users/Rakesh/Projects/sv-uvm-guide/qa-watchtower/RESTART_QA.md`
 
 ## Current Checkpoint (Update Before Run)
-- Last Checked Commit: `9840a780c0b14ac9e1ad43146490429dbd4df4ce`
+- Last Checked Commit: `c50d78788045de96e49248f470a212c001e87aba`
 - Last Checked Date: `2026-03-04`
 - Focus Areas: `curriculum|navigation|accessibility|qa`
 - Run E2E: `no`
-- Checkpoint Note: This checkpoint now includes the `W5-IUVM2-SPLIT` implementation commit (`9840a780`). Default validation passed after QA added shared-suite coverage for `TLMPortConnector`, but two new open defects remain: curriculum deep links still target a missing analysis-fabric hash anchor in `I-UVM-2B_TLM_Connections`, and the new `TLMPortConnector` connect button has no accessible name. The earlier infrastructure finding for `npx tsx scripts/generate-curriculum-data.ts` also remains open in restricted/offline shells. On restart, review new changes after `Last Checked Commit`, prioritize implementation/content deltas, and keep all open findings in `qa-watchtower/findings/` as the active follow-up queue. If the diff is empty, do not re-audit old commits; only validate new work or explicitly requested regressions.
+- Checkpoint Note: This checkpoint now includes the `W5-IUVM2-SPLIT` QA-fix commit (`c50d7878`). The TLM anchor and accessibility regressions are resolved and closed. Shared-suite coverage for `TLMPortConnector` remains in place, and the only active blocker is still the infrastructure finding for `npx tsx scripts/generate-curriculum-data.ts` in restricted/offline shells. On restart, review new changes after `Last Checked Commit`, prioritize implementation/content deltas, and keep the remaining infra finding in the active follow-up queue if the documented `npx tsx` command still hangs or reaches for the network. If the diff is empty, do not re-audit old commits; only validate new work or explicitly requested regressions.
 
 ## Execution Instructions (for Codex)
 Role: You are the QA Watchtower agent for this repository. Your job is strict QA only.
@@ -76,7 +76,7 @@ Workflow:
 
 ## Checkpoint Update After Run
 After each completed periodic run, update this section in this same file:
-- Last Checked Commit: `9840a780c0b14ac9e1ad43146490429dbd4df4ce`
+- Last Checked Commit: `c50d78788045de96e49248f470a212c001e87aba`
 - Last Checked Date: `2026-03-04`
 - Focus Areas: `curriculum|navigation|accessibility|qa`
 - Run E2E: `no`

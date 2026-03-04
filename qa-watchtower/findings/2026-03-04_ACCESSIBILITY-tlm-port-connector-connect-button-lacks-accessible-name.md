@@ -3,7 +3,7 @@
 - Date: 2026-03-04
 - Feature ID: FEAT-W5-IUVM2-SPLIT
 - Severity: P2
-- Status: open
+- Status: closed
 
 ## Summary
 The new `TLMPortConnector` interactive uses an icon-only button to start the connection handshake, but the control has no accessible name. Screen-reader and keyboard users can reach a blank button with no descriptive label, which makes the core lab action ambiguous.
@@ -37,6 +37,6 @@ The control was implemented as a purely visual affordance and never received an 
 - Keep the label stable enough for future automated accessibility assertions.
 
 ## Verification to Close
-- [ ] `QA_STRICT_A11Y_AUDIT=1 npx vitest --run tests/components/TLMPortConnector.test.tsx` passes.
+- [x] `QA_STRICT_A11Y_AUDIT=1 npx vitest --run tests/components/TLMPortConnector.test.tsx` passes.
 - [ ] Keyboard and screen-reader users can identify the connect action unambiguously.
-- [ ] Findings status updated to `closed`.
+- [x] Findings status updated to `closed`.

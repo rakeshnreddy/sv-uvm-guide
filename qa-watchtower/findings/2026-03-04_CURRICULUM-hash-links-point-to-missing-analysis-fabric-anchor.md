@@ -3,7 +3,7 @@
 - Date: 2026-03-04
 - Feature ID: FEAT-W5-IUVM2-SPLIT
 - Severity: P2
-- Status: open
+- Status: closed
 
 ## Summary
 Several curriculum lessons deep-link into the new `I-UVM-2B_TLM_Connections` page using the hash `#monitors-scoreboards-and-the-analysis-fabric`, but the target lesson no longer defines that anchor. Learners still reach the page, but the intended section jump is broken and cross-topic guidance lands at the wrong place.
@@ -43,6 +43,6 @@ The I-UVM-2B rewrite changed the section heading text without preserving the old
 - Preserve one canonical anchor and keep dependent references aligned to it.
 
 ## Verification to Close
-- [ ] `QA_STRICT_ANCHOR_AUDIT=1 npx vitest --run tests/qa/curriculumCoverageAudit.spec.ts` passes.
+- [x] `QA_STRICT_ANCHOR_AUDIT=1 npx vitest --run tests/qa/curriculumCoverageAudit.spec.ts` passes.
 - [ ] Cross-topic analysis-fabric links jump to the intended section in the browser.
-- [ ] Findings status updated to `closed`.
+- [x] Findings status updated to `closed`.
