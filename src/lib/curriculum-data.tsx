@@ -407,6 +407,11 @@ export const curriculumData: Module[] = [
             "description": "Master virtual sequences, arbitration, layering, and driver-sequencer synchronization patterns."
           },
           {
+            "title": "Lab: Coordinated Attack",
+            "slug": "coordinated-attack-lab",
+            "description": "Apply your knowledge of virtual sequences to coordinate transactions between a slow configuration interface and a fast data interface."
+          },
+          {
             "title": "Interrupt Handling and Layered Stimulus | Advanced UVM Sequencing",
             "slug": "interrupt-handling",
             "description": "Turn asynchronous interrupts into deterministic stimulus by combining monitor events, routing policy, and virtual sequences."

@@ -37,7 +37,7 @@ Below are the remaining requirements from the `comprehensive_lrm_audit_report.md
 |---|---|---|---|
 | `W5-IUVM1-SPLIT-MERGE` | `complete` | Spilt `I-UVM-1` (Intro) and merge `I-UVM-4`/`I-UVM-5`/`A-UVM-2` | Create `I-UVM-1A_Components_and_Objects`, `I-UVM-1B_The_UVM_Factory`, and `I-UVM-1C_UVM_Phasing`. Merge contents of `I-UVM-4` and `A-UVM-2` into `I-UVM-1B` and delete them. Merge `I-UVM-5` into `I-UVM-1C` and delete it. Set up redirects. Build `UVMTreeExplorer.tsx` (1A) and `FactoryOverrideVisualizer.tsx` (1B). Create "Error Injection Override" lab (1B). |
 | `W5-IUVM2-SPLIT` | `complete` | Split `I-UVM-2` (TB) into A & B | Create `I-UVM-2A_Component_Roles` and `I-UVM-2B_Connecting_with_TLM`. Build `TLMPortConnector.tsx` (2B). Create "Wire It Up!" lab (2B). |
-| `W5-IUVM3-SPLIT-MERGE` | `todo` | Split `I-UVM-3` (Sequences) and merge `A-UVM-1` | Create `I-UVM-3A_Sequence_Fundamentals` and `I-UVM-3B_Advanced_Sequencing_and_Layering`. Merge `A-UVM-1` into `3B` and delete it. Relocate `config_db` out of sequencing. Build `VirtualSequencerExplorer.tsx` (3B). Create "Coordinated Attack" lab (3B). |
+| `W5-IUVM3-SPLIT-MERGE` | `complete` | Split `I-UVM-3` (Sequences) and merge `A-UVM-1` | Create `I-UVM-3A_Sequence_Fundamentals` and `I-UVM-3B_Advanced_Sequencing_and_Layering`. Merge `A-UVM-1` into `3B` and delete it. Relocate `config_db` out of sequencing. Build `VirtualSequencerExplorer.tsx` (3B). Create "Coordinated Attack" lab (3B). |
 
 ### Sub-Task 4: Advanced UVM Deprecations & Splits
 | ID | Status | Summary | Agent Instructions |

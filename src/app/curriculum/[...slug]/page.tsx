@@ -127,6 +127,10 @@ const SystemVerilog3DVisualizer = dynamic(
   () => import('@/components/curriculum/f2/SystemVerilog3DVisualizer'),
   { ssr: false, loading: () => <VisualizationFallback /> },
 );
+const VirtualSequencerExplorer = dynamic(
+  () => import('@/components/curriculum/interactives/VirtualSequencerExplorer'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -205,6 +209,7 @@ const components = {
   TemporalLogicExplorer: dynamic(() => import('@/components/curriculum/interactives/TemporalLogicExplorer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   TLMPortConnector: dynamic(() => import('@/components/curriculum/interactives/TLMPortConnector'), { ssr: false, loading: () => <VisualizationFallback /> }),
   UVMTreeExplorer: dynamic(() => import('@/components/curriculum/interactives/UVMTreeExplorer'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  VirtualSequencerExplorer,
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {
