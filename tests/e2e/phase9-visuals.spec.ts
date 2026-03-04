@@ -3,8 +3,24 @@ import { test, expect } from '@playwright/test';
 test.describe('Phase 9 Visualizations', () => {
 
     test('EventRegionGame in F2C renders and interacts', async ({ page }) => {
-        page.on('console', msg => console.log('BROWSER CONSOLE:', msg.type(), msg.text()));
-        page.on('pageerror', error => console.log('BROWSER ERROR:', error.message));
+        page.on('console', async msg => {
+            if (msg.type() === 'error' && msg.text().includes('Error')) {
+                const text = msg.text();
+                if (text.includes('Error creating WebGL context') || text.includes('customDepthMaterial') || text.includes('Expected length') || text.includes('404')) {
+                    return; // Ignore benign/known framework errors
+                }
+                const args = await Promise.all(msg.args().map(a => a.jsonValue().catch(() => '')));
+                throw new Error(`BROWSER CONSOLE ERROR: ${msg.text()} | Args: ${JSON.stringify(args)}`);
+            }
+        });
+        page.on('pageerror', error => {
+            const msg = error.message;
+            if (!msg.includes('Error creating WebGL context') &&
+                !msg.includes('Hydration failed') &&
+                !msg.includes('error while hydrating')) {
+                throw new Error(`UNCAUGHT BROWSER ERROR: ${msg}`);
+            }
+        });
         await page.goto('/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index');
 
         // Check title

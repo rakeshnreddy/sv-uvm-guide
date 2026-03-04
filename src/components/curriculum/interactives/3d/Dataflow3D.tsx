@@ -1,10 +1,11 @@
-// @ts-nocheck
 'use client';
+// @ts-nocheck
+import { WebGLFallbackBoundary } from '@/components/ui/WebGLFallbackBoundary';
 
 import React, { useRef } from 'react';
 // @ts-nocheck
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Text, Line, Box } from '@react-three/drei';
+import { OrbitControls, Html, Line, Box } from '@react-three/drei';
 import * as THREE from 'three';
 
 const ComponentBlock = ({ position, color, label }: { position: [number, number, number], color: string, label: string }) => {
@@ -13,9 +14,11 @@ const ComponentBlock = ({ position, color, label }: { position: [number, number,
             <Box args={[1.5, 1, 1]}>
                 <meshStandardMaterial color={color} transparent opacity={0.8} />
             </Box>
-            <Text position={[0, -0.8, 0]} fontSize={0.25} color="white">
-                {label}
-            </Text>
+            <Html position={[0, -0.8, 0]} transform center>
+                <div style={{ color: 'white', fontSize: '12px', whiteSpace: 'nowrap', userSelect: 'none' }}>
+                    {label}
+                </div>
+            </Html>
         </group>
     );
 };
@@ -49,6 +52,11 @@ export default function Dataflow3D() {
     const monPos: [number, number, number] = [2, 0, 0];
     const sbPos: [number, number, number] = [5, 0, 0];
 
+    const [mounted, setMounted] = React.useState(false);
+    React.useEffect(() => setMounted(true), []);
+
+    if (!mounted) return <div className="flex h-48 items-center justify-center">Loading visualization...</div>;
+
     return (
         <div className="w-full h-[400px] border border-slate-700 rounded-lg overflow-hidden bg-slate-900 relative my-8">
             <div className="absolute top-4 left-4 z-10 text-white pointer-events-none">
@@ -56,7 +64,7 @@ export default function Dataflow3D() {
                 <p className="text-sm text-slate-300 mt-1 bg-slate-900/50 p-1 rounded inline-block">Sequencer → Driver → DUT → Monitor → Scoreboard</p>
             </div>
 
-            <Canvas camera={{ position: [0.5, 3, 7], fov: 50 }}>
+            <WebGLFallbackBoundary><Canvas camera={{ position: [0.5, 3, 7], fov: 50 }}>
                 <fog attach="fog" args={["#0f172a", 5, 20]} />
                 <ambientLight intensity={0.6} />
                 <pointLight position={[0, 8, 5]} intensity={1.5} />
@@ -77,7 +85,11 @@ export default function Dataflow3D() {
                     [monPos[0], monPos[1] - 1.5, monPos[2]],
                     [monPos[0], monPos[1] - 0.5, monPos[2]]
                 ]} color="#ef4444" lineWidth={2} />
-                <Text position={[0.5, -1.8, 0]} fontSize={0.25} color="#ef4444">Virtual Interface (DUT)</Text>
+                <Html position={[0.5, -1.8, 0]} transform center>
+                    <div style={{ color: '#ef4444', fontSize: '12px', whiteSpace: 'nowrap', userSelect: 'none' }}>
+                        Virtual Interface (DUT)
+                    </div>
+                </Html>
 
                 {/* TLM Analysis Path */}
                 <Line points={[monPos, sbPos]} color="#94a3b8" lineWidth={2} />
@@ -105,7 +117,7 @@ export default function Dataflow3D() {
                     minPolarAngle={Math.PI / 4}
                     maxPolarAngle={Math.PI / 2}
                 />
-            </Canvas>
+            </Canvas></WebGLFallbackBoundary>
         </div>
     );
 }

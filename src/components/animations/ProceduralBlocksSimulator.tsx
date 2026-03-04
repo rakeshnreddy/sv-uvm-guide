@@ -39,7 +39,7 @@ const Waveform: React.FC<{ data: { time: number; a: number; b: number }[]; step:
   const pathA = buildPath('a');
   const pathB = buildPath('b');
 
-  const pointerX = Math.min(step, data.length - 1) * stepWidth;
+  const pointerX = (Math.min(step, data.length - 1) * stepWidth) || 0;
 
   return (
     <svg width={width} height={height} className="bg-background rounded">

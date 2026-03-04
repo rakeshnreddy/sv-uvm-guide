@@ -1,10 +1,11 @@
-// @ts-nocheck
 'use client';
+// @ts-nocheck
+import { WebGLFallbackBoundary } from '@/components/ui/WebGLFallbackBoundary';
 
 import React, { useRef, useState } from 'react';
 // @ts-nocheck
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Text, Line, Sphere } from '@react-three/drei';
+import { OrbitControls, Html, Line, Sphere } from '@react-three/drei';
 import * as THREE from 'three';
 
 const TreeNode = ({ position, label, color, opacity = 1 }: { position: [number, number, number], label: string, color: string, opacity?: number }) => {
@@ -14,9 +15,11 @@ const TreeNode = ({ position, label, color, opacity = 1 }: { position: [number, 
                 <sphereGeometry args={[0.3]} />
                 <meshStandardMaterial color={color} transparent opacity={opacity} />
             </mesh>
-            <Text position={[0, -0.5, 0]} fontSize={0.2} color="white" fillOpacity={opacity}>
-                {label}
-            </Text>
+            <Html position={[0, -0.5, 0]} transform center>
+                <div style={{ color: 'white', fontSize: '10px', whiteSpace: 'nowrap', userSelect: 'none', opacity }}>
+                    {label}
+                </div>
+            </Html>
         </group>
     );
 };
@@ -43,6 +46,11 @@ export default function Constraint3D() {
     const l2bColor = step >= 2 ? "#ef4444" : "#3b82f6";
     const r2aColor = step >= 2 ? "#ef4444" : "#3b82f6"; // Pruned at step 2
     const r2bColor = step >= 2 ? "#22c55e" : "#3b82f6"; // Final Solution
+
+    const [mounted, setMounted] = React.useState(false);
+    React.useEffect(() => setMounted(true), []);
+
+    if (!mounted) return <div className="flex h-48 items-center justify-center">Loading visualization...</div>;
 
     return (
         <div className="w-full h-[400px] border border-slate-700 rounded-lg overflow-hidden bg-slate-900 relative my-8">
@@ -72,7 +80,7 @@ export default function Constraint3D() {
                 </button>
             </div>
 
-            <Canvas camera={{ position: [0, 1, 8], fov: 45 }}>
+            <WebGLFallbackBoundary><Canvas camera={{ position: [0, 1, 8], fov: 45 }}>
                 <fog attach="fog" args={["#0f172a", 5, 20]} />
                 <ambientLight intensity={0.5} />
                 <pointLight position={[0, 5, 5]} intensity={1.5} />
@@ -104,7 +112,7 @@ export default function Constraint3D() {
                     minPolarAngle={Math.PI / 4}
                     maxPolarAngle={Math.PI / 1.5}
                 />
-            </Canvas>
+            </Canvas></WebGLFallbackBoundary>
         </div>
     );
 }

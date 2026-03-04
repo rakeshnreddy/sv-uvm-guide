@@ -1,10 +1,11 @@
-// @ts-nocheck
 'use client';
+// @ts-nocheck
+import { WebGLFallbackBoundary } from '@/components/ui/WebGLFallbackBoundary';
 
 import React, { useRef } from 'react';
 // @ts-nocheck
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Text, Box } from '@react-three/drei';
+import { OrbitControls, Html, Box } from '@react-three/drei';
 import * as THREE from 'three';
 
 const PhaseBlock = ({ position, width, color, label }: { position: [number, number, number], width: number, color: string, label: string }) => {
@@ -13,9 +14,11 @@ const PhaseBlock = ({ position, width, color, label }: { position: [number, numb
             <Box args={[width, 0.4, 0.4]}>
                 <meshStandardMaterial color={color} transparent opacity={0.8} />
             </Box>
-            <Text position={[0, 0, 0.25]} fontSize={0.15} color="white">
-                {label}
-            </Text>
+            <Html position={[0, 0, 0.25]} transform center>
+                <div style={{ color: 'white', fontSize: '10px', whiteSpace: 'nowrap', userSelect: 'none' }}>
+                    {label}
+                </div>
+            </Html>
         </group>
     );
 };
@@ -40,6 +43,11 @@ const ProgressPlane = () => {
 };
 
 export default function PhaseTimeline3D() {
+    const [mounted, setMounted] = React.useState(false);
+    React.useEffect(() => setMounted(true), []);
+
+    if (!mounted) return <div className="flex h-48 items-center justify-center">Loading visualization...</div>;
+
     return (
         <div className="w-full h-[400px] border border-slate-700 rounded-lg overflow-hidden bg-slate-900 relative my-8">
             <div className="absolute top-4 left-4 z-10 text-white pointer-events-none">
@@ -47,7 +55,7 @@ export default function PhaseTimeline3D() {
                 <p className="text-sm text-slate-300 mt-1 bg-slate-900/50 p-1 rounded inline-block">Time-consuming phases overlap across components</p>
             </div>
 
-            <Canvas camera={{ position: [0, 0, 8], fov: 45 }}>
+            <WebGLFallbackBoundary><Canvas camera={{ position: [0, 0, 8], fov: 45 }}>
                 <fog attach="fog" args={["#0f172a", 5, 20]} />
                 <ambientLight intensity={0.6} />
                 <pointLight position={[0, 5, 5]} intensity={1.5} />
@@ -57,7 +65,9 @@ export default function PhaseTimeline3D() {
 
                 {/* Component A Timeline */}
                 <group position={[0, 1, 0]}>
-                    <Text position={[-5.5, 0, 0]} fontSize={0.2} color="white" anchorX="right">Comp A</Text>
+                    <Html position={[-5.5, 0, 0]} transform center>
+                        <div style={{ color: 'white', fontSize: '12px', whiteSpace: 'nowrap', userSelect: 'none', textAlign: 'right', width: '60px' }}>Comp A</div>
+                    </Html>
                     <PhaseBlock position={[-3, 0, 0]} width={2} color="#3b82f6" label="reset" />
                     <PhaseBlock position={[-0.5, 0, 0]} width={1} color="#f59e0b" label="configure" />
                     <PhaseBlock position={[2, 0, 0]} width={4} color="#22c55e" label="main" />
@@ -65,7 +75,9 @@ export default function PhaseTimeline3D() {
 
                 {/* Component B Timeline */}
                 <group position={[0, -0.2, 0]}>
-                    <Text position={[-5.5, 0, 0]} fontSize={0.2} color="white" anchorX="right">Comp B</Text>
+                    <Html position={[-5.5, 0, 0]} transform center>
+                        <div style={{ color: 'white', fontSize: '12px', whiteSpace: 'nowrap', userSelect: 'none', textAlign: 'right', width: '60px' }}>Comp B</div>
+                    </Html>
                     <PhaseBlock position={[-2.5, 0, 0]} width={3} color="#3b82f6" label="reset" />
                     <PhaseBlock position={[1, 0, 0]} width={2} color="#f59e0b" label="configure" />
                     <PhaseBlock position={[3.5, 0, 0]} width={1} color="#22c55e" label="main" />
@@ -73,7 +85,9 @@ export default function PhaseTimeline3D() {
 
                 {/* Component C Timeline */}
                 <group position={[0, -1.4, 0]}>
-                    <Text position={[-5.5, 0, 0]} fontSize={0.2} color="white" anchorX="right">Comp C</Text>
+                    <Html position={[-5.5, 0, 0]} transform center>
+                        <div style={{ color: 'white', fontSize: '12px', whiteSpace: 'nowrap', userSelect: 'none', textAlign: 'right', width: '60px' }}>Comp C</div>
+                    </Html>
                     <PhaseBlock position={[-3.5, 0, 0]} width={1} color="#3b82f6" label="reset" />
                     <PhaseBlock position={[-1, 0, 0]} width={4} color="#f59e0b" label="configure" />
                     <PhaseBlock position={[2.5, 0, 0]} width={3} color="#22c55e" label="main" />
@@ -81,7 +95,9 @@ export default function PhaseTimeline3D() {
 
                 {/* Unified Run Phase (always active) */}
                 <group position={[0, -2.6, 0]}>
-                    <Text position={[-5.5, 0, 0]} fontSize={0.2} color="white" anchorX="right">Global</Text>
+                    <Html position={[-5.5, 0, 0]} transform center>
+                        <div style={{ color: 'white', fontSize: '12px', whiteSpace: 'nowrap', userSelect: 'none', textAlign: 'right', width: '60px' }}>Global</div>
+                    </Html>
                     <PhaseBlock position={[0, 0, 0]} width={8} color="#a855f7" label="run_phase (parallel to task phases)" />
                 </group>
 
@@ -93,7 +109,7 @@ export default function PhaseTimeline3D() {
                     minPolarAngle={Math.PI / 4}
                     maxPolarAngle={Math.PI / 1.5}
                 />
-            </Canvas>
+            </Canvas></WebGLFallbackBoundary>
         </div>
     );
 }

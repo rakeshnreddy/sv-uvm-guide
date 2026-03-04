@@ -1,3 +1,4 @@
+import { WebGLFallbackBoundary } from '@/components/ui/WebGLFallbackBoundary';
 "use client";
 
 import React, { useEffect, useMemo, useRef, useState } from "react";

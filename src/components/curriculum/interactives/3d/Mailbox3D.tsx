@@ -1,9 +1,10 @@
-// @ts-nocheck
 'use client';
+// @ts-nocheck
+import { WebGLFallbackBoundary } from '@/components/ui/WebGLFallbackBoundary';
 
 import React, { useState } from 'react';
 import { Canvas } from '@react-three/fiber';
-import { OrbitControls, Text, Box } from '@react-three/drei';
+import { OrbitControls, Html, Box } from '@react-three/drei';
 
 const Message = ({ position, color, label }: { position: [number, number, number], color: string, label: string }) => {
     return (
@@ -11,9 +12,11 @@ const Message = ({ position, color, label }: { position: [number, number, number
             <Box args={[0.8, 0.8, 0.8]}>
                 <meshStandardMaterial color={color} />
             </Box>
-            <Text position={[0, 0, 0.41]} fontSize={0.3} color="black">
-                {label}
-            </Text>
+            <Html position={[0, 0, 0.41]} transform center>
+                <div style={{ color: 'black', fontSize: '13px', fontWeight: 'bold', userSelect: 'none' }}>
+                    {label}
+                </div>
+            </Html>
         </group>
     );
 };
@@ -48,6 +51,11 @@ export default function Mailbox3D() {
     const [messages, setMessages] = useState(2);
     const capacity = 5;
 
+    const [mounted, setMounted] = React.useState(false);
+    React.useEffect(() => setMounted(true), []);
+
+    if (!mounted) return <div className="flex h-48 items-center justify-center">Loading visualization...</div>;
+
     return (
         <div className="w-full h-[400px] border border-slate-700 rounded-lg overflow-hidden bg-slate-900 relative my-8">
             <div className="absolute top-4 left-4 z-10 text-white pointer-events-none">
@@ -81,7 +89,7 @@ export default function Mailbox3D() {
                 </button>
             </div>
 
-            <Canvas camera={{ position: [0, 2, 5], fov: 50 }}>
+            <WebGLFallbackBoundary><Canvas camera={{ position: [0, 2, 5], fov: 50 }}>
                 <ambientLight intensity={0.5} />
                 <directionalLight position={[10, 10, 5]} intensity={1} />
                 <directionalLight position={[-10, 10, -5]} intensity={0.5} />
@@ -93,7 +101,7 @@ export default function Mailbox3D() {
                     minPolarAngle={Math.PI / 4}
                     maxPolarAngle={Math.PI / 2}
                 />
-            </Canvas>
+            </Canvas></WebGLFallbackBoundary>
         </div>
     );
 }

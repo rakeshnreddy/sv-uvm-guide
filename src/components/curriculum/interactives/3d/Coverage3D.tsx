@@ -1,10 +1,11 @@
-// @ts-nocheck
 'use client';
+// @ts-nocheck
+import { WebGLFallbackBoundary } from '@/components/ui/WebGLFallbackBoundary';
 
 import React, { useRef, useMemo } from 'react';
 // @ts-nocheck
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Text } from '@react-three/drei';
+import { OrbitControls, Html } from '@react-three/drei';
 import * as THREE from 'three';
 
 const CoverageTower = ({ position, height, color, label }: { position: [number, number, number], height: number, color: string, label: string }) => {
@@ -31,12 +32,12 @@ const CoverageTower = ({ position, height, color, label }: { position: [number, 
                 <meshStandardMaterial color="#334155" />
             </mesh>
             {/* Label */}
-            <Text position={[0, -0.3, 0.5]} fontSize={0.25} color="white" anchorY="top">
-                {label}
-            </Text>
-            <Text position={[0, height + 0.2, 0]} fontSize={0.3} color="white" anchorY="bottom">
-                {Math.round((height / 4) * 100)}%
-            </Text>
+            <Html position={[0, -0.3, 0.5]} transform center>
+                <div style={{ color: 'white', fontSize: '10px', whiteSpace: 'nowrap', userSelect: 'none' }}>{label}</div>
+            </Html>
+            <Html position={[0, height + 0.2, 0]} transform center>
+                <div style={{ color: 'white', fontSize: '12px', fontWeight: 'bold', userSelect: 'none' }}>{Math.round((height / 4) * 100)}%</div>
+            </Html>
         </group>
     );
 };
@@ -59,6 +60,11 @@ export default function Coverage3D() {
         return data;
     }, []);
 
+    const [mounted, setMounted] = React.useState(false);
+    React.useEffect(() => setMounted(true), []);
+
+    if (!mounted) return <div className="flex h-48 items-center justify-center">Loading visualization...</div>;
+
     return (
         <div className="w-full h-[400px] border border-slate-700 rounded-lg overflow-hidden bg-slate-900 relative my-8">
             <div className="absolute top-4 left-4 z-10 text-white pointer-events-none">
@@ -71,7 +77,7 @@ export default function Coverage3D() {
                 </div>
             </div>
 
-            <Canvas camera={{ position: [0, 4, 7], fov: 45 }}>
+            <WebGLFallbackBoundary><Canvas camera={{ position: [0, 4, 7], fov: 45 }}>
                 <fog attach="fog" args={["#0f172a", 5, 15]} />
                 <ambientLight intensity={0.4} />
                 <directionalLight position={[5, 10, 5]} intensity={1.5} castShadow />
@@ -97,7 +103,7 @@ export default function Coverage3D() {
                     autoRotate={true}
                     autoRotateSpeed={0.5}
                 />
-            </Canvas>
+            </Canvas></WebGLFallbackBoundary>
         </div>
     );
 }

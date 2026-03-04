@@ -307,7 +307,9 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
 }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(initialStep);
   const { theme, resolvedTheme } = useTheme();
-  const effectiveTheme = (theme === 'system' ? resolvedTheme : theme) ?? 'dark';
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  const effectiveTheme = mounted ? ((theme === 'system' ? resolvedTheme : theme) ?? 'dark') : 'dark';
   const isDarkMode = effectiveTheme === 'dark';
   const editorRef = useRef<MonacoEditorInstance | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
@@ -423,10 +425,10 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
       y += 20;
       mod.children?.filter(c => c.type === 'always').forEach((al, idx) => {
         svg.append('line')
-          .attr('x1', width / 2)
-          .attr('y1', startY + 5)
-          .attr('x2', width / 2)
-          .attr('y2', y - 10)
+          .attr('x1', (width / 2) || 0)
+          .attr('y1', (startY + 5) || 0)
+          .attr('x2', (width / 2) || 0)
+          .attr('y2', (y - 10) || 0)
           .attr('stroke', '#555');
         svg.append('text')
           .attr('x', width / 2)

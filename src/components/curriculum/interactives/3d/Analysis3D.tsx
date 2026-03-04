@@ -1,9 +1,10 @@
-// @ts-nocheck
 'use client';
+// @ts-nocheck
+import { WebGLFallbackBoundary } from '@/components/ui/WebGLFallbackBoundary';
 
 import React, { useRef } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
-import { OrbitControls, Text, Line } from '@react-three/drei';
+import { OrbitControls, Html, Line } from '@react-three/drei';
 import * as THREE from 'three';
 
 // Nodes represent components like monitor, scoreboard, subscriber
@@ -26,9 +27,11 @@ const Node = ({ position, label, color }: { position: [number, number, number], 
                 <octahedronGeometry args={[0.4]} />
                 <meshStandardMaterial color={color} transparent opacity={0.6} />
             </mesh>
-            <Text position={[0, -0.7, 0]} fontSize={0.25} color="white" anchorY="top">
-                {label}
-            </Text>
+            <Html position={[0, -0.7, 0]} transform center>
+                <div style={{ color: 'white', fontSize: '12px', whiteSpace: 'nowrap', userSelect: 'none' }}>
+                    {label}
+                </div>
+            </Html>
         </group>
     );
 };
@@ -64,6 +67,11 @@ export default function Analysis3D() {
     const sb2Pos: [number, number, number] = [0, -2, 1.5];
     const subPos: [number, number, number] = [3, -2, 0];
 
+    const [mounted, setMounted] = React.useState(false);
+    React.useEffect(() => setMounted(true), []);
+
+    if (!mounted) return <div className="flex h-48 items-center justify-center">Loading visualization...</div>;
+
     return (
         <div className="w-full h-[500px] border border-slate-700 rounded-lg overflow-hidden bg-slate-900 relative my-8">
             <div className="absolute top-4 left-4 z-10 text-white pointer-events-none">
@@ -71,7 +79,7 @@ export default function Analysis3D() {
                 <p className="text-sm text-slate-300 mt-1 bg-slate-900/50 p-1 rounded inline-block">One-to-many broadcast via uvm_analysis_port</p>
             </div>
 
-            <Canvas camera={{ position: [0, 2, 8], fov: 45 }}>
+            <WebGLFallbackBoundary><Canvas camera={{ position: [0, 2, 8], fov: 45 }}>
                 <fog attach="fog" args={["#0f172a", 5, 20]} />
                 <ambientLight intensity={0.5} />
                 <pointLight position={[0, 5, 0]} intensity={2} />
@@ -107,7 +115,7 @@ export default function Analysis3D() {
                     autoRotate={true}
                     autoRotateSpeed={0.5}
                 />
-            </Canvas>
+            </Canvas></WebGLFallbackBoundary>
         </div>
     );
 }
