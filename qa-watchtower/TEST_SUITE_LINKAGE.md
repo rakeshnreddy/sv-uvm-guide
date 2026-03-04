@@ -12,6 +12,7 @@ QA tracking and findings live in `qa-watchtower/`, but executable tests are adde
 - `npm run test:e2e` runs all Playwright specs in `tests/e2e/` (includes `tests/e2e/qa/`).
 
 ## Current QA-Authored Shared Tests
+- `tests/components/TLMPortConnector.test.tsx`
 - `tests/components/visuals/ConstraintSolverExplorer.test.tsx`
 - `tests/components/visuals/EventRegionGame.test.tsx`
 - `tests/components/visuals/MailboxSemaphoreGame.test.tsx`

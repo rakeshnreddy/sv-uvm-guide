@@ -57,11 +57,12 @@ export default function TLMPortConnector() {
                         <span className="text-xs text-muted-foreground font-mono">seq_item_port</span>
 
                         <button
+                            aria-label="Connect"
                             onClick={wireState === 'disconnected' ? handleConnectClick : undefined}
                             disabled={wireState === 'connecting'}
                             className={`mt-2 flex h-8 w-8 items-center justify-center rounded-full text-white shadow-md transition-colors ${wireState === 'disconnected' ? 'cursor-pointer bg-[var(--primary)] hover:bg-[var(--primary)]/80' :
-                                    wireState === 'error' ? 'bg-red-500' :
-                                        'bg-[var(--primary)]/50'
+                                wireState === 'error' ? 'bg-red-500' :
+                                    'bg-[var(--primary)]/50'
                                 }`}
                         >
                             <div className="h-3 w-3 rounded-full bg-white shadow-inner" />

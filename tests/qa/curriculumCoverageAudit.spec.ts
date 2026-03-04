@@ -111,6 +111,19 @@ function collectBrokenInternalLinks(): string[] {
   return brokenLinks;
 }
 
+function slugifyHeading(value: string): string {
+  return value
+    .trim()
+    .replace(/\{#.+\}$/, '')
+    .replace(/`/g, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&[a-z]+;/gi, '')
+    .toLowerCase()
+    .replace(/[^\w\s-]/g, '')
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-');
+}
+
 function collectCustomMdxTags(): Set<string> {
   const tags = new Set<string>();
   const mdxFiles = walkFiles(contentRoot, (filePath) => filePath.endsWith('.mdx'));
@@ -145,6 +158,72 @@ function collectRegisteredMdxComponents(): Set<string> {
   });
 
   return registered;
+}
+
+function resolveCurriculumRouteToFilePath(route: string): string | null {
+  const normalized = route.replace(/^\/curriculum\/?/, '').replace(/\/$/, '');
+  const segments = normalized.split('/').filter(Boolean);
+
+  if (segments.length === 2) {
+    return path.join(contentRoot, segments[0], segments[1], 'index.mdx');
+  }
+
+  if (segments.length === 3) {
+    return path.join(contentRoot, segments[0], segments[1], `${segments[2]}.mdx`);
+  }
+
+  return null;
+}
+
+function collectDefinedAnchors(filePath: string): Set<string> {
+  const source = fs.readFileSync(filePath, 'utf8');
+  const anchors = new Set<string>();
+
+  for (const match of source.matchAll(/^#{2,6}\s+(.+)$/gm)) {
+    anchors.add(slugifyHeading(match[1]));
+  }
+
+  for (const match of source.matchAll(/\bid=["']([^"']+)["']/g)) {
+    anchors.add(match[1]);
+  }
+
+  return anchors;
+}
+
+function collectBrokenCurriculumAnchors(): string[] {
+  const filesToCheck = [
+    ...walkFiles(contentRoot, (filePath) => filePath.endsWith('.mdx')),
+    path.join(repoRoot, 'src', 'components', 'diagrams', 'uvm-link-map.ts'),
+    path.join(repoRoot, 'src', 'components', 'home', 'InteractiveFeaturesSection.tsx'),
+  ];
+  const brokenAnchors: string[] = [];
+
+  filesToCheck.forEach((filePath) => {
+    collectInternalLinks(filePath).forEach((href) => {
+      if (!href.startsWith('/curriculum/') || !href.includes('#')) {
+        return;
+      }
+
+      const [route, rawHash] = href.split('#');
+      const anchor = rawHash?.trim();
+
+      if (!route || !anchor) {
+        return;
+      }
+
+      const targetPath = resolveCurriculumRouteToFilePath(route);
+      if (!targetPath || !fs.existsSync(targetPath)) {
+        return;
+      }
+
+      const targetAnchors = collectDefinedAnchors(targetPath);
+      if (!targetAnchors.has(anchor)) {
+        brokenAnchors.push(`${path.relative(repoRoot, filePath)} -> ${href}`);
+      }
+    });
+  });
+
+  return brokenAnchors;
 }
 
 describe('Curriculum coverage audit', () => {
@@ -251,5 +330,10 @@ describe('Curriculum coverage audit', () => {
   const strictLinkAudit = process.env.QA_STRICT_LINK_AUDIT === '1';
   (strictLinkAudit ? it : it.skip)('has no broken authored coursework links in strict mode', () => {
     expect(collectBrokenInternalLinks()).toEqual([]);
+  });
+
+  const strictAnchorAudit = process.env.QA_STRICT_ANCHOR_AUDIT === '1';
+  (strictAnchorAudit ? it : it.skip)('has no broken curriculum hash anchors in strict mode', () => {
+    expect(collectBrokenCurriculumAnchors()).toEqual([]);
   });
 });
