@@ -25,6 +25,26 @@ Below are the remaining requirements from the `comprehensive_lrm_audit_report.md
 |---|---|---|---|
 | `W5-AUVM4-SPLIT` | `todo` | Split `A-UVM-4` (RAL) into A & B | Create `A-UVM-4A_RAL_Fundamentals` and `A-UVM-4B_Advanced_RAL_Techniques`. Build `RALHierarchy.tsx` (4A) and `RALPredictorVisualizer.tsx` (4B). Create "Mirror Bug Lab" (4B). |
 | `W5-AUVM3-DEPRECATE` | `todo` | Deprecate `A-UVM-3` and create Callbacks lesson | Delete `A-UVM-3`. Create `A-UVM-5_UVM_Callbacks`. |
+
+---
+
+## Wave 6: Final Curriculum Audit Gaps (Pending Execution)
+
+Below are the final tasks generated from the independent Tier 2 and Tier 4 curriculum audit. These modules contain content but miss the rigorous "Definition of Done" (LRM anchoring, interactives, gamified labs) established in Waves 1-4.
+
+### Sub-Task 1: Intermediate Fill-Ins
+| ID | Status | Summary | Agent Instructions |
+|---|---|---|---|
+| `W6-ISV5-MOD` | `todo` | Modernize `I-SV-5` (Sync & IPC) | The content exists, but lacks a dedicated interactive. `MailboxSemaphoreGame.tsx` is currently embedded in `F2D/ipc.mdx` (which is the wrong difficulty tier). Move the game component to `I-SV-5` and create a proper "Dining Philosophers" or similar IPC deadlock lab. |
+| `W6-IUVM2C-MOD` | `todo` | Modernize `I-UVM-2C` (Config) | Add rigorous UVM LRM Clause 23 anchoring to the frontmatter. Create a `ConfigDbExplorer.tsx` visualizer showing the top-down resolution of `set` vs `get`. Add a "Null Virtual Interface" debug lab. |
+
+### Sub-Task 2: Expert Modernization
+| ID | Status | Summary | Agent Instructions |
+|---|---|---|---|
+| `W6-ECUST1-MOD` | `todo` | Modernize `E-CUST-1` (Methodology) | Add a `MethodologyPhaseVisualizer.tsx` interactive component. Create a lab focusing on injecting a custom UVM phase into the simulation schedule. |
+| `W6-EDBG1-MOD` | `todo` | Modernize `E-DBG-1` (Debug) | Add a `TelemetryEventBusVisualizer.tsx` interactive component showing how structured logs map to a timeline. Create a lab on trigging waveform capture from an event bus. |
+| `W6-EINT1-MOD` | `todo` | Modernize `E-INT-1` (Formal) | Add a `FormalVsSimulationVisualizer.tsx` interactive showing the difference between a simulation wave and a formal counter-example. Create a lab that translates a UVM constrained-random sequence into a Formal `assume` property. |
+| `W6-ESOC1-MOD` | `todo` | Modernize `E-SOC-1` (SoC Verification) | Add a `VIPReuseVisualizer.tsx` interactive component demonstrating active vs passive topology toggling. Create an SoC bring-up lab. |
 ---
 
 ## Context File References

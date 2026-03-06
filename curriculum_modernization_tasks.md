@@ -87,3 +87,55 @@ This lesson is a high-level summary of other advanced topics, creating redundanc
 | `CURR-A-UVM-3-REDIRECT` | `complete ✅` | Add a redirect from the old A-UVM-3 path. | - A redirect is added to `next.config.mjs` for the old path to an appropriate new lesson (e.g., the virtual sequences lesson). |
 | `CURR-A-UVM-5-CREATE` | `todo` | Create a new lesson on UVM Callbacks. | - A new directory `A-UVM-5_UVM_Callbacks` is created with an `index.mdx` file.<br>- The lesson explains `uvm_callback`, the `uvm_register_cb` macro, and how to add/delete callbacks.<br>- The lesson includes a lab where a user adds a callback to a driver to inject an error without subclassing. |
 | `CURR-A-UVM-3-REVIEW` | `todo` | Review all related lessons and navigation. | - The curriculum's `_category_.json` file is updated to remove `A-UVM-3` and add `A-UVM-5`.<br>- **Unit Tests:** N/A for this refactoring.<br>- **E2E Tests:** Verify that the old `A-UVM-3` URL correctly redirects.<br>- All internal links are verified. |
+
+---
+
+### Task: Modernize Intermediate Fill-Ins (I-SV-5, I-UVM-2C)
+
+**Agent Instructions:**
+1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
+2.  You must also update the master `TASKS.md` file by finding the corresponding W6 rows and changing their status from `todo` to `complete`.
+
+- **Status:** `todo`
+- **Lessons:** I-SV-5: Synchronization and IPC, I-UVM-2C: Configuration and Resources
+
+#### 1. Proposed Action & Objectives
+While these modules have content, they lack the interactive depth of other T2 modules.
+
+**I-SV-5:**
+- `MailboxSemaphoreGame.tsx` is currently misfiled under the F2 tier. It should be moved and embedded deeply into `I-SV-5_Synchronization_and_IPC/index.mdx` or its subpages.
+- Needs a dedicated lab dealing with deadlocks and race conditions.
+
+**I-UVM-2C:**
+- Needs strict LRM references added.
+- Needs a new visualizer showing the tree structure of `uvm_config_db`.
+
+#### 3. Task Backlog Entries
+
+| Task ID | Status | Summary | Acceptance Criteria |
+|---|---|---|---|
+| `CURR-W6-ISV5` | `todo` | Complete modernization of I-SV-5. | - Move `MailboxSemaphoreGame.tsx` embed to 'I-SV-5'.<br>- Build a Synchronization Deadlock lab and embed it.<br>- LRM 1800-2023 anchoring. |
+| `CURR-W6-IUVM2C` | `todo` | Complete modernization of I-UVM-2C. | - Build `ConfigDbExplorer.tsx`.<br>- Build a Null Virtual Interface debugging lab.<br>- UVM LRM Clause 23 anchoring. |
+
+---
+
+### Task: Modernize T4 Expert Modules
+
+**Agent Instructions:**
+1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
+2.  You must also update the master `TASKS.md` file by finding the corresponding W6 rows and changing their status from `todo` to `complete`.
+
+- **Status:** `todo`
+- **Lessons:** E-CUST-1, E-DBG-1, E-INT-1, E-SOC-1
+
+#### 1. Proposed Action & Objectives
+Bring all Expert-tier lessons up to the new "Definition of Done". They currently read like conceptual brain-dumps rather than pedagogical tracks because they entirely lack interactive components, runnable labs, and interview pitfalls.
+
+#### 3. Task Backlog Entries
+
+| Task ID | Status | Summary | Acceptance Criteria |
+|---|---|---|---|
+| `CURR-W6-ECUST1` | `todo` | Modernize Methodology Customization. | - Build `MethodologyPhaseVisualizer.tsx`.<br>- Create lab: Inject custom phase into UVM schedule. |
+| `CURR-W6-EDBG1` | `todo` | Modernize Debug Methodologies. | - Build `TelemetryEventBusVisualizer.tsx`.<br>- Create lab: Waveform trigger via UVM event bus. |
+| `CURR-W6-EINT1` | `todo` | Modernize Formal Integration. | - Build `FormalVsSimulationVisualizer.tsx`.<br>- Create lab: Constrained random sequence to formal assumption translation. |
+| `CURR-W6-ESOC1` | `todo` | Modernize SoC Strategies. | - Build `VIPReuseVisualizer.tsx`.<br>- Create lab: SoC Bring-up with passive/active agents. |
