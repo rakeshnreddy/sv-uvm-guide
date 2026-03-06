@@ -61,7 +61,7 @@ Because this guide is too large to modernize in a single chat session, use the f
 ### 📋 THE GENERIC PROMPT TO RESUME WORK
 **Users: Copy and paste the block below into your AI chat when starting a new session or handing off work.**
 
-> Read and execute the instructions in the file `prompt_to_resume_wave5.txt` located in the root of the repository.
+> Read and execute the instructions in the file `prompt_to_resume_modernization.txt` located in the root of the repository.
 
 ### Agent Workflow (Internal Guidelines)
 **If you (the agent) are reading this file:**
