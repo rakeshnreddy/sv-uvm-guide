@@ -1,24 +1,7 @@
 import React from 'react';
 import LabClientPage from './LabClientPage';
-
-const lab = {
-  id: "1",
-  title: "My First Lab",
-  steps: [
-    {
-      id: "1",
-      title: "Step 1: Declare a variable",
-      instructions: "Declare a variable named 'myVar' of type 'int'.",
-      starterCode: "// Your code here",
-    },
-    {
-      id: "2",
-      title: "Step 2: Assign a value",
-      instructions: "Assign the value 10 to the variable 'myVar'.",
-      starterCode: "int myVar;",
-    },
-  ],
-};
+import { getLabById } from '@/lib/lab-registry';
+import { notFound } from 'next/navigation';
 
 type LabPageProps = {
   params: Promise<{
@@ -28,6 +11,11 @@ type LabPageProps = {
 
 export default async function LabPage({ params }: LabPageProps) {
   const { labId } = await params;
-  // In a real app, you would fetch the lab data based on the labId
+  const lab = getLabById(labId);
+
+  if (!lab) {
+    notFound();
+  }
+
   return <LabClientPage lab={lab} />;
 }

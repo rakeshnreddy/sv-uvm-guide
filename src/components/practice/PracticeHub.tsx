@@ -1,6 +1,7 @@
 import React from 'react';
 import Link from 'next/link';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
+import { getAllLabs } from '@/lib/lab-registry';
 
 interface PracticeItem {
   href: string;
@@ -139,6 +140,8 @@ const PracticeHub = () => {
     return acc;
   }, {} as Record<PracticeItem['type'], PracticeItem[]>);
 
+  const labs = getAllLabs();
+
   return (
     <div className="relative w-full bg-[color:var(--blueprint-bg)] text-[color:var(--blueprint-foreground)] overflow-hidden">
       <div className="absolute inset-0 hero-gradient opacity-40" />
@@ -151,6 +154,36 @@ const PracticeHub = () => {
             Sharpen your SystemVerilog & UVM skills with immersive exercises, visualizations, and tools.
           </p>
         </div>
+
+        {/* Interactive Labs Section */}
+        <section className="mb-14">
+          <div className="flex items-center justify-between mb-5">
+            <h2 className="text-2xl font-semibold text-[color:var(--blueprint-accent)]">Interactive Labs</h2>
+            <div className="neon-divider w-40" />
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {labs.map((lab) => (
+              <Link href={`/practice/lab/${lab.id}`} key={lab.id} className="group">
+                <Card className="h-full px-6 py-8 transition-transform duration-300 group-hover:-translate-y-1">
+                  <CardHeader className="p-0 mb-4">
+                    <div className="flex justify-between items-start">
+                      <CardTitle className="text-[color:var(--blueprint-foreground)] group-hover:text-[color:var(--blueprint-accent)]">{lab.title}</CardTitle>
+                      <span className={`text-xs uppercase tracking-widest ${lab.status === 'available' ? 'text-[color:var(--blueprint-success)] font-bold' : 'text-[color:var(--blueprint-foreground)]/50'}`}>
+                        {lab.status === 'available' ? 'Available' : 'Coming Soon'}
+                      </span>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    <p className="text-sm text-[color:var(--blueprint-foreground)]/70">{lab.description}</p>
+                    <div className="mt-4 flex flex-col gap-2">
+                       <span className="text-xs text-[color:var(--blueprint-foreground)]/60 font-mono flex items-center gap-2">📍 Module: {lab.owningModule}</span>
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
+          </div>
+        </section>
 
         {Object.entries(categorizedItems).map(([category, items]) => (
           <section key={category} className="mb-14">

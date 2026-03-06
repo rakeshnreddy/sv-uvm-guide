@@ -2,43 +2,28 @@
 
 import React, { useState } from "react";
 import dynamic from "next/dynamic";
+import { LabMetadata } from "@/types/lab";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   ssr: false,
   loading: () => <div className="flex h-full items-center justify-center">Loading editor...</div>,
 });
 
-const labData = {
-  id: "1",
-  title: "My First Lab",
-  steps: [
-    {
-      id: "1",
-      title: "Step 1: Declare a variable",
-      instructions: "Declare a variable named 'myVar' of type 'int'.",
-      starterCode: "// Your code here",
-    },
-    {
-      id: "2",
-      title: "Step 2: Assign a value",
-      instructions: "Assign the value 10 to the variable 'myVar'.",
-      starterCode: "int myVar;",
-    },
-  ],
-};
-
 type LabClientPageProps = {
-  lab: typeof labData;
+  lab: LabMetadata;
 };
 
 const LabClientPage = ({ lab }: LabClientPageProps) => {
   const [currentStep, setCurrentStep] = useState(0);
-  const [code, setCode] = useState(lab.steps[0].starterCode);
+  const hasSteps = lab.steps && lab.steps.length > 0;
+  const [code, setCode] = useState(hasSteps ? lab.steps[0].starterCode : "");
   const [consoleOutput, setConsoleOutput] = useState("");
   const [isSuccess, setIsSuccess] = useState<boolean | null>(null);
   const [completedSteps, setCompletedSteps] = useState<string[]>([]);
 
   const checkSolution = async () => {
+    if (!hasSteps) return;
+    
     setConsoleOutput("Checking solution...");
     setIsSuccess(null);
     const response = await fetch("/api/labs/run", {
@@ -62,6 +47,17 @@ const LabClientPage = ({ lab }: LabClientPageProps) => {
       }
     }
   };
+
+  if (!hasSteps) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-background text-foreground">
+        <div className="text-center">
+          <h1 className="text-3xl font-bold mb-4">{lab.title}</h1>
+          <p className="text-muted-foreground">This lab is currently under construction. Please check back later!</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-screen">

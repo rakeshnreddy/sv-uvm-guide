@@ -23,6 +23,7 @@ import FlashcardWidget from '@/components/widgets/FlashcardWidget';
 import { ArrowLeft, ArrowRight, BookOpen, Clock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import MdxImage from '@/components/mdx/Image';
+import { LabLink } from '@/components/mdx/LabLink';
 
 const VisualizationFallback = () => (
   <div className="flex h-48 items-center justify-center">Loading visualization...</div>
@@ -210,6 +211,7 @@ const components = {
   TLMPortConnector: dynamic(() => import('@/components/curriculum/interactives/TLMPortConnector'), { ssr: false, loading: () => <VisualizationFallback /> }),
   UVMTreeExplorer: dynamic(() => import('@/components/curriculum/interactives/UVMTreeExplorer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   VirtualSequencerExplorer,
+  LabLink,
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {

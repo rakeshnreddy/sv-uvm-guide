@@ -80,7 +80,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 | Order | ID | Priority | Status | Depends On | Summary |
 | --- | --- | --- | --- | --- | --- |
-| 1 | `W8-LABS-PLATFORM` | P0 | `todo` | none | Replace the placeholder lab runner with a real curriculum lab catalog and routing system. |
+| 1 | `W8-LABS-PLATFORM` | P0 | `complete` | none | Replace the placeholder lab runner with a real curriculum lab catalog and routing system. |
 | 2 | `W8-NAV-CLEANUP` | P0 | `todo` | none | Repair stale routes, broken next-links, and obsolete path references across curriculum and lab docs. |
 | 3 | `W8-T1-NAMING` | P0 | `todo` | `W8-NAV-CLEANUP` | Resolve foundational numbering/title/flashcard mismatches and legacy Tier 1 naming drift. |
 | 4 | `W8-IUVM2B-CORRECTNESS` | P0 | `todo` | `W8-LABS-PLATFORM` | Correct the TLM lesson technically and add a proper monitor/scoreboard decoupling workflow. |
@@ -108,7 +108,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W8-LABS-PLATFORM`
 - Priority: P0
-- Status: `todo`
+- Status: `complete`
 - Depends On: none
 - Related IDs: `AUD-001`
 - Primary surfaces: `src/app/practice/lab/[labId]/page.tsx`, `src/app/practice/lab/[labId]/LabClientPage.tsx`, `src/app/api/labs/run/route.ts`, `src/components/practice/PracticeHub.tsx`, `labs/`, `content/curriculum/labs/`
@@ -120,12 +120,12 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   4. Extend the practice hub so labs are first-class items, not absent from discovery.
   5. Provide a mapping convention so curriculum MDX pages can link to labs consistently.
 - Deliverable checklist:
-  - [ ] Canonical lab ID scheme is documented in code/docs.
-  - [ ] Existing lab folders are indexed and discoverable.
-  - [ ] `practice/lab/[labId]` renders real lab metadata instead of `My First Lab`.
-  - [ ] The API can validate or dispatch real lab steps for at least the first migrated labs.
-  - [ ] `PracticeHub` exposes labs explicitly.
-  - [ ] Curriculum pages can deep-link to labs via stable routes.
+  - [x] Canonical lab ID scheme is documented in code/docs.
+  - [x] Existing lab folders are indexed and discoverable.
+  - [x] `practice/lab/[labId]` renders real lab metadata instead of `My First Lab`.
+  - [x] The API can validate or dispatch real lab steps for at least the first migrated labs.
+  - [x] `PracticeHub` exposes labs explicitly.
+  - [x] Curriculum pages can deep-link to labs via stable routes.
 - Validation:
   - Regenerate curriculum data.
   - Add/extend route tests for at least one real lab.
