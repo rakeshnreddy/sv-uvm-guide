@@ -42,3 +42,20 @@ Keep commits focused and imperative, referencing relevant task IDs. PRs should s
 
 ## Configuration & Security Notes
 Secrets remain in `.env.local`. Export `PLAYWRIGHT_SKIP_INSTALL_DEPS=true` when system packages manage browsers; otherwise run `npx playwright install-deps && npx playwright install` to resolve `OPS-1`. `@next/bundle-analyzer` is optional—the build disables it gracefully if missing but reinstall it before running `ANALYZE=true` pipelines.
+
+## Installed Skills
+The following installed skills are available to agents through Antigravity/Codex and should be used when the task clearly matches them:
+
+- `nextjs-app-router-patterns`: Use for App Router routes, dynamic route loaders, route handlers, redirect cleanup, and navigation rewiring.
+- `vercel-react-best-practices`: Use for React component architecture, client/server boundaries, and interactive TSX work.
+- `vitest`: Use for unit tests, component tests, and shared testing patterns.
+- `playwright-best-practices`: Use for route validation, navigation checks, learner-flow E2E coverage, and browser-driven regression tests.
+- `technical-writing`: Use for curriculum MDX rewrites, lesson structure, audit reports, and instructional consistency work.
+- `web-accessibility`: Use for semantic structure, keyboard support, accessible labeling, and interactive review.
+- `tailwind-design-system`: Use for consistent visual system work across learner-facing surfaces.
+- `code-review-excellence`: Use for self-review before closing implementation tasks, especially when adding interactives, tests, or routing changes.
+
+Skill usage guidance:
+1. If a task clearly matches one of the skills above, use it before proceeding freeform.
+2. For curriculum modernization, combine skill use with the workflow in `TASKS.md` rather than replacing it.
+3. If Antigravity/Gemini reports that only built-in tools are available, refresh skills in the IDE and restart the session before assuming the skills are unavailable.
