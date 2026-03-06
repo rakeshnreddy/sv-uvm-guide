@@ -242,12 +242,12 @@ For each interactive, acceptance criteria:
 ---
 
 ## Priority Backlog for the Next Agent (Concrete Start Order)
-1. **Ship I-SV structural splits:** `I-SV-2/3/4` into A/B tracks; fully modernize `I-SV-1`.
-2. **Ship I-UVM structural splits:** `I-UVM-1/2/3` into A/B/C targets.
-3. **Execute canonical UVM merges:** `I-UVM-4 + A-UVM-2 -> I-UVM-1B`; `I-UVM-5 -> I-UVM-1C`; `A-UVM-1 -> I-UVM-3B`.
-4. **Deprecate/refactor advanced redundancy:** deprecate `A-UVM-3`, create `A-UVM-5_UVM_Callbacks`.
-5. **Split advanced RAL:** `A-UVM-4 -> A-UVM-4A/A-UVM-4B`.
-6. **Deliver core interactives:** constraint solver, UVM tree, factory override, SVA temporal explorer, interview playground.
-7. **Deliver 3D visualization backlog:** `VIS-3D-MAILBOX`, `VIS-3D-COVERAGE`, `VIS-3D-ANALYSIS`, `VIS-3D-DATAFLOW`, `VIS-3D-CONSTRAINT`, `VIS-3D-PHASE-TIMELINE`.
-8. **Modernize expert performance:** complete `E-PERF-1` with scheduler/event-region grounding and `EventSchedulerVisualizer`.
-9. **Standards closure sprint:** add explicit LRM anchors for every modernized module and remove stale 1800-2017 references.
+1. ~~**Ship I-SV structural splits:**~~ `I-SV-2/3/4` into A/B tracks; fully modernize `I-SV-1`. *(Complete)*
+2. ~~**Ship I-UVM structural splits:**~~ `I-UVM-1/2/3` into A/B/C targets. *(Complete)*
+3. ~~**Execute canonical UVM merges:**~~ `I-UVM-4 + A-UVM-2 -> I-UVM-1B`; `I-UVM-5 -> I-UVM-1C`; `A-UVM-1 -> I-UVM-3B`. *(Complete)*
+4. **Deprecate/refactor advanced redundancy:** deprecate `A-UVM-3`, create `A-UVM-5_UVM_Callbacks`. *(Todo)*
+5. **Split advanced RAL:** `A-UVM-4 -> A-UVM-4A/A-UVM-4B`. *(Todo)*
+6. ~~**Deliver core interactives:**~~ constraint solver, UVM tree, factory override, SVA temporal explorer, interview playground. *(Complete)*
+7. ~~**Deliver 3D visualization backlog:**~~ `VIS-3D-MAILBOX`, `VIS-3D-COVERAGE`, `VIS-3D-ANALYSIS`, `VIS-3D-DATAFLOW`, `VIS-3D-CONSTRAINT`, `VIS-3D-PHASE-TIMELINE`. *(Complete)*
+8. ~~**Modernize expert performance:**~~ complete `E-PERF-1` with scheduler/event-region grounding and `EventSchedulerVisualizer`. *(Complete)*
+9. ~~**Standards closure sprint:**~~ add explicit LRM anchors for every modernized module and remove stale 1800-2017 references. *(Complete)*
