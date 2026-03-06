@@ -1,14 +1,14 @@
 # Curriculum Modernization Tasks
 
-This file contains a series of prompts for a coding agent to modernize the curriculum lessons based on the SystemVerilog and UVM Language Reference Manuals. The tasks are ordered logically: prerequisite split work comes first, followed by deprecation/merge clean-up, and finally content modernization.
+Status note (2026-03-06): This document is now an archival planning reference. Live task ordering, dependencies, status, and the canonical implementation briefs have moved to `TASKS.md`. If this file conflicts with `TASKS.md`, follow `TASKS.md`. For session resume, use `prompt_to_resume_modernization.txt`, which routes agents back to `TASKS.md`.
+
+This file preserves earlier task prompts and acceptance criteria for historical context. Legacy IDs such as `CURR-SPLIT-A-UVM-4` and `CURR-REFACTOR-A-UVM-3` are now mapped through the `Canonical Task Crosswalk` in `TASKS.md` rather than being updated here.
 
 ---
 
 ### Task: Modernize "A-UVM-4: The UVM Register Abstraction Layer (RAL)"
 
-**Agent Instructions:**
-1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
-2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-SPLIT-A-UVM-4` and changing its status from `todo` to `complete`.
+**Tracker Note:** Do not update task status in this file. Use the mapped canonical task in `TASKS.md` instead.
 
 - **Status:** `todo`
 - **Lesson:** A-UVM-4: The UVM Register Abstraction Layer (RAL)
@@ -57,9 +57,7 @@ The topic is substantial and should be split into two lessons:
 
 ### Task: Deprecate "A-UVM-3: Advanced UVM Techniques" and Create New Callbacks Lesson
 
-**Agent Instructions:**
-1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
-2.  You must also update the master `TASKS.md` file by finding the row with the Task ID `CURR-REFACTOR-A-UVM-3` and changing its status from `todo` to `complete`.
+**Tracker Note:** Do not update task status in this file. Use the mapped canonical task in `TASKS.md` instead.
 
 - **Status:** `todo`
 - **Lesson:** A-UVM-3: Advanced UVM Techniques & Strategy
@@ -92,9 +90,7 @@ This lesson is a high-level summary of other advanced topics, creating redundanc
 
 ### Task: Modernize Intermediate Fill-Ins (I-SV-5, I-UVM-2C)
 
-**Agent Instructions:**
-1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
-2.  You must also update the master `TASKS.md` file by finding the corresponding W6 rows and changing their status from `todo` to `complete`.
+**Tracker Note:** Do not update task status in this file. Use the mapped canonical task in `TASKS.md` instead.
 
 - **Status:** `todo`
 - **Lessons:** I-SV-5: Synchronization and IPC, I-UVM-2C: Configuration and Resources
@@ -121,9 +117,7 @@ While these modules have content, they lack the interactive depth of other T2 mo
 
 ### Task: Modernize T4 Expert Modules
 
-**Agent Instructions:**
-1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
-2.  You must also update the master `TASKS.md` file by finding the corresponding W6 rows and changing their status from `todo` to `complete`.
+**Tracker Note:** Do not update task status in this file. Use the mapped canonical task in `TASKS.md` instead.
 
 - **Status:** `todo`
 - **Lessons:** E-CUST-1, E-DBG-1, E-INT-1, E-SOC-1
@@ -144,9 +138,7 @@ Bring all Expert-tier lessons up to the new "Definition of Done". They currently
 
 ### Task: Address Missing SV/UVM LRM Clauses (Wave 7)
 
-**Agent Instructions:**
-1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
-2.  You must also update the master `TASKS.md` file by finding the corresponding W7 rows and changing their status from `todo` to `complete`.
+**Tracker Note:** Do not update task status in this file. Use the mapped canonical task in `TASKS.md` instead.
 
 - **Status:** `todo`
 - **Lessons:** New lessons for SV Clauses 17, 22, 27, 35-41 and UVM Clauses 7, 11, 16.

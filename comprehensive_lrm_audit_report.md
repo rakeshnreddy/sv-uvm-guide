@@ -1,11 +1,13 @@
 # Comprehensive LRM Audit Report & Master Modernization Execution Plan
 
+Status note (2026-03-06): This document is a historical audit and architecture reference. Live task status, execution order, dependency tracking, and implementation briefs now live in `TASKS.md`. If this file conflicts with `TASKS.md`, follow `TASKS.md`. For session resume, use `prompt_to_resume_modernization.txt`, which routes agents back to `TASKS.md`.
+
 ## Audit Scope and Method
 - Repository audited end-to-end at `/Users/Rakesh/Projects/sv-uvm-guide` (content, curriculum wiring, MDX renderer, practice/exercise surfaces, modernization trackers).
 - Standards baseline extracted from local PDFs:
   - `system_verilog_lrm.pdf` (IEEE 1800-2023, 41 top-level clauses)
   - `uvm_lrm.pdf` (IEEE 1800.2-2020, 19 top-level clauses)
-- Consolidated all prior "Fresh Eyes" feedback, `TASKS.md` 3D visualization backlogs, and tracker requirements into this single source of truth.
+- Consolidated all prior "Fresh Eyes" feedback, `TASKS.md` 3D visualization backlogs, and tracker requirements into a historical baseline audit. Live execution tracking has since been unified in `TASKS.md`.
 
 ---
 
@@ -241,7 +243,8 @@ For each interactive, acceptance criteria:
 
 ---
 
-## Priority Backlog for the Next Agent (Concrete Start Order)
+## Historical Priority Backlog (Superseded by `TASKS.md`)
+This retained queue shows the audit-era recommended order. Use `TASKS.md` for the live backlog and dependency graph.
 1. ~~**Ship I-SV structural splits:**~~ `I-SV-2/3/4` into A/B tracks; fully modernize `I-SV-1`. *(Complete)*
 2. ~~**Ship I-UVM structural splits:**~~ `I-UVM-1/2/3` into A/B/C targets. *(Complete)*
 3. ~~**Execute canonical UVM merges:**~~ `I-UVM-4 + A-UVM-2 -> I-UVM-1B`; `I-UVM-5 -> I-UVM-1C`; `A-UVM-1 -> I-UVM-3B`. *(Complete)*
