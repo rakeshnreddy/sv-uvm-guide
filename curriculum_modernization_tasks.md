@@ -139,3 +139,36 @@ Bring all Expert-tier lessons up to the new "Definition of Done". They currently
 | `CURR-W6-EDBG1` | `todo` | Modernize Debug Methodologies. | - Build `TelemetryEventBusVisualizer.tsx`.<br>- Create lab: Waveform trigger via UVM event bus. |
 | `CURR-W6-EINT1` | `todo` | Modernize Formal Integration. | - Build `FormalVsSimulationVisualizer.tsx`.<br>- Create lab: Constrained random sequence to formal assumption translation. |
 | `CURR-W6-ESOC1` | `todo` | Modernize SoC Strategies. | - Build `VIPReuseVisualizer.tsx`.<br>- Create lab: SoC Bring-up with passive/active agents. |
+
+---
+
+### Task: Address Missing SV/UVM LRM Clauses (Wave 7)
+
+**Agent Instructions:**
+1.  Upon completing all sub-tasks in the `Task Backlog Entries` table, update the status of this task from `todo` to `complete ✅` in this file.
+2.  You must also update the master `TASKS.md` file by finding the corresponding W7 rows and changing their status from `todo` to `complete`.
+
+- **Status:** `todo`
+- **Lessons:** New lessons for SV Clauses 17, 22, 27, 35-41 and UVM Clauses 7, 11, 16.
+
+#### 1. Proposed Action & Objectives
+The `comprehensive_lrm_audit_report.md` identified several critical SV and UVM clauses that are either entirely missing or too shallow for workplace readiness.
+
+**SystemVerilog Additions:**
+- Create `I-SV-4C` for SV Checkers (Clause 17).
+- Create `I-SV-6` for Compiler Directives and Generates (Clauses 22, 27).
+- Expand DPI/VPI coverage into a production-grade guide (Clauses 35-41).
+
+**UVM Additions:**
+- Create lessons for Policy Classes (Clause 16), Container Classes (Clause 11), and Recording Classes (Clause 7).
+
+#### 3. Task Backlog Entries
+
+| Task ID | Status | Summary | Acceptance Criteria |
+|---|---|---|---|
+| `CURR-W7-ISV-CHECKERS` | `todo` | Treat SV Checkers as a first-class topic. | - Build `I-SV-4C` with interactive SVA integration examples. |
+| `CURR-W7-ISV-DIRECTIVES` | `todo` | Address Directives and Generates. | - Build interactive visualizer for `generate` vs runtime `if`. |
+| `CURR-W7-ISV-API` | `todo` | Expand DPI/VPI coverage. | - Include C++ marshaling and memory boundary pitfalls. |
+| `CURR-W7-IUVM-POLICY` | `todo` | Teach Policy Classes. | - Build `UvmPolicyVisualizer.tsx`. |
+| `CURR-W7-IUVM-CONTAINER`| `todo` | Teach Container Classes. | - Lab contrasting UVM containers with native SV associative arrays. |
+| `CURR-W7-IUVM-RECORDING`| `todo` | Teach Recording Classes. | - Integrate with `debug_event_bus` concept. |

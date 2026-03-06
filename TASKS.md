@@ -45,6 +45,27 @@ Below are the final tasks generated from the independent Tier 2 and Tier 4 curri
 | `W6-EDBG1-MOD` | `todo` | Modernize `E-DBG-1` (Debug) | Add a `TelemetryEventBusVisualizer.tsx` interactive component showing how structured logs map to a timeline. Create a lab on trigging waveform capture from an event bus. |
 | `W6-EINT1-MOD` | `todo` | Modernize `E-INT-1` (Formal) | Add a `FormalVsSimulationVisualizer.tsx` interactive showing the difference between a simulation wave and a formal counter-example. Create a lab that translates a UVM constrained-random sequence into a Formal `assume` property. |
 | `W6-ESOC1-MOD` | `todo` | Modernize `E-SOC-1` (SoC Verification) | Add a `VIPReuseVisualizer.tsx` interactive component demonstrating active vs passive topology toggling. Create an SoC bring-up lab. |
+
+---
+
+## Wave 7: Deep Standards Closure (Pending Execution)
+
+Below are the final tasks to address the explicitly missing SV and UVM LRM sections identified in sections 1.2 and 1.3 of the `comprehensive_lrm_audit_report.md`.
+
+### Sub-Task 1: SystemVerilog Missing Clauses
+| ID | Status | Summary | Agent Instructions |
+|---|---|---|---|
+| `W7-ISV-CHECKERS` | `todo` | Create `I-SV-4C` (Checkers) | Provide a dedicated treatment of SV LRM Clause 17 (Checkers) as a first-class topic, explaining integration with SVA. |
+| `W7-ISV-DIRECTIVES` | `todo` | Create `I-SV-6` (Compiler Directives & Generates) | Address SV LRM Clauses 22 and 27. Build an interactive component showing the semantic difference between `generate` blocks and runtime `if`. |
+| `W7-ISV-API` | `todo` | Expand DPI/VPI coverage | Address SV LRM Clauses 35-41. Expand the existing brief DPI page into a robust production-grade guide with C++ boundary marshaling examples. |
+
+### Sub-Task 2: UVM Missing Clauses
+| ID | Status | Summary | Agent Instructions |
+|---|---|---|---|
+| `W7-IUVM-POLICY` | `todo` | Create Policy Classes Lesson | Teach UVM LRM Clause 16 (printer, comparer, packer, recorder, copier). Build an interactive `UvmPolicyVisualizer.tsx` showing how a single object behaves differently under different policies. |
+| `W7-IUVM-CONTAINER` | `todo` | Create Container Classes Lesson | Teach UVM LRM Clause 11 (`uvm_pool`, `uvm_queue`). Contrast them against native SV queues/associative arrays. |
+| `W7-IUVM-RECORDING` | `todo` | Create Recording Classes Lesson | Teach UVM LRM Clause 7, demonstrating how to integrate `uvm_recorder` with vendor-specific transaction viewing databases using the `debug_event_bus` architecture from `E-DBG-1`. |
+
 ---
 
 ## Context File References
