@@ -38,7 +38,7 @@ This lab revisits the Tier-1 `F4: Your First Testbench` content and walks you th
 6. **Experiment** – insert a deliberate bug or extend the DUT (e.g., make it an OR gate) and update the checker. Practice turning failures into passing runs.
 
 ## Going Further
-- Extend the bench to a small ALU and mirror the structure in `content/curriculum/T1_Foundational/F2_SystemVerilog_Basics`.
+- Extend the bench to a small ALU and mirror the structure in `content/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control`.
 - Convert the procedural tasks into a class-based driver and scoreboard once you reach `I-SV-1`.
 
 > When you're comfortable, graduate to the Tier-2 UVM agent labs—the same instantiate → drive → check pattern shows up there too.

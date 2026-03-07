@@ -9,7 +9,7 @@ This file is the single source of truth for modernization status, ordering, depe
 - If a supporting document contains an old task ID or an outdated instruction to update that file directly, follow the canonical mapping in this file instead.
 - A task remains `todo` until every unchecked deliverable in its task brief is complete.
 - When a task creates or modifies curriculum code, the executing agent must run:
-  - `npx tsx scripts/generate-curriculum-data.ts`
+  - `npm run generate:curriculum`
   - `npm run lint`
   - `npx vitest --run`
   - targeted Playwright coverage when the task adds or rewires learner-facing routes/interactives
@@ -81,7 +81,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | Order | ID | Priority | Status | Depends On | Summary |
 | --- | --- | --- | --- | --- | --- |
 | 1 | `W8-LABS-PLATFORM` | P0 | `complete` | none | Replace the placeholder lab runner with a real curriculum lab catalog and routing system. |
-| 2 | `W8-NAV-CLEANUP` | P0 | `todo` | none | Repair stale routes, broken next-links, and obsolete path references across curriculum and lab docs. |
+| 2 | `W8-NAV-CLEANUP` | P0 | `complete` | none | Repair stale routes, broken next-links, and obsolete path references across curriculum and lab docs. |
 | 3 | `W8-T1-NAMING` | P0 | `todo` | `W8-NAV-CLEANUP` | Resolve foundational numbering/title/flashcard mismatches and legacy Tier 1 naming drift. |
 | 4 | `W8-IUVM2B-CORRECTNESS` | P0 | `todo` | `W8-LABS-PLATFORM` | Correct the TLM lesson technically and add a proper monitor/scoreboard decoupling workflow. |
 | 5 | `W6-IUVM2C-MOD` | P0 | `todo` | `W8-LABS-PLATFORM` | Modernize configuration/resources with accurate precedence, interactive visualization, and debug lab. |
@@ -144,10 +144,10 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   3. Update any route-level redirect logic if the repo still needs compatibility redirects.
   4. Verify no modernized page points back to removed split predecessors.
 - Deliverable checklist:
-  - [ ] Known broken links from the 2026 audit are fixed.
-  - [ ] Lab READMEs stop pointing to deleted legacy lesson names.
-  - [ ] Canonical next-topic flow matches the current curriculum structure.
-  - [ ] Redirect coverage is intentional rather than accidental.
+  - [x] Known broken links from the 2026 audit are fixed.
+  - [x] Lab READMEs stop pointing to deleted legacy lesson names.
+  - [x] Canonical next-topic flow matches the current curriculum structure.
+  - [x] Redirect coverage is intentional rather than accidental.
 - Validation:
   - Run a repository-wide link/path grep for known stale route strings.
   - Run targeted Playwright or link-audit coverage for updated pages.
