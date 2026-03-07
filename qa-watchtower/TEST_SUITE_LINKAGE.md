@@ -19,6 +19,7 @@ QA tracking and findings live in `qa-watchtower/`, but executable tests are adde
 - `tests/components/visuals/MailboxSemaphoreGame.test.tsx`
 - `tests/e2e/canvas-health-check.spec.ts`
 - `tests/qa/curriculumCoverageAudit.spec.ts`
+- `tests/qa/labsPlatformAudit.spec.ts`
 
 ## Rule
 Do not place executable test files under `qa-watchtower/`. Keep them in `tests/` or `tests/e2e/` and reference them from QA trackers.

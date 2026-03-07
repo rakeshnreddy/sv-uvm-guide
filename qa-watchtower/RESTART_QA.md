@@ -8,11 +8,11 @@ In a new Codex session, send exactly:
 `Read and execute /Users/Rakesh/Projects/sv-uvm-guide/qa-watchtower/RESTART_QA.md`
 
 ## Current Checkpoint (Update Before Run)
-- Last Checked Commit: `4f260dcb67e9ba0a63eefb1094215d3fa7818f36`
-- Last Checked Date: `2026-03-04`
-- Focus Areas: `visualizations|webgl|curriculum-routes|qa`
+- Last Checked Commit: `9b65b8707586714330a67d215a15e1f6bf78bda5`
+- Last Checked Date: `2026-03-06`
+- Focus Areas: `labs-platform|iuvm3|qa`
 - Run E2E: `no`
-- Checkpoint Note: This checkpoint includes post-`W5-IUVM2-SPLIT` WebGL/canvas stability work (`aa53a8c2`, `aa11c4a0`, `4f260dcb`) and QA follow-up. QA added `WebGLFallbackBoundary` intent coverage and repaired stale curriculum routing in `tests/e2e/canvas-health-check.spec.ts` after the route-integrity audit failed on a retired `A-SV-1` path. Full `npx vitest --run` and `npm run build` pass from this state. The only active blocker remains the infrastructure finding for `npx tsx scripts/generate-curriculum-data.ts` in restricted/offline shells; continue fallback `npm run generate:curriculum` and track infra status on each restart.
+- Checkpoint Note: This checkpoint covers the post-WebGL implementation delta through `9b65b870`, including the centralized `W8-LABS-PLATFORM` registry/routing rollout and the completed `W5-IUVM3-SPLIT-MERGE` follow-up. QA added `tests/qa/labsPlatformAudit.spec.ts`; strict labs coverage reproduced three open platform defects: `randomization-advanced-1` points to a missing asset folder, available labs still lack curriculum deep links, and registry ownership metadata conflicts with source lab READMEs. `QA_STRICT_IUVM3_AUDIT=1 npx vitest --run tests/qa/iuvm3SplitMergeAudit.spec.ts` passes, `npm run generate:curriculum` passes, and `npx vitest --run` currently fails on the missing lab asset-path regression. The infrastructure blocker for `npx tsx scripts/generate-curriculum-data.ts` also remains open in restricted/offline shells.
 
 ## Execution Instructions (for Codex)
 Role: You are the QA Watchtower agent for this repository. Your job is strict QA only.
@@ -76,7 +76,7 @@ Workflow:
 
 ## Checkpoint Update After Run
 After each completed periodic run, update this section in this same file:
-- Last Checked Commit: `4f260dcb67e9ba0a63eefb1094215d3fa7818f36`
-- Last Checked Date: `2026-03-04`
-- Focus Areas: `visualizations|webgl|curriculum-routes|qa`
+- Last Checked Commit: `9b65b8707586714330a67d215a15e1f6bf78bda5`
+- Last Checked Date: `2026-03-06`
+- Focus Areas: `labs-platform|iuvm3|qa`
 - Run E2E: `no`
