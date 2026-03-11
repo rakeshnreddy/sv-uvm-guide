@@ -56,9 +56,14 @@ export const metadata = {
 
   Events often coordinate randomized stimulus or monitor actions. Review [Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals) to see how events can trigger new random transactions.
 
-  ## Level 3: Expert Insights
+  ## Failure Mode: Lost Event Pulses
+  
+  **The `->` vs `->>` Race Condition:** Native events do not queue requests. If a producer triggers an event with `->` before the consumer thread reaches the `@event_name` statement (even by a fraction of a delta-cycle at the exact same timestep), the pulse is gone forever. The consumer will wait infinitely for a pulse that already happened.
 
-  **Multiple triggers & lost pulses:** Native events do not queue requests. If you trigger with `->` before anyone is waiting, the pulse is gone. Use `->>` or keep a `done_seen` flag to avoid races.
+  **The Non-Blocking Wait Trap:**
+  Another dangerous pattern is combining a blocking trigger with a non-blocking check. If Thread A does `-> done;` and Thread B does `wait(done.triggered)` in a zero-delay loop without yielding, it might miss the event entirely or evaluate to true erroneously depending on simulator scheduling.
+  
+  **The Fix:** Use the Nonblocking Trigger `->>` which persists the event state through the *entire* Reactive region of the current time step. Alternatively, maintain a `bit done_seen` state flag, or use `uvm_event` which tracks trigger counts safely under the hood.
 
   **Ordering constraints:** `wait_order(e1, e2)` (or the array form) asserts that events arrive in a given sequence—perfect for handshake protocols. Pair with assertions so violations show up in logs.
 

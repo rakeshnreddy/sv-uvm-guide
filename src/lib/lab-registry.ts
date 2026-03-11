@@ -124,6 +124,37 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
       }
     ]
   },
+  "ipc-deadlock": {
+    id: "ipc-deadlock",
+    title: "Semaphore Deadlock",
+    description: "Diagnose and fix a simulation hang caused by an unreturned semaphore key in an early exit condition.",
+    owningModule: "I-SV-5",
+    routeSlug: "ipc-deadlock",
+    prerequisites: ["systemverilog-basics"],
+    assetLocation: "labs/ipc_deadlock",
+    status: "available",
+    graderType: "systemverilog",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Identify the Hang",
+        instructions: "Run the simulation. Notice the `WATCHDOG` timer fires at 500ns because the test never organically reaches `$finish;`.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Trace the Keys",
+        instructions: "Look at `producer_thread()`. It requires a key to start transmission. Trace what happens to that key if `data == 5` occurs.",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Fix the Leak",
+        instructions: "Ensure `shared_bus.put(1);` is called even when bailing out early. Re-run to see both threads complete all 5 iterations.",
+        starterCode: ""
+      }
+    ]
+  },
   "arbiter-1": {
     id: "arbiter-1",
     title: "Arbiter Verification",

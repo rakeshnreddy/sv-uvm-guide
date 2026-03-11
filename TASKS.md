@@ -85,7 +85,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 3 | `W8-T1-NAMING` | P0 | `complete` | `W8-NAV-CLEANUP` | Resolve foundational numbering/title/flashcard mismatches and legacy Tier 1 naming drift. |
 | 4 | `W8-IUVM2B-CORRECTNESS` | P0 | `complete` | `W8-LABS-PLATFORM` | Correct the TLM lesson technically and add a proper monitor/scoreboard decoupling workflow. |
 | 5 | `W6-IUVM2C-MOD` | P0 | `complete` | `W8-LABS-PLATFORM` | Modernize configuration/resources with accurate precedence, interactive visualization, and debug lab. |
-| 6 | `W6-ISV5-MOD` | P0 | `todo` | `W8-LABS-PLATFORM` | Make `I-SV-5` the canonical IPC module with dedicated interactive and deadlock lab. |
+| 6 | `W6-ISV5-MOD` | P0 | `complete` | `W8-LABS-PLATFORM` | Make `I-SV-5` the canonical IPC module with dedicated interactive and deadlock lab. |
 | 7 | `W8-ISV2B-DEEPEN` | P1 | `todo` | none | Deepen advanced constrained-randomization beyond current basics. |
 | 8 | `W8-ISV3B-DEEPEN` | P1 | `todo` | none | Deepen advanced coverage into APIs, closure loops, and real closure practice. |
 | 9 | `W5-AUVM4-SPLIT` | P1 | `todo` | `W8-LABS-PLATFORM` | Finish the advanced RAL split with the missing hierarchy visual, mirror-bug lab, and deeper RAL treatment. |
@@ -217,7 +217,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W6-ISV5-MOD`
 - Priority: P0
-- Status: `todo`
+- Status: `complete`
 - Depends On: `W8-LABS-PLATFORM`
 - Related IDs: `CURR-W6-ISV5`, `AUD-004`
 - Primary surfaces: `content/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/*`, `src/components/visuals/MailboxSemaphoreGame.tsx`, new IPC lab assets
@@ -229,11 +229,11 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   4. Expand the track with explicit failure modes: lost event pulses, `->` vs `->>`, deadlock, semaphore leaks, mailbox growth.
   5. Add stronger UVM-bridge guidance where raw SV IPC transitions into UVM synchronization/dataflow patterns.
 - Deliverable checklist:
-  - [ ] `I-SV-5` has a dedicated embedded interactive.
-  - [ ] The track contains a real lab.
-  - [ ] Clause 15 anchoring is clear across the track.
-  - [ ] Failure-mode/debug triage is explicit.
-  - [ ] Tier 1 IPC now clearly points advanced learners into `I-SV-5`.
+  - [x] `I-SV-5` has a dedicated embedded interactive.
+  - [x] The track contains a real lab.
+  - [x] Clause 15 anchoring is clear across the track.
+  - [x] Failure-mode/debug triage is explicit.
+  - [x] Tier 1 IPC now clearly points advanced learners into `I-SV-5`.
 - Validation:
   - Add tests for the lab route and/or interactive if new logic is introduced.
 
