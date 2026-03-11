@@ -82,7 +82,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | --- | --- | --- | --- | --- | --- |
 | 1 | `W8-LABS-PLATFORM` | P0 | `complete` | none | Replace the placeholder lab runner with a real curriculum lab catalog and routing system. |
 | 2 | `W8-NAV-CLEANUP` | P0 | `complete` | none | Repair stale routes, broken next-links, and obsolete path references across curriculum and lab docs. |
-| 3 | `W8-T1-NAMING` | P0 | `todo` | `W8-NAV-CLEANUP` | Resolve foundational numbering/title/flashcard mismatches and legacy Tier 1 naming drift. |
+| 3 | `W8-T1-NAMING` | P0 | `complete` | `W8-NAV-CLEANUP` | Resolve foundational numbering/title/flashcard mismatches and legacy Tier 1 naming drift. |
 | 4 | `W8-IUVM2B-CORRECTNESS` | P0 | `todo` | `W8-LABS-PLATFORM` | Correct the TLM lesson technically and add a proper monitor/scoreboard decoupling workflow. |
 | 5 | `W6-IUVM2C-MOD` | P0 | `todo` | `W8-LABS-PLATFORM` | Modernize configuration/resources with accurate precedence, interactive visualization, and debug lab. |
 | 6 | `W6-ISV5-MOD` | P0 | `todo` | `W8-LABS-PLATFORM` | Make `I-SV-5` the canonical IPC module with dedicated interactive and deadlock lab. |
@@ -164,10 +164,10 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   2. Decide whether the learner-facing taxonomy should explicitly preserve an `F3` concept or fully collapse it into the current `F2` structure; then update all references consistently.
   3. Update Tier 1 lab READMEs so prerequisites and "going further" sections reference current canonical module names.
 - Deliverable checklist:
-  - [ ] `F2C` no longer presents itself as `F3A`.
-  - [ ] `F2D` no longer presents itself as `F3D` or mixed `F3E` flashcard lineage.
-  - [ ] Tier 1 READMEs reference current module names only.
-  - [ ] The foundational sequence reads as intentional, not half-migrated.
+  - [x] `F2C` no longer presents itself as `F3A`.
+  - [x] `F2D` no longer presents itself as `F3D` or mixed `F3E` flashcard lineage.
+  - [x] Tier 1 READMEs reference current module names only.
+  - [x] The foundational sequence reads as intentional, not half-migrated.
 - Validation:
   - Search for `F3A`, `F3D`, `F3E`, `F2_SystemVerilog_Basics`, and other legacy Tier 1 labels after the pass.
 
