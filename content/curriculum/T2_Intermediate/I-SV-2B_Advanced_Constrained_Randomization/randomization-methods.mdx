@@ -1,0 +1,108 @@
+import { InfoPage } from "@/components/templates/InfoPage";
+import InteractiveCode from "@/components/ui/InteractiveCode";
+import Quiz from "@/components/ui/Quiz";
+import { InterviewQuestionPlayground } from "@/components/ui";
+
+export const metadata = {
+  title: "Procedural Randomization: randcase, randsequence, std::randomize | Advanced SystemVerilog for Verification",
+  description: "Learn how to randomize variables outside of classes and control execution flow using procedural randomization.",
+};
+
+<InfoPage
+  title="Procedural Randomization Methods"
+  sv_concept_tags={["randcase", "randsequence", "std::randomize", "seed stability"]}
+>
+
+## Level 1: Beyond Classes
+*IEEE 1800-2023, Clause 18.12: std::randomize() and Clause 18.16: randcase/randsequence*
+
+While `obj.randomize()` is the most common way to generate random data, sometimes you need to randomize local variables within a function or randomly choose an execution path without defining a whole new class. SystemVerilog provides procedural randomization tools for exactly these scenarios.
+
+## Level 2: Core Mechanics
+
+### 1. `std::randomize()`
+The `std::randomize()` function allows you to randomize any variable in the current scope. It works just like `obj.randomize()`, and you can even attach inline constraints using `with`.
+
+<InteractiveCode language="systemverilog" code={`module test;
+  initial begin
+    int unsigned payload_size;
+    bit [7:0]  start_addr;
+
+    // Randomize local variables with inline constraints
+    if (!std::randomize(payload_size, start_addr) with {
+      payload_size inside {[64:1500]};
+      start_addr < 8'h20;
+    }) begin
+      $fatal(1, "Randomization failed!");
+    end
+    
+    $display("Generated size: %0d, addr: %0h", payload_size, start_addr);
+  end
+endmodule`} />
+
+### 2. `randcase`
+`randcase` is a `case` statement that makes weighted random choices between execution branches. The expression before the colon is the weight.
+
+<InteractiveCode language="systemverilog" code={`task drive_traffic();
+  repeat(10) begin
+    randcase
+      3: send_read();    // 3/10 or 30% probability
+      5: send_write();   // 5/10 or 50% probability
+      2: send_reset();   // 2/10 or 20% probability
+    endcase
+  end
+endtask`} />
+
+### 3. `randsequence`
+`randsequence` is a powerful construct for generating random token sequences, often used for instructional streams or assembly generation. It looks like a formal grammar definition.
+
+```systemverilog
+randsequence( main )
+  main  : setup execute cleanup;
+  setup : reset | init;          // Equal probability choice
+  execute : read := 3 | write := 7; // Weighted choice
+  reset : { $display("RESET"); };
+  init  : { $display("INIT"); };
+  read  : { $display("READ"); };
+  write : { $display("WRITE"); };
+  cleanup : { $display("CLEAN"); };
+endsequence
+```
+
+## Level 3: Reproducibility and Seed Stability
+
+A testbench that is "random" but cannot be reproduced is a liability. You must be able to reproduce failures.
+
+### The Seed
+Every random variable stream in SV is deterministic if you start with the same initial seed. Simulators accept command-line arguments (like `+ntb_random_seed=1234` in VCS or `-sv_seed 1234` in Xcelium) to set the master seed.
+
+### Debugging Flaky Bugs
+1. **Always log the seed:** Ensure your testbench prints the master random seed at the very beginning of the test.
+2. **Replay the exact seed:** To debug a random failure, re-run the exact same test with the exact same seed from the log.
+3. **Beware of thread stability:** If you spawn random threads (`fork...join_none`) in a non-deterministic order (e.g., based on real-time events that change slightly), the random number generator will be drawn from in a different order, and the same global seed will produce a different scenario. Keep random generation in deterministic, strictly ordered threads!
+
+<Quiz questions={[
+  {
+    question: "You want to randomize a local `int count` inside a task, ensuring it is less than 10. You do not have a class. Which is correct?",
+    answers: [
+      { text: "count.randomize() with { count < 10; };", correct: false },
+      { text: "std::randomize(count) with { count < 10; };", correct: true },
+      { text: "randomize(count) -> count < 10;", correct: false }
+    ],
+    explanation: "`std::randomize()` provides procedural randomization for variables in the current scope with inline constraints."
+  }
+]} />
+
+<div className="mt-8">
+  <InterviewQuestionPlayground
+    question="You are debugging a test failure. You re-run the simulation with the exact same random seed, but the test passes this time. The testbench uses `std::randomize()` in several places. What is the most likely cause of this seed instability?"
+    options={[
+      { text: "std::randomize() uses a true random number generator, so it ignores the seed.", isCorrect: false, feedback: "std::randomize() is governed by the SV random stability rules and the thread's RNG state, which derives from the global seed." },
+      { text: "The testbench is using uninitialized variables in its constraints, which take different values on different runs.", isCorrect: false, feedback: "Uninitialized 2-state variables default to 0, and 4-state default to X. They are consistent from run to run." },
+      { text: "Random calls are made inside threads whose execution order depends on race conditions (like an asynchronous interface timing difference without proper synchronization).", isCorrect: true, feedback: "Correct! If the order of threads changes, the order of calls to the random number generator changes. Thread A gets the random number Thread B originally got, completely altering the sequence of events. This ruins seed stability." },
+      { text: "randcase statements do not respect the random seed.", isCorrect: false, feedback: "randcase relies on the thread's RNG, which derives from the global seed." }
+    ]}
+  />
+</div>
+
+</InfoPage>

@@ -86,7 +86,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 4 | `W8-IUVM2B-CORRECTNESS` | P0 | `complete` | `W8-LABS-PLATFORM` | Correct the TLM lesson technically and add a proper monitor/scoreboard decoupling workflow. |
 | 5 | `W6-IUVM2C-MOD` | P0 | `complete` | `W8-LABS-PLATFORM` | Modernize configuration/resources with accurate precedence, interactive visualization, and debug lab. |
 | 6 | `W6-ISV5-MOD` | P0 | `complete` | `W8-LABS-PLATFORM` | Make `I-SV-5` the canonical IPC module with dedicated interactive and deadlock lab. |
-| 7 | `W8-ISV2B-DEEPEN` | P1 | `todo` | none | Deepen advanced constrained-randomization beyond current basics. |
+| 7 | `W8-ISV2B-DEEPEN` | P1 | `complete` | none | Deepen advanced constrained-randomization beyond current basics. |
 | 8 | `W8-ISV3B-DEEPEN` | P1 | `todo` | none | Deepen advanced coverage into APIs, closure loops, and real closure practice. |
 | 9 | `W5-AUVM4-SPLIT` | P1 | `todo` | `W8-LABS-PLATFORM` | Finish the advanced RAL split with the missing hierarchy visual, mirror-bug lab, and deeper RAL treatment. |
 | 10 | `W5-AUVM3-DEPRECATE` | P1 | `todo` | `W5-AUVM4-SPLIT` | Finish callback extraction/review and fully retire advanced redundancy from `A-UVM-3`. |
@@ -239,7 +239,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W8-ISV2B-DEEPEN`
 - Priority: P1
-- Status: `todo`
+- Status: `complete`
 - Depends On: none
 - Related IDs: `AUD-010`
 - Primary surfaces: `content/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/*`
@@ -250,9 +250,9 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   3. Expand solver-debug content into a real triage flow, not just a syntax note.
   4. Add or link a lab that forces the learner to debug a randomization failure or biased solution space.
 - Deliverable checklist:
-  - [ ] `randcase`, `randsequence`, and `std::randomize()` are taught.
-  - [ ] Seed stability and replay/debug guidance is explicit.
-  - [ ] There is at least one failure-driven exercise or lab.
+  - [x] `randcase`, `randsequence`, and `std::randomize()` are taught.
+  - [x] Seed stability and replay/debug guidance is explicit.
+  - [x] There is at least one failure-driven exercise or lab.
 - Validation:
   - Verify cross-links to coverage and solver-debug exercises.
 

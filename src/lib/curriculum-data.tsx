@@ -219,6 +219,11 @@ export const curriculumData: Module[] = [
             "description": "Hook solver callbacks with pre_randomize and post_randomize to prepare and finalize objects."
           },
           {
+            "title": "Procedural Randomization: randcase, randsequence, std::randomize | Advanced SystemVerilog for Verification",
+            "slug": "randomization-methods",
+            "description": "Learn how to randomize variables outside of classes and control execution flow using procedural randomization."
+          },
+          {
             "title": "Solver Debug and Failure Triage | Advanced SystemVerilog for Verification",
             "slug": "solver-debug",
             "description": "Learn how to approach constraint solver failures, debug conflicting constraints, and use built-in simulator tools."

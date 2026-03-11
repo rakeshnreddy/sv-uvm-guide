@@ -223,9 +223,28 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     routeSlug: "randomization-advanced-1",
     prerequisites: [],
     assetLocation: "content/curriculum/labs/randomization_advanced/lab1_dependent_fields",
-    status: "coming_soon",
+    status: "available",
     graderType: "systemverilog",
-    steps: []
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Check the Source",
+        instructions: "Open `test.sv` and notice that the generator loop is ignoring the return value of `packet.randomize()`. The packets shown in the log will all look identical (zeros) when randomization fails.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Triage with constraint_mode",
+        instructions: "The constraint contradiction is between the length rules and the hardware hardware limit rules. Use `pkt.c_hardware_limit.constraint_mode(0)` in your test before the `randomize()` call. Does it succeed?",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Fix the Model",
+        instructions: "In `packet.sv`, notice that the IPV6 length is hardcoded to 40 bytes, but 40 is not a power of two in `c_hardware_limit`! Fix `c_hardware_limit` or `c_proto_len` so an IPV6 packet can be legally generated.",
+        starterCode: ""
+      }
+    ]
   },
   "uvm-performance-1": {
     id: "uvm-performance-1",
