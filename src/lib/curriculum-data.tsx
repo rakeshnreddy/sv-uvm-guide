@@ -256,6 +256,16 @@ export const curriculumData: Module[] = [
             "description": "Master coverage to V-Plan linkage, API querying, and coverage-driven constrained random loops."
           },
           {
+            "title": "The Coverage Closure Loop | Advanced SystemVerilog for Verification",
+            "slug": "closure-workflow",
+            "description": "Learn the methodology of identifying coverage holes, adjusting generators, and closing coverage."
+          },
+          {
+            "title": "Coverage APIs and Runtime Querying | Advanced SystemVerilog for Verification",
+            "slug": "coverage-apis",
+            "description": "Learn how to query coverage data at runtime using SystemVerilog APIs."
+          },
+          {
             "title": "Linking Coverage to the V-Plan | Advanced UVM Techniques & Strategy",
             "slug": "linking-coverage",
             "description": "Tie functional coverage points back to verification plan items."

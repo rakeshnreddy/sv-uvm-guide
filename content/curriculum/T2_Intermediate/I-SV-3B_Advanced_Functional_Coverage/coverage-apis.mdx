@@ -1,0 +1,97 @@
+import { InfoPage } from "@/components/templates/InfoPage";
+import InteractiveCode from "@/components/ui/InteractiveCode";
+import Quiz from "@/components/ui/Quiz";
+import { InterviewQuestionPlayground } from "@/components/ui";
+
+export const metadata = {
+  title: "Coverage APIs and Runtime Querying | Advanced SystemVerilog for Verification",
+  description: "Learn how to query coverage data at runtime using SystemVerilog APIs.",
+};
+
+<InfoPage
+  title="Coverage APIs and Runtime Querying"
+  sv_concept_tags={["coverage apis", "get_coverage", "get_inst_coverage"]}
+>
+
+## Level 1: Why Query Coverage at Runtime?
+*IEEE 1800-2023, Clause 19.8: Predefined coverage methods*
+
+Normally, coverage is analyzed *after* the simulation finishes by loading the database (UCDB/UCIS) into a viewer. But what if you want your testbench to be smart enough to stop running as soon as 100% is reached, saving server compute time? What if you want to switch to a different random seed dynamically if coverage gets stuck? 
+
+To do this, the testbench needs to read its own coverage score while it is running.
+
+## Level 2: Core Mechanics
+
+### 1. `get_inst_coverage()`
+This method returns the coverage percentage (0.0 to 100.0) for a specific *instance* of a covergroup.
+
+<InteractiveCode language="systemverilog" code={`class monitor;
+  bit [1:0] state;
+
+  covergroup cg;
+    coverpoint state;
+  endgroup
+
+  function new();
+    cg = new();
+  endfunction
+
+  function void check_done();
+    // Get the score for this specific instance
+    real score = cg.get_inst_coverage();
+    
+    $display("Current instance coverage: %0.2f%%", score);
+    if (score == 100.0) begin
+      $display("Goal reached! Stopping simulation.");
+      $finish; // Early exit saves compute!
+    end
+  endfunction
+endclass`} />
+
+### 2. `get_coverage()`
+There are two versions of `get_coverage()`. 
+1. `cg.get_coverage()`: On a covergroup instance, this returns the merged coverage across all instances of that specific covergroup type.
+2. `$get_coverage()`: A system task that returns the global overall coverage across all covergroups in the entire simulation.
+
+### 3. `set_inst_name()`
+By default, every instance of a covergroup in the database is named after its type (e.g., `cg`). If you have 10 channels, you will have 10 instances named `cg` merged together. To tell them apart in the database API or viewer, name them during creation:
+
+```systemverilog
+function new(string name);
+  cg = new();
+  cg.set_inst_name(name); // Now they appear as "tx_chan_cg", "rx_chan_cg", etc.
+endfunction
+```
+
+## Level 3: Real-world Usage
+
+You can query individual items down to the coverpoint or cross level.
+- `cg.cp_state.get_coverage()`: Specifically checks the score of the `cp_state` coverpoint.
+
+**Warning on Performance:**
+Calculating coverage scores takes CPU cycles. Do not call `.get_inst_coverage()` every single clock cycle or every transaction. A common best practice is to query it on a slower heartbeat thread (e.g., every 1 millisecond of simulation time) or only during phase wrap-up.
+
+<Quiz questions={[
+  {
+    question: "Which method tells you the coverage score for the entire simulation globally?",
+    answers: [
+      { text: "my_cg.get_coverage()", correct: false },
+      { text: "$get_coverage()", correct: true },
+      { text: "my_cg.get_inst_coverage()", correct: false }
+    ],
+    explanation: "$get_coverage() is a global system task that calculates overall coverage."
+  }
+]} />
+
+<div className="mt-8">
+  <InterviewQuestionPlayground
+    question="You instantiate a monitor 4 times (for 4 SPI ports), and the monitor contains `covergroup cg_spi`. You want the testbench to end early ONLY when all 4 ports have individually hit 100% of their states. Which API call inside the monitor should you check?"
+    options={[
+      { text: "cg_spi.get_coverage()", isCorrect: false, feedback: "This returns the collective merged coverage of all 4 instances combined. If Port 0 hits state A, and Port 1 hits state B, the combined score goes up, even if Port 0 never hits state B." },
+      { text: "$get_coverage()", isCorrect: false, feedback: "This is global for the whole testbench, far too broad." },
+      { text: "cg_spi.get_inst_coverage()", isCorrect: true, feedback: "Correct. You want to check the specific instance score for each port independently. Only when all 4 instances individually report 100 on their get_inst_coverage() should the test exit." }
+    ]}
+  />
+</div>
+
+</InfoPage>

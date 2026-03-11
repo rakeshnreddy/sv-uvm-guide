@@ -210,10 +210,29 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     owningModule: "I-SV-3B",
     routeSlug: "coverage-advanced-1",
     prerequisites: [],
-    assetLocation: "content/curriculum/labs/coverage_advanced",
-    status: "coming_soon",
+    assetLocation: "content/curriculum/labs/coverage_advanced/lab1_closure_loop",
+    status: "available",
     graderType: "systemverilog",
-    steps: []
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Run and Analyze",
+        instructions: "Run the simulation. Notice the coverage score. Open `alu_cov_mon.sv` and see what the bin requirements are for `MAX_VAL`.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Add Missing Operations",
+        instructions: "The constraint block in `testbench.sv` explicitly omits `DIV`. Add it back to the `inside` block.",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Weight Edge Cases",
+        instructions: "The generic `std::randomize()` rarely hits `8'hFF`. Add a `dist` constraint for `a` and `b` to assign weight to `8'hFF` so it occurs frequently.",
+        starterCode: ""
+      }
+    ]
   },
   "randomization-advanced-1": {
     id: "randomization-advanced-1",

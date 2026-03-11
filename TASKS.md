@@ -87,7 +87,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 5 | `W6-IUVM2C-MOD` | P0 | `complete` | `W8-LABS-PLATFORM` | Modernize configuration/resources with accurate precedence, interactive visualization, and debug lab. |
 | 6 | `W6-ISV5-MOD` | P0 | `complete` | `W8-LABS-PLATFORM` | Make `I-SV-5` the canonical IPC module with dedicated interactive and deadlock lab. |
 | 7 | `W8-ISV2B-DEEPEN` | P1 | `complete` | none | Deepen advanced constrained-randomization beyond current basics. |
-| 8 | `W8-ISV3B-DEEPEN` | P1 | `todo` | none | Deepen advanced coverage into APIs, closure loops, and real closure practice. |
+| 8 | `W8-ISV3B-DEEPEN` | P1 | `complete` | none | Deepen advanced coverage into APIs, closure loops, and real closure practice. |
 | 9 | `W5-AUVM4-SPLIT` | P1 | `todo` | `W8-LABS-PLATFORM` | Finish the advanced RAL split with the missing hierarchy visual, mirror-bug lab, and deeper RAL treatment. |
 | 10 | `W5-AUVM3-DEPRECATE` | P1 | `todo` | `W5-AUVM4-SPLIT` | Finish callback extraction/review and fully retire advanced redundancy from `A-UVM-3`. |
 | 11 | `W6-EDBG1-MOD` | P1 | `todo` | `W8-LABS-PLATFORM` | Turn the debug module into a real telemetry/debug workflow with lab and visualizer. |
@@ -258,7 +258,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W8-ISV3B-DEEPEN`
 - Priority: P1
-- Status: `todo`
+- Status: `complete`
 - Depends On: none
 - Related IDs: `AUD-009`
 - Primary surfaces: `content/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/*`
@@ -268,10 +268,10 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   2. Add a real closure practice loop: identify uncovered bins, adjust stimulus, and re-run.
   3. Make the track the prerequisite foundation for expert coverage-closure discussion.
 - Deliverable checklist:
-  - [ ] Advanced coverage is more than a single thin deep-dive.
-  - [ ] Coverage APIs/report querying are taught.
-  - [ ] The track includes a genuine closure workflow exercise or lab.
-  - [ ] Expert pages can link back here as the canonical prerequisite.
+  - [x] Advanced coverage is more than a single thin deep-dive.
+  - [x] Coverage APIs/report querying are taught.
+  - [x] The track includes a genuine closure workflow exercise or lab.
+  - [x] Expert pages can link back here as the canonical prerequisite.
 - Validation:
   - Verify cross-links into SoC/expert coverage pages.
 
