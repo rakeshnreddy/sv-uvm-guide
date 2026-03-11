@@ -83,7 +83,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 1 | `W8-LABS-PLATFORM` | P0 | `complete` | none | Replace the placeholder lab runner with a real curriculum lab catalog and routing system. |
 | 2 | `W8-NAV-CLEANUP` | P0 | `complete` | none | Repair stale routes, broken next-links, and obsolete path references across curriculum and lab docs. |
 | 3 | `W8-T1-NAMING` | P0 | `complete` | `W8-NAV-CLEANUP` | Resolve foundational numbering/title/flashcard mismatches and legacy Tier 1 naming drift. |
-| 4 | `W8-IUVM2B-CORRECTNESS` | P0 | `todo` | `W8-LABS-PLATFORM` | Correct the TLM lesson technically and add a proper monitor/scoreboard decoupling workflow. |
+| 4 | `W8-IUVM2B-CORRECTNESS` | P0 | `complete` | `W8-LABS-PLATFORM` | Correct the TLM lesson technically and add a proper monitor/scoreboard decoupling workflow. |
 | 5 | `W6-IUVM2C-MOD` | P0 | `todo` | `W8-LABS-PLATFORM` | Modernize configuration/resources with accurate precedence, interactive visualization, and debug lab. |
 | 6 | `W6-ISV5-MOD` | P0 | `todo` | `W8-LABS-PLATFORM` | Make `I-SV-5` the canonical IPC module with dedicated interactive and deadlock lab. |
 | 7 | `W8-ISV2B-DEEPEN` | P1 | `todo` | none | Deepen advanced constrained-randomization beyond current basics. |

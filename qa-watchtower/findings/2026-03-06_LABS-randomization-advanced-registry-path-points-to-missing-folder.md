@@ -3,7 +3,7 @@
 - Date: 2026-03-06
 - Feature ID: FEAT-W8-LABS-PLATFORM
 - Severity: P2
-- Status: open
+- Status: closed
 
 ## Summary
 The centralized lab registry includes `randomization-advanced-1`, but its `assetLocation` points to `content/curriculum/labs/randomization_advanced/lab1_state_machine_bug_hunt`, which does not exist in the repo. This breaks the registry's role as an accurate source of truth for real lab assets and causes the shared QA audit to fail in the default Vitest suite.
@@ -37,6 +37,6 @@ The registry entry likely reused an older lab concept/title and was not updated 
 - Re-audit the remaining registry entries for the same drift pattern.
 
 ## Verification to Close
-- [ ] `npx vitest --run tests/qa/labsPlatformAudit.spec.ts` passes the asset-path assertion.
-- [ ] `npx vitest --run` returns to green for the shared suite.
-- [ ] Findings status updated to `closed`.
+- [x] `QA_STRICT_LABS_AUDIT=1 npx vitest --run tests/qa/labsPlatformAudit.spec.ts` passes the asset-path assertion.
+- [x] `npx vitest --run` returns to green for the shared suite.
+- [x] Findings status updated to `closed`.

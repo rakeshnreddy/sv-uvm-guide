@@ -81,11 +81,11 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "F3A: Procedural Blocks and Flow Control",
+        "title": "F2C: Procedural Code and Flow Control",
         "slug": "F2C_Procedural_Code_and_Flow_Control",
         "topics": [
           {
-            "title": "F3A: Procedural Blocks and Flow Control",
+            "title": "F2C: Procedural Code and Flow Control",
             "slug": "index",
             "description": "Master the procedural heart of SystemVerilog—initial/always/final blocks, flow control, and assignment semantics that drive every testbench."
           },
@@ -97,16 +97,16 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "F3D: System Tasks and File I/O",
+        "title": "F2D: System Tasks and File I/O",
         "slug": "F2D_Reusable_Code_and_Parallelism",
         "topics": [
           {
-            "title": "F3D: System Tasks and File I/O",
+            "title": "F2D: System Tasks and File I/O",
             "slug": "index",
             "description": "Interact with the simulator kernel: print messages, cast types, generate random numbers, and read/write files."
           },
           {
-            "title": "F3D: Interprocess Communication",
+            "title": "F2D: Interprocess Communication",
             "slug": "ipc",
             "description": "Coordinate parallel threads safely using Semaphores and Mailboxes."
           }

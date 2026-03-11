@@ -8,11 +8,11 @@ In a new Codex session, send exactly:
 `Read and execute /Users/Rakesh/Projects/sv-uvm-guide/qa-watchtower/RESTART_QA.md`
 
 ## Current Checkpoint (Update Before Run)
-- Last Checked Commit: `9b65b8707586714330a67d215a15e1f6bf78bda5`
-- Last Checked Date: `2026-03-06`
-- Focus Areas: `labs-platform|iuvm3|qa`
+- Last Checked Commit: `d1056eabf7ab67ec352a2449256d74034aeff857`
+- Last Checked Date: `2026-03-07`
+- Focus Areas: `labs-platform|workflow|qa`
 - Run E2E: `no`
-- Checkpoint Note: This checkpoint covers the post-WebGL implementation delta through `9b65b870`, including the centralized `W8-LABS-PLATFORM` registry/routing rollout and the completed `W5-IUVM3-SPLIT-MERGE` follow-up. QA added `tests/qa/labsPlatformAudit.spec.ts`; strict labs coverage reproduced three open platform defects: `randomization-advanced-1` points to a missing asset folder, available labs still lack curriculum deep links, and registry ownership metadata conflicts with source lab READMEs. `QA_STRICT_IUVM3_AUDIT=1 npx vitest --run tests/qa/iuvm3SplitMergeAudit.spec.ts` passes, `npm run generate:curriculum` passes, and `npx vitest --run` currently fails on the missing lab asset-path regression. The infrastructure blocker for `npx tsx scripts/generate-curriculum-data.ts` also remains open in restricted/offline shells.
+- Checkpoint Note: This checkpoint covers the labs-platform follow-up through `d1056eab`, which resolved the prior W8 lab defects. QA revalidated the fixes: `QA_STRICT_LABS_AUDIT=1 npx vitest --run tests/qa/labsPlatformAudit.spec.ts` passes, full `npx vitest --run` passes, and the three W8 labs findings are closed. The infrastructure workflow blocker is also resolved: active implementation and QA instructions now standardize on `npm run generate:curriculum`, which succeeds in this restricted shell.
 
 ## Execution Instructions (for Codex)
 Role: You are the QA Watchtower agent for this repository. Your job is strict QA only.
@@ -47,9 +47,8 @@ Workflow:
 - Ensure each test validates feature intent + at least one edge/negative case for non-trivial features.
 
 4. Run periodic validation commands:
-- `npx tsx scripts/generate-curriculum-data.ts`
+- `npm run generate:curriculum`
 - `npx vitest --run`
-- If first command fails due offline/npm resolution, run `npm run generate:curriculum` and record a finding.
 - If `Run E2E` is `yes`, run targeted Playwright tests for changed features; if blocked, log blocker finding.
 
 5. Publish findings for all failed acceptance checks:
@@ -65,7 +64,7 @@ Workflow:
 7. End-of-run report format:
 - New tests added (absolute file paths)
 - Findings created/updated (ordered by severity)
-- Command outcomes (`npx tsx ...`, `npx vitest --run`, and e2e if run)
+- Command outcomes (`npm run generate:curriculum`, `npx vitest --run`, and e2e if run)
 - Residual risks + exact next actions for implementation agent
 
 ## Definition of Done
@@ -76,7 +75,7 @@ Workflow:
 
 ## Checkpoint Update After Run
 After each completed periodic run, update this section in this same file:
-- Last Checked Commit: `9b65b8707586714330a67d215a15e1f6bf78bda5`
-- Last Checked Date: `2026-03-06`
-- Focus Areas: `labs-platform|iuvm3|qa`
+- Last Checked Commit: `d1056eabf7ab67ec352a2449256d74034aeff857`
+- Last Checked Date: `2026-03-07`
+- Focus Areas: `labs-platform|workflow|qa`
 - Run E2E: `no`

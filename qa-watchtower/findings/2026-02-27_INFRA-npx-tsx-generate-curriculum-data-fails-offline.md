@@ -3,10 +3,10 @@
 - Date: 2026-02-27
 - Feature ID: INFRA-PRECOMMIT-COMMANDS
 - Severity: P1
-- Status: open
+- Status: closed
 
 ## Summary
-The pre-submit command `npx tsx scripts/generate-curriculum-data.ts` remains unreliable in network-restricted or non-interactive environments, which blocks the documented pre-commit flow used by the implementation agent. The 2026-03-04 periodic QA run again required the `npm run generate:curriculum` fallback because `npx tsx` could not execute locally in this restricted shell.
+The old pre-submit command `npx tsx scripts/generate-curriculum-data.ts` was unreliable in network-restricted or non-interactive environments, which blocked the documented pre-commit flow used by implementation and QA agents. The repo now standardizes on `npm run generate:curriculum`, which already resolves locally through `ts-node` and executes successfully in this restricted shell.
 
 ## Affected Area
 - Files:
@@ -49,6 +49,6 @@ Raw `npx tsx ...` is environment-sensitive; when `tsx` is not resolved immediate
 - Or add `tsx` as a pinned dev dependency and enforce local execution (`npx --no-install tsx ...`), then update docs accordingly.
 
 ## Verification to Close
-- [ ] Pre-submit docs updated to a network-independent command.
-- [ ] Command executes successfully in a restricted/offline environment.
-- [ ] Findings status updated to `closed`.
+- [x] Pre-submit docs updated to a network-independent command.
+- [x] `npm run generate:curriculum` executes successfully in this restricted/offline environment.
+- [x] Findings status updated to `closed`.

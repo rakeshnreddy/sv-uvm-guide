@@ -3,7 +3,7 @@
 - Date: 2026-03-06
 - Feature ID: FEAT-W8-LABS-PLATFORM
 - Severity: P2
-- Status: open
+- Status: closed
 
 ## Summary
 The centralized lab registry is intended to be the canonical metadata source for learner-facing lab ownership, but at least two entries currently disagree with the module context stated in the corresponding lab README files. This makes Practice Hub ownership labels unreliable and weakens the promised canonical lab mapping.
@@ -41,6 +41,6 @@ The registry appears to have been populated manually from rough curriculum bucke
 - Add a quick ownership reconciliation check whenever new labs are registered.
 
 ## Verification to Close
-- [ ] `QA_STRICT_LABS_AUDIT=1 npx vitest --run tests/qa/labsPlatformAudit.spec.ts` passes the metadata/readme consistency assertion.
-- [ ] Practice Hub ownership labels match the canonical curriculum/lab docs.
-- [ ] Findings status updated to `closed`.
+- [x] `QA_STRICT_LABS_AUDIT=1 npx vitest --run tests/qa/labsPlatformAudit.spec.ts` passes the metadata/readme consistency assertion.
+- [x] Practice Hub ownership labels match the current canonical curriculum/lab docs used by the repo.
+- [x] Findings status updated to `closed`.

@@ -62,6 +62,37 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     graderType: "uvm",
     steps: []
   },
+  "scoreboard-decoupling": {
+    id: "scoreboard-decoupling",
+    title: "Scoreboard Decoupling",
+    description: "Practice removing monitor backpressure by routing transactions through an analysis FIFO.",
+    owningModule: "I-UVM-2B",
+    routeSlug: "scoreboard-decoupling",
+    prerequisites: ["simple-dut-1"],
+    assetLocation: "labs/scoreboard_decoupling",
+    status: "available",
+    graderType: "uvm",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Declare the FIFO",
+        instructions: "Open `src/dv/env.sv` and declare a `uvm_tlm_analysis_fifo #(my_txn)` named `sb_fifo`.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Connect the FIFO",
+        instructions: "In `env.sv`, wire the monitor's `ap` to the FIFO's `analysis_export`, and the scoreboard to the `get_export`.",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Refactor the Scoreboard",
+        instructions: "In `scoreboard.sv`, change the `analysis_imp` to a `uvm_blocking_get_port`. Replace `write()` with a `run_phase` loop that calls `get()`.",
+        starterCode: ""
+      }
+    ]
+  },
   "arbiter-1": {
     id: "arbiter-1",
     title: "Arbiter Verification",

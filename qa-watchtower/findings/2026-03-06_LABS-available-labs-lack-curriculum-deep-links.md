@@ -3,7 +3,7 @@
 - Date: 2026-03-06
 - Feature ID: FEAT-W8-LABS-PLATFORM
 - Severity: P2
-- Status: open
+- Status: closed
 
 ## Summary
 The centralized lab platform adds stable `/practice/lab/<id>` routes and a reusable `LabLink` component, but no curriculum MDX page currently links to the only learner-available lab (`basics-1`). The feature therefore works from the Practice Hub only, not from lesson flow, which leaves the "curriculum pages can deep-link to labs via stable routes" acceptance target unmet.
@@ -38,6 +38,6 @@ The registry/routing work added the reusable link primitive and route surface, b
 - Re-run the strict labs audit after wiring the first migrated labs into lessons.
 
 ## Verification to Close
-- [ ] `QA_STRICT_LABS_AUDIT=1 npx vitest --run tests/qa/labsPlatformAudit.spec.ts` passes the discoverability assertion.
-- [ ] At least each `status: "available"` lab has an intentional inbound curriculum link.
-- [ ] Findings status updated to `closed`.
+- [x] `QA_STRICT_LABS_AUDIT=1 npx vitest --run tests/qa/labsPlatformAudit.spec.ts` passes the discoverability assertion.
+- [x] Each `status: "available"` lab currently has an intentional inbound curriculum link.
+- [x] Findings status updated to `closed`.

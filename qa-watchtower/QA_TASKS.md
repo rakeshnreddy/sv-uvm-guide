@@ -10,10 +10,10 @@
 | QA-006 | in_progress | medium | Verify coverage of SV/UVM content accuracy checks and labs | Test/finding updates tied to curriculum modules |
 
 ## Open Findings
+
+## Recently Closed Findings
 - `P1`: `2026-02-27_INFRA-npx-tsx-generate-curriculum-data-fails-offline.md`
+- `P2`: `2026-03-04_TESTING-canvas-health-check-referenced-retired-constraints-route.md`
 - `P2`: `2026-03-06_LABS-randomization-advanced-registry-path-points-to-missing-folder.md`
 - `P2`: `2026-03-06_LABS-available-labs-lack-curriculum-deep-links.md`
 - `P2`: `2026-03-06_LABS-lab-registry-owning-module-metadata-conflicts-with-source-readmes.md`
-
-## Recently Closed Findings
-- `P2`: `2026-03-04_TESTING-canvas-health-check-referenced-retired-constraints-route.md`

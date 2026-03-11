@@ -17,7 +17,7 @@ rm -f public/data/curriculum.json
 rm -rf content/curriculum/.generated
 
 echo -e "${YELLOW}[2/4] Regenerating curriculum data maps...${NC}"
-npx tsx scripts/generate-curriculum-data.ts
+npm run generate:curriculum
 
 echo -e "${YELLOW}[3/4] Ensuring dependencies are installed...${NC}"
 npm install

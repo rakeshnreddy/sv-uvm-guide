@@ -21,7 +21,7 @@ You must execute the following "Wave 5" mop-up passes:
 
 **Task C: Documentation & Test Integrity**
 - Update tracking lists in `.gemini brain/task.md` and `TASKS.md` as you make progress.
-- Run `npx tsx scripts/generate-curriculum-data.ts` if you move or delete any folders (like F3).
+- Run `npm run generate:curriculum` if you move or delete any folders (like F3).
 - Run `npm run lint` and `npx vitest --run` to ensure your components compile cleanly and no tests are broken by the F3 deletion.
 
 3. Technical Rules & Verification

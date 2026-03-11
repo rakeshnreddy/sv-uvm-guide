@@ -33,7 +33,7 @@ The modernization of the curriculum is strictly managed through a unified proces
 1.  Read `TASKS.md` to identify the first task with the status `todo`.
 2.  Optionally consult the supporting documents for additional architectural context on the specific task.
 3.  Execute the instructions (creating MDX lessons, React interactives, labs).
-4.  Run validation tests (`npx tsx scripts/generate-curriculum-data.ts` and `npx vitest --run`).
+4.  Run validation tests (`npm run generate:curriculum` and `npx vitest --run`).
 5.  Update the status to `complete` **only in `TASKS.md`**.
 6.  Yield using the `Agent Handoff Protocol` documented at the bottom of `TASKS.md`.
 
