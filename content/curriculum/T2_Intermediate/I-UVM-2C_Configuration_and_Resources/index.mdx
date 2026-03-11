@@ -5,6 +5,7 @@ flashcards: "I-UVM-2C_Configuration_and_Resources"
 ---
 
 import { InteractiveCode, Quiz } from '@/components/ui';
+import ConfigDbExplorer from '@/components/curriculum/interactives/ConfigDbExplorer';
 
 ## Quick Take
 - **What it is:** The `uvm_config_db` (and its underlying database `uvm_resource_db`) allows tests and top-level modules to distribute settings, virtual interfaces, and handles precisely through the component tree.
@@ -14,8 +15,10 @@ import { InteractiveCode, Quiz } from '@/components/ui';
 > **Retention Hook:** `set()` pushes from the top down. `get()` pulls from the bottom up. 
 
 ## Build Your Mental Model
-### The Database Mechanics (Clause 23)
-The UVM configuration DB is essentially a strongly-typed string-keyed dictionary that respects testbench hierarchy.
+### The Database Mechanics (IEEE 1800.2-2020 Clause 23)
+The UVM configuration DB is essentially a strongly-typed string-keyed dictionary that respects testbench hierarchy. It is built on top of the lower-level `uvm_resource_db`. While `config_db` enforces hierarchy precedence (a `uvm_env`'s `set()` overrides an `uvm_agent`'s `set()`), `resource_db` relies strictly on a chronological or explicit precedence value.
+
+**Rule of Thumb:** Use `uvm_config_db` for 99% of settings. It automatically injects the hierarchical context string. Fall back to `resource_db` only if you need exotic globally-scoped precedence control that defies standard testbench hierarchy.
 
 ```systemverilog
 class soc_base_test extends uvm_test;
@@ -71,9 +74,13 @@ module top;
 endmodule
 ```
 
-### uvm_config_db vs uvm_resource_db
-`uvm_resource_db` is the lower-level foundation of `uvm_config_db`. While `config_db` enforces hierarchy precedence (a `uvm_env`'s `set()` overrides an `uvm_agent`'s `set()`), `resource_db` relies strictly on a chronological or explicit precedence value.
-- **Rule of Thumb:** Use `uvm_config_db` for 99% of settings. Fall back to `resource_db` only if you need exotic globally-scoped precedence control that defies standard testbench hierarchy.
+### Precedence and Path Matching
+The UVM configuration database uses glob matching. The context parameter (`cntxt`) and the target string (`inst_name`) are concatenated to form a fully resolved path. 
+
+When a component calls `get()`, UVM checks if that component's `get_full_name()` matches any of the stored `set()` paths. If multiple match, **the highest component in the hierarchy wins** (top-down precedence during the build phase).
+However, if strings are set during the `run_phase` (runtime), **the latest set() call wins**.
+
+<ConfigDbExplorer />
 
 ## Make It Work
 1. **Combine variables into Config Objects:** Instead of 10 `set()` calls for 10 integers, pack them into a `uvm_object` config class, and set the handle once. It creates a single source of truth.
@@ -84,7 +91,14 @@ endmodule
 **The Missing Virtual Interface Issue:**
 You may be given code that has a `null pointer exception` inside the driver's `run_phase` when it tries to wiggle a pin. Look for the `uvm_config_db::set` in the top module and the `get` in the driver's `build_phase`. Typographical errors in the string names (e.g. `"viif"` vs `"vif"`) are a classic bug pattern tested in interviews.
 
+**Late Runtime Overrides:**
+If someone calls `set()` *after* the `build_phase` has finished and the target components have already called `get()`, the value will sit in the database unused. The `config_db` is not reactive; components must explicitly `get()` the value again to see runtime changes.
+
 ## Practice & Reinforce
+
+> **Lab Exercise:** [Debug the Null VIF](/practice/lab/config-debug)
+> 
+> Put the theory into practice. Learn to trace hierarchy spelling typos to fix a fatal null virtual interface error caused by a sloppy `config_db` string.
 
 <Quiz questions={[
     {

@@ -112,6 +112,10 @@ const QueueOperationLab = dynamic(
   () => import('@/components/curriculum/f2/QueueOperationLab'),
   { ssr: false, loading: () => <VisualizationFallback /> },
 );
+const ConfigDbExplorer = dynamic(
+  () => import('@/components/curriculum/interactives/ConfigDbExplorer'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 const PackedUnpackedPlayground = dynamic(
   () => import('@/components/curriculum/f2/PackedUnpackedPlayground'),
   { ssr: false, loading: () => <VisualizationFallback /> },
@@ -174,6 +178,7 @@ const components = {
   InteractiveCostOfBugGraph,
   HallOfShameCarousel,
   VerificationMethodologiesDiagram,
+  ConfigDbExplorer,
   FirstBugHuntGame,
   DynamicStructureVisualizer,
   QueueOperationLab,

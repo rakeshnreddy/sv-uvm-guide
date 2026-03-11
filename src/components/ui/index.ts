@@ -15,3 +15,4 @@ export { Label } from './Label';
 export { Select, SelectGroup, SelectValue, SelectTrigger, SelectContent, SelectLabel, SelectItem, SelectSeparator } from './Select';
 export { Switch } from './Switch';
 export { Badge } from './Badge';
+export { default as ConfigDbExplorer } from '../curriculum/interactives/ConfigDbExplorer';

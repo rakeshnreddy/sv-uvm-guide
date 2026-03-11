@@ -93,6 +93,37 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
       }
     ]
   },
+  "config-debug": {
+    id: "config-debug",
+    title: "Null Virtual Interface",
+    description: "Diagnose and fix a fatal null virtual interface error caused by a typo in the uvm_config_db.",
+    owningModule: "I-UVM-2C",
+    routeSlug: "config-debug",
+    prerequisites: ["simple-dut-1"],
+    assetLocation: "labs/config_debug",
+    status: "available",
+    graderType: "uvm",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Check the Source",
+        instructions: "Open `testbench.sv` and inspect the `uvm_config_db::set` string arguments.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Check the Target",
+        instructions: "Open `driver.sv` and inspect the `uvm_config_db::get` string arguments.",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Fix the Typo",
+        instructions: "Realign the strings so they match, then run the simulation and look for `[DRV] Wiggling pins`.",
+        starterCode: ""
+      }
+    ]
+  },
   "arbiter-1": {
     id: "arbiter-1",
     title: "Arbiter Verification",

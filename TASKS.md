@@ -84,7 +84,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 2 | `W8-NAV-CLEANUP` | P0 | `complete` | none | Repair stale routes, broken next-links, and obsolete path references across curriculum and lab docs. |
 | 3 | `W8-T1-NAMING` | P0 | `complete` | `W8-NAV-CLEANUP` | Resolve foundational numbering/title/flashcard mismatches and legacy Tier 1 naming drift. |
 | 4 | `W8-IUVM2B-CORRECTNESS` | P0 | `complete` | `W8-LABS-PLATFORM` | Correct the TLM lesson technically and add a proper monitor/scoreboard decoupling workflow. |
-| 5 | `W6-IUVM2C-MOD` | P0 | `todo` | `W8-LABS-PLATFORM` | Modernize configuration/resources with accurate precedence, interactive visualization, and debug lab. |
+| 5 | `W6-IUVM2C-MOD` | P0 | `complete` | `W8-LABS-PLATFORM` | Modernize configuration/resources with accurate precedence, interactive visualization, and debug lab. |
 | 6 | `W6-ISV5-MOD` | P0 | `todo` | `W8-LABS-PLATFORM` | Make `I-SV-5` the canonical IPC module with dedicated interactive and deadlock lab. |
 | 7 | `W8-ISV2B-DEEPEN` | P1 | `todo` | none | Deepen advanced constrained-randomization beyond current basics. |
 | 8 | `W8-ISV3B-DEEPEN` | P1 | `todo` | none | Deepen advanced coverage into APIs, closure loops, and real closure practice. |
@@ -184,17 +184,17 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   3. Add a concrete monitor -> analysis FIFO -> scoreboard design example and associated debug/failure-mode walkthrough.
   4. Add a real lab or exercise focused on diagnosing bad TLM wiring or missing scoreboard decoupling.
 - Deliverable checklist:
-  - [ ] Terminal analysis subscriber patterns are explained correctly.
-  - [ ] `uvm_tlm_analysis_fifo` is taught in the correct architectural place.
-  - [ ] The page includes at least one failure-mode/debug walkthrough.
-  - [ ] Learners can practice a connection/debug scenario through a lab or exercise.
+  - [x] Terminal analysis subscriber patterns are explained correctly.
+  - [x] `uvm_tlm_analysis_fifo` is taught in the correct architectural place.
+  - [x] The page includes at least one failure-mode/debug walkthrough.
+  - [x] Learners can practice a connection/debug scenario through a lab or exercise.
 - Validation:
   - Review terminology against IEEE 1800.2-2020 Clause 12.
   - Add/extend tests for any new exercise/lab route.
 
 ### `W6-IUVM2C-MOD`
 - Priority: P0
-- Status: `todo`
+- Status: `complete`
 - Depends On: `W8-LABS-PLATFORM`
 - Related IDs: `CURR-W6-IUVM2C`, `AUD-005`
 - Primary surfaces: `content/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index.mdx`, new `ConfigDbExplorer.tsx`, new config debug lab assets
@@ -206,11 +206,11 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   4. Add a null virtual interface debugging lab.
   5. Add failure-mode triage for typo bugs, wildcard collisions, and late runtime overrides.
 - Deliverable checklist:
-  - [ ] Clause 23 anchoring is explicit and accurate.
-  - [ ] The precedence explanation includes runtime/default-precedence nuance.
-  - [ ] `ConfigDbExplorer.tsx` exists and is embedded.
-  - [ ] A real null-VIF debug lab is linked from the lesson.
-  - [ ] The lesson includes explicit failure/debug guidance, not only syntax.
+  - [x] Clause 23 anchoring is explicit and accurate.
+  - [x] The precedence explanation includes runtime/default-precedence nuance.
+  - [x] `ConfigDbExplorer.tsx` exists and is embedded.
+  - [x] A real null-VIF debug lab is linked from the lesson.
+  - [x] The lesson includes explicit failure/debug guidance, not only syntax.
 - Validation:
   - Unit-test the visualizer.
   - Add a route smoke/E2E check for the lesson or lab.
