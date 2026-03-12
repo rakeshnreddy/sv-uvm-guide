@@ -28,7 +28,7 @@ var mdxFiles = [
     "content/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/index.mdx",
     "content/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/layered-sequences.mdx",
     "content/curriculum/T3_Advanced/A-UVM-1_Advanced_Sequencing/uvm-subscriber.mdx",
-    "content/curriculum/T3_Advanced/A-UVM-3_Advanced_UVM_Techniques/index.mdx",
+    "content/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index.mdx",
     "content/curriculum/T3_Advanced/A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL/frontdoor-vs-backdoor.mdx",
     "content/curriculum/T3_Advanced/A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL/explicit-vs-implicit.mdx",
     "content/curriculum/T3_Advanced/A-UVM-4_The_UVM_Register_Abstraction_Layer_RAL/built-in-ral-sequences.mdx",

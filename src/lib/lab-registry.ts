@@ -276,6 +276,37 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     status: "coming_soon",
     graderType: "uvm",
     steps: []
+  },
+  "ral-mirror-bug": {
+    id: "ral-mirror-bug",
+    title: "RAL Mirror Bug",
+    description: "Diagnose and fix a frozen RAL mirror caused by a missing predictor connection in connect_phase.",
+    owningModule: "A-UVM-4B",
+    routeSlug: "ral-mirror-bug",
+    prerequisites: ["simple-dut-1"],
+    assetLocation: "content/curriculum/labs/ral_advanced/lab1_mirror_bug",
+    status: "available",
+    graderType: "uvm",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Identify the Frozen Mirror",
+        instructions: "Run the simulation. Every `mirror(UVM_CHECK)` call fails with the stale reset value `0x0000`, even though bus writes to the DUT succeed.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Trace the Predictor Pipeline",
+        instructions: "Open `testbench_buggy.sv` and inspect `connect_phase()`. The predictor and adapter are assigned, but is the bus monitor's analysis port connected to `predictor.bus_in`?",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Fix the Connect Phase",
+        instructions: "Add `axi_agt.monitor.ap.connect(predictor.bus_in);` to `connect_phase`. Re-run. The mirror should now track writes and `mirror(UVM_CHECK)` should pass.",
+        starterCode: ""
+      }
+    ]
   }
 };
 

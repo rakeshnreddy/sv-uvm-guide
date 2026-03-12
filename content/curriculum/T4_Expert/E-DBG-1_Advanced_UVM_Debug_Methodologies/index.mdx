@@ -4,78 +4,59 @@ description: "Instrument your UVM environment with traceability, telemetry, and 
 flashcards: "E-DBG-1_Debug_Methodologies"
 ---
 
+import TelemetryEventBusVisualizer from "@/components/visuals/TelemetryEventBusVisualizer";
+
 ## Quick Take
-- **What it is:** A debugging playbook—structured logging, selective waveform capture, trace metadata—to tame large UVM environments.
-- **Why it matters:** Scale brings opaque failures. Rich debug hooks keep signal-to-noise high under tight schedules.
-- **The Analogy:** Think of an airliner flight recorder: every test run should leave breadcrumbs that explain what the bench did and why.
+- **What it is:** A debugging playbook—structured logging, centralized event routing, selective waveform capture, and trace metadata—to tame large UVM environments.
+- **Why it matters:** Scale brings opaque failures. Long SoC simulations or massive block-level regressions require rich, automated debug hooks to keep the signal-to-noise ratio high under tight schedules.
+- **The Analogy:** Think of an airliner flight recorder: every test run should leave breadcrumbs that explain what the bench did and why, *before* you ever open a waveform viewer.
 
 > **Signal:** When triage meetings begin with “rerun with more logs,” your methodology needs stronger built-in instrumentation.
 
 ## Build Your Mental Model
-### Structured logging
-- Standardise log categories (`ENV`, `DRV`, `SEQ`, `DBG`) and verbosity levels across the team.
-- Use `uvm_report_object::set_report_id_action_hier()` to promote or demote categories at runtime.
-- Include correlation IDs: stamp sequence IDs, transaction handles, and timestamps into every message so logs join up with coverage and waveform captures.
 
-### Trace metadata pipeline
-- Emit JSON or NDJSON trace files mapping test name → key events (reset done, handshake stalled, scoreboard mismatch).
-- Post-process traces into dashboards so regressions show high-level failure breadcrumbs before diving into waveforms.
-- Include links to source commits, config hashes, and git describe output for reproducibility.
+### 1. Structured Logging
+Standard `uvm_info` is often treated as a dumping ground. Professional environments treat logs as machine-readable telemetry.
+- **Standardize Categories:** Use consistent IDs (`ENV`, `DRV`, `SEQ`, `DBG`, `CFG`).
+- **Correlation IDs:** Stamp sequence IDs, transaction handles, and timestamps into every message so logs join up clearly with coverage holes and scoreboard discrepancies.
+- **Runtime Filtering:** Use `uvm_report_object::set_report_id_action_hier()` to promote or demote categories from the command line without recompiling.
 
-### Selective waveform capture
-- Gate waveform dumping behind triggers (e.g., scoreboard error, watchdog timeout).
-- Use VDB/FSDB bookmarking or `.sv` tasks to mark interesting windows.
-- Include a “ring buffer” concept: keep the last N microseconds in memory and flush only when a trigger fires.
+### 2. The Centralized Debug Event Bus
+Instead of hardcoding trigger logic deep inside individual monitors or scoreboards, advanced environments broadcast significant events to a centralized bus.
 
-```systemverilog
-class debug_event_bus extends uvm_component;
-  `uvm_component_utils(debug_event_bus)
-
-  uvm_analysis_port#(debug_event) ap;
-
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-    ap = new("ap", this);
-  endfunction
-
-  function void publish(string tag, string detail);
-    debug_event evt = debug_event::type_id::create("evt");
-    evt.tag     = tag;
-    evt.detail  = detail;
-    ap.write(evt);
-  endfunction
-endclass
-```
+<TelemetryEventBusVisualizer />
 
 **Why add an event bus?**
-- Centralises debug events, allowing multiple subscribers (log formatters, telemetry exporters, trigger logic) without rewiring drivers or monitors.
+- It centralizes debug events, allowing multiple subscribers (log formatters, telemetry exporters, trigger logic) to react without rewiring drivers or monitors.
+- A scoreboard can simply broadcast `("SCB", "DATA_MISMATCH")`. A separate, specialized debug component listens for that tag and decides whether to dump waveforms, increment an error counter, or halt the simulation.
 
-## Make It Work
-1. **Packaged utilities:** Ship a `debug_pkg` with macros (`DBG_TRACE(tag, detail)`), event bus definitions, and helper sequences for triggers.
-2. **Baseline dashboards:** Automate daily ingestion of trace metadata so failures show up with timeline cards, not raw logs.
-3. **Trigger-driven captures:** Pair debug events with vendor-specific waveform APIs (e.g., `$fsdbDumpvarsByFile`, VCS DVE bookmarks) to record only when needed.
-4. **Feedback loop:** Hold periodic “debug audit” reviews—inspect recent failures and update instrumentation gaps.
+### 3. Selective Waveform Capture
+Indiscriminately dumping waveforms for a 20-hour SoC regression is impossible. You must gate waveform dumping behind triggers.
+- **Trigger-Driven Dumps:** Use the event bus to listen for errors or watchdog timeouts, and *then* fire vendor-specific waveform APIs (e.g., `$fsdbDumpvarsByFile`).
+- **Ring Buffers:** Keep the last $N$ microseconds of history in memory and flush to disk only when a trigger fires, capturing the lead-up to the failure without the terabytes of idle traffic.
 
-**Checklist before moving on:**
-- [ ] Standard log categories and verbosity are documented and enforced via code review/lint.
-- [ ] Tests emit structured traces mapping key events to timestamps.
-- [ ] Waveform dumps are trigger-driven, not always-on.
-- [ ] Teams know where dashboards live and how to request new instrumentation.
+### 4. Trace Metadata Pipeline
+- Emit JSON or NDJSON trace files mapping the test name to key lifecycle events (e.g., reset done, handshake stalled, scoreboard mismatch).
+- Post-process these traces into dashboards so regression reports show high-level failure breadcrumbs before anyone opens a log file.
 
-## Push Further
-- **Cross-domain correlation:** Tie sequences to firmware logs or emulator telemetry for holistic failure stories.
-- **Machine learning aids:** Feed trace metadata into clustering tools to spot recurring patterns automatically.
-- **Self-healing tests:** Use debug events to trigger automatic retries with extra instrumentation.
-- **Playbook culture:** Document past failures and the instrumentation that solved them so new engineers level up rapidly.
+## Push Further: Triage Playbook
+
+When an overnight regression turns red, follow this playbook rather than randomly adding displays:
+
+1. **Check the Watchdog / Heartbeat:** Did a physical timeout occur, or did a `uvm_objection` hang? (See the Hang Lab for objection tracing).
+2. **Review the Event Bus Trace:** Look for the final major events before the failure. Did the configuration phase complete? Did the scoreboard receive any items?
+3. **Triggered Waveforms Only:** Open the specific selective-dump file created by the event bus trigger, rather than the full-run database.
+4. **Reproduce Fast:** Divide and conquer. Reduce randomization seeds, trim the test duration, or bypass unrelated subsystems until the bug reproduces in under 60 seconds.
 
 ## Practice & Reinforce
-- Add a debug event when a driver retries a handshake; verify traces show the snapshot.
-- Script a command that extracts the last failing test’s trace into HTML for instant sharing.
-- Integrate the event bus with your waveform trigger logic so interesting windows dump automatically.
-- Run a “no extra logging” regression to ensure even the baseline instrumentation tells a coherent story.
+
+<LabLink 
+  id="debug-waveform-trigger" 
+  title="Lab: Triggering Waveforms via Event Bus"
+  description="Build an event bus subscriber that listens for specific timeout tags and executes selective waveform captures."
+/>
 
 ## References & Next Topics
 - UVM User Guide Appendix (debug and messaging).
 - EDA vendor docs on FSDB/VCD selective dumping APIs.
-- Internal debug retrospectives and incident review notes.
-- Next: Explore advanced performance profiling once debug instrumentation is mature.
+- Next: Move on to SoC-level verification strategies, where these debug principles are tested at scale.

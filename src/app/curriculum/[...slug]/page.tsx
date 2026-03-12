@@ -136,6 +136,10 @@ const VirtualSequencerExplorer = dynamic(
   () => import('@/components/curriculum/interactives/VirtualSequencerExplorer'),
   { ssr: false, loading: () => <VisualizationFallback /> },
 );
+const TelemetryEventBusVisualizer = dynamic(
+  () => import('@/components/visuals/TelemetryEventBusVisualizer'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -211,11 +215,13 @@ const components = {
   InterviewQuestionPlayground: dynamic(() => import('@/components/curriculum/interactives/InterviewQuestionPlayground'), { ssr: false, loading: () => <VisualizationFallback /> }),
   Mailbox3D: dynamic(() => import('@/components/curriculum/interactives/3d/Mailbox3D'), { ssr: false, loading: () => <VisualizationFallback /> }),
   PhaseTimeline3D: dynamic(() => import('@/components/curriculum/interactives/3d/PhaseTimeline3D'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  RALHierarchy: dynamic(() => import('@/components/visuals/RALHierarchy'), { ssr: false, loading: () => <VisualizationFallback /> }),
   RALPredictorVisualizer: dynamic(() => import('@/components/visuals/RALPredictorVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   TemporalLogicExplorer: dynamic(() => import('@/components/curriculum/interactives/TemporalLogicExplorer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   TLMPortConnector: dynamic(() => import('@/components/curriculum/interactives/TLMPortConnector'), { ssr: false, loading: () => <VisualizationFallback /> }),
   UVMTreeExplorer: dynamic(() => import('@/components/curriculum/interactives/UVMTreeExplorer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   VirtualSequencerExplorer,
+  TelemetryEventBusVisualizer,
   LabLink,
 };
 

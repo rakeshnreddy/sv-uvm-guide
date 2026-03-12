@@ -88,8 +88,8 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 6 | `W6-ISV5-MOD` | P0 | `complete` | `W8-LABS-PLATFORM` | Make `I-SV-5` the canonical IPC module with dedicated interactive and deadlock lab. |
 | 7 | `W8-ISV2B-DEEPEN` | P1 | `complete` | none | Deepen advanced constrained-randomization beyond current basics. |
 | 8 | `W8-ISV3B-DEEPEN` | P1 | `complete` | none | Deepen advanced coverage into APIs, closure loops, and real closure practice. |
-| 9 | `W5-AUVM4-SPLIT` | P1 | `todo` | `W8-LABS-PLATFORM` | Finish the advanced RAL split with the missing hierarchy visual, mirror-bug lab, and deeper RAL treatment. |
-| 10 | `W5-AUVM3-DEPRECATE` | P1 | `todo` | `W5-AUVM4-SPLIT` | Finish callback extraction/review and fully retire advanced redundancy from `A-UVM-3`. |
+| 9 | `W5-AUVM4-SPLIT` | P1 | `complete` | `W8-LABS-PLATFORM` | Finish the advanced RAL split with the missing hierarchy visual, mirror-bug lab, and deeper RAL treatment. |
+| 10 | `W5-AUVM3-DEPRECATE` | P1 | `complete` | `W5-AUVM4-SPLIT` | Finish callback extraction/review and fully retire advanced redundancy from `A-UVM-3`. |
 | 11 | `W6-EDBG1-MOD` | P1 | `todo` | `W8-LABS-PLATFORM` | Turn the debug module into a real telemetry/debug workflow with lab and visualizer. |
 | 12 | `W6-EINT1-MOD` | P1 | `todo` | `W7-ISV-API`, `W8-LABS-PLATFORM` | Keep formal-integration focused on formal and remove misplaced API/methodology content. |
 | 13 | `W6-ECUST1-MOD` | P1 | `todo` | `W8-LABS-PLATFORM` | Modernize methodology customization with custom-phase teaching and a schedule-injection lab. |
@@ -277,7 +277,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W5-AUVM4-SPLIT`
 - Priority: P1
-- Status: `todo`
+- Status: `complete`
 - Depends On: `W8-LABS-PLATFORM`
 - Related IDs: `CURR-SPLIT-A-UVM-4`, `CURR-A-UVM-4-SPLIT`, `CURR-A-UVM-4A-LORE`, `CURR-A-UVM-4B-LAB`, `CURR-A-UVM-4-REVIEW`, `AUD-011`
 - Primary surfaces: `content/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/*`, `content/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/*`, new `RALHierarchy.tsx`, new RAL lab assets
@@ -286,10 +286,10 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   - [x] `A-UVM-4A_RAL_Fundamentals` exists
   - [x] `A-UVM-4B_Advanced_RAL_Techniques` exists
   - [x] `RALPredictorVisualizer.tsx` is present and embedded in 4B
-  - [ ] `RALHierarchy.tsx` does not exist yet
-  - [ ] Mirror Bug Lab does not exist yet
-  - [ ] 4A still needs richer fundamentals depth
-  - [ ] 4B still needs more production-depth on memories, maps, volatile behavior, and mirror strategy
+  - [x] `RALHierarchy.tsx` exists and is embedded in 4A
+  - [x] Mirror Bug Lab exists with buggy/solution testbenches and README
+  - [x] 4A deepened with adapter, map, generation workflow, frontdoor flow
+  - [x] 4B deepened with memories, volatile/W1C/W1S, set_auto_predict, multi-map
 - Scope:
   1. Build `RALHierarchy.tsx` and embed it in 4A.
   2. Strengthen 4A with adapter, map, frontdoor sequence, generation-flow, and RAL object hierarchy teaching.
@@ -297,11 +297,11 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   4. Create `labs/ral_advanced/lab1_mirror_bug` and link it from 4B.
   5. Finish tests, navigation, and route coverage for the split track.
 - Deliverable checklist:
-  - [ ] `RALHierarchy.tsx` exists and is embedded.
-  - [ ] 4A is LRM-anchored and covers core RAL building blocks in depth.
-  - [ ] 4B includes realistic prediction/mirror debugging content.
-  - [ ] Mirror Bug Lab exists with buggy code, solution, and learner instructions.
-  - [ ] Internal links, tests, and curriculum data are updated.
+  - [x] `RALHierarchy.tsx` exists and is embedded.
+  - [x] 4A is LRM-anchored and covers core RAL building blocks in depth.
+  - [x] 4B includes realistic prediction/mirror debugging content.
+  - [x] Mirror Bug Lab exists with buggy code, solution, and learner instructions.
+  - [x] Internal links, tests, and curriculum data are updated.
 - Validation:
   - Unit-test the new hierarchy visual.
   - Add a lesson route smoke/E2E check for the advanced RAL path.
@@ -334,7 +334,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W6-EDBG1-MOD`
 - Priority: P1
-- Status: `todo`
+- Status: `complete`
 - Depends On: `W8-LABS-PLATFORM`
 - Related IDs: `CURR-W6-EDBG1`
 - Primary surfaces: `content/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/*`, new `TelemetryEventBusVisualizer.tsx`, debug lab assets

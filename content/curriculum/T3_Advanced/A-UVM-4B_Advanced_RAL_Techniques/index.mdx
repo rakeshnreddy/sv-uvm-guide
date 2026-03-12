@@ -13,6 +13,7 @@ import RALPredictorVisualizer from "@/components/visuals/RALPredictorVisualizer"
 - **The Standard:** IEEE 1800.2-2020 Clause 19 (Memory Allocation / Adapters) and Clause 18.2 (Registers).
 
 ## Build Your Mental Model
+
 ### The Adapter Bridge
 `uvm_reg_adapter` is the translator between generic `uvm_reg_bus_op` requests and your bus transaction item (e.g., `axi_item`). It converts read/write intent into an actual sequence item and back. Each bus protocol needs its own adapter, often shared across environments.
 
@@ -31,15 +32,96 @@ When the RAL mirror diverges from the DUT, it is often difficult to pinpoint the
 
 > **Interview Pitfall:** A common interview question asks "My RAL mirror isn't updating after a bus write, why?". The most frequent architectural cause is simply forgetting to connect the bus monitor's analysis port to the `uvm_reg_predictor` in the `connect_phase`.
 
+## Memories — `uvm_mem` (IEEE 1800.2-2020 Clause 19)
+
+RAL also models addressable memories via `uvm_mem`. Unlike registers, memories are typically too large to mirror completely, so the RAL tracks metadata (base address, size, access policy) rather than content.
+
+```systemverilog
+class sram_block extends uvm_reg_block;
+  uvm_mem sram;
+  uvm_reg_map map;
+
+  virtual function void build();
+    sram = uvm_mem::type_id::create("sram");
+    sram.configure(this, 1024, 32, "RW");   // 1K words × 32 bits
+
+    map = create_map("mem_map", 'h0, 4, UVM_LITTLE_ENDIAN);
+    map.add_mem(sram, 'h0000, "RW");
+    lock_model();
+  endfunction
+endclass
+```
+
+**Memory allocation manager** (`uvm_mem_mam`) tracks allocated regions so DMA tests can claim/release buffer space without address collisions:
+
+```systemverilog
+uvm_mem_mam mam = new("mam", sram.get_size());
+uvm_mem_region r = mam.request_region(256);  // Claim 256 words
+// ... run DMA test ...
+mam.release_region(r);
+```
+
+## Volatile and Special Access Policies
+
+Not every field behaves like simple RW memory. Several access policies require special handling because **the hardware changes the field value behind the RAL's back**:
+
+| Policy | Behavior | Mirror Implication |
+| --- | --- | --- |
+| **W1C** (Write-1-to-Clear) | Writing `1` to a bit clears it | RAL auto-predicts the clear; manual `predict()` often still needed after HW sets the bit |
+| **W1S** (Write-1-to-Set) | Writing `1` to a bit sets it | Similar to W1C—RAL predicts the set on write |
+| **RC** (Read-to-Clear) | Reading the field clears it | Mirror must update on every read; frontdoor reads trigger auto-prediction |
+| **Volatile** | HW can change the value at any time | Mirror may diverge between accesses; use `mirror(UVM_CHECK)` judiciously |
+
+> **Gotcha:** If a `W1C` status register is set by hardware between your write and your next read, the mirror will be stale unless you explicitly call `predict()` or `mirror()` after the hardware event. This is the single most common source of false mirror-mismatch errors in interrupt-status registers.
+
+## `set_auto_predict()` Strategy
+
+By default, RAL uses **implicit prediction**: a `uvm_reg_predictor` component watches bus traffic and updates the mirror. This is the recommended production approach because it catches bugs where the driver/adapter silently mangles data.
+
+`set_auto_predict(1)` on a map **disables** the predictor pipeline and instead auto-updates the mirror on every `write()`/`read()` call directly. This is simpler but **less safe**:
+
+| Mode | Pros | Cons |
+| --- | --- | --- |
+| Implicit (default) | Catches adapter bugs, realistic mirror | Requires predictor wiring |
+| Auto-predict | No predictor needed, fast bringup | Misses adapter/bus mismatches |
+
+**When to use auto-predict:**
+- Early bring-up when no monitor exists yet.
+- Non-critical debug environments where speed matters more than accuracy.
+- Never in production regressions—switch to implicit prediction once the bus agent is ready.
+
+```systemverilog
+// Bring-up mode: skip predictor during early integration
+cfg_map.set_auto_predict(1);
+
+// Production mode: disable auto-predict and use the predictor pipeline
+cfg_map.set_auto_predict(0);
+predictor.map     = ral.cfg_map;
+predictor.adapter = adapter;
+axi_agt.monitor.ap.connect(predictor.bus_in);
+```
+
+## Multi-Map Concerns
+
+When the same register is accessible from multiple bus interfaces (e.g., AXI config bus and APB debug port), each map needs its own:
+- Adapter instance (different bus protocols)
+- Predictor instance (listening to different monitors)
+- Sequencer assignment
+
+Writes from one bus interface will update the DUT, but only the **predictor attached to the observing monitor** will update the mirror. If a test writes through map A but reads through map B, ensure both predictors are active or call `mirror()` explicitly after cross-map operations.
+
 ## Make It Work
 1. **Instantiate Predictors:** Build the adapter and predictor in the `build_phase`.
 2. **Connect the Flow:** In `connect_phase`, wire the bus monitor's `ap` into the predictor's `bus_in`, and explicitly assign `predictor.map` and `predictor.adapter`.
 3. **Mirror responsibly:** Decide which registers need continuous mirroring; throttle expensive frontdoor reads by enabling backdoor mirroring when risk justifies it.
+4. **Handle volatile fields:** For interrupt-status and HW-modified registers, schedule explicit `mirror(UVM_CHECK)` calls after known hardware events.
 
 **Checklist before moving on:**
 - [ ] You know which class creates the bus translation layer (the adapter).
 - [ ] You can systematically debug why a mirror fails to update.
 - [ ] Your environment exposes the predictor so tests do not drill through component internals.
+- [ ] You understand when `set_auto_predict` is appropriate and when it hides real bugs.
+- [ ] You know how volatile and W1C policies affect mirror accuracy.
 
 ## Practice & Reinforce
 - Dive into **[Explicit vs. Implicit Prediction](./explicit-vs-implicit)** to weigh different synchronization strategies.
@@ -47,7 +129,14 @@ When the RAL mirror diverges from the DUT, it is often difficult to pinpoint the
 - Leverage **[Built-in RAL Sequences](./built-in-ral-sequences)** to quickly sanity-check your generated model.
 - Pair the RAL model with callback hooks to inject targeted errors.
 
+### Mirror Bug Lab
+
+Practice debugging a broken RAL mirror in a hands-on lab:
+
+<LabLink labId="ral-mirror-bug" />
+
 ## References & Next Topics
+- IEEE 1800.2-2020, Clauses 18–19.
 - Accellera *UVM User Guide*, Chapter 6 (Register Layer).
 - Verification Academy, *UVM Register Layer* course.
 - Next: Move to Tier-4 methodology customization for performance and debug.

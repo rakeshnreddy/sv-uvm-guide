@@ -4,63 +4,191 @@ description: "Model DUT registers once and decouple stimulus from physical bus p
 flashcards: "A-UVM-4A_RAL_Fundamentals"
 ---
 
+import RALHierarchy from "@/components/visuals/RALHierarchy";
+
 ## Quick Take
-- **What it is:** The Register Abstraction Layer (RAL) turns the DUT register map into an object-oriented model (`uvm_reg_block`, `uvm_reg`).
-- **Why it matters:** It centralizes register addresses and properties (reset values, access policies) so tests don't hardcode magic numbers.
+- **What it is:** The Register Abstraction Layer (RAL) turns the DUT register map into an object-oriented model (`uvm_reg_block`, `uvm_reg`, `uvm_reg_field`).
+- **Why it matters:** It centralizes register addresses, reset values, and access policies so tests don't hardcode magic numbers—and so the same stimulus works across different bus protocols.
 - **The Standard:** IEEE 1800.2-2020 Clauses 18 (Registers) and 19 (Memory Allocation) define these base classes.
 
-> **Signal:** When scoreboard logic knows address constants, it’s time to centralize that knowledge inside RAL.
+> **Signal:** When scoreboard logic knows address constants, when adapter code is duplicated across tests, or when register coverage is manual—it's time to centralize that knowledge inside RAL.
 
 ## Build Your Mental Model
-### RAL Building Blocks (IEEE 1800.2-2020 Clause 18)
-- `uvm_reg_field` → individual bit slices with defined hardware access policies.
-- `uvm_reg` → collects fields; knows reset values and mirroring rules.
-- `uvm_reg_block` + `uvm_reg_map` → maps logical registers onto a bus address space.
 
-These classes are usually generated from IP-XACT/SystemRDL so verification, design, and documentation reference the exact same spec.
+### RAL Object Hierarchy (IEEE 1800.2-2020 Clause 18)
+
+The RAL is a containment hierarchy. Each level owns the level below it:
+
+| Level | Class | Responsibility |
+| --- | --- | --- |
+| Block | `uvm_reg_block` | Top-level container: owns registers, memories, sub-blocks, and address maps |
+| Map | `uvm_reg_map` | Assigns physical addresses to registers/memories for a specific bus interface |
+| Register | `uvm_reg` | A single HW register: knows reset value, access policy, mirrored value |
+| Field | `uvm_reg_field` | Bit-slice within a register: defines access type (RW, RO, W1C, etc.) and reset |
+| Memory | `uvm_mem` | Addressable memory region: DMA buffers, LUTs, instruction stores |
+
+Explore the hierarchy interactively:
+
+<RALHierarchy />
+
+### uvm_reg_block — The Container
+
+A block is the outermost shell. It owns one or more `uvm_reg_map` instances and all the registers and memories that belong to that IP. Sub-blocks model hierarchical designs (e.g., a SoC block that contains an Ethernet block and a DMA block).
 
 ```systemverilog
-class codec_status_reg extends uvm_reg;
-  rand uvm_reg_field state;
-  function new(); super.new("codec_status_reg", 8, UVM_NO_COVERAGE); endfunction
-  virtual function void build();
-    state = uvm_reg_field::type_id::create("state");
-    state.configure(this, 8, 0, "RO", 0, 0, 1, 0);
-  endfunction
-endclass
-
 class codec_block extends uvm_reg_block;
+  `uvm_object_utils(codec_block)
   codec_status_reg status;
-  uvm_reg_map map;
+  codec_control_reg control;
+  uvm_reg_map cfg_map;
 
   virtual function void build();
-    status = codec_status_reg::type_id::create("status");
+    // Create registers
+    status  = codec_status_reg::type_id::create("status");
     status.configure(this, null);
     status.build();
 
-    map = create_map("cfg_bus", 'h0, 4, UVM_LITTLE_ENDIAN);
-    map.add_reg(status, 'h20, "RO");
-    lock_model();
+    control = codec_control_reg::type_id::create("control");
+    control.configure(this, null);
+    control.build();
+
+    // Create address map for this bus interface
+    cfg_map = create_map("cfg_map", 'h0, 4, UVM_LITTLE_ENDIAN);
+    cfg_map.add_reg(status,  'h00, "RO");
+    cfg_map.add_reg(control, 'h04, "RW");
+
+    lock_model();   // Freeze – no more structural changes
   endfunction
 endclass
 ```
 
-**Why this matters**
-- Lines 1-9 capture field configuration, access policy, and reset behaviour in one place.
-- Lines 11-23 place the register into an address map so bus agents can discover it.
+**Key points:**
+- `configure(this, null)` sets the parent block and optional back-door HDL path.
+- `lock_model()` freezes the structure so the predictor can safely query it at run time. Always call it at the end of `build()`.
+
+### uvm_reg_map — The Address Bridge
+
+A **map** bridges the abstract register model to a physical bus protocol. Each bus port the DUT exposes typically gets its own map. The **same register** can appear in multiple maps at different addresses (multi-map), which is common when an IP is accessible from both a configuration bus and a debug port.
+
+```systemverilog
+// Two maps sharing the same register set
+cfg_map   = create_map("cfg_map",   'h0000, 4, UVM_LITTLE_ENDIAN);
+debug_map = create_map("debug_map", 'h1000, 4, UVM_LITTLE_ENDIAN);
+
+cfg_map.add_reg(status,  'h00, "RO");
+debug_map.add_reg(status, 'h100, "RO");
+```
+
+After creating a map, you attach it to a **sequencer** and supply an **adapter** so RAL knows how to transform generic `uvm_reg_bus_op` operations into your protocol-specific sequence items.
+
+### uvm_reg and uvm_reg_field — Register and Fields
+
+Each register is a collection of typed fields. Fields declare their **access policy** (RW, RO, W1C, W1S, RC, RS, volatile, etc.) and their reset value. This information drives the RAL's built-in mirror checking and sequence automation.
+
+```systemverilog
+class codec_status_reg extends uvm_reg;
+  `uvm_object_utils(codec_status_reg)
+  rand uvm_reg_field state;
+  rand uvm_reg_field error;
+
+  function new(string name = "codec_status_reg");
+    super.new(name, 32, UVM_NO_COVERAGE);
+  endfunction
+
+  virtual function void build();
+    state = uvm_reg_field::type_id::create("state");
+    //             parent, size, lsb, access, volatile, reset, has_reset, is_rand, individual_accessible
+    state.configure(this,   8,    0,   "RO",   0,        0,     1,         0,       0);
+
+    error = uvm_reg_field::type_id::create("error");
+    error.configure(this,   1,    8,   "W1C",  0,        0,     1,         0,       0);
+  endfunction
+endclass
+```
+
+**Why `configure()` matters:** The 9 arguments tell RAL everything it needs to predict, mirror, and automate this field—no external documentation lookup required.
+
+### The Adapter Bridge
+
+`uvm_reg_adapter` is the translator between generic `uvm_reg_bus_op` requests and your bus transaction item (e.g., `axi_item`, `apb_item`). Each bus protocol needs its own adapter.
+
+```systemverilog
+class apb_adapter extends uvm_reg_adapter;
+  `uvm_object_utils(apb_adapter)
+
+  function new(string name = "apb_adapter");
+    super.new(name);
+    supports_byte_enable = 0;   // APB doesn't support byte lanes
+    provides_responses   = 0;   // We read status from the item directly
+  endfunction
+
+  virtual function uvm_sequence_item reg2bus(const ref uvm_reg_bus_op rw);
+    apb_item item = apb_item::type_id::create("item");
+    item.addr  = rw.addr;
+    item.data  = rw.data;
+    item.write = (rw.kind == UVM_WRITE);
+    return item;
+  endfunction
+
+  virtual function void bus2reg(uvm_sequence_item bus_item, ref uvm_reg_bus_op rw);
+    apb_item item;
+    if (!$cast(item, bus_item)) `uvm_fatal("CAST", "Bad item type")
+    rw.addr   = item.addr;
+    rw.data   = item.data;
+    rw.kind   = item.write ? UVM_WRITE : UVM_READ;
+    rw.status = UVM_IS_OK;
+  endfunction
+endclass
+```
+
+**Two key methods:**
+- `reg2bus()` — converts a RAL operation into a bus-specific item (used by the sequencer when a test calls `reg.write()`).
+- `bus2reg()` — converts a monitored bus item back into a generic operation (used by the predictor to update the mirror).
+
+### Frontdoor Sequence Flow
+
+When a test calls `my_reg.write(status, 'hFF)`, here is what happens internally:
+
+1. RAL looks up the register's **map** and finds the **sequencer** and **adapter** attached to it.
+2. RAL calls `adapter.reg2bus()` to create a protocol-specific sequence item.
+3. The item is sent to the bus **sequencer → driver → DUT**.
+4. The bus **monitor** observes the transaction and broadcasts it via its analysis port.
+5. The **predictor** receives the broadcast, calls `adapter.bus2reg()`, and updates the **mirror**.
+
+This entire flow is transparent to the test writer—they only call `write()` or `read()`.
+
+### Generation Workflow
+
+In practice, RAL models are **generated** from a formal register specification:
+
+| Source Format | Tool | Output |
+| --- | --- | --- |
+| IP-XACT (IEEE 1685) | ralgen, PeakRDL, Magillem | SystemVerilog `uvm_reg_block` classes |
+| SystemRDL | PeakRDL, Semifore | SystemVerilog `uvm_reg_block` classes |
+| CSV / spreadsheet | Custom scripts | SystemVerilog `uvm_reg_block` classes |
+
+**Governance rules:**
+- Always commit the generated RAL code to version control so all team members share the same specification snapshot.
+- Treat the generated files as **read-only**—never hand-modify them. Customizations belong in subclasses or environment-level wrappers.
+- Re-generate and diff when the spec changes to catch address shifts or policy updates early.
 
 ## Make It Work
-1. **Generate the model:** Use auto-generation from the register spec and commit the emitted SystemVerilog so everyone shares the same hierarchy.
-2. **Instantiate in the environment:** Build the block in the environment's `build_phase`, and hook it up to the bus sequencer. 
-3. **Expose access APIs:** Provide handles in the environment or base test for sequences to easily locate the top-level block.
+
+1. **Generate the model:** Produce the `uvm_reg_block` hierarchy from your register spec and commit the output.
+2. **Create the adapter:** Write `reg2bus()` and `bus2reg()` for each bus protocol your DUT exposes.
+3. **Instantiate in the environment:** Build the block and adapter in `build_phase()`; set the map's sequencer and adapter in `connect_phase()`.
+4. **Lock the model:** Call `lock_model()` before any test runs to freeze the structure.
 
 **Checklist before moving on:**
-- [ ] You understand the hierarchy of `uvm_reg_block` -> `uvm_reg` -> `uvm_reg_field`.
+- [ ] You understand the hierarchy: `uvm_reg_block` → `uvm_reg_map` → `uvm_reg` → `uvm_reg_field`.
 - [ ] You can explain why `uvm_reg_map` is necessary to bridge physical bus addresses.
+- [ ] You know the adapter's two key translation methods (`reg2bus` / `bus2reg`).
+- [ ] You understand why generated RAL files should be treated as read-only.
 
 ## Push Further
 - **Formal tie-in:** Reuse the RAL spec to generate SVA properties that enforce access policies and reset expectations without writing manual assertions.
 - **Team governance:** Always treat the generated RAL model as read-only. Avoid hand-tweaking the generated files.
+- **Sub-blocks:** Nest `uvm_reg_block` instances to model SoC-level register hierarchies with sub-maps and address translation.
 
 ## Practice & Reinforce
-- Next: Move onto adapters, predictors, and debugging workflows in [/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index](../A-UVM-4B_Advanced_RAL_Techniques/index).
+- Next: Move onto adapters, predictors, and debugging workflows in [A-UVM-4B: Advanced RAL Techniques](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index).
