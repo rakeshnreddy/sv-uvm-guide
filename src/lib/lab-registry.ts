@@ -307,6 +307,37 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
         starterCode: ""
       }
     ]
+  },
+  "callbacks-driver-behavior": {
+    id: "callbacks-driver-behavior",
+    title: "Modifying Driver Behavior with Callbacks",
+    description: "Inject an error and a delay into a driver using a callback hook without altering the driver class itself.",
+    owningModule: "A-UVM-5",
+    routeSlug: "callbacks-driver-behavior",
+    prerequisites: ["simple-dut-1"],
+    assetLocation: "content/curriculum/labs/uvm_callbacks/lab1_driver_behavior",
+    status: "available",
+    graderType: "uvm",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Review the Hook",
+        instructions: "Open `testbench.sv` and locate the `packet_driver_cb` virtual class. Find where `uvm_do_callbacks` is invoked inside the driver's `run_phase`.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Implement the Callback",
+        instructions: "Create a class `error_inject_cb` extending `packet_driver_cb`. Override `pre_drive` to add a 10ns delay and flip the packet's parity bit.",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Attach in the Test",
+        instructions: "In `my_test`, instantiate your callback and add it to the driver using `uvm_callbacks#(packet_driver, packet_driver_cb)::add()`. Run the simulation to verify the delay and corruption appear in the driver's log.",
+        starterCode: ""
+      }
+    ]
   }
 };
 

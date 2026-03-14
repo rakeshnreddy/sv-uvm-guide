@@ -41,7 +41,7 @@ This guide consolidates the strategic, instructional, and visual references used
 |  | I-UVM-5 Phasing & Sync | Phase flow, objections, synchronization primitives. |
 | **Tier 3 – Advanced** | A-UVM-1 Advanced Sequencing | Virtual sequencers, arbitration, layered stimulus. |
 |  | A-UVM-2 Factory Deep Dive | Policy classes, factory diagnostics, best practices. |
-|  | A-UVM-3 Advanced Techniques | Virtual interfaces, DPI bridges, scoreboards. |
+|  | A-UVM-5 UVM Callbacks | Registration, lifecycle, add/delete ordering, factory comparison. |
 |  | A-UVM-4 Register Layer (RAL) | Register models, backdoor/frontdoor access, mirroring. |
 | **Tier 4 – Expert** | E-CUST-1 Methodology Customization | Scaling teams, guidelines, custom phases. |
 |  | E-DBG-1 Advanced Debug | Transaction tracing, waveform strategy, failure triage. |

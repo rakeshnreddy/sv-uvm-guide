@@ -90,7 +90,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 8 | `W8-ISV3B-DEEPEN` | P1 | `complete` | none | Deepen advanced coverage into APIs, closure loops, and real closure practice. |
 | 9 | `W5-AUVM4-SPLIT` | P1 | `complete` | `W8-LABS-PLATFORM` | Finish the advanced RAL split with the missing hierarchy visual, mirror-bug lab, and deeper RAL treatment. |
 | 10 | `W5-AUVM3-DEPRECATE` | P1 | `complete` | `W5-AUVM4-SPLIT` | Finish callback extraction/review and fully retire advanced redundancy from `A-UVM-3`. |
-| 11 | `W6-EDBG1-MOD` | P1 | `todo` | `W8-LABS-PLATFORM` | Turn the debug module into a real telemetry/debug workflow with lab and visualizer. |
+| 11 | `W6-EDBG1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Turn the debug module into a real telemetry/debug workflow with lab and visualizer. |
 | 12 | `W6-EINT1-MOD` | P1 | `todo` | `W7-ISV-API`, `W8-LABS-PLATFORM` | Keep formal-integration focused on formal and remove misplaced API/methodology content. |
 | 13 | `W6-ECUST1-MOD` | P1 | `todo` | `W8-LABS-PLATFORM` | Modernize methodology customization with custom-phase teaching and a schedule-injection lab. |
 | 14 | `W6-ESOC1-MOD` | P1 | `todo` | `W8-LABS-PLATFORM` | Add SoC bring-up practice, VIP topology visualization, and SoC-specific reuse/debug workflows. |
@@ -308,7 +308,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W5-AUVM3-DEPRECATE`
 - Priority: P1
-- Status: `todo`
+- Status: `complete`
 - Depends On: `W5-AUVM4-SPLIT`
 - Related IDs: `CURR-REFACTOR-A-UVM-3`, `CURR-A-UVM-3-MERGE`, `CURR-A-UVM-3-REDIRECT`, `CURR-A-UVM-5-CREATE`, `CURR-A-UVM-3-REVIEW`
 - Primary surfaces: `content/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index.mdx`, redirect config, any surviving references to `A-UVM-3`
@@ -317,18 +317,18 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   - [x] `A-UVM-3` content was redistributed/deleted
   - [x] redirect work appears to exist
   - [x] `A-UVM-5_UVM_Callbacks` exists
-  - [ ] callbacks lesson still needs production-depth and correctness cleanup
-  - [ ] callback lab is missing
-  - [ ] final redirect/link review is still required
+  - [x] callbacks lesson rewritten to production depth with IEEE grounding
+  - [x] callback lab registered in lab-registry.ts
+  - [x] final redirect/link review completed
 - Scope:
   1. Rewrite `A-UVM-5` into a complete callbacks lesson with accurate API terminology.
   2. Add a real callback lab where a driver behavior is altered without subclass replacement.
   3. Verify redirects, internal links, and any leftover references to `A-UVM-3`.
 - Deliverable checklist:
-  - [ ] Callback terminology is technically correct.
-  - [ ] The lesson explains registration, add/delete behavior, and when callbacks beat factory overrides.
-  - [ ] A real callback lab exists.
-  - [ ] Old path redirects and internal links are verified.
+  - [x] Callback terminology is technically correct.
+  - [x] The lesson explains registration, add/delete behavior, and when callbacks beat factory overrides.
+  - [x] A real callback lab exists.
+  - [x] Old path redirects and internal links are verified.
 - Validation:
   - Add redirect verification and route smoke coverage.
 
