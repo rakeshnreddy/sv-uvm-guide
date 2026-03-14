@@ -338,6 +338,37 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
         starterCode: ""
       }
     ]
+  },
+  "methodology-custom-phase": {
+    id: "methodology-custom-phase",
+    title: "Injecting a Custom UVM Phase",
+    description: "Insert a firmware-loading phase into the UVM schedule and verify it executes between reset and configure.",
+    owningModule: "E-CUST-1",
+    routeSlug: "methodology-custom-phase",
+    prerequisites: ["simple-dut-1"],
+    assetLocation: "content/curriculum/labs/methodology_customization/lab1_custom_phase",
+    status: "available",
+    graderType: "uvm",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Complete the Singleton",
+        instructions: "Open `testbench.sv` and complete the `load_fw_phase` singleton `get()` method so UVM can find a single canonical phase instance.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Insert Into the Schedule",
+        instructions: "In `base_test::build_phase`, use `uvm_domain::get_common_domain().add()` to insert `load_fw_phase` after `reset_phase`.",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Implement the Phase Task",
+        instructions: "In `soc_env`, implement `load_fw_phase` as a task that raises an objection, prints a firmware-load banner, waits 20ns, and drops the objection. Run the simulation to verify the phase order.",
+        starterCode: ""
+      }
+    ]
   }
 };
 

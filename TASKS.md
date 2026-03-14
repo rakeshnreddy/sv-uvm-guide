@@ -92,7 +92,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 10 | `W5-AUVM3-DEPRECATE` | P1 | `complete` | `W5-AUVM4-SPLIT` | Finish callback extraction/review and fully retire advanced redundancy from `A-UVM-3`. |
 | 11 | `W6-EDBG1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Turn the debug module into a real telemetry/debug workflow with lab and visualizer. |
 | 12 | `W6-EINT1-MOD` | P1 | `todo` | `W7-ISV-API`, `W8-LABS-PLATFORM` | Keep formal-integration focused on formal and remove misplaced API/methodology content. |
-| 13 | `W6-ECUST1-MOD` | P1 | `todo` | `W8-LABS-PLATFORM` | Modernize methodology customization with custom-phase teaching and a schedule-injection lab. |
+| 13 | `W6-ECUST1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Modernize methodology customization with custom-phase teaching and a schedule-injection lab. |
 | 14 | `W6-ESOC1-MOD` | P1 | `todo` | `W8-LABS-PLATFORM` | Add SoC bring-up practice, VIP topology visualization, and SoC-specific reuse/debug workflows. |
 | 15 | `W7-ISV-CHECKERS` | P1 | `todo` | none | Create a dedicated checkers lesson and integrate it with the SVA path. |
 | 16 | `W7-ISV-DIRECTIVES` | P1 | `todo` | none | Create the directives/generate track with elaboration-vs-runtime teaching. |
@@ -375,7 +375,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W6-ECUST1-MOD`
 - Priority: P1
-- Status: `todo`
+- Status: `complete`
 - Depends On: `W8-LABS-PLATFORM`
 - Related IDs: `CURR-W6-ECUST1`
 - Primary surfaces: `content/curriculum/T4_Expert/E-CUST-1_UVM_Methodology_Customization/index.mdx`, new `MethodologyPhaseVisualizer.tsx`, methodology lab assets
@@ -385,9 +385,9 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   2. Add a lab focused on injecting a custom UVM phase and verifying schedule behavior.
   3. Expand governance content: project-wide base classes, method hooks, phase ownership, migration strategy.
 - Deliverable checklist:
-  - [ ] Methodology phase visualizer exists.
-  - [ ] Custom-phase lab exists.
-  - [ ] The module includes real failure scenarios for methodology drift and phase misuse.
+  - [x] Methodology phase visualizer exists.
+  - [x] Custom-phase lab exists.
+  - [x] The module includes real failure scenarios for methodology drift and phase misuse.
 - Validation:
   - Unit-test the visualizer.
   - Add route smoke coverage for the lesson/lab.

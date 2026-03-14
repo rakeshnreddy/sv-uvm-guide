@@ -8,17 +8,26 @@ flashcards: "E-CUST-1_Methodology_Customization"
 - **What it is:** A blueprint for tailoring UVM to your organisation—custom base classes, phases, and guardrails that scale across projects.
 - **Why it matters:** Enterprise verification breaks down when every team reinvents the environment; a curated methodology keeps stimulus consistent and debuggable.
 - **The Analogy:** Imagine a bespoke software framework: you package utilities, logging, and policy into a base layer so feature teams focus on design-specific checks.
+- **The Standard:** IEEE 1800.2-2020 Clause 9 (Phasing) defines user-defined phases and the scheduling API. Clause 6 (Component hierarchy) underpins base-class strategy.
 
 > **Signal:** If every new block duplicates config plumbing or logging conventions, invest in a methodology layer.
 
 ## Build Your Mental Model
-### Custom base classes
+
+### Custom Base Classes
+
 Wrap standard UVM components with project behaviour—configuration handles, logging, metrics—so every derived component inherits the same posture.
 
 ```systemverilog
 class proj_config extends uvm_object;
   `uvm_object_utils(proj_config)
   bit enable_scoreboard_hooks;
+  bit enable_coverage_sampling;
+  string firmware_image;
+
+  function new(string name = "proj_config");
+    super.new(name);
+  endfunction
 endclass
 
 class proj_component extends uvm_component;
@@ -36,8 +45,8 @@ class proj_component extends uvm_component;
       `uvm_fatal("NO_CFG", "Project config missing—ensure base test seeds it")
   endfunction
 
+  // Hook subclasses override for project-specific post-configure
   virtual function void post_configure();
-    // Hook subclasses override
   endfunction
 endclass
 
@@ -46,18 +55,19 @@ class proj_driver extends proj_component;
 
   virtual function void post_configure();
     if (cfg.enable_scoreboard_hooks) begin
-      // Register additional analysis exports, instrumentation, etc.
+      `uvm_info("HOOK", "Registering scoreboard analysis exports", UVM_MEDIUM)
     end
   endfunction
 endclass
 ```
 
-**What this buys you**
-- Lines 1-4 centralize project toggles inside a single config object.
-- Lines 6-24 give every component a consistent place to fetch config and run shared setup.
-- Lines 26-33 provide light extension hooks so downstream components override behaviour without rewriting plumbing.
+**What this buys you:**
+- Lines 1–7 centralize project toggles inside a single config object.
+- Lines 9–21 give every component a consistent place to fetch config and run shared setup.
+- Lines 23–30 provide light extension hooks so downstream components override behaviour without rewriting plumbing.
 
-### Custom phases & schedules
+### Custom Phases & Schedules
+
 Insert bespoke phases to coordinate activities (firmware load, security attestation, traffic ramp-up) without shoehorning code into `run_phase`.
 
 ```systemverilog
@@ -65,12 +75,17 @@ class load_fw_phase extends uvm_task_phase;
   `uvm_object_utils(load_fw_phase)
   static load_fw_phase m_inst;
 
+  function new(string name = "load_fw");
+    super.new(name);
+  endfunction
+
   static function load_fw_phase get();
     if (m_inst == null) m_inst = new("load_fw");
     return m_inst;
   endfunction
 endclass
 
+// In base_test::build_phase:
 function void base_test::build_phase(uvm_phase phase);
   super.build_phase(phase);
   uvm_phase reset = uvm_reset_phase::get();
@@ -78,18 +93,30 @@ function void base_test::build_phase(uvm_phase phase);
     .add(load_fw_phase::get(), .after_phase(reset));
 endfunction
 
+// In soc_env:
 task soc_env::load_fw_phase(uvm_phase phase);
+  phase.raise_objection(this);
   // Backdoor load firmware images before main stimulus
+  $readmemh("firmware.hex", dut.mem);
+  `uvm_info("FW", "Firmware loaded", UVM_LOW)
+  phase.drop_objection(this);
 endtask
 ```
 
-**Scheduling insights**
-- Lines 1-9 define a singleton phase so everyone references the same instance.
-- Lines 11-16 insert the new phase right after reset, guaranteeing consistent ordering across environments.
-- Lines 18-20 show how your environment implements the new phase to inject custom behaviour.
+**Scheduling insights:**
+- Lines 1–11 define a singleton phase so everyone references the same instance.
+- Lines 14–18 insert the new phase right after reset, guaranteeing consistent ordering across environments.
+- Lines 21–27 show how your environment implements the new phase task with proper objection discipline.
+
+### Explore the Phase Schedule
+
+Use this interactive to see how custom phases fit into the UVM schedule:
+
+<MethodologyPhaseVisualizer />
 
 ## Make It Work
-1. **Codify policy:** Publish a methodology package (base classes, utilities, adapters) with versioning and CI tests.
+
+1. **Codify policy:** Publish a methodology package (base classes, utilities, adapters) with semantic versioning and CI tests.
 2. **Seed configuration early:** Base tests push `proj_config` and any shared services (coverage bus, scoreboards) via `uvm_config_db`.
 3. **Offer extension hooks:** Provide virtual methods or callbacks instead of hard-coded behaviour so block teams extend safely.
 4. **Enforce adoption:** Create linting/check scripts that forbid raw `uvm_component` inheritance or missing custom phases.
@@ -99,19 +126,93 @@ endtask
 - [ ] You have a plan to distribute configs and shared services automatically.
 - [ ] You can describe how teams add behaviour via hooks/callbacks instead of editing core code.
 
-## Push Further
-- **CI governance:** Automate regression of methodology examples to catch breaking changes before they hit projects.
-- **Documentation portal:** Host API docs and playbooks so new hires ramp quickly.
-- **Metrics integration:** Instrument base classes with telemetry (coverage snapshots, performance counters).
-- **Multi-site scaling:** Pair methodology releases with change logs, migration guides, and support rotations.
+## Failure Modes & Methodology Drift
+
+### Phase Misordering
+
+Inserting a custom task phase after a cleanup phase (e.g., after `extract_phase`) is a common mistake. Cleanup phases are **function-based**—they execute at zero simulation time after `run_phase` completes. A task phase inserted there gets no simulation time and its objections are never reached.
+
+```systemverilog
+// ❌ WRONG: Task phase after cleanup — will never execute properly
+uvm_domain::get_common_domain()
+  .add(load_fw_phase::get(), .after_phase(uvm_extract_phase::get()));
+
+// ✅ RIGHT: Task phase after another task-based phase
+uvm_domain::get_common_domain()
+  .add(load_fw_phase::get(), .after_phase(uvm_reset_phase::get()));
+```
+
+### Missing Base-Class Adoption
+
+When a team creates a component inheriting directly from `uvm_driver` instead of `proj_driver`:
+- They lose project-wide config access, logging, and metrics.
+- Their driver silently skips `post_configure` hooks.
+- Debug telemetry shows gaps—some components report, others don't.
+
+**Mitigation:** Add a lint rule or CI check that greps for raw `uvm_component`, `uvm_driver`, `uvm_monitor` inheritance and flags violations.
+
+### Methodology Version Drift
+
+When multiple projects pin different methodology package versions:
+- Shared VIPs break silently if the base-class API changes.
+- Factory overrides registered by the methodology may not align with block-team expectations.
+
+**Mitigation:**
+- Use semantic versioning: major bumps for breaking API changes.
+- Publish a migration guide with each major release.
+- Automate regression of methodology examples to catch breaking changes.
+
+## Push Further: Governance at Scale
+
+### CI Enforcement Pipeline
+
+```
+┌──────────────┐    ┌──────────────────┐    ┌────────────────┐
+│ Methodology  │───▶│ Regression Suite  │───▶│ Adoption Lint  │
+│ Package PR   │    │ (example envs)   │    │ (grep checks)  │
+└──────────────┘    └──────────────────┘    └────────────────┘
+```
+
+- **Regression suite:** Run a curated set of block-level and SoC-level environments against every methodology change to catch regressions.
+- **Adoption lint:** After release, sweep block repositories for raw UVM inheritance, missing custom phases, and outdated methodology package versions.
+
+### Multi-Site Scaling
+
+| Concern | Strategy |
+|---|---|
+| **Distribution** | Publish methodology as a versioned package with a changelog |
+| **Training** | Host API docs and playbooks so new hires ramp quickly |
+| **Support** | Rotate methodology office hours across sites |
+| **Metrics** | Track adoption rate, override frequency, and phase-usage statistics |
+| **Migration** | Ship migration scripts that update base-class imports and phase registrations |
+
+### Metrics Integration
+
+Instrument base classes with telemetry counters:
+- Coverage snapshot frequency
+- Factory override count per test
+- Phase duration histograms
+- Objection-raise/drop audit trail
+
+These feed SoC-level dashboards and regression health indicators.
 
 ## Practice & Reinforce
-- Extend the base class hook to register security monitors only when a flag is set.
-- Prototype a `load_fw_phase` on your SoC bench and measure boot-time savings.
-- Add a lint rule ensuring all components inherit from `proj_component`.
-- Review [/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index](../../T2_Intermediate/I-UVM-1B_The_UVM_Factory/index) to align factory policy with methodology layers.
+
+<LabLink
+  id="methodology-custom-phase"
+  title="Lab: Injecting a Custom UVM Phase"
+  description="Insert a firmware-loading phase into the UVM schedule and verify it executes between reset and configure."
+/>
+
+- **Extend the base class:** Add a hook to register security monitors only when `cfg.enable_security` is set.
+- **Audit exercise:** Grep a real project for raw `uvm_component` inheritance and propose a migration plan.
+- **Phase experiment:** Try inserting a phase after `extract_phase` and observe the failure—then fix it.
 
 ## References & Next Topics
-- Accellera *UVM User Guide*, Section 7 (Phases) and Annex for methodology tips.
-- Internal methodology portal or coding standards.
-- Next: tackle Tier-4 debug and performance modules to round out expert-level infrastructure.
+
+- **IEEE 1800.2-2020 Clause 9** — Phase scheduling, user-defined phases, and domain management.
+- **IEEE 1800.2-2020 Clause 6** — Component hierarchy and base-class extension patterns.
+- **Accellera UVM User Guide**, Section 7 — Phase flow and methodology tips.
+- **Prerequisite:** [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing) — standard phase flow and objection mechanics.
+- **Related:** [A-UVM-5: UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks) — another extension mechanism complementary to base-class hooks.
+- **Next:** [E-DBG-1: Advanced Debug](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies) — debug telemetry that methodology layers should export to.

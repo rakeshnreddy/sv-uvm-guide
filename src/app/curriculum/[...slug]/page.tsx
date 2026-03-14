@@ -222,6 +222,7 @@ const components = {
   UVMTreeExplorer: dynamic(() => import('@/components/curriculum/interactives/UVMTreeExplorer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   VirtualSequencerExplorer,
   TelemetryEventBusVisualizer,
+  MethodologyPhaseVisualizer: dynamic(() => import('@/components/visuals/MethodologyPhaseVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   LabLink,
 };
 
