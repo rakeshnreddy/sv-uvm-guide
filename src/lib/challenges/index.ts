@@ -21,7 +21,12 @@ export const challenges: Challenge[] = [
     description: "Return the factorial of n.",
     difficulty: "medium",
     starterCode: `function solution(n: number) {
-  // TODO: return n!
+  if (n < 0) return undefined;
+  let result = 1;
+  for (let i = 2; i <= n; i++) {
+    result *= i;
+  }
+  return result;
 }`,
     solution: (n: number): number => {
       if (!Number.isInteger(n) || n < 0) {
@@ -34,8 +39,11 @@ export const challenges: Challenge[] = [
       return result;
     },
     testCases: [
+      { input: [0], expected: 1 },
+      { input: [1], expected: 1 },
       { input: [3], expected: 6 },
-      { input: [5], expected: 120 }
+      { input: [5], expected: 120 },
+      { input: [10], expected: 3628800 }
     ]
   },
   {
