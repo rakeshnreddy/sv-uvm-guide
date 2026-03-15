@@ -15,7 +15,8 @@ interface CodeBlockProps {
   customStyle?: React.CSSProperties;
 }
 
-export const CodeBlock: React.FC<CodeBlockProps> = ({
+// ⚡ Bolt: Added React.memo to prevent expensive SyntaxHighlighter re-renders when parent components update
+export const CodeBlock: React.FC<CodeBlockProps> = React.memo(({
   code = '',
   language = "systemverilog",
   fileName,
@@ -105,5 +106,7 @@ export const CodeBlock: React.FC<CodeBlockProps> = ({
       </div>
     </div>
   );
-};
+});
+
+CodeBlock.displayName = "CodeBlock";
 
