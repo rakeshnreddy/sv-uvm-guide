@@ -104,8 +104,6 @@ const RewardRecognitionHub: React.FC<RewardRecognitionHubProps> = ({ userId }) =
         reward.id === rewardId ? { ...reward, isRedeemed: true } : reward
       )
     );
-    // In a real app, this would also trigger an API call.
-    console.log(`User ${userId} redeemed reward ${rewardId}`);
   };
 
   const myBadges = rewards.filter(r => ['Badge', 'Certificate', 'SkillEndorsement', 'ExpertRecognition'].includes(r.type));
