@@ -48,9 +48,37 @@ describe('curriculum slug utilities', () => {
     warn.mockRestore();
   });
 
-  it('provides fully-qualified slugs for entry points', () => {
-    const entryPoint = getEntryPointSlug(['T4_Expert', 'E-CUST-1_UVM_Methodology_Customization']);
-    expect(entryPoint).toBeTruthy();
-    expect(entryPoint?.length).toBe(3);
+  describe('getEntryPointSlug', () => {
+    it('returns null for empty slugs', () => {
+      expect(getEntryPointSlug([])).toBeNull();
+    });
+
+    it('returns a 3-segment slug when only a tier is provided', () => {
+      const entryPoint = getEntryPointSlug(['T1_Foundational']);
+      expect(entryPoint).toEqual(['T1_Foundational', 'F1A_The_Cost_of_Bugs', 'index']);
+    });
+
+    it('returns a 3-segment slug when tier and section are provided', () => {
+      const entryPoint = getEntryPointSlug(['T1_Foundational', 'F2C_Procedural_Code_and_Flow_Control']);
+      expect(entryPoint).toEqual(['T1_Foundational', 'F2C_Procedural_Code_and_Flow_Control', 'index']);
+    });
+
+    it('returns the same 3-segment slug when a full slug is provided', () => {
+      const entryPoint = getEntryPointSlug(['T1_Foundational', 'F2C_Procedural_Code_and_Flow_Control', 'flow-control']);
+      expect(entryPoint).toEqual(['T1_Foundational', 'F2C_Procedural_Code_and_Flow_Control', 'flow-control']);
+    });
+
+    it('slices slugs longer than 3 segments', () => {
+      const entryPoint = getEntryPointSlug(['T1_Foundational', 'F2C_Procedural_Code_and_Flow_Control', 'flow-control', 'extra']);
+      expect(entryPoint).toEqual(['T1_Foundational', 'F2C_Procedural_Code_and_Flow_Control', 'flow-control']);
+    });
+
+    it('returns null for invalid tier slugs', () => {
+      expect(getEntryPointSlug(['Invalid_Tier'])).toBeNull();
+    });
+
+    it('returns null for invalid section slugs', () => {
+      expect(getEntryPointSlug(['T1_Foundational', 'Invalid_Section'])).toBeNull();
+    });
   });
 });
