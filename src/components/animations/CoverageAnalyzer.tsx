@@ -229,7 +229,7 @@ const CoverageAnalyzer = () => {
       </CardHeader>
       <CardContent>
         <Select onValueChange={handleExampleChange} defaultValue={exampleIndex.toString()}>
-          <SelectTrigger className="w-[280px] mb-4">
+          <SelectTrigger className="w-[280px] mb-4" aria-label="Select an example">
             <SelectValue placeholder="Select an example" />
           </SelectTrigger>
           <SelectContent>
@@ -356,7 +356,14 @@ const CoverageAnalyzer = () => {
                     {percent}% / {cp.goal}%
                   </span>
                 </div>
-                <div className="w-full bg-gray-200 rounded h-2">
+                <div
+                  className="w-full bg-gray-200 rounded h-2"
+                  role="progressbar"
+                  aria-valuenow={Math.min(percent, 100)}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label={`${cp.name} progress`}
+                >
                   <motion.div
                     initial={{ width: 0 }}
                     animate={{ width: `${Math.min(percent, 100)}%` }}
@@ -382,7 +389,14 @@ const CoverageAnalyzer = () => {
                   <span>Overall Coverage</span>
                   <span>{percent}%</span>
                 </div>
-                <div className="w-full bg-gray-200 rounded h-2">
+                <div
+                  className="w-full bg-gray-200 rounded h-2"
+                  role="progressbar"
+                  aria-valuenow={percent}
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-label="Overall Coverage progress"
+                >
                   <motion.div
                     initial={{ width: 0 }}
                     animate={{ width: `${percent}%` }}
@@ -430,13 +444,13 @@ const CoverageAnalyzer = () => {
 
         <div className="flex flex-wrap gap-2 justify-between mt-4">
           <div className="flex gap-2">
-            <Button onClick={handlePrev} disabled={currentStepIndex === 0}>Previous</Button>
-            <Button onClick={handleNext} disabled={currentStepIndex === currentExample.steps.length - 1}>Next</Button>
+            <Button onClick={handlePrev} disabled={currentStepIndex === 0} aria-label="Previous step">Previous</Button>
+            <Button onClick={handleNext} disabled={currentStepIndex === currentExample.steps.length - 1} aria-label="Next step">Next</Button>
           </div>
           <div className="flex gap-2">
-            <Button onClick={handlePlay} disabled={isPlaying}>Play</Button>
-            <Button onClick={handlePause} disabled={!isPlaying}>Pause</Button>
-            <Button onClick={handleReset}>Reset</Button>
+            <Button onClick={handlePlay} disabled={isPlaying} aria-label="Play coverage animation">Play</Button>
+            <Button onClick={handlePause} disabled={!isPlaying} aria-label="Pause coverage animation">Pause</Button>
+            <Button onClick={handleReset} aria-label="Reset coverage animation">Reset</Button>
           </div>
         </div>
       </CardContent>
