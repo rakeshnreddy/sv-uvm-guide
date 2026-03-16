@@ -241,6 +241,7 @@ const CoverageAnalyzer = () => {
 
         <div className="grid md:grid-cols-2 gap-8">
           <div>
+            {/* ⚡ Bolt: CodeBlock itself is memoized. Pass standard props to prevent expensive syntax highlighter re-renders during playback */}
             <CodeBlock code={currentExample.code} language="systemverilog" />
           </div>
           <div className="flex flex-col justify-center items-center">
