@@ -310,6 +310,17 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "I-SV-4C: SystemVerilog Checkers & Bind",
+        "slug": "I-SV-4C_Checkers",
+        "topics": [
+          {
+            "title": "I-SV-4C: SystemVerilog Checkers & Bind",
+            "slug": "index",
+            "description": "Use IEEE Clause 17 checkers and the bind directive to attach assertions to your RTL without touching the source code."
+          }
+        ]
+      },
+      {
         "title": "I-SV-5: Synchronization and IPC",
         "slug": "I-SV-5_Synchronization_and_IPC",
         "topics": [
@@ -602,16 +613,6 @@ export const curriculumData: Module[] = [
             "title": "E-SOC-1: SoC-Level Verification Strategies",
             "slug": "index",
             "description": "Scale block-level infrastructure to SoC: plan reuse, configure virtual platforms, and coordinate cross-team stimulus."
-          },
-          {
-            "title": "Coverage Closure and Metrics | The Professional Verification Craft",
-            "slug": "coverage-closure",
-            "description": "Using coverage results to measure verification completeness."
-          },
-          {
-            "title": "Regression and Triage Strategies | The Professional Verification Craft",
-            "slug": "regression-triage",
-            "description": "Building stable regressions and quickly diagnosing failures."
           }
         ]
       }

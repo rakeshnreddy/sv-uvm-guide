@@ -31,9 +31,10 @@ This guide consolidates the strategic, instructional, and visual references used
 |  | F3 Procedural Constructs | Flow control, tasks/functions, process control. |
 |  | F4 RTL & Testbench Constructs | Interfaces, packages, clocking/program blocks. |
 | **Tier 2 – Intermediate** | I-SV-1 OOP for Verification | Classes, inheritance, polymorphism. |
-|  | I-SV-2 Constrained Randomization | `rand`/`randc`, constraints, solver hooks. |
-|  | I-SV-3 Functional Coverage | Covergroups, coverpoints, crosses, metrics. |
-|  | I-SV-4 Assertions (SVA) | Temporal properties, sequences, protocol checking. |
+|  | I-SV-4A SVA Fundamentals | Assertions, assumptions, immediate vs. concurrent, properties. |
+|  | I-SV-4B Advanced Temporal Logic | Sequences, local variables, implication, multiclock assertions. |
+|  | I-SV-4C Checkers & Bind | IEEE Clause 17 checkers and attaching SVA via the bind directive. |
+|  | I-SV-5 Synchronization & IPC | Semaphores, mailboxes, events, and deadlock debugging. |
 |  | I-UVM-1 Core Concepts | UVM component taxonomy, factory overview. |
 |  | I-UVM-2 Base Class Library | Agents, drivers, sequencers, monitors. |
 |  | I-UVM-3 Component Communication | TLM ports, analysis FIFOs, objections. |

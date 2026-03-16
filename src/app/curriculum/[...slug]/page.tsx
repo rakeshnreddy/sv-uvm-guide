@@ -224,6 +224,7 @@ const components = {
   TelemetryEventBusVisualizer,
   MethodologyPhaseVisualizer: dynamic(() => import('@/components/visuals/MethodologyPhaseVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   VIPReuseVisualizer: dynamic(() => import('@/components/visuals/VIPReuseVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  BindDirectiveVisualizer: dynamic(() => import('@/components/visuals/BindDirectiveVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   LabLink,
 };
 

@@ -94,7 +94,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 12 | `W6-EINT1-MOD` | P1 | `todo` | `W7-ISV-API`, `W8-LABS-PLATFORM` | Keep formal-integration focused on formal and remove misplaced API/methodology content. |
 | 13 | `W6-ECUST1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Modernize methodology customization with custom-phase teaching and a schedule-injection lab. |
 | 14 | `W6-ESOC1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Add SoC bring-up practice, VIP topology visualization, and SoC-specific reuse/debug workflows. |
-| 15 | `W7-ISV-CHECKERS` | P1 | `todo` | none | Create a dedicated checkers lesson and integrate it with the SVA path. |
+| 15 | `W7-ISV-CHECKERS` | P1 | `complete` | none | Create a dedicated checkers lesson and integrate it with the SVA path. |
 | 16 | `W7-ISV-DIRECTIVES` | P1 | `todo` | none | Create the directives/generate track with elaboration-vs-runtime teaching. |
 | 17 | `W7-ISV-API` | P1 | `todo` | none | Create a dedicated DPI/VPI/API track and move DPI ownership out of formal integration. |
 | 18 | `W7-IUVM-POLICY` | P1 | `todo` | none | Add the missing UVM policy-classes lesson. |
@@ -415,7 +415,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W7-ISV-CHECKERS`
 - Priority: P1
-- Status: `todo`
+- Status: `complete`
 - Depends On: none
 - Related IDs: `CURR-W7-ISV-CHECKERS`, `AUD-007`
 - Primary surfaces: new `content/curriculum/T2_Intermediate/I-SV-4C_Checkers/*`, supporting visual or exercise assets
@@ -425,10 +425,10 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   2. Explain checker composition, bind usage, SVA interplay, and when a checker is the right abstraction.
   3. Add an interactive or lab showing how checkers attach to DUTs without source edits.
 - Deliverable checklist:
-  - [ ] `I-SV-4C_Checkers` exists.
-  - [ ] Checkers are taught as a first-class language construct.
-  - [ ] Integration with SVA/bind is explicit.
-  - [ ] The lesson includes an interactive or lab.
+  - [x] `I-SV-4C_Checkers` exists.
+  - [x] Checkers are taught as a first-class language construct.
+  - [x] Integration with SVA/bind is explicit.
+  - [x] The lesson includes an interactive or lab.
 - Validation:
   - Add route smoke coverage and tests for any new interactive.
 

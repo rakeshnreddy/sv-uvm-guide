@@ -1,0 +1,117 @@
+---
+title: "I-SV-4C: SystemVerilog Checkers & Bind"
+description: "Use IEEE Clause 17 checkers and the bind directive to attach assertions to your RTL without touching the source code."
+flashcards: "I-SV-4C_Checkers_and_Bind"
+---
+
+## Quick Take
+- **What it is:** A `checker` (Clause 17) is a verification block designed specifically to hold assertions, covergroups, and helper logic. The `bind` directive is a compile-time mechanism to inject this block into existing RTL.
+- **Why it matters:** Designers hate when verification engineers clutter their pristine RTL with `assert property` statements. `bind` lets you attach verification IP cleanly and non-intrusively.
+- **The Analogy:** Think of `bind` like a medical heart monitor patch. You stick it onto the patient's skin to observe their vitals without performing invasive surgery on their heart.
+
+> **Signal:** If your team uses standard `module` constructs to hold assertions—and struggles with instantiation order or port connections—it's time to learn checkers and bind.
+
+## Build Your Mental Model
+
+### The Checker Construct
+
+A `checker` is similar to a `module` or `interface`, but rigorously scoped for verification.
+
+```systemverilog
+checker ahb_protocol_chk (
+  input logic hclk,
+  input logic hresetn,
+  input logic hsel,
+  input logic [31:0] haddr
+);
+
+  // 1. You can declare helper variables
+  logic in_transaction;
+  assign in_transaction = hsel && hresetn;
+
+  // 2. You can define sequences and properties
+  sequence valid_addr;
+    !$isunknown(haddr);
+  endsequence
+
+  // 3. You can assert them
+  chk_addr_not_x: assert property (
+    @(posedge hclk) disable iff (!hresetn)
+    in_transaction |-> valid_addr
+  ) else $error("AHB Address went X during selection");
+
+  // 4. You CANNOT write general procedural code!
+  // ILLEGAL in a checker:
+  // always_ff @(posedge hclk) begin ... end
+  // assign out_port = data;
+
+endchecker
+```
+
+**Why prefer `checker` over `module`?**
+- **Clarity of intent:** The compiler knows this block only contains verification code. If coverage is turned off, the tool knows it can safely drop the entire checker.
+- **Concurrency:** Checkers can be instantiated *inside* `always` blocks or loops, taking on the clocking context of where they are placed. Modules cannot.
+
+### The Bind Directive
+
+Writing a checker is only half the battle. How do you wire it up to the Design Under Test (DUT)?
+
+If you instantiate it normally, you have to edit the DUT's source code. In a large project, the RTL source is often locked, or owned by a different team, or third-party IP.
+
+Enter the `bind` directive.
+
+<BindDirectiveVisualizer />
+
+### Two Ways to Bind
+
+**1. Bind to a Module Definition (Target all instances)**
+
+If you want the checker attached to *every* instance of an `ahb_slave` in the design:
+
+```systemverilog
+// Syntax: bind <target_module_name> <checker_name> <instance_name> (<ports>);
+bind ahb_slave ahb_protocol_chk chk_inst (
+  .hclk    (clk_i),     // Local signal inside ahb_slave
+  .hresetn (rst_ni),
+  .hsel    (sel_i),
+  .haddr   (addr_i)
+);
+```
+> **Note:** The signals in the port map (`clk_i`, `rst_ni`) are evaluated in the scope of the **target module** (`ahb_slave`), *not* the scope where the `bind` statement is written.
+
+**2. Bind to a Specific Instance**
+
+If you only want to monitor one specific peripheral:
+
+```systemverilog
+// Syntax: bind <target_instance_path> <checker_name> <instance_name> (<ports>);
+bind tb_top.dut.spi_ctrl_0 ahb_protocol_chk chk_inst (
+  .hclk    (clk_i),
+  .hresetn (rst_ni),
+  .hsel    (sel_i),
+  .haddr   (addr_i)
+);
+```
+
+## Make It Work
+
+1. **Keep Checkers Pure:** Do not try to drive stimulus from a checker. They are strictly for observation (assertions and coverage).
+2. **Centralize Bind Files:** Create a dedicated `sva_bindings.sv` file that holds all your `bind` statements. Compile this file *after* the RTL but *before* the testbench.
+3. **Use `.*` carefully:** If the port names of your checker perfectly match the internal signals of the target RTL, you can use `.*` syntax: `bind ahb_slave ahb_protocol_chk chk_inst (.*);`. However, this makes the binding fragile if the RTL engineer renames a signal.
+
+**Checklist before moving on:**
+- [ ] You know why `checker` is preferred over `module` for holding SVA.
+- [ ] You understand that `bind` acts as if the instantiation was typed *inside* the target scope.
+- [ ] You know the difference between binding a module definition vs an instance path.
+
+## Push Further: Bind Under the Hood
+
+When the simulation elaborates the design, the `bind` directive triggers an AST (Abstract Syntax Tree) injection. 
+
+Because the checker is instantiated *inside* the target module's hierarchy, it has read-access to every internal signal, parameter, and local variable of that module. You do not need to bring internal signals out to the top-level ports of the DUT just to test them.
+
+## References & Next Topics
+- **IEEE 1800-2017 Clause 17** — Checkers.
+- **IEEE 1800-2017 Clause 23.11** — The `bind` directive.
+- **Previous:** [I-SV-4B: Advanced Temporal Logic](/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic)
+- **Next:** Shift tracks to explore coverage in [I-SV-3A: Functional Coverage Fundamentals](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals) or UVM in [I-UVM-1A: Components](/curriculum/T2_Intermediate/I-UVM-1A_Components).
