@@ -223,6 +223,7 @@ const components = {
   VirtualSequencerExplorer,
   TelemetryEventBusVisualizer,
   MethodologyPhaseVisualizer: dynamic(() => import('@/components/visuals/MethodologyPhaseVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  VIPReuseVisualizer: dynamic(() => import('@/components/visuals/VIPReuseVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   LabLink,
 };
 

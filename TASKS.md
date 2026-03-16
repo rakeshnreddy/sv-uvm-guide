@@ -93,7 +93,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 11 | `W6-EDBG1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Turn the debug module into a real telemetry/debug workflow with lab and visualizer. |
 | 12 | `W6-EINT1-MOD` | P1 | `todo` | `W7-ISV-API`, `W8-LABS-PLATFORM` | Keep formal-integration focused on formal and remove misplaced API/methodology content. |
 | 13 | `W6-ECUST1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Modernize methodology customization with custom-phase teaching and a schedule-injection lab. |
-| 14 | `W6-ESOC1-MOD` | P1 | `todo` | `W8-LABS-PLATFORM` | Add SoC bring-up practice, VIP topology visualization, and SoC-specific reuse/debug workflows. |
+| 14 | `W6-ESOC1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Add SoC bring-up practice, VIP topology visualization, and SoC-specific reuse/debug workflows. |
 | 15 | `W7-ISV-CHECKERS` | P1 | `todo` | none | Create a dedicated checkers lesson and integrate it with the SVA path. |
 | 16 | `W7-ISV-DIRECTIVES` | P1 | `todo` | none | Create the directives/generate track with elaboration-vs-runtime teaching. |
 | 17 | `W7-ISV-API` | P1 | `todo` | none | Create a dedicated DPI/VPI/API track and move DPI ownership out of formal integration. |
@@ -405,9 +405,9 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   3. Strengthen SoC-specific topics: interconnect observability, firmware/UVM handshake, regression telemetry, and bring-up sequencing.
   4. Prepare the module to absorb or supersede generic pages like `coverage-closure.mdx` and `regression-triage.mdx` during `W8-EXPERT-CLEANUP`.
 - Deliverable checklist:
-  - [ ] VIP reuse visualizer exists.
-  - [ ] SoC bring-up lab exists.
-  - [ ] SoC-specific reuse/debug/telemetry workflows are explicit.
+  - [x] SoC VIP reuse visualizer exists.
+  - [x] VIP block-to-SoC mode conversion lab exists.
+  - [x] SoC-specific governance/workflows explicitly defined.
   - [ ] The module is ready to own SoC-specific supporting material during expert cleanup.
 - Validation:
   - Unit-test the visualizer.

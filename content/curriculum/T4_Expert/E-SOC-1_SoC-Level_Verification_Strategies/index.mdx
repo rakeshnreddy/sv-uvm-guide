@@ -5,69 +5,110 @@ flashcards: "E-SOC-1_SoC_Verification"
 ---
 
 ## Quick Take
-- **What it is:** Patterns for reusing block-level VIP, integrating firmware, and orchestrating large SoC benches.
-- **Why it matters:** SoC programs stumble when VIP isn’t reusable or cross-team configurations drift.
-- **The Analogy:** Treat SoC verification like a city grid—shared infrastructure (power/reset, interconnect checkers) keeps traffic flowing.
+- **What it is:** The architectural patterns for reusing block-level Verification IP (VIP), integrating processor firmware, and orchestrating massive monolithic SoC testbenches.
+- **Why it matters:** SoC programs stumble when VIP isn’t built for reuse, forcing the SoC team to rewrite components or deal with driving conflicts against embedded cores.
+- **The Analogy:** Treat SoC verification like a city grid—shared infrastructure (power/reset networks, interconnect checkers, register hubs) keeps traffic flowing securely between isolated neighborhoods (blocks). 
 
-> **Signal:** If every IP team delivers a bespoke env that the SoC bench rewrites, you need a reuse strategy.
+> **Signal:** If every IP team delivers a bespoke environment that the SoC bench throws away and rewrites, your reuse strategy has failed.
 
 ## Build Your Mental Model
-### Reusing block environments
-- Wrap block agents into “personalities”: active/passive, scoreboarding on/off, metrics toggles.
-- Provide configuration packages (plusargs, JSON, YAML) so SoC tests flip personalities without recompiling.
+
+### Active vs. Passive VIP Reuse
+
+At the block level, your UVM Agent is **Active**: its Sequencer and Driver are generating transactions and wiggling DUT pins. 
+
+At the SoC level, an embedded processor (running C firmware) generally takes over the driving responsibilities. If your VIP stays active, the UVM Driver and the embedded core will both try to drive the bus, causing fatal `X` state collisions.
+
+Instead of rewriting the VIP, you reuse it in **Passive** mode.
+
+<VIPReuseVisualizer />
+
+**Implementation mechanism:**
+- Wrap block agents to respond to `uvm_active_passive_enum`.
+- In passive mode, the agent's `build_phase` simply skips creating the sequencer and driver.
+- The `monitor` remains alive—it snoops the bus, parses the firmware's traffic into UVM Sequence Items, and feeds them to your existing coverage collectors and scoreboards.
 
 ```systemverilog
 class spi_soc_test extends uvm_test;
   `uvm_component_utils(spi_soc_test)
-  soc_env m_env;
+  soc_env env;
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    spi_agent_cfg spi_cfg = spi_agent_cfg::type_id::create("spi_cfg");
-    spi_cfg.mode = SPI_PASSIVE;
-    uvm_config_db#(spi_agent_cfg)::set(this, "*.spi_agent", "cfg", spi_cfg);
+    
+    // Switch the block-level VIP to passive mode
+    // Now firmware drives, but our UVM monitors still check protocols
+    uvm_config_db#(uvm_active_passive_enum)::set(this, "*.spi_agent", "is_active", UVM_PASSIVE);
 
-    m_env = soc_env::type_id::create("m_env", this);
+    env = soc_env::type_id::create("env", this);
   endfunction
 endclass
 ```
 
-**Reuse takeaway**
-- Lines 1-10 show a SoC test flipping an SPI agent to passive mode via config, reusing the block VIP without source edits.
+### Firmware & UVM Handshakes
 
-### Firmware/virtual platform coordination
-- Mirror firmware versions in `uvm_config_db`; log commit hashes.
-- Use virtual platforms for early software bring-up; swap to RTL once interfaces stabilise.
-- Provide hooks for firmware to notify UVM (e.g., semaphores, shared memory mailboxes).
+When C firmware runs on the SoC's embedded core, it needs to coordinate with the UVM environment. For example, UVM shouldn't start checking data until firmware has finished booting and configuring the peripherals.
 
-### Interconnect observability
-- Deploy protocol monitors at every ingress/egress; aggregate latency/throughput metrics.
-- Build “traffic dashboards” that cross-link to traces and coverage reports.
-- Correlate scoreboard mismatches with firmware logs using timestamps.
+1. **Shared Memory Mailboxes:** Firmware writes specific "magic numbers" to an unused memory region. A UVM monitor snoops that address and broadcasts an event or transaction when it sees the magic number.
+2. **Interrupts:** Firmware triggers a software interrupt; UVM catches the IRQ pin wiggling.
+3. **Register Mirrors:** Firmware writes to a scratchpad register; UVM RAL auto-predicts the write and tests can `wait(rm.scratchpad.get() == 0xDEADBEEF)`.
 
-## Make It Work
-1. **IP onboarding checklist:** Define deliverables (VIP package, docs, config samples) before IPs hand over their environments.
-2. **Configuration governance:** Maintain central config repos; run lint to ensure SoC tests only use approved personalities.
-3. **Firmware handshake:** Standardise APIs between firmware and UVM (mailboxes, CSR register semantics) so debug signals align.
-4. **Telemetry pipelines:** Aggregate metrics (latency, bandwidth, coverage) per regression and publish dashboards.
+### Interconnect & System Observability
 
-**Checklist before moving on:**
-- [ ] IP VIP supports passive/active personalities via config.
-- [ ] Firmware builds are traceable inside logs and traces.
-- [ ] SoC regression dashboards show traffic metrics alongside pass/fail.
+Block-level focuses on endpoints. SoC-level focuses on the network connecting them.
 
-## Push Further
-- **Platform twins:** Run block-level VIP inside emulators/FPGA prototypes, not just RTL sim.
-- **Cross-team contracts:** Formalise service-level agreements (SLAs) for VIP updates and bug turnaround.
-- **Performance profiling:** Integrate power/perf counters so SoC regressions track more than pass/fail.
-- **Self-serve debug:** Provide scripts that collect logs/waves/traces for failing tests with one command.
+- **Ingress/Egress Monitors:** Deploy protocol monitors at every port entering or leaving the Network-on-Chip (NoC).
+- **Latency Tracking:** Tag transactions with timestamps at ingress and compare them at egress to catch Quality of Service (QoS) violations.
+- **Coherency Checkers:** Passive VIP attached to cache interfaces to ensure multi-core snooping logic holds up.
+
+## Make It Work: SoC Operations
+
+SoC verification isn't just bigger UVM; it's a completely different operational workflow.
+
+### 1. Coverage Closure Sub-systems
+
+*Note: This formally incorporates concepts from the legacy `coverage-closure` module.*
+
+Coverage closure means all planned coverage points have been hit and analyzed. At the SoC level, do not attempt to reach 100% on every block-level coverpoint. 
+- **Focus:** System-level interactions (interrupt concurrency, multi-master arbitration, clock-domain crossing).
+- **Workflow:** Review reports nightly against the V-Plan. Automate report parsing to highlight structural gaps (e.g., "CPU0 never talked to Crypto block").
+- **Trap:** Chasing 100% on trivially unreachble block-states at the top level wastes compute.
+
+### 2. Regression & Triage Strategies
+
+*Note: This formally incorporates concepts from the legacy `regression-triage` module.*
+
+A massive SoC simulation might take 12 hours. You cannot run every test on every commit.
+
+- **Smoke Suite:** A 15-minute subset run on every pull request to catch catastrophic breakage (reset failure, boot hang).
+- **Nightly Regression:** The heavy lifting.
+- **Triage Automation:** When a test fails, scripts must categorize it:
+  - *Firmware compilation error*
+  - *UVM Fatal (e.g., Configuration missing)*
+  - *Scoreboard mismatch (Actual DUT bug)*
+- **Reproduction:** Always log the exact random seed, firmware commit hash, and UVM plusargs in the CI artifact. 
+
+### 3. IP Onboarding
+
+Define strict deliverables before accepting an IP block into the SoC repo:
+- VIP must support passive/active personalities via config DB.
+- RAL models must be clean and compiled without warnings.
+- "No raw `$display` statements"—everything must use `uvm_report` for central filtering.
 
 ## Practice & Reinforce
-- Convert one block bench to configurable personalities and integrate it into the SoC env.
-- Build a firmware-to-UVM mailbox demo that toggles SoC agents at runtime.
-- Publish a dashboard snapshot showing traffic distribution across fabrics.
+
+<LabLink
+  id="soc-vip-reuse"
+  title="Lab: Block to SoC VIP Modes"
+  description="Configure a block-level SPI agent into passive mode so it monitors traffic driven by an embedded processor without causing bus collisions."
+/>
+
+**Checklist before moving on:**
+- [ ] You understand why leaving block VIP in Active mode breaks SoC bring-up.
+- [ ] You can explain how UVM tracks firmware progress via memory mailboxes.
+- [ ] You know how to categorize pull-request smoke tests vs nightly regressions.
 
 ## References & Next Topics
-- Company SoC verification guidelines and onboarding checklists.
-- Firmware integration strategies (virtual platforms, co-sim).
-- Next: Continue with Tier-4 performance/throughput optimization modules.
+- **IEEE 1800.2-2020 Clause 4.1.1** — UVM Component lifecycle and configuration setup for topology modification.
+- **Accellera UVM User Guide**, Section 4.5.1 — Active vs Passive Agent configurations.
+- **Next:** Continue with Tier-4 performance/throughput optimization modules, or review [E-CUST-1: UVM Methodology Customization](/curriculum/T4_Expert/E-CUST-1_UVM_Methodology_Customization) for the governance backing SoC reuse.

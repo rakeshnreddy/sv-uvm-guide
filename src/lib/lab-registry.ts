@@ -369,6 +369,37 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
         starterCode: ""
       }
     ]
+  },
+  "soc-vip-reuse": {
+    id: "soc-vip-reuse",
+    title: "Block to SoC: VIP Modes",
+    description: "Configure a block-level SPI agent into passive mode so it monitors traffic driven by an embedded processor without causing bus collisions.",
+    owningModule: "E-SOC-1",
+    routeSlug: "soc-vip-reuse",
+    prerequisites: ["simple-dut-1"],
+    assetLocation: "content/curriculum/labs/soc_level/lab1_vip_reuse",
+    status: "available",
+    graderType: "uvm",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Observe the Active Agent Failure",
+        instructions: "Run `testbench.sv` without changes. Observe the `BUS_COLLISION` fatal error caused by the UVM Driver and Firmware driving simultaneously.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Flip to Passive Mode",
+        instructions: "In `soc_test::build_phase`, use the `uvm_config_db` to set `is_active` to `UVM_PASSIVE` for the `\"env.spi_agt\"` path.",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Verify Monitor Behavior",
+        instructions: "Rerun the simulation. Verify the driver is disabled but the `[SPI_MON]` continues to log firmware traffic.",
+        starterCode: ""
+      }
+    ]
   }
 };
 
