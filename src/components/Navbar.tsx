@@ -36,8 +36,10 @@ const UserProfileDropdown = () => {
     return (
         <div className="relative" onMouseEnter={() => setIsOpen(true)} onMouseLeave={() => setIsOpen(false)}>
             <button
-                className="rounded-2xl border border-white/10 bg-white/5 p-2 text-[var(--blueprint-foreground)] transition hover:border-white/20 hover:bg-white/10"
+                className="rounded-2xl border border-white/10 bg-white/5 p-2 text-[var(--blueprint-foreground)] transition hover:border-white/20 hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-[var(--blueprint-accent)]"
                 data-testid="user-profile-button"
+                aria-label="User profile"
+                aria-expanded={isOpen}
             >
                 <UserCircle className="h-6 w-6" />
             </button>
@@ -129,8 +131,10 @@ const NotificationCenter = () => {
     <div className="relative">
       <button
         onClick={() => setIsOpen((prev) => !prev)}
-        className="relative rounded-2xl border border-white/10 bg-white/5 p-2 text-[var(--blueprint-foreground)] transition hover:border-white/20 hover:bg-white/10"
+        className="relative rounded-2xl border border-white/10 bg-white/5 p-2 text-[var(--blueprint-foreground)] transition hover:border-white/20 hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-[var(--blueprint-accent)]"
         data-testid="notification-button"
+        aria-label="Notifications"
+        aria-expanded={isOpen}
       >
         <Bell className="h-6 w-6" />
         <span className={badgeClass} aria-hidden={!hasUnread} />
@@ -336,7 +340,10 @@ const Navbar = () => {
               <PanelLeft className="h-6 w-6" />
               <span className="sr-only">Open sidebar</span>
             </button>
-            <button aria-label="Search" className="rounded-2xl border border-white/10 bg-white/5 p-2 text-[var(--blueprint-foreground)] transition hover:border-white/20 hover:bg-white/10">
+            <button
+              className="rounded-2xl border border-white/10 bg-white/5 p-2 text-[var(--blueprint-foreground)] transition hover:border-white/20 hover:bg-white/10 md:hidden focus-visible:ring-2 focus-visible:ring-[var(--blueprint-accent)]"
+              aria-label="Search"
+            >
                 <Search className="h-6 w-6" />
             </button>
             <button
@@ -376,7 +383,11 @@ const Navbar = () => {
                 >
                     <div className="flex items-center justify-between border-b border-white/10 p-4">
                       <h2 className="text-lg font-semibold">Menu</h2>
-                      <button onClick={toggleMobileMenu} className="rounded-2xl border border-white/10 bg-white/5 p-1 text-[var(--blueprint-foreground)] transition hover:border-white/20 hover:bg-white/10">
+                      <button
+                        onClick={toggleMobileMenu}
+                        className="rounded-2xl border border-white/10 bg-white/5 p-1 text-[var(--blueprint-foreground)] transition hover:border-white/20 hover:bg-white/10 focus-visible:ring-2 focus-visible:ring-[var(--blueprint-accent)]"
+                        aria-label="Close menu"
+                      >
                           <X className="h-6 w-6" />
                       </button>
                     </div>
