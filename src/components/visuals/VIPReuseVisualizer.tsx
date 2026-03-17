@@ -141,21 +141,21 @@ export default function VIPReuseVisualizer() {
         <div className="font-mono text-xs overflow-x-auto whitespace-pre">
           {isPassive ? (
             <span className="text-purple-300">
-              <span className="text-slate-500">// In soc_test::build_phase</span>{'\n'}
+              <span className="text-slate-500">{"// In soc_test::build_phase"}</span>{'\n'}
               uvm_config_db#(uvm_active_passive_enum)::set(this, "*.spi_agent", "is_active", <strong>UVM_PASSIVE</strong>);{'\n'}
-              <span className="text-slate-500 mt-2 block">// Result:
-// - Driver & Sequencer are NOT created.
-// - Monitor continues observing bus traffic driven by SoC processor.</span>
+              <span className="text-slate-500 mt-2 block">{"// Result:\n"}
+{"// - Driver & Sequencer are NOT created.\n"}
+{"// - Monitor continues observing bus traffic driven by SoC processor."}</span>
             </span>
           ) : (
             <span className="text-blue-300">
-              <span className="text-slate-500">// Default behavior in block_test::build_phase</span>{'\n'}
-              <span className="text-slate-500 opacity-60">// uvm_config_db is not required for default active mode,</span>{'\n'}
-              <span className="text-slate-500 opacity-60">// but explicitly looks like:</span>{'\n'}
+              <span className="text-slate-500">{"// Default behavior in block_test::build_phase"}</span>{'\n'}
+              <span className="text-slate-500 opacity-60">{"// uvm_config_db is not required for default active mode,"}</span>{'\n'}
+              <span className="text-slate-500 opacity-60">{"// but explicitly looks like:"}</span>{'\n'}
               uvm_config_db#(uvm_active_passive_enum)::set(this, "*.spi_agent", "is_active", <strong>UVM_ACTIVE</strong>);{'\n'}
-              <span className="text-slate-500 mt-2 block">// Result:
-// - Driver & Sequencer are created.
-// - Driver actively wiggles DUT pins.</span>
+              <span className="text-slate-500 mt-2 block">{"// Result:\n"}
+{"// - Driver & Sequencer are created.\n"}
+{"// - Driver actively wiggles DUT pins."}</span>
             </span>
           )}
         </div>
