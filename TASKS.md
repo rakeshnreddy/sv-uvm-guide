@@ -96,7 +96,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 14 | `W6-ESOC1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Add SoC bring-up practice, VIP topology visualization, and SoC-specific reuse/debug workflows. |
 | 15 | `W7-ISV-CHECKERS` | P1 | `complete` | none | Create a dedicated checkers lesson and integrate it with the SVA path. |
 | 16 | `W7-ISV-DIRECTIVES` | P1 | `complete` | none | Create the directives/generate track with elaboration-vs-runtime teaching. |
-| 17 | `W7-ISV-API` | P1 | `todo` | none | Create a dedicated DPI/VPI/API track and move DPI ownership out of formal integration. |
+| 17 | `W7-ISV-API` | P1 | `complete` | none | Create a dedicated DPI/VPI/API track and move DPI ownership out of formal integration. |
 | 18 | `W7-IUVM-POLICY` | P1 | `todo` | none | Add the missing UVM policy-classes lesson. |
 | 19 | `W7-IUVM-CONTAINER` | P1 | `todo` | none | Add the missing UVM container-classes lesson. |
 | 20 | `W7-IUVM-RECORDING` | P1 | `todo` | `W6-EDBG1-MOD` | Add the missing UVM recording-classes lesson tied to debug telemetry architecture. |
@@ -452,7 +452,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W7-ISV-API`
 - Priority: P1
-- Status: `todo`
+- Status: `complete`
 - Depends On: none
 - Related IDs: `CURR-W7-ISV-API`, `AUD-008`
 - Primary surfaces: new or re-homed API lesson(s) for DPI/VPI, plus updates to `E-INT-1`
@@ -463,10 +463,10 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   3. Expand content to production-grade topics: marshaling, `context`/`pure`, memory ownership, blocking behavior, build/link concerns, and common failure modes.
   4. Include at least one practical demo or lab path.
 - Deliverable checklist:
-  - [ ] A dedicated API lesson path exists.
-  - [ ] DPI is no longer misfiled under formal integration.
-  - [ ] VPI/PLI/API expansion direction is laid out explicitly.
-  - [ ] The content includes practical failure/debug treatment and not just a syntax snippet.
+  - [x] A dedicated API lesson path exists.
+  - [x] DPI is no longer misfiled under formal integration.
+  - [x] VPI/PLI/API expansion direction is laid out explicitly.
+  - [x] The content includes practical failure/debug treatment and not just a syntax snippet.
 - Validation:
   - Add route smoke coverage and tests for any new interactive/demo.
 

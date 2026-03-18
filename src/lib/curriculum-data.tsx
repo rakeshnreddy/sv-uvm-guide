@@ -358,6 +358,17 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "I-SV-7: DPI & Foreign Language Interfaces",
+        "slug": "I-SV-7_DPI_and_Foreign_Language_Interfaces",
+        "topics": [
+          {
+            "title": "I-SV-7: DPI & Foreign Language Interfaces",
+            "slug": "index",
+            "description": "Connect SystemVerilog to C/C++ and beyond using the Direct Programming Interface. Master import/export semantics, type marshaling, memory ownership, and build workflows."
+          }
+        ]
+      },
+      {
         "title": "I-UVM-1A: UVM Objects and Components",
         "slug": "I-UVM-1A_Components",
         "topics": [
@@ -594,7 +605,7 @@ export const curriculumData: Module[] = [
             "description": "Bridge simulation and proof: share assertions, align coverage, and orchestrate flows where UVM and formal reinforce each other."
           },
           {
-            "title": "Direct Programming Interface (DPI) | The Professional Verification Craft",
+            "title": "Direct Programming Interface (DPI)",
             "slug": "dpi",
             "description": "C interoperability for performance and modeling flexibility."
           },
