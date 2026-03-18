@@ -73,6 +73,9 @@ Use this table to translate legacy IDs and audit IDs into the canonical tasks be
 | `W8-EXPERT-CLEANUP` | `AUD-015` | Final expert-tier taxonomy and page-ownership cleanup after W6/W7 content lands. |
 | `W8-ASSET-MAPPING` | `AUD-018` | Unused/orphaned visuals and diagrams mapping sweep. |
 | `W8-CONCEPT-LINKS` | `AUD-019` | Canonical concept-linking sweep after content work stabilizes. |
+| `W9-ISV-UPF` | none | New power-intent/UPF fundamentals lesson at intermediate tier. |
+| `W9-EPWR-STRATEGY` | none | New expert-tier power-aware UVM verification strategy module. |
+| `W9-EPWR-LAB` | none | Hands-on power-state verification lab with interactive visualizer. |
 
 ## Active Backlog Summary
 
@@ -103,6 +106,9 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 21 | `W8-EXPERT-CLEANUP` | P2 | `todo` | `W6-EDBG1-MOD`, `W6-EINT1-MOD`, `W6-ESOC1-MOD`, `W7-ISV-API` | Re-home thin expert pages and normalize ownership after W6/W7 content work lands. |
 | 22 | `W8-ASSET-MAPPING` | P2 | `todo` | `W5-AUVM4-SPLIT`, `W6-ECUST1-MOD`, `W6-ESOC1-MOD` | Map or retire unused verification visuals/diagrams. |
 | 23 | `W8-CONCEPT-LINKS` | P2 | `todo` | all content tasks above | Run a final canonical concept-linking pass across the curriculum. |
+| 24 | `W9-ISV-UPF` | P1 | `todo` | none | Create a dedicated UPF/power-intent fundamentals lesson with supply network and power-state teaching. |
+| 25 | `W9-EPWR-STRATEGY` | P1 | `todo` | `W9-ISV-UPF`, `W6-ESOC1-MOD` | Build the expert power-aware UVM verification strategy module with corruption semantics and shutdown/wake-up verification. |
+| 26 | `W9-EPWR-LAB` | P1 | `todo` | `W9-EPWR-STRATEGY`, `W8-LABS-PLATFORM` | Create a power-state verification lab and `PowerDomainVisualizer` interactive. |
 
 ## Detailed Task Briefs
 
@@ -576,6 +582,93 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   - [ ] The curriculum no longer relies on plain-text concept mentions where a canonical link is expected.
 - Validation:
   - Run a targeted grep-based audit for major repeated concepts after the pass.
+
+### `W9-ISV-UPF`
+- Priority: P1
+- Status: `todo`
+- Depends On: none
+- Related IDs: none
+- Primary surfaces: new `content/curriculum/T2_Intermediate/I-SV-8_Power_Intent_and_UPF/index.mdx`
+- Problem statement: The curriculum does not teach IEEE 1801 (UPF) or low-power verification fundamentals. Power-aware verification is a critical skill gap for SoC-facing engineers.
+- Scope:
+  1. Create `I-SV-8_Power_Intent_and_UPF` as a dedicated intermediate-tier module.
+  2. Teach the UPF supply network model: power domains, supply sets, supply nets, supply ports.
+  3. Explain power states and power state tables (PST) — on, off, retention, standby.
+  4. Cover isolation cells, level shifters, retention registers, and always-on logic.
+  5. Explain the UPF command set: `create_power_domain`, `create_supply_net`, `set_isolation`, `set_retention`, `add_power_state`, `create_pst`.
+  6. Teach the relationship between UPF and RTL — UPF as a side-file that expresses power intent without modifying design code.
+  7. Add an interactive code block showing a multi-domain UPF file alongside the RTL it annotates.
+  8. Cross-link to SVA (I-SV-4A) for power-aware assertions and to the SoC module (E-SOC-1) for system-level context.
+- Deliverable checklist:
+  - [ ] `I-SV-8_Power_Intent_and_UPF/index.mdx` exists with IEEE 1801-grounded content.
+  - [ ] Supply network, power domains, and power states are taught clearly.
+  - [ ] Isolation, level shifting, and retention semantics are explained.
+  - [ ] UPF command set is taught with annotated examples.
+  - [ ] Cross-links to SVA, SoC, and the expert power module are set.
+- Validation:
+  - Regenerate curriculum data.
+  - Add route smoke coverage for the new module.
+
+### `W9-EPWR-STRATEGY`
+- Priority: P1
+- Status: `todo`
+- Depends On: `W9-ISV-UPF`, `W6-ESOC1-MOD`
+- Related IDs: none
+- Primary surfaces: new `content/curriculum/T4_Expert/E-PWR-1_Power_Aware_Verification/index.mdx`, subpages for corruption semantics, shutdown/wake-up flows, and coverage strategies
+- Problem statement: Even with UPF fundamentals, engineers need expert-level guidance on building UVM testbenches that verify power transitions, corruption behavior, retention correctness, and shutdown/wake-up sequences.
+- Scope:
+  1. Create `E-PWR-1_Power_Aware_Verification` as a new expert-tier module.
+  2. **Corruption semantics:** Teach how simulators model data corruption during power-down (X-propagation, value zeroing, retention hold), how to verify that retained registers preserve values and non-retained registers corrupt correctly.
+  3. **Power controller verification:** Testing the power management unit (PMU/PCU) — state machine coverage, illegal transition detection, handshake protocol verification.
+  4. **Shutdown/wake-up sequences:** UVM sequences that orchestrate power transitions — save context, assert isolation, power down, power up, release isolation, restore context, verify functionality.
+  5. **Power-aware assertions:** SVA properties for isolation cell correctness, retention cell behavior, supply ramp timing, and domain crossing checks.
+  6. **Power-aware coverage:** Covergroups for power state transitions, cross-coverage of functional scenarios × power states, transition-pair coverage.
+  7. **UVM integration patterns:** Power-aware virtual sequences, UVM callbacks for power events, `uvm_config_db` for power-state parameterization, custom power phases.
+  8. **Debug and triage:** Common power verification failures — retention corruption, isolation glitches, wake-up race conditions, PMU deadlocks.
+  9. Cross-link back to UPF fundamentals (I-SV-8), SoC strategies (E-SOC-1), and formal integration (E-INT-1) for formal power-aware proofs.
+- Deliverable checklist:
+  - [ ] `E-PWR-1_Power_Aware_Verification/index.mdx` exists with comprehensive content.
+  - [ ] Corruption semantics (retention, isolation, X-propagation) are taught accurately.
+  - [ ] Power controller verification strategy is documented with PMU state machine examples.
+  - [ ] Shutdown/wake-up UVM sequence patterns are provided.
+  - [ ] Power-aware SVA assertions are included.
+  - [ ] Power-state coverage strategy is explicit.
+  - [ ] UVM integration patterns (virtual sequences, callbacks, custom phases) are taught.
+  - [ ] Debug triage for common power verification failures is included.
+  - [ ] Cross-links to I-SV-8, E-SOC-1, E-INT-1 are set.
+- Validation:
+  - Regenerate curriculum data.
+  - Run lint and vitest.
+  - Add route smoke coverage for the new expert module.
+
+### `W9-EPWR-LAB`
+- Priority: P1
+- Status: `todo`
+- Depends On: `W9-EPWR-STRATEGY`, `W8-LABS-PLATFORM`
+- Related IDs: none
+- Primary surfaces: new `PowerDomainVisualizer.tsx`, new power-state lab assets, lab-registry entry
+- Problem statement: The power-aware verification module needs a hands-on lab and an interactive visualizer to make abstract power-state concepts tangible.
+- Scope:
+  1. Build `PowerDomainVisualizer.tsx` — interactive component showing a multi-domain SoC with animated power transitions: domains lighting up/dimming, isolation cells activating, retention registers holding/corrupting, level shifters engaging.
+  2. Controls: learner selects a power state transition (e.g., "Full Run → Deep Sleep → Wake"), the visualizer animates the sequence step by step with callouts for each UPF action.
+  3. Create a power-state verification lab (`labs/power_aware/lab1_retention_bug`):
+     - Buggy testbench where a retention register loses its value because isolation is released before the domain is fully powered up (race condition).
+     - Solution testbench with correct sequencing.
+     - README with step-by-step instructions.
+  4. Register lab in `lab-registry.ts`.
+  5. Register visualizer in the MDX component map.
+  6. Embed both in the E-PWR-1 module.
+  7. Unit-test the visualizer.
+- Deliverable checklist:
+  - [ ] `PowerDomainVisualizer.tsx` exists and is embedded in E-PWR-1.
+  - [ ] Visualizer unit tests pass.
+  - [ ] Retention-bug lab exists with buggy testbench, solution, and README.
+  - [ ] Lab is registered and discoverable.
+  - [ ] The lab link is embedded in the E-PWR-1 lesson.
+- Validation:
+  - Unit-test the visualizer.
+  - Add route smoke coverage for the lab.
+  - Run full vitest and lint.
 
 ## Agent Handoff Protocol
 
