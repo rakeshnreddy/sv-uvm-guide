@@ -140,6 +140,10 @@ const TelemetryEventBusVisualizer = dynamic(
   () => import('@/components/visuals/TelemetryEventBusVisualizer'),
   { ssr: false, loading: () => <VisualizationFallback /> },
 );
+const FormalVsSimulationVisualizer = dynamic(
+  () => import('@/components/visuals/FormalVsSimulationVisualizer'),
+  { ssr: false, loading: () => <VisualizationFallback /> },
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -226,6 +230,7 @@ const components = {
   VIPReuseVisualizer: dynamic(() => import('@/components/visuals/VIPReuseVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   BindDirectiveVisualizer: dynamic(() => import('@/components/visuals/BindDirectiveVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   GenerateElaborationVisualizer: dynamic(() => import('@/components/visuals/GenerateElaborationVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  FormalVsSimulationVisualizer,
   LabLink,
 };
 

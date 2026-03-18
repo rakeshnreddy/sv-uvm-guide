@@ -14,8 +14,10 @@ import { InteractiveCode } from '@/components/ui';
 > **Signal:** When UVM tests add endless directed scenarios to hit corner cases, formal proofs can slash effort if assertions already exist.
 
 ## Build Your Mental Model
+
 ### Assertions as the bridge
-SystemVerilog Assertions (SVA) become the common artefact: `assert` in simulation, `prove` in formal, `cover` for reachability/coverage.
+
+SystemVerilog Assertions (SVA) become the common artefact: `assert` in simulation, `prove` in formal, `cover` for reachability/coverage. The **same property library** serves both flows—no duplicate specification, no semantic drift.
 
 <InteractiveCode
   language="systemverilog"
@@ -63,11 +65,150 @@ run_cover -property p_cover_fill_and_drain`}
   ]}
 />
 
-### Workflow alignment
-- **Plan and map:** Link requirements to both UVM scenarios and formal proof goals; track progress in a shared dashboard.
-- **Share constraints:** Convert UVM sequence constraints into formal assumptions where legal stimulus must be mirrored.
-- **Swap drivers:** Replace expensive UVM drivers with lightweight formal stubs when building formal harnesses; reuse monitors for scoreboarding.
-- **Handshake results:** Feed proven properties back into UVM (waive unreachable coverage bins) and use formal counterexamples as directed UVM seeds.
+### Interactive: Formal vs Simulation comparison
+
+Toggle assumptions in the formal panel to see how removing constraints exposes real bugs, then replay counterexamples as directed simulation seeds.
+
+<FormalVsSimulationVisualizer />
+
+## Formal Harness Architecture
+
+Building a formal testbench from an existing UVM environment requires stripping the RTL down to a small cone of logic and replacing UVM agents with formal assumptions.
+
+### From UVM env to formal harness
+
+| UVM Component | Formal Equivalent | Notes |
+|---|---|---|
+| Driver + Sequencer | Free inputs + `assume` properties | Assumptions replace constrained stimulus |
+| Monitor | Not needed | Formal engines observe all signals natively |
+| Scoreboard | `assert` properties | Correctness is expressed as SVA, not procedural checks |
+| Coverage | `cover` properties | Reachability proofs replace sampling-based coverage |
+| Config/Factory | Parameters | Formal harnesses are statically parameterized |
+
+### Building the harness step by step
+
+1. **Isolate the DUT block** — formal scales best on small modules (1K–10K gates). Extract the block you want to prove.
+2. **Declare free inputs** — inputs left undriven become unconstrained; the formal engine explores all possible values.
+3. **Add assumptions** — constrain free inputs to legal stimulus. Map these directly from your UVM sequence constraints.
+4. **Assert safety properties** — these are the same properties your UVM assertions check in simulation.
+5. **Add cover properties** — verify that interesting states are reachable under your assumptions.
+6. **Bind the property module** — use `bind` so the same checkers attach in both simulation and formal without modifying the DUT.
+
+> ⚠️ **Over-constraining is the #1 formal pitfall.** If your assumptions are tighter than what the real environment produces, the formal engine cannot find real bugs. Always audit assumptions against actual UVM driver behavior.
+
+## Assumption Alignment
+
+### Mapping UVM constraints to formal assumptions
+
+Every constraint block in a UVM sequence item has a formal equivalent:
+
+<InteractiveCode
+  language="systemverilog"
+  fileName="constraint_mapping.sv"
+  code={`// UVM sequence item constraint
+class fifo_txn extends uvm_sequence_item;
+  rand bit push, pop;
+  constraint c_legal {
+    !(push && full_flag);   // never push when full
+    !(pop && empty_flag);   // never pop when empty
+  }
+endclass
+
+// Equivalent formal assumption
+property a_legal_push;
+  @(posedge clk) disable iff (!rst_n)
+    !(push && full);
+endproperty
+assume property (a_legal_push);
+
+property a_legal_pop;
+  @(posedge clk) disable iff (!rst_n)
+    !(pop && empty);
+endproperty
+assume property (a_legal_pop);`}
+  explanationSteps={[
+    { target: "3-7", title: "UVM constraints", explanation: "The sequence item constrains randomization — the solver never generates illegal transactions." },
+    { target: "10-20", title: "Formal assumptions", explanation: "The same constraints appear as `assume` properties. The formal engine restricts its state-space exploration to legal traces." }
+  ]}
+/>
+
+### Common assumption pitfalls
+
+| Pitfall | Symptom | Fix |
+|---|---|---|
+| **Over-constraining** | Everything proves, but bugs exist in silicon | Audit each assumption against actual driver behavior |
+| **Under-constraining** | Spurious CEX on legal inputs | Add missing constraints; check environment guarantees |
+| **Vacuous proofs** | Property passes but antecedent is never true | Add a cover property for the antecedent; verify reachability |
+| **Assumption/assertion confusion** | Properties accidentally assumed instead of asserted | Review property directives; use linting tools |
+
+## Counterexample Replay
+
+When a formal engine finds a counterexample trace, that trace is a guaranteed bug witness. Converting it into a directed UVM test closes the formal→simulation feedback loop.
+
+### The replay workflow
+
+1. **Export the CEX** — formal tools produce VCD, FSDB, or waveform databases. Extract signal values per cycle.
+2. **Build a directed sequence** — create a UVM sequence that replays the exact input values from the CEX trace.
+3. **Run in UVM** — execute the directed sequence in your full UVM environment to reproduce the bug with full scoreboard and coverage instrumentation.
+4. **Debug with waveforms** — use the familiar simulation debug flow to root-cause the failure.
+5. **Verify the fix** — re-run formal to confirm the property now proves, then add the CEX-derived test to your regression suite as a permanent guard.
+
+<InteractiveCode
+  language="systemverilog"
+  fileName="cex_replay.sv"
+  code={`// Directed sequence from formal counterexample
+class cex_replay_seq extends uvm_sequence #(fifo_txn);
+  \`uvm_object_utils(cex_replay_seq)
+
+  function new(string name = "cex_replay_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    fifo_txn txn;
+
+    // Cycle 1-4: push items rapidly (from CEX trace)
+    repeat(4) begin
+      txn = fifo_txn::type_id::create("txn");
+      start_item(txn);
+      txn.push = 1; txn.pop = 0;
+      finish_item(txn);
+    end
+
+    // Cycle 5: push while full — this is the bug trigger
+    txn = fifo_txn::type_id::create("txn");
+    start_item(txn);
+    txn.push = 1; txn.pop = 0;  // full flag was late
+    finish_item(txn);
+    \`uvm_info("CEX", "Replayed counterexample trace", UVM_LOW)
+  endtask
+endclass`}
+  explanationSteps={[
+    { target: "2-8", title: "Directed sequence", explanation: "A hand-crafted sequence replays the exact input values from the formal counterexample." },
+    { target: "12-18", title: "Fill the FIFO", explanation: "Rapid consecutive pushes — the formal engine proved these expose the late full-flag bug." },
+    { target: "21-25", title: "Bug trigger", explanation: "The fifth push occurs before the registered `full` flag updates. This is the cycle that violates the safety assertion." }
+  ]}
+/>
+
+### Practice: Formal Assumption Harness Lab
+
+Apply the concepts above in a hands-on lab:
+
+<LabLink labId="formal-harness" />
+
+## Workflow Alignment
+
+### Plan and map
+Link requirements to both UVM scenarios and formal proof goals; track progress in a shared dashboard.
+
+### Share constraints
+Convert UVM sequence constraints into formal assumptions where legal stimulus must be mirrored. Use the mapping table above as a translation guide.
+
+### Swap drivers
+Replace expensive UVM drivers with lightweight formal stubs when building formal harnesses; reuse monitors for scoreboarding.
+
+### Handshake results
+Feed proven properties back into UVM (waive unreachable coverage bins) and use formal counterexamples as directed UVM seeds.
 
 ## Make It Work
 1. **Property library:** Store assertions in reusable packages with consistent naming; annotate each with owner and coverage intent.
@@ -86,15 +227,18 @@ run_cover -property p_cover_fill_and_drain`}
 - **Formal smoke tests:** Add short bounded proofs to CI so critical properties break builds immediately.
 - **Proof planning:** Categorize properties by difficulty and schedule compute resources accordingly.
 - **Training:** Run joint UVM+formal debug workshops so teams can interpret counterexamples and waveform evidence quickly.
+- **Portable Stimulus:** See [PSS: Portable Stimulus](./pss) for how intent-based test descriptions extend across simulation, emulation, and silicon.
 
 ## Practice & Reinforce
 - Translate an existing UVM constraint into a formal assumption and check equivalence.
 - Use a formal counterexample to seed a UVM regression test and verify the bug fix.
 - Run a joint coverage report combining formal `cover` and UVM coverage to identify gaps.
-- Review [/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index](../E-DBG-1_Advanced_UVM_Debug_Methodologies/index) to streamline cross-tool debug.
+- Complete the <LabLink labId="formal-harness" /> to experience over-constraining firsthand.
 
 ## References & Next Topics
+- IEEE 1800-2017 §16–17 (Assertions and Checkers) — the shared language for simulation and formal.
 - Accellera *UVM User Guide* (App. on Assertions) and SVA cookbooks.
 - Cadence/Jasper, Synopsys VC Formal, Mentor Questa Formal best-practice guides.
-- Internal scripts for proof orchestration and coverage merging.
-- Next: move into Tier‑4 performance tuning to keep hybrid flows efficient.
+- Prerequisites: [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) and [I-SV-4C: Checkers](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index).
+- Debug workflows: [E-DBG-1: Advanced UVM Debug](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index).
+- Foreign interfaces: DPI content has moved to [I-SV-7: DPI & Foreign Language Interfaces](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces).

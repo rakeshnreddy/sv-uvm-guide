@@ -610,9 +610,9 @@ export const curriculumData: Module[] = [
             "description": "C interoperability for performance and modeling flexibility."
           },
           {
-            "title": "Introduction to Portable Stimulus (PSS) | The Professional Verification Craft",
+            "title": "Portable Stimulus (PSS)",
             "slug": "pss",
-            "description": "Conceptual overview of portable stimulus methodology."
+            "description": "Intent-based test description that runs across simulation, emulation, and silicon with minimal adaptation."
           }
         ]
       },

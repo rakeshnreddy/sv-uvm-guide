@@ -91,7 +91,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 9 | `W5-AUVM4-SPLIT` | P1 | `complete` | `W8-LABS-PLATFORM` | Finish the advanced RAL split with the missing hierarchy visual, mirror-bug lab, and deeper RAL treatment. |
 | 10 | `W5-AUVM3-DEPRECATE` | P1 | `complete` | `W5-AUVM4-SPLIT` | Finish callback extraction/review and fully retire advanced redundancy from `A-UVM-3`. |
 | 11 | `W6-EDBG1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Turn the debug module into a real telemetry/debug workflow with lab and visualizer. |
-| 12 | `W6-EINT1-MOD` | P1 | `todo` | `W7-ISV-API`, `W8-LABS-PLATFORM` | Keep formal-integration focused on formal and remove misplaced API/methodology content. |
+| 12 | `W6-EINT1-MOD` | P1 | `complete` | `W7-ISV-API`, `W8-LABS-PLATFORM` | Keep formal-integration focused on formal and remove misplaced API/methodology content. |
 | 13 | `W6-ECUST1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Modernize methodology customization with custom-phase teaching and a schedule-injection lab. |
 | 14 | `W6-ESOC1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Add SoC bring-up practice, VIP topology visualization, and SoC-specific reuse/debug workflows. |
 | 15 | `W7-ISV-CHECKERS` | P1 | `complete` | none | Create a dedicated checkers lesson and integrate it with the SVA path. |
@@ -366,10 +366,10 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   3. Keep this module focused on formal/simulation interaction.
   4. Coordinate with `W7-ISV-API` so DPI moves out to its own track and `E-INT-1` links to it rather than owning it.
 - Deliverable checklist:
-  - [ ] Formal vs simulation visualizer exists and is embedded.
-  - [ ] Formal assumption/counterexample lab exists.
-  - [ ] The module no longer serves as the home for DPI/API content.
-  - [ ] Formal prerequisite links and follow-on links are explicit.
+  - [x] Formal vs simulation visualizer exists and is embedded.
+  - [x] Formal assumption/counterexample lab exists.
+  - [x] The module no longer serves as the home for DPI/API content.
+  - [x] Formal prerequisite links and follow-on links are explicit.
 - Validation:
   - Add route smoke/E2E coverage for the updated expert path.
 

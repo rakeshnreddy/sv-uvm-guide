@@ -400,6 +400,37 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
         starterCode: ""
       }
     ]
+  },
+  "formal-harness": {
+    id: "formal-harness",
+    title: "Formal Assumption Harness",
+    description: "Identify an over-constrained formal assumption that masks a real FIFO overflow bug, relax it, and fix the design.",
+    owningModule: "E-INT-1",
+    routeSlug: "formal-harness",
+    prerequisites: [],
+    assetLocation: "content/curriculum/labs/formal_harness/lab1_assumption_harness",
+    status: "available",
+    graderType: "systemverilog",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Read the Buggy Harness",
+        instructions: "Open `testbench_buggy.sv`. Identify the three `assume` properties. Notice that `a_never_consecutive_push` is far more restrictive than what a real environment guarantees.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Relax the Over-Constraint",
+        instructions: "Comment out `a_never_consecutive_push`. Re-run the formal engine. Observe the counterexample: rapid consecutive pushes overflow the FIFO because the `full` flag updates one cycle late.",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Fix the Design",
+        instructions: "Open `testbench_solution.sv`. Notice that `full` and `empty` are now combinational (`assign`). Re-run: the assertion passes and the cover property is now reachable.",
+        starterCode: ""
+      }
+    ]
   }
 };
 
