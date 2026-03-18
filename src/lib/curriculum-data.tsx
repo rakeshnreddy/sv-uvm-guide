@@ -347,6 +347,17 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "I-SV-6: Compiler Directives & Generate Constructs",
+        "slug": "I-SV-6_Compiler_Directives_and_Generates",
+        "topics": [
+          {
+            "title": "I-SV-6: Compiler Directives & Generate Constructs",
+            "slug": "index",
+            "description": "Master SystemVerilog's compile-time toolkit: preprocessor directives, macro hygiene, and generate blocks for scalable, configurable verification IP."
+          }
+        ]
+      },
+      {
         "title": "I-UVM-1A: UVM Objects and Components",
         "slug": "I-UVM-1A_Components",
         "topics": [

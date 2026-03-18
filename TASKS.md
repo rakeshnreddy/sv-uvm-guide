@@ -95,7 +95,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 13 | `W6-ECUST1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Modernize methodology customization with custom-phase teaching and a schedule-injection lab. |
 | 14 | `W6-ESOC1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Add SoC bring-up practice, VIP topology visualization, and SoC-specific reuse/debug workflows. |
 | 15 | `W7-ISV-CHECKERS` | P1 | `complete` | none | Create a dedicated checkers lesson and integrate it with the SVA path. |
-| 16 | `W7-ISV-DIRECTIVES` | P1 | `todo` | none | Create the directives/generate track with elaboration-vs-runtime teaching. |
+| 16 | `W7-ISV-DIRECTIVES` | P1 | `complete` | none | Create the directives/generate track with elaboration-vs-runtime teaching. |
 | 17 | `W7-ISV-API` | P1 | `todo` | none | Create a dedicated DPI/VPI/API track and move DPI ownership out of formal integration. |
 | 18 | `W7-IUVM-POLICY` | P1 | `todo` | none | Add the missing UVM policy-classes lesson. |
 | 19 | `W7-IUVM-CONTAINER` | P1 | `todo` | none | Add the missing UVM container-classes lesson. |
@@ -434,7 +434,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W7-ISV-DIRECTIVES`
 - Priority: P1
-- Status: `todo`
+- Status: `complete`
 - Depends On: none
 - Related IDs: `CURR-W7-ISV-DIRECTIVES`, `AUD-017`
 - Primary surfaces: new `content/curriculum/T2_Intermediate/I-SV-6_Compiler_Directives_and_Generates/*`, new generate visualizer
@@ -444,9 +444,9 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   2. Build an interactive showing elaboration-time `generate` behavior versus runtime `if` behavior.
   3. Include practical verification usage: feature flags, bench variants, config headers, and macro pitfalls.
 - Deliverable checklist:
-  - [ ] The new module exists and is linked into the Tier 2 path.
-  - [ ] The generate-vs-runtime interactive exists.
-  - [ ] Macro/directive hygiene pitfalls are taught explicitly.
+  - [x] The new module exists and is linked into the Tier 2 path.
+  - [x] The generate-vs-runtime interactive exists.
+  - [x] Macro/directive hygiene pitfalls are taught explicitly.
 - Validation:
   - Unit-test the interactive and add route smoke coverage.
 

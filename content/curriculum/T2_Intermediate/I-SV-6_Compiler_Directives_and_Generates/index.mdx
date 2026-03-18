@@ -1,0 +1,261 @@
+---
+title: "I-SV-6: Compiler Directives & Generate Constructs"
+description: "Master SystemVerilog's compile-time toolkit: preprocessor directives, macro hygiene, and generate blocks for scalable, configurable verification IP."
+flashcards: "I-SV-6_Compiler_Directives_and_Generates"
+---
+
+## Quick Take
+- **What it is:** Compiler directives (`` `define ``, `` `ifdef ``, `` `include ``) let you configure source files before compilation. Generate constructs (`generate for`, `generate if`, `generate case`) let the compiler stamp out replicated hardware at elaboration time.
+- **Why it matters:** Real verification environments are parameterized — you need to create *N* protocol checkers, toggle debug features on/off, and share header definitions across files. Directives and generates are how you scale without copy-paste.
+- **The Analogy:** Think of directives as a mail-merge template and generates as a factory assembly line. The template fills in blanks before printing (directives substitute text before compilation); the assembly line stamps out multiple copies of the same part (generate unrolls loops into independent hardware instances).
+
+> **Signal:** If you find yourself manually duplicating instantiations or surrounding code with `if (ENABLE_DEBUG)` runtime checks that should really be compile-time decisions, it is time to learn these constructs.
+
+## Build Your Mental Model
+
+### Compiler Directives (IEEE 1800-2017 Clause 22)
+
+Directives begin with a backtick (`` ` ``) and are processed by the **preprocessor** before the code reaches the compiler. They operate on the source text, not on the language semantics.
+
+#### Text Substitution with `` `define ``
+
+```systemverilog
+`define DATA_WIDTH 32
+`define ADDR_WIDTH 16
+
+// Usage — the preprocessor literally replaces the token
+logic [`DATA_WIDTH-1:0] data_bus;
+logic [`ADDR_WIDTH-1:0] addr;
+```
+
+**Parameterized macros** accept arguments:
+
+```systemverilog
+`define ASSERT_STABLE(sig, clk, rst) \
+  assert property (@(posedge clk) disable iff (rst) \
+    $stable(sig)) \
+  else $error(`"sig is not stable`");
+
+// Usage
+`ASSERT_STABLE(data_bus, clk, reset)
+```
+
+> **Pitfall:** Macros are *textual substitution*. The preprocessor does not understand SystemVerilog syntax — it just pastes tokens. Never put a semicolon at the end of a macro that will be used as an expression or inside another statement.
+
+#### Conditional Compilation
+
+```systemverilog
+`ifdef ENABLE_COVERAGE
+  covergroup cg_bus @(posedge clk);
+    cp_data: coverpoint data_bus;
+  endgroup
+  cg_bus cg_inst = new;
+`elsif ENABLE_ASSERTIONS
+  // assertions-only build
+  assert property (@(posedge clk) !$isunknown(data_bus));
+`else
+  // production build — nothing extra
+`endif
+```
+
+Use `` `ifndef `` for include guards:
+
+```systemverilog
+`ifndef MY_PKG_SVH
+`define MY_PKG_SVH
+  // package contents
+`endif
+```
+
+#### `` `include `` for File Composition
+
+```systemverilog
+`include "project_defines.svh"
+`include "ahb_interface.sv"
+```
+
+> **Pitfall:** Without include guards, a file included twice will cause redefinition errors. Always wrap shared headers with `` `ifndef ``/`` `define ``/`` `endif ``.
+
+#### Other Notable Directives
+
+| Directive | Purpose |
+|---|---|
+| `` `timescale 1ns/1ps `` | Sets the time unit and precision for the file. |
+| `` `resetall `` | Resets all directives to their default states. |
+| `` `undef MACRO_NAME `` | Undefines a previously defined macro. |
+| `` `default_nettype none `` | Forces explicit declarations — catches typos. |
+
+### Macro Hygiene Best Practices
+
+1. **Always use include guards** for shared header files.
+2. **Namespace your macros** — prefix with the project or package name: `` `AHB_DATA_WIDTH `` instead of `` `DATA_WIDTH ``.
+3. **`` `undef `` when done** — if a macro is only needed inside one file or block, undefine it afterward to avoid polluting the global namespace.
+4. **Avoid macros for constants** when a `parameter` or `localparam` would work — parameters are typed, scoped, and understood by the compiler.
+5. **Use `` `ifdef `` for feature flags** — compile different verification builds (assertions-only, coverage-enabled, debug mode) from the same source tree.
+
+```systemverilog
+// Good: feature-flag pattern
+`ifdef SIM_DEBUG
+  `define DBG_PRINT(msg) $display("[DEBUG] %0t: %s", $time, msg)
+`else
+  `define DBG_PRINT(msg)  // compiles to nothing in production
+`endif
+```
+
+---
+
+## Generate Constructs (IEEE 1800-2017 Clause 27)
+
+Generate constructs operate at **elaboration time** — the phase between parsing and simulation where the compiler resolves parameters and builds the design hierarchy. They create or omit structural elements (modules, interfaces, checkers, assertions, covergroups) based on compile-time-known values.
+
+### `generate for`
+
+```systemverilog
+module multi_channel_monitor #(parameter int NUM_CH = 4) (
+  input logic clk,
+  input logic [7:0] data_bus [NUM_CH]
+);
+  generate
+    for (genvar i = 0; i < NUM_CH; i++) begin : gen_mon
+      protocol_checker u_chk (
+        .clk  (clk),
+        .data (data_bus[i])
+      );
+    end
+  endgenerate
+endmodule
+```
+
+Key points:
+- **`genvar`** is the loop variable — it exists only at elaboration time and is not accessible at runtime.
+- Each iteration creates a **named scope** (`gen_mon[0]`, `gen_mon[1]`, …) that appears in the hierarchy.
+- You are creating *parallel hardware*, not running a sequential loop.
+
+### `generate if` / `generate case`
+
+```systemverilog
+generate
+  if (BUS_TYPE == "AHB") begin : gen_ahb
+    ahb_monitor u_mon (.clk(clk), .bus(bus_if));
+  end else if (BUS_TYPE == "AXI") begin : gen_axi
+    axi_monitor u_mon (.clk(clk), .bus(bus_if));
+  end else begin : gen_default
+    $fatal(1, "Unsupported BUS_TYPE: %s", BUS_TYPE);
+  end
+endgenerate
+```
+
+This lets you configure entirely different sub-architectures at compile time, which is invaluable for protocol-parameterized VIP wrappers.
+
+### Generate vs Runtime: The Critical Distinction
+
+This is the single most important concept in this lesson. Use the interactive below to build your intuition:
+
+<GenerateElaborationVisualizer />
+
+**Rule of thumb:**
+- Use `generate` when you need to **create structural instances** (modules, interfaces, checkers, covergroups, `assign` statements, `always` blocks).
+- Use a runtime loop (`for (int i …)`) when you need to **perform procedural operations** (signal assignments, function calls, display statements) inside an `always` or `initial` block.
+
+You **cannot** instantiate a module inside a runtime `for` loop. You **cannot** access runtime variables (signals) in a `generate` condition — only parameters, `localparam`, and `genvar` values.
+
+---
+
+## Make It Work
+
+### Verification Playbook
+
+1. **Feature-flag your testbench builds:**
+   ```systemverilog
+   // Compile with: +define+ENABLE_COVERAGE+SIM_DEBUG
+   `ifdef ENABLE_COVERAGE
+     // covergroups
+   `endif
+   `ifdef SIM_DEBUG
+     // verbose tracing
+   `endif
+   ```
+
+2. **Parameterized checker arrays:**
+   ```systemverilog
+   generate
+     for (genvar i = 0; i < NUM_PORTS; i++) begin : gen_chk
+       bind router_port protocol_checker chk_inst (
+         .clk  (clk),
+         .data (port_data[i])
+       );
+     end
+   endgenerate
+   ```
+
+3. **Config headers for bench variants:**
+   ```systemverilog
+   // project_config.svh
+   `ifndef PROJECT_CONFIG_SVH
+   `define PROJECT_CONFIG_SVH
+     `define TARGET_FREQ_MHZ 100
+     `define NUM_DMA_CHANNELS 4
+     `define ENABLE_COVERAGE
+   `endif
+   ```
+
+**Checklist before moving on:**
+- [ ] You know the difference between `` `define `` (text substitution) and `parameter` (typed, scoped constant).
+- [ ] You can write an include guard.
+- [ ] You understand that `generate for` creates parallel hardware instances, not a sequential loop.
+- [ ] You know when to use `` `ifdef `` vs a runtime `if`.
+
+---
+
+## Push Further: Common Pitfalls
+
+### Macro Expansion Surprises
+
+```systemverilog
+// BAD: semicolon in the macro definition
+`define CLK_PERIOD 10;  // <-- trailing semicolon!
+
+// This expands to: #10;; — double semicolon, subtle parse errors
+initial begin
+  #`CLK_PERIOD;
+end
+```
+
+### Missing `begin/end` in Generate Blocks
+
+```systemverilog
+// BAD: no begin/end means no named scope
+generate
+  for (genvar i = 0; i < 4; i++)
+    // Only ONE statement is part of the loop body!
+    assign out[i] = in[i] & enable;
+    assign valid[i] = 1'b1;  // THIS IS OUTSIDE THE LOOP
+endgenerate
+```
+
+Always wrap generate loop bodies with `begin : label_name … end`.
+
+### `genvar` Scope Confusion
+
+```systemverilog
+// genvar is NOT a runtime variable
+generate
+  for (genvar i = 0; i < N; i++) begin : gen_blk
+    // ILLEGAL inside an always block:
+    // always_ff @(posedge clk) x <= data[i];  // 'i' is a genvar!
+    
+    // LEGAL: use 'i' to parameterize structural connections
+    assign out[i] = in[i];
+  end
+endgenerate
+```
+
+### Recursive Include
+
+If `a.svh` includes `b.svh` and `b.svh` includes `a.svh`, you get infinite recursion. The fix: **always use include guards** in every header file.
+
+## References & Next Topics
+- **IEEE 1800-2017 Clause 22** — Compiler directives.
+- **IEEE 1800-2017 Clause 27** — Generate constructs.
+- **Previous:** [I-SV-5: Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC)
+- **Next:** Explore assertion-based verification with [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals) or begin the UVM journey with [I-UVM-1A: Components](/curriculum/T2_Intermediate/I-UVM-1A_Components).
