@@ -285,7 +285,11 @@ const Navbar = () => {
                   onMouseEnter={() => setOpenDropdown(link.label)}
                   onMouseLeave={() => setOpenDropdown(null)}
                 >
-                  <button className="flex items-center rounded-2xl px-3 py-2 text-sm text-[rgba(230,241,255,0.65)] transition hover:text-[var(--blueprint-foreground)]">
+                  <button
+                    className="flex items-center rounded-2xl px-3 py-2 text-sm text-[rgba(230,241,255,0.65)] transition hover:text-[var(--blueprint-foreground)]"
+                    aria-expanded={openDropdown === link.label}
+                    aria-haspopup="true"
+                  >
                     {link.label}
                     <ChevronDown className="h-4 w-4 ml-1" />
                   </button>
@@ -336,7 +340,10 @@ const Navbar = () => {
               <PanelLeft className="h-6 w-6" />
               <span className="sr-only">Open sidebar</span>
             </button>
-            <button className="rounded-2xl border border-white/10 bg-white/5 p-2 text-[var(--blueprint-foreground)] transition hover:border-white/20 hover:bg-white/10">
+            <button
+              className="rounded-2xl border border-white/10 bg-white/5 p-2 text-[var(--blueprint-foreground)] transition hover:border-white/20 hover:bg-white/10"
+              aria-label="Open search"
+            >
                 <Search className="h-6 w-6" />
             </button>
             <button
