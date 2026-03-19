@@ -1,3 +1,7 @@
 ## 2024-03-15 - [Added Accessible Progress Bars and Controls to Coverage Analyzer]
 **Learning:** Adding ARIA roles to custom visual progress bars (using `role="progressbar"`, `aria-valuenow`, `aria-valuemin`, `aria-valuemax`) drastically improves the screen-reader experience for components that only indicate progress via colored `div` widths. Adding context-specific `aria-label`s to controls like play/pause and selectors makes complex interactives more understandable.
 **Action:** When building custom visual progress indicators, always ensure they are accompanied by the proper `role="progressbar"` and current value attributes, rather than relying on visual CSS properties alone.
+
+## 2024-03-19 - [Missing ARIA Attributes on Interactive Elements]
+**Learning:** Found a pattern where custom UI elements (like dropdown triggers and accordion toggles) are missing critical ARIA attributes (`aria-expanded`, `aria-controls`, `aria-haspopup`) and icon-only buttons lack `aria-label`. Without these attributes, users on screen readers miss out on essential context regarding the current state or function of these components.
+**Action:** When building custom interactive components (like custom dropdowns in `Navbar` or collapsibles in `Sidebar`), always use `aria-expanded` tied to the state variable, and connect the trigger to the content block with `aria-controls` / `id`. For icon-only actions, ensure an `aria-label` provides a meaningful description. Furthermore, interactive custom elements need explicit `focus-visible` styling for keyboard users.

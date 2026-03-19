@@ -196,13 +196,19 @@ const Sidebar = () => {
               {/* Module Outline */}
               {moduleOutline && moduleOutline.sections.length > 0 && (
                 <div>
-                  <button onClick={() => setOutlineOpen(!isOutlineOpen)} className="w-full flex justify-between items-center font-semibold text-left mb-2">
+                  <button
+                    onClick={() => setOutlineOpen(!isOutlineOpen)}
+                    className="w-full flex justify-between items-center font-semibold text-left mb-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 rounded-sm"
+                    aria-expanded={isOutlineOpen}
+                    aria-controls="module-outline-content"
+                  >
                     <span>Module Outline</span>
                     <ChevronsUpDown className={`h-4 w-4 transition-transform ${isOutlineOpen ? 'rotate-180' : ''}`} />
                   </button>
                   <AnimatePresence>
                     {isOutlineOpen && (
                       <motion.div
+                        id="module-outline-content"
                         initial={{ height: 0, opacity: 0 }}
                         animate={{ height: 'auto', opacity: 1 }}
                         exit={{ height: 0, opacity: 0 }}
