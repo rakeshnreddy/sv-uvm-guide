@@ -232,6 +232,7 @@ const components = {
   GenerateElaborationVisualizer: dynamic(() => import('@/components/visuals/GenerateElaborationVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   FormalVsSimulationVisualizer,
   UvmPolicyVisualizer: dynamic(() => import('@/components/visuals/UvmPolicyVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  UvmContainerVisualizer: dynamic(() => import('@/components/visuals/UvmContainerVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   LabLink,
 };
 

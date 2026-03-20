@@ -1,0 +1,176 @@
+---
+title: "I-UVM-5: UVM Container Classes"
+description: "Learn when uvm_pool and uvm_queue add value over native SystemVerilog data structures — and when plain SV is the simpler choice."
+flashcards: "I-UVM-5_Container_Classes"
+---
+
+## Quick Take
+- **What it is:** `uvm_pool` and `uvm_queue` are UVM-managed container classes that wrap associative arrays and dynamic arrays, respectively, while integrating with the UVM factory and policy infrastructure.
+- **Why it matters:** Choosing the wrong container wastes simulation performance or forces manual boilerplate. Knowing when UVM containers add value versus when native SV is simpler prevents over-engineering.
+- **The Analogy:** UVM containers are like branded luggage with tracking tags (factory, print, compare). Native SV containers are lightweight gym bags — faster and simpler, but you lose the tracking.
+
+> **Signal:** If you're wrapping SV queues in custom `uvm_object` subclasses just to get print/compare support, it's time to learn `uvm_queue`.
+
+## Build Your Mental Model
+
+### The Two UVM Containers
+
+UVM provides exactly two container classes. Both extend `uvm_object`, which means they participate in the factory and support all five policy operations (print, compare, pack, record, copy).
+
+| Container | Native SV Equivalent | Key Difference |
+| --- | --- | --- |
+| `uvm_pool#(KEY, VAL)` | `VAL aa[KEY]` | Singleton access via `get_global_pool()` |
+| `uvm_queue#(T)` | `T q[$]` | Factory-compatible, policy-integrated |
+
+> **IEEE 1800.2-2020 Reference:** Clause 11.2 (`uvm_pool`) and Clause 11.3 (`uvm_queue`).
+
+### `uvm_pool` — The Global Shared Map
+
+`uvm_pool` is a parameterized associative container with a built-in global singleton pattern. Any component anywhere in the hierarchy can access the same pool without needing a handle.
+
+```systemverilog
+// Store a value from a monitor
+uvm_pool#(string, int)::get_global_pool().add("error_count", err_cnt);
+
+// Retrieve it in the scoreboard — no handle-passing needed
+int errors = uvm_pool#(string, int)::get_global_pool().get("error_count");
+```
+
+**When to use `uvm_pool`:**
+- Sharing metadata across components that don't have direct TLM connections (event counters, status flags, configuration tokens)
+- Building registries or lookup tables that multiple agents read
+
+**When NOT to use it:**
+- For high-frequency data (transactions) — use TLM ports instead
+- When you need ordering guarantees — pools are unordered maps
+
+### `uvm_queue` — The Factory-Aware List
+
+`uvm_queue` wraps a dynamic array with push/pop/insert/delete operations. Its primary advantage over an SV queue is factory and policy integration.
+
+```systemverilog
+// Create a factory-overridable queue
+uvm_queue#(my_packet) pkt_log = uvm_queue#(my_packet)::type_id::create("pkt_log");
+
+// Use it like any queue
+pkt_log.push_back(pkt);
+my_packet first = pkt_log.get(0);
+$display("Logged %0d packets", pkt_log.size());
+
+// Policy integration: print all entries via uvm_printer
+pkt_log.print();
+```
+
+**When to use `uvm_queue`:**
+- When you need to store the queue as a `uvm_object` field (e.g., for `do_compare` or `do_copy`)
+- When factory override of the container itself is meaningful
+- When you want debug-printing of the container contents via `print()`
+
+**When NOT to use it:**
+- For simple local iteration — native `T q[$]` is faster and has richer array methods (`sort`, `find`, `unique`, `rsort`)
+- When you need array reduction (`sum`, `product`, `and`, `or`)
+
+### Native SV: When Simpler Is Better
+
+Most production testbenches use native SV structures for the majority of their container needs:
+
+```systemverilog
+// Associative array — zero-overhead hash map
+int error_map[string];
+error_map["crc"] = 0;
+error_map["timeout"] = 3;
+
+// Queue — ordered, double-ended, with rich array methods
+my_packet pkt_q[$];
+pkt_q.push_back(pkt);
+my_packet sorted_q[$] = pkt_q.sort() with (item.addr);    // built-in sort
+my_packet matches[$]  = pkt_q.find() with (item.addr > 'h1000); // built-in filter
+```
+
+> **Key insight:** Native SV queues have `sort`, `find`, `unique`, `min`, `max`, `sum`, and `reverse` built in. `uvm_queue` has none of these. If you need array manipulation, native SV wins.
+
+### Try It: Compare the Containers
+
+<UvmContainerVisualizer />
+
+## Make It Work
+
+1. **Default to native SV.** Start with `int map[string]` and `pkt q[$]`. Only switch to UVM containers when you need factory, policy, or global singleton features.
+2. **Use `uvm_pool` for cross-component metadata.** Error counters, test-phase flags, and configuration tokens are good candidates.
+3. **Avoid `uvm_pool` for transactions.** TLM analysis ports are the right mechanism for moving structured data between components.
+4. **Use `uvm_queue` when the container is a field.** If a queue lives inside a `uvm_object` and needs to participate in `compare` or `copy`, `uvm_queue` saves boilerplate.
+5. **Never wrap a queue just for printing.** A `foreach` loop with `$sformatf` is simpler than switching to `uvm_queue` for debug output alone.
+
+**Checklist before moving on:**
+- [ ] You know the two UVM container classes and their native SV equivalents.
+- [ ] You understand `get_global_pool()` and when global shared state helps vs hurts.
+- [ ] You can explain why native SV queues have richer array methods than `uvm_queue`.
+- [ ] You know when to choose each container type.
+
+## Push Further: uvm_pool Patterns
+
+### Typed Barrier Pool
+
+A common pattern uses `uvm_pool` as a coordination point between independent agents:
+
+```systemverilog
+class my_env extends uvm_env;
+  typedef uvm_pool#(string, uvm_event) event_pool_t;
+
+  function void connect_phase(uvm_phase phase);
+    // Both agents share the same event pool
+    event_pool_t pool = event_pool_t::get_global_pool();
+    pool.add("dma_done", new("dma_done"));
+  endfunction
+endclass
+
+// In agent A's sequence:
+event_pool_t::get_global_pool().get("dma_done").trigger();
+
+// In agent B's sequence:
+event_pool_t::get_global_pool().get("dma_done").wait_trigger();
+```
+
+> **Caution:** This pattern couples agents via a string key. If the key is misspelled, the bug is silent until runtime. Consider defining key constants in a shared package.
+
+## Practice & Reinforce
+
+<Quiz questions={[
+  {
+    "question": "When would you choose `uvm_pool` over a native SV associative array?",
+    "answers": [
+      {"text": "When you need sort/find/unique methods on the entries.", "correct": false},
+      {"text": "When multiple components need shared access without passing handles.", "correct": true},
+      {"text": "When you need maximum simulation performance.", "correct": false},
+      {"text": "When you are storing transactions between a monitor and scoreboard.", "correct": false}
+    ],
+    "explanation": "`uvm_pool` provides global singleton access via `get_global_pool()`, letting components share data without explicit handle-passing. TLM ports are better for transactions."
+  },
+  {
+    "question": "Which container supports built-in `sort()` and `find()` array methods?",
+    "answers": [
+      {"text": "uvm_pool", "correct": false},
+      {"text": "uvm_queue", "correct": false},
+      {"text": "Native SV queue ($)", "correct": true},
+      {"text": "Both uvm_queue and SV queue", "correct": false}
+    ],
+    "explanation": "Only native SV queues/dynamic arrays support `sort`, `find`, `unique`, and other array manipulation methods. `uvm_queue` wraps a dynamic array but does not expose these."
+  },
+  {
+    "question": "What is the main benefit of `uvm_queue` over a native SV queue?",
+    "answers": [
+      {"text": "It is faster at push/pop operations.", "correct": false},
+      {"text": "It supports array reduction methods like sum().", "correct": false},
+      {"text": "It integrates with the UVM factory and policy classes (print, compare, copy).", "correct": true}
+    ],
+    "explanation": "`uvm_queue` extends `uvm_object`, giving it factory override support and policy-class integration. Native SV queues are faster but lack these features."
+  }
+]} />
+
+## References & Next Topics
+- **IEEE 1800.2-2020 Clause 11.2** — `uvm_pool`.
+- **IEEE 1800.2-2020 Clause 11.3** — `uvm_queue`.
+- **IEEE 1800-2017 Clause 7.10–7.12** — Native SV dynamic arrays, associative arrays, and queues.
+- **Previous:** [I-UVM-4: UVM Policy Classes](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes)
+- **Next:** Continue to advanced UVM with [A-UVM-4A: RAL Fundamentals](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals) or explore recording classes.
+- **Related:** [I-UVM-1A: Objects and Components](/curriculum/T2_Intermediate/I-UVM-1A_Components) — the `uvm_object` base class that gives containers their factory/policy integration.

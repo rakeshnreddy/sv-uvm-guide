@@ -506,6 +506,17 @@ export const curriculumData: Module[] = [
             "description": "Master the five utility classes — printer, comparer, packer, recorder, copier — that give you total control over how UVM objects present, compare, serialize, record, and clone themselves."
           }
         ]
+      },
+      {
+        "title": "I-UVM-5: UVM Container Classes",
+        "slug": "I-UVM-5_UVM_Container_Classes",
+        "topics": [
+          {
+            "title": "I-UVM-5: UVM Container Classes",
+            "slug": "index",
+            "description": "Learn when uvm_pool and uvm_queue add value over native SystemVerilog data structures — and when plain SV is the simpler choice."
+          }
+        ]
       }
     ]
   },
