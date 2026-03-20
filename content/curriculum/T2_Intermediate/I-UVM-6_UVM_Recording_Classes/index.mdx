@@ -1,0 +1,106 @@
+---
+title: "UVM Recording Classes"
+description: "Understand how transaction recording bridges the gap between object-oriented verification models and traditional waveform viewing tools."
+flashcardId: "I-UVM-6_UVM_Recording_Classes"
+---
+
+# UVM Recording Classes
+
+As your UVM testbench grows in complexity, standard text-based `$display` or `uvm_info` logs become insufficient for debugging complex bus transactions or system-level flows. You need a way to visualize UVM transaction objects—which exist dynamically in simulator memory—alongside physical RTL signals in a waveform viewer.
+
+The **UVM Recording Classes** define a standard, vendor-neutral API for recording these dynamic transaction objects into a structured transaction database (usually mapped to vendor-specific formats like FSDB or GUI databases).
+
+## Quick Take
+- **`uvm_recorder`**: The policy object responsible for packing transaction fields. It provides the API (`uvm_record_field`, `uvm_record_string`, etc.) used when `do_record()` is called on a transaction.
+- **`uvm_tr_stream`**: Represents a specific channel or "stream" of transactions, much like a signal trace in a waveform. Streams belong to a database.
+- **`uvm_tr_database`**: The backend engine that receives the recorded transaction data. In practical terms, this is implemented by the EDA vendor to dump directly into the simulation's waveform file.
+
+
+## Build Your Mental Model
+
+Think of a UVM transaction as a cargo box filled with items (data fields). The `uvm_recorder` acts as a packing slip generator, noting down every item in the box. The `uvm_tr_stream` is the conveyor belt that moves this specific type of box, and the `uvm_tr_database` is the warehouse where all boxes are stored and cataloged for later inspection.
+
+When a `uvm_driver` starts executing a transaction, it tells the warehouse, "I'm starting a new box now." When it finishes, it says, "I'm done with this box." The warehouse records exactly how long that box took to process and exactly what was inside it at that moment.
+
+## Interactive: Transaction Recording Visualization
+
+Use the visualizer below to see how standard UVM components interact with the recording infrastructure to push transaction data to an external viewing database. Observe how `begin_tr` and `end_tr` define the transaction's lifetime in the waveform viewer.
+
+<TransactionRecordingVisualizer />
+
+## Make It Work: Recording in Practice
+
+To leverage recording effectively, you need to instrument both your transaction object and the component processing it.
+
+### Step 1: Implement `do_record` in the Transaction
+
+Just like `do_print` or `do_copy`, your transaction must define what fields are important to record by overriding the `do_record` method. This method receives a `uvm_recorder` object.
+
+```sv
+class axi_transfer extends uvm_sequence_item;
+  rand bit [31:0] addr;
+  rand bit [31:0] data;
+  rand bit        is_read;
+
+  `uvm_object_utils(axi_transfer)
+
+  virtual function void do_record(uvm_recorder recorder);
+    super.do_record(recorder);
+    // Use the `uvm_record_field` macro or direct recorder API
+    `uvm_record_field("ADDR", addr)
+    `uvm_record_field("DATA", data)
+    `uvm_record_string("CMD", (is_read ? "READ" : "WRITE"))
+  endfunction
+  
+  // ... constructor ...
+endclass
+```
+
+### Step 2: Demarcate the Transaction in the Component
+
+In the component that executes or observes the transaction (like a driver or monitor), you must mark when the transaction begins and ends physical time. The base `uvm_component` provides the `begin_tr()` and `end_tr()` methods for this purpose. Usually `accept_tr()` is called before `begin_tr()` to indicate the component has taken ownership.
+
+```sv
+class axi_driver extends uvm_driver #(axi_transfer);
+  // ... constructor and registration ...
+
+  virtual task run_phase(uvm_phase phase);
+    forever begin
+      seq_item_port.get_next_item(req);
+      
+      // Start recording. This creates a stream linkage and records the start time.
+      // 'req' is the transaction, and the driver is the stream context.
+      void'(begin_tr(req, "axi_driver_stream"));
+      
+      // Drive physical signals (consume simulation time)
+      drive_transaction(req);
+      
+      // End recording. This records the end time and triggers do_record().
+      end_tr(req);
+      
+      seq_item_port.item_done();
+    end
+  endtask
+endclass
+```
+
+> [!TIP]
+> By default, `begin_tr` and `end_tr` assume that transaction recording is globally permitted and stream settings are valid. Vendor simulators often require specific plusargs (like `+UVM_TR_RECORD`) or API options to attach their proprietary database engine to the default UVM database instance.
+
+## Push Further: Telemetry and Structured Debug
+
+Transaction recording bridges the gap between pure UVM logic and structured debug. While `uvm_info` statements are interspersed linearly in a text log, recorded transactions have rigid start/end times and hierarchical relationships.
+
+This allows EDA tools to correlate a high-level `uvm_sequence_item` directly with the toggling of wires on a physical interface. For example, by recording both the original generic sequence item and the translated mapped packets, you can visualize parent-child object relationships directly atop your waveform traces. This concept seamlessly integrates with the centralized event-bus telemetry and debug strategies discussed in the **Advanced UVM Debug Methodologies** section. Tools can show a single transaction encompassing multiple sub-transactions, providing a clearer system-level debug flow.
+
+## Practice & Reinforce
+
+1. **Why not just use `do_print()` instead of `do_record()`?**
+   Printing converts an object into a single formatted string, which is hard to parse programmatically. Recording hands over typed fields (integers, strings) individually to a backend database, allowing a waveform viewer to render `[31:0] addr` as an expandable hex signal rather than monolithic plain text.
+2. **What happens if you forget to call `end_tr()`?**
+   The transaction will remain "open" indefinitely in the database, appearing in the waveform viewer as a block that stretches to the end of simulation without ever concluding, potentially consuming excessive memory.
+
+## References & Next Topics
+
+- **IEEE 1800.2-2020 Clause 11**: UVM Recording Classes
+- **Next Topic**: [Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies) for applying recording and structured logs to complex verification triage.

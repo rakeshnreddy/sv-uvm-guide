@@ -517,6 +517,17 @@ export const curriculumData: Module[] = [
             "description": "Learn when uvm_pool and uvm_queue add value over native SystemVerilog data structures — and when plain SV is the simpler choice."
           }
         ]
+      },
+      {
+        "title": "UVM Recording Classes",
+        "slug": "I-UVM-6_UVM_Recording_Classes",
+        "topics": [
+          {
+            "title": "UVM Recording Classes",
+            "slug": "index",
+            "description": "Understand how transaction recording bridges the gap between object-oriented verification models and traditional waveform viewing tools."
+          }
+        ]
       }
     ]
   },

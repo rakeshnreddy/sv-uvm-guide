@@ -102,7 +102,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 17 | `W7-ISV-API` | P1 | `complete` | none | Create a dedicated DPI/VPI/API track and move DPI ownership out of formal integration. |
 | 18 | `W7-IUVM-POLICY` | P1 | `complete` | none | Add the missing UVM policy-classes lesson. |
 | 19 | `W7-IUVM-CONTAINER` | P1 | `complete` | none | Add the missing UVM container-classes lesson. |
-| 20 | `W7-IUVM-RECORDING` | P1 | `todo` | `W6-EDBG1-MOD` | Add the missing UVM recording-classes lesson tied to debug telemetry architecture. |
+| 20 | `W7-IUVM-RECORDING` | P1 | `complete` | `W6-EDBG1-MOD` | Add the missing UVM recording-classes lesson tied to debug telemetry architecture. |
 | 21 | `W8-EXPERT-CLEANUP` | P2 | `todo` | `W6-EDBG1-MOD`, `W6-EINT1-MOD`, `W6-ESOC1-MOD`, `W7-ISV-API` | Re-home thin expert pages and normalize ownership after W6/W7 content work lands. |
 | 22 | `W8-ASSET-MAPPING` | P2 | `todo` | `W5-AUVM4-SPLIT`, `W6-ECUST1-MOD`, `W6-ESOC1-MOD` | Map or retire unused verification visuals/diagrams. |
 | 23 | `W8-CONCEPT-LINKS` | P2 | `todo` | all content tasks above | Run a final canonical concept-linking pass across the curriculum. |
@@ -513,7 +513,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W7-IUVM-RECORDING`
 - Priority: P1
-- Status: `todo`
+- Status: `complete`
 - Depends On: `W6-EDBG1-MOD`
 - Related IDs: `CURR-W7-IUVM-RECORDING`, `AUD-014`
 - Primary surfaces: new recording-classes lesson, debug telemetry links
@@ -523,9 +523,9 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   2. Show how recording ties into transaction-viewing databases and structured debug flows.
   3. Reuse the debug event-bus architecture from `W6-EDBG1-MOD` where appropriate.
 - Deliverable checklist:
-  - [ ] Recording lesson exists.
-  - [ ] Integration with the debug/telemetry path is explicit.
-  - [ ] Vendor-specific viewing/database concepts are taught responsibly without overfitting one tool.
+  - [x] Recording lesson exists.
+  - [x] Integration with the debug/telemetry path is explicit.
+  - [x] Vendor-specific viewing/database concepts are taught responsibly without overfitting one tool.
 - Validation:
   - Add route smoke coverage and tests for any new visual/demo logic.
 
