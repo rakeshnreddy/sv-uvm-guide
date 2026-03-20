@@ -103,7 +103,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 18 | `W7-IUVM-POLICY` | P1 | `complete` | none | Add the missing UVM policy-classes lesson. |
 | 19 | `W7-IUVM-CONTAINER` | P1 | `complete` | none | Add the missing UVM container-classes lesson. |
 | 20 | `W7-IUVM-RECORDING` | P1 | `complete` | `W6-EDBG1-MOD` | Add the missing UVM recording-classes lesson tied to debug telemetry architecture. |
-| 21 | `W8-EXPERT-CLEANUP` | P2 | `todo` | `W6-EDBG1-MOD`, `W6-EINT1-MOD`, `W6-ESOC1-MOD`, `W7-ISV-API` | Re-home thin expert pages and normalize ownership after W6/W7 content work lands. |
+| 21 | `W8-EXPERT-CLEANUP` | P2 | `complete` | `W6-EDBG1-MOD`, `W6-EINT1-MOD`, `W6-ESOC1-MOD`, `W7-ISV-API` | Re-home thin expert pages and normalize ownership after W6/W7 content work lands. |
 | 22 | `W8-ASSET-MAPPING` | P2 | `todo` | `W5-AUVM4-SPLIT`, `W6-ECUST1-MOD`, `W6-ESOC1-MOD` | Map or retire unused verification visuals/diagrams. |
 | 23 | `W8-CONCEPT-LINKS` | P2 | `todo` | all content tasks above | Run a final canonical concept-linking pass across the curriculum. |
 | 24 | `W9-ISV-UPF` | P1 | `todo` | none | Create a dedicated UPF/power-intent fundamentals lesson with supply network and power-state teaching. |
@@ -531,7 +531,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W8-EXPERT-CLEANUP`
 - Priority: P2
-- Status: `todo`
+- Status: `complete`
 - Depends On: `W6-EDBG1-MOD`, `W6-EINT1-MOD`, `W6-ESOC1-MOD`, `W7-ISV-API`
 - Related IDs: `AUD-015`
 - Primary surfaces: thin expert pages under `E-DBG-1`, `E-INT-1`, and `E-SOC-1`
@@ -542,9 +542,9 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   3. Remove or re-home `pss.mdx` and `dpi.mdx` ownership after the new API track exists.
   4. Ensure expert-tier page ownership is intentional and non-overlapping.
 - Deliverable checklist:
-  - [ ] Thin expert pages are either expanded, merged, or re-homed.
-  - [ ] Debug/formal/SoC modules each own the right concepts.
-  - [ ] No expert page remains as a note-length orphan without a rationale.
+  - [x] Thin expert pages are either expanded, merged, or re-homed.
+  - [x] Debug/formal/SoC modules each own the right concepts.
+  - [x] No expert page remains as a note-length orphan without a rationale.
 - Validation:
   - Re-run link and route coverage for all affected expert paths.
 

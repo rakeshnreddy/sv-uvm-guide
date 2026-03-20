@@ -620,11 +620,6 @@ export const curriculumData: Module[] = [
             "title": "Hang Lab: Practising UVM Deadlock Recovery",
             "slug": "hang-lab",
             "description": "Use the debugging simulator to rehearse objection tracing, heartbeat analysis, and item_done triage on realistic UVM hangs."
-          },
-          {
-            "title": "Reusable Verification IP (VIP) Architecture | The Professional Verification Craft",
-            "slug": "reusable-vip",
-            "description": "Patterns for building maintainable verification components."
           }
         ]
       },
@@ -636,16 +631,6 @@ export const curriculumData: Module[] = [
             "title": "E-INT-1: Integrating UVM with Formal Verification",
             "slug": "index",
             "description": "Bridge simulation and proof: share assertions, align coverage, and orchestrate flows where UVM and formal reinforce each other."
-          },
-          {
-            "title": "Direct Programming Interface (DPI)",
-            "slug": "dpi",
-            "description": "C interoperability for performance and modeling flexibility."
-          },
-          {
-            "title": "Portable Stimulus (PSS)",
-            "slug": "pss",
-            "description": "Intent-based test description that runs across simulation, emulation, and silicon with minimal adaptation."
           }
         ]
       },
@@ -668,6 +653,11 @@ export const curriculumData: Module[] = [
             "title": "E-SOC-1: SoC-Level Verification Strategies",
             "slug": "index",
             "description": "Scale block-level infrastructure to SoC: plan reuse, configure virtual platforms, and coordinate cross-team stimulus."
+          },
+          {
+            "title": "Portable Stimulus (PSS)",
+            "slug": "pss",
+            "description": "Intent-based test description that runs across simulation, emulation, and silicon with minimal adaptation."
           }
         ]
       }
