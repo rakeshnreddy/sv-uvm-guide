@@ -100,7 +100,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 15 | `W7-ISV-CHECKERS` | P1 | `complete` | none | Create a dedicated checkers lesson and integrate it with the SVA path. |
 | 16 | `W7-ISV-DIRECTIVES` | P1 | `complete` | none | Create the directives/generate track with elaboration-vs-runtime teaching. |
 | 17 | `W7-ISV-API` | P1 | `complete` | none | Create a dedicated DPI/VPI/API track and move DPI ownership out of formal integration. |
-| 18 | `W7-IUVM-POLICY` | P1 | `todo` | none | Add the missing UVM policy-classes lesson. |
+| 18 | `W7-IUVM-POLICY` | P1 | `complete` | none | Add the missing UVM policy-classes lesson. |
 | 19 | `W7-IUVM-CONTAINER` | P1 | `todo` | none | Add the missing UVM container-classes lesson. |
 | 20 | `W7-IUVM-RECORDING` | P1 | `todo` | `W6-EDBG1-MOD` | Add the missing UVM recording-classes lesson tied to debug telemetry architecture. |
 | 21 | `W8-EXPERT-CLEANUP` | P2 | `todo` | `W6-EDBG1-MOD`, `W6-EINT1-MOD`, `W6-ESOC1-MOD`, `W7-ISV-API` | Re-home thin expert pages and normalize ownership after W6/W7 content work lands. |
@@ -478,7 +478,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W7-IUVM-POLICY`
 - Priority: P1
-- Status: `todo`
+- Status: `complete`
 - Depends On: none
 - Related IDs: `CURR-W7-IUVM-POLICY`, `AUD-012`
 - Primary surfaces: new policy-classes lesson, `UvmPolicyVisualizer.tsx`
@@ -488,9 +488,9 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   2. Build `UvmPolicyVisualizer.tsx` so learners can see the same object under different policy behaviors.
   3. Add an exercise or lab using one object through multiple policies.
 - Deliverable checklist:
-  - [ ] Policy lesson exists.
-  - [ ] Visualizer exists.
-  - [ ] Learners can compare policy-class roles and customization points.
+  - [x] Policy lesson exists.
+  - [x] Visualizer exists.
+  - [x] Learners can compare policy-class roles and customization points.
 - Validation:
   - Unit-test the visualizer and add route coverage.
 

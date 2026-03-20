@@ -231,6 +231,7 @@ const components = {
   BindDirectiveVisualizer: dynamic(() => import('@/components/visuals/BindDirectiveVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   GenerateElaborationVisualizer: dynamic(() => import('@/components/visuals/GenerateElaborationVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   FormalVsSimulationVisualizer,
+  UvmPolicyVisualizer: dynamic(() => import('@/components/visuals/UvmPolicyVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   LabLink,
 };
 

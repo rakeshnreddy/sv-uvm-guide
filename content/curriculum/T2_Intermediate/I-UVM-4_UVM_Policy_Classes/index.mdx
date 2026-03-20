@@ -1,0 +1,194 @@
+---
+title: "I-UVM-4: UVM Policy Classes"
+description: "Master the five utility classes — printer, comparer, packer, recorder, copier — that give you total control over how UVM objects present, compare, serialize, record, and clone themselves."
+flashcards: "I-UVM-4_Policy_Classes"
+---
+
+## Quick Take
+- **What it is:** UVM policy classes are pluggable strategies that define *how* an object's field data is processed — without touching the object's core logic.
+- **Why it matters:** Without understanding policies, you are stuck with the default `print()` / `compare()` / `pack()` / `record()` / `copy()` behavior and cannot customize debug output, comparison tolerance, serialization layout, transaction recording, or deep-copy semantics.
+- **The Analogy:** Think of policy classes as lenses on a camera. The subject (your `uvm_object`) stays the same, but each lens reveals a different view: wide-angle for printing, macro for comparison, fisheye for packed transport.
+
+> **Signal:** If you find yourself writing `$sformatf` wrappers around object fields instead of using `print()`, or manually copying fields one-by-one instead of `copy()`, it is time to learn policy classes.
+
+## Build Your Mental Model
+
+### The Five Policies
+
+Every `uvm_object` inherits five virtual `do_*` hooks that policy classes call:
+
+| Policy Class | Hook Method | What It Does |
+| --- | --- | --- |
+| `uvm_printer` | `do_print()` | Formats the object's fields into a debug string (table, tree, or line) |
+| `uvm_comparer` | `do_compare()` | Walks two objects field-by-field and reports mismatches |
+| `uvm_packer` | `do_pack()` / `do_unpack()` | Serializes fields into a flat bitstream and back |
+| `uvm_recorder` | `do_record()` | Logs structured transaction attributes to a waveform database |
+| `uvm_copier` | `do_copy()` | Deep-copies fields and recursively clones nested handles |
+
+> **IEEE 1800.2-2020 Reference:** Clause 5.3 defines the `uvm_object` interface; Clauses 5.4–5.8 and 16 define the individual policy-class APIs and their default behaviors.
+
+### How Policies Interact with Objects
+
+When you call `pkt.print()`, UVM internally does:
+
+```systemverilog
+// Pseudocode — what happens inside uvm_object::print()
+function void print(uvm_printer printer = null);
+  if (printer == null) printer = uvm_default_printer;
+  // 1. Policy opens a scope for formattig
+  printer.print_object_header(get_name(), get_type_name());
+  // 2. YOUR override hook is called
+  do_print(printer);
+  // 3. Policy closes the scope
+  printer.print_object_footer();
+endfunction
+```
+
+The same pattern repeats for `compare()`, `pack()`, `record()`, and `copy()`. You customize behavior by overriding the `do_*` method, not by replacing the policy class itself (though you can do that too).
+
+### Field Macros vs Manual Overrides
+
+UVM provides two ways to wire fields into policy processing:
+
+**1. Declarative macros (quick but heavy):**
+
+```systemverilog
+class my_packet extends uvm_sequence_item;
+  `uvm_object_utils_begin(my_packet)
+    `uvm_field_int(addr,   UVM_ALL_ON)
+    `uvm_field_int(data,   UVM_ALL_ON)
+    `uvm_field_int(parity, UVM_ALL_ON | UVM_NOCOMPARE) // skip in compare
+    `uvm_field_int(id,     UVM_ALL_ON | UVM_NOPACK)    // skip in pack
+  `uvm_object_utils_end
+endclass
+```
+
+The macros auto-generate all five `do_*` methods. Flags like `UVM_NOCOMPARE` and `UVM_NOPACK` give per-field control.
+
+**2. Manual overrides (precise and performant):**
+
+```systemverilog
+class my_packet extends uvm_sequence_item;
+  `uvm_object_utils(my_packet)
+
+  rand bit [31:0] addr;
+  rand bit [31:0] data;
+  rand bit        parity;
+  rand bit [7:0]  id;
+
+  function void do_print(uvm_printer printer);
+    printer.print_field_int("addr",   addr,   32, UVM_HEX);
+    printer.print_field_int("data",   data,   32, UVM_HEX);
+    printer.print_field_int("parity", parity, 1,  UVM_BIN);
+    printer.print_field_int("id",     id,     8,  UVM_DEC);
+  endfunction
+
+  function bit do_compare(uvm_object rhs, uvm_comparer comparer);
+    my_packet rhs_;
+    if (!$cast(rhs_, rhs)) return 0;
+    return (addr == rhs_.addr) &&
+           (data == rhs_.data) &&
+           (id   == rhs_.id);
+    // parity deliberately excluded from compare
+  endfunction
+
+  // ... do_pack, do_copy, do_record similarly
+endclass
+```
+
+> **Industry preference:** Most production teams use manual `do_*` overrides because field macros generate significant code overhead and provide less control. The macros remain useful for quick prototyping.
+
+### Try It: The Policy Visualizer
+
+Explore how the same `my_packet` looks through all five policy lenses:
+
+<UvmPolicyVisualizer />
+
+## Make It Work
+
+1. **Start with macros, graduate to manual:** Use `uvm_field_*` macros during early development, then replace them with manual `do_*` overrides in production code for performance and control.
+2. **Always implement `do_compare` for scoreboards:** A scoreboard that uses the default `compare()` may be comparing fields you did not intend (like timestamps or IDs).
+3. **Use `do_pack` for DPI export:** When interfacing with C/C++ reference models via DPI, `pack()` / `unpack()` give you a clean serialization boundary.
+4. **Swap the global printer for debug:** Change `uvm_default_printer` at the start of your test to switch all debug output to tree or line format.
+5. **Deep copy before mutation:** Always use `copy()` or `clone()` before mutating a sequence item that other components might still reference.
+
+**Checklist before moving on:**
+- [ ] You can name all five policy classes and their `do_*` hooks.
+- [ ] You understand the tradeoff between field macros and manual overrides.
+- [ ] You know when to skip a field in compare (`UVM_NOCOMPARE`) or pack (`UVM_NOPACK`).
+- [ ] You understand that `copy()` deep-clones nested handles by default.
+
+## Push Further: Advanced Policy Customization
+
+### Custom Comparer with Tolerance
+
+```systemverilog
+class tolerant_comparer extends uvm_comparer;
+  int unsigned tolerance = 2;
+
+  virtual function bit compare_field_int(
+    string name, uvm_bitstream_t lhs, uvm_bitstream_t rhs,
+    int size, uvm_radix_enum radix = UVM_NORADIX
+  );
+    if (name == "data") begin
+      // Allow ±tolerance mismatch
+      if ($signed(lhs - rhs) > -tolerance && $signed(lhs - rhs) < tolerance)
+        return 1;
+    end
+    return super.compare_field_int(name, lhs, rhs, size, radix);
+  endfunction
+endclass
+```
+
+### Custom Recorder for Coverage Correlation
+
+Override `do_record()` to attach extra metadata — like coverage-bin names or test phase — that your waveform correlation scripts can consume.
+
+```systemverilog
+function void do_record(uvm_recorder recorder);
+  super.do_record(recorder);
+  recorder.record_string("test_phase", "main_sequence");
+  recorder.record_field_int("latency_ns", latency, 32, UVM_DEC);
+endfunction
+```
+
+## Practice & Reinforce
+
+<Quiz questions={[
+  {
+    "question": "Which policy class would you use to serialize a transaction for DPI export to a C model?",
+    "answers": [
+      {"text": "uvm_printer", "correct": false},
+      {"text": "uvm_comparer", "correct": false},
+      {"text": "uvm_packer", "correct": true},
+      {"text": "uvm_recorder", "correct": false}
+    ],
+    "explanation": "`uvm_packer` serializes object fields into a flat bitstream that can cross the DPI boundary as a byte array."
+  },
+  {
+    "question": "What happens if you use `uvm_field_*` macros but also implement `do_compare()`?",
+    "answers": [
+      {"text": "The macro-generated compare and do_compare both run and results are combined.", "correct": false},
+      {"text": "do_compare() takes priority and the macro-generated compare is ignored.", "correct": true},
+      {"text": "A compilation error occurs due to duplicate definitions.", "correct": false},
+      {"text": "The macro-generated compare runs first; do_compare is a no-op.", "correct": false}
+    ],
+    "explanation": "When you provide a manual `do_compare()` override, it replaces the macro-generated logic for the compare policy."
+  },
+  {
+    "question": "Why might a scoreboard exclude `id` from comparison using UVM_NOCOMPARE?",
+    "answers": [
+      {"text": "The id field is always zero.", "correct": false},
+      {"text": "The id is assigned by infrastructure (e.g., sequence numbering) and is not part of the functional specification the scoreboard checks.", "correct": true},
+      {"text": "UVM_NOCOMPARE improves simulation speed.", "correct": false}
+    ],
+    "explanation": "Infrastructure-assigned fields like sequence IDs are not part of the DUT's functional behavior. Comparing them would cause false mismatches."
+  }
+]} />
+
+## References & Next Topics
+- **IEEE 1800.2-2020 Clause 5.3–5.8** — `uvm_object` policy interface.
+- **IEEE 1800.2-2020 Clause 16** — Reporting and recording infrastructure.
+- **Previous:** [I-UVM-3B: Advanced Sequencing and Layering](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering)
+- **Next:** Explore UVM container classes or continue to [Advanced UVM — RAL Fundamentals](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals).
+- **Related:** [E-DBG-1: Advanced Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies) — where recording integrates with telemetry architecture.

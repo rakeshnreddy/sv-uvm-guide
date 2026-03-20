@@ -495,6 +495,17 @@ export const curriculumData: Module[] = [
             "description": "Learn how to use virtual sequences and sequencers to coordinate and synchronize stimulus across multiple agents in a UVM testbench."
           }
         ]
+      },
+      {
+        "title": "I-UVM-4: UVM Policy Classes",
+        "slug": "I-UVM-4_UVM_Policy_Classes",
+        "topics": [
+          {
+            "title": "I-UVM-4: UVM Policy Classes",
+            "slug": "index",
+            "description": "Master the five utility classes — printer, comparer, packer, recorder, copier — that give you total control over how UVM objects present, compare, serialize, record, and clone themselves."
+          }
+        ]
       }
     ]
   },
