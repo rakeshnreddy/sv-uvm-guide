@@ -104,7 +104,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 19 | `W7-IUVM-CONTAINER` | P1 | `complete` | none | Add the missing UVM container-classes lesson. |
 | 20 | `W7-IUVM-RECORDING` | P1 | `complete` | `W6-EDBG1-MOD` | Add the missing UVM recording-classes lesson tied to debug telemetry architecture. |
 | 21 | `W8-EXPERT-CLEANUP` | P2 | `complete` | `W6-EDBG1-MOD`, `W6-EINT1-MOD`, `W6-ESOC1-MOD`, `W7-ISV-API` | Re-home thin expert pages and normalize ownership after W6/W7 content work lands. |
-| 22 | `W8-ASSET-MAPPING` | P2 | `todo` | `W5-AUVM4-SPLIT`, `W6-ECUST1-MOD`, `W6-ESOC1-MOD` | Map or retire unused verification visuals/diagrams. |
+| 22 | `W8-ASSET-MAPPING` | P2 | `complete` | `W5-AUVM4-SPLIT`, `W6-ECUST1-MOD`, `W6-ESOC1-MOD` | Map or retire unused verification visuals/diagrams. |
 | 23 | `W8-CONCEPT-LINKS` | P2 | `todo` | all content tasks above | Run a final canonical concept-linking pass across the curriculum. |
 | 24 | `W9-ISV-UPF` | P1 | `todo` | none | Create a dedicated UPF/power-intent fundamentals lesson with supply network and power-state teaching. |
 | 25 | `W9-EPWR-STRATEGY` | P1 | `todo` | `W9-ISV-UPF`, `W6-ESOC1-MOD` | Build the expert power-aware UVM verification strategy module with corruption semantics and shutdown/wake-up verification. |
@@ -550,7 +550,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W8-ASSET-MAPPING`
 - Priority: P2
-- Status: `todo`
+- Status: `complete`
 - Depends On: `W5-AUVM4-SPLIT`, `W6-ECUST1-MOD`, `W6-ESOC1-MOD`
 - Related IDs: `AUD-018`
 - Primary surfaces: verification-themed assets in `src/components/diagrams/`, `src/components/visuals/`, related practice/curriculum routes
@@ -560,8 +560,8 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   2. Decide whether it should be embedded into curriculum, exposed via practice, or archived/deleted.
   3. Avoid keeping unused premium assets with no roadmap owner.
 - Deliverable checklist:
-  - [ ] Each currently orphaned verification visual has an owner decision.
-  - [ ] Unused assets are either mapped or intentionally retired.
+  - [x] Each currently orphaned verification visual has an owner decision.
+  - [x] Unused assets are either mapped or intentionally retired.
 - Validation:
   - Re-run the usage audit after the pass.
 
