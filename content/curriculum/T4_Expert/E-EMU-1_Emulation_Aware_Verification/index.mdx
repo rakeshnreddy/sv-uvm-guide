@@ -1,0 +1,306 @@
+---
+title: "E-EMU-1: Emulation-Aware Verification"
+description: "Adapt UVM testbenches for hardware emulation platforms — transaction-level acceleration, virtual probes, and the compile-time vs. run-time tradeoffs that determine emulation success."
+---
+
+## Quick Take
+- **What it is:** Emulation-aware verification is the set of techniques, patterns, and constraints required to run UVM-based testbenches on hardware emulation platforms (Cadence Palladium Z2, Synopsys ZeBu EP1, Siemens Veloce Strato), where the DUT is synthesized onto FPGA or custom emulation hardware and runs 100–10,000× faster than RTL simulation.
+- **Why it matters:** At the SoC level, RTL simulation throughput hits a wall — a full boot sequence that takes 72 hours in VCS runs in 2 minutes on Palladium. Emulation is mandatory for SoC-level regression, firmware co-verification, and performance validation. But standard UVM testbenches cannot run unmodified on emulators — they require architectural changes.
+- **Scale of adoption:** In 2025–2026, every top-10 semiconductor company uses hardware emulation for their most complex SoC designs. Emulation capacity is typically the most expensive and contended resource in a verification organization.
+
+## Why Emulation: Speed/Capacity Tradeoffs
+
+| Metric | RTL Simulation | Hardware Emulation | FPGA Prototyping |
+|---|---|---|---|
+| **Speed** | 1–100 Hz | 100 KHz – 2 MHz | 10–100 MHz |
+| **Capacity** | Up to ~500M gates | Up to 15B gates | Up to 500M gates |
+| **Debug visibility** | Full waveform access | Selective probing | Limited visibility |
+| **Setup cost** | Low (compile-and-run) | High (synthesis + mapping) | Medium (synthesis + place-route) |
+| **Accuracy** | Cycle-accurate by definition | Cycle-accurate | May have timing differences |
+| **Typical use** | IP-level, subsystem | Full SoC boot, firmware | Performance validation, SW development |
+| **Cost per seat** | $50K–$200K/year | $1M–$5M/year | $100K–$500K |
+
+**Key insight:** Emulation is not "faster simulation." The DUT runs in hardware, while the testbench runs in software. The bottleneck shifts from DUT computation to **testbench–DUT communication**.
+
+## Emulation Platforms Overview
+
+### Cadence Palladium Z2/Z3
+
+- Custom emulation hardware with up to 15 billion gates capacity
+- Xcelium co-simulation for testbench execution
+- Virtual/physical interfaces for external stimulus
+- SpeedBridge adapters for legacy BFM integration
+
+### Synopsys ZeBu EP1
+
+- Custom processor-based emulation architecture
+- VCS co-simulation for UVM testbenches
+- ZeBu Server provides multi-user access to emulation resources
+- Fast Transaction Interface (FTI) for transaction-level acceleration
+
+### Siemens Veloce Strato
+
+- FPGA-based emulation architecture
+- Questa co-simulation for testbench  
+- Transaction-Based Acceleration (TBA) with Veloce transactors
+- Multi-user access through Veloce OS
+
+## Transaction-Level Acceleration (TLA)
+
+### The Problem: Pin-Level Bottleneck
+
+A standard UVM driver wiggles individual pins on every clock edge:
+
+```systemverilog
+// Pin-level driver — one signal change per clock cycle
+// This is SLOW on an emulator because each signal change
+// requires a software-to-hardware round-trip
+task drive_axi_write(axi_transaction txn);
+  @(posedge vif.aclk);
+  vif.awvalid <= 1'b1;
+  vif.awaddr  <= txn.addr;
+  vif.awlen   <= txn.burst_length - 1;
+
+  @(posedge vif.aclk iff vif.awready);
+  vif.awvalid <= 1'b0;
+
+  for (int i = 0; i < txn.burst_length; i++) begin
+    @(posedge vif.aclk);
+    vif.wvalid <= 1'b1;
+    vif.wdata  <= txn.data[i];
+    vif.wlast  <= (i == txn.burst_length - 1);
+    @(posedge vif.aclk iff vif.wready);
+  end
+  vif.wvalid <= 1'b0;
+endtask
+```
+
+On an emulator, each `@(posedge vif.aclk)` is a synchronization point between the software testbench and the hardware DUT. With thousands of clock edges per transaction, the overhead dominates execution time.
+
+### The Solution: Transaction-Level Transactors
+
+A transactor moves the pin-wiggling logic **inside the emulated hardware** and exposes a transaction-level API to the software testbench:
+
+```
+Software (Host)                    Hardware (Emulator)
+┌──────────────────┐              ┌──────────────────────────┐
+│  UVM Testbench   │   TL API    │  Emulated Design         │
+│                   │ ──────────►│                           │
+│  TL Driver:      │   1 call    │  ┌─────────────────────┐ │
+│  write(addr,data)│   per txn   │  │  Transactor (synth)  │ │
+│                   │             │  │  Converts TL → pins  │ │
+│  TL Monitor:     │             │  │  Handles protocol    │ │
+│  txn = get()     │ ◄────────── │  │  timing internally   │ │
+│                   │   1 call    │  └──────────┬──────────┘ │
+│                   │   per txn   │             │             │
+│                   │             │          DUT ports        │
+└──────────────────┘              └──────────────────────────┘
+```
+
+### Code Comparison: Pin-Level vs Transaction-Level
+
+**Pin-level driver (simulation only):**
+```systemverilog
+task run_phase(uvm_phase phase);
+  axi_transaction txn;
+  forever begin
+    seq_item_port.get_next_item(txn);
+    // 50+ clock cycles of pin wiggling per transaction
+    drive_axi_write(txn);
+    seq_item_port.item_done();
+  end
+endtask
+```
+
+**Transaction-level driver (emulation-optimized):**
+```systemverilog
+task run_phase(uvm_phase phase);
+  axi_transaction txn;
+  forever begin
+    seq_item_port.get_next_item(txn);
+    // Single function call — transactor handles pin timing
+    transactor.write(txn.addr, txn.data, txn.burst_length);
+    seq_item_port.item_done();
+  end
+endtask
+```
+
+The transaction-level version reduces the software-hardware synchronization points from ~50 per transaction to **1 per transaction**, delivering 10–50× speedup.
+
+## Virtual Probes and In-Emulation Debug
+
+### The Debug Visibility Challenge
+
+In simulation, you can observe every signal in the design with zero overhead. In emulation, you can only observe signals that have been **probed** — and probe capacity is limited by the emulator's interconnect bandwidth.
+
+### Virtual Probes
+
+Virtual probes are selectable signal groups defined at compile time but enabled/disabled at runtime:
+
+```
+// Probe groups defined during emulation compilation
+probe_group "axi_master_if" {
+  /tb_top/dut/axi_master/awaddr
+  /tb_top/dut/axi_master/awvalid
+  /tb_top/dut/axi_master/awready
+  /tb_top/dut/axi_master/wdata
+  /tb_top/dut/axi_master/wvalid
+  /tb_top/dut/axi_master/bresp
+}
+
+probe_group "dma_engine" {
+  /tb_top/dut/dma/state
+  /tb_top/dut/dma/src_addr
+  /tb_top/dut/dma/dst_addr
+  /tb_top/dut/dma/byte_count
+}
+```
+
+**Best practice:** Define probe groups during compilation for each major subsystem. Enable only the groups needed for the current debug scenario. Over-probing reduces emulation speed by up to 50%.
+
+### In-Emulation Assertions
+
+SystemVerilog assertions that are **synthesizable** can execute inside the emulated hardware at full emulation speed:
+
+```systemverilog
+// This assertion CAN run in emulation (synthesizable)
+property p_fifo_overflow;
+  @(posedge clk) disable iff (rst)
+  (fifo_count < FIFO_DEPTH) || !write_en;
+endproperty
+assert property (p_fifo_overflow);
+
+// This assertion CANNOT run in emulation (uses $display)
+property p_debug_info;
+  @(posedge clk)
+  valid |-> ##1 begin
+    $display("Transaction completed at time %0t", $time);  // NOT synthesizable
+    1;
+  end
+endproperty
+```
+
+## Compile-Time vs Run-Time Configuration
+
+### What Changes for Emulation
+
+| Aspect | Simulation | Emulation |
+|---|---|---|
+| **Randomization** | Full SV constraint solver at runtime | Constraints must be solvable in the software testbench; DUT cannot `randomize()` |
+| **`$display` / `$info`** | Works everywhere | Only in software testbench; NOT in synthesized DUT code |
+| **Time precision** | Any `timescale` | Must match emulator clock period; typically 1ns/1ps |
+| **DPI-C** | Unrestricted | Only in software testbench partition — cannot cross into emulated DUT |
+| **Force/release** | Works on any signal | Limited to probed signals |
+| **Clocks** | Generated in testbench | Generated by emulator hardware; testbench uses emulator clock API |
+
+### Emulation-Safe Coding Guidelines
+
+```systemverilog
+// ❌ NOT emulation-safe: $display in RTL
+always_ff @(posedge clk) begin
+  if (state == ERROR)
+    $display("ERROR state reached!");  // Will cause synthesis failure
+end
+
+// ✅ Emulation-safe: Use assertion instead
+property p_no_error_state;
+  @(posedge clk) state != ERROR;
+endproperty
+assert property (p_no_error_state);
+
+// ❌ NOT emulation-safe: Dynamic array in RTL
+logic data_q[$];  // Queues are not synthesizable
+
+// ✅ Emulation-safe: Fixed-size array
+logic [31:0] data_array [0:MAX_DEPTH-1];
+integer head, tail;
+```
+
+## UVM Modifications Required for Emulation
+
+### Testbench Partitioning
+
+The fundamental emulation challenge is **partitioning** the testbench:
+
+```
+┌───────────────────────────────────────────────────────────┐
+│ SOFTWARE PARTITION (host CPU)                            │
+│                                                          │
+│  • UVM test, env, agents, sequences, scoreboard         │
+│  • Constraint solving (randomize())                      │
+│  • Coverage collection (covergroup)                      │
+│  • Reporting ($display, uvm_info)                        │
+│  • Reference model comparison                            │
+└──────────────────────┬───────────────────────────────────┘
+                       │  Transaction-Level Interface
+                       │  (transactor API)
+┌──────────────────────┴───────────────────────────────────┐
+│ HARDWARE PARTITION (emulator)                            │
+│                                                          │
+│  • DUT (synthesized RTL)                                │
+│  • Transactors (synthesized protocol adapters)           │
+│  • In-emulation assertions (synthesizable SVA)          │
+│  • Clock generation (emulator hardware)                  │
+│  • Reset generation (emulator hardware)                  │
+└───────────────────────────────────────────────────────────┘
+```
+
+### Checklist: Preparing a UVM Testbench for Emulation
+
+1. **Replace pin-level drivers** with transaction-level transactor calls
+2. **Move clock/reset generation** to the emulator configuration — do not generate clocks in the testbench
+3. **Remove `$display`** from all synthesized code — use assertions instead
+4. **Replace dynamic arrays** in DUT code with fixed-size structures
+5. **Define probe groups** for debug visibility
+6. **Set emulator-compatible timescale** (typically `1ns/1ps`)
+7. **Partition coverage collection** — covergroups stay in software; in-emulation assertions go to hardware
+8. **Update Makefile** to support separate compilation for software and hardware partitions
+
+## Knowledge Check
+
+<Quiz
+  questions={[
+    {
+      question: "What is the primary bottleneck when running a standard UVM testbench on an emulator?",
+      options: [
+        "The emulator's clock frequency is too low",
+        "Software-to-hardware synchronization for every pin-level signal change",
+        "The emulator cannot synthesize SystemVerilog constructs",
+        "UVM phases are incompatible with emulation"
+      ],
+      correctAnswer: 1,
+      explanation: "Each pin-level signal change in a standard UVM driver requires a synchronization round-trip between the software testbench (host CPU) and the hardware partition (emulator). With thousands of signal changes per transaction, this communication overhead dominates execution time."
+    },
+    {
+      question: "How does Transaction-Level Acceleration (TLA) improve emulation throughput?",
+      options: [
+        "By increasing the emulator's clock frequency",
+        "By moving pin-wiggling logic into synthesized transactors inside the emulator, reducing software-hardware synchronization to one call per transaction",
+        "By compressing the DUT design to fit on fewer FPGAs",
+        "By running the testbench on a faster host CPU"
+      ],
+      correctAnswer: 1,
+      explanation: "TLA transactors are synthesized hardware blocks inside the emulator that implement the pin-level protocol timing. The software testbench sends a single transaction-level API call, and the transactor handles all the clock-by-clock signal manipulation inside the emulator hardware."
+    },
+    {
+      question: "Why can't `$display` statements exist in emulated DUT code?",
+      options: [
+        "$display is deprecated in SystemVerilog",
+        "$display is not synthesizable and cannot execute in the hardware partition",
+        "$display would slow down the emulator's clock",
+        "$display output cannot be captured by the emulator"
+      ],
+      correctAnswer: 1,
+      explanation: "The DUT partition runs on emulator hardware (FPGAs or custom chips), which can only execute synthesizable constructs. $display is a simulation-only system task with no hardware equivalent. It must be replaced with synthesizable assertions or moved to the software testbench partition."
+    }
+  ]}
+/>
+
+## References & Next Topics
+
+- **Cadence Palladium:** [cadence.com/en_US/home/tools/system-design-and-verification/acceleration-and-emulation/palladium-z2.html](https://www.cadence.com/en_US/home/tools/system-design-and-verification/acceleration-and-emulation/palladium-z2.html)
+- **Synopsys ZeBu:** [synopsys.com/verification/emulation/zebu-server.html](https://www.synopsys.com/verification/emulation/zebu-server.html)
+- **Siemens Veloce:** [sw.siemens.com/en-US/portfolio/verification/veloce/](https://sw.siemens.com/en-US/portfolio/verification/veloce/)
+- **Prerequisite:** [A-UVM-8: Multi-Agent Topologies](/curriculum/t3-advanced/a-uvm-8-multi-agent-topologies) — SoC-level environments that need emulation.
+- **Prerequisite:** [I-UVM-2B: TLM Connections](/curriculum/t2-intermediate/i-uvm-2b-tlm-connections) — transaction-level communication that TLA extends to hardware.
+- **Related:** [E-PERF-1: UVM Performance](/curriculum/t4-expert/e-perf-1-uvm-performance) — simulation performance optimization before considering emulation.

@@ -31,7 +31,7 @@
 | 21 | CONTENT-T4-AI-VERIF | P1 | complete | CONTENT-T4-PYUVM | Author E-AI-1_AI_Driven_Verification module in T4_Expert. |
 | 22 | CONTENT-T4-RISCV | P1 | complete | none | Author E-RISCV-1_RISC_V_Verification_Methodology module in T4_Expert. |
 | 23 | CONTENT-T4-UVM-ML | P2 | complete | CONTENT-T4-PYUVM | Author E-UVM-ML-1_Multi_Language_Verification module in T4_Expert. |
-| 24 | CONTENT-T4-EMULATION | P2 | todo | CONTENT-T3-MULTI-AGENT | Author E-EMU-1_Emulation_Aware_Verification module in T4_Expert. |
+| 24 | CONTENT-T4-EMULATION | P2 | complete | CONTENT-T3-MULTI-AGENT | Author E-EMU-1_Emulation_Aware_Verification module in T4_Expert. |
 | 25 | FLASH-1-T3-T4-COVERAGE | P1 | todo | CONTENT-T3-SCOREBOARD | Create flashcard sets for all T3 and new T4 modules. |
 | 26 | LAB-1-T3-SCOREBOARD | P1 | todo | CONTENT-T3-SCOREBOARD | Author hands-on lab for scoreboard construction with self-checking assertions. |
 | 27 | LAB-2-T4-PSS | P2 | todo | CONTENT-T4-PSS | Author PSS lab: write a portable test intent spec and compile to SV and C. |
@@ -729,7 +729,7 @@
 
 ### `CONTENT-T4-EMULATION`
 - **Priority:** P2
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `CONTENT-T3-MULTI-AGENT`
 - **Primary surfaces:**
   - `content/curriculum/T4_Expert/E-EMU-1_Emulation_Aware_Verification/index.mdx` (create)
@@ -740,10 +740,10 @@
   2. Sections: (a) Why emulation — speed/capacity tradeoffs; (b) Emulation platforms overview (Palladium, ZeBu, Veloce); (c) Transaction-Level Acceleration (TLA) — replacing pin-level UVM drivers with TL models; (d) Virtual Probes and in-emulation debug; (e) Compile-time vs. run-time configuration for emulation; (f) UVM modifications required — time precision, no `$display` in synthesized code; (g) Knowledge Check — 3 questions.
   3. Update curriculum generator.
 - **Deliverable checklist:**
-  - [ ] Module created with all 7 sections
-  - [ ] TLA explanation includes code comparison (pin-level vs. TL driver)
-  - [ ] Curriculum generator updated
-  - [ ] `npm run build` succeeds
+  - [x] Module created with all 7 sections
+  - [x] TLA explanation includes code comparison (pin-level vs. TL driver)
+  - [x] Curriculum generator updated
+  - [x] `npm run build` succeeds
 - **Validation:**
   - `npm run generate:curriculum`
   - `npm run build`

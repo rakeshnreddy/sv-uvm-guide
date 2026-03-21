@@ -723,6 +723,17 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "E-EMU-1: Emulation-Aware Verification",
+        "slug": "E-EMU-1_Emulation_Aware_Verification",
+        "topics": [
+          {
+            "title": "E-EMU-1: Emulation-Aware Verification",
+            "slug": "index",
+            "description": "Adapt UVM testbenches for hardware emulation platforms — transaction-level acceleration, virtual probes, and the compile-time vs. run-time tradeoffs that determine emulation success."
+          }
+        ]
+      },
+      {
         "title": "E-INT-1: Integrating UVM with Formal Verification",
         "slug": "E-INT-1_Integrating_UVM_with_Formal_Verification",
         "topics": [
