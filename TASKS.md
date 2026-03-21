@@ -12,7 +12,7 @@
 | 2 | INFRA-2-LABS-DEDUP | P0 | complete | INFRA-1-REPO-CLEANUP | Reconcile dual labs/ directories and fix curriculum data generator path references. |
 | 3 | INFRA-3-APPROUTER-MIGRATION | P0 | complete | none | Complete Next.js App Router migration by resolving src/pages/ vs src/app/ coexistence. |
 | 4 | CONTENT-1-F3-SCHEDULING | P0 | complete | none | Author the missing F3_* module group: SV Scheduling Semantics, Regions & Delta Cycles. |
-| 5 | VIZ-1-SV-SCHEDULER | P0 | todo | CONTENT-1-F3-SCHEDULING | Build SVSchedulerRegionVisualizer.tsx: animated delta-cycle and region stepper. |
+| 5 | VIZ-1-SV-SCHEDULER | P0 | complete | CONTENT-1-F3-SCHEDULING | Build SVSchedulerRegionVisualizer.tsx: animated delta-cycle and region stepper. |
 | 6 | CONTENT-2-T1T2-BRIDGE | P1 | todo | CONTENT-1-F3-SCHEDULING | Author "Why UVM?" bridge module between I-SV-8 and I-UVM-1A. |
 | 7 | VIZ-2-UVM-PHASE-TIMELINE | P0 | todo | none | Build UvmPhaseTimelineVisualizer.tsx: interactive phasing swimlane with click-to-expand. |
 | 8 | VIZ-3-TLM-CONNECTION-BUILDER | P0 | todo | none | Build TlmConnectionBuilderVisualizer.tsx: drag-and-drop TLM port/socket wiring. |
@@ -175,7 +175,7 @@
 
 ### `VIZ-1-SV-SCHEDULER`
 - **Priority:** P0
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `CONTENT-1-F3-SCHEDULING`
 - **Primary surfaces:**
   - `src/components/visualizers/SVSchedulerRegionVisualizer.tsx` (create)
@@ -196,12 +196,12 @@
      - Test: "Reset" button returns to step 0
      - Test: scenario toggle changes displayed scenario label
 - **Deliverable checklist:**
-  - [ ] Component renders in isolation (`npm run dev`)
-  - [ ] Play/Step/Reset controls function correctly
-  - [ ] Both scenarios (normal flip-flop and race condition) are implemented
-  - [ ] Component is registered in MDX component map
-  - [ ] Vitest test file passes with `npx vitest run`
-  - [ ] No TypeScript errors (`npx tsc --noEmit`)
+  - [x] Component renders in isolation (`npm run dev`)
+  - [x] Play/Step/Reset controls function correctly
+  - [x] Both scenarios (normal flip-flop and race condition) are implemented
+  - [x] Component is registered in MDX component map
+  - [x] Vitest test file passes with `npx vitest run`
+  - [x] No TypeScript errors (`npx tsc --noEmit`)
 - **Validation:**
   - `npx vitest run src/components/visualizers/SVSchedulerRegionVisualizer.test.tsx`
   - `npm run build`
