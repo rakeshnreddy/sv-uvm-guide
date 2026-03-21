@@ -14,12 +14,12 @@ describe('Security Configuration', () => {
   const originalEnv = process.env;
 
   afterEach(() => {
-    process.env = { ...originalEnv };
+    vi.unstubAllEnvs();
   });
 
   describe('session-options', () => {
     it('throws an error in production if SESSION_SECRET is missing', async () => {
-      process.env.NODE_ENV = 'production';
+      vi.stubEnv('NODE_ENV', 'production');
       delete process.env.SESSION_SECRET;
 
       await expect(loadSessionOptions()).rejects.toThrow(
@@ -28,7 +28,7 @@ describe('Security Configuration', () => {
     });
 
     it('does not throw in development if SESSION_SECRET is missing', async () => {
-      process.env.NODE_ENV = 'development';
+      vi.stubEnv('NODE_ENV', 'development');
       delete process.env.SESSION_SECRET;
 
       const mod = await loadSessionOptions();
@@ -38,7 +38,7 @@ describe('Security Configuration', () => {
 
   describe('auth-route', () => {
     it('throws an error in production if both secrets are missing', async () => {
-      process.env.NODE_ENV = 'production';
+      vi.stubEnv('NODE_ENV', 'production');
       delete process.env.NEXTAUTH_SECRET;
       delete process.env.SESSION_SECRET;
 
@@ -48,7 +48,7 @@ describe('Security Configuration', () => {
     });
 
     it('does not throw in development if secrets are missing', async () => {
-      process.env.NODE_ENV = 'development';
+      vi.stubEnv('NODE_ENV', 'development');
       delete process.env.NEXTAUTH_SECRET;
       delete process.env.SESSION_SECRET;
 

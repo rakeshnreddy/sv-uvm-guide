@@ -146,7 +146,13 @@ const overrides: Record<string, Partial<StatusMetadata>> = {
   },
 };
 
+let cachedCurriculumStatus: CurriculumTopicStatus[] | null = null;
+
 export function buildCurriculumStatus(): CurriculumTopicStatus[] {
+  if (cachedCurriculumStatus) {
+    return cachedCurriculumStatus;
+  }
+
   const entries: CurriculumTopicStatus[] = [];
 
   curriculumData.forEach(module => {
@@ -179,11 +185,19 @@ export function buildCurriculumStatus(): CurriculumTopicStatus[] {
     });
   });
 
-  return entries.sort((a, b) => a.path.localeCompare(b.path));
+  cachedCurriculumStatus = entries.sort((a, b) => a.path.localeCompare(b.path));
+  return cachedCurriculumStatus;
 }
 
+type TierSummary = Record<Module['tier'], { total: number; complete: number; review: number; draft: number }>;
+const summarizeCache = new WeakMap<CurriculumTopicStatus[], TierSummary>();
+
 export function summarizeByTier(statusEntries: CurriculumTopicStatus[]) {
-  const summary: Record<Module['tier'], { total: number; complete: number; review: number; draft: number }> = {} as any;
+  if (summarizeCache.has(statusEntries)) {
+    return summarizeCache.get(statusEntries)!;
+  }
+
+  const summary: TierSummary = {} as any;
 
   statusEntries.forEach(entry => {
     if (!summary[entry.tier]) {
@@ -195,5 +209,6 @@ export function summarizeByTier(statusEntries: CurriculumTopicStatus[]) {
     if (entry.status === 'draft') summary[entry.tier].draft += 1;
   });
 
+  summarizeCache.set(statusEntries, summary);
   return summary;
 }
