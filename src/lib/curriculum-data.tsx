@@ -638,6 +638,17 @@ export const curriculumData: Module[] = [
             "description": "Inject optional behavior into components without exploding your class hierarchy or hacking the base code."
           }
         ]
+      },
+      {
+        "title": "A-UVM-6: Scoreboards and Reference Models",
+        "slug": "A-UVM-6_Scoreboards_and_Reference_Models",
+        "topics": [
+          {
+            "title": "A-UVM-6: Scoreboards and Reference Models",
+            "slug": "index",
+            "description": "Build self-checking testbenches using transaction-level scoreboards, reference models, and analysis FIFOs to catch DUT bugs without manual waveform inspection."
+          }
+        ]
       }
     ]
   },
@@ -646,6 +657,17 @@ export const curriculumData: Module[] = [
     "slug": "T4_Expert",
     "tier": "T4",
     "sections": [
+      {
+        "title": "E-AI-1: AI-Driven Verification",
+        "slug": "E-AI-1_AI_Driven_Verification",
+        "topics": [
+          {
+            "title": "E-AI-1: AI-Driven Verification",
+            "slug": "index",
+            "description": "Explore how machine learning and large language models are transforming hardware verification — from intelligent stimulus generation to automated coverage closure and assertion writing."
+          }
+        ]
+      },
       {
         "title": "E-CUST-1: UVM Methodology Customization",
         "slug": "E-CUST-1_UVM_Methodology_Customization",
@@ -701,6 +723,17 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "E-PSS-1: Portable Stimulus Standard",
+        "slug": "E-PSS-1_Portable_Stimulus_Standard",
+        "topics": [
+          {
+            "title": "E-PSS-1: Portable Stimulus Standard",
+            "slug": "index",
+            "description": "Write your test intent once and compile it to simulation, emulation, or post-silicon targets using the Accellera Portable Stimulus Standard (PSS 2.0)."
+          }
+        ]
+      },
+      {
         "title": "Power-Aware UVM Verification Strategy",
         "slug": "E-PWR-1_Power_Aware_Verification",
         "topics": [
@@ -708,6 +741,28 @@ export const curriculumData: Module[] = [
             "title": "Power-Aware UVM Verification Strategy",
             "slug": "index",
             "description": "Expert guide on verifying power intent, corruption semantics, PMU handshakes, and shutdown/wake-up sequences within a UVM environment."
+          }
+        ]
+      },
+      {
+        "title": "E-PYUVM-1: Python-Based Verification",
+        "slug": "E-PYUVM-1_Python_Based_Verification",
+        "topics": [
+          {
+            "title": "E-PYUVM-1: Python-Based Verification",
+            "slug": "index",
+            "description": "Leverage Python's ecosystem for hardware verification using cocotb and pyUVM — from coroutine-based testbenches to full UVM environments in Python."
+          }
+        ]
+      },
+      {
+        "title": "E-RISCV-1: RISC-V Verification Methodology",
+        "slug": "E-RISCV-1_RISC_V_Verification_Methodology",
+        "topics": [
+          {
+            "title": "E-RISCV-1: RISC-V Verification Methodology",
+            "slug": "index",
+            "description": "Master the specialized verification methodology for RISC-V processors — from constrained-random instruction generation with RISCV-DV to ISA compliance checking and formal verification."
           }
         ]
       },

@@ -1,0 +1,341 @@
+---
+title: "E-PSS-1: Portable Stimulus Standard"
+description: "Write your test intent once and compile it to simulation, emulation, or post-silicon targets using the Accellera Portable Stimulus Standard (PSS 2.0)."
+---
+
+## Quick Take
+- **What it is:** The Portable Stimulus Standard (PSS), ratified as IEEE 2401-2024, is a declarative language for expressing *test intent* — the abstract scenario logic — independently of any particular execution platform.
+- **Why it matters:** Modern verification teams must run the same test scenarios on RTL simulation, FPGA prototypes, emulation platforms, and post-silicon validation. Without PSS, each target requires hand-porting of test logic, a quadratic maintenance burden that fragments coverage metrics and introduces target-specific bugs.
+- **Industry context:** As of 2025–2026, Cadence (Perspec PSS Compiler), Synopsys (VC PSS), and Siemens (Questa PSS) all ship commercial PSS compilers. Google and several RISC-V consortia have open-source PSS parsers for academic and pre-production use.
+
+## The Portability Problem PSS Solves
+
+Consider a memory subsystem verification scenario that must check read-after-write coherency. Without PSS, you write:
+
+| Target | What you write | Effort |
+|---|---|---|
+| **RTL Simulation** | A UVM virtual sequence calling read/write sequences on an AXI agent | ~200 lines SV |
+| **FPGA Prototype** | A C test using memory-mapped register writes from an embedded processor | ~150 lines C |
+| **Emulation** | A transaction-level acceleration (TLA) sequence with emulator-specific APIs | ~180 lines SV |
+| **Post-Silicon** | A bare-metal firmware test running on the real chip via JTAG | ~120 lines C |
+
+That is **four separate implementations** of the same logical test, each with independent bugs and maintenance costs. PSS replaces all four with a single declarative specification that a compiler translates to each target.
+
+## PSS 2.0 Language Fundamentals
+
+### Actions, Components, and Activity Graphs
+
+PSS programs are built from three core concepts:
+
+1. **Components** — reusable building blocks that model system resources (memory controllers, DMA engines, processors).
+2. **Actions** — atomic test operations with input/output data flows (read, write, configure, verify).
+3. **Activity graphs** — declarative ordering of actions within a test scenario. Activity graphs express parallelism, sequencing, and repetition without imperative control flow.
+
+```pss
+// PSS 2.0: A memory read-after-write coherency test
+component mem_subsystem {
+  // Model a 4 KB memory region
+  resource mem_region {
+    addr_t base_addr;
+    int unsigned size = 4096;
+  }
+
+  action write_mem {
+    input  mem_region region;
+    rand   addr_t addr;
+    rand   data_t data;
+
+    constraint addr_range {
+      addr >= region.base_addr;
+      addr <  region.base_addr + region.size;
+      addr % 4 == 0; // 4-byte alignment
+    }
+  }
+
+  action read_mem {
+    input  mem_region region;
+    rand   addr_t addr;
+    output data_t data;
+
+    constraint addr_range {
+      addr >= region.base_addr;
+      addr <  region.base_addr + region.size;
+      addr % 4 == 0;
+    }
+  }
+
+  action verify_data {
+    input data_t expected;
+    input data_t actual;
+  }
+}
+```
+
+### Activity Graphs: Declarative Test Flow
+
+The activity block defines the test scenario's execution order:
+
+```pss
+action raw_coherency_test {
+  activity {
+    // Sequential: write then read then verify
+    do write_mem as wr;
+    do read_mem as rd with {
+      rd.addr == wr.addr; // Same address
+    };
+    do verify_data as vfy with {
+      vfy.expected == wr.data;
+      vfy.actual   == rd.data;
+    };
+  }
+}
+```
+
+This is the fundamental power of PSS: the test intent is expressed with **what** and **when**, not **how**. The compiler determines the **how** for each target.
+
+## Data Constraints in PSS
+
+PSS constraints look syntactically similar to SystemVerilog constraints but operate in a purely declarative context:
+
+```pss
+action stress_test {
+  rand int unsigned num_iterations;
+  rand bit use_burst;
+
+  constraint iterations_range {
+    num_iterations >= 100;
+    num_iterations <= 10000;
+  }
+
+  constraint burst_weighting {
+    // Soft constraint: prefer burst mode 70% of the time
+    soft use_burst == 1; dist { 0 := 30, 1 := 70 };
+  }
+
+  activity {
+    repeat (num_iterations) {
+      if (use_burst) {
+        do burst_write;
+      } else {
+        do single_write;
+      }
+      do read_verify;
+    }
+  }
+}
+```
+
+Key differences from SV constraints:
+- PSS constraints are always **declarative** — no procedural constraint manipulation.
+- PSS supports `soft` constraints and `dist` for distribution control.
+- Constraints can reference cross-action data flows, enabling the solver to globally optimize the test.
+
+## Compiling PSS to SystemVerilog UVM Sequences
+
+When targeting RTL simulation, the PSS compiler generates a UVM virtual sequence that:
+1. Maps each PSS `action` to a UVM sequence class.
+2. Maps each PSS `component` to a UVM `uvm_component` with analysis ports.
+3. Translates the `activity` graph into `start()` calls with proper ordering.
+
+### Side-by-Side: PSS vs Generated UVM
+
+```pss
+// ── PSS Source ──
+action raw_coherency_test {
+  activity {
+    do write_mem as wr;
+    do read_mem as rd with {
+      rd.addr == wr.addr;
+    };
+    do verify_data;
+  }
+}
+```
+
+The generated UVM equivalent (simplified):
+
+```systemverilog
+// ── Generated UVM Sequence ──
+class raw_coherency_test_seq extends uvm_sequence #(uvm_sequence_item);
+  `uvm_object_utils(raw_coherency_test_seq)
+
+  write_mem_seq wr;
+  read_mem_seq  rd;
+
+  function new(string name = "raw_coherency_test_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    // Step 1: Write
+    wr = write_mem_seq::type_id::create("wr");
+    wr.start(m_sequencer);
+
+    // Step 2: Read (same address as write)
+    rd = read_mem_seq::type_id::create("rd");
+    rd.addr = wr.addr; // Cross-action constraint resolved
+    rd.start(m_sequencer);
+
+    // Step 3: Verify
+    if (rd.data !== wr.data)
+      `uvm_error("RAW_COH", $sformatf(
+        "Mismatch at addr=0x%0h: wrote=0x%0h read=0x%0h",
+        wr.addr, wr.data, rd.data))
+  endtask
+endclass
+```
+
+## Compiling PSS to C for Bare-Metal Firmware Tests
+
+When targeting post-silicon or embedded processors, the PSS compiler generates C code:
+
+```c
+// ── Generated C Bare-Metal Test ──
+#include "mem_subsystem_api.h"
+
+void raw_coherency_test(void) {
+    uint32_t addr = rand_aligned_addr(MEM_BASE, MEM_SIZE, 4);
+    uint32_t data = rand_data();
+
+    // Step 1: Write
+    mem_write(addr, data);
+
+    // Step 2: Read
+    uint32_t readback = mem_read(addr);
+
+    // Step 3: Verify
+    if (readback != data) {
+        test_fail("RAW coherency mismatch at 0x%08x: "
+                  "wrote 0x%08x, read 0x%08x",
+                  addr, data, readback);
+    }
+}
+```
+
+The **same PSS spec** produced both the 45-line UVM sequence and the 15-line C test. This is the portability guarantee.
+
+## Tool Ecosystem (2025–2026)
+
+| Tool | Vendor | Key Features |
+|---|---|---|
+| **Perspec PSS Compiler** | Cadence | Full PSS 2.0, integrates with Xcelium simulation and Palladium emulation |
+| **VC PSS** | Synopsys | PSS 2.0 with VCS simulation backend, Verdi debug integration |
+| **Questa PSS** | Siemens EDA | PSS compilation to Questa simulation and Veloce emulation |
+| **pss-parser** | Open Source | Community PSS parser for syntax validation and academic research |
+| **PSS Reference Compiler** | Accellera | Reference implementation for PSS 2.0 language conformance testing |
+
+**Industry adoption status:** Intel, Arm, Qualcomm, MediaTek, and Samsung have published papers or presentations on PSS adoption for SoC-level verification. The consensus is that PSS pays off starting at the point where a design requires verification across 3+ execution targets.
+
+## Hands-On Example: Memory Test with Portability Comparison
+
+Here is a complete PSS specification for a memory stress test, followed by excerpts from both generated targets:
+
+```pss
+component mem_test_suite {
+  resource mem_region r;
+
+  action write_burst {
+    input mem_region region;
+    rand addr_t start_addr;
+    rand int unsigned burst_len;
+
+    constraint {
+      start_addr >= region.base_addr;
+      start_addr + (burst_len * 4) <= region.base_addr + region.size;
+      start_addr % 4 == 0;
+      burst_len inside [1..16];
+    }
+  }
+
+  action read_verify_burst {
+    input mem_region region;
+    rand addr_t start_addr;
+    rand int unsigned burst_len;
+
+    constraint {
+      start_addr >= region.base_addr;
+      start_addr + (burst_len * 4) <= region.base_addr + region.size;
+      start_addr % 4 == 0;
+      burst_len inside [1..16];
+    }
+  }
+
+  action mem_stress {
+    activity {
+      repeat (100) {
+        do write_burst as wb;
+        do read_verify_burst as rvb with {
+          rvb.start_addr == wb.start_addr;
+          rvb.burst_len  == wb.burst_len;
+        };
+      }
+    }
+  }
+}
+```
+
+This single specification can generate:
+- A **UVM virtual sequence** for RTL simulation (~300 lines)
+- A **C firmware test** for post-silicon validation (~100 lines)
+- An **emulation TLA sequence** for hardware-accelerated verification (~200 lines)
+
+Each generated test maintains semantic equivalence to the PSS source while targeting the specific APIs and protocols of its execution platform.
+
+## Knowledge Check
+
+<Quiz
+  questions={[
+    {
+      question: "What is the primary problem that the Portable Stimulus Standard (PSS) solves?",
+      options: [
+        "It replaces SystemVerilog as the primary verification language",
+        "It eliminates the need to maintain separate test implementations for different execution targets",
+        "It provides faster constraint solving than SystemVerilog randomization",
+        "It automatically generates DUT RTL from test specifications"
+      ],
+      correctAnswer: 1,
+      explanation: "PSS allows test intent to be written once and compiled to multiple targets (simulation, emulation, FPGA, post-silicon), eliminating the quadratic maintenance burden of hand-porting tests."
+    },
+    {
+      question: "In PSS, what is the relationship between an 'action' and an 'activity'?",
+      options: [
+        "Actions contain activities; activities are sub-steps within an action",
+        "Activities contain actions; activities define the ordering of action executions",
+        "Actions and activities are synonymous terms",
+        "Activities are compile-time constructs; actions are runtime constructs"
+      ],
+      correctAnswer: 1,
+      explanation: "An activity graph is a declarative ordering specification that defines when and how actions (atomic test operations) execute. The activity expresses sequencing, parallelism, and repetition."
+    },
+    {
+      question: "When a PSS compiler targets UVM simulation, what does it generate for each PSS 'action'?",
+      options: [
+        "A uvm_driver class with pin-level signal manipulation",
+        "A uvm_sequence class with a body() task implementing the action's logic",
+        "A uvm_monitor class that observes DUT outputs",
+        "A uvm_component class registered with the factory"
+      ],
+      correctAnswer: 1,
+      explanation: "Each PSS action maps to a UVM sequence class. The activity graph's ordering constraints become the sequence's body() task logic, with start() calls reflecting the declared action ordering."
+    },
+    {
+      question: "At what scale of verification targets does PSS adoption typically become cost-effective?",
+      options: [
+        "Any project with more than 1 testbench",
+        "Projects requiring verification across 3 or more execution targets",
+        "Only for designs with more than 10 million gates",
+        "Only for companies with dedicated PSS compiler licenses"
+      ],
+      correctAnswer: 1,
+      explanation: "Industry consensus is that PSS pays off starting at 3+ execution targets (e.g., RTL sim + emulation + post-silicon), where the cost of maintaining separate test implementations exceeds the cost of PSS adoption."
+    }
+  ]}
+/>
+
+## References & Next Topics
+
+- **IEEE 2401-2024** — The Portable Stimulus Standard, defining the PSS 2.0 language specification.
+- **Accellera PSS Working Group** — [accellera.org/activities/working-groups/portable-stimulus](https://accellera.org/activities/working-groups/portable-stimulus) for the latest specification and reference implementations.
+- **Prerequisite:** [I-UVM-3A: Sequence Fundamentals](/curriculum/t2-intermediate/i-uvm-3a-fundamentals) — understand UVM sequences before seeing how PSS generates them.
+- **Prerequisite:** [A-UVM-8: Multi-Agent Topologies](/curriculum/t3-advanced/a-uvm-8-multi-agent-topologies) — virtual sequencers are the primary PSS compilation target for multi-agent environments.
+- **Next:** [E-PYUVM-1: Python-Based Verification](/curriculum/t4-expert/e-pyuvm-1-python-based-verification) — Python co-verification with cocotb and pyUVM complements PSS for ML-driven hardware teams.

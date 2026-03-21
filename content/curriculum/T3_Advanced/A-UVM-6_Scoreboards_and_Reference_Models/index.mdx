@@ -1,0 +1,370 @@
+---
+title: "A-UVM-6: Scoreboards and Reference Models"
+description: "Build self-checking testbenches using transaction-level scoreboards, reference models, and analysis FIFOs to catch DUT bugs without manual waveform inspection."
+flashcards: "A-UVM-6_Scoreboards"
+---
+
+## Quick Take
+- **What it is:** A scoreboard is a passive verification component that collects transactions from monitors, predicts expected results through a reference model, and automatically compares DUT output against those predictions — transforming a testbench from "run and hope" into a self-checking machine.
+- **Why it matters:** Without a scoreboard, catching a bug requires a human staring at waveforms comparing inputs to outputs. Scoreboards automate this comparison across millions of transactions, making bugs surface as `uvm_error` messages instead of invisible waveform anomalies.
+- **The Standard:** IEEE 1800.2-2020 does not prescribe a single `uvm_scoreboard` base class. Instead, the pattern is constructed from `uvm_component`, `uvm_analysis_imp`, and `uvm_tlm_analysis_fifo` — all standard TLM building blocks defined in Clause 12.
+
+## Build Your Mental Model
+
+### The Scoreboard Architecture
+
+Every production scoreboard follows this data flow:
+
+```
+Monitor → analysis_port → analysis_export → Scoreboard
+                                                  ↓
+                                           Reference Model
+                                                  ↓
+                                           Comparator Logic
+                                                  ↓
+                                         UVM_ERROR / UVM_INFO
+```
+
+The design separates three concerns:
+1. **Collection** — The scoreboard receives transactions via TLM analysis ports. It never drives or monitors signals directly.
+2. **Prediction** — A reference model computes the expected output from the input stimulus.
+3. **Comparison** — A comparator checks the DUT's actual output against the reference model's predicted output.
+
+### The Analysis FIFO Pattern
+
+The recommended connection pattern uses `uvm_tlm_analysis_fifo` as a buffering adapter between the monitor's analysis port and the scoreboard's blocking get port:
+
+```systemverilog
+class my_scoreboard extends uvm_component;
+  `uvm_component_utils(my_scoreboard)
+
+  // Analysis FIFOs buffer transactions from monitors
+  uvm_tlm_analysis_fifo #(my_transaction) input_fifo;
+  uvm_tlm_analysis_fifo #(my_transaction) output_fifo;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    input_fifo  = new("input_fifo", this);
+    output_fifo = new("output_fifo", this);
+  endfunction
+endclass
+```
+
+In the environment's `connect_phase`, wire the monitor analysis ports to these FIFOs:
+
+```systemverilog
+function void connect_phase(uvm_phase phase);
+  super.connect_phase(phase);
+  // Input monitor → scoreboard input FIFO
+  agent.input_monitor.ap.connect(scoreboard.input_fifo.analysis_export);
+  // Output monitor → scoreboard output FIFO
+  agent.output_monitor.ap.connect(scoreboard.output_fifo.analysis_export);
+endfunction
+```
+
+> **Why use a FIFO?** A `uvm_analysis_imp` write callback is non-blocking and executes synchronously inside the monitor's `run_phase` context. If the scoreboard needs to do time-consuming comparison or wait for a corresponding output transaction, a FIFO decouples the timing — the scoreboard's `run_phase` can `get()` at its own pace.
+
+## Building a Transaction-Level Reference Model
+
+The reference model is the golden behavioral specification of your DUT, implemented as pure SystemVerilog logic with no access to the RTL internals.
+
+```systemverilog
+class alu_reference_model;
+  // Pure function: no side effects, no DUT access
+  static function my_transaction predict(my_transaction input_txn);
+    my_transaction expected = new();
+    expected.copy(input_txn);
+
+    case (input_txn.opcode)
+      ADD:  expected.result = input_txn.operand_a + input_txn.operand_b;
+      SUB:  expected.result = input_txn.operand_a - input_txn.operand_b;
+      AND:  expected.result = input_txn.operand_a & input_txn.operand_b;
+      OR:   expected.result = input_txn.operand_a | input_txn.operand_b;
+      XOR:  expected.result = input_txn.operand_a ^ input_txn.operand_b;
+      default: expected.result = '0;
+    endcase
+
+    return expected;
+  endfunction
+endclass
+```
+
+**Key principle:** The reference model should be simple enough that you trust it more than the RTL. If your reference model is as complex as the DUT, you've just duplicated the bug surface area.
+
+## The Complete Scoreboard: Compare and Report
+
+Combining the analysis FIFO pattern with the reference model, here is a complete self-checking scoreboard:
+
+```systemverilog
+class alu_scoreboard extends uvm_component;
+  `uvm_component_utils(alu_scoreboard)
+
+  uvm_tlm_analysis_fifo #(my_transaction) input_fifo;
+  uvm_tlm_analysis_fifo #(my_transaction) output_fifo;
+
+  int unsigned match_count;
+  int unsigned mismatch_count;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    input_fifo  = new("input_fifo", this);
+    output_fifo = new("output_fifo", this);
+    match_count    = 0;
+    mismatch_count = 0;
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    my_transaction input_txn, output_txn, expected;
+
+    forever begin
+      // Block until both input and output transactions arrive
+      input_fifo.get(input_txn);
+      output_fifo.get(output_txn);
+
+      // Predict expected output
+      expected = alu_reference_model::predict(input_txn);
+
+      // Compare
+      if (!output_txn.compare(expected)) begin
+        mismatch_count++;
+        `uvm_error("SCOREBOARD",
+          $sformatf("MISMATCH on txn #%0d: op=%s a=0x%0h b=0x%0h expected=0x%0h got=0x%0h",
+            match_count + mismatch_count,
+            input_txn.opcode.name(),
+            input_txn.operand_a,
+            input_txn.operand_b,
+            expected.result,
+            output_txn.result))
+      end else begin
+        match_count++;
+        `uvm_info("SCOREBOARD",
+          $sformatf("MATCH on txn #%0d: op=%s result=0x%0h",
+            match_count,
+            input_txn.opcode.name(),
+            output_txn.result), UVM_HIGH)
+      end
+    end
+  endtask
+
+  function void report_phase(uvm_phase phase);
+    `uvm_info("SCOREBOARD",
+      $sformatf("\n========== Scoreboard Summary ==========\n  Matches:    %0d\n  Mismatches: %0d\n  Total:      %0d\n=========================================",
+        match_count, mismatch_count, match_count + mismatch_count), UVM_LOW)
+
+    if (mismatch_count > 0)
+      `uvm_error("SCOREBOARD", $sformatf("%0d mismatches detected!", mismatch_count))
+    else
+      `uvm_info("SCOREBOARD", "All transactions matched — test PASSED", UVM_LOW)
+  endfunction
+endclass
+```
+
+> **Design note:** The `report_phase` summary is not optional. Without it, a scoreboard that received zero transactions (due to a broken connection) would silently report success. Always assert that `match_count + mismatch_count > 0`.
+
+## Handling Out-of-Order Transactions
+
+In-order comparison assumes DUT output arrives in the same order as input. For pipelined or arbitrating designs, transactions may complete out of order. The solution is an **associative array predictor**:
+
+```systemverilog
+class ooo_scoreboard extends uvm_component;
+  `uvm_component_utils(ooo_scoreboard)
+
+  uvm_tlm_analysis_fifo #(my_transaction) input_fifo;
+  uvm_tlm_analysis_fifo #(my_transaction) output_fifo;
+
+  // Associative array keyed by transaction ID
+  my_transaction expected_queue[int unsigned];
+
+  int unsigned match_count;
+  int unsigned mismatch_count;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    input_fifo  = new("input_fifo", this);
+    output_fifo = new("output_fifo", this);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    fork
+      collect_inputs();
+      compare_outputs();
+    join
+  endtask
+
+  task collect_inputs();
+    my_transaction txn, expected;
+    forever begin
+      input_fifo.get(txn);
+      expected = alu_reference_model::predict(txn);
+      expected_queue[txn.id] = expected;
+    end
+  endtask
+
+  task compare_outputs();
+    my_transaction actual;
+    forever begin
+      output_fifo.get(actual);
+
+      if (!expected_queue.exists(actual.id)) begin
+        `uvm_error("OOO_SCB", $sformatf("Unexpected output with id=%0d", actual.id))
+        continue;
+      end
+
+      if (!actual.compare(expected_queue[actual.id])) begin
+        mismatch_count++;
+        `uvm_error("OOO_SCB", $sformatf("MISMATCH id=%0d", actual.id))
+      end else begin
+        match_count++;
+      end
+
+      expected_queue.delete(actual.id); // Remove matched entry
+    end
+  endtask
+
+  function void check_phase(uvm_phase phase);
+    if (expected_queue.size() > 0) begin
+      `uvm_error("OOO_SCB",
+        $sformatf("%0d expected transactions never received from DUT",
+          expected_queue.size()))
+    end
+  endfunction
+endclass
+```
+
+**Key insight:** The `check_phase` handler catches dropped transactions — inputs the DUT consumed but never produced outputs for. This is one of the most common silicon bugs that scoreboards catch.
+
+## Common Pitfalls
+
+### 1. Comparing Objects by Reference Instead of Value
+
+```systemverilog
+// ❌ WRONG: compares handle identity (always fails for different objects)
+if (actual_txn == expected_txn) ...
+
+// ✅ CORRECT: uses uvm_object::compare() which calls do_compare()
+if (actual_txn.compare(expected_txn)) ...
+```
+
+Every transaction class must implement `do_compare()` (or use the `` `uvm_field_* `` macros) for `compare()` to work correctly. If you rely on autopacked field macros, verify they cover all fields — a missing registration silently skips that field in comparisons.
+
+### 2. Scoreboard Receives Zero Transactions
+
+A scoreboard connected to the wrong analysis port—or a monitor that never fires—reports zero mismatches and zero matches. This is a **false pass**.
+
+**Mitigation:** In `report_phase`, assert that the total transaction count is greater than zero:
+
+```systemverilog
+if (match_count + mismatch_count == 0)
+  `uvm_error("SCOREBOARD", "No transactions received — check monitor connections!")
+```
+
+### 3. Phase Ordering: Drain Time
+
+The `run_phase` task ends when all objections are dropped. If the monitor publishes a final transaction right before objection drop, the scoreboard may not have time to process it. Use a **drain time** to allow in-flight transactions to reach the scoreboard:
+
+```systemverilog
+function void phase_ready_to_end(uvm_phase phase);
+  if (phase.get_name() == "run") begin
+    phase.raise_objection(this, "Scoreboard draining");
+    fork begin
+      #100ns; // Allow final transactions to arrive
+      phase.drop_objection(this, "Scoreboard drain complete");
+    end join_none
+  end
+endfunction
+```
+
+### 4. Forgetting the `copy()` Before Mutation
+
+When predicting, always `copy()` the input transaction before modifying it. Otherwise you corrupt the original transaction still held by the monitor or sequence:
+
+```systemverilog
+// ❌ WRONG: mutates the original transaction
+expected = input_txn;
+expected.result = input_txn.a + input_txn.b;
+
+// ✅ CORRECT: work on an independent copy
+expected = new();
+expected.copy(input_txn);
+expected.result = input_txn.a + input_txn.b;
+```
+
+## Knowledge Check
+
+<Quiz
+  questions={[
+    {
+      question: "What TLM component is recommended for buffering transactions between a monitor's analysis port and a scoreboard?",
+      options: [
+        "uvm_analysis_imp",
+        "uvm_tlm_analysis_fifo",
+        "uvm_blocking_put_port",
+        "uvm_sequencer"
+      ],
+      correctAnswer: 1,
+      explanation: "A uvm_tlm_analysis_fifo provides non-blocking write on its analysis_export side and blocking get on the other side, decoupling the monitor's timing from the scoreboard's processing loop."
+    },
+    {
+      question: "Why is comparing transaction objects with == instead of .compare() a bug?",
+      options: [
+        "The == operator is not valid for class types in SystemVerilog",
+        "The == operator compares object handles (identity), not field values",
+        "The == operator only works with packed structs",
+        "The == operator calls do_compare() which may not be implemented"
+      ],
+      correctAnswer: 1,
+      explanation: "In SystemVerilog, == between class handles checks whether they point to the same object in memory. For field-by-field comparison, you must use the uvm_object::compare() method which internally calls do_compare()."
+    },
+    {
+      question: "What technique handles out-of-order DUT output in a scoreboard?",
+      options: [
+        "Using a FIFO to re-order transactions",
+        "Using an associative array keyed by transaction ID",
+        "Using multiple analysis ports, one per output order",
+        "Forcing the DUT to output in order via constraints"
+      ],
+      correctAnswer: 1,
+      explanation: "An associative array indexed by a unique transaction identifier (such as an ID field) allows the scoreboard to match outputs to inputs regardless of arrival order. The check_phase then catches any entries that were never matched."
+    },
+    {
+      question: "A scoreboard reports 0 matches and 0 mismatches at the end of simulation. What is the most likely root cause?",
+      options: [
+        "The DUT produced no output because the test was too short",
+        "The scoreboard's analysis FIFO connections are broken or the monitor is not firing",
+        "The reference model returned null for all transactions",
+        "The compare() function suppressed all results"
+      ],
+      correctAnswer: 1,
+      explanation: "Zero transactions through the scoreboard typically means a wiring problem: the monitor's analysis port was never connected to the scoreboard's analysis export, or the monitor itself never called write(). This is a false pass and must be caught with a report_phase assertion."
+    }
+  ]}
+/>
+
+## Hands-On Lab
+
+<LabLink
+  id="t3-scoreboard-lab"
+  title="Lab: Building a Self-Checking Scoreboard"
+  description="Construct an ALU scoreboard from a starter template. Connect analysis FIFOs, implement a reference model, and validate DUT correctness through automated comparison."
+/>
+
+## References & Next Topics
+
+- **IEEE 1800.2-2020 Clause 12** — TLM Interfaces and Ports, defining `uvm_analysis_port`, `uvm_analysis_imp`, and `uvm_tlm_analysis_fifo`.
+- **IEEE 1800.2-2020 Clause 5.3.12** — `uvm_object::compare()` and `do_compare()` method specs.
+- **Prerequisite:** [I-UVM-2B: TLM Connections](/curriculum/t2-intermediate/i-uvm-2b-tlm-connections) — understand analysis ports and exports before wiring a scoreboard.
+- **Prerequisite:** [I-UVM-2A: Component Roles](/curriculum/t2-intermediate/i-uvm-2a-component-roles) — monitors produce the transactions scoreboards consume.
+- **Next:** [A-UVM-7: VIP Construction](/curriculum/t3-advanced/a-uvm-7-vip-construction) — learn how scoreboards fit inside reusable Verification IP packages.
+- **Related:** [A-UVM-5: UVM Callbacks](/curriculum/t3-advanced/a-uvm-5-uvm-callbacks) — callbacks can inject scoring hooks into drivers for correlation.

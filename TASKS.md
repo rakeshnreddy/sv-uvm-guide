@@ -22,14 +22,14 @@
 | 12 | VIZ-7-COVERAGE-CROSS-EXPLORER | P1 | todo | none | Build CoverageCrossExplorerVisualizer.tsx: interactive covergroup cross-bin matrix. |
 | 13 | VIZ-8-RAL-REGISTER-MAP | P1 | todo | CONTENT-T3-RAL-ENHANCE | Build RalRegisterMapVisualizer.tsx: hierarchical register map with field-level drill-down. |
 | 14 | VIZ-9-SEQUENCE-HIERARCHY | P1 | todo | none | Build UvmSequenceHierarchyVisualizer.tsx: collapsible tree of nested sequence invocations. |
-| 15 | CONTENT-T3-SCOREBOARD | P0 | todo | none | Author A-UVM-6_Scoreboards_and_Reference_Models module in T3_Advanced. |
+| 15 | CONTENT-T3-SCOREBOARD | P0 | complete | none | Author A-UVM-6_Scoreboards_and_Reference_Models module in T3_Advanced. |
 | 16 | CONTENT-T3-VIP | P1 | todo | CONTENT-T3-SCOREBOARD | Author A-UVM-7_VIP_Construction module in T3_Advanced. |
 | 17 | CONTENT-T3-MULTI-AGENT | P1 | todo | CONTENT-T3-SCOREBOARD | Author A-UVM-8_Multi_Agent_Topologies module in T3_Advanced. |
-| 18 | CONTENT-T4-PSS | P0 | todo | none | Author E-PSS-1_Portable_Stimulus_Standard module in T4_Expert. |
+| 18 | CONTENT-T4-PSS | P0 | complete | none | Author E-PSS-1_Portable_Stimulus_Standard module in T4_Expert. |
 | 19 | VIZ-10-PSS-INTENT-MAP | P1 | todo | CONTENT-T4-PSS | Build PssIntentMapVisualizer.tsx: PSS action/resource graph with portability toggle. |
-| 20 | CONTENT-T4-PYUVM | P0 | todo | none | Author E-PYUVM-1_Python_Based_Verification module in T4_Expert. |
-| 21 | CONTENT-T4-AI-VERIF | P1 | todo | CONTENT-T4-PYUVM | Author E-AI-1_AI_Driven_Verification module in T4_Expert. |
-| 22 | CONTENT-T4-RISCV | P1 | todo | none | Author E-RISCV-1_RISC_V_Verification_Methodology module in T4_Expert. |
+| 20 | CONTENT-T4-PYUVM | P0 | complete | none | Author E-PYUVM-1_Python_Based_Verification module in T4_Expert. |
+| 21 | CONTENT-T4-AI-VERIF | P1 | complete | CONTENT-T4-PYUVM | Author E-AI-1_AI_Driven_Verification module in T4_Expert. |
+| 22 | CONTENT-T4-RISCV | P1 | complete | none | Author E-RISCV-1_RISC_V_Verification_Methodology module in T4_Expert. |
 | 23 | CONTENT-T4-UVM-ML | P2 | todo | CONTENT-T4-PYUVM | Author E-UVM-ML-1_Multi_Language_Verification module in T4_Expert. |
 | 24 | CONTENT-T4-EMULATION | P2 | todo | CONTENT-T3-MULTI-AGENT | Author E-EMU-1_Emulation_Aware_Verification module in T4_Expert. |
 | 25 | FLASH-1-T3-T4-COVERAGE | P1 | todo | CONTENT-T3-SCOREBOARD | Create flashcard sets for all T3 and new T4 modules. |
@@ -497,7 +497,7 @@
 
 ### `CONTENT-T3-SCOREBOARD`
 - **Priority:** P0
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `none`
 - **Primary surfaces:**
   - `content/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index.mdx` (create)
@@ -510,12 +510,12 @@
   4. Include a static architecture diagram showing `monitor → analysis port → scoreboard → reference model → comparator`.
   5. Update `scripts/generate-curriculum.ts` to include this module after `A-UVM-5_UVM_Callbacks`.
 - **Deliverable checklist:**
-  - [ ] `A-UVM-6_Scoreboards_and_Reference_Models/index.mdx` created
-  - [ ] All 6 content sections present
-  - [ ] 4 Knowledge Check questions included
-  - [ ] Lab pointer to `LAB-1-T3-SCOREBOARD` included
-  - [ ] Curriculum generator includes the new module
-  - [ ] `npm run build` succeeds
+  - [x] `A-UVM-6_Scoreboards_and_Reference_Models/index.mdx` created
+  - [x] All 6 content sections present
+  - [x] 4 Knowledge Check questions included
+  - [x] Lab pointer to `LAB-1-T3-SCOREBOARD` included
+  - [x] Curriculum generator includes the new module
+  - [x] `npm run build` succeeds
 - **Validation:**
   - `npm run generate:curriculum`
   - `npm run build`
@@ -574,7 +574,7 @@
 
 ### `CONTENT-T4-PSS`
 - **Priority:** P0
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `none`
 - **Primary surfaces:**
   - `content/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index.mdx` (create)
@@ -587,12 +587,12 @@
   4. Embed `<PssIntentMapVisualizer />` (from `VIZ-10`) in section (b).
   5. Update curriculum generator to add as first new T4 Expert module after existing content.
 - **Deliverable checklist:**
-  - [ ] `E-PSS-1_Portable_Stimulus_Standard/index.mdx` created
-  - [ ] All 8 content sections present
-  - [ ] PSS-to-SV and PSS-to-C examples included
-  - [ ] Tool ecosystem section current as of 2025
-  - [ ] Curriculum generator includes the new module
-  - [ ] `npm run build` succeeds
+  - [x] `E-PSS-1_Portable_Stimulus_Standard/index.mdx` created
+  - [x] All 8 content sections present
+  - [x] PSS-to-SV and PSS-to-C examples included
+  - [x] Tool ecosystem section current as of 2025
+  - [x] Curriculum generator includes the new module
+  - [x] `npm run build` succeeds
 - **Validation:**
   - `npm run generate:curriculum`
   - `npm run build`
@@ -631,7 +631,7 @@
 
 ### `CONTENT-T4-PYUVM`
 - **Priority:** P0
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `none`
 - **Primary surfaces:**
   - `content/curriculum/T4_Expert/E-PYUVM-1_Python_Based_Verification/index.mdx` (create)
@@ -643,11 +643,11 @@
   3. Include a full cocotb testbench code example with syntax highlighting.
   4. Update curriculum generator to include after `E-PSS-1`.
 - **Deliverable checklist:**
-  - [ ] `E-PYUVM-1_Python_Based_Verification/index.mdx` created
-  - [ ] cocotb code example is syntactically correct Python
-  - [ ] pyUVM vs SV UVM comparison table present
-  - [ ] Curriculum generator includes new module
-  - [ ] `npm run build` succeeds
+  - [x] `E-PYUVM-1_Python_Based_Verification/index.mdx` created
+  - [x] cocotb code example is syntactically correct Python
+  - [x] pyUVM vs SV UVM comparison table present
+  - [x] Curriculum generator includes new module
+  - [x] `npm run build` succeeds
 - **Validation:**
   - `npm run generate:curriculum`
   - `npm run build`
@@ -656,7 +656,7 @@
 
 ### `CONTENT-T4-AI-VERIF`
 - **Priority:** P1
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `CONTENT-T4-PYUVM`
 - **Primary surfaces:**
   - `content/curriculum/T4_Expert/E-AI-1_AI_Driven_Verification/index.mdx` (create)
@@ -668,11 +668,11 @@
   3. This module is intentionally conceptual — no heavy code examples required.
   4. Update curriculum generator to include after `E-PYUVM-1`.
 - **Deliverable checklist:**
-  - [ ] `E-AI-1_AI_Driven_Verification/index.mdx` created
-  - [ ] All 7 sections present
-  - [ ] Tool overview is accurate for 2025/2026 tool versions
-  - [ ] Curriculum generator includes new module
-  - [ ] `npm run build` succeeds
+  - [x] `E-AI-1_AI_Driven_Verification/index.mdx` created
+  - [x] All 7 sections present
+  - [x] Tool overview is accurate for 2025/2026 tool versions
+  - [x] Curriculum generator includes new module
+  - [x] `npm run build` succeeds
 - **Validation:**
   - `npm run generate:curriculum`
   - `npm run build`
@@ -681,7 +681,7 @@
 
 ### `CONTENT-T4-RISCV`
 - **Priority:** P1
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `none`
 - **Primary surfaces:**
   - `content/curriculum/T4_Expert/E-RISCV-1_RISC_V_Verification_Methodology/index.mdx` (create)
@@ -693,11 +693,11 @@
   3. Include a RISCV-DV configuration snippet showing a custom instruction distribution YAML.
   4. Update curriculum generator to include after `E-AI-1`.
 - **Deliverable checklist:**
-  - [ ] `E-RISCV-1_RISC_V_Verification_Methodology/index.mdx` created
-  - [ ] RISCV-DV config snippet included
-  - [ ] Step-and-compare methodology explained with diagram description
-  - [ ] Curriculum generator includes new module
-  - [ ] `npm run build` succeeds
+  - [x] `E-RISCV-1_RISC_V_Verification_Methodology/index.mdx` created
+  - [x] RISCV-DV config snippet included
+  - [x] Step-and-compare methodology explained with diagram description
+  - [x] Curriculum generator includes new module
+  - [x] `npm run build` succeeds
 - **Validation:**
   - `npm run generate:curriculum`
   - `npm run build`

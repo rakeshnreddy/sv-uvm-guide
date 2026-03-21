@@ -1,0 +1,347 @@
+---
+title: "E-RISCV-1: RISC-V Verification Methodology"
+description: "Master the specialized verification methodology for RISC-V processors — from constrained-random instruction generation with RISCV-DV to ISA compliance checking and formal verification."
+---
+
+## Quick Take
+- **What it is:** RISC-V verification methodology is the set of specialized techniques, tools, and reference flows for verifying RISC-V processor implementations — covering instruction-level randomization, ISA coverage, step-and-compare with instruction set simulators, and formal ISA property checking.
+- **Why it matters:** RISC-V has become the dominant open ISA for custom silicon. Unlike proprietary ISAs (Arm, x86), any team can build a RISC-V core — making verification the critical differentiator between a working chip and a silicon bug. The open-source RISC-V verification ecosystem (RISCV-DV, Spike, RISC-V ISAC) is a must-know for modern verification engineers.
+- **Scale of adoption:** As of 2026, over 13 billion RISC-V cores have shipped across automotive, IoT, AI, and datacenter applications. Every major semiconductor company either uses or evaluates RISC-V.
+
+## RISC-V Verification Challenges vs ASIC Peripherals
+
+Verifying a processor is fundamentally different from verifying a peripheral IP (UART, SPI, DMA):
+
+| Dimension | Peripheral IP | RISC-V Processor |
+|---|---|---|
+| **Input space** | Protocol transactions (address, data, control) | Instructions (~1000 encodings × register files × CSRs) |
+| **State space** | Registers + FSM states | 32 architectural registers + pipeline state + CSRs + memory |
+| **Correctness criteria** | Protocol compliance + functional correctness | ISA compliance for every instruction in every configuration |
+| **Reference model** | Hand-written RTL or behavioral model | Instruction Set Simulator (Spike, QEMU, SAIL) |
+| **Coverage** | Functional covergroups on transactions | Instruction categories × privilege modes × pipeline hazards |
+| **Hazards** | Bus contention, arbitration | Data hazards, control hazards, exception interlocks |
+
+The combinatorial explosion of instruction interactions means exhaustive simulation is impossible. The methodology relies on:
+1. **Constrained-random instruction generation** (RISCV-DV)
+2. **Step-and-compare** with a golden ISA model
+3. **Formal verification** for critical properties
+4. **ISA coverage analysis** (RISC-V ISAC)
+
+## RISCV-DV: Google's Instruction Generator
+
+[RISCV-DV](https://github.com/chipsalliance/riscv-dv) is an open-source constrained-random instruction generator written in SystemVerilog (with a Python frontend for configuration). It generates random but architecturally legal RISC-V instruction sequences.
+
+### How RISCV-DV Works
+
+```
+┌──────────────┐     YAML Config      ┌──────────────────┐
+│  RISCV-DV     │ ◄──────────────────  │  Test Config      │
+│  Generator    │                       │  • ISA extensions  │
+│               │                       │  • Inst. dist.     │
+│  SV + Python  │    Generated .S      │  • Hazard patterns │
+│               │ ──────────────────►  │                    │
+└──────────────┘                       └──────────────────┘
+       │
+       ▼
+  Assembly programs (.S)
+       │
+       ├──► Compiled → RTL Simulation → Instruction Trace
+       │
+       └──► Compiled → Spike/SAIL ISS → Reference Trace
+```
+
+### Configuration: Instruction Distribution YAML
+
+RISCV-DV uses YAML configuration to control instruction generation:
+
+```yaml
+# riscv_dv_config.yaml — Custom instruction distribution
+- test: riscv_arithmetic_stress
+  description: "Heavy arithmetic and multiply-divide stress"
+  gen_opts: >
+    +num_of_tests=5
+    +num_of_sub_program=3
+    +instr_cnt=5000
+  iterations: 10
+  gen_test: riscv_instr_base_test
+  rtl_test: core_base_test
+
+  # Custom instruction distribution
+  dist:
+    ADD:     10
+    SUB:     10
+    MUL:     20
+    MULH:    15
+    DIV:     15
+    REM:      5
+    AND:      5
+    OR:       5
+    XOR:      5
+    SLL:      5
+    SRL:      5
+```
+
+### Key RISCV-DV Features
+
+- **ISA extension support:** RV32I/E, RV64I, M, A, F, D, C, V, Zb*, Zicsr, and custom extensions
+- **Hazard injection:** Generates sequences with back-to-back data hazards, control transfer chains, exception triggers
+- **Privilege mode mixing:** M-mode, S-mode, U-mode transitions with CSR manipulation
+- **Interrupt injection:** Random interrupt generation with configurable timing
+- **Page table walking:** Generates virtual memory test scenarios with TLB misses
+
+## RISC-V ISAC: Instruction Coverage
+
+[RISC-V ISAC](https://github.com/riscv-software-src/riscv-isac) (Instruction Set Architecture Coverage) analyzes instruction traces to measure verification completeness:
+
+```
+Instruction trace (.log)          ISAC Analysis           Coverage Report
+────────────────────          ────────────────          ─────────────────
+  0x80000000: ADD x1, x2, x3  →  Parse trace    →    Instruction coverage:
+  0x80000004: BEQ x1, x0, 0x10    Categorize           ADD: 100% (all operand combos)
+  0x80000008: MUL x4, x5, x6      instructions         BEQ: 78% (missing x0 source)
+  ...                              Map to CGFS          MUL: 92% (missing overflow)
+                                   coverpoints          Total: 87.3%
+```
+
+### Coverage Specification Files (CGFS)
+
+ISAC uses YAML-based Coverage Group Format Specification files:
+
+```yaml
+# cgfs/rv32i_add.yaml
+ADD:
+  config:
+    - check ISA:=regex(.*I.*)
+  opcode:
+    val_comb:
+      # All source register combinations
+      'rs1 == rs2': 0
+      'rs1 != rs2': 0
+      # Boundary values
+      'rs1_val == 0x00000000': 0
+      'rs1_val == 0xFFFFFFFF': 0
+      'rs2_val == 0x00000000': 0
+      'rs2_val == 0x7FFFFFFF': 0
+      # Result properties
+      'rd_val == 0': 0
+      'rd_val > rs1_val': 0
+```
+
+## Formal ISA Verification
+
+Formal verification complements simulation by proving properties of the processor design mathematically:
+
+### riscv-formal Framework
+
+The [riscv-formal](https://github.com/SymbioticEDA/riscv-formal) framework defines a set of SystemVerilog properties that any RISC-V core must satisfy:
+
+```systemverilog
+// Example: Verify ADD instruction correctness
+property p_add_correct;
+  @(posedge clk) disable iff (rst)
+  (rvfi_valid && rvfi_insn[6:0] == 7'b0110011  // R-type
+   && rvfi_insn[14:12] == 3'b000               // funct3 = ADD
+   && rvfi_insn[31:25] == 7'b0000000)          // funct7 = ADD (not SUB)
+  |->
+  (rvfi_rd_wdata == rvfi_rs1_rdata + rvfi_rs2_rdata);
+endproperty
+
+assert property (p_add_correct)
+  else $error("ADD instruction produced incorrect result");
+```
+
+### The RVFI Interface
+
+riscv-formal uses the **RISC-V Formal Interface (RVFI)** — a set of output ports that the DUT must expose, reporting the architectural effect of each retired instruction:
+
+| Signal | Width | Description |
+|---|---|---|
+| `rvfi_valid` | 1 | Instruction retired this cycle |
+| `rvfi_order` | 64 | Monotonic instruction count |
+| `rvfi_insn` | 32 | Instruction encoding |
+| `rvfi_rs1_rdata` | XLEN | Value read from rs1 |
+| `rvfi_rs2_rdata` | XLEN | Value read from rs2 |
+| `rvfi_rd_wdata` | XLEN | Value written to rd |
+| `rvfi_pc_rdata` | XLEN | PC before instruction |
+| `rvfi_pc_wdata` | XLEN | PC after instruction |
+| `rvfi_mem_addr` | XLEN | Memory address (for load/store) |
+
+Commercial tools (Cadence JasperGold, Synopsys VC Formal) support riscv-formal properties out of the box.
+
+## Step-and-Compare Methodology
+
+Step-and-compare is the primary dynamic verification methodology for RISC-V processors:
+
+```
+                 Same binary (.elf)
+                     │
+          ┌──────────┴──────────┐
+          ▼                      ▼
+   ┌──────────────┐      ┌──────────────┐
+   │ RTL Simulation│      │   Spike ISS   │
+   │               │      │  (or SAIL)    │
+   │  DUT under    │      │  Golden       │
+   │  test         │      │  reference    │
+   └──────┬───────┘      └──────┬───────┘
+          │                      │
+   Instruction Trace       Instruction Trace
+   (PC, insn, rd, mem)     (PC, insn, rd, mem)
+          │                      │
+          └──────────┬──────────┘
+                     ▼
+              ┌──────────────┐
+              │  Comparator   │
+              │               │
+              │  Finds first  │
+              │  divergence   │
+              └──────────────┘
+```
+
+### ISS Options
+
+| ISS | Language | Speed | Features |
+|---|---|---|---|
+| **Spike** | C++ | Very fast | Reference implementation, supports all standard extensions |
+| **SAIL** | SAIL → C | Fast | Formal specification language, used for ISA spec proofs |
+| **QEMU** | C | Fastest | Full system emulation, less cycle-accurate |
+| **Dromajo** | C++ | Fast | BOOM/Rocket co-simulation support, checkpoint/restore |
+
+### Trace-based Comparison
+
+After simulation completes, a trace comparison tool (typically Python) checks every retired instruction:
+
+```python
+def compare_traces(rtl_trace, iss_trace):
+    """Compare RTL and ISS instruction traces."""
+    for i, (rtl, iss) in enumerate(zip(rtl_trace, iss_trace)):
+        if rtl.pc != iss.pc:
+            raise VerificationError(
+                f"PC mismatch at instruction {i}: "
+                f"RTL=0x{rtl.pc:08x}, ISS=0x{iss.pc:08x}"
+            )
+        if rtl.rd_val != iss.rd_val and rtl.rd_addr != 0:
+            raise VerificationError(
+                f"Register write mismatch at PC=0x{rtl.pc:08x}: "
+                f"rd[{rtl.rd_addr}] RTL=0x{rtl.rd_val:08x}, "
+                f"ISS=0x{iss.rd_val:08x}"
+            )
+        if rtl.mem_addr and rtl.mem_data != iss.mem_data:
+            raise VerificationError(
+                f"Memory write mismatch at PC=0x{rtl.pc:08x}: "
+                f"addr=0x{rtl.mem_addr:08x} RTL=0x{rtl.mem_data:08x}, "
+                f"ISS=0x{iss.mem_data:08x}"
+            )
+```
+
+## UVM Integration: Wrapping RISCV-DV in UVM
+
+For teams with existing UVM infrastructure, RISCV-DV generated programs can be wrapped in a UVM sequence:
+
+```systemverilog
+class riscv_dv_seq extends uvm_sequence #(uvm_sequence_item);
+  `uvm_object_utils(riscv_dv_seq)
+
+  string asm_file;
+
+  function new(string name = "riscv_dv_seq");
+    super.new(name);
+  endfunction
+
+  task body();
+    riscv_mem_load_item load_item;
+
+    // Load compiled ELF into instruction memory
+    load_item = riscv_mem_load_item::type_id::create("load_item");
+    load_item.elf_path = asm_file;
+    start_item(load_item);
+    finish_item(load_item);
+
+    // Wait for program to complete (WFI or timeout)
+    fork begin
+      wait_for_wfi();
+    end begin
+      #1ms;
+      `uvm_error("TIMEOUT", "RISCV-DV test did not complete within 1ms")
+    end join_any
+    disable fork;
+  endtask
+endclass
+
+// In the test:
+class riscv_random_test extends uvm_test;
+  `uvm_component_utils(riscv_random_test)
+
+  task run_phase(uvm_phase phase);
+    riscv_dv_seq seq;
+    phase.raise_objection(this);
+
+    seq = riscv_dv_seq::type_id::create("seq");
+    seq.asm_file = "tests/riscv_arithmetic_stress_0.S";
+    seq.start(env.sqr);
+
+    // Step-and-compare runs post-simulation
+    phase.drop_objection(this);
+  endtask
+endclass
+```
+
+## Knowledge Check
+
+<Quiz
+  questions={[
+    {
+      question: "What is the primary purpose of RISCV-DV in a RISC-V verification flow?",
+      options: [
+        "To compile RISC-V RTL into a synthesis-ready netlist",
+        "To generate constrained-random but architecturally legal instruction sequences",
+        "To formally prove correctness of RISC-V instructions",
+        "To emulate RISC-V binaries at full speed"
+      ],
+      correctAnswer: 1,
+      explanation: "RISCV-DV generates random instruction sequences that respect ISA legality constraints (valid encodings, register dependencies, privilege modes) while maximizing coverage of instruction interactions and hazard patterns."
+    },
+    {
+      question: "In the step-and-compare methodology, what serves as the golden reference?",
+      options: [
+        "The RTL simulation output from the previous tape-out",
+        "An instruction set simulator (ISS) like Spike or SAIL",
+        "The RISCV-DV instruction generator output",
+        "A formal verification property proof"
+      ],
+      correctAnswer: 1,
+      explanation: "An ISS (Instruction Set Simulator) executes the same binary as the DUT and produces a reference trace. The comparator tool then checks that the RTL simulation trace matches the ISS trace for every retired instruction."
+    },
+    {
+      question: "What is the purpose of the RVFI (RISC-V Formal Interface)?",
+      options: [
+        "A standard bus protocol for connecting RISC-V cores to peripherals",
+        "A set of output ports that report the architectural effect of each retired instruction for formal verification",
+        "A debug interface for loading programs into RISC-V cores",
+        "A standard memory interface for RISC-V caches"
+      ],
+      correctAnswer: 1,
+      explanation: "RVFI exposes signals like rvfi_valid, rvfi_insn, rvfi_rd_wdata, and rvfi_pc_wdata that report what each retired instruction did architecturally. Formal verification tools use these signals to prove ISA compliance properties."
+    },
+    {
+      question: "What does RISC-V ISAC measure?",
+      options: [
+        "The power consumption of RISC-V cores during verification",
+        "The instruction coverage of verification runs against defined coverpoints",
+        "The timing performance of RISC-V formal verification tools",
+        "The binary size of compiled RISCV-DV test programs"
+      ],
+      correctAnswer: 1,
+      explanation: "RISC-V ISAC (Instruction Set Architecture Coverage) analyzes instruction traces against CGFS (Coverage Group Format Specification) files to measure what percentage of instruction categories, operand combinations, and edge cases have been exercised."
+    }
+  ]}
+/>
+
+## References & Next Topics
+
+- **RISCV-DV**: [github.com/chipsalliance/riscv-dv](https://github.com/chipsalliance/riscv-dv) — instruction generator documentation and configuration.
+- **RISC-V ISAC**: [github.com/riscv-software-src/riscv-isac](https://github.com/riscv-software-src/riscv-isac) — coverage analysis tool.
+- **riscv-formal**: [github.com/SymbioticEDA/riscv-formal](https://github.com/SymbioticEDA/riscv-formal) — formal verification framework.
+- **Spike ISS**: [github.com/riscv-software-src/riscv-isa-sim](https://github.com/riscv-software-src/riscv-isa-sim) — reference RISC-V simulator.
+- **Prerequisite:** [I-SV-2A: Constrained Randomization](/curriculum/t2-intermediate/i-sv-2a-constrained-randomization-fundamentals) — RISCV-DV uses SV constraint solving internally.
+- **Prerequisite:** [E-INT-1: Formal Verification Integration](/curriculum/t4-expert/e-int-1-integrating-uvm-with-formal-verification) — formal methods context before riscv-formal.
+- **Related:** [E-PYUVM-1: Python-Based Verification](/curriculum/t4-expert/e-pyuvm-1-python-based-verification) — cocotb/pyUVM for RISC-V IP verification.
