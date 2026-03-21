@@ -107,7 +107,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 22 | `W8-ASSET-MAPPING` | P2 | `complete` | `W5-AUVM4-SPLIT`, `W6-ECUST1-MOD`, `W6-ESOC1-MOD` | Map or retire unused verification visuals/diagrams. |
 | 23 | `W8-CONCEPT-LINKS` | P2 | `complete` | all content tasks above | Run a final canonical concept-linking pass across the curriculum. |
 | 24 | `W9-ISV-UPF` | P1 | `complete` | none | Create a dedicated UPF/power-intent fundamentals lesson with supply network and power-state teaching. |
-| 25 | `W9-EPWR-STRATEGY` | P1 | `todo` | `W9-ISV-UPF`, `W6-ESOC1-MOD` | Build the expert power-aware UVM verification strategy module with corruption semantics and shutdown/wake-up verification. |
+| 25 | `W9-EPWR-STRATEGY` | P1 | `complete` | `W9-ISV-UPF`, `W6-ESOC1-MOD` | Build the expert power-aware UVM verification strategy module with corruption semantics and shutdown/wake-up verification. |
 | 26 | `W9-EPWR-LAB` | P1 | `todo` | `W9-EPWR-STRATEGY`, `W8-LABS-PLATFORM` | Create a power-state verification lab and `PowerDomainVisualizer` interactive. |
 
 ## Detailed Task Briefs
@@ -627,15 +627,15 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   8. **Debug and triage:** Common power verification failures — retention corruption, isolation glitches, wake-up race conditions, PMU deadlocks.
   9. Cross-link back to UPF fundamentals (I-SV-8), SoC strategies (E-SOC-1), and formal integration (E-INT-1) for formal power-aware proofs.
 - Deliverable checklist:
-  - [ ] `E-PWR-1_Power_Aware_Verification/index.mdx` exists with comprehensive content.
-  - [ ] Corruption semantics (retention, isolation, X-propagation) are taught accurately.
-  - [ ] Power controller verification strategy is documented with PMU state machine examples.
-  - [ ] Shutdown/wake-up UVM sequence patterns are provided.
-  - [ ] Power-aware SVA assertions are included.
-  - [ ] Power-state coverage strategy is explicit.
-  - [ ] UVM integration patterns (virtual sequences, callbacks, custom phases) are taught.
-  - [ ] Debug triage for common power verification failures is included.
-  - [ ] Cross-links to I-SV-8, E-SOC-1, E-INT-1 are set.
+  - [x] `E-PWR-1_Power_Aware_Verification/index.mdx` exists with comprehensive content.
+  - [x] Corruption semantics (retention, isolation, X-propagation) are taught accurately.
+  - [x] Power controller verification strategy is documented with PMU state machine examples.
+  - [x] Shutdown/wake-up UVM sequence patterns are provided.
+  - [x] Power-aware SVA assertions are included.
+  - [x] Power-state coverage strategy is explicit.
+  - [x] UVM integration patterns (virtual sequences, callbacks, custom phases) are taught.
+  - [x] Debug triage for common power verification failures is included.
+  - [x] Cross-links to I-SV-8, E-SOC-1, E-INT-1 are set.
 - Validation:
   - Regenerate curriculum data.
   - Run lint and vitest.

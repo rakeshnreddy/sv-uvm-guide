@@ -1,0 +1,138 @@
+---
+title: "Power-Aware UVM Verification Strategy"
+description: "Expert guide on verifying power intent, corruption semantics, PMU handshakes, and shutdown/wake-up sequences within a UVM environment."
+order: 2
+---
+
+# Power-Aware UVM Verification Strategy
+
+While [I-SV-8: Power Intent and UPF Fundamentals](/curriculum/T2_Intermediate/I-SV-8_Power_Intent_and_UPF/index) teaches you how to express power architecture using IEEE 1801 UPF syntax, verifying that architecture requires deep UVM instrumentation.
+
+Power-aware verification tests **functional scenarios in the presence of power events**. What happens if an interrupt arrives exactly as a block's isolation goes high? What if the power controller drops a supply net before retaining state?
+
+This module provides the expert playbook for verifying corruption semantics, Power Management Unit (PMU) handshakes, and orchestrating shutdown/wake-up sequences in a modern UVM environment.
+
+---
+
+## 1. Corruption Semantics and Verification
+
+When a domain loses power (the UPF state transitions to `OFF`), the simulator enforces **corruption semantics**. All non-retained signals and registers inside the domain are driven to `X` (unknown).
+
+### X-Propagation and The Testbench
+Your UVM testbench must handle this `X` gracefully, or the simulation will crash with false failures.
+- **Scoreboards:** The scoreboard must pause comparison for any checking logic attached to the powered-down domain. The scoreboard must also recognize that registers will reset upon wake-up, unless specifically marked as retained.
+- **Monitors/Drivers:** Bus monitors active on the boundary of an `OFF` domain must gracefully handle `X` on their inputs. If isolation cells are working correctly, the `X` will be clamped (e.g., to `0`), and the bus will appear idle but legal.
+
+```systemverilog
+// Scoreboard pseudo-code handling power down
+function void write(my_packet pkt);
+  if (pmu_agent_cfg.current_state == POWER_OFF) begin
+    // Ignore floating activity or clamped zero traffic
+    return;
+  end
+  // ... proceed with normal checking
+endfunction
+```
+
+---
+
+## 2. Power Management Unit (PMU) Verification
+
+The PMU (or PCU - Power Controller Unit) orchestrates the power sequencing for the entire SoC. It is the most critical block to verify.
+
+### State Machine Coverage
+The PMU is basically a massive state machine. You must extract its definition and verify every legal transition.
+- **Functional Coverage:** Create covergroups mapping every `{Current_State, Next_State}` pair.
+- **Illegal Transitions:** Attempt to force illegal PMU reg/bus writes (e.g., trying to jump straight from `FULL_ON` to `DEEP_SLEEP` without passing through a transient `SAVE` state) and verify the PMU handles the error cleanly instead of locking up.
+
+### Handshake Verification
+PMUs rely on handshakes. For example, the PMU asserts `cpu_pwr_req` to the external voltage regulator, and waits for `cpu_pwr_ack`.
+- **Delay randomization:** Your UVM PMU VIP should randomize the delay between `req` and `ack` across a massive range (from 0 cycles to thousands of cycles) to expose race conditions in the RTL.
+
+---
+
+## 3. Shutdown and Wake-up UVM Sequences
+
+To test power cycling, your **Virtual Sequences** must coordinate the functional stimulus and the power events.
+
+A robust power-cycle sequence pattern:
+1. **Quiesce Traffic:** Stop sending functional stimulus to the target domain. Wait for the pipeline to drain.
+2. **Save Context:** Execute software/hardware routines to save volatile registers to memory or retention cells.
+3. **Assert Isolation:** Program the PMU to clamp the domain's outputs.
+4. **Power Down (`OFF`):** Program the PMU to drop the supply net.
+5. **Hold:** Wait a randomized duration.
+6. **Power Up (`ON`):** Restore the supply net.
+7. **Release Isolation:** Remove the boundary clamps.
+8. **Restore Context:** Load the saved state back into the active registers.
+9. **Resume Traffic:** Send functional stimulus and use the scoreboard to verify the domain retained its state and handles new traffic correctly.
+
+---
+
+## 4. Power-Aware SVA Assertions
+
+SystemVerilog Assertions (SVA) are highly effective for catching low-power sequencing violations that are invisible to the UVM scoreboard.
+
+**Isolation before Power Down:**
+Isolation must be active *before* the supply net drops, and remain active until *after* the supply net returns.
+```systemverilog
+property p_iso_before_pwr_down;
+  @(posedge pmu_clk)
+  $fell(supply_net_on) |-> $past(isolation_en);
+endproperty
+assert property (p_iso_before_pwr_down) else $error("Power dropped before isolation active!");
+```
+
+**Retention Save/Restore:**
+The `save_en` signal must not pulse while the domain is already powered down.
+```systemverilog
+property p_save_while_powered;
+  @(posedge pmu_clk)
+  save_en |-> supply_net_on;
+endproperty
+```
+
+For more on assertion structure, see [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals).
+
+---
+
+## 5. Power-State Coverage Strategy
+
+To achieve [coverage closure](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow) on a power-aware design, you must cross functional states with power states.
+
+```systemverilog
+covergroup cg_power_aware_traffic @(posedge clk);
+  cp_op: coverpoint bus.opcode;
+  cp_pwr: coverpoint pmu.state {
+    bins ON = {STATE_ON};
+    bins SLEEP = {STATE_SLEEP};
+    bins RETENTION = {STATE_RET};
+  }
+  
+  // Prove we executed every opcode while in every valid power state
+  cr_op_x_pwr: cross cp_op, cp_pwr;
+endgroup
+```
+
+---
+
+## 6. UVM Integration Patterns
+
+### Power-Aware Virtual Sequences
+Virtual sequences are the ideal place to orchestrate power events because they have handles to both the PMU sequencer and the functional (e.g., AXI/PCIe) sequencers. This is covered in depth in [Virtual Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences).
+
+### UVM Callbacks for Power Events
+If a domain suddenly powers down, the active UVM driver trying to send a packet might hang waiting for a handshake (`ACK`) that will never come. Use [UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks) injected into the driver to cleanly abort the active sequence when the PMU signals a power-down event.
+
+### Phasing and Objections
+Never drop a power supply while an essential `run_phase` [objection](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing) is raised by the domain's traffic generator, or you run the risk of deadlocking the test.
+
+---
+
+## 7. Debug and Triage Playbook
+
+When a power-aware test fails, start here:
+1. **Did `X` leak?** If a failure is caused by an `X` value on a bus, check the isolation control signals. The PMU likely dropped the supply voltage before asserting the isolation clamps.
+2. **Did a register lose its value?** If a retention register initializes to `0` instead of its pre-sleep value upon wake-up, verify the `save_en` and `restore_en` toggles occurred exactly per the UPF constraints.
+3. **Did the testbench hang?** If the simulation runs forever, verify that your UVM driver isn't waiting for a blocked `req/ack` handshake from a domain that is currently `OFF`.
+
+For system-level integration of these concepts, proceed to [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies). For mathematical proofs of your power controller's state machine, see [E-INT-1: Integrating UVM with Formal Verification](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification).

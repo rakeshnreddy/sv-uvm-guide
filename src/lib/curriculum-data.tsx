@@ -657,6 +657,17 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "Power-Aware UVM Verification Strategy",
+        "slug": "E-PWR-1_Power_Aware_Verification",
+        "topics": [
+          {
+            "title": "Power-Aware UVM Verification Strategy",
+            "slug": "index",
+            "description": "Expert guide on verifying power intent, corruption semantics, PMU handshakes, and shutdown/wake-up sequences within a UVM environment."
+          }
+        ]
+      },
+      {
         "title": "E-SOC-1: SoC-Level Verification Strategies",
         "slug": "E-SOC-1_SoC-Level_Verification_Strategies",
         "topics": [
