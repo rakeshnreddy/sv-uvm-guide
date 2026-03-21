@@ -1,688 +1,846 @@
-# SV-UVM Guide Modernization Tracker
+# TASKS.md — sv-uvm-guide Next-Generation Backlog
+# Generated: 2026-03-21 | Auditor: Principal Verification Engineer / Technical Curriculum Architect
+# Purpose: Machine-readable backlog for autonomous AI coding agent execution.
 
-This file is the single source of truth for modernization status, ordering, dependencies, and implementation acceptance criteria.
-
-## Tracker Policy
-
-- Update **status only in this file**.
-- Treat `comprehensive_lrm_audit_report.md`, `curriculum_modernization_tasks.md`, and `curriculum_audit_findings.md` as **context/evidence**, not live trackers.
-- If a supporting document contains an old task ID or an outdated instruction to update that file directly, follow the canonical mapping in this file instead.
-- A task remains `todo` until every unchecked deliverable in its task brief is complete.
-- When a task creates or modifies curriculum code, the executing agent must run:
-  - `npm run generate:curriculum`
-  - `npm run lint`
-  - `npx vitest --run`
-  - targeted Playwright coverage when the task adds or rewires learner-facing routes/interactives
-
-## Status Legend
-
-- `todo`: not complete; eligible for execution
-- `blocked`: cannot proceed until dependency or decision is resolved
-- `complete`: implementation finished and validated
-
-## Current Baseline
-
-The repository has already completed the major Waves 1-4 structural modernization and several premium-interactive milestones.
-
-Closed baseline work already reflected in the repo:
-- Tier 1 foundations split and modernized into `F1A/F1B/F1C`, `F2A/F2B/F2C/F2D`, and `F4A/F4B/F4C`
-- Legacy `CURR-REFACTOR-F3` intent is considered structurally landed in the repository; any remaining Tier 1 nomenclature drift is tracked under `W8-T1-NAMING`
-- Tier 2 structural splits for `I-SV-1/2/3/4` and `I-UVM-1/2/3`
-- Canonical UVM merges into `I-UVM-1B`, `I-UVM-1C`, and `I-UVM-3B`
-- Core curriculum interactives: constraint solver, UVM tree, factory override, temporal logic explorer, interview playground
-- 3D visualization backlog: mailbox, coverage, analysis, dataflow, constraint, phase timeline
-- `E-PERF-1` modernization with `EventSchedulerVisualizer`
-- Global cleanup of stale IEEE 1800-2017 references
-
-## Supporting Document Roles
-
-| File | Role | Update Status Here? |
-| --- | --- | --- |
-| `TASKS.md` | Canonical tracker and execution brief | Yes |
-| `comprehensive_lrm_audit_report.md` | Historical architecture rationale and original modernization blueprint | No |
-| `curriculum_modernization_tasks.md` | Archived detailed acceptance criteria from earlier planning waves | No |
-| `curriculum_audit_findings.md` | 2026-03-06 audit evidence and gap analysis | No |
-| `prompt_to_resume_modernization.txt` | Resume-work prompt pointing agents back to this file | Yes, when workflow instructions change |
-
-## Canonical Task Crosswalk
-
-Use this table to translate legacy IDs and audit IDs into the canonical tasks below.
-
-| Canonical ID | Related Legacy / Audit IDs | Notes |
-| --- | --- | --- |
-| `W5-AUVM4-SPLIT` | `CURR-SPLIT-A-UVM-4`, `CURR-A-UVM-4-SPLIT`, `CURR-A-UVM-4A-LORE`, `CURR-A-UVM-4B-LAB`, `CURR-A-UVM-4-REVIEW`, `AUD-011` | Structural split already exists in the repo; remaining work is depth, interactive, lab, review, and testing. |
-| `W5-AUVM3-DEPRECATE` | `CURR-REFACTOR-A-UVM-3`, `CURR-A-UVM-3-MERGE`, `CURR-A-UVM-3-REDIRECT`, `CURR-A-UVM-5-CREATE`, `CURR-A-UVM-3-REVIEW` | Some repo changes landed already; callbacks lesson still needs full completion and correctness pass. |
-| `W6-ISV5-MOD` | `CURR-W6-ISV5`, `AUD-004` | Canonical IPC/deadlock modernization task. |
-| `W6-IUVM2C-MOD` | `CURR-W6-IUVM2C`, `AUD-005` | Canonical config-db/resource-db modernization task. |
-| `W6-ECUST1-MOD` | `CURR-W6-ECUST1` | Expert methodology modernization. |
-| `W6-EDBG1-MOD` | `CURR-W6-EDBG1` | Expert debug modernization. |
-| `W6-EINT1-MOD` | `CURR-W6-EINT1` | Expert formal-integration modernization; coordinated with `W7-ISV-API`. |
-| `W6-ESOC1-MOD` | `CURR-W6-ESOC1`, part of `AUD-015`, `AUD-016` | Expert SoC modernization and SoC-specific practice/lab work. |
-| `W7-ISV-CHECKERS` | `CURR-W7-ISV-CHECKERS`, `AUD-007` | New dedicated checkers lesson. |
-| `W7-ISV-DIRECTIVES` | `CURR-W7-ISV-DIRECTIVES`, `AUD-017` | Directives/generate/elaboration semantics track. |
-| `W7-ISV-API` | `CURR-W7-ISV-API`, `AUD-008` | Dedicated DPI/VPI/API expansion task. |
-| `W7-IUVM-POLICY` | `CURR-W7-IUVM-POLICY`, `AUD-012` | New UVM policy-classes lesson. |
-| `W7-IUVM-CONTAINER` | `CURR-W7-IUVM-CONTAINER`, `AUD-013` | New UVM container-classes lesson. |
-| `W7-IUVM-RECORDING` | `CURR-W7-IUVM-RECORDING`, `AUD-014` | New UVM recording-classes lesson. |
-| `W8-LABS-PLATFORM` | `AUD-001` | New planning task created from the 2026 audit. |
-| `W8-NAV-CLEANUP` | `AUD-002` | New planning task created from the 2026 audit. |
-| `W8-T1-NAMING` | `CURR-REFACTOR-F3`, `AUD-003` | Residual Tier 1 naming cleanup after the historical F3 consolidation. |
-| `W8-IUVM2B-CORRECTNESS` | `AUD-006` | New planning task created from the 2026 audit. |
-| `W8-ISV2B-DEEPEN` | `AUD-010` | New planning task created from the 2026 audit. |
-| `W8-ISV3B-DEEPEN` | `AUD-009` | New planning task created from the 2026 audit. |
-| `W8-EXPERT-CLEANUP` | `AUD-015` | Final expert-tier taxonomy and page-ownership cleanup after W6/W7 content lands. |
-| `W8-ASSET-MAPPING` | `AUD-018` | Unused/orphaned visuals and diagrams mapping sweep. |
-| `W8-CONCEPT-LINKS` | `AUD-019` | Canonical concept-linking sweep after content work stabilizes. |
-| `W9-ISV-UPF` | none | New power-intent/UPF fundamentals lesson at intermediate tier. |
-| `W9-EPWR-STRATEGY` | none | New expert-tier power-aware UVM verification strategy module. |
-| `W9-EPWR-LAB` | none | Hands-on power-state verification lab with interactive visualizer. |
+---
 
 ## Active Backlog Summary
 
-Execute tasks in this order unless the user explicitly reprioritizes.
+| Order | ID | Priority | Status | Depends On | Description |
+|---|---|---|---|---|---|
+| 1 | INFRA-1-REPO-CLEANUP | P0 | todo | none | Remove stray root-level developer artifacts and move LRM PDFs to git-lfs. |
+| 2 | INFRA-2-LABS-DEDUP | P0 | todo | INFRA-1-REPO-CLEANUP | Reconcile dual labs/ directories and fix curriculum data generator path references. |
+| 3 | INFRA-3-APPROUTER-MIGRATION | P0 | todo | none | Complete Next.js App Router migration by resolving src/pages/ vs src/app/ coexistence. |
+| 4 | CONTENT-1-F3-SCHEDULING | P0 | todo | none | Author the missing F3_* module group: SV Scheduling Semantics, Regions & Delta Cycles. |
+| 5 | VIZ-1-SV-SCHEDULER | P0 | todo | CONTENT-1-F3-SCHEDULING | Build SVSchedulerRegionVisualizer.tsx: animated delta-cycle and region stepper. |
+| 6 | CONTENT-2-T1T2-BRIDGE | P1 | todo | CONTENT-1-F3-SCHEDULING | Author "Why UVM?" bridge module between I-SV-8 and I-UVM-1A. |
+| 7 | VIZ-2-UVM-PHASE-TIMELINE | P0 | todo | none | Build UvmPhaseTimelineVisualizer.tsx: interactive phasing swimlane with click-to-expand. |
+| 8 | VIZ-3-TLM-CONNECTION-BUILDER | P0 | todo | none | Build TlmConnectionBuilderVisualizer.tsx: drag-and-drop TLM port/socket wiring. |
+| 9 | VIZ-4-FACTORY-OVERRIDE-EXPLORER | P0 | todo | none | Build FactoryOverrideExplorerVisualizer.tsx: live factory registry with override simulation. |
+| 10 | VIZ-5-CONSTRAINT-HEATMAP | P1 | todo | none | Build ConstraintSolverHeatmapVisualizer.tsx: distribution heatmap for rand variables. |
+| 11 | VIZ-6-SVA-WAVEFORM | P1 | todo | none | Build SvaSequenceWaveformVisualizer.tsx: waveform-style temporal sequence stepper. |
+| 12 | VIZ-7-COVERAGE-CROSS-EXPLORER | P1 | todo | none | Build CoverageCrossExplorerVisualizer.tsx: interactive covergroup cross-bin matrix. |
+| 13 | VIZ-8-RAL-REGISTER-MAP | P1 | todo | CONTENT-T3-RAL-ENHANCE | Build RalRegisterMapVisualizer.tsx: hierarchical register map with field-level drill-down. |
+| 14 | VIZ-9-SEQUENCE-HIERARCHY | P1 | todo | none | Build UvmSequenceHierarchyVisualizer.tsx: collapsible tree of nested sequence invocations. |
+| 15 | CONTENT-T3-SCOREBOARD | P0 | todo | none | Author A-UVM-6_Scoreboards_and_Reference_Models module in T3_Advanced. |
+| 16 | CONTENT-T3-VIP | P1 | todo | CONTENT-T3-SCOREBOARD | Author A-UVM-7_VIP_Construction module in T3_Advanced. |
+| 17 | CONTENT-T3-MULTI-AGENT | P1 | todo | CONTENT-T3-SCOREBOARD | Author A-UVM-8_Multi_Agent_Topologies module in T3_Advanced. |
+| 18 | CONTENT-T4-PSS | P0 | todo | none | Author E-PSS-1_Portable_Stimulus_Standard module in T4_Expert. |
+| 19 | VIZ-10-PSS-INTENT-MAP | P1 | todo | CONTENT-T4-PSS | Build PssIntentMapVisualizer.tsx: PSS action/resource graph with portability toggle. |
+| 20 | CONTENT-T4-PYUVM | P0 | todo | none | Author E-PYUVM-1_Python_Based_Verification module in T4_Expert. |
+| 21 | CONTENT-T4-AI-VERIF | P1 | todo | CONTENT-T4-PYUVM | Author E-AI-1_AI_Driven_Verification module in T4_Expert. |
+| 22 | CONTENT-T4-RISCV | P1 | todo | none | Author E-RISCV-1_RISC_V_Verification_Methodology module in T4_Expert. |
+| 23 | CONTENT-T4-UVM-ML | P2 | todo | CONTENT-T4-PYUVM | Author E-UVM-ML-1_Multi_Language_Verification module in T4_Expert. |
+| 24 | CONTENT-T4-EMULATION | P2 | todo | CONTENT-T3-MULTI-AGENT | Author E-EMU-1_Emulation_Aware_Verification module in T4_Expert. |
+| 25 | FLASH-1-T3-T4-COVERAGE | P1 | todo | CONTENT-T3-SCOREBOARD | Create flashcard sets for all T3 and new T4 modules. |
+| 26 | LAB-1-T3-SCOREBOARD | P1 | todo | CONTENT-T3-SCOREBOARD | Author hands-on lab for scoreboard construction with self-checking assertions. |
+| 27 | LAB-2-T4-PSS | P2 | todo | CONTENT-T4-PSS | Author PSS lab: write a portable test intent spec and compile to SV and C. |
+| 28 | INFRA-4-VITEST-SUITE | P1 | todo | VIZ-1-SV-SCHEDULER | Write Vitest unit tests for all new visualizer components (VIZ-1 through VIZ-10). |
+| 29 | INFRA-5-PLAYWRIGHT-E2E | P2 | todo | INFRA-4-VITEST-SUITE | Write Playwright E2E smoke tests for all new T3/T4 curriculum pages. |
+| 30 | INFRA-6-3D-VIZ-PORT | P2 | todo | INFRA-3-APPROUTER-MIGRATION | Port 3dvisualization.html prototype to a proper react-three-fiber component. |
 
-| Order | ID | Priority | Status | Depends On | Summary |
-| --- | --- | --- | --- | --- | --- |
-| 1 | `W8-LABS-PLATFORM` | P0 | `complete` | none | Replace the placeholder lab runner with a real curriculum lab catalog and routing system. |
-| 2 | `W8-NAV-CLEANUP` | P0 | `complete` | none | Repair stale routes, broken next-links, and obsolete path references across curriculum and lab docs. |
-| 3 | `W8-T1-NAMING` | P0 | `complete` | `W8-NAV-CLEANUP` | Resolve foundational numbering/title/flashcard mismatches and legacy Tier 1 naming drift. |
-| 4 | `W8-IUVM2B-CORRECTNESS` | P0 | `complete` | `W8-LABS-PLATFORM` | Correct the TLM lesson technically and add a proper monitor/scoreboard decoupling workflow. |
-| 5 | `W6-IUVM2C-MOD` | P0 | `complete` | `W8-LABS-PLATFORM` | Modernize configuration/resources with accurate precedence, interactive visualization, and debug lab. |
-| 6 | `W6-ISV5-MOD` | P0 | `complete` | `W8-LABS-PLATFORM` | Make `I-SV-5` the canonical IPC module with dedicated interactive and deadlock lab. |
-| 7 | `W8-ISV2B-DEEPEN` | P1 | `complete` | none | Deepen advanced constrained-randomization beyond current basics. |
-| 8 | `W8-ISV3B-DEEPEN` | P1 | `complete` | none | Deepen advanced coverage into APIs, closure loops, and real closure practice. |
-| 9 | `W5-AUVM4-SPLIT` | P1 | `complete` | `W8-LABS-PLATFORM` | Finish the advanced RAL split with the missing hierarchy visual, mirror-bug lab, and deeper RAL treatment. |
-| 10 | `W5-AUVM3-DEPRECATE` | P1 | `complete` | `W5-AUVM4-SPLIT` | Finish callback extraction/review and fully retire advanced redundancy from `A-UVM-3`. |
-| 11 | `W6-EDBG1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Turn the debug module into a real telemetry/debug workflow with lab and visualizer. |
-| 12 | `W6-EINT1-MOD` | P1 | `complete` | `W7-ISV-API`, `W8-LABS-PLATFORM` | Keep formal-integration focused on formal and remove misplaced API/methodology content. |
-| 13 | `W6-ECUST1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Modernize methodology customization with custom-phase teaching and a schedule-injection lab. |
-| 14 | `W6-ESOC1-MOD` | P1 | `complete` | `W8-LABS-PLATFORM` | Add SoC bring-up practice, VIP topology visualization, and SoC-specific reuse/debug workflows. |
-| 15 | `W7-ISV-CHECKERS` | P1 | `complete` | none | Create a dedicated checkers lesson and integrate it with the SVA path. |
-| 16 | `W7-ISV-DIRECTIVES` | P1 | `complete` | none | Create the directives/generate track with elaboration-vs-runtime teaching. |
-| 17 | `W7-ISV-API` | P1 | `complete` | none | Create a dedicated DPI/VPI/API track and move DPI ownership out of formal integration. |
-| 18 | `W7-IUVM-POLICY` | P1 | `complete` | none | Add the missing UVM policy-classes lesson. |
-| 19 | `W7-IUVM-CONTAINER` | P1 | `complete` | none | Add the missing UVM container-classes lesson. |
-| 20 | `W7-IUVM-RECORDING` | P1 | `complete` | `W6-EDBG1-MOD` | Add the missing UVM recording-classes lesson tied to debug telemetry architecture. |
-| 21 | `W8-EXPERT-CLEANUP` | P2 | `complete` | `W6-EDBG1-MOD`, `W6-EINT1-MOD`, `W6-ESOC1-MOD`, `W7-ISV-API` | Re-home thin expert pages and normalize ownership after W6/W7 content work lands. |
-| 22 | `W8-ASSET-MAPPING` | P2 | `complete` | `W5-AUVM4-SPLIT`, `W6-ECUST1-MOD`, `W6-ESOC1-MOD` | Map or retire unused verification visuals/diagrams. |
-| 23 | `W8-CONCEPT-LINKS` | P2 | `complete` | all content tasks above | Run a final canonical concept-linking pass across the curriculum. |
-| 24 | `W9-ISV-UPF` | P1 | `complete` | none | Create a dedicated UPF/power-intent fundamentals lesson with supply network and power-state teaching. |
-| 25 | `W9-EPWR-STRATEGY` | P1 | `complete` | `W9-ISV-UPF`, `W6-ESOC1-MOD` | Build the expert power-aware UVM verification strategy module with corruption semantics and shutdown/wake-up verification. |
-| 26 | `W9-EPWR-LAB` | P1 | `complete` | `W9-EPWR-STRATEGY`, `W8-LABS-PLATFORM` | Create a power-state verification lab and `PowerDomainVisualizer` interactive. |
+---
 
 ## Detailed Task Briefs
 
-### `W8-LABS-PLATFORM`
-- Priority: P0
-- Status: `complete`
-- Depends On: none
-- Related IDs: `AUD-001`
-- Primary surfaces: `src/app/practice/lab/[labId]/page.tsx`, `src/app/practice/lab/[labId]/LabClientPage.tsx`, `src/app/api/labs/run/route.ts`, `src/components/practice/PracticeHub.tsx`, `labs/`, `content/curriculum/labs/`
-- Problem statement: The repo contains 12 lab folders, but the learner-facing platform still serves a hard-coded demo lab and the curriculum cannot deep-link to real labs.
-- Scope:
-  1. Define one canonical lab metadata model: lab ID, title, owning module, route slug, prerequisites, asset location, readiness status, and grader/runtime type.
-  2. Decide how root `labs/` and `content/curriculum/labs/` coexist. Either unify them under one index or deliberately classify them (for example: production labs vs embedded content labs) without leaving orphaned folders.
-  3. Replace the placeholder demo lab route with data-driven loading by `labId`.
-  4. Extend the practice hub so labs are first-class items, not absent from discovery.
-  5. Provide a mapping convention so curriculum MDX pages can link to labs consistently.
-- Deliverable checklist:
-  - [x] Canonical lab ID scheme is documented in code/docs.
-  - [x] Existing lab folders are indexed and discoverable.
-  - [x] `practice/lab/[labId]` renders real lab metadata instead of `My First Lab`.
-  - [x] The API can validate or dispatch real lab steps for at least the first migrated labs.
-  - [x] `PracticeHub` exposes labs explicitly.
-  - [x] Curriculum pages can deep-link to labs via stable routes.
-- Validation:
-  - Regenerate curriculum data.
-  - Add/extend route tests for at least one real lab.
-  - Verify no curriculum lab link lands on the placeholder demo.
+---
 
-### `W8-NAV-CLEANUP`
-- Priority: P0
-- Status: `todo`
-- Depends On: none
-- Related IDs: `AUD-002`
-- Primary surfaces: curriculum MDX files, lab READMEs, any route redirects or curriculum-data generators that still mention removed paths
-- Problem statement: The audit found stale links to removed or renamed modules (`I-UVM-1_UVM_Intro`, `I-SV-4A_Assertions_SVA_Fundamentals`, `I-SV-4B_Advanced_SVA`, `F2C_Operators_and_Expressions`, `F2_SystemVerilog_Basics`). These break learner flow.
-- Scope:
-  1. Scan and repair stale internal links in curriculum MDX and lab READMEs.
-  2. Normalize next-topic links to canonical current routes.
-  3. Update any route-level redirect logic if the repo still needs compatibility redirects.
-  4. Verify no modernized page points back to removed split predecessors.
-- Deliverable checklist:
-  - [x] Known broken links from the 2026 audit are fixed.
-  - [x] Lab READMEs stop pointing to deleted legacy lesson names.
-  - [x] Canonical next-topic flow matches the current curriculum structure.
-  - [x] Redirect coverage is intentional rather than accidental.
-- Validation:
-  - Run a repository-wide link/path grep for known stale route strings.
-  - Run targeted Playwright or link-audit coverage for updated pages.
+### `INFRA-1-REPO-CLEANUP`
+- **Priority:** P0
+- **Status:** `todo`
+- **Depends On:** `none`
+- **Primary surfaces:**
+  - `3dvisualization.html`
+  - `check_pages.js`
+  - `comprehensive_lrm_audit_report.md`
+  - `curriculum_audit_findings.md`
+  - `curriculum_modernization_tasks.md`
+  - `prompt_to_resume_modernization.txt`
+  - `agent_7_mop_up_and_infrastructure_prompt.md`
+  - `system_verilog_lrm.pdf`
+  - `uvm_lrm.pdf`
+  - `.gitignore`
+  - `.gitattributes` (create)
+- **Problem statement:** The repository root is polluted with stray developer artifacts (audit reports, agent prompts, prototype HTML) and contains two large PDF files (13+ MB combined) committed directly to git, bloating clone size and poisoning AI coding agent context windows with irrelevant noise.
+- **Scope:**
+  1. Move `system_verilog_lrm.pdf` and `uvm_lrm.pdf` to `git-lfs` by adding a `.gitattributes` rule (`*.pdf filter=lfs diff=lfs merge=lfs -text`) and running `git lfs track "*.pdf"`.
+  2. Move `3dvisualization.html` to `docs/prototypes/3dvisualization.html` to preserve its content for the `INFRA-6-3D-VIZ-PORT` task.
+  3. Move `check_pages.js` to `scripts/check_pages.js`.
+  4. Create a `docs/archive/` directory and move all `*_audit_report.md`, `*_findings.md`, `*_tasks.md`, `prompt_to_resume_*.txt`, and `agent_*_prompt.md` files into it.
+  5. Add `docs/archive/` and `*.pdf` (non-lfs) to `.gitignore`.
+  6. Update `README.md` to remove any references to the moved files.
+- **Deliverable checklist:**
+  - [ ] Repo root contains only standard project files (README, LICENSE, config files, package.json, source dirs)
+  - [ ] `.gitattributes` created with LFS tracking for `*.pdf`
+  - [ ] `git lfs ls-files` shows both PDFs tracked
+  - [ ] All stray `.md` artifact files are under `docs/archive/`
+  - [ ] `check_pages.js` is under `scripts/`
+  - [ ] `README.md` updated
+- **Validation:**
+  - `git lfs ls-files` — should list both PDFs
+  - `ls -la` at repo root — should show clean directory
+  - `npm run build` — should still pass after moves
 
-### `W8-T1-NAMING`
-- Priority: P0
-- Status: `todo`
-- Depends On: `W8-NAV-CLEANUP`
-- Related IDs: `CURR-REFACTOR-F3`, `AUD-003`
-- Primary surfaces: `content/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/*`, `content/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/*`, associated flashcard identifiers, lab README references
-- Problem statement: Foundational modules still expose `F3A`/`F3D` titles and flashcard IDs from an older taxonomy, which makes Tier 1 look partially migrated.
-- Scope:
-  1. Align folder names, titles, descriptions, flashcard IDs, and next-topic links for `F2C` and `F2D`.
-  2. Decide whether the learner-facing taxonomy should explicitly preserve an `F3` concept or fully collapse it into the current `F2` structure; then update all references consistently.
-  3. Update Tier 1 lab READMEs so prerequisites and "going further" sections reference current canonical module names.
-- Deliverable checklist:
-  - [x] `F2C` no longer presents itself as `F3A`.
-  - [x] `F2D` no longer presents itself as `F3D` or mixed `F3E` flashcard lineage.
-  - [x] Tier 1 READMEs reference current module names only.
-  - [x] The foundational sequence reads as intentional, not half-migrated.
-- Validation:
-  - Search for `F3A`, `F3D`, `F3E`, `F2_SystemVerilog_Basics`, and other legacy Tier 1 labels after the pass.
+---
 
-### `W8-IUVM2B-CORRECTNESS`
-- Priority: P0
-- Status: `todo`
-- Depends On: `W8-LABS-PLATFORM`
-- Related IDs: `AUD-006`
-- Primary surfaces: `content/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index.mdx`, associated exercises/lab assets, TLM diagrams/interactives
-- Problem statement: The current TLM lesson contains several technically misleading statements around analysis export/imp roles and FIFO placement.
-- Scope:
-  1. Correct the explanation of `uvm_analysis_port`, `uvm_analysis_export`, `uvm_analysis_imp`, and subscriber patterns.
-  2. Separate sequence-driver handshake material from analysis-fabric decoupling material.
-  3. Add a concrete monitor -> analysis FIFO -> scoreboard design example and associated debug/failure-mode walkthrough.
-  4. Add a real lab or exercise focused on diagnosing bad TLM wiring or missing scoreboard decoupling.
-- Deliverable checklist:
-  - [x] Terminal analysis subscriber patterns are explained correctly.
-  - [x] `uvm_tlm_analysis_fifo` is taught in the correct architectural place.
-  - [x] The page includes at least one failure-mode/debug walkthrough.
-  - [x] Learners can practice a connection/debug scenario through a lab or exercise.
-- Validation:
-  - Review terminology against IEEE 1800.2-2020 Clause 12.
-  - Add/extend tests for any new exercise/lab route.
+### `INFRA-2-LABS-DEDUP`
+- **Priority:** P0
+- **Status:** `todo`
+- **Depends On:** `INFRA-1-REPO-CLEANUP`
+- **Primary surfaces:**
+  - `content/labs/` (entire directory)
+  - `content/curriculum/labs/` (entire directory)
+  - `labs/` (root-level directory)
+  - `scripts/generate-curriculum.ts` (or equivalent)
+  - `src/lib/curriculum.ts` (or equivalent data loader)
+- **Problem statement:** Three potential `labs/` directories exist at different path levels (`labs/`, `content/labs/`, `content/curriculum/labs/`). This creates ambiguity in the curriculum data generator about which labs are canonical, risks broken links in the rendered app, and breaks the pedagogical loop for any module that references a lab by relative path.
+- **Scope:**
+  1. Audit all three `labs/` directories and create a mapping of all `.mdx` files found.
+  2. Establish `content/curriculum/labs/` as the single canonical location.
+  3. Merge any unique lab content from `content/labs/` and root `labs/` into `content/curriculum/labs/`, deduplicating exact copies.
+  4. Delete the now-empty `content/labs/` and root `labs/` directories.
+  5. Update `scripts/generate-curriculum.ts` (or the equivalent generator script) to use only `content/curriculum/labs/` as its labs source path.
+  6. Update `src/lib/curriculum.ts` (or equivalent) data loader to use the canonical path.
+  7. Run `npm run generate:curriculum` and verify all lab links resolve correctly.
+- **Deliverable checklist:**
+  - [ ] Only one `labs/` directory exists at `content/curriculum/labs/`
+  - [ ] No broken lab links in `npm run build` output
+  - [ ] `npm run generate:curriculum` completes without path-not-found errors
+  - [ ] All previously-linked labs still resolve in the app
+- **Validation:**
+  - `npm run generate:curriculum`
+  - `npm run build`
+  - `npx playwright test --grep "lab"` (if lab E2E tests exist)
 
-### `W6-IUVM2C-MOD`
-- Priority: P0
-- Status: `complete`
-- Depends On: `W8-LABS-PLATFORM`
-- Related IDs: `CURR-W6-IUVM2C`, `AUD-005`
-- Primary surfaces: `content/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index.mdx`, new `ConfigDbExplorer.tsx`, new config debug lab assets
-- Problem statement: The module exists, but it needs standards-accurate precedence teaching, better visual explanation, and a real debug lab.
-- Scope:
-  1. Ground the lesson explicitly in IEEE 1800.2-2020 Clause 23.
-  2. Teach `set()`/`get()` resolution with correct hierarchy and runtime semantics, including wildcard risk and `resource_db` nuance.
-  3. Add `ConfigDbExplorer.tsx` to visualize path matching and precedence.
-  4. Add a null virtual interface debugging lab.
-  5. Add failure-mode triage for typo bugs, wildcard collisions, and late runtime overrides.
-- Deliverable checklist:
-  - [x] Clause 23 anchoring is explicit and accurate.
-  - [x] The precedence explanation includes runtime/default-precedence nuance.
-  - [x] `ConfigDbExplorer.tsx` exists and is embedded.
-  - [x] A real null-VIF debug lab is linked from the lesson.
-  - [x] The lesson includes explicit failure/debug guidance, not only syntax.
-- Validation:
-  - Unit-test the visualizer.
-  - Add a route smoke/E2E check for the lesson or lab.
+---
 
-### `W6-ISV5-MOD`
-- Priority: P0
-- Status: `complete`
-- Depends On: `W8-LABS-PLATFORM`
-- Related IDs: `CURR-W6-ISV5`, `AUD-004`
-- Primary surfaces: `content/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/*`, `src/components/visuals/MailboxSemaphoreGame.tsx`, new IPC lab assets
-- Problem statement: The IPC material exists, but the track is weaker than the foundational introduction. The key interactive sits in the wrong tier and there is no canonical deadlock lab.
-- Scope:
-  1. Make `I-SV-5` the canonical intermediate IPC module.
-  2. Move or intentionally duplicate `MailboxSemaphoreGame` into `I-SV-5` and keep Tier 1 as the lightweight introduction.
-  3. Add a deadlock/backpressure lab (for example dining philosophers, lost semaphore key, or mailbox overflow/backlog).
-  4. Expand the track with explicit failure modes: lost event pulses, `->` vs `->>`, deadlock, semaphore leaks, mailbox growth.
-  5. Add stronger UVM-bridge guidance where raw SV IPC transitions into UVM synchronization/dataflow patterns.
-- Deliverable checklist:
-  - [x] `I-SV-5` has a dedicated embedded interactive.
-  - [x] The track contains a real lab.
-  - [x] Clause 15 anchoring is clear across the track.
-  - [x] Failure-mode/debug triage is explicit.
-  - [x] Tier 1 IPC now clearly points advanced learners into `I-SV-5`.
-- Validation:
-  - Add tests for the lab route and/or interactive if new logic is introduced.
+### `INFRA-3-APPROUTER-MIGRATION`
+- **Priority:** P0
+- **Status:** `todo`
+- **Depends On:** `none`
+- **Primary surfaces:**
+  - `src/pages/` (entire directory — audit and migrate)
+  - `src/app/` (target)
+  - `next.config.mjs`
+  - Any API routes under `src/pages/api/`
+- **Problem statement:** The coexistence of `src/pages/` and `src/app/` indicates an incomplete migration from the Next.js Pages Router to the App Router. This creates routing conflicts, makes RSC (React Server Components) benefits unavailable for migrated pages, and will cause subtle hydration bugs. The App Router is the current standard for Next.js 14/15.
+- **Scope:**
+  1. Audit every file in `src/pages/` and categorize: page component, API route, or `_app`/`_document` special file.
+  2. Migrate each page component to a corresponding `src/app/[route]/page.tsx` file, using RSC where the component has no client-side interactivity, and adding `"use client"` directive where required.
+  3. Migrate each API route from `src/pages/api/[name].ts` to `src/app/api/[name]/route.ts` using the Next.js Route Handler format (`GET`, `POST` exports).
+  4. Remove `_app.tsx` and `_document.tsx`, incorporating their logic into `src/app/layout.tsx`.
+  5. Update `next.config.mjs` to remove any Pages Router-specific configuration.
+  6. Delete `src/pages/` once all routes are confirmed working.
+- **Deliverable checklist:**
+  - [ ] `src/pages/` directory no longer exists
+  - [ ] All routes previously under `src/pages/` are accessible under `src/app/`
+  - [ ] No Next.js build warnings about mixed router usage
+  - [ ] `npm run build` exits with code 0
+  - [ ] All Playwright E2E tests pass after migration
+- **Validation:**
+  - `npm run build`
+  - `npx playwright test`
 
-### `W8-ISV2B-DEEPEN`
-- Priority: P1
-- Status: `complete`
-- Depends On: none
-- Related IDs: `AUD-010`
-- Primary surfaces: `content/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/*`
-- Problem statement: Advanced constrained-randomization is present, but it still misses high-value workplace topics and deeper solver-debug methodology.
-- Scope:
-  1. Add `randcase`, `randsequence`, and `std::randomize()` use cases.
-  2. Add reproducibility/seed stability guidance and practical debug workflows for flaky random bugs.
-  3. Expand solver-debug content into a real triage flow, not just a syntax note.
-  4. Add or link a lab that forces the learner to debug a randomization failure or biased solution space.
-- Deliverable checklist:
-  - [x] `randcase`, `randsequence`, and `std::randomize()` are taught.
-  - [x] Seed stability and replay/debug guidance is explicit.
-  - [x] There is at least one failure-driven exercise or lab.
-- Validation:
-  - Verify cross-links to coverage and solver-debug exercises.
+---
 
-### `W8-ISV3B-DEEPEN`
-- Priority: P1
-- Status: `complete`
-- Depends On: none
-- Related IDs: `AUD-009`
-- Primary surfaces: `content/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/*`
-- Problem statement: The advanced coverage track is far too small for its intended role and cannot support later expert coverage-closure content.
-- Scope:
-  1. Expand beyond V-Plan linking into coverage APIs, querying, dashboard/report workflows, and closure loops.
-  2. Add a real closure practice loop: identify uncovered bins, adjust stimulus, and re-run.
-  3. Make the track the prerequisite foundation for expert coverage-closure discussion.
-- Deliverable checklist:
-  - [x] Advanced coverage is more than a single thin deep-dive.
-  - [x] Coverage APIs/report querying are taught.
-  - [x] The track includes a genuine closure workflow exercise or lab.
-  - [x] Expert pages can link back here as the canonical prerequisite.
-- Validation:
-  - Verify cross-links into SoC/expert coverage pages.
+### `CONTENT-1-F3-SCHEDULING`
+- **Priority:** P0
+- **Status:** `todo`
+- **Depends On:** `none`
+- **Primary surfaces:**
+  - `content/curriculum/T1_Foundational/F3A_Simulation_Semantics/index.mdx` (create)
+  - `content/curriculum/T1_Foundational/F3B_Scheduling_Regions/index.mdx` (create)
+  - `content/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index.mdx` (create)
+  - `scripts/generate-curriculum.ts`
+- **Problem statement:** The T1_Foundational tier skips from `F2D_Reusable_Code_and_Parallelism` directly to `F4A_Modules_and_Packages`, leaving a complete gap in the `F3_*` numbering group. The missing content — SV simulation semantics, the 4-region scheduler (Active, NBA, Observed, Reactive), and delta cycles — is a critical prerequisite for understanding clocking blocks (`F4C`), and an absolute foundation for all testbench timing discussions in T2 and beyond.
+- **Scope:**
+  1. Author `F3A_Simulation_Semantics/index.mdx`: Cover the SV event-driven simulation model, time steps, and the distinction between simulation time and delta time. Include a prose explanation and at least 3 annotated SV code examples.
+  2. Author `F3B_Scheduling_Regions/index.mdx`: Detail all four standard SV scheduling regions (Active, Inactive, NBA, Observed, Reactive, Re-Inactive, Pre-Active, Pre-NBA). Include a table of which constructs execute in which region. Embed the `<SVSchedulerRegionVisualizer />` MDX component (created in `VIZ-1`). Add a Knowledge Check quiz with 3 questions.
+  3. Author `F3C_Delta_Cycles_and_Race_Conditions/index.mdx`: Explain delta cycles with a concrete race-condition example, then show how blocking vs. non-blocking assignments interact with the scheduler. Include a "common bug" callout box. Add 3 flashcard entries.
+  4. Update `scripts/generate-curriculum.ts` to include the three new modules in the T1 curriculum manifest, ordered between `F2D` and `F4A`.
+  5. Run `npm run generate:curriculum` and verify the three new modules appear in the nav.
+- **Deliverable checklist:**
+  - [ ] `F3A`, `F3B`, `F3C` directories exist under `T1_Foundational/`
+  - [ ] Each module has a valid `index.mdx` with correct frontmatter (title, tier, order, prerequisites)
+  - [ ] `F3B` MDX embeds `<SVSchedulerRegionVisualizer />` without render error
+  - [ ] `F3C` includes at least one race-condition code example
+  - [ ] Curriculum generator includes all 3 new modules
+  - [ ] Nav order is: `F2D` → `F3A` → `F3B` → `F3C` → `F4A`
+- **Validation:**
+  - `npm run generate:curriculum`
+  - `npm run build`
+  - Manual navigation to `/curriculum/t1-foundational/f3b-scheduling-regions`
 
-### `W5-AUVM4-SPLIT`
-- Priority: P1
-- Status: `complete`
-- Depends On: `W8-LABS-PLATFORM`
-- Related IDs: `CURR-SPLIT-A-UVM-4`, `CURR-A-UVM-4-SPLIT`, `CURR-A-UVM-4A-LORE`, `CURR-A-UVM-4B-LAB`, `CURR-A-UVM-4-REVIEW`, `AUD-011`
-- Primary surfaces: `content/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/*`, `content/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/*`, new `RALHierarchy.tsx`, new RAL lab assets
-- Problem statement: The repo already contains the split directories, but the task is not functionally done. The missing work is the deeper RAL teaching, the hierarchy visual, the mirror-bug lab, and the final review/test pass.
-- Current progress snapshot:
-  - [x] `A-UVM-4A_RAL_Fundamentals` exists
-  - [x] `A-UVM-4B_Advanced_RAL_Techniques` exists
-  - [x] `RALPredictorVisualizer.tsx` is present and embedded in 4B
-  - [x] `RALHierarchy.tsx` exists and is embedded in 4A
-  - [x] Mirror Bug Lab exists with buggy/solution testbenches and README
-  - [x] 4A deepened with adapter, map, generation workflow, frontdoor flow
-  - [x] 4B deepened with memories, volatile/W1C/W1S, set_auto_predict, multi-map
-- Scope:
-  1. Build `RALHierarchy.tsx` and embed it in 4A.
-  2. Strengthen 4A with adapter, map, frontdoor sequence, generation-flow, and RAL object hierarchy teaching.
-  3. Strengthen 4B with predictor flow, explicit vs implicit prediction, frontdoor/backdoor tradeoffs, built-in sequences, memories, volatile/W1C/W1S semantics, multi-map concerns, and `set_auto_predict` strategy.
-  4. Create `labs/ral_advanced/lab1_mirror_bug` and link it from 4B.
-  5. Finish tests, navigation, and route coverage for the split track.
-- Deliverable checklist:
-  - [x] `RALHierarchy.tsx` exists and is embedded.
-  - [x] 4A is LRM-anchored and covers core RAL building blocks in depth.
-  - [x] 4B includes realistic prediction/mirror debugging content.
-  - [x] Mirror Bug Lab exists with buggy code, solution, and learner instructions.
-  - [x] Internal links, tests, and curriculum data are updated.
-- Validation:
-  - Unit-test the new hierarchy visual.
-  - Add a lesson route smoke/E2E check for the advanced RAL path.
+---
 
-### `W5-AUVM3-DEPRECATE`
-- Priority: P1
-- Status: `complete`
-- Depends On: `W5-AUVM4-SPLIT`
-- Related IDs: `CURR-REFACTOR-A-UVM-3`, `CURR-A-UVM-3-MERGE`, `CURR-A-UVM-3-REDIRECT`, `CURR-A-UVM-5-CREATE`, `CURR-A-UVM-3-REVIEW`
-- Primary surfaces: `content/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index.mdx`, redirect config, any surviving references to `A-UVM-3`
-- Problem statement: The structural deprecation of `A-UVM-3` is partially in place, but the callbacks lesson still needs to be completed and corrected.
-- Current progress snapshot:
-  - [x] `A-UVM-3` content was redistributed/deleted
-  - [x] redirect work appears to exist
-  - [x] `A-UVM-5_UVM_Callbacks` exists
-  - [x] callbacks lesson rewritten to production depth with IEEE grounding
-  - [x] callback lab registered in lab-registry.ts
-  - [x] final redirect/link review completed
-- Scope:
-  1. Rewrite `A-UVM-5` into a complete callbacks lesson with accurate API terminology.
-  2. Add a real callback lab where a driver behavior is altered without subclass replacement.
-  3. Verify redirects, internal links, and any leftover references to `A-UVM-3`.
-- Deliverable checklist:
-  - [x] Callback terminology is technically correct.
-  - [x] The lesson explains registration, add/delete behavior, and when callbacks beat factory overrides.
-  - [x] A real callback lab exists.
-  - [x] Old path redirects and internal links are verified.
-- Validation:
-  - Add redirect verification and route smoke coverage.
+### `VIZ-1-SV-SCHEDULER`
+- **Priority:** P0
+- **Status:** `todo`
+- **Depends On:** `CONTENT-1-F3-SCHEDULING`
+- **Primary surfaces:**
+  - `src/components/visualizers/SVSchedulerRegionVisualizer.tsx` (create)
+  - `src/components/visualizers/SVSchedulerRegionVisualizer.test.tsx` (create)
+  - `src/app/curriculum/[...slug]/page.tsx` (register component in MDX map)
+- **Problem statement:** Delta cycles and scheduling regions are the single most visually demanding concept in T1. A static text description is pedagogically insufficient — learners need to see transactions moving through the Active → NBA → Observed → Reactive regions in real time, with the ability to step forward/backward and see the signal value at each stage.
+- **Scope:**
+  1. Create `SVSchedulerRegionVisualizer.tsx` as a `"use client"` React component.
+  2. The component renders a horizontal timeline of SV regions (Pre-Active, Active, Inactive, NBA, Observed, Reactive, Re-Inactive) as labeled swim lanes.
+  3. Include a hard-coded scenario of a clocked flip-flop with a non-blocking assignment. Buttons: **Play**, **Step Forward**, **Step Backward**, **Reset**.
+  4. At each step, animate an arrow/token moving through the relevant region, with a side panel showing current signal values (`q`, `d`, `clk`).
+  5. Add a second scenario toggle: **"Race Condition Example"** showing two competing assignments in the Active region.
+  6. Use Framer Motion for animations.
+  7. Register `SVSchedulerRegionVisualizer` in the MDX component map in `src/app/curriculum/[...slug]/page.tsx`.
+  8. Write `SVSchedulerRegionVisualizer.test.tsx` with Vitest + React Testing Library:
+     - Test: renders without crashing
+     - Test: "Step Forward" button increments internal step state
+     - Test: "Reset" button returns to step 0
+     - Test: scenario toggle changes displayed scenario label
+- **Deliverable checklist:**
+  - [ ] Component renders in isolation (`npm run dev`)
+  - [ ] Play/Step/Reset controls function correctly
+  - [ ] Both scenarios (normal flip-flop and race condition) are implemented
+  - [ ] Component is registered in MDX component map
+  - [ ] Vitest test file passes with `npx vitest run`
+  - [ ] No TypeScript errors (`npx tsc --noEmit`)
+- **Validation:**
+  - `npx vitest run src/components/visualizers/SVSchedulerRegionVisualizer.test.tsx`
+  - `npm run build`
 
-### `W6-EDBG1-MOD`
-- Priority: P1
-- Status: `complete`
-- Depends On: `W8-LABS-PLATFORM`
-- Related IDs: `CURR-W6-EDBG1`
-- Primary surfaces: `content/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/*`, new `TelemetryEventBusVisualizer.tsx`, debug lab assets
-- Problem statement: The expert debug module has a strong index page directionally, but key supporting pages are still note-length and the module lacks a proper telemetry/event-bus visualizer and runnable lab.
-- Scope:
-  1. Build `TelemetryEventBusVisualizer.tsx` showing structured logs, event bus subscribers, and waveform trigger mapping.
-  2. Add a lab where debug events trigger targeted waveform capture.
-  3. Expand debug content into a real triage playbook: logs, trace metadata, objection/hang diagnosis, event-bus instrumentation.
-  4. Keep the module focused on debug; do not let reusable VIP ownership remain here after expert cleanup.
-- Deliverable checklist:
-  - [ ] Telemetry visualizer exists and is embedded.
-  - [ ] Waveform-trigger lab exists.
-  - [ ] Debug content includes failure triage rather than generic advice only.
-  - [ ] Module ownership stays centered on debug instrumentation and triage.
-- Validation:
-  - Unit-test the visualizer.
-  - Add route smoke/E2E coverage for the lab and/or visualizer.
+---
 
-### `W6-EINT1-MOD`
-- Priority: P1
-- Status: `todo`
-- Depends On: `W7-ISV-API`, `W8-LABS-PLATFORM`
-- Related IDs: `CURR-W6-EINT1`
-- Primary surfaces: `content/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/*`, new `FormalVsSimulationVisualizer.tsx`, formal lab assets
-- Problem statement: The index page has solid high-level intent, but the track is diluted by misplaced DPI/PSS content and lacks a formal-specific visualizer and practice lab.
-- Scope:
-  1. Build `FormalVsSimulationVisualizer.tsx` to compare simulation waveforms and formal counterexamples.
-  2. Add a lab translating a constrained-random scenario into a formal assumption/property harness.
-  3. Keep this module focused on formal/simulation interaction.
-  4. Coordinate with `W7-ISV-API` so DPI moves out to its own track and `E-INT-1` links to it rather than owning it.
-- Deliverable checklist:
-  - [x] Formal vs simulation visualizer exists and is embedded.
-  - [x] Formal assumption/counterexample lab exists.
-  - [x] The module no longer serves as the home for DPI/API content.
-  - [x] Formal prerequisite links and follow-on links are explicit.
-- Validation:
-  - Add route smoke/E2E coverage for the updated expert path.
+### `CONTENT-2-T1T2-BRIDGE`
+- **Priority:** P1
+- **Status:** `todo`
+- **Depends On:** `CONTENT-1-F3-SCHEDULING`
+- **Primary surfaces:**
+  - `content/curriculum/T2_Intermediate/I-BRIDGE-0_Why_UVM/index.mdx` (create)
+  - `scripts/generate-curriculum.ts`
+- **Problem statement:** Learners completing T1 and the SystemVerilog half of T2 (through `I-SV-8`) are cold-dropped into UVM components (`I-UVM-1A`) with no narrative transition. There is no module explaining the testbench scalability problems that UVM was designed to solve (duplication, non-reusability, lack of standardized phasing). This creates motivation failure and confusion about why UVM's complexity is justified.
+- **Scope:**
+  1. Author `I-BRIDGE-0_Why_UVM/index.mdx` as the final pre-UVM module.
+  2. Content sections: (a) The Testbench Scaling Problem — illustrate a naive Verilog testbench with hard-coded stimulus, (b) The Reuse Problem — show code duplication across projects, (c) The Standardization Solution — introduce the OVM→UVM historical arc, (d) UVM's Core Value Propositions — factory, phasing, TLM, and sequences as the four pillars, (e) "What You'll Build" — preview of the UVM environment learners will construct across T2-T3.
+  3. Include a comparison table: Naive TB vs. UVM TB across dimensions of reusability, configurability, scalability, and debug.
+  4. Insert a `<UvmHeroDiagram />` (already exists at `src/components/UvmHeroDiagram.tsx`) in the appropriate section.
+  5. Update `scripts/generate-curriculum.ts` to insert this module between `I-SV-8` and `I-UVM-1A`.
+- **Deliverable checklist:**
+  - [ ] `I-BRIDGE-0_Why_UVM/index.mdx` exists with valid frontmatter
+  - [ ] Comparison table is present
+  - [ ] `<UvmHeroDiagram />` is embedded
+  - [ ] Module appears in nav between `I-SV-8` and `I-UVM-1A`
+  - [ ] `npm run generate:curriculum` succeeds
+- **Validation:**
+  - `npm run generate:curriculum`
+  - `npm run build`
 
-### `W6-ECUST1-MOD`
-- Priority: P1
-- Status: `complete`
-- Depends On: `W8-LABS-PLATFORM`
-- Related IDs: `CURR-W6-ECUST1`
-- Primary surfaces: `content/curriculum/T4_Expert/E-CUST-1_UVM_Methodology_Customization/index.mdx`, new `MethodologyPhaseVisualizer.tsx`, methodology lab assets
-- Problem statement: The page is one of the stronger expert pages conceptually, but it still lacks the dedicated visual and lab needed to make it implementation-ready.
-- Scope:
-  1. Build `MethodologyPhaseVisualizer.tsx` around custom phase insertion and scheduling.
-  2. Add a lab focused on injecting a custom UVM phase and verifying schedule behavior.
-  3. Expand governance content: project-wide base classes, method hooks, phase ownership, migration strategy.
-- Deliverable checklist:
-  - [x] Methodology phase visualizer exists.
-  - [x] Custom-phase lab exists.
-  - [x] The module includes real failure scenarios for methodology drift and phase misuse.
-- Validation:
-  - Unit-test the visualizer.
-  - Add route smoke coverage for the lesson/lab.
+---
 
-### `W6-ESOC1-MOD`
-- Priority: P1
-- Status: `todo`
-- Depends On: `W8-LABS-PLATFORM`
-- Related IDs: `CURR-W6-ESOC1`, `AUD-016`
-- Primary surfaces: `content/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/*`, new `VIPReuseVisualizer.tsx`, SoC bring-up lab assets
-- Problem statement: The main SoC page is directionally useful, but the supporting subpages are thin and the module lacks a real SoC bring-up practice path.
-- Scope:
-  1. Build `VIPReuseVisualizer.tsx` around active/passive topology switching and block-to-SoC reuse.
-  2. Add an SoC bring-up lab using passive/active VIP personalities and firmware/UVM coordination.
-  3. Strengthen SoC-specific topics: interconnect observability, firmware/UVM handshake, regression telemetry, and bring-up sequencing.
-  4. Prepare the module to absorb or supersede generic pages like `coverage-closure.mdx` and `regression-triage.mdx` during `W8-EXPERT-CLEANUP`.
-- Deliverable checklist:
-  - [x] SoC VIP reuse visualizer exists.
-  - [x] VIP block-to-SoC mode conversion lab exists.
-  - [x] SoC-specific governance/workflows explicitly defined.
-  - [ ] The module is ready to own SoC-specific supporting material during expert cleanup.
-- Validation:
-  - Unit-test the visualizer.
-  - Add route smoke/E2E coverage for the lab or key updated pages.
+### `VIZ-2-UVM-PHASE-TIMELINE`
+- **Priority:** P0
+- **Status:** `todo`
+- **Depends On:** `none`
+- **Primary surfaces:**
+  - `src/components/visualizers/UvmPhaseTimelineVisualizer.tsx` (create)
+  - `src/components/visualizers/UvmPhaseTimelineVisualizer.test.tsx` (create)
+  - `src/app/curriculum/[...slug]/page.tsx` (register)
+  - `content/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index.mdx` (embed component)
+- **Problem statement:** UVM phasing (`build_phase` → `connect_phase` → `run_phase` → `extract_phase` etc.) is the second-biggest confusion point after TLM for new UVM engineers. The standard is 12 phases with specific ordering guarantees and parallel execution semantics. No visualizer exists for this critical concept.
+- **Scope:**
+  1. Create `UvmPhaseTimelineVisualizer.tsx` as a `"use client"` component.
+  2. Render a vertical swimlane diagram: columns = UVM components (uvm_test, uvm_env, uvm_agent, uvm_driver, uvm_monitor), rows = phases in order.
+  3. On hover/click of any phase cell, expand a side panel showing: (a) the phase name, (b) which base class defines it, (c) typical operations performed in that component at that phase, (d) a minimal SV code snippet.
+  4. Add a **"Run Animation"** button that lights up each phase row in sequence with a 600ms delay, simulating phase progression.
+  5. Highlight `run_phase` distinctly to show it is the only time-consuming phase.
+  6. Add a toggle: **"Show Custom Phases"** to overlay user-defined schedule_phase examples.
+  7. Embed `<UvmPhaseTimelineVisualizer />` in `I-UVM-1C_UVM_Phasing/index.mdx`.
+  8. Register in MDX component map.
+  9. Write Vitest tests: renders correctly, animation state advances, hover panel displays correct phase data.
+- **Deliverable checklist:**
+  - [ ] All 12 standard UVM phases rendered in correct order
+  - [ ] Click-to-expand side panel works for each phase × component cell
+  - [ ] Animation runs and completes without error
+  - [ ] Custom phases toggle works
+  - [ ] Component registered in MDX map
+  - [ ] Vitest tests pass
+- **Validation:**
+  - `npx vitest run src/components/visualizers/UvmPhaseTimelineVisualizer.test.tsx`
+  - `npm run build`
 
-### `W7-ISV-CHECKERS`
-- Priority: P1
-- Status: `complete`
-- Depends On: none
-- Related IDs: `CURR-W7-ISV-CHECKERS`, `AUD-007`
-- Primary surfaces: new `content/curriculum/T2_Intermediate/I-SV-4C_Checkers/*`, supporting visual or exercise assets
-- Problem statement: Clause 17 is cited but not actually taught.
-- Scope:
-  1. Create a dedicated checkers lesson.
-  2. Explain checker composition, bind usage, SVA interplay, and when a checker is the right abstraction.
-  3. Add an interactive or lab showing how checkers attach to DUTs without source edits.
-- Deliverable checklist:
-  - [x] `I-SV-4C_Checkers` exists.
-  - [x] Checkers are taught as a first-class language construct.
-  - [x] Integration with SVA/bind is explicit.
-  - [x] The lesson includes an interactive or lab.
-- Validation:
-  - Add route smoke coverage and tests for any new interactive.
+---
 
-### `W7-ISV-DIRECTIVES`
-- Priority: P1
-- Status: `complete`
-- Depends On: none
-- Related IDs: `CURR-W7-ISV-DIRECTIVES`, `AUD-017`
-- Primary surfaces: new `content/curriculum/T2_Intermediate/I-SV-6_Compiler_Directives_and_Generates/*`, new generate visualizer
-- Problem statement: The curriculum does not currently teach compiler directives or generate/elaboration semantics in a focused way.
-- Scope:
-  1. Create a module covering directives, include/macro hygiene, and generate constructs.
-  2. Build an interactive showing elaboration-time `generate` behavior versus runtime `if` behavior.
-  3. Include practical verification usage: feature flags, bench variants, config headers, and macro pitfalls.
-- Deliverable checklist:
-  - [x] The new module exists and is linked into the Tier 2 path.
-  - [x] The generate-vs-runtime interactive exists.
-  - [x] Macro/directive hygiene pitfalls are taught explicitly.
-- Validation:
-  - Unit-test the interactive and add route smoke coverage.
+### `VIZ-3-TLM-CONNECTION-BUILDER`
+- **Priority:** P0
+- **Status:** `todo`
+- **Depends On:** `none`
+- **Primary surfaces:**
+  - `src/components/visualizers/TlmConnectionBuilderVisualizer.tsx` (create)
+  - `src/components/visualizers/TlmConnectionBuilderVisualizer.test.tsx` (create)
+  - `src/app/curriculum/[...slug]/page.tsx` (register)
+  - `content/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index.mdx` (embed)
+- **Problem statement:** TLM ports, exports, and `uvm_tlm_fifo` connections are abstract and spatial — learners must understand which side initiates calls and which side implements them. Text descriptions of `uvm_analysis_port`, `uvm_blocking_put_port`, and FIFOs consistently cause confusion. A drag-and-connect visual builder directly addresses this.
+- **Scope:**
+  1. Create `TlmConnectionBuilderVisualizer.tsx` as a `"use client"` component using React Flow (or a lightweight canvas alternative).
+  2. Provide a palette of draggable UVM component nodes: Driver, Monitor, Scoreboard, Coverage, Agent, Sequencer.
+  3. Each node has typed ports on its boundary: blue circles = TLM ports (initiator), green circles = TLM exports (responder), orange circles = analysis ports.
+  4. Users drag connections between compatible port types. Incompatible connections (e.g., port-to-port) are rejected with a red flash and tooltip error.
+  5. A **"Check Connections"** button validates the topology and highlights missing connections in yellow.
+  6. A **"Show Solution"** button reveals the canonical agent topology.
+  7. Preset scenarios selectable from a dropdown: Basic Agent, Scoreboard Checker, Coverage Collector.
+  8. Register in MDX map and embed in `I-UVM-2B`.
+  9. Write Vitest tests: node renders, valid connection accepted, invalid connection rejected.
+- **Deliverable checklist:**
+  - [ ] Draggable component nodes render
+  - [ ] Port-type validation rejects incompatible connections
+  - [ ] "Check Connections" validation works
+  - [ ] "Show Solution" overlay works
+  - [ ] All 3 preset scenarios are implemented
+  - [ ] Component registered in MDX map
+  - [ ] Vitest tests pass
+- **Validation:**
+  - `npx vitest run src/components/visualizers/TlmConnectionBuilderVisualizer.test.tsx`
+  - `npm run build`
 
-### `W7-ISV-API`
-- Priority: P1
-- Status: `complete`
-- Depends On: none
-- Related IDs: `CURR-W7-ISV-API`, `AUD-008`
-- Primary surfaces: new or re-homed API lesson(s) for DPI/VPI, plus updates to `E-INT-1`
-- Problem statement: DPI is currently a short page inside the formal module, which is both shallow and taxonomically incorrect.
-- Scope:
-  1. Create a dedicated SV API/foreign-interface track that owns DPI and future VPI/PLI coverage.
-  2. Move DPI ownership out of `E-INT-1` and replace it there with canonical backlinks.
-  3. Expand content to production-grade topics: marshaling, `context`/`pure`, memory ownership, blocking behavior, build/link concerns, and common failure modes.
-  4. Include at least one practical demo or lab path.
-- Deliverable checklist:
-  - [x] A dedicated API lesson path exists.
-  - [x] DPI is no longer misfiled under formal integration.
-  - [x] VPI/PLI/API expansion direction is laid out explicitly.
-  - [x] The content includes practical failure/debug treatment and not just a syntax snippet.
-- Validation:
-  - Add route smoke coverage and tests for any new interactive/demo.
+---
 
-### `W7-IUVM-POLICY`
-- Priority: P1
-- Status: `complete`
-- Depends On: none
-- Related IDs: `CURR-W7-IUVM-POLICY`, `AUD-012`
-- Primary surfaces: new policy-classes lesson, `UvmPolicyVisualizer.tsx`
-- Problem statement: Policy classes are a major UVM gap for senior learners.
-- Scope:
-  1. Teach printer/comparer/packer/recorder/copier classes coherently.
-  2. Build `UvmPolicyVisualizer.tsx` so learners can see the same object under different policy behaviors.
-  3. Add an exercise or lab using one object through multiple policies.
-- Deliverable checklist:
-  - [x] Policy lesson exists.
-  - [x] Visualizer exists.
-  - [x] Learners can compare policy-class roles and customization points.
-- Validation:
-  - Unit-test the visualizer and add route coverage.
+### `VIZ-4-FACTORY-OVERRIDE-EXPLORER`
+- **Priority:** P0
+- **Status:** `todo`
+- **Depends On:** `none`
+- **Primary surfaces:**
+  - `src/components/visualizers/FactoryOverrideExplorerVisualizer.tsx` (create)
+  - `src/components/visualizers/FactoryOverrideExplorerVisualizer.test.tsx` (create)
+  - `src/app/curriculum/[...slug]/page.tsx` (register)
+  - `content/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index.mdx` (embed)
+- **Problem statement:** The UVM factory's type and instance override mechanism is the most frequently misunderstood advanced feature for new verification engineers. Learners must understand the registry, how `create()` dispatches, and how type overrides propagate down the hierarchy — all of which are impossible to convey with static text alone.
+- **Scope:**
+  1. Create `FactoryOverrideExplorerVisualizer.tsx` as a `"use client"` component.
+  2. Display a default UVM component tree (test → env → agent → driver).
+  3. Show a **Factory Registry panel** listing registered types.
+  4. Provide a form to apply a **Type Override**: select base type and override type from dropdowns. Apply changes to the tree in real time.
+  5. Provide a form to apply an **Instance Override**: specify the full hierarchical path string and the override type.
+  6. After overrides are applied, highlight changed nodes in the tree with a different color and badge showing "OVERRIDDEN".
+  7. A **"Simulate create()"** button walks through the factory lookup algorithm step by step in a log panel on the right.
+  8. Register in MDX map and embed in `I-UVM-1B`.
+  9. Vitest tests: initial tree renders correctly, type override updates tree node, instance override at path updates only that node.
+- **Deliverable checklist:**
+  - [ ] Default component tree renders with all 4 levels
+  - [ ] Type override form updates all matching nodes
+  - [ ] Instance override form updates only the targeted path node
+  - [ ] "Simulate create()" step log shows correct resolution order
+  - [ ] Component registered in MDX map
+  - [ ] Vitest tests pass
+- **Validation:**
+  - `npx vitest run src/components/visualizers/FactoryOverrideExplorerVisualizer.test.tsx`
+  - `npm run build`
 
-### `W7-IUVM-CONTAINER`
-- Priority: P1
-- Status: `complete`
-- Depends On: none
-- Related IDs: `CURR-W7-IUVM-CONTAINER`, `AUD-013`
-- Primary surfaces: new container-classes lesson and comparison lab
-- Problem statement: `uvm_pool` and `uvm_queue` are not taught at all.
-- Scope:
-  1. Create a lesson contrasting UVM container classes with native SV queues/associative arrays.
-  2. Add a lab demonstrating where UVM containers help and where plain SV is simpler.
-- Deliverable checklist:
-  - [x] Container lesson exists.
-  - [x] Comparison lab exists.
-  - [x] Native SV versus UVM tradeoffs are explicit.
-- Validation:
-  - Add route smoke coverage for the lesson/lab.
+---
 
-### `W7-IUVM-RECORDING`
-- Priority: P1
-- Status: `complete`
-- Depends On: `W6-EDBG1-MOD`
-- Related IDs: `CURR-W7-IUVM-RECORDING`, `AUD-014`
-- Primary surfaces: new recording-classes lesson, debug telemetry links
-- Problem statement: Recording classes are missing, and they should connect naturally to the debug telemetry/event-bus architecture.
-- Scope:
-  1. Create a dedicated recording-classes lesson.
-  2. Show how recording ties into transaction-viewing databases and structured debug flows.
-  3. Reuse the debug event-bus architecture from `W6-EDBG1-MOD` where appropriate.
-- Deliverable checklist:
-  - [x] Recording lesson exists.
-  - [x] Integration with the debug/telemetry path is explicit.
-  - [x] Vendor-specific viewing/database concepts are taught responsibly without overfitting one tool.
-- Validation:
-  - Add route smoke coverage and tests for any new visual/demo logic.
+### `VIZ-5-CONSTRAINT-HEATMAP`
+- **Priority:** P1
+- **Status:** `todo`
+- **Depends On:** `none`
+- **Primary surfaces:**
+  - `src/components/visualizers/ConstraintSolverHeatmapVisualizer.tsx` (create)
+  - `src/components/visualizers/ConstraintSolverHeatmapVisualizer.test.tsx` (create)
+  - `src/app/curriculum/[...slug]/page.tsx` (register)
+  - `content/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index.mdx` (embed)
+- **Problem statement:** Students learning constrained randomization intuitively believe that `rand` variables with more constraints produce more uniform distributions. In reality, constraint interactions can create highly skewed probability distributions that are invisible without visualization. A live heatmap that updates as the user modifies constraints makes this immediately apparent.
+- **Scope:**
+  1. Create `ConstraintSolverHeatmapVisualizer.tsx` as a `"use client"` component.
+  2. Hard-code a simple SV transaction class with two `rand` variables: `addr [0:15]` and `data [0:255]`.
+  3. Render a 16×256 heatmap grid (or a downsampled 16×16 version for performance) showing simulated solve probability for each `(addr, data)` pair.
+  4. Provide a constraint editor panel with checkboxes to enable/disable pre-written constraints (e.g., `addr inside {[0:3]}`, `data % 2 == 0`, `addr + data < 100`).
+  5. When constraints are toggled, recompute the probability distribution (via a JS-side solver simulation) and update the heatmap colors.
+  6. Add a bar chart below the heatmap showing the marginal distribution of `addr` values.
+  7. Register in MDX map and embed in `I-SV-2A`.
+  8. Vitest tests: renders without crash, constraint toggle changes heatmap data array.
+- **Deliverable checklist:**
+  - [ ] Heatmap renders initial uniform distribution
+  - [ ] Each constraint toggle visibly changes heatmap
+  - [ ] Marginal distribution bar chart updates synchronously
+  - [ ] Component registered in MDX map
+  - [ ] Vitest tests pass
+- **Validation:**
+  - `npx vitest run src/components/visualizers/ConstraintSolverHeatmapVisualizer.test.tsx`
+  - `npm run build`
 
-### `W8-EXPERT-CLEANUP`
-- Priority: P2
-- Status: `complete`
-- Depends On: `W6-EDBG1-MOD`, `W6-EINT1-MOD`, `W6-ESOC1-MOD`, `W7-ISV-API`
-- Related IDs: `AUD-015`
-- Primary surfaces: thin expert pages under `E-DBG-1`, `E-INT-1`, and `E-SOC-1`
-- Problem statement: Several expert pages are too short to stand alone and/or belong under the wrong parent module.
-- Scope:
-  1. Re-home `reusable-vip.mdx` out of debug.
-  2. Reassess `coverage-closure.mdx` and `regression-triage.mdx` so they either become SoC-specific or merge into stronger parent lessons.
-  3. Remove or re-home `pss.mdx` and `dpi.mdx` ownership after the new API track exists.
-  4. Ensure expert-tier page ownership is intentional and non-overlapping.
-- Deliverable checklist:
-  - [x] Thin expert pages are either expanded, merged, or re-homed.
-  - [x] Debug/formal/SoC modules each own the right concepts.
-  - [x] No expert page remains as a note-length orphan without a rationale.
-- Validation:
-  - Re-run link and route coverage for all affected expert paths.
+---
 
-### `W8-ASSET-MAPPING`
-- Priority: P2
-- Status: `complete`
-- Depends On: `W5-AUVM4-SPLIT`, `W6-ECUST1-MOD`, `W6-ESOC1-MOD`
-- Related IDs: `AUD-018`
-- Primary surfaces: verification-themed assets in `src/components/diagrams/`, `src/components/visuals/`, related practice/curriculum routes
-- Problem statement: The repo contains useful-looking verification visuals that appear unused by curriculum or practice routes.
-- Scope:
-  1. Audit each apparently unused verification asset.
-  2. Decide whether it should be embedded into curriculum, exposed via practice, or archived/deleted.
-  3. Avoid keeping unused premium assets with no roadmap owner.
-- Deliverable checklist:
-  - [x] Each currently orphaned verification visual has an owner decision.
-  - [x] Unused assets are either mapped or intentionally retired.
-- Validation:
-  - Re-run the usage audit after the pass.
+### `VIZ-6-SVA-WAVEFORM`
+- **Priority:** P1
+- **Status:** `todo`
+- **Depends On:** `none`
+- **Primary surfaces:**
+  - `src/components/visualizers/SvaSequenceWaveformVisualizer.tsx` (create)
+  - `src/components/visualizers/SvaSequenceWaveformVisualizer.test.tsx` (create)
+  - `src/app/curriculum/[...slug]/page.tsx` (register)
+  - `content/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index.mdx` (embed)
+- **Problem statement:** SystemVerilog Assertions (SVA) sequences and properties operate on clock cycles and are defined using temporal operators (`##`, `|->`, `|=>`, `[*N]`, `[->N]`). These operators are completely opaque without a waveform-style time-axis view. Learners need to see the assertion match/fail condition across a signal trace.
+- **Scope:**
+  1. Create `SvaSequenceWaveformVisualizer.tsx` as a `"use client"` component.
+  2. Display a 16-cycle waveform view with 4 signal rows (clk, req, ack, data_valid) with editable high/low values per cycle.
+  3. A dropdown selects the active SVA property to evaluate (pre-loaded examples: `req ##2 ack`, `req |-> ##[1:3] ack`, `$rose(req) |=> ack [*2]`).
+  4. After the user sets signal values, a **"Evaluate"** button runs a JS-side property checker and marks each clock cycle as: **PASS** (green), **FAIL** (red), **PENDING** (yellow), or **VACUOUS** (grey).
+  5. Hovering a cycle shows a tooltip explaining why it passed/failed.
+  6. Add a custom property text-input for advanced users to type their own simplified SVA syntax.
+  7. Register in MDX map and embed in `I-SV-4A`.
+  8. Vitest tests: renders, evaluation of known-passing trace returns PASS, evaluation of known-failing trace returns FAIL at correct cycle.
+- **Deliverable checklist:**
+  - [ ] 16-cycle waveform editor renders and is editable
+  - [ ] All 3 pre-loaded SVA examples evaluate correctly
+  - [ ] Cycle-level PASS/FAIL/PENDING/VACUOUS status is displayed
+  - [ ] Hover tooltip explains result
+  - [ ] Component registered in MDX map
+  - [ ] Vitest tests pass
+- **Validation:**
+  - `npx vitest run src/components/visualizers/SvaSequenceWaveformVisualizer.test.tsx`
+  - `npm run build`
 
-### `W8-CONCEPT-LINKS`
-- Priority: P2
-- Status: `complete`
-- Depends On: all content tasks above
-- Related IDs: `AUD-019`
-- Primary surfaces: curriculum MDX across tiers
-- Problem statement: The curriculum does not consistently link recurring concepts back to canonical lessons.
-- Scope:
-  1. Establish canonical pages for recurring concepts: `uvm_config_db`, analysis ports, objections, phases, coverage closure, formal replay, virtual sequences, etc.
-  2. Add consistent back-links from higher-tier mentions to those canonical lessons.
-  3. Ensure the final path feels like a graph of reinforcing lessons rather than isolated pages.
-- Deliverable checklist:
-  - [x] Canonical pages are defined for repeated concepts.
-  - [x] Higher-tier pages link back to canonical foundations/intermediate lessons.
-  - [x] The curriculum no longer relies on plain-text concept mentions where a canonical link is expected.
-- Validation:
-  - Run a targeted grep-based audit for major repeated concepts after the pass.
+---
 
-### `W9-ISV-UPF`
-- Priority: P1
-- Status: `complete`
-- Depends On: none
-- Related IDs: none
-- Primary surfaces: new `content/curriculum/T2_Intermediate/I-SV-8_Power_Intent_and_UPF/index.mdx`
-- Problem statement: The curriculum does not teach IEEE 1801 (UPF) or low-power verification fundamentals. Power-aware verification is a critical skill gap for SoC-facing engineers.
-- Scope:
-  1. Create `I-SV-8_Power_Intent_and_UPF` as a dedicated intermediate-tier module.
-  2. Teach the UPF supply network model: power domains, supply sets, supply nets, supply ports.
-  3. Explain power states and power state tables (PST) — on, off, retention, standby.
-  4. Cover isolation cells, level shifters, retention registers, and always-on logic.
-  5. Explain the UPF command set: `create_power_domain`, `create_supply_net`, `set_isolation`, `set_retention`, `add_power_state`, `create_pst`.
-  6. Teach the relationship between UPF and RTL — UPF as a side-file that expresses power intent without modifying design code.
-  7. Add an interactive code block showing a multi-domain UPF file alongside the RTL it annotates.
-  8. Cross-link to SVA (I-SV-4A) for power-aware assertions and to the SoC module (E-SOC-1) for system-level context.
-- Deliverable checklist:
-  - [x] `I-SV-8_Power_Intent_and_UPF/index.mdx` exists with IEEE 1801-grounded content.
-  - [x] Supply network, power domains, and power states are taught clearly.
-  - [x] Isolation, level shifting, and retention semantics are explained.
-  - [x] UPF command set is taught with annotated examples.
-  - [x] Cross-links to SVA, SoC, and the expert power module are set.
-- Validation:
-  - Regenerate curriculum data.
-  - Add route smoke coverage for the new module.
+### `VIZ-7-COVERAGE-CROSS-EXPLORER`
+- **Priority:** P1
+- **Status:** `todo`
+- **Depends On:** `none`
+- **Primary surfaces:**
+  - `src/components/visualizers/CoverageCrossExplorerVisualizer.tsx` (create)
+  - `src/components/visualizers/CoverageCrossExplorerVisualizer.test.tsx` (create)
+  - `src/app/curriculum/[...slug]/page.tsx` (register)
+  - `content/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index.mdx` (embed)
+- **Problem statement:** Functional coverage cross-products between coverpoints are a major source of coverage holes and wasted simulation time. The combinatorial explosion of cross bins is difficult to reason about statically — learners need an interactive matrix that shows which bins are hit and which remain uncovered.
+- **Scope:**
+  1. Create `CoverageCrossExplorerVisualizer.tsx` as a `"use client"` component.
+  2. Define two default coverpoints: `cp_addr` with bins `low`, `mid`, `high` and `cp_op` with bins `READ`, `WRITE`, `BURST`.
+  3. Render a 3×3 matrix (cross-product) where each cell represents a cross bin. Initially all cells are grey (unhit).
+  4. Provide a **"Randomize Transactions"** button that simulates 10 random transactions and lights up corresponding matrix cells green.
+  5. Provide a **"Run Until 100% Coverage"** button that keeps simulating until all bins are hit, reporting the number of transactions needed.
+  6. Allow users to add `ignore_bins` via a checkbox list, which grays out those cells and removes them from the coverage calculation.
+  7. Display a coverage percentage counter updating in real time.
+  8. Register in MDX map and embed in `I-SV-3A`.
+  9. Vitest tests: matrix renders 9 cells initially, randomize button hits at least one cell, coverage percentage increases.
+- **Deliverable checklist:**
+  - [ ] 3×3 cross-product matrix renders
+  - [ ] Randomize adds green cells correctly
+  - [ ] 100% coverage mode works
+  - [ ] Ignore bins mechanism removes cells from count
+  - [ ] Real-time percentage counter works
+  - [ ] Component registered in MDX map
+  - [ ] Vitest tests pass
+- **Validation:**
+  - `npx vitest run src/components/visualizers/CoverageCrossExplorerVisualizer.test.tsx`
+  - `npm run build`
 
-### `W9-EPWR-STRATEGY`
-- Priority: P1
-- Status: `todo`
-- Depends On: `W9-ISV-UPF`, `W6-ESOC1-MOD`
-- Related IDs: none
-- Primary surfaces: new `content/curriculum/T4_Expert/E-PWR-1_Power_Aware_Verification/index.mdx`, subpages for corruption semantics, shutdown/wake-up flows, and coverage strategies
-- Problem statement: Even with UPF fundamentals, engineers need expert-level guidance on building UVM testbenches that verify power transitions, corruption behavior, retention correctness, and shutdown/wake-up sequences.
-- Scope:
-  1. Create `E-PWR-1_Power_Aware_Verification` as a new expert-tier module.
-  2. **Corruption semantics:** Teach how simulators model data corruption during power-down (X-propagation, value zeroing, retention hold), how to verify that retained registers preserve values and non-retained registers corrupt correctly.
-  3. **Power controller verification:** Testing the power management unit (PMU/PCU) — state machine coverage, illegal transition detection, handshake protocol verification.
-  4. **Shutdown/wake-up sequences:** UVM sequences that orchestrate power transitions — save context, assert isolation, power down, power up, release isolation, restore context, verify functionality.
-  5. **Power-aware assertions:** SVA properties for isolation cell correctness, retention cell behavior, supply ramp timing, and domain crossing checks.
-  6. **Power-aware coverage:** Covergroups for power state transitions, cross-coverage of functional scenarios × power states, transition-pair coverage.
-  7. **UVM integration patterns:** Power-aware virtual sequences, UVM callbacks for power events, `uvm_config_db` for power-state parameterization, custom power phases.
-  8. **Debug and triage:** Common power verification failures — retention corruption, isolation glitches, wake-up race conditions, PMU deadlocks.
-  9. Cross-link back to UPF fundamentals (I-SV-8), SoC strategies (E-SOC-1), and formal integration (E-INT-1) for formal power-aware proofs.
-- Deliverable checklist:
-  - [x] `E-PWR-1_Power_Aware_Verification/index.mdx` exists with comprehensive content.
-  - [x] Corruption semantics (retention, isolation, X-propagation) are taught accurately.
-  - [x] Power controller verification strategy is documented with PMU state machine examples.
-  - [x] Shutdown/wake-up UVM sequence patterns are provided.
-  - [x] Power-aware SVA assertions are included.
-  - [x] Power-state coverage strategy is explicit.
-  - [x] UVM integration patterns (virtual sequences, callbacks, custom phases) are taught.
-  - [x] Debug triage for common power verification failures is included.
-  - [x] Cross-links to I-SV-8, E-SOC-1, E-INT-1 are set.
-- Validation:
-  - Regenerate curriculum data.
-  - Run lint and vitest.
-  - Add route smoke coverage for the new expert module.
+---
 
-### `W9-EPWR-LAB`
-- Priority: P1
-- Status: `complete`
-- Depends On: `W9-EPWR-STRATEGY`, `W8-LABS-PLATFORM`
-- Related IDs: none
-- Primary surfaces: new `PowerDomainVisualizer.tsx`, new power-state lab assets, lab-registry entry
-- Problem statement: The power-aware verification module needs a hands-on lab and an interactive visualizer to make abstract power-state concepts tangible.
-- Scope:
-  1. Build `PowerDomainVisualizer.tsx` — interactive component showing a multi-domain SoC with animated power transitions: domains lighting up/dimming, isolation cells activating, retention registers holding/corrupting, level shifters engaging.
-  2. Controls: learner selects a power state transition (e.g., "Full Run → Deep Sleep → Wake"), the visualizer animates the sequence step by step with callouts for each UPF action.
-  3. Create a power-state verification lab (`labs/power_aware/lab1_retention_bug`):
-     - Buggy testbench where a retention register loses its value because isolation is released before the domain is fully powered up (race condition).
-     - Solution testbench with correct sequencing.
-     - README with step-by-step instructions.
-  4. Register lab in `lab-registry.ts`.
-  5. Register visualizer in the MDX component map.
-  6. Embed both in the E-PWR-1 module.
-  7. Unit-test the visualizer.
-- Deliverable checklist:
-  - [x] `PowerDomainVisualizer.tsx` exists and is embedded in E-PWR-1.
-  - [x] Visualizer unit tests pass.
-  - [x] Retention-bug lab exists with buggy testbench, solution, and README.
-  - [x] Lab is registered and discoverable.
-  - [x] The lab link is embedded in the E-PWR-1 lesson.
-- Validation:
-  - Unit-test the visualizer.
-  - Add route smoke coverage for the lab.
-  - Run full vitest and lint.
+### `VIZ-8-RAL-REGISTER-MAP`
+- **Priority:** P1
+- **Status:** `todo`
+- **Depends On:** `CONTENT-T3-SCOREBOARD` (ensures T3 content is being built)
+- **Primary surfaces:**
+  - `src/components/visualizers/RalRegisterMapVisualizer.tsx` (create)
+  - `src/components/visualizers/RalRegisterMapVisualizer.test.tsx` (create)
+  - `src/app/curriculum/[...slug]/page.tsx` (register)
+  - `content/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index.mdx` (embed)
+- **Problem statement:** The UVM Register Abstraction Layer (RAL) models hardware register maps hierarchically (block → regfile → register → field). Learners struggle to understand how the model maps to hardware address spaces without an interactive hierarchical browser.
+- **Scope:**
+  1. Create `RalRegisterMapVisualizer.tsx` as a `"use client"` component.
+  2. Define a sample register model: an I2C controller block with 4 registers (CTRL, STATUS, TX_DATA, RX_DATA), each with 2-4 bit fields.
+  3. Render a collapsible tree on the left: `i2c_block` → registers → fields.
+  4. Clicking any register opens a right panel showing: register name, base offset, access policy (RW/RO/WO/W1C), reset value, and a bit-field diagram.
+  5. The bit-field diagram shows each field as a colored rectangle proportional to its width, with name and bit-range tooltip on hover.
+  6. Add a **"Simulate frontdoor write"** button for any register that animates a write transaction and shows the mirror value updating.
+  7. Register in MDX map and embed in `A-UVM-4A`.
+  8. Vitest tests: tree renders, clicking register shows correct fields, bit-field diagram renders correct number of field blocks.
+- **Deliverable checklist:**
+  - [ ] Collapsible tree renders `i2c_block` hierarchy
+  - [ ] Register details panel shows correct metadata
+  - [ ] Bit-field diagram renders proportional field widths
+  - [ ] Frontdoor write animation works
+  - [ ] Component registered in MDX map
+  - [ ] Vitest tests pass
+- **Validation:**
+  - `npx vitest run src/components/visualizers/RalRegisterMapVisualizer.test.tsx`
+  - `npm run build`
 
-## Agent Handoff Protocol
+---
 
-### Generic Resume Prompt
+### `VIZ-9-SEQUENCE-HIERARCHY`
+- **Priority:** P1
+- **Status:** `todo`
+- **Depends On:** `none`
+- **Primary surfaces:**
+  - `src/components/visualizers/UvmSequenceHierarchyVisualizer.tsx` (create)
+  - `src/components/visualizers/UvmSequenceHierarchyVisualizer.test.tsx` (create)
+  - `src/app/curriculum/[...slug]/page.tsx` (register)
+  - `content/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index.mdx` (embed)
+- **Problem statement:** UVM sequences can call sub-sequences which call further sub-sequences, forming a call tree. The `start()` / `body()` / `finish_item()` lifecycle is non-obvious when nesting is involved. Learners need a tree visualization that shows the call hierarchy and execution order.
+- **Scope:**
+  1. Create `UvmSequenceHierarchyVisualizer.tsx` as a `"use client"` component.
+  2. Hard-code a 3-level sequence example: `top_sequence` calls `write_burst_sequence` and `read_check_sequence`; each child calls a `base_rw_sequence`.
+  3. Render a collapsible tree diagram with expand/collapse on each node.
+  4. Each node shows: sequence class name, the sequencer it runs on, and status (idle/running/done).
+  5. A **"Step Execute"** button walks through the execution order, highlighting the currently executing sequence and showing a log panel with `start()`, `body()`, `finish_item()` lifecycle events.
+  6. Add a second preset: a virtual sequencer example with multiple sequencer targets.
+  7. Register in MDX map and embed in `I-UVM-3A`.
+  8. Vitest tests: tree renders, step execution advances, collapse/expand works.
+- **Deliverable checklist:**
+  - [ ] 3-level sequence tree renders
+  - [ ] Expand/collapse works per node
+  - [ ] Step execution highlights correct node and adds to log
+  - [ ] Virtual sequencer preset works
+  - [ ] Component registered in MDX map
+  - [ ] Vitest tests pass
+- **Validation:**
+  - `npx vitest run src/components/visualizers/UvmSequenceHierarchyVisualizer.test.tsx`
+  - `npm run build`
 
-Users should reuse this file through `prompt_to_resume_modernization.txt`.
+---
 
-### Agent Workflow
+### `CONTENT-T3-SCOREBOARD`
+- **Priority:** P0
+- **Status:** `todo`
+- **Depends On:** `none`
+- **Primary surfaces:**
+  - `content/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index.mdx` (create)
+  - `scripts/generate-curriculum.ts`
+- **Problem statement:** The T3_Advanced tier has only 3 modules and stops at RAL and Callbacks. There is no scoreboard module, despite scoreboards being the central self-checking mechanism in every real UVM environment. This is the most critical content gap in T3.
+- **Scope:**
+  1. Author `A-UVM-6_Scoreboards_and_Reference_Models/index.mdx`.
+  2. Sections: (a) The Role of the Scoreboard — why passive checking beats assertion-only approaches; (b) `uvm_scoreboard` base class; (c) Building a Transaction-Level Reference Model in SV; (d) Analysis FIFO pattern for connecting monitor to scoreboard; (e) Handling Out-of-Order Transactions with an associative array predictor; (f) Common Pitfalls — comparing objects by reference vs. value, phase ordering issues; (g) Knowledge Check — 4 questions; (h) Lab pointer linking to `LAB-1-T3-SCOREBOARD`.
+  3. Include at least 5 annotated SV code blocks.
+  4. Include a static architecture diagram showing `monitor → analysis port → scoreboard → reference model → comparator`.
+  5. Update `scripts/generate-curriculum.ts` to include this module after `A-UVM-5_UVM_Callbacks`.
+- **Deliverable checklist:**
+  - [ ] `A-UVM-6_Scoreboards_and_Reference_Models/index.mdx` created
+  - [ ] All 6 content sections present
+  - [ ] 4 Knowledge Check questions included
+  - [ ] Lab pointer to `LAB-1-T3-SCOREBOARD` included
+  - [ ] Curriculum generator includes the new module
+  - [ ] `npm run build` succeeds
+- **Validation:**
+  - `npm run generate:curriculum`
+  - `npm run build`
 
-If you are the coding agent picking up this work:
-1. Read `TASKS.md` first.
-2. In `Active Backlog Summary`, find the first row whose status is `todo` and whose dependencies are already satisfied.
-3. Read that task's full brief in `Detailed Task Briefs`.
-4. Use the `Related IDs` and supporting documents only for deeper context; do **not** update status outside `TASKS.md`.
-5. Implement the task, run required validation, then change only that task's status in `TASKS.md` from `todo` to `complete`.
-6. If your task unlocks downstream tasks or changes routing/workflow assumptions, update the dependency/order notes in this file before handing off.
-7. When yielding, instruct the next session to use `prompt_to_resume_modernization.txt` again.
+---
+
+### `CONTENT-T3-VIP`
+- **Priority:** P1
+- **Status:** `todo`
+- **Depends On:** `CONTENT-T3-SCOREBOARD`
+- **Primary surfaces:**
+  - `content/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index.mdx` (create)
+  - `scripts/generate-curriculum.ts`
+- **Problem statement:** Professional verification engineers are frequently tasked with building or extending Verification IP (VIP) for standard protocols (AXI, APB, I2C, SPI). No module exists covering VIP architecture principles, reuse packaging, or the standard VIP internal structure (agent + interface + sequence library).
+- **Scope:**
+  1. Author `A-UVM-7_VIP_Construction/index.mdx`.
+  2. Sections: (a) What is a VIP and why it matters; (b) VIP Internal Architecture — interface, agent, sequence library, protocol checker; (c) Passive vs. Active Agent Mode and the `is_active` flag; (d) Packaging a VIP for Reuse — directory structure, package files, parameter passing; (e) A concrete mini-VIP example for the APB protocol with annotated code; (f) Integrating a 3rd-party VIP — common pitfalls; (g) Knowledge Check — 3 questions.
+  3. Include a directory-tree code block showing recommended VIP package structure.
+  4. Update curriculum generator to include after `A-UVM-6`.
+- **Deliverable checklist:**
+  - [ ] `A-UVM-7_VIP_Construction/index.mdx` created
+  - [ ] APB mini-VIP code example is complete and syntactically correct SV
+  - [ ] VIP directory structure code block present
+  - [ ] Curriculum generator includes the new module
+  - [ ] `npm run build` succeeds
+- **Validation:**
+  - `npm run generate:curriculum`
+  - `npm run build`
+
+---
+
+### `CONTENT-T3-MULTI-AGENT`
+- **Priority:** P1
+- **Status:** `todo`
+- **Depends On:** `CONTENT-T3-SCOREBOARD`
+- **Primary surfaces:**
+  - `content/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index.mdx` (create)
+  - `scripts/generate-curriculum.ts`
+- **Problem statement:** Real SoC-level testbenches have multiple protocol agents (AXI master, AXI slave, APB, interrupt controller) coordinated by virtual sequences via a virtual sequencer. No module exists covering this multi-agent topology, virtual sequencer construction, or cross-agent synchronization — all of which are daily tasks for senior verification engineers.
+- **Scope:**
+  1. Author `A-UVM-8_Multi_Agent_Topologies/index.mdx`.
+  2. Sections: (a) Scaling Beyond a Single Agent; (b) The Virtual Sequencer Pattern — `uvm_sequencer #(uvm_sequence_item)` as coordinator; (c) Virtual Sequence Construction — calling child sequences on typed sub-sequencer handles; (d) Cross-Agent Synchronization — using events and semaphores between virtual sequences; (e) Topology configuration with `uvm_config_db`; (f) A worked example: 2-agent AXI+APB environment; (g) Knowledge Check — 4 questions.
+  3. Embed `<UvmSequenceHierarchyVisualizer />` (from `VIZ-9`) in section (c).
+  4. Update curriculum generator to include after `A-UVM-7`.
+- **Deliverable checklist:**
+  - [ ] `A-UVM-8_Multi_Agent_Topologies/index.mdx` created
+  - [ ] Virtual sequencer code example is complete
+  - [ ] `<UvmSequenceHierarchyVisualizer />` embedded (requires `VIZ-9` to be deployed)
+  - [ ] Curriculum generator includes the new module
+  - [ ] `npm run build` succeeds
+- **Validation:**
+  - `npm run generate:curriculum`
+  - `npm run build`
+
+---
+
+### `CONTENT-T4-PSS`
+- **Priority:** P0
+- **Status:** `todo`
+- **Depends On:** `none`
+- **Primary surfaces:**
+  - `content/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index.mdx` (create)
+  - `scripts/generate-curriculum.ts`
+- **Problem statement:** The Portable Stimulus Standard (Accellera PSS / IEEE 2401) is now a core competency for senior verification engineers at companies like Intel, Arm, and Qualcomm. PSS allows test intent to be written once and compiled to simulation, emulation, or post-silicon targets. This is a complete gap in the current T4 content and represents the largest industry relevance deficit in the guide.
+- **Scope:**
+  1. Author `E-PSS-1_Portable_Stimulus_Standard/index.mdx`.
+  2. Sections: (a) The Portability Problem PSS Solves; (b) PSS 2.0 Language Fundamentals — actions, components, activity graphs; (c) Data Constraints in PSS — similar to SV but declarative; (d) Compiling PSS to SystemVerilog UVM sequences; (e) Compiling PSS to C for bare-metal firmware tests; (f) Tool ecosystem — Cadence PSS Compiler, Synopsys VC PSS, open-source `pss-parser`; (g) Hands-on Example — PSS spec for a memory access test with portability target comparison; (h) Knowledge Check — 4 questions.
+  3. Include a side-by-side comparison: PSS action graph vs. equivalent hand-written UVM virtual sequence.
+  4. Embed `<PssIntentMapVisualizer />` (from `VIZ-10`) in section (b).
+  5. Update curriculum generator to add as first new T4 Expert module after existing content.
+- **Deliverable checklist:**
+  - [ ] `E-PSS-1_Portable_Stimulus_Standard/index.mdx` created
+  - [ ] All 8 content sections present
+  - [ ] PSS-to-SV and PSS-to-C examples included
+  - [ ] Tool ecosystem section current as of 2025
+  - [ ] Curriculum generator includes the new module
+  - [ ] `npm run build` succeeds
+- **Validation:**
+  - `npm run generate:curriculum`
+  - `npm run build`
+
+---
+
+### `VIZ-10-PSS-INTENT-MAP`
+- **Priority:** P1
+- **Status:** `todo`
+- **Depends On:** `CONTENT-T4-PSS`
+- **Primary surfaces:**
+  - `src/components/visualizers/PssIntentMapVisualizer.tsx` (create)
+  - `src/components/visualizers/PssIntentMapVisualizer.test.tsx` (create)
+  - `src/app/curriculum/[...slug]/page.tsx` (register)
+  - `content/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index.mdx` (embed)
+- **Problem statement:** PSS action graphs are directed acyclic graphs of actions and data flows that are fundamentally visual artifacts. A static code block cannot convey the portability concept — learners need to see the same abstract action graph and then see it "compiled" to different target representations.
+- **Scope:**
+  1. Create `PssIntentMapVisualizer.tsx` as a `"use client"` component.
+  2. Render a PSS action graph with nodes for: `write_mem_action`, `read_mem_action`, `verify_data_action`, connected by data-flow and ordering edges.
+  3. A **"Compile Target"** toggle with three options: **UVM Sequence**, **C Bare-Metal**, **Emulation**.
+  4. When a target is selected, the action graph animates a transformation: nodes rearrange/relabel to show the target representation (e.g., UVM mode shows sequence classes, C mode shows function calls).
+  5. A generated-code panel on the right updates to show the pseudocode output for the selected target.
+  6. Register in MDX map and embed in `E-PSS-1`.
+  7. Vitest tests: renders, compile target toggle changes displayed code, all 3 targets render without error.
+- **Deliverable checklist:**
+  - [ ] Action graph renders with all 3 nodes and edges
+  - [ ] All 3 compile targets produce distinct output
+  - [ ] Generated code panel updates on target change
+  - [ ] Component registered in MDX map
+  - [ ] Vitest tests pass
+- **Validation:**
+  - `npx vitest run src/components/visualizers/PssIntentMapVisualizer.test.tsx`
+  - `npm run build`
+
+---
+
+### `CONTENT-T4-PYUVM`
+- **Priority:** P0
+- **Status:** `todo`
+- **Depends On:** `none`
+- **Primary surfaces:**
+  - `content/curriculum/T4_Expert/E-PYUVM-1_Python_Based_Verification/index.mdx` (create)
+  - `scripts/generate-curriculum.ts`
+- **Problem statement:** Python-based hardware verification (cocotb, pyUVM 3.x) has crossed the threshold from niche to mainstream, driven by ML hardware teams and the open-source RISC-V ecosystem. An Expert-tier guide that omits Python co-verification is no longer competitive or industry-relevant in 2026.
+- **Scope:**
+  1. Author `E-PYUVM-1_Python_Based_Verification/index.mdx`.
+  2. Sections: (a) Why Python in Hardware Verification — ML framework integration, faster iteration, open-source ecosystem; (b) cocotb Architecture — coroutines, triggers, DUT handle; (c) A minimal cocotb testbench for an AXI4-Lite slave; (d) pyUVM 3.x — mapping UVM phases and components to Python classes; (e) Side-by-side: UVM SV agent vs. pyUVM agent; (f) Interoperability — running pyUVM alongside SV UVM using DPI; (g) Limitations and when to use SV UVM vs. pyUVM; (h) Knowledge Check — 3 questions.
+  3. Include a full cocotb testbench code example with syntax highlighting.
+  4. Update curriculum generator to include after `E-PSS-1`.
+- **Deliverable checklist:**
+  - [ ] `E-PYUVM-1_Python_Based_Verification/index.mdx` created
+  - [ ] cocotb code example is syntactically correct Python
+  - [ ] pyUVM vs SV UVM comparison table present
+  - [ ] Curriculum generator includes new module
+  - [ ] `npm run build` succeeds
+- **Validation:**
+  - `npm run generate:curriculum`
+  - `npm run build`
+
+---
+
+### `CONTENT-T4-AI-VERIF`
+- **Priority:** P1
+- **Status:** `todo`
+- **Depends On:** `CONTENT-T4-PYUVM`
+- **Primary surfaces:**
+  - `content/curriculum/T4_Expert/E-AI-1_AI_Driven_Verification/index.mdx` (create)
+  - `scripts/generate-curriculum.ts`
+- **Problem statement:** AI/ML-assisted verification — including ML-driven stimulus generation, coverage closure prediction, and LLM-assisted assertion writing — is now an active area of both commercial tool investment (Synopsys.ai, Cadence Cerebrus) and academic research. Expert-tier engineers must understand the landscape even if they don't implement ML models themselves.
+- **Scope:**
+  1. Author `E-AI-1_AI_Driven_Verification/index.mdx`.
+  2. Sections: (a) The Coverage Closure Bottleneck that AI addresses; (b) ML-Driven Stimulus Generation — reinforcement learning approaches, genetic algorithms; (c) LLM-Assisted Verification — generating assertions, sequences, and scoreboard checkers from natural language specs; (d) Commercial Tools — Synopsys VSO.ai, Cadence JasperGold ML, Mentor Questa AutoCheck overview; (e) Open research approaches — using Python (scikit-learn/PyTorch) via cocotb to build a coverage-closure predictor; (f) Ethical and reliability considerations — why AI-generated assertions must be reviewed; (g) Knowledge Check — 3 conceptual questions (no coding).
+  3. This module is intentionally conceptual — no heavy code examples required.
+  4. Update curriculum generator to include after `E-PYUVM-1`.
+- **Deliverable checklist:**
+  - [ ] `E-AI-1_AI_Driven_Verification/index.mdx` created
+  - [ ] All 7 sections present
+  - [ ] Tool overview is accurate for 2025/2026 tool versions
+  - [ ] Curriculum generator includes new module
+  - [ ] `npm run build` succeeds
+- **Validation:**
+  - `npm run generate:curriculum`
+  - `npm run build`
+
+---
+
+### `CONTENT-T4-RISCV`
+- **Priority:** P1
+- **Status:** `todo`
+- **Depends On:** `none`
+- **Primary surfaces:**
+  - `content/curriculum/T4_Expert/E-RISCV-1_RISC_V_Verification_Methodology/index.mdx` (create)
+  - `scripts/generate-curriculum.ts`
+- **Problem statement:** RISC-V has become the dominant open ISA in custom ASIC design. Verifying a RISC-V processor requires specialized methodology — instruction generation (RISCV-DV), ISA-level compliance checking (RISC-V ISAC), and formal ISA property checking. None of this is covered in the current guide, making it incomplete for the single largest emerging hardware verification domain.
+- **Scope:**
+  1. Author `E-RISCV-1_RISC_V_Verification_Methodology/index.mdx`.
+  2. Sections: (a) RISC-V Verification Challenges vs. ASIC Peripherals; (b) RISCV-DV — Google's open-source constrained-random instruction generator (Python/SV); (c) RISC-V ISAC — instruction-level coverage and tracing; (d) Formal ISA verification with JasperGold riscv-formal; (e) Step-and-compare methodology — RTL sim vs. ISS (Spike, QEMU); (f) UVM integration — wrapping RISCV-DV in a UVM sequence; (g) Knowledge Check — 4 questions.
+  3. Include a RISCV-DV configuration snippet showing a custom instruction distribution YAML.
+  4. Update curriculum generator to include after `E-AI-1`.
+- **Deliverable checklist:**
+  - [ ] `E-RISCV-1_RISC_V_Verification_Methodology/index.mdx` created
+  - [ ] RISCV-DV config snippet included
+  - [ ] Step-and-compare methodology explained with diagram description
+  - [ ] Curriculum generator includes new module
+  - [ ] `npm run build` succeeds
+- **Validation:**
+  - `npm run generate:curriculum`
+  - `npm run build`
+
+---
+
+### `CONTENT-T4-UVM-ML`
+- **Priority:** P2
+- **Status:** `todo`
+- **Depends On:** `CONTENT-T4-PYUVM`
+- **Primary surfaces:**
+  - `content/curriculum/T4_Expert/E-UVM-ML-1_Multi_Language_Verification/index.mdx` (create)
+  - `scripts/generate-curriculum.ts`
+- **Problem statement:** Complex SoC environments mix SV UVM agents with SystemC TLM-2.0 models and C++ reference models. Accellera UVM-ML provides a framework for connecting these multi-language components under a unified phase and TLM communication infrastructure. Expert engineers at large semiconductor companies encounter this regularly.
+- **Scope:**
+  1. Author `E-UVM-ML-1_Multi_Language_Verification/index.mdx`.
+  2. Sections: (a) When multi-language verification is needed; (b) UVM-ML architecture and the Open Architecture framework; (c) Connecting a SV UVM agent to a SystemC TLM-2.0 model; (d) Unified phasing across language boundaries; (e) Practical limitations and commercial support status; (f) Knowledge Check — 3 questions.
+  3. Update curriculum generator.
+- **Deliverable checklist:**
+  - [ ] Module created with all 6 sections
+  - [ ] SV↔SystemC connection example included
+  - [ ] Curriculum generator updated
+  - [ ] `npm run build` succeeds
+- **Validation:**
+  - `npm run generate:curriculum`
+  - `npm run build`
+
+---
+
+### `CONTENT-T4-EMULATION`
+- **Priority:** P2
+- **Status:** `todo`
+- **Depends On:** `CONTENT-T3-MULTI-AGENT`
+- **Primary surfaces:**
+  - `content/curriculum/T4_Expert/E-EMU-1_Emulation_Aware_Verification/index.mdx` (create)
+  - `scripts/generate-curriculum.ts`
+- **Problem statement:** Hardware emulation (Cadence Palladium Z2, Synopsys ZeBu, Siemens Veloce) is used for SoC-level verification where RTL simulation is too slow. UVM environments must be modified to run efficiently on emulators: transaction-level acceleration, virtual probes, compile-time vs. run-time tradeoffs. No content exists for this essential senior-engineer topic.
+- **Scope:**
+  1. Author `E-EMU-1_Emulation_Aware_Verification/index.mdx`.
+  2. Sections: (a) Why emulation — speed/capacity tradeoffs; (b) Emulation platforms overview (Palladium, ZeBu, Veloce); (c) Transaction-Level Acceleration (TLA) — replacing pin-level UVM drivers with TL models; (d) Virtual Probes and in-emulation debug; (e) Compile-time vs. run-time configuration for emulation; (f) UVM modifications required — time precision, no `$display` in synthesized code; (g) Knowledge Check — 3 questions.
+  3. Update curriculum generator.
+- **Deliverable checklist:**
+  - [ ] Module created with all 7 sections
+  - [ ] TLA explanation includes code comparison (pin-level vs. TL driver)
+  - [ ] Curriculum generator updated
+  - [ ] `npm run build` succeeds
+- **Validation:**
+  - `npm run generate:curriculum`
+  - `npm run build`
+
+---
+
+### `FLASH-1-T3-T4-COVERAGE`
+- **Priority:** P1
+- **Status:** `todo`
+- **Depends On:** `CONTENT-T3-SCOREBOARD`
+- **Primary surfaces:**
+  - `content/flashcards/t3-advanced.json` (create or augment)
+  - `content/flashcards/t4-expert.json` (create or augment)
+- **Problem statement:** The flashcard system is a critical component of the pedagogical loop (Learn → Visualize → Quiz → Lab → **Flashcard Review**). Given that T3 previously had only 3 modules and T4 had 6 modules with no new topics, flashcard coverage for Advanced/Expert content is minimal. Every new module authored in `CONTENT-T3-*` and `CONTENT-T4-*` tasks needs a corresponding flashcard set.
+- **Scope:**
+  1. Audit existing `content/flashcards/` for T3 and T4 coverage.
+  2. Create or augment `t3-advanced.json` with flashcard sets for all T3 modules: RAL Fundamentals (10 cards), Advanced RAL (8 cards), UVM Callbacks (8 cards), Scoreboards (12 cards), VIP Construction (8 cards), Multi-Agent Topologies (10 cards).
+  3. Create or augment `t4-expert.json` with flashcard sets for all T4 modules: UVM Methodology Customization (8 cards), Advanced Debug (8 cards), Formal Integration (8 cards), Performance (8 cards), Power Aware (8 cards), SoC Verification (10 cards), PSS (12 cards), pyUVM (10 cards), AI Verification (6 cards), RISC-V (10 cards).
+  4. Each flashcard must have: `front` (question), `back` (answer), `moduleId` (linking to the module slug), `difficulty` (`beginner`/`intermediate`/`advanced`).
+  5. Validate JSON schema against existing flashcard format.
+- **Deliverable checklist:**
+  - [ ] `t3-advanced.json` has ≥56 cards covering all 6 T3 modules
+  - [ ] `t4-expert.json` has ≥88 cards covering all 11 T4 modules
+  - [ ] All cards have valid `front`, `back`, `moduleId`, `difficulty` fields
+  - [ ] JSON validates against existing flashcard schema
+  - [ ] Flashcard viewer app can load and render the new sets without error
+- **Validation:**
+  - `node scripts/validate-flashcards.js` (create this script if it doesn't exist)
+  - `npm run build`
+
+---
+
+### `LAB-1-T3-SCOREBOARD`
+- **Priority:** P1
+- **Status:** `todo`
+- **Depends On:** `CONTENT-T3-SCOREBOARD`
+- **Primary surfaces:**
+  - `content/curriculum/labs/t3-scoreboard-lab/index.mdx` (create)
+  - `content/curriculum/labs/t3-scoreboard-lab/starter/` (create — SV source files)
+  - `content/curriculum/labs/t3-scoreboard-lab/solution/` (create — SV source files)
+- **Problem statement:** The `CONTENT-T3-SCOREBOARD` module teaches scoreboards conceptually, but without a hands-on lab the pedagogical loop is broken. Learners need to construct a self-checking scoreboard from a starter template, which solidifies both the analysis FIFO pattern and the reference model comparison.
+- **Scope:**
+  1. Author `index.mdx` as the lab guide with: objectives, prerequisites (`A-UVM-6`), step-by-step instructions, and expected output.
+  2. Create `starter/` directory with: a minimal UVM environment stub (`my_env.sv`, `my_scoreboard.sv` with `TODO` comments), a simple DUT (`fifo_dut.sv`), and a testbench top (`tb_top.sv`).
+  3. The lab objective: complete `my_scoreboard.sv` to: (a) connect to the analysis port, (b) implement a FIFO-based reference model, (c) compare DUT output to expected and call `uvm_error` on mismatch.
+  4. Create `solution/` directory with the complete, working scoreboard implementation.
+  5. The lab instructions must reference the `CoverageCrossExplorerVisualizer` (from `VIZ-7`) for extending the lab with coverage.
+  6. Include expected `run_test()` output showing `UVM_INFO` pass messages.
+- **Deliverable checklist:**
+  - [ ] `index.mdx` lab guide created with clear step-by-step instructions
+  - [ ] `starter/` has syntactically valid SV with `TODO` markers
+  - [ ] `solution/` has complete, working SV that produces passing output
+  - [ ] Lab is reachable from `A-UVM-6` module page via "Lab" link
+  - [ ] `npm run build` succeeds
+- **Validation:**
+  - `npm run generate:curriculum`
+  - `npm run build`
+  - Manual: starter code compiles with a SV simulator (e.g., `vcs`, `iverilog` if available)
+
+---
+
+### `LAB-2-T4-PSS`
+- **Priority:** P2
+- **Status:** `todo`
+- **Depends On:** `CONTENT-T4-PSS`
+- **Primary surfaces:**
+  - `content/curriculum/labs/t4-pss-lab/index.mdx` (create)
+  - `content/curriculum/labs/t4-pss-lab/starter/` (create — PSS source files)
+  - `content/curriculum/labs/t4-pss-lab/solution/` (create — PSS + generated SV/C)
+- **Problem statement:** PSS is a declarative language that learners must write, not just read. Without a hands-on lab writing a PSS spec and observing the compiled output, the "write once, run anywhere" value proposition remains abstract. This lab bridges the concept to practice.
+- **Scope:**
+  1. Author `index.mdx` as the lab guide.
+  2. `starter/` contains: a partial PSS spec for a memory test (`mem_test.pss`) with `TODO` sections for the data constraint and the activity graph ordering.
+  3. Lab objective: complete the PSS spec so it expresses: (a) a write action followed by a read-verify action, (b) an address constraint ensuring 4-byte alignment, (c) data ranging from 0x0 to 0xFFFF.
+  4. `solution/` contains: the complete PSS spec, a pre-generated SV UVM sequence equivalent, and a pre-generated C bare-metal equivalent.
+  5. The lab guide includes side-by-side diffs showing how each PSS construct maps to its compiled target.
+- **Deliverable checklist:**
+  - [ ] `index.mdx` created with clear objectives
+  - [ ] `starter/mem_test.pss` has valid partial PSS with `TODO` markers
+  - [ ] `solution/` has complete PSS and both compiled outputs
+  - [ ] Lab linked from `E-PSS-1` module page
+  - [ ] `npm run build` succeeds
+- **Validation:**
+  - `npm run generate:curriculum`
+  - `npm run build`
+
+---
+
+### `INFRA-4-VITEST-SUITE`
+- **Priority:** P1
+- **Status:** `todo`
+- **Depends On:** `VIZ-1-SV-SCHEDULER`
+- **Primary surfaces:**
+  - `src/components/visualizers/*.test.tsx` (all new visualizer test files)
+  - `vitest.config.mts`
+  - `package.json` (test script)
+- **Problem statement:** The existing `vitest.config.mts` exists but there is currently only one visualizer component (`EventSchedulerVisualizer.tsx`) and no evidence of a comprehensive test suite. With 10 new visualizer components being added across `VIZ-1` through `VIZ-10`, a formal test governance pass is needed to verify all test files are correctly discovered, run, and reported in CI.
+- **Scope:**
+  1. Audit `vitest.config.mts` and update if needed to ensure all `src/components/visualizers/*.test.tsx` files are included in the test glob.
+  2. Ensure `@testing-library/react` and `@testing-library/user-event` are installed and configured in the Vitest setup file
