@@ -9,7 +9,7 @@
 | Order | ID | Priority | Status | Depends On | Description |
 |---|---|---|---|---|---|
 | 1 | INFRA-1-REPO-CLEANUP | P0 | complete | none | Remove stray root-level developer artifacts and move LRM PDFs to git-lfs. |
-| 2 | INFRA-2-LABS-DEDUP | P0 | todo | INFRA-1-REPO-CLEANUP | Reconcile dual labs/ directories and fix curriculum data generator path references. |
+| 2 | INFRA-2-LABS-DEDUP | P0 | complete | INFRA-1-REPO-CLEANUP | Reconcile dual labs/ directories and fix curriculum data generator path references. |
 | 3 | INFRA-3-APPROUTER-MIGRATION | P0 | todo | none | Complete Next.js App Router migration by resolving src/pages/ vs src/app/ coexistence. |
 | 4 | CONTENT-1-F3-SCHEDULING | P0 | todo | none | Author the missing F3_* module group: SV Scheduling Semantics, Regions & Delta Cycles. |
 | 5 | VIZ-1-SV-SCHEDULER | P0 | todo | CONTENT-1-F3-SCHEDULING | Build SVSchedulerRegionVisualizer.tsx: animated delta-cycle and region stepper. |
@@ -85,7 +85,7 @@
 
 ### `INFRA-2-LABS-DEDUP`
 - **Priority:** P0
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `INFRA-1-REPO-CLEANUP`
 - **Primary surfaces:**
   - `content/labs/` (entire directory)
@@ -103,10 +103,10 @@
   6. Update `src/lib/curriculum.ts` (or equivalent) data loader to use the canonical path.
   7. Run `npm run generate:curriculum` and verify all lab links resolve correctly.
 - **Deliverable checklist:**
-  - [ ] Only one `labs/` directory exists at `content/curriculum/labs/`
-  - [ ] No broken lab links in `npm run build` output
-  - [ ] `npm run generate:curriculum` completes without path-not-found errors
-  - [ ] All previously-linked labs still resolve in the app
+  - [x] Only one `labs/` directory exists at `content/curriculum/labs/`
+  - [x] No broken lab links in `npm run build` output
+  - [x] `npm run generate:curriculum` completes without path-not-found errors
+  - [x] All previously-linked labs still resolve in the app
 - **Validation:**
   - `npm run generate:curriculum`
   - `npm run build`
