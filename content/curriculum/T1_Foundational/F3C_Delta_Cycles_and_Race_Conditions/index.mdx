@@ -1,0 +1,62 @@
+---
+title: "F3C: Delta Cycles and Race Conditions"
+description: "Explore delta cycles, race conditions, and the critical differences between blocking and non-blocking assignments."
+flashcards: "F3C_Delta_Cycles"
+---
+
+import { InteractiveCode, Quiz, Card, CardContent, CardHeader, CardTitle, Alert } from '@/components/ui';
+
+## Quick Take
+- **What it is:** Delta cycles are zero-time steps used to resolve event ordering locally. Race conditions occur when order of execution is non-deterministic.
+- **Why it matters:** Improper use of blocking vs. non-blocking assignments is the #1 cause of simulation mismatches compared to synthesized hardware.
+
+## Delta Cycles Explained
+
+When multiple events trigger simultaneously, the simulator uses delta cycles to process them sequentially. For example, if signal `A` updates, triggering a block that updates `B`, these happen in the same time step but separate delta cycles.
+
+## Race Condition Example
+
+A race condition happens when two `always` blocks read and write to the same variable at the same time using blocking assignments.
+
+```systemverilog
+module race_condition_demo;
+  logic clk = 0;
+  logic q1, q2, d;
+
+  always #5 clk = ~clk;
+
+  // BAD: Race Condition!
+  always @(posedge clk) q1 = d;
+  always @(posedge clk) q2 = q1;
+  
+  // Depending on which block evaluates first in the Active region,
+  // q2 might get the OLD value of q1, or the NEW value of q1.
+  // This is non-deterministic!
+endmodule
+```
+
+## Blocking vs. Non-Blocking Assignments
+
+To solve this, SystemVerilog provides non-blocking assignments (`<=`) for sequential logic.
+
+```systemverilog
+module safe_assignments_demo;
+  logic clk = 0;
+  logic q1, q2, d;
+
+  always #5 clk = ~clk;
+
+  // GOOD: Deterministic behavior
+  always @(posedge clk) begin
+    q1 <= d;  // Evaluates RHS now, updates LHS in NBA region
+  end
+  
+  always @(posedge clk) begin
+    q2 <= q1; // Evaluates RHS now (gets OLD q1), updates LHS in NBA region
+  end
+endmodule
+```
+
+<Alert variant="destructive">
+**Common Bug:** Using blocking assignments (`=`) in sequential (clocked) `always_ff` blocks creates simulation race conditions that will NOT match the synthesized hardware. Always use `<=`.
+</Alert>

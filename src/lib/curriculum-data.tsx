@@ -113,6 +113,39 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "F3A: Simulation Semantics",
+        "slug": "F3A_Simulation_Semantics",
+        "topics": [
+          {
+            "title": "F3A: Simulation Semantics",
+            "slug": "index",
+            "description": "Understand the SystemVerilog event-driven simulation model, time steps, and the distinction between simulation time and delta time."
+          }
+        ]
+      },
+      {
+        "title": "F3B: Scheduling Regions",
+        "slug": "F3B_Scheduling_Regions",
+        "topics": [
+          {
+            "title": "F3B: Scheduling Regions",
+            "slug": "index",
+            "description": "Learn about the SystemVerilog scheduler regions and how statements are ordered for execution."
+          }
+        ]
+      },
+      {
+        "title": "F3C: Delta Cycles and Race Conditions",
+        "slug": "F3C_Delta_Cycles_and_Race_Conditions",
+        "topics": [
+          {
+            "title": "F3C: Delta Cycles and Race Conditions",
+            "slug": "index",
+            "description": "Explore delta cycles, race conditions, and the critical differences between blocking and non-blocking assignments."
+          }
+        ]
+      },
+      {
         "title": "F4A: Structuring Designs with Modules and Packages",
         "slug": "F4A_Modules_and_Packages",
         "topics": [

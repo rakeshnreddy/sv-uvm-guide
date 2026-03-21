@@ -11,7 +11,7 @@
 | 1 | INFRA-1-REPO-CLEANUP | P0 | complete | none | Remove stray root-level developer artifacts and move LRM PDFs to git-lfs. |
 | 2 | INFRA-2-LABS-DEDUP | P0 | complete | INFRA-1-REPO-CLEANUP | Reconcile dual labs/ directories and fix curriculum data generator path references. |
 | 3 | INFRA-3-APPROUTER-MIGRATION | P0 | complete | none | Complete Next.js App Router migration by resolving src/pages/ vs src/app/ coexistence. |
-| 4 | CONTENT-1-F3-SCHEDULING | P0 | todo | none | Author the missing F3_* module group: SV Scheduling Semantics, Regions & Delta Cycles. |
+| 4 | CONTENT-1-F3-SCHEDULING | P0 | complete | none | Author the missing F3_* module group: SV Scheduling Semantics, Regions & Delta Cycles. |
 | 5 | VIZ-1-SV-SCHEDULER | P0 | todo | CONTENT-1-F3-SCHEDULING | Build SVSchedulerRegionVisualizer.tsx: animated delta-cycle and region stepper. |
 | 6 | CONTENT-2-T1T2-BRIDGE | P1 | todo | CONTENT-1-F3-SCHEDULING | Author "Why UVM?" bridge module between I-SV-8 and I-UVM-1A. |
 | 7 | VIZ-2-UVM-PHASE-TIMELINE | P0 | todo | none | Build UvmPhaseTimelineVisualizer.tsx: interactive phasing swimlane with click-to-expand. |
@@ -145,7 +145,7 @@
 
 ### `CONTENT-1-F3-SCHEDULING`
 - **Priority:** P0
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `none`
 - **Primary surfaces:**
   - `content/curriculum/T1_Foundational/F3A_Simulation_Semantics/index.mdx` (create)
@@ -160,12 +160,12 @@
   4. Update `scripts/generate-curriculum.ts` to include the three new modules in the T1 curriculum manifest, ordered between `F2D` and `F4A`.
   5. Run `npm run generate:curriculum` and verify the three new modules appear in the nav.
 - **Deliverable checklist:**
-  - [ ] `F3A`, `F3B`, `F3C` directories exist under `T1_Foundational/`
-  - [ ] Each module has a valid `index.mdx` with correct frontmatter (title, tier, order, prerequisites)
-  - [ ] `F3B` MDX embeds `<SVSchedulerRegionVisualizer />` without render error
-  - [ ] `F3C` includes at least one race-condition code example
-  - [ ] Curriculum generator includes all 3 new modules
-  - [ ] Nav order is: `F2D` → `F3A` → `F3B` → `F3C` → `F4A`
+  - [x] `F3A`, `F3B`, `F3C` directories exist under `T1_Foundational/`
+  - [x] Each module has a valid `index.mdx` with correct frontmatter (title, tier, order, prerequisites)
+  - [x] `F3B` MDX embeds `<SVSchedulerRegionVisualizer />` without render error
+  - [x] `F3C` includes at least one race-condition code example
+  - [x] Curriculum generator includes all 3 new modules
+  - [x] Nav order is: `F2D` → `F3A` → `F3B` → `F3C` → `F4A`
 - **Validation:**
   - `npm run generate:curriculum`
   - `npm run build`

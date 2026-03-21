@@ -1,0 +1,71 @@
+---
+title: "F3A: Simulation Semantics"
+description: "Understand the SystemVerilog event-driven simulation model, time steps, and the distinction between simulation time and delta time."
+---
+
+import { InteractiveCode, Quiz, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
+
+## Quick Take
+- **What it is:** SystemVerilog simulation is event-driven. Time only advances when events occur.
+- **Why it matters:** Understanding simulation semantics is crucial for avoiding race conditions and predicting hardware behavior accurately.
+- **The Analogy:** Think of simulation time as a clock on the wall, while delta time is a stopwatch used to order immediate events before the wall clock ticks forward.
+
+## Build Your Mental Model
+
+### 1. Event-Driven Simulation
+The simulator only evaluates code when an event triggers it. An event is typically a change in a signal's value.
+
+```systemverilog
+module event_driven_demo;
+  logic a, b;
+
+  // This block only runs when 'a' changes.
+  always @(a) begin
+    b = ~a;
+    $display("a changed to %b at time %0t", a, $time);
+  end
+
+  initial begin
+    a = 0;
+    #10 a = 1;
+    #10 a = 0;
+  end
+endmodule
+```
+
+### 2. Time Steps
+Simulation time advances in discrete increments defined by the timescale. Delay controls (`#`) explicitly advance time.
+
+```systemverilog
+`timescale 1ns/1ps
+
+module time_steps_demo;
+  initial begin
+    $display("Time is %0t", $time); // 0
+    #5;
+    $display("Time is %0t", $time); // 5000 (ps)
+  end
+endmodule
+```
+
+### 3. Simulation Time vs. Delta Time
+Multiple events can occur at the exact same simulation time. The simulator processes these in "delta cycles" — zero-delay iterations that determine the order of evaluation without advancing the global simulation clock.
+
+```systemverilog
+module delta_time_demo;
+  logic clk = 0;
+  logic d, q1, q2;
+
+  // clock generation
+  always #5 clk = ~clk;
+
+  initial begin
+    d = 1;
+    @(posedge clk);
+    // At posedge clk, q1 gets d, and q2 gets q1. 
+    // This happens in delta cycles within the same simulation time step.
+    q1 <= d; // Delta cycle 1
+    q2 <= q1; // Delta cycle 2
+  end
+endmodule
+```

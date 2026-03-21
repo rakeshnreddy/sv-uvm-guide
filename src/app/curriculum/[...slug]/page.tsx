@@ -144,6 +144,10 @@ const FormalVsSimulationVisualizer = dynamic(
   () => import('@/components/visuals/FormalVsSimulationVisualizer'),
   { ssr: false, loading: () => <VisualizationFallback /> },
 );
+const SVSchedulerRegionVisualizer = dynamic(
+  () => import('@/components/visualizers/SVSchedulerRegionVisualizer').then(mod => mod.SVSchedulerRegionVisualizer),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -236,6 +240,7 @@ const components = {
   TransactionRecordingVisualizer: dynamic(() => import('@/components/visuals/TransactionRecordingVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   PowerDomainVisualizer: dynamic(() => import('@/components/curriculum/interactives/visuals/PowerDomainVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   LabLink,
+  SVSchedulerRegionVisualizer,
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {
