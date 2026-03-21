@@ -33,8 +33,8 @@
 | 23 | CONTENT-T4-UVM-ML | P2 | complete | CONTENT-T4-PYUVM | Author E-UVM-ML-1_Multi_Language_Verification module in T4_Expert. |
 | 24 | CONTENT-T4-EMULATION | P2 | complete | CONTENT-T3-MULTI-AGENT | Author E-EMU-1_Emulation_Aware_Verification module in T4_Expert. |
 | 25 | FLASH-1-T3-T4-COVERAGE | P1 | complete | CONTENT-T3-SCOREBOARD | Create flashcard sets for all T3 and new T4 modules. |
-| 26 | LAB-1-T3-SCOREBOARD | P1 | todo | CONTENT-T3-SCOREBOARD | Author hands-on lab for scoreboard construction with self-checking assertions. |
-| 27 | LAB-2-T4-PSS | P2 | todo | CONTENT-T4-PSS | Author PSS lab: write a portable test intent spec and compile to SV and C. |
+| 26 | LAB-1-T3-SCOREBOARD | P1 | complete | CONTENT-T3-SCOREBOARD | Author hands-on lab for scoreboard construction with self-checking assertions. |
+| 27 | LAB-2-T4-PSS | P2 | complete | CONTENT-T4-PSS | Author PSS lab: write a portable test intent spec and compile to SV and C. |
 | 28 | INFRA-4-VITEST-SUITE | P1 | todo | VIZ-1-SV-SCHEDULER | Write Vitest unit tests for all new visualizer components (VIZ-1 through VIZ-10). |
 | 29 | INFRA-5-PLAYWRIGHT-E2E | P2 | todo | INFRA-4-VITEST-SUITE | Write Playwright E2E smoke tests for all new T3/T4 curriculum pages. |
 | 30 | INFRA-6-3D-VIZ-PORT | P2 | todo | INFRA-3-APPROUTER-MIGRATION | Port 3dvisualization.html prototype to a proper react-three-fiber component. |
