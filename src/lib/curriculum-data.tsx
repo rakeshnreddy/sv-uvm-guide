@@ -649,6 +649,28 @@ export const curriculumData: Module[] = [
             "description": "Build self-checking testbenches using transaction-level scoreboards, reference models, and analysis FIFOs to catch DUT bugs without manual waveform inspection."
           }
         ]
+      },
+      {
+        "title": "A-UVM-7: VIP Construction",
+        "slug": "A-UVM-7_VIP_Construction",
+        "topics": [
+          {
+            "title": "A-UVM-7: VIP Construction",
+            "slug": "index",
+            "description": "Architect, build, and package reusable Verification IP for standard protocols — from agent internals to directory structure and integration best practices."
+          }
+        ]
+      },
+      {
+        "title": "A-UVM-8: Multi-Agent Topologies",
+        "slug": "A-UVM-8_Multi_Agent_Topologies",
+        "topics": [
+          {
+            "title": "A-UVM-8: Multi-Agent Topologies",
+            "slug": "index",
+            "description": "Coordinate multiple protocol agents across complex SoC environments using virtual sequencers, virtual sequences, and cross-agent synchronization patterns."
+          }
+        ]
       }
     ]
   },
@@ -779,6 +801,17 @@ export const curriculumData: Module[] = [
             "title": "Portable Stimulus (PSS)",
             "slug": "pss",
             "description": "Intent-based test description that runs across simulation, emulation, and silicon with minimal adaptation."
+          }
+        ]
+      },
+      {
+        "title": "E-UVM-ML-1: Multi-Language Verification",
+        "slug": "E-UVM-ML-1_Multi_Language_Verification",
+        "topics": [
+          {
+            "title": "E-UVM-ML-1: Multi-Language Verification",
+            "slug": "index",
+            "description": "Connect SystemVerilog UVM agents with SystemC TLM-2.0 models and C++ reference models using the Accellera UVM-ML Open Architecture framework."
           }
         ]
       }

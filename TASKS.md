@@ -23,14 +23,14 @@
 | 13 | VIZ-8-RAL-REGISTER-MAP | P1 | todo | CONTENT-T3-RAL-ENHANCE | Build RalRegisterMapVisualizer.tsx: hierarchical register map with field-level drill-down. |
 | 14 | VIZ-9-SEQUENCE-HIERARCHY | P1 | todo | none | Build UvmSequenceHierarchyVisualizer.tsx: collapsible tree of nested sequence invocations. |
 | 15 | CONTENT-T3-SCOREBOARD | P0 | complete | none | Author A-UVM-6_Scoreboards_and_Reference_Models module in T3_Advanced. |
-| 16 | CONTENT-T3-VIP | P1 | todo | CONTENT-T3-SCOREBOARD | Author A-UVM-7_VIP_Construction module in T3_Advanced. |
-| 17 | CONTENT-T3-MULTI-AGENT | P1 | todo | CONTENT-T3-SCOREBOARD | Author A-UVM-8_Multi_Agent_Topologies module in T3_Advanced. |
+| 16 | CONTENT-T3-VIP | P1 | complete | CONTENT-T3-SCOREBOARD | Author A-UVM-7_VIP_Construction module in T3_Advanced. |
+| 17 | CONTENT-T3-MULTI-AGENT | P1 | complete | CONTENT-T3-SCOREBOARD | Author A-UVM-8_Multi_Agent_Topologies module in T3_Advanced. |
 | 18 | CONTENT-T4-PSS | P0 | complete | none | Author E-PSS-1_Portable_Stimulus_Standard module in T4_Expert. |
 | 19 | VIZ-10-PSS-INTENT-MAP | P1 | todo | CONTENT-T4-PSS | Build PssIntentMapVisualizer.tsx: PSS action/resource graph with portability toggle. |
 | 20 | CONTENT-T4-PYUVM | P0 | complete | none | Author E-PYUVM-1_Python_Based_Verification module in T4_Expert. |
 | 21 | CONTENT-T4-AI-VERIF | P1 | complete | CONTENT-T4-PYUVM | Author E-AI-1_AI_Driven_Verification module in T4_Expert. |
 | 22 | CONTENT-T4-RISCV | P1 | complete | none | Author E-RISCV-1_RISC_V_Verification_Methodology module in T4_Expert. |
-| 23 | CONTENT-T4-UVM-ML | P2 | todo | CONTENT-T4-PYUVM | Author E-UVM-ML-1_Multi_Language_Verification module in T4_Expert. |
+| 23 | CONTENT-T4-UVM-ML | P2 | complete | CONTENT-T4-PYUVM | Author E-UVM-ML-1_Multi_Language_Verification module in T4_Expert. |
 | 24 | CONTENT-T4-EMULATION | P2 | todo | CONTENT-T3-MULTI-AGENT | Author E-EMU-1_Emulation_Aware_Verification module in T4_Expert. |
 | 25 | FLASH-1-T3-T4-COVERAGE | P1 | todo | CONTENT-T3-SCOREBOARD | Create flashcard sets for all T3 and new T4 modules. |
 | 26 | LAB-1-T3-SCOREBOARD | P1 | todo | CONTENT-T3-SCOREBOARD | Author hands-on lab for scoreboard construction with self-checking assertions. |
@@ -524,7 +524,7 @@
 
 ### `CONTENT-T3-VIP`
 - **Priority:** P1
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `CONTENT-T3-SCOREBOARD`
 - **Primary surfaces:**
   - `content/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index.mdx` (create)
@@ -536,11 +536,11 @@
   3. Include a directory-tree code block showing recommended VIP package structure.
   4. Update curriculum generator to include after `A-UVM-6`.
 - **Deliverable checklist:**
-  - [ ] `A-UVM-7_VIP_Construction/index.mdx` created
-  - [ ] APB mini-VIP code example is complete and syntactically correct SV
-  - [ ] VIP directory structure code block present
-  - [ ] Curriculum generator includes the new module
-  - [ ] `npm run build` succeeds
+  - [x] `A-UVM-7_VIP_Construction/index.mdx` created
+  - [x] APB mini-VIP code example is complete and syntactically correct SV
+  - [x] VIP directory structure code block present
+  - [x] Curriculum generator includes the new module
+  - [x] `npm run build` succeeds
 - **Validation:**
   - `npm run generate:curriculum`
   - `npm run build`
@@ -549,7 +549,7 @@
 
 ### `CONTENT-T3-MULTI-AGENT`
 - **Priority:** P1
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `CONTENT-T3-SCOREBOARD`
 - **Primary surfaces:**
   - `content/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index.mdx` (create)
@@ -561,11 +561,11 @@
   3. Embed `<UvmSequenceHierarchyVisualizer />` (from `VIZ-9`) in section (c).
   4. Update curriculum generator to include after `A-UVM-7`.
 - **Deliverable checklist:**
-  - [ ] `A-UVM-8_Multi_Agent_Topologies/index.mdx` created
-  - [ ] Virtual sequencer code example is complete
-  - [ ] `<UvmSequenceHierarchyVisualizer />` embedded (requires `VIZ-9` to be deployed)
-  - [ ] Curriculum generator includes the new module
-  - [ ] `npm run build` succeeds
+  - [x] `A-UVM-8_Multi_Agent_Topologies/index.mdx` created
+  - [x] Virtual sequencer code example is complete
+  - [x] `<UvmSequenceHierarchyVisualizer />` embedded (requires `VIZ-9` to be deployed)
+  - [x] Curriculum generator includes the new module
+  - [x] `npm run build` succeeds
 - **Validation:**
   - `npm run generate:curriculum`
   - `npm run build`
@@ -706,7 +706,7 @@
 
 ### `CONTENT-T4-UVM-ML`
 - **Priority:** P2
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `CONTENT-T4-PYUVM`
 - **Primary surfaces:**
   - `content/curriculum/T4_Expert/E-UVM-ML-1_Multi_Language_Verification/index.mdx` (create)
@@ -717,10 +717,10 @@
   2. Sections: (a) When multi-language verification is needed; (b) UVM-ML architecture and the Open Architecture framework; (c) Connecting a SV UVM agent to a SystemC TLM-2.0 model; (d) Unified phasing across language boundaries; (e) Practical limitations and commercial support status; (f) Knowledge Check — 3 questions.
   3. Update curriculum generator.
 - **Deliverable checklist:**
-  - [ ] Module created with all 6 sections
-  - [ ] SV↔SystemC connection example included
-  - [ ] Curriculum generator updated
-  - [ ] `npm run build` succeeds
+  - [x] Module created with all 6 sections
+  - [x] SV↔SystemC connection example included
+  - [x] Curriculum generator updated
+  - [x] `npm run build` succeeds
 - **Validation:**
   - `npm run generate:curriculum`
   - `npm run build`

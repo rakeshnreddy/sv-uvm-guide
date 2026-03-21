@@ -1,0 +1,381 @@
+---
+title: "A-UVM-8: Multi-Agent Topologies"
+description: "Coordinate multiple protocol agents across complex SoC environments using virtual sequencers, virtual sequences, and cross-agent synchronization patterns."
+---
+
+## Quick Take
+- **What it is:** Multi-agent topologies are testbench architectures where multiple protocol agents (AXI master, AXI slave, APB, interrupt controller, DMA) operate concurrently within a single UVM environment, coordinated through virtual sequences running on a virtual sequencer.
+- **Why it matters:** Real SoC verification involves 10–50 protocol interfaces running simultaneously. Without a structured coordination mechanism, test scenarios devolve into uncoordinated concurrent traffic that never exercises cross-protocol interactions — the exact class of bugs that escapes to silicon.
+- **The Standard:** IEEE 1800.2-2020 does not define a `uvm_virtual_sequencer` class. The virtual sequencer pattern is a community convention built from the standard `uvm_sequencer` base class with sub-sequencer handles.
+
+## Scaling Beyond a Single Agent
+
+A single-agent testbench manages one protocol interface:
+
+```
+┌─────────────────────────────────────┐
+│              uvm_test               │
+│  ┌───────────────────────────────┐  │
+│  │           uvm_env             │  │
+│  │  ┌───────────────────────┐    │  │
+│  │  │      apb_agent        │    │  │
+│  │  │  driver + monitor +   │    │  │
+│  │  │  sequencer             │    │  │
+│  │  └───────────────────────┘    │  │
+│  └───────────────────────────────┘  │
+└─────────────────────────────────────┘
+```
+
+An SoC-level testbench manages many simultaneously:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                         uvm_test                             │
+│  ┌────────────────────────────────────────────────────────┐  │
+│  │                     soc_env                            │  │
+│  │                                                        │  │
+│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐│  │
+│  │  │ axi_agent│  │ apb_agent│  │ irq_agent│  │dma_agt ││  │
+│  │  │ (master) │  │          │  │          │  │        ││  │
+│  │  └──────────┘  └──────────┘  └──────────┘  └────────┘│  │
+│  │                                                        │  │
+│  │  ┌──────────────────────────────────────────────────┐  │  │
+│  │  │            virtual_sequencer                     │  │  │
+│  │  │  axi_sqr ──┐                                     │  │  │
+│  │  │  apb_sqr ──┼── handles to sub-sequencers         │  │  │
+│  │  │  irq_sqr ──┤                                     │  │  │
+│  │  │  dma_sqr ──┘                                     │  │  │
+│  │  └──────────────────────────────────────────────────┘  │  │
+│  └────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────┘
+```
+
+## The Virtual Sequencer Pattern
+
+A virtual sequencer is a plain `uvm_sequencer` that holds **handles** to typed sub-sequencers. It does not process sequence items itself — it serves as a coordination point.
+
+```systemverilog
+class soc_virtual_sequencer extends uvm_sequencer;
+  `uvm_component_utils(soc_virtual_sequencer)
+
+  // Handles to per-protocol sub-sequencers
+  axi_sequencer  axi_sqr;
+  apb_sequencer  apb_sqr;
+  irq_sequencer  irq_sqr;
+  dma_sequencer  dma_sqr;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+endclass
+```
+
+In the environment's `build_phase` and `connect_phase`:
+
+```systemverilog
+class soc_env extends uvm_env;
+  `uvm_component_utils(soc_env)
+
+  axi_agent          axi_agt;
+  apb_agent          apb_agt;
+  irq_agent          irq_agt;
+  dma_agent          dma_agt;
+  soc_virtual_sequencer v_sqr;
+  soc_scoreboard     scoreboard;
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    axi_agt  = axi_agent::type_id::create("axi_agt", this);
+    apb_agt  = apb_agent::type_id::create("apb_agt", this);
+    irq_agt  = irq_agent::type_id::create("irq_agt", this);
+    dma_agt  = dma_agent::type_id::create("dma_agt", this);
+    v_sqr    = soc_virtual_sequencer::type_id::create("v_sqr", this);
+    scoreboard = soc_scoreboard::type_id::create("scoreboard", this);
+  endfunction
+
+  function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    // Wire virtual sequencer handles to actual sub-sequencers
+    v_sqr.axi_sqr = axi_agt.sequencer;
+    v_sqr.apb_sqr = apb_agt.sequencer;
+    v_sqr.irq_sqr = irq_agt.sequencer;
+    v_sqr.dma_sqr = dma_agt.sequencer;
+
+    // Wire monitors to scoreboard
+    axi_agt.monitor.ap.connect(scoreboard.axi_fifo.analysis_export);
+    apb_agt.monitor.ap.connect(scoreboard.apb_fifo.analysis_export);
+  endfunction
+endclass
+```
+
+## Virtual Sequence Construction
+
+A virtual sequence runs on the virtual sequencer and dispatches child sequences to specific sub-sequencers:
+
+```systemverilog
+class dma_transfer_with_irq_vseq extends uvm_sequence;
+  `uvm_object_utils(dma_transfer_with_irq_vseq)
+  `uvm_declare_p_sequencer(soc_virtual_sequencer)
+
+  function new(string name = "dma_transfer_with_irq_vseq");
+    super.new(name);
+  endfunction
+
+  task body();
+    apb_config_dma_seq  cfg_seq;
+    dma_transfer_seq    xfer_seq;
+    irq_wait_seq        irq_seq;
+    axi_read_verify_seq verify_seq;
+
+    // Step 1: Configure DMA via APB registers
+    cfg_seq = apb_config_dma_seq::type_id::create("cfg_seq");
+    cfg_seq.src_addr  = 32'h1000_0000;
+    cfg_seq.dst_addr  = 32'h2000_0000;
+    cfg_seq.length    = 256;
+    cfg_seq.start(p_sequencer.apb_sqr);
+
+    // Step 2: Trigger DMA transfer
+    xfer_seq = dma_transfer_seq::type_id::create("xfer_seq");
+    xfer_seq.start(p_sequencer.dma_sqr);
+
+    // Step 3: Wait for completion interrupt
+    irq_seq = irq_wait_seq::type_id::create("irq_seq");
+    irq_seq.expected_irq = DMA_DONE_IRQ;
+    irq_seq.start(p_sequencer.irq_sqr);
+
+    // Step 4: Verify data via AXI reads
+    verify_seq = axi_read_verify_seq::type_id::create("verify_seq");
+    verify_seq.addr   = 32'h2000_0000;
+    verify_seq.length = 256;
+    verify_seq.start(p_sequencer.axi_sqr);
+  endtask
+endclass
+```
+
+**Key pattern:** Each `start()` call targets a **specific sub-sequencer** via the virtual sequencer's handle. The virtual sequence orchestrates the cross-protocol scenario; each child sequence only knows about its own protocol.
+
+## Cross-Agent Synchronization
+
+### Using Events
+
+When sequences on different agents must synchronize without a full handshake:
+
+```systemverilog
+class synchronized_vseq extends uvm_sequence;
+  `uvm_object_utils(synchronized_vseq)
+  `uvm_declare_p_sequencer(soc_virtual_sequencer)
+
+  uvm_event dma_config_done;
+
+  function new(string name = "synchronized_vseq");
+    super.new(name);
+    dma_config_done = new("dma_config_done");
+  endfunction
+
+  task body();
+    fork
+      // Thread 1: Configure DMA then signal
+      begin
+        apb_config_dma_seq cfg_seq;
+        cfg_seq = apb_config_dma_seq::type_id::create("cfg_seq");
+        cfg_seq.start(p_sequencer.apb_sqr);
+        dma_config_done.trigger(); // Signal completion
+      end
+
+      // Thread 2: Wait for config, then start transfer
+      begin
+        dma_config_done.wait_trigger(); // Wait for signal
+        dma_transfer_seq xfer_seq;
+        xfer_seq = dma_transfer_seq::type_id::create("xfer_seq");
+        xfer_seq.start(p_sequencer.dma_sqr);
+      end
+
+      // Thread 3: Background interrupt monitoring (always running)
+      begin
+        irq_monitor_seq irq_seq;
+        irq_seq = irq_monitor_seq::type_id::create("irq_seq");
+        irq_seq.start(p_sequencer.irq_sqr);
+      end
+    join
+  endtask
+endclass
+```
+
+### Using Semaphores for Resource Arbitration
+
+When multiple sequences compete for a shared resource (e.g., a shared bus):
+
+```systemverilog
+class arbitrated_vseq extends uvm_sequence;
+  `uvm_object_utils(arbitrated_vseq)
+  `uvm_declare_p_sequencer(soc_virtual_sequencer)
+
+  semaphore bus_lock;
+
+  function new(string name = "arbitrated_vseq");
+    super.new(name);
+    bus_lock = new(1); // Binary semaphore: one user at a time
+  endfunction
+
+  task body();
+    fork
+      run_axi_traffic();
+      run_dma_traffic();
+    join
+  endtask
+
+  task run_axi_traffic();
+    repeat (10) begin
+      bus_lock.get(1); // Acquire bus
+      axi_write_seq wr = axi_write_seq::type_id::create("aw");
+      wr.start(p_sequencer.axi_sqr);
+      bus_lock.put(1); // Release bus
+    end
+  endtask
+
+  task run_dma_traffic();
+    repeat (5) begin
+      bus_lock.get(1); // Acquire bus
+      dma_transfer_seq xfer = dma_transfer_seq::type_id::create("dx");
+      xfer.start(p_sequencer.dma_sqr);
+      bus_lock.put(1); // Release bus
+    end
+  endtask
+endclass
+```
+
+## Topology Configuration with `uvm_config_db`
+
+Use `uvm_config_db` to configure multi-agent topologies from the test level:
+
+```systemverilog
+class dma_stress_test extends uvm_test;
+  `uvm_component_utils(dma_stress_test)
+
+  soc_env env;
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+
+    // Configure AXI agent as ACTIVE (bus master)
+    uvm_config_db#(uvm_active_passive_enum)::set(
+      this, "env.axi_agt", "is_active", UVM_ACTIVE);
+
+    // Configure APB agent as ACTIVE (register access)
+    uvm_config_db#(uvm_active_passive_enum)::set(
+      this, "env.apb_agt", "is_active", UVM_ACTIVE);
+
+    // Configure IRQ agent as PASSIVE (monitoring only)
+    uvm_config_db#(uvm_active_passive_enum)::set(
+      this, "env.irq_agt", "is_active", UVM_PASSIVE);
+
+    env = soc_env::type_id::create("env", this);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    dma_transfer_with_irq_vseq vseq;
+    phase.raise_objection(this);
+
+    vseq = dma_transfer_with_irq_vseq::type_id::create("vseq");
+    vseq.start(env.v_sqr);
+
+    phase.drop_objection(this);
+  endtask
+endclass
+```
+
+## Worked Example: 2-Agent AXI+APB Environment
+
+Here is a minimal but complete SoC environment with two agents:
+
+```systemverilog
+// Minimal SoC environment: AXI master + APB slave
+class mini_soc_env extends uvm_env;
+  `uvm_component_utils(mini_soc_env)
+
+  axi_agent axi_master;
+  apb_agent apb_slave;
+  soc_virtual_sequencer v_sqr;
+  soc_scoreboard scoreboard;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    axi_master = axi_agent::type_id::create("axi_master", this);
+    apb_slave  = apb_agent::type_id::create("apb_slave", this);
+    v_sqr      = soc_virtual_sequencer::type_id::create("v_sqr", this);
+    scoreboard = soc_scoreboard::type_id::create("scoreboard", this);
+  endfunction
+
+  function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    v_sqr.axi_sqr = axi_master.sequencer;
+    v_sqr.apb_sqr = apb_slave.sequencer;
+
+    axi_master.monitor.ap.connect(scoreboard.axi_fifo.analysis_export);
+    apb_slave.monitor.ap.connect(scoreboard.apb_fifo.analysis_export);
+  endfunction
+endclass
+```
+
+## Knowledge Check
+
+<Quiz
+  questions={[
+    {
+      question: "What is a virtual sequencer in UVM?",
+      options: [
+        "A sequencer that handles virtual interfaces",
+        "A uvm_sequencer that holds handles to typed sub-sequencers for cross-protocol coordination",
+        "A sequencer that only runs in simulation, not on emulators",
+        "A sequencer that generates randomized sequences automatically"
+      ],
+      correctAnswer: 1,
+      explanation: "A virtual sequencer extends uvm_sequencer and contains handle variables pointing to each protocol-specific sub-sequencer. It does not process sequence items itself — it serves as a coordination point for virtual sequences that dispatch work to multiple agents."
+    },
+    {
+      question: "How does a virtual sequence send transactions to a specific protocol agent?",
+      options: [
+        "By calling `start()` on the virtual sequencer, which routes automatically",
+        "By calling `start()` on the specific sub-sequencer handle (e.g., `p_sequencer.apb_sqr`)",
+        "By using `uvm_config_db` to set the target agent",
+        "By overriding the agent's factory type at runtime"
+      ],
+      correctAnswer: 1,
+      explanation: "Each child sequence's `start()` call targets a specific sub-sequencer handle accessed through `p_sequencer`. For example, `cfg_seq.start(p_sequencer.apb_sqr)` sends APB transactions through the APB agent's sequencer."
+    },
+    {
+      question: "When should you use `uvm_event` vs `semaphore` for cross-agent synchronization?",
+      options: [
+        "Events for signaling completion of a phase; semaphores for mutual exclusion of shared resources",
+        "Events for high-speed traffic; semaphores for low-speed traffic",
+        "Events for active agents; semaphores for passive agents",
+        "They are interchangeable — use whichever is more convenient"
+      ],
+      correctAnswer: 0,
+      explanation: "Events are point-to-point notifications (one thread signals, another waits) — ideal for sequencing dependencies. Semaphores control concurrent access to shared resources (one thread acquires, later releases) — ideal for bus arbitration or preventing protocol conflicts."
+    },
+    {
+      question: "Why is it important to configure some agents as UVM_PASSIVE in a multi-agent SoC environment?",
+      options: [
+        "Passive agents consume less simulation memory",
+        "Passive agents can monitor interfaces already driven by the DUT or other agents without causing bus contention",
+        "UVM requires at least one passive agent per environment",
+        "Passive agents are needed for coverage but not for driving"
+      ],
+      correctAnswer: 1,
+      explanation: "In an SoC, some interfaces are driven by internal DUT logic (e.g., an interrupt controller output). A passive agent monitors this traffic for coverage and protocol checking without driving conflicting signals. Driving on an already-driven interface would cause X-state contention."
+    }
+  ]}
+/>
+
+## References & Next Topics
+
+- **Prerequisite:** [A-UVM-7: VIP Construction](/curriculum/t3-advanced/a-uvm-7-vip-construction) — single-agent VIP architecture before multi-agent coordination.
+- **Prerequisite:** [I-UVM-3A: Sequence Fundamentals](/curriculum/t2-intermediate/i-uvm-3a-fundamentals) — sequence `start()` and `body()` before virtual sequences.
+- **Prerequisite:** [I-SV-5: Synchronization and IPC](/curriculum/t2-intermediate/i-sv-5-synchronization-and-ipc) — events and semaphores.
+- **Next:** [E-SOC-1: SoC-Level Verification Strategies](/curriculum/t4-expert/e-soc-1-soc-level-verification-strategies) — scaling multi-agent environments to full SoC verification.
+- **Related:** [A-UVM-6: Scoreboards](/curriculum/t3-advanced/a-uvm-6-scoreboards-and-reference-models) — scoreboards consuming transactions from multiple agents.

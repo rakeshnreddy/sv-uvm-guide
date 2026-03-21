@@ -1,0 +1,241 @@
+---
+title: "E-UVM-ML-1: Multi-Language Verification"
+description: "Connect SystemVerilog UVM agents with SystemC TLM-2.0 models and C++ reference models using the Accellera UVM-ML Open Architecture framework."
+---
+
+## Quick Take
+- **What it is:** Multi-language verification (UVM-ML) is a framework for running UVM components written in different languages (SystemVerilog, SystemC, e) within a single verification environment, with unified phasing, TLM communication, and factory services across language boundaries.
+- **Why it matters:** Complex SoC verification mixes SV UVM agents for protocol-level verification with SystemC TLM-2.0 models for high-level architectural exploration and C++ reference models for algorithmic correctness checking. Without UVM-ML, these components cannot communicate through standard TLM interfaces or participate in a unified phase schedule.
+- **Industry context:** Large semiconductor companies (Intel, AMD, Samsung, NVIDIA) routinely maintain mixed-language verification environments. Accellera's UVM-ML Open Architecture and commercial solutions from Cadence (ML-Connect) and Synopsys (UVM-Connect) address this need.
+
+## When Multi-Language Verification is Needed
+
+Multi-language environments arise from three common situations:
+
+| Situation | Languages Involved | Example |
+|---|---|---|
+| **Architectural model reuse** | SV + SystemC | A SystemC TLM-2.0 model of a PCIe controller developed during architecture exploration, reused as a reference model alongside SV UVM protocol agents |
+| **Algorithm verification** | SV + C/C++ | A C++ video codec reference model validating a hardware encoder's output, called from an SV scoreboard via DPI |
+| **Legacy IP integration** | SV + e/SystemC | An existing e-language VIP being integrated into a new SV UVM environment |
+
+The key question is: **Can I get away with DPI-C alone?** If you only need to call C/C++ functions from SV, DPI-C is sufficient. If you need concurrent processes, TLM communication, and unified phasing across languages, you need UVM-ML.
+
+## UVM-ML Architecture and the Open Architecture Framework
+
+### Accellera UVM-ML Open Architecture
+
+The Accellera UVM-ML framework provides a **backplane** that bridges UVM implementations across languages:
+
+```
+ ┌──────────────────────┐    ┌──────────────────────┐
+ │  SV UVM Environment  │    │  SC UVM Environment  │
+ │                       │    │                       │
+ │  • SV UVM agents     │    │  • SC TLM-2.0 models │
+ │  • SV sequences      │    │  • SC initiators      │
+ │  • SV scoreboards    │    │  • SC targets          │
+ └──────────┬───────────┘    └───────────┬───────────┘
+            │                             │
+            │   TLM / Phase / Factory     │
+            ▼                             ▼
+ ┌────────────────────────────────────────────────────┐
+ │              UVM-ML Backplane                      │
+ │                                                     │
+ │  • Phase coordination across languages             │
+ │  • TLM-1 and TLM-2.0 cross-language connections   │
+ │  • Unified factory service                         │
+ │  • Configuration database bridging                 │
+ └────────────────────────────────────────────────────┘
+```
+
+### Backplane Services
+
+| Service | What It Does | How It Works |
+|---|---|---|
+| **Phase coordination** | Ensures `build_phase`, `connect_phase`, `run_phase` execute in the correct order across SV and SC components | The backplane acts as a global phase controller, starting each phase only when all languages report readiness |
+| **TLM bridging** | Routes TLM-1 (`put`, `get`, `analysis`) and TLM-2.0 (`b_transport`, `nb_transport_fw/bw`) calls across language boundaries | Port-to-export connections are registered with the backplane using hierarchical path strings |
+| **Factory** | Allows type overrides to be applied from one language to components in another | Type registry is shared through the backplane API |
+| **Config DB** | Allows configuration values set in SV to be retrieved by SC components and vice versa | Key-value store bridged through the backplane |
+
+## Connecting a SV UVM Agent to a SystemC TLM-2.0 Model
+
+### Step 1: Define the SV Side
+
+```systemverilog
+// SV UVM environment with an analysis port going cross-language
+class sv_env extends uvm_env;
+  `uvm_component_utils(sv_env)
+
+  axi_agent  agent;
+
+  // Analysis port that will connect to a SystemC target
+  uvm_analysis_port #(axi_transaction) ap_to_sc;
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    agent = axi_agent::type_id::create("agent", this);
+    ap_to_sc = new("ap_to_sc", this);
+  endfunction
+
+  function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    // Internal: monitor → analysis port
+    agent.monitor.ap.connect(ap_to_sc);
+
+    // Cross-language: registered with backplane by path
+    // The backplane resolves "sc_env.sc_scoreboard.analysis_export"
+    // at connect_phase time
+  endfunction
+endclass
+```
+
+### Step 2: Define the SystemC Side
+
+```cpp
+// SystemC TLM-2.0 scoreboard that receives from SV
+class sc_scoreboard : public uvm_component,
+                      public uvm_analysis_imp<axi_transaction> {
+public:
+  sc_scoreboard(const std::string& name, uvm_component* parent)
+    : uvm_component(name, parent) {}
+
+  void write(const axi_transaction& txn) override {
+    // Compare against reference model
+    axi_transaction expected = ref_model.predict(txn.input_fields);
+    if (txn != expected) {
+      UVM_ERROR("SC_SCB", "Mismatch detected");
+    }
+  }
+};
+```
+
+### Step 3: Register Cross-Language Connections
+
+The backplane connection is established in a top-level configuration file or through API calls:
+
+```systemverilog
+// In the top-level test or top module:
+initial begin
+  // Register TLM connection across languages
+  uvm_ml::connect(
+    "sv_env.ap_to_sc",              // SV analysis port path
+    "sc_env.sc_scoreboard.analysis_export"  // SC analysis export path
+  );
+end
+```
+
+## Unified Phasing Across Language Boundaries
+
+The backplane ensures all language environments progress through phases together:
+
+```
+Time →
+         build_phase    connect_phase    run_phase      extract_phase
+SV UVM:  ████████████   ████████████     ████████████   ████████████
+         │              │                │              │
+Backpln: ──barrier──    ──barrier──      ──barrier──    ──barrier──
+         │              │                │              │
+SC UVM:  ████████████   ████████████     ████████████   ████████████
+```
+
+**Key guarantee:** The `connect_phase` does not start in any language until `build_phase` has completed in all languages. This prevents dangling cross-language TLM connections.
+
+### Phase Synchronization Example
+
+```systemverilog
+// SV side: run_phase with cross-language objection
+task run_phase(uvm_phase phase);
+  phase.raise_objection(this);
+  // The backplane ensures SC run_phase also starts
+  // before any transactions flow
+
+  repeat (1000) begin
+    axi_seq seq = axi_seq::type_id::create("seq");
+    seq.start(env.agent.sequencer);
+  end
+
+  phase.drop_objection(this);
+  // SC side's run_phase also ends when all objections
+  // across all languages are dropped
+endtask
+```
+
+## Practical Limitations and Commercial Support Status
+
+### Current Limitations (2025–2026)
+
+| Limitation | Impact | Mitigation |
+|---|---|---|
+| **Performance overhead** | Cross-language TLM calls are 5–20× slower than same-language calls | Batch transactions; minimize cross-language call frequency |
+| **Debug complexity** | Stack traces span two language runtimes; no single unified debugger | Use logging heavily; correlate timestamps across language logs |
+| **Simulator support** | Not all simulators support UVM-ML natively | Cadence Xcelium and Synopsys VCS have the best support |
+| **Build complexity** | Separate compilation for SV and SC; linking requires specific flags | Invest in a robust Makefile/CMake infrastructure |
+| **Type mapping** | SV and SC have different type systems; transaction packing/unpacking required | Define a canonical packed representation used at the boundary |
+
+### Commercial Alternatives
+
+| Solution | Vendor | Approach |
+|---|---|---|
+| **ML-Connect** | Cadence | Native Xcelium integration with automatic type mapping |
+| **UVM-Connect** | Synopsys | VCS-integrated TLM bridging with Verdi debug support |
+| **UVM-ML Open Architecture** | Accellera | Open-source reference implementation |
+| **DPI-C (simple cases)** | Standard | Pure function-call bridging without TLM or phasing |
+
+### Decision Framework
+
+```
+Do you need concurrent processes across languages?
+├── No → Use DPI-C (simplest)
+└── Yes → Do you need TLM communication?
+    ├── No → Use DPI-C with threads + callbacks
+    └── Yes → Do you need unified phasing?
+        ├── No → Use DPI-C with manual synchronization
+        └── Yes → Use UVM-ML (full framework)
+```
+
+## Knowledge Check
+
+<Quiz
+  questions={[
+    {
+      question: "What is the primary function of the UVM-ML backplane?",
+      options: [
+        "To compile SystemVerilog and SystemC code together",
+        "To bridge TLM communication, phase coordination, and factory services across language boundaries",
+        "To convert SystemC code into SystemVerilog automatically",
+        "To provide a GUI for multi-language debug"
+      ],
+      correctAnswer: 1,
+      explanation: "The UVM-ML backplane acts as a coordination layer that routes TLM calls between languages, synchronizes phase execution across language environments, and bridges factory and configuration database services."
+    },
+    {
+      question: "When should you use UVM-ML instead of simple DPI-C for cross-language integration?",
+      options: [
+        "Always — DPI-C is deprecated",
+        "When you need concurrent processes, TLM communication, and unified phasing across languages",
+        "Only when using SystemC — DPI-C works for all other languages",
+        "When the design has more than 1 million gates"
+      ],
+      correctAnswer: 1,
+      explanation: "DPI-C is sufficient for simple function calls across the SV-C boundary. UVM-ML is needed when components in different languages must run concurrently with proper phase ordering, communicate through TLM interfaces, and share factory/config_db services."
+    },
+    {
+      question: "What is the primary performance concern with cross-language TLM calls through UVM-ML?",
+      options: [
+        "They consume more memory than same-language calls",
+        "They are 5–20× slower due to boundary marshalling and backplane routing",
+        "They can only transfer 32-bit data types",
+        "They require a network connection between process"
+      ],
+      correctAnswer: 1,
+      explanation: "Cross-language TLM calls must serialize transaction data, route through the backplane, and deserialize on the other side. This boundary-crossing overhead is 5–20× slower than native same-language TLM calls, making call frequency optimization critical."
+    }
+  ]}
+/>
+
+## References & Next Topics
+
+- **Accellera UVM-ML Open Architecture:** [accellera.org](https://accellera.org) — open-source reference implementation and documentation.
+- **Prerequisite:** [I-UVM-2B: TLM Connections](/curriculum/t2-intermediate/i-uvm-2b-tlm-connections) — TLM ports and exports within a single language.
+- **Prerequisite:** [I-SV-7: DPI and Foreign Language Interfaces](/curriculum/t2-intermediate/i-sv-7-dpi-and-foreign-language-interfaces) — DPI-C for simpler cross-language function calls.
+- **Prerequisite:** [E-PYUVM-1: Python-Based Verification](/curriculum/t4-expert/e-pyuvm-1-python-based-verification) — Python as an alternative cross-language approach via cocotb.
+- **Related:** [A-UVM-8: Multi-Agent Topologies](/curriculum/t3-advanced/a-uvm-8-multi-agent-topologies) — multi-agent environments that may span languages.

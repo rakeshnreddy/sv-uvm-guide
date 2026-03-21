@@ -1,0 +1,312 @@
+---
+title: "A-UVM-7: VIP Construction"
+description: "Architect, build, and package reusable Verification IP for standard protocols — from agent internals to directory structure and integration best practices."
+---
+
+## Quick Take
+- **What it is:** Verification IP (VIP) is a self-contained, reusable verification component that encapsulates everything needed to verify a specific protocol interface: an agent (driver + monitor + sequencer), a protocol checker, a coverage model, a sequence library, and an SV interface with assertions.
+- **Why it matters:** Professional verification teams spend 30–60% of testbench bring-up time integrating protocol agents. A well-architected VIP eliminates this cost for every subsequent project that uses the same protocol. Commercial VIP from Synopsys (VIP Catalog), Cadence (VIPCAT), and Siemens (Questa VIP) follows these exact patterns.
+- **The Standard:** While IEEE 1800.2 does not prescribe a VIP structure, the de facto industry standard is an agent-based architecture with a configurable `is_active` flag, a parameterized interface, and a package file that encapsulates all types and components.
+
+## What is a VIP and Why It Matters
+
+A VIP is not just "a UVM agent." It is a **complete verification solution** for a protocol interface that includes:
+
+| Component | Purpose | Reuse Scope |
+|---|---|---|
+| **SV Interface** | Signal-level connection to DUT | Shared across all testbenches using this protocol |
+| **Agent** | Driver + Monitor + Sequencer bundle | Configurable for active (driving) or passive (monitoring) mode |
+| **Protocol Checker** | Assertion-based protocol compliance monitor | Catches DUT protocol violations independent of test scenarios |
+| **Coverage Model** | Covergroups for protocol-level functional coverage | Measures protocol feature exercised across all tests |
+| **Sequence Library** | Pre-built sequences for common operations | Accelerates test development |
+| **Configuration Object** | Parameters, mode flags, timing knobs | Allows per-instance customization without code changes |
+| **Package File** | Compilation unit encapsulating all types | Clean namespace management |
+
+## VIP Internal Architecture
+
+### The Agent as the Core Building Block
+
+```systemverilog
+class apb_agent extends uvm_agent;
+  `uvm_component_utils(apb_agent)
+
+  apb_driver     driver;
+  apb_monitor    monitor;
+  apb_sequencer  sequencer;
+  apb_coverage   coverage;
+
+  // Configuration object — set via uvm_config_db
+  apb_agent_config cfg;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+
+    if (!uvm_config_db#(apb_agent_config)::get(this, "", "cfg", cfg))
+      `uvm_fatal("NO_CFG", "Agent config not found in config_db")
+
+    // Monitor is ALWAYS built (both active and passive mode)
+    monitor = apb_monitor::type_id::create("monitor", this);
+
+    // Coverage collector is ALWAYS built
+    coverage = apb_coverage::type_id::create("coverage", this);
+
+    // Driver and sequencer are only built in ACTIVE mode
+    if (cfg.is_active == UVM_ACTIVE) begin
+      driver    = apb_driver::type_id::create("driver", this);
+      sequencer = apb_sequencer::type_id::create("sequencer", this);
+    end
+  endfunction
+
+  function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+
+    // Monitor analysis port → coverage collector
+    monitor.ap.connect(coverage.analysis_export);
+
+    // Driver ↔ sequencer connection (active mode only)
+    if (cfg.is_active == UVM_ACTIVE) begin
+      driver.seq_item_port.connect(sequencer.seq_item_export);
+    end
+  endfunction
+endclass
+```
+
+### The Interface with Protocol Assertions
+
+```systemverilog
+interface apb_if (input logic pclk, input logic preset_n);
+  logic        psel;
+  logic        penable;
+  logic        pwrite;
+  logic [31:0] paddr;
+  logic [31:0] pwdata;
+  logic [31:0] prdata;
+  logic        pready;
+  logic        pslverr;
+
+  // ------ Protocol checker assertions ------
+
+  // SETUP phase: PSEL must be asserted before PENABLE
+  property p_setup_before_enable;
+    @(posedge pclk) disable iff (!preset_n)
+    $rose(psel) |-> !penable;
+  endproperty
+  assert property (p_setup_before_enable)
+    else $error("APB PROTOCOL VIOLATION: PENABLE asserted without SETUP phase");
+
+  // ACCESS phase: PSEL must remain stable during ACCESS
+  property p_psel_stable_during_access;
+    @(posedge pclk) disable iff (!preset_n)
+    (psel && penable && !pready) |=> psel;
+  endproperty
+  assert property (p_psel_stable_during_access)
+    else $error("APB PROTOCOL VIOLATION: PSEL deasserted during ACCESS phase");
+
+  // PADDR must remain stable during a transfer
+  property p_addr_stable;
+    @(posedge pclk) disable iff (!preset_n)
+    (psel && penable && !pready) |=> $stable(paddr);
+  endproperty
+  assert property (p_addr_stable)
+    else $error("APB PROTOCOL VIOLATION: PADDR changed during transfer");
+
+  // ------ Clocking blocks for driver/monitor ------
+  clocking driver_cb @(posedge pclk);
+    output psel, penable, pwrite, paddr, pwdata;
+    input  prdata, pready, pslverr;
+  endclocking
+
+  clocking monitor_cb @(posedge pclk);
+    input psel, penable, pwrite, paddr, pwdata, prdata, pready, pslverr;
+  endclocking
+
+  modport driver_mp  (clocking driver_cb, input pclk, preset_n);
+  modport monitor_mp (clocking monitor_cb, input pclk, preset_n);
+endinterface
+```
+
+## Passive vs Active Agent Mode
+
+The `is_active` flag is the single most important VIP configuration parameter:
+
+| Mode | `is_active` | Components Built | Use Case |
+|---|---|---|---|
+| **Active** | `UVM_ACTIVE` | Driver + Monitor + Sequencer + Coverage | Acting as a bus master or slave — driving and monitoring |
+| **Passive** | `UVM_PASSIVE` | Monitor + Coverage only | Observing an existing interface without driving — used for protocol checking and coverage collection on DUT-to-DUT connections |
+
+```systemverilog
+// Configuration object
+class apb_agent_config extends uvm_object;
+  `uvm_object_utils(apb_agent_config)
+
+  uvm_active_passive_enum is_active = UVM_ACTIVE;
+  virtual apb_if vif;
+
+  // Protocol timing parameters
+  int unsigned setup_time  = 1;  // PSEL to PENABLE delay in cycles
+  int unsigned max_wait    = 16; // Maximum PREADY wait cycles before timeout
+
+  function new(string name = "apb_agent_config");
+    super.new(name);
+  endfunction
+endclass
+```
+
+**When to use passive mode:**
+- Monitoring traffic between two DUT-internal interfaces
+- Adding protocol checking to an interface already driven by another agent or the RTL itself
+- Collecting coverage on interfaces where driving would cause contention
+
+## Packaging a VIP for Reuse
+
+### Recommended Directory Structure
+
+```
+vip/
+└── apb_vip/
+    ├── apb_pkg.sv                    ← Package file (compilation entry point)
+    ├── apb_if.sv                     ← Interface + protocol assertions
+    ├── src/
+    │   ├── apb_types.sv              ← Enums, typedefs, parameters
+    │   ├── apb_transaction.sv        ← Sequence item
+    │   ├── apb_agent_config.sv       ← Configuration object
+    │   ├── apb_driver.sv             ← Driver
+    │   ├── apb_monitor.sv            ← Monitor
+    │   ├── apb_sequencer.sv          ← Sequencer (typedef or class)
+    │   ├── apb_coverage.sv           ← Functional coverage model
+    │   ├── apb_agent.sv              ← Agent (top-level component)
+    │   └── apb_protocol_checker.sv   ← Standalone protocol checker
+    ├── sequences/
+    │   ├── apb_base_seq.sv           ← Base sequence with common helpers
+    │   ├── apb_single_write_seq.sv   ← Single write transaction
+    │   ├── apb_single_read_seq.sv    ← Single read transaction
+    │   ├── apb_burst_seq.sv          ← Burst of transactions
+    │   └── apb_error_inject_seq.sv   ← Protocol error injection
+    ├── tests/
+    │   ├── apb_base_test.sv          ← Base test with agent instantiation
+    │   └── apb_sanity_test.sv        ← VIP self-test
+    └── docs/
+        ├── README.md                 ← Integration guide
+        └── apb_vip_userguide.pdf     ← API reference
+```
+
+### The Package File
+
+The package file controls compilation order and provides a clean namespace:
+
+```systemverilog
+package apb_pkg;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+
+  // Types and parameters first
+  `include "src/apb_types.sv"
+  `include "src/apb_transaction.sv"
+  `include "src/apb_agent_config.sv"
+
+  // Components (order matters: leaf components before containers)
+  `include "src/apb_driver.sv"
+  `include "src/apb_monitor.sv"
+  `include "src/apb_sequencer.sv"
+  `include "src/apb_coverage.sv"
+  `include "src/apb_agent.sv"
+  `include "src/apb_protocol_checker.sv"
+
+  // Sequences
+  `include "sequences/apb_base_seq.sv"
+  `include "sequences/apb_single_write_seq.sv"
+  `include "sequences/apb_single_read_seq.sv"
+  `include "sequences/apb_burst_seq.sv"
+  `include "sequences/apb_error_inject_seq.sv"
+endpackage
+```
+
+### Parameter Passing for Protocol Variants
+
+Use SystemVerilog parameters to support protocol variants within a single VIP:
+
+```systemverilog
+class apb_agent #(int ADDR_WIDTH = 32, int DATA_WIDTH = 32) extends uvm_agent;
+  // Parameterized agent supports APB3 (32-bit) and APB4 (variable width)
+endclass
+```
+
+## Integrating a 3rd-Party VIP
+
+When integrating commercial VIP (Synopsys VIP, Cadence VIPCAT), watch for these common pitfalls:
+
+### 1. Virtual Interface Mismatch
+Commercial VIPs use their own interface definitions. You must connect your DUT ports to the VIP's interface, not the other way around:
+
+```systemverilog
+// In tb_top.sv — connect DUT to VIP interface
+apb_if apb_master_if(.pclk(clk), .preset_n(rst_n));
+
+// Bind DUT ports to VIP interface signals
+assign apb_master_if.prdata  = dut.apb_slave.prdata;
+assign apb_master_if.pready  = dut.apb_slave.pready;
+assign dut.apb_slave.psel    = apb_master_if.psel;
+assign dut.apb_slave.penable = apb_master_if.penable;
+// ... etc
+```
+
+### 2. Configuration Database Path Mismatch
+Commercial VIPs expect their config objects at specific `uvm_config_db` paths. Always read the VIP integration guide to find the expected path string.
+
+### 3. Sequence Compatibility
+Your custom sequences must extend the VIP's base sequence class, not `uvm_sequence` directly. The VIP's base sequence provides protocol-specific `start_item`/`finish_item` handling.
+
+### 4. License Availability
+Commercial VIP requires runtime licenses. CI pipelines must handle license checkout failures gracefully — either queue the job or fall back to a stub VIP.
+
+## Knowledge Check
+
+<Quiz
+  questions={[
+    {
+      question: "What is the purpose of the is_active flag in a VIP agent?",
+      options: [
+        "It determines whether the agent uses blocking or non-blocking assignments",
+        "It controls whether the driver and sequencer are instantiated (active mode) or only the monitor runs (passive mode)",
+        "It sets the agent's priority in the UVM component hierarchy",
+        "It enables or disables the agent's analysis ports"
+      ],
+      correctAnswer: 1,
+      explanation: "When is_active is UVM_ACTIVE, the agent builds its driver and sequencer in addition to the monitor, enabling it to drive transactions. When UVM_PASSIVE, only the monitor and coverage collector are built, allowing the agent to observe traffic without driving."
+    },
+    {
+      question: "Why does the VIP package file control the order of `include directives?",
+      options: [
+        "SystemVerilog requires alphabetical ordering of includes",
+        "Leaf components (driver, monitor) must be compiled before container components (agent) that instantiate them",
+        "The UVM library requires a specific include order",
+        "The order determines the factory registration priority"
+      ],
+      correctAnswer: 1,
+      explanation: "SystemVerilog compilation is order-dependent. The agent class references driver, monitor, and sequencer types, so those must be compiled first. Similarly, the transaction class must precede the driver that uses it."
+    },
+    {
+      question: "Where should protocol compliance assertions be placed in a VIP architecture?",
+      options: [
+        "Inside the driver's run_phase task",
+        "In the test's check_phase function",
+        "In the SV interface definition, executing continuously via concurrent assertions",
+        "In the scoreboard's compare function"
+      ],
+      correctAnswer: 2,
+      explanation: "Protocol assertions belong in the interface definition as concurrent SVA properties. They fire continuously on every clock edge regardless of test scenario, catching protocol violations even when no test-specific checks are active. This ensures protocol compliance monitoring is always on."
+    }
+  ]}
+/>
+
+## References & Next Topics
+
+- **Prerequisite:** [I-UVM-2A: Component Roles](/curriculum/t2-intermediate/i-uvm-2a-component-roles) — agents, drivers, monitors, and sequencers.
+- **Prerequisite:** [I-UVM-2B: TLM Connections](/curriculum/t2-intermediate/i-uvm-2b-tlm-connections) — analysis ports used by monitors.
+- **Prerequisite:** [A-UVM-6: Scoreboards and Reference Models](/curriculum/t3-advanced/a-uvm-6-scoreboards-and-reference-models) — scoreboards that consume VIP monitor output.
+- **Next:** [A-UVM-8: Multi-Agent Topologies](/curriculum/t3-advanced/a-uvm-8-multi-agent-topologies) — coordinating multiple VIP agents in an SoC-level environment.
+- **Related:** [A-UVM-5: UVM Callbacks](/curriculum/t3-advanced/a-uvm-5-uvm-callbacks) — callbacks for extending VIP behavior without subclassing.
