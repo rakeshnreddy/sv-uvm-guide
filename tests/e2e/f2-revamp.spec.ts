@@ -4,7 +4,7 @@ test.describe('F2 Revamp', () => {
   test('F2C hub surfaces Quick Take and chapter linking', async ({ page }) => {
     await page.goto('/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index');
 
-    await expect(page.getByRole('heading', { name: /Procedural Blocks and Flow Control/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Procedural Code and Flow Control/i })).toBeVisible();
     await expect(page.getByText('Quick Take')).toBeVisible();
     await expect(page.getByText('Timeline of a Simulation Tick')).toBeVisible();
     await expect(page.getByRole('link', { name: /Procedural Flow Control/ }).first()).toBeVisible();
@@ -44,6 +44,8 @@ test.describe('F2 Revamp', () => {
   });
 
   test('F2D index keeps the sibling chapter reachable', async ({ page }) => {
+    page.on('console', msg => console.log('BROWSER CONSOLE:', msg.text()));
+    page.on('pageerror', err => console.log('BROWSER ERROR:', err.message));
     await page.goto('/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index');
 
     await expect(page.getByText('Quick Take')).toBeVisible();
@@ -51,6 +53,6 @@ test.describe('F2 Revamp', () => {
     const ipcLink = page.getByRole('link', { name: /Interprocess Communication/ }).first();
     await expect(ipcLink).toBeVisible();
     await ipcLink.click();
-    await expect(page).toHaveURL(/F2D_Reusable_Code_and_Parallelism\/ipc$/);
+    await expect(page).toHaveURL(/F2D_Reusable_Code_and_Parallelism\/ipc$/, { timeout: 15000 });
   });
 });

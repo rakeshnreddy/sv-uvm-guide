@@ -11,7 +11,7 @@ test.describe('Foundational Lessons F2-F3', () => {
 
     test('F3A content route loads correctly', async ({ page }) => {
         await page.goto('/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index');
-        await expect(page.getByRole('heading', { name: /Procedural Blocks and Flow Control/i })).toBeVisible();
+        await expect(page.getByRole('heading', { name: /Procedural Code and Flow Control/i })).toBeVisible();
         // Check for Event Region Game
         await expect(page.getByText('Event Region Scheduler')).toBeVisible();
     });

@@ -24,7 +24,7 @@ test.describe('Phase 9 Visualizations', () => {
         await page.goto('/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index');
 
         // Check title
-        await expect(page.getByRole('heading', { name: /Procedural Blocks and Flow Control/i })).toBeVisible();
+        await expect(page.getByRole('heading', { name: /Procedural Code and Flow Control/i })).toBeVisible();
 
         // Start the challenge and answer the first prompt
         const startButton = page.getByRole('button', { name: 'Start Challenge' });

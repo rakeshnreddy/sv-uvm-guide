@@ -10,7 +10,7 @@
 |---|---|---|---|---|---|
 | 1 | INFRA-1-REPO-CLEANUP | P0 | complete | none | Remove stray root-level developer artifacts and move LRM PDFs to git-lfs. |
 | 2 | INFRA-2-LABS-DEDUP | P0 | complete | INFRA-1-REPO-CLEANUP | Reconcile dual labs/ directories and fix curriculum data generator path references. |
-| 3 | INFRA-3-APPROUTER-MIGRATION | P0 | todo | none | Complete Next.js App Router migration by resolving src/pages/ vs src/app/ coexistence. |
+| 3 | INFRA-3-APPROUTER-MIGRATION | P0 | complete | none | Complete Next.js App Router migration by resolving src/pages/ vs src/app/ coexistence. |
 | 4 | CONTENT-1-F3-SCHEDULING | P0 | todo | none | Author the missing F3_* module group: SV Scheduling Semantics, Regions & Delta Cycles. |
 | 5 | VIZ-1-SV-SCHEDULER | P0 | todo | CONTENT-1-F3-SCHEDULING | Build SVSchedulerRegionVisualizer.tsx: animated delta-cycle and region stepper. |
 | 6 | CONTENT-2-T1T2-BRIDGE | P1 | todo | CONTENT-1-F3-SCHEDULING | Author "Why UVM?" bridge module between I-SV-8 and I-UVM-1A. |
@@ -116,7 +116,7 @@
 
 ### `INFRA-3-APPROUTER-MIGRATION`
 - **Priority:** P0
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `none`
 - **Primary surfaces:**
   - `src/pages/` (entire directory — audit and migrate)
@@ -132,11 +132,11 @@
   5. Update `next.config.mjs` to remove any Pages Router-specific configuration.
   6. Delete `src/pages/` once all routes are confirmed working.
 - **Deliverable checklist:**
-  - [ ] `src/pages/` directory no longer exists
-  - [ ] All routes previously under `src/pages/` are accessible under `src/app/`
-  - [ ] No Next.js build warnings about mixed router usage
-  - [ ] `npm run build` exits with code 0
-  - [ ] All Playwright E2E tests pass after migration
+  - [x] `src/pages/` directory no longer exists
+  - [x] All routes previously under `src/pages/` are accessible under `src/app/`
+  - [x] No Next.js build warnings about mixed router usage
+  - [x] `npm run build` exits with code 0
+  - [x] All Playwright E2E tests pass after migration
 - **Validation:**
   - `npm run build`
   - `npx playwright test`
