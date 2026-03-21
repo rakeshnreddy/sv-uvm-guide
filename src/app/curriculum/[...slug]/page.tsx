@@ -148,6 +148,10 @@ const SVSchedulerRegionVisualizer = dynamic(
   () => import('@/components/visualizers/SVSchedulerRegionVisualizer').then(mod => mod.SVSchedulerRegionVisualizer),
   { ssr: false, loading: () => <VisualizationFallback /> }
 );
+const TlmConnectionBuilderVisualizer = dynamic(
+  () => import('@/components/visualizers/TlmConnectionBuilderVisualizer').then(mod => mod.TlmConnectionBuilderVisualizer),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -241,6 +245,7 @@ const components = {
   PowerDomainVisualizer: dynamic(() => import('@/components/curriculum/interactives/visuals/PowerDomainVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   LabLink,
   SVSchedulerRegionVisualizer,
+  TlmConnectionBuilderVisualizer,
   UvmPhaseTimelineVisualizer: dynamic(() => import('@/components/visualizers/UvmPhaseTimelineVisualizer').then(mod => mod.UvmPhaseTimelineVisualizer), { ssr: false, loading: () => <VisualizationFallback /> }),
 };
 

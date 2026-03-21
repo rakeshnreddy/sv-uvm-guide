@@ -15,7 +15,7 @@
 | 5 | VIZ-1-SV-SCHEDULER | P0 | complete | CONTENT-1-F3-SCHEDULING | Build SVSchedulerRegionVisualizer.tsx: animated delta-cycle and region stepper. |
 | 6 | CONTENT-2-T1T2-BRIDGE | P1 | complete | CONTENT-1-F3-SCHEDULING | Author "Why UVM?" bridge module between I-SV-8 and I-UVM-1A. |
 | 7 | VIZ-2-UVM-PHASE-TIMELINE | P0 | complete | none | Build UvmPhaseTimelineVisualizer.tsx: interactive phasing swimlane with click-to-expand. |
-| 8 | VIZ-3-TLM-CONNECTION-BUILDER | P0 | todo | none | Build TlmConnectionBuilderVisualizer.tsx: drag-and-drop TLM port/socket wiring. |
+| 8 | VIZ-3-TLM-CONNECTION-BUILDER | P0 | complete | none | Build TlmConnectionBuilderVisualizer.tsx: drag-and-drop TLM port/socket wiring. |
 | 9 | VIZ-4-FACTORY-OVERRIDE-EXPLORER | P0 | todo | none | Build FactoryOverrideExplorerVisualizer.tsx: live factory registry with override simulation. |
 | 10 | VIZ-5-CONSTRAINT-HEATMAP | P1 | todo | none | Build ConstraintSolverHeatmapVisualizer.tsx: distribution heatmap for rand variables. |
 | 11 | VIZ-6-SVA-WAVEFORM | P1 | todo | none | Build SvaSequenceWaveformVisualizer.tsx: waveform-style temporal sequence stepper. |
@@ -269,35 +269,35 @@
 
 ### `VIZ-3-TLM-CONNECTION-BUILDER`
 - **Priority:** P0
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `none`
 - **Primary surfaces:**
-  - `src/components/visualizers/TlmConnectionBuilderVisualizer.tsx` (create)
-  - `src/components/visualizers/TlmConnectionBuilderVisualizer.test.tsx` (create)
-  - `src/app/curriculum/[...slug]/page.tsx` (register)
-  - `content/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index.mdx` (embed)
+  - `src/components/visualizers/TlmConnectionBuilderVisualizer.tsx` (created)
+  - `tests/components/TlmConnectionBuilderVisualizer.test.tsx` (created)
+  - `src/app/curriculum/[...slug]/page.tsx` (registered)
+  - `content/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index.mdx` (embedded)
 - **Problem statement:** TLM ports, exports, and `uvm_tlm_fifo` connections are abstract and spatial — learners must understand which side initiates calls and which side implements them. Text descriptions of `uvm_analysis_port`, `uvm_blocking_put_port`, and FIFOs consistently cause confusion. A drag-and-connect visual builder directly addresses this.
 - **Scope:**
-  1. Create `TlmConnectionBuilderVisualizer.tsx` as a `"use client"` component using React Flow (or a lightweight canvas alternative).
-  2. Provide a palette of draggable UVM component nodes: Driver, Monitor, Scoreboard, Coverage, Agent, Sequencer.
+  1. Create `TlmConnectionBuilderVisualizer.tsx` as a `"use client"` component using React + inline SVG.
+  2. Provide a palette of UVM component nodes: Driver, Monitor, Scoreboard, Coverage, Agent, Sequencer.
   3. Each node has typed ports on its boundary: blue circles = TLM ports (initiator), green circles = TLM exports (responder), orange circles = analysis ports.
-  4. Users drag connections between compatible port types. Incompatible connections (e.g., port-to-port) are rejected with a red flash and tooltip error.
+  4. Users click-connect between compatible port types. Incompatible connections (e.g., port-to-port) are rejected with a red flash and error message.
   5. A **"Check Connections"** button validates the topology and highlights missing connections in yellow.
   6. A **"Show Solution"** button reveals the canonical agent topology.
   7. Preset scenarios selectable from a dropdown: Basic Agent, Scoreboard Checker, Coverage Collector.
   8. Register in MDX map and embed in `I-UVM-2B`.
   9. Write Vitest tests: node renders, valid connection accepted, invalid connection rejected.
 - **Deliverable checklist:**
-  - [ ] Draggable component nodes render
-  - [ ] Port-type validation rejects incompatible connections
-  - [ ] "Check Connections" validation works
-  - [ ] "Show Solution" overlay works
-  - [ ] All 3 preset scenarios are implemented
-  - [ ] Component registered in MDX map
-  - [ ] Vitest tests pass
+  - [x] Draggable component nodes render
+  - [x] Port-type validation rejects incompatible connections
+  - [x] "Check Connections" validation works
+  - [x] "Show Solution" overlay works
+  - [x] All 3 preset scenarios are implemented
+  - [x] Component registered in MDX map
+  - [x] Vitest tests pass (9/9)
 - **Validation:**
-  - `npx vitest run src/components/visualizers/TlmConnectionBuilderVisualizer.test.tsx`
-  - `npm run build`
+  - `npx vitest run tests/components/TlmConnectionBuilderVisualizer.test.tsx` ✅
+  - `npm run build` ✅
 
 ---
 
