@@ -1,0 +1,200 @@
+---
+title: "Power Intent and UPF Fundamentals"
+description: "Understanding IEEE 1801 Unified Power Format (UPF), supply networks, power states, and isolation strategies for low-power verification."
+order: 8
+---
+
+# Power Intent and UPF Fundamentals
+
+As designs shrink and mobile applications dominate, managing power consumption is as critical as verifying logical correctness. However, intertwining power-control logic directly with functional RTL makes the code unreadable, unportable, and extremely difficult to verify.
+
+The **Unified Power Format (UPF)**, codified as IEEE 1801, solves this by separating **logical function** from **power intent**. UPF is a side-file loaded alongside the RTL during compilation, simulation, and synthesis. It describes how blocks are powered, what happens when they lose power, and how they communicate across power domain boundaries.
+
+---
+
+## Why UPF? Logical vs. Physical Separation
+
+Before UPF, designers had to manually instantiate isolation cells and retention registers directly in the Verilog code. This tied the logical design to a specific physical implementation and made it almost impossible to verify "what if this block turns off?" without gate-level netlists.
+
+With UPF:
+- **RTL:** Describes the ideal, always-on logical behavior of the chip.
+- **UPF:** Describes which blocks sit in which power domains, what supply nets exist, and what the legal power states are.
+
+When you load both into a simulator, the simulator automatically infers data corruption (X-propagation) when a domain powers down, without you changing a single line of SystemVerilog RTL.
+
+---
+
+## The UPF Supply Network Model
+
+UPF models the power delivery network using four core concepts:
+
+1. **Power Domains (`create_power_domain`):** Groupings of logic (module instances) that share the same power characteristics. An SoC typically has a `PD_TOP` (always on) and multiple switchable domains like `PD_CPU` or `PD_DSP`.
+2. **Supply Nets (`create_supply_net`):** The physical wires that carry power or ground (e.g., `VDD`, `VSS`, `VDD_CPU`).
+3. **Supply Ports (`create_supply_port`):** The connection points where supply nets enter the chip or a specific power domain.
+4. **Supply Sets (`create_supply_set`):** Bundles of power and ground nets used to power a domain (e.g., a pair consisting of `{VDD, VSS}`).
+
+### Example: Defining Domains and Nets
+```tcl
+# Create the top always-on domain
+create_power_domain PD_TOP -include_scope
+
+# Create a switchable domain for the CPU
+create_power_domain PD_CPU -elements {u_soc_top/u_cpu}
+
+# Create supply nets
+create_supply_net VDD -domain PD_TOP
+create_supply_net VDD_CPU -domain PD_TOP
+create_supply_net VSS -domain PD_TOP
+
+# Create a supply set for the CPU domain
+create_supply_set SS_CPU -function {power VDD_CPU} -function {ground VSS}
+
+# Assign the primary supply to the domain
+set_domain_supply_net PD_CPU -primary_power_net VDD_CPU -primary_ground_net VSS
+```
+
+---
+
+## Low-Power Architectural Elements
+
+When power domains interact or shut down, specific hardware elements must be inferred by the UPF to prevent the chip from failing.
+
+### 1. Isolation Cells (`set_isolation`)
+When `PD_CPU` powers down, its outputs will float, potentially driving `X` (unknown) values into the active `PD_TOP` domain. Isolation cells clamp these boundary signals to a known safe value (usually `0` or `1`) before the power goes down.
+
+```tcl
+# Isolate outputs of PD_CPU to '0' when iso_en is high
+set_isolation iso_cpu_out -domain PD_CPU \
+  -isolation_power_net VDD -isolation_ground_net VSS \
+  -clamp_value 0
+
+set_isolation_control iso_cpu_out -domain PD_CPU \
+  -isolation_signal {u_soc_top/u_pmu/cpu_iso_en} \
+  -isolation_sense high -location parent
+```
+
+### 2. Retention Registers (`set_retention`)
+If `PD_CPU` wakes up, it normally resets completely. If it needs to remember its state (so-called "sleep mode"), UPF infers retention registers. These registers are powered by a backup, always-on supply.
+
+```tcl
+# Retain state in the CPU domain when save_en is pulsed
+set_retention ret_cpu -domain PD_CPU \
+  -retention_power_net VDD -retention_ground_net VSS
+
+set_retention_control ret_cpu -domain PD_CPU \
+  -save_signal {u_pmu/save_en high} \
+  -restore_signal {u_pmu/restore_en high}
+```
+
+### 3. Level Shifters (`set_level_shifter`)
+If `PD_CPU` runs at 0.8V and `PD_TOP` runs at 1.2V, signals crossing the boundary must be scaled. UPF inserts level shifters automatically based on the voltages defined in the power states.
+
+### 4. Always-On Logic
+Inside a powered-down domain, some logic (like the wake-up interrupt router) might need to stay active. This is modelled in UPF using the `-elements` switch to map specific sub-modules back to the always-on `PD_TOP` supply.
+
+---
+
+## Power States and PSTs
+
+The simulator needs to know the legal combinations of voltages across different nets. This is defined by **Power States** and **Power State Tables (PST)**.
+
+- **ON state:** The net is fully powered.
+- **OFF state:** The net is disconnected (drives simulating `X`).
+- **STANDBY state:** The net voltage is lowered (saves leakage, state retained, but clock usually stopped).
+
+```tcl
+# Define states for the supply sets
+add_power_state SS_TOP -state ON {-supply_expr {power == `{FULL_ON, 1.2V}} -simstate NORMAL}
+add_power_state SS_CPU -state ON {-supply_expr {power == `{FULL_ON, 0.8V}} -simstate NORMAL}
+add_power_state SS_CPU -state OFF {-supply_expr {power == `{OFF}} -simstate CORRUPT}
+
+# Create a Power State Table (PST) defining legal combinations
+create_pst pst_soc -supplies {SS_TOP SS_CPU}
+
+# Add legal states to the PST
+add_pst_state ALL_ON -pst pst_soc -state {ON ON}
+add_pst_state CPU_SLEEP -pst pst_soc -state {ON OFF}
+```
+
+When the simulation runs, if the power controller (`u_pmu`) drops the `VDD_CPU` net, the UPF engine transitions `SS_CPU` to the `OFF` state. The simulator automatically corrupts all unprotected registers in `PD_CPU` to `X`.
+
+---
+
+## Anatomy of a Power-Aware Environment
+
+**`soc_top.sv`**
+```systemverilog
+module soc_top (
+  input logic clk,
+  input logic rst_n
+);
+  // PMU controls isolation and power switching
+  logic cpu_iso_en;
+  logic cpu_pwr_en;
+
+  pmu u_pmu (
+    .clk(clk),
+    .cpu_iso_en(cpu_iso_en),
+    .cpu_pwr_en(cpu_pwr_en)
+  );
+
+  // CPU logic doesn't know it can be powered down!
+  logic [31:0] cpu_data_out;
+  
+  cpu_core u_cpu (
+    .clk(clk),
+    .rst_n(rst_n),
+    .data_out(cpu_data_out)
+  );
+  
+  // Top-level logic expects stable data from CPU
+  top_logic u_top (
+    .cpu_data(cpu_data_out)
+  );
+endmodule
+```
+
+
+**`power_intent.upf`**
+```tcl
+upf_version 2.1
+
+# 1. Domains
+create_power_domain PD_TOP -include_scope
+create_power_domain PD_CPU -elements {u_cpu}
+
+# 2. Nets and Sets
+create_supply_net VDD -domain PD_TOP
+create_supply_net VSS -domain PD_TOP
+create_supply_net VDD_CPU -domain PD_TOP
+
+create_supply_set SS_TOP -function {power VDD} -function {ground VSS}
+create_supply_set SS_CPU -function {power VDD_CPU} -function {ground VSS}
+
+# 3. Supply connections
+set_domain_supply_net PD_TOP -primary_power_net VDD -primary_ground_net VSS
+set_domain_supply_net PD_CPU -primary_power_net VDD_CPU -primary_ground_net VSS
+
+# 4. Isolation
+set_isolation iso_cpu -domain PD_CPU -isolation_power_net VDD -isolation_ground_net VSS -clamp_value 0
+set_isolation_control iso_cpu -domain PD_CPU -isolation_signal {u_pmu/cpu_iso_en} -isolation_sense high -location parent
+
+# 5. Power switch
+create_power_switch psw_cpu -domain PD_CPU \
+  -input_supply_port {in VDD} \
+  -output_supply_port {out VDD_CPU} \
+  -control_port {en u_pmu/cpu_pwr_en} \
+  -on_state {ON in {en}}
+```
+
+
+---
+
+## Moving Forward: Verification Strategy
+
+UPF defines the physical rules, but as an engineer, your job is to verify the functional transitions. You must answer:
+- What happens if the `pwr_en` signal is dropped *before* `iso_en` is asserted? (A glitch leaks into `PD_TOP`).
+- What if the CPU is awakened but receives a transaction before its reset completes?
+
+For the low-level signal timing constraints, you will write [power-aware SVA assertions](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals).
+For the system-level orchestration of shutdown and wake-up testing, transition to the [SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies) and the specialized expert power module (E-PWR-1, coming soon).

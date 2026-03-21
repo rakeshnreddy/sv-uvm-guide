@@ -369,6 +369,17 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "Power Intent and UPF Fundamentals",
+        "slug": "I-SV-8_Power_Intent_and_UPF",
+        "topics": [
+          {
+            "title": "Power Intent and UPF Fundamentals",
+            "slug": "index",
+            "description": "Understanding IEEE 1801 Unified Power Format (UPF), supply networks, power states, and isolation strategies for low-power verification."
+          }
+        ]
+      },
+      {
         "title": "I-UVM-1A: UVM Objects and Components",
         "slug": "I-UVM-1A_Components",
         "topics": [

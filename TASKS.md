@@ -105,8 +105,8 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 20 | `W7-IUVM-RECORDING` | P1 | `complete` | `W6-EDBG1-MOD` | Add the missing UVM recording-classes lesson tied to debug telemetry architecture. |
 | 21 | `W8-EXPERT-CLEANUP` | P2 | `complete` | `W6-EDBG1-MOD`, `W6-EINT1-MOD`, `W6-ESOC1-MOD`, `W7-ISV-API` | Re-home thin expert pages and normalize ownership after W6/W7 content work lands. |
 | 22 | `W8-ASSET-MAPPING` | P2 | `complete` | `W5-AUVM4-SPLIT`, `W6-ECUST1-MOD`, `W6-ESOC1-MOD` | Map or retire unused verification visuals/diagrams. |
-| 23 | `W8-CONCEPT-LINKS` | P2 | `todo` | all content tasks above | Run a final canonical concept-linking pass across the curriculum. |
-| 24 | `W9-ISV-UPF` | P1 | `todo` | none | Create a dedicated UPF/power-intent fundamentals lesson with supply network and power-state teaching. |
+| 23 | `W8-CONCEPT-LINKS` | P2 | `complete` | all content tasks above | Run a final canonical concept-linking pass across the curriculum. |
+| 24 | `W9-ISV-UPF` | P1 | `complete` | none | Create a dedicated UPF/power-intent fundamentals lesson with supply network and power-state teaching. |
 | 25 | `W9-EPWR-STRATEGY` | P1 | `todo` | `W9-ISV-UPF`, `W6-ESOC1-MOD` | Build the expert power-aware UVM verification strategy module with corruption semantics and shutdown/wake-up verification. |
 | 26 | `W9-EPWR-LAB` | P1 | `todo` | `W9-EPWR-STRATEGY`, `W8-LABS-PLATFORM` | Create a power-state verification lab and `PowerDomainVisualizer` interactive. |
 
@@ -567,7 +567,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W8-CONCEPT-LINKS`
 - Priority: P2
-- Status: `todo`
+- Status: `complete`
 - Depends On: all content tasks above
 - Related IDs: `AUD-019`
 - Primary surfaces: curriculum MDX across tiers
@@ -577,15 +577,15 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   2. Add consistent back-links from higher-tier mentions to those canonical lessons.
   3. Ensure the final path feels like a graph of reinforcing lessons rather than isolated pages.
 - Deliverable checklist:
-  - [ ] Canonical pages are defined for repeated concepts.
-  - [ ] Higher-tier pages link back to canonical foundations/intermediate lessons.
-  - [ ] The curriculum no longer relies on plain-text concept mentions where a canonical link is expected.
+  - [x] Canonical pages are defined for repeated concepts.
+  - [x] Higher-tier pages link back to canonical foundations/intermediate lessons.
+  - [x] The curriculum no longer relies on plain-text concept mentions where a canonical link is expected.
 - Validation:
   - Run a targeted grep-based audit for major repeated concepts after the pass.
 
 ### `W9-ISV-UPF`
 - Priority: P1
-- Status: `todo`
+- Status: `complete`
 - Depends On: none
 - Related IDs: none
 - Primary surfaces: new `content/curriculum/T2_Intermediate/I-SV-8_Power_Intent_and_UPF/index.mdx`
@@ -600,11 +600,11 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   7. Add an interactive code block showing a multi-domain UPF file alongside the RTL it annotates.
   8. Cross-link to SVA (I-SV-4A) for power-aware assertions and to the SoC module (E-SOC-1) for system-level context.
 - Deliverable checklist:
-  - [ ] `I-SV-8_Power_Intent_and_UPF/index.mdx` exists with IEEE 1801-grounded content.
-  - [ ] Supply network, power domains, and power states are taught clearly.
-  - [ ] Isolation, level shifting, and retention semantics are explained.
-  - [ ] UPF command set is taught with annotated examples.
-  - [ ] Cross-links to SVA, SoC, and the expert power module are set.
+  - [x] `I-SV-8_Power_Intent_and_UPF/index.mdx` exists with IEEE 1801-grounded content.
+  - [x] Supply network, power domains, and power states are taught clearly.
+  - [x] Isolation, level shifting, and retention semantics are explained.
+  - [x] UPF command set is taught with annotated examples.
+  - [x] Cross-links to SVA, SoC, and the expert power module are set.
 - Validation:
   - Regenerate curriculum data.
   - Add route smoke coverage for the new module.
