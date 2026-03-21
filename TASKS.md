@@ -8,7 +8,7 @@
 
 | Order | ID | Priority | Status | Depends On | Description |
 |---|---|---|---|---|---|
-| 1 | INFRA-1-REPO-CLEANUP | P0 | todo | none | Remove stray root-level developer artifacts and move LRM PDFs to git-lfs. |
+| 1 | INFRA-1-REPO-CLEANUP | P0 | complete | none | Remove stray root-level developer artifacts and move LRM PDFs to git-lfs. |
 | 2 | INFRA-2-LABS-DEDUP | P0 | todo | INFRA-1-REPO-CLEANUP | Reconcile dual labs/ directories and fix curriculum data generator path references. |
 | 3 | INFRA-3-APPROUTER-MIGRATION | P0 | todo | none | Complete Next.js App Router migration by resolving src/pages/ vs src/app/ coexistence. |
 | 4 | CONTENT-1-F3-SCHEDULING | P0 | todo | none | Author the missing F3_* module group: SV Scheduling Semantics, Regions & Delta Cycles. |
@@ -47,7 +47,7 @@
 
 ### `INFRA-1-REPO-CLEANUP`
 - **Priority:** P0
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `none`
 - **Primary surfaces:**
   - `3dvisualization.html`
@@ -70,12 +70,12 @@
   5. Add `docs/archive/` and `*.pdf` (non-lfs) to `.gitignore`.
   6. Update `README.md` to remove any references to the moved files.
 - **Deliverable checklist:**
-  - [ ] Repo root contains only standard project files (README, LICENSE, config files, package.json, source dirs)
-  - [ ] `.gitattributes` created with LFS tracking for `*.pdf`
-  - [ ] `git lfs ls-files` shows both PDFs tracked
-  - [ ] All stray `.md` artifact files are under `docs/archive/`
-  - [ ] `check_pages.js` is under `scripts/`
-  - [ ] `README.md` updated
+  - [x] Repo root contains only standard project files (README, LICENSE, config files, package.json, source dirs)
+  - [x] `.gitattributes` created with LFS tracking for `*.pdf`
+  - [x] `git lfs ls-files` shows both PDFs tracked
+  - [x] All stray `.md` artifact files are under `docs/archive/`
+  - [x] `check_pages.js` is under `scripts/`
+  - [x] `README.md` updated
 - **Validation:**
   - `git lfs ls-files` — should list both PDFs
   - `ls -la` at repo root — should show clean directory
