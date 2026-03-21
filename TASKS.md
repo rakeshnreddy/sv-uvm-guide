@@ -108,7 +108,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 | 23 | `W8-CONCEPT-LINKS` | P2 | `complete` | all content tasks above | Run a final canonical concept-linking pass across the curriculum. |
 | 24 | `W9-ISV-UPF` | P1 | `complete` | none | Create a dedicated UPF/power-intent fundamentals lesson with supply network and power-state teaching. |
 | 25 | `W9-EPWR-STRATEGY` | P1 | `complete` | `W9-ISV-UPF`, `W6-ESOC1-MOD` | Build the expert power-aware UVM verification strategy module with corruption semantics and shutdown/wake-up verification. |
-| 26 | `W9-EPWR-LAB` | P1 | `todo` | `W9-EPWR-STRATEGY`, `W8-LABS-PLATFORM` | Create a power-state verification lab and `PowerDomainVisualizer` interactive. |
+| 26 | `W9-EPWR-LAB` | P1 | `complete` | `W9-EPWR-STRATEGY`, `W8-LABS-PLATFORM` | Create a power-state verification lab and `PowerDomainVisualizer` interactive. |
 
 ## Detailed Task Briefs
 
@@ -643,7 +643,7 @@ Execute tasks in this order unless the user explicitly reprioritizes.
 
 ### `W9-EPWR-LAB`
 - Priority: P1
-- Status: `todo`
+- Status: `complete`
 - Depends On: `W9-EPWR-STRATEGY`, `W8-LABS-PLATFORM`
 - Related IDs: none
 - Primary surfaces: new `PowerDomainVisualizer.tsx`, new power-state lab assets, lab-registry entry
@@ -660,11 +660,11 @@ Execute tasks in this order unless the user explicitly reprioritizes.
   6. Embed both in the E-PWR-1 module.
   7. Unit-test the visualizer.
 - Deliverable checklist:
-  - [ ] `PowerDomainVisualizer.tsx` exists and is embedded in E-PWR-1.
-  - [ ] Visualizer unit tests pass.
-  - [ ] Retention-bug lab exists with buggy testbench, solution, and README.
-  - [ ] Lab is registered and discoverable.
-  - [ ] The lab link is embedded in the E-PWR-1 lesson.
+  - [x] `PowerDomainVisualizer.tsx` exists and is embedded in E-PWR-1.
+  - [x] Visualizer unit tests pass.
+  - [x] Retention-bug lab exists with buggy testbench, solution, and README.
+  - [x] Lab is registered and discoverable.
+  - [x] The lab link is embedded in the E-PWR-1 lesson.
 - Validation:
   - Unit-test the visualizer.
   - Add route smoke coverage for the lab.

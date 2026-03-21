@@ -431,6 +431,31 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
         starterCode: ""
       }
     ]
+  },
+  "power_aware_retention": {
+    id: "power_aware_retention",
+    title: "Retention Bug and Isolation Sequencing",
+    description: "Identify and fix a critical bug in a Power Management Unit wake-up sequence.",
+    owningModule: "E-PWR-1",
+    routeSlug: "power-aware-retention",
+    prerequisites: [],
+    assetLocation: "content/labs/power_aware/lab1_retention_bug",
+    status: "available",
+    graderType: "systemverilog",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Understand the Bug",
+        instructions: "Analyze the failing test sequence in `buggy_tb.sv` where isolation is released before power is strictly stable.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Reorder Sequence",
+        instructions: "Fix the sequence so isolation remains asserted until after power is completely restored and context is reloaded.",
+        starterCode: ""
+      }
+    ]
   }
 };
 

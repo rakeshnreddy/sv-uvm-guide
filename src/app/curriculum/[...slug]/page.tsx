@@ -234,6 +234,7 @@ const components = {
   UvmPolicyVisualizer: dynamic(() => import('@/components/visuals/UvmPolicyVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   UvmContainerVisualizer: dynamic(() => import('@/components/visuals/UvmContainerVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   TransactionRecordingVisualizer: dynamic(() => import('@/components/visuals/TransactionRecordingVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
+  PowerDomainVisualizer: dynamic(() => import('@/components/curriculum/interactives/visuals/PowerDomainVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   LabLink,
 };
 
