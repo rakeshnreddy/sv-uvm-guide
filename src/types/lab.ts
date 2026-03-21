@@ -14,7 +14,7 @@ export interface LabMetadata {
   owningModule: string;
   routeSlug: string; 
   prerequisites: string[]; // array of module IDs
-  assetLocation: string; // 'labs/' or 'content/curriculum/labs/'
+  assetLocation: string; // 'content/curriculum/labs/'
   status: LabStatus;
   graderType: 'systemverilog' | 'uvm' | 'custom' | 'none';
   steps: LabStep[];

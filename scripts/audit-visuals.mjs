@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const searchDirs = ['src/app', 'content/curriculum', 'content/labs', 'src/components'];
+const searchDirs = ['src/app', 'content/curriculum', 'src/components'];
 const componentDirs = ['src/components/diagrams', 'src/components/visuals'];
 
 const getAllFiles = (dir, ext) => {

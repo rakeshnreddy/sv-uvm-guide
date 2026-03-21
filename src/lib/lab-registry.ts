@@ -8,7 +8,7 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     owningModule: "F2D", 
     routeSlug: "basics-1",
     prerequisites: [],
-    assetLocation: "labs/basics/lab1_refactoring",
+    assetLocation: "content/curriculum/labs/basics/lab1_refactoring",
     status: "available",
     graderType: "systemverilog",
     steps: [
@@ -33,7 +33,7 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     owningModule: "F2C",
     routeSlug: "common-1",
     prerequisites: ["basics-1"],
-    assetLocation: "labs/common",
+    assetLocation: "content/curriculum/labs/common",
     status: "coming_soon",
     graderType: "systemverilog",
     steps: []
@@ -45,7 +45,7 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     owningModule: "I-SV-1",
     routeSlug: "fifo-1",
     prerequisites: ["common-1"],
-    assetLocation: "labs/fifo",
+    assetLocation: "content/curriculum/labs/fifo",
     status: "coming_soon",
     graderType: "systemverilog",
     steps: []
@@ -57,7 +57,7 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     owningModule: "F4",
     routeSlug: "simple-dut-1",
     prerequisites: [],
-    assetLocation: "labs/simple_dut",
+    assetLocation: "content/curriculum/labs/simple_dut",
     status: "coming_soon",
     graderType: "uvm",
     steps: []
@@ -69,7 +69,7 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     owningModule: "I-UVM-2B",
     routeSlug: "scoreboard-decoupling",
     prerequisites: ["simple-dut-1"],
-    assetLocation: "labs/scoreboard_decoupling",
+    assetLocation: "content/curriculum/labs/scoreboard_decoupling",
     status: "available",
     graderType: "uvm",
     steps: [
@@ -100,7 +100,7 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     owningModule: "I-UVM-2C",
     routeSlug: "config-debug",
     prerequisites: ["simple-dut-1"],
-    assetLocation: "labs/config_debug",
+    assetLocation: "content/curriculum/labs/config_debug",
     status: "available",
     graderType: "uvm",
     steps: [
@@ -131,7 +131,7 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     owningModule: "I-SV-5",
     routeSlug: "ipc-deadlock",
     prerequisites: ["systemverilog-basics"],
-    assetLocation: "labs/ipc_deadlock",
+    assetLocation: "content/curriculum/labs/ipc_deadlock",
     status: "available",
     graderType: "systemverilog",
     steps: [
@@ -162,7 +162,7 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     owningModule: "I-UVM-2A",
     routeSlug: "arbiter-1",
     prerequisites: ["simple-dut-1"],
-    assetLocation: "labs/arbiter",
+    assetLocation: "content/curriculum/labs/arbiter",
     status: "coming_soon",
     graderType: "uvm",
     steps: []
@@ -174,7 +174,7 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     owningModule: "I-SV-4A",
     routeSlug: "assertions-1",
     prerequisites: [],
-    assetLocation: "labs/assertions",
+    assetLocation: "content/curriculum/labs/assertions",
     status: "coming_soon",
     graderType: "systemverilog",
     steps: []
@@ -186,7 +186,7 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     owningModule: "F2B",
     routeSlug: "constructs-1",
     prerequisites: [],
-    assetLocation: "labs/constructs",
+    assetLocation: "content/curriculum/labs/constructs",
     status: "coming_soon",
     graderType: "systemverilog",
     steps: []
@@ -198,7 +198,7 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     owningModule: "I-UVM-3B",
     routeSlug: "dma-1",
     prerequisites: ["arbiter-1"],
-    assetLocation: "labs/dma",
+    assetLocation: "content/curriculum/labs/dma",
     status: "coming_soon",
     graderType: "uvm",
     steps: []
@@ -439,7 +439,7 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
     owningModule: "E-PWR-1",
     routeSlug: "power-aware-retention",
     prerequisites: [],
-    assetLocation: "content/labs/power_aware/lab1_retention_bug",
+    assetLocation: "content/curriculum/labs/power_aware/lab1_retention_bug",
     status: "available",
     graderType: "systemverilog",
     steps: [
