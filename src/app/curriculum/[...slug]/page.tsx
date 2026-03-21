@@ -152,6 +152,10 @@ const TlmConnectionBuilderVisualizer = dynamic(
   () => import('@/components/visualizers/TlmConnectionBuilderVisualizer').then(mod => mod.TlmConnectionBuilderVisualizer),
   { ssr: false, loading: () => <VisualizationFallback /> }
 );
+const FactoryOverrideExplorerVisualizer = dynamic(
+  () => import('@/components/visualizers/FactoryOverrideExplorerVisualizer').then(mod => mod.FactoryOverrideExplorerVisualizer),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -246,6 +250,7 @@ const components = {
   LabLink,
   SVSchedulerRegionVisualizer,
   TlmConnectionBuilderVisualizer,
+  FactoryOverrideExplorerVisualizer,
   UvmPhaseTimelineVisualizer: dynamic(() => import('@/components/visualizers/UvmPhaseTimelineVisualizer').then(mod => mod.UvmPhaseTimelineVisualizer), { ssr: false, loading: () => <VisualizationFallback /> }),
 };
 

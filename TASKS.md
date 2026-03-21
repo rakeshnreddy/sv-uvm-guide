@@ -16,7 +16,7 @@
 | 6 | CONTENT-2-T1T2-BRIDGE | P1 | complete | CONTENT-1-F3-SCHEDULING | Author "Why UVM?" bridge module between I-SV-8 and I-UVM-1A. |
 | 7 | VIZ-2-UVM-PHASE-TIMELINE | P0 | complete | none | Build UvmPhaseTimelineVisualizer.tsx: interactive phasing swimlane with click-to-expand. |
 | 8 | VIZ-3-TLM-CONNECTION-BUILDER | P0 | complete | none | Build TlmConnectionBuilderVisualizer.tsx: drag-and-drop TLM port/socket wiring. |
-| 9 | VIZ-4-FACTORY-OVERRIDE-EXPLORER | P0 | todo | none | Build FactoryOverrideExplorerVisualizer.tsx: live factory registry with override simulation. |
+| 9 | VIZ-4-FACTORY-OVERRIDE-EXPLORER | P0 | complete | none | Build FactoryOverrideExplorerVisualizer.tsx: live factory registry with override simulation. |
 | 10 | VIZ-5-CONSTRAINT-HEATMAP | P1 | todo | none | Build ConstraintSolverHeatmapVisualizer.tsx: distribution heatmap for rand variables. |
 | 11 | VIZ-6-SVA-WAVEFORM | P1 | todo | none | Build SvaSequenceWaveformVisualizer.tsx: waveform-style temporal sequence stepper. |
 | 12 | VIZ-7-COVERAGE-CROSS-EXPLORER | P1 | todo | none | Build CoverageCrossExplorerVisualizer.tsx: interactive covergroup cross-bin matrix. |
@@ -303,34 +303,34 @@
 
 ### `VIZ-4-FACTORY-OVERRIDE-EXPLORER`
 - **Priority:** P0
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `none`
 - **Primary surfaces:**
-  - `src/components/visualizers/FactoryOverrideExplorerVisualizer.tsx` (create)
-  - `src/components/visualizers/FactoryOverrideExplorerVisualizer.test.tsx` (create)
-  - `src/app/curriculum/[...slug]/page.tsx` (register)
-  - `content/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index.mdx` (embed)
+  - `src/components/visualizers/FactoryOverrideExplorerVisualizer.tsx` (created)
+  - `tests/components/FactoryOverrideExplorerVisualizer.test.tsx` (created)
+  - `src/app/curriculum/[...slug]/page.tsx` (registered)
+  - `content/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index.mdx` (embedded)
 - **Problem statement:** The UVM factory's type and instance override mechanism is the most frequently misunderstood advanced feature for new verification engineers. Learners must understand the registry, how `create()` dispatches, and how type overrides propagate down the hierarchy — all of which are impossible to convey with static text alone.
 - **Scope:**
-  1. Create `FactoryOverrideExplorerVisualizer.tsx` as a `"use client"` component.
-  2. Display a default UVM component tree (test → env → agent → driver).
-  3. Show a **Factory Registry panel** listing registered types.
-  4. Provide a form to apply a **Type Override**: select base type and override type from dropdowns. Apply changes to the tree in real time.
-  5. Provide a form to apply an **Instance Override**: specify the full hierarchical path string and the override type.
-  6. After overrides are applied, highlight changed nodes in the tree with a different color and badge showing "OVERRIDDEN".
-  7. A **"Simulate create()"** button walks through the factory lookup algorithm step by step in a log panel on the right.
-  8. Register in MDX map and embed in `I-UVM-1B`.
-  9. Vitest tests: initial tree renders correctly, type override updates tree node, instance override at path updates only that node.
+  1. Created `FactoryOverrideExplorerVisualizer.tsx` as a `"use client"` component.
+  2. Displays a default UVM component tree (test → env → agent → driver/monitor/sequencer).
+  3. Shows a **Factory Registry panel** listing registered types.
+  4. Provides a form to apply a **Type Override**: select base type and override type from dropdowns. Changes apply to the tree in real time.
+  5. Provides a form to apply an **Instance Override**: specify the full hierarchical path string and the override type.
+  6. After overrides are applied, highlights changed nodes with a different color and badge showing "TYPE OVERRIDE" or "INST OVERRIDE".
+  7. A **"simulate"** button on leaf nodes walks through the factory lookup algorithm step by step in a log panel.
+  8. Registered in MDX map and embedded in `I-UVM-1B`.
+  9. Vitest tests: initial tree renders, type override updates tree, instance override targets only path, simulate create() log.
 - **Deliverable checklist:**
-  - [ ] Default component tree renders with all 4 levels
-  - [ ] Type override form updates all matching nodes
-  - [ ] Instance override form updates only the targeted path node
-  - [ ] "Simulate create()" step log shows correct resolution order
-  - [ ] Component registered in MDX map
-  - [ ] Vitest tests pass
+  - [x] Default component tree renders with all 4 levels
+  - [x] Type override form updates all matching nodes
+  - [x] Instance override form updates only the targeted path node
+  - [x] "Simulate create()" step log shows correct resolution order
+  - [x] Component registered in MDX map
+  - [x] Vitest tests pass (7/7)
 - **Validation:**
-  - `npx vitest run src/components/visualizers/FactoryOverrideExplorerVisualizer.test.tsx`
-  - `npm run build`
+  - `npx vitest run tests/components/FactoryOverrideExplorerVisualizer.test.tsx` ✅
+  - `npm run build` ✅
 
 ---
 
