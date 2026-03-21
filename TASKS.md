@@ -13,7 +13,7 @@
 | 3 | INFRA-3-APPROUTER-MIGRATION | P0 | complete | none | Complete Next.js App Router migration by resolving src/pages/ vs src/app/ coexistence. |
 | 4 | CONTENT-1-F3-SCHEDULING | P0 | complete | none | Author the missing F3_* module group: SV Scheduling Semantics, Regions & Delta Cycles. |
 | 5 | VIZ-1-SV-SCHEDULER | P0 | complete | CONTENT-1-F3-SCHEDULING | Build SVSchedulerRegionVisualizer.tsx: animated delta-cycle and region stepper. |
-| 6 | CONTENT-2-T1T2-BRIDGE | P1 | todo | CONTENT-1-F3-SCHEDULING | Author "Why UVM?" bridge module between I-SV-8 and I-UVM-1A. |
+| 6 | CONTENT-2-T1T2-BRIDGE | P1 | complete | CONTENT-1-F3-SCHEDULING | Author "Why UVM?" bridge module between I-SV-8 and I-UVM-1A. |
 | 7 | VIZ-2-UVM-PHASE-TIMELINE | P0 | todo | none | Build UvmPhaseTimelineVisualizer.tsx: interactive phasing swimlane with click-to-expand. |
 | 8 | VIZ-3-TLM-CONNECTION-BUILDER | P0 | todo | none | Build TlmConnectionBuilderVisualizer.tsx: drag-and-drop TLM port/socket wiring. |
 | 9 | VIZ-4-FACTORY-OVERRIDE-EXPLORER | P0 | todo | none | Build FactoryOverrideExplorerVisualizer.tsx: live factory registry with override simulation. |
@@ -210,27 +210,27 @@
 
 ### `CONTENT-2-T1T2-BRIDGE`
 - **Priority:** P1
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `CONTENT-1-F3-SCHEDULING`
 - **Primary surfaces:**
-  - `content/curriculum/T2_Intermediate/I-BRIDGE-0_Why_UVM/index.mdx` (create)
-  - `scripts/generate-curriculum.ts`
+  - `content/curriculum/T2_Intermediate/I-SV-9_Why_UVM/index.mdx` (created — renamed from `I-BRIDGE-0` to `I-SV-9` for correct alphabetical sort order)
+  - `scripts/generate-curriculum.ts` (no changes needed — auto-discovers directories)
 - **Problem statement:** Learners completing T1 and the SystemVerilog half of T2 (through `I-SV-8`) are cold-dropped into UVM components (`I-UVM-1A`) with no narrative transition. There is no module explaining the testbench scalability problems that UVM was designed to solve (duplication, non-reusability, lack of standardized phasing). This creates motivation failure and confusion about why UVM's complexity is justified.
 - **Scope:**
-  1. Author `I-BRIDGE-0_Why_UVM/index.mdx` as the final pre-UVM module.
+  1. Author `I-SV-9_Why_UVM/index.mdx` as the final pre-UVM module.
   2. Content sections: (a) The Testbench Scaling Problem — illustrate a naive Verilog testbench with hard-coded stimulus, (b) The Reuse Problem — show code duplication across projects, (c) The Standardization Solution — introduce the OVM→UVM historical arc, (d) UVM's Core Value Propositions — factory, phasing, TLM, and sequences as the four pillars, (e) "What You'll Build" — preview of the UVM environment learners will construct across T2-T3.
   3. Include a comparison table: Naive TB vs. UVM TB across dimensions of reusability, configurability, scalability, and debug.
-  4. Insert a `<UvmHeroDiagram />` (already exists at `src/components/UvmHeroDiagram.tsx`) in the appropriate section.
-  5. Update `scripts/generate-curriculum.ts` to insert this module between `I-SV-8` and `I-UVM-1A`.
+  4. Embedded `<InteractiveUvmArchitectureDiagram />` (already registered in MDX component map).
+  5. Curriculum generator auto-discovers directories alphabetically — no manual update needed.
 - **Deliverable checklist:**
-  - [ ] `I-BRIDGE-0_Why_UVM/index.mdx` exists with valid frontmatter
-  - [ ] Comparison table is present
-  - [ ] `<UvmHeroDiagram />` is embedded
-  - [ ] Module appears in nav between `I-SV-8` and `I-UVM-1A`
-  - [ ] `npm run generate:curriculum` succeeds
+  - [x] `I-SV-9_Why_UVM/index.mdx` exists with valid frontmatter
+  - [x] Comparison table is present
+  - [x] `<InteractiveUvmArchitectureDiagram />` is embedded
+  - [x] Module appears in nav between `I-SV-8` and `I-UVM-1A`
+  - [x] `npm run generate:curriculum` succeeds
 - **Validation:**
-  - `npm run generate:curriculum`
-  - `npm run build`
+  - `npm run generate:curriculum` ✅
+  - `npm run build` ✅
 
 ---
 

@@ -413,6 +413,17 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "Why UVM? The Bridge from SystemVerilog to Verification Methodology",
+        "slug": "I-SV-9_Why_UVM",
+        "topics": [
+          {
+            "title": "Why UVM? The Bridge from SystemVerilog to Verification Methodology",
+            "slug": "index",
+            "description": "Understand the testbench scalability and reuse problems that motivated the Universal Verification Methodology, and preview the four pillars you will master across T2 and T3."
+          }
+        ]
+      },
+      {
         "title": "I-UVM-1A: UVM Objects and Components",
         "slug": "I-UVM-1A_Components",
         "topics": [
