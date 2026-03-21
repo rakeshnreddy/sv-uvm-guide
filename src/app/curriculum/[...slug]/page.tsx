@@ -241,6 +241,7 @@ const components = {
   PowerDomainVisualizer: dynamic(() => import('@/components/curriculum/interactives/visuals/PowerDomainVisualizer'), { ssr: false, loading: () => <VisualizationFallback /> }),
   LabLink,
   SVSchedulerRegionVisualizer,
+  UvmPhaseTimelineVisualizer: dynamic(() => import('@/components/visualizers/UvmPhaseTimelineVisualizer').then(mod => mod.UvmPhaseTimelineVisualizer), { ssr: false, loading: () => <VisualizationFallback /> }),
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {

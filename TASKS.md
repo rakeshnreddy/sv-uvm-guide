@@ -14,7 +14,7 @@
 | 4 | CONTENT-1-F3-SCHEDULING | P0 | complete | none | Author the missing F3_* module group: SV Scheduling Semantics, Regions & Delta Cycles. |
 | 5 | VIZ-1-SV-SCHEDULER | P0 | complete | CONTENT-1-F3-SCHEDULING | Build SVSchedulerRegionVisualizer.tsx: animated delta-cycle and region stepper. |
 | 6 | CONTENT-2-T1T2-BRIDGE | P1 | complete | CONTENT-1-F3-SCHEDULING | Author "Why UVM?" bridge module between I-SV-8 and I-UVM-1A. |
-| 7 | VIZ-2-UVM-PHASE-TIMELINE | P0 | todo | none | Build UvmPhaseTimelineVisualizer.tsx: interactive phasing swimlane with click-to-expand. |
+| 7 | VIZ-2-UVM-PHASE-TIMELINE | P0 | complete | none | Build UvmPhaseTimelineVisualizer.tsx: interactive phasing swimlane with click-to-expand. |
 | 8 | VIZ-3-TLM-CONNECTION-BUILDER | P0 | todo | none | Build TlmConnectionBuilderVisualizer.tsx: drag-and-drop TLM port/socket wiring. |
 | 9 | VIZ-4-FACTORY-OVERRIDE-EXPLORER | P0 | todo | none | Build FactoryOverrideExplorerVisualizer.tsx: live factory registry with override simulation. |
 | 10 | VIZ-5-CONSTRAINT-HEATMAP | P1 | todo | none | Build ConstraintSolverHeatmapVisualizer.tsx: distribution heatmap for rand variables. |
@@ -236,34 +236,34 @@
 
 ### `VIZ-2-UVM-PHASE-TIMELINE`
 - **Priority:** P0
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `none`
 - **Primary surfaces:**
-  - `src/components/visualizers/UvmPhaseTimelineVisualizer.tsx` (create)
-  - `src/components/visualizers/UvmPhaseTimelineVisualizer.test.tsx` (create)
-  - `src/app/curriculum/[...slug]/page.tsx` (register)
-  - `content/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index.mdx` (embed component)
+  - `src/components/visualizers/UvmPhaseTimelineVisualizer.tsx` (created)
+  - `tests/components/UvmPhaseTimelineVisualizer.test.tsx` (created)
+  - `src/app/curriculum/[...slug]/page.tsx` (registered)
+  - `content/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index.mdx` (embedded)
 - **Problem statement:** UVM phasing (`build_phase` → `connect_phase` → `run_phase` → `extract_phase` etc.) is the second-biggest confusion point after TLM for new UVM engineers. The standard is 12 phases with specific ordering guarantees and parallel execution semantics. No visualizer exists for this critical concept.
 - **Scope:**
-  1. Create `UvmPhaseTimelineVisualizer.tsx` as a `"use client"` component.
-  2. Render a vertical swimlane diagram: columns = UVM components (uvm_test, uvm_env, uvm_agent, uvm_driver, uvm_monitor), rows = phases in order.
-  3. On hover/click of any phase cell, expand a side panel showing: (a) the phase name, (b) which base class defines it, (c) typical operations performed in that component at that phase, (d) a minimal SV code snippet.
-  4. Add a **"Run Animation"** button that lights up each phase row in sequence with a 600ms delay, simulating phase progression.
-  5. Highlight `run_phase` distinctly to show it is the only time-consuming phase.
-  6. Add a toggle: **"Show Custom Phases"** to overlay user-defined schedule_phase examples.
-  7. Embed `<UvmPhaseTimelineVisualizer />` in `I-UVM-1C_UVM_Phasing/index.mdx`.
-  8. Register in MDX component map.
-  9. Write Vitest tests: renders correctly, animation state advances, hover panel displays correct phase data.
+  1. Created `UvmPhaseTimelineVisualizer.tsx` as a `"use client"` component.
+  2. Renders a vertical swimlane diagram: columns = UVM components (uvm_test, uvm_env, uvm_agent, uvm_driver, uvm_monitor), rows = phases in order.
+  3. On click of any phase cell, expands a side panel showing: (a) the phase name, (b) which base class defines it, (c) typical operations, (d) a minimal SV code snippet.
+  4. Added **"Run Animation"** button that lights up each phase row in sequence with a 600ms delay.
+  5. `run_phase` highlighted distinctly with amber border and background.
+  6. Added **"Show Custom Phases"** toggle to overlay 9 optional runtime phases.
+  7. Embedded `<UvmPhaseTimelineVisualizer />` in `I-UVM-1C_UVM_Phasing/index.mdx`.
+  8. Registered in MDX component map.
+  9. Wrote 9 Vitest tests covering rendering, animation, cell clicks, custom phases toggle, and reset.
 - **Deliverable checklist:**
-  - [ ] All 12 standard UVM phases rendered in correct order
-  - [ ] Click-to-expand side panel works for each phase × component cell
-  - [ ] Animation runs and completes without error
-  - [ ] Custom phases toggle works
-  - [ ] Component registered in MDX map
-  - [ ] Vitest tests pass
+  - [x] All 12 standard UVM phases rendered in correct order (plus 9 custom)
+  - [x] Click-to-expand side panel works for each phase × component cell
+  - [x] Animation runs and completes without error
+  - [x] Custom phases toggle works
+  - [x] Component registered in MDX map
+  - [x] Vitest tests pass (9/9)
 - **Validation:**
-  - `npx vitest run src/components/visualizers/UvmPhaseTimelineVisualizer.test.tsx`
-  - `npm run build`
+  - `npx vitest run tests/components/UvmPhaseTimelineVisualizer.test.tsx` ✅
+  - `npm run build` ✅
 
 ---
 
