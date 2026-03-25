@@ -7,7 +7,7 @@ export const challenges: Challenge[] = [
     description: "Return the sum of two numbers.",
     difficulty: "easy",
     starterCode: `function solution(a: number, b: number) {
-  // TODO: return the sum of a and b
+  return a + b;
 }`,
     solution: (a: number, b: number): number => a + b,
     testCases: [
