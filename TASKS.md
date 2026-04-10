@@ -18,7 +18,7 @@
 | 8 | VIZ-3-TLM-CONNECTION-BUILDER | P0 | complete | none | Build TlmConnectionBuilderVisualizer.tsx: drag-and-drop TLM port/socket wiring. |
 | 9 | VIZ-4-FACTORY-OVERRIDE-EXPLORER | P0 | complete | none | Build FactoryOverrideExplorerVisualizer.tsx: live factory registry with override simulation. |
 | 10 | VIZ-5-CONSTRAINT-HEATMAP | P1 | complete | none | Build ConstraintSolverHeatmapVisualizer.tsx: distribution heatmap for rand variables. |
-| 11 | VIZ-6-SVA-WAVEFORM | P1 | todo | none | Build SvaSequenceWaveformVisualizer.tsx: waveform-style temporal sequence stepper. |
+| 11 | VIZ-6-SVA-WAVEFORM | P1 | complete | none | Build SvaSequenceWaveformVisualizer.tsx: waveform-style temporal sequence stepper. |
 | 12 | VIZ-7-COVERAGE-CROSS-EXPLORER | P1 | todo | none | Build CoverageCrossExplorerVisualizer.tsx: interactive covergroup cross-bin matrix. |
 | 13 | VIZ-8-RAL-REGISTER-MAP | P1 | todo | CONTENT-T3-RAL-ENHANCE | Build RalRegisterMapVisualizer.tsx: hierarchical register map with field-level drill-down. |
 | 14 | VIZ-9-SEQUENCE-HIERARCHY | P1 | todo | none | Build UvmSequenceHierarchyVisualizer.tsx: collapsible tree of nested sequence invocations. |
@@ -367,7 +367,7 @@
 
 ### `VIZ-6-SVA-WAVEFORM`
 - **Priority:** P1
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `none`
 - **Primary surfaces:**
   - `src/components/visualizers/SvaSequenceWaveformVisualizer.tsx` (create)
@@ -385,12 +385,12 @@
   7. Register in MDX map and embed in `I-SV-4A`.
   8. Vitest tests: renders, evaluation of known-passing trace returns PASS, evaluation of known-failing trace returns FAIL at correct cycle.
 - **Deliverable checklist:**
-  - [ ] 16-cycle waveform editor renders and is editable
-  - [ ] All 3 pre-loaded SVA examples evaluate correctly
-  - [ ] Cycle-level PASS/FAIL/PENDING/VACUOUS status is displayed
-  - [ ] Hover tooltip explains result
-  - [ ] Component registered in MDX map
-  - [ ] Vitest tests pass
+  - [x] 16-cycle waveform editor renders and is editable
+  - [x] All 3 pre-loaded SVA examples evaluate correctly
+  - [x] Cycle-level PASS/FAIL/PENDING/VACUOUS status is displayed
+  - [x] Hover tooltip explains result
+  - [x] Component registered in MDX map
+  - [x] Vitest tests pass
 - **Validation:**
   - `npx vitest run src/components/visualizers/SvaSequenceWaveformVisualizer.test.tsx`
   - `npm run build`

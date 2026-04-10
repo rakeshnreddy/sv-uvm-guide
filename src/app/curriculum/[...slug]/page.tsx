@@ -160,6 +160,10 @@ const ConstraintSolverHeatmapVisualizer = dynamic(
   () => import('@/components/visualizers/ConstraintSolverHeatmapVisualizer').then(mod => mod.ConstraintSolverHeatmapVisualizer),
   { ssr: false, loading: () => <VisualizationFallback /> }
 );
+const SvaSequenceWaveformVisualizer = dynamic(
+  () => import('@/components/visualizers/SvaSequenceWaveformVisualizer').then(mod => mod.SvaSequenceWaveformVisualizer),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -256,6 +260,7 @@ const components = {
   TlmConnectionBuilderVisualizer,
   FactoryOverrideExplorerVisualizer,
   ConstraintSolverHeatmapVisualizer,
+  SvaSequenceWaveformVisualizer,
   UvmPhaseTimelineVisualizer: dynamic(() => import('@/components/visualizers/UvmPhaseTimelineVisualizer').then(mod => mod.UvmPhaseTimelineVisualizer), { ssr: false, loading: () => <VisualizationFallback /> }),
 };
 
