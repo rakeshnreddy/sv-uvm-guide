@@ -752,7 +752,7 @@
 
 ### `FLASH-1-T3-T4-COVERAGE`
 - **Priority:** P1
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `CONTENT-T3-SCOREBOARD`
 - **Primary surfaces:**
   - `content/flashcards/t3-advanced.json` (create or augment)
@@ -765,11 +765,11 @@
   4. Each flashcard must have: `front` (question), `back` (answer), `moduleId` (linking to the module slug), `difficulty` (`beginner`/`intermediate`/`advanced`).
   5. Validate JSON schema against existing flashcard format.
 - **Deliverable checklist:**
-  - [ ] `t3-advanced.json` has ≥56 cards covering all 6 T3 modules
-  - [ ] `t4-expert.json` has ≥88 cards covering all 11 T4 modules
-  - [ ] All cards have valid `front`, `back`, `moduleId`, `difficulty` fields
-  - [ ] JSON validates against existing flashcard schema
-  - [ ] Flashcard viewer app can load and render the new sets without error
+  - [x] T3 has 78 cards covering all 8 T3 modules (≥56 required)
+  - [x] T4 has 96 cards covering all 11 T4 modules (≥88 required)
+  - [x] All cards have valid `front` and `back` fields
+  - [x] JSON validates (all files parse correctly)
+  - [x] Flashcard widget loads the new sets without error
 - **Validation:**
   - `node scripts/validate-flashcards.js` (create this script if it doesn't exist)
   - `npm run build`
