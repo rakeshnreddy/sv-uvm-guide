@@ -43,7 +43,7 @@ export interface RawFlashcard {
   answer: string;
 }
 
-export const flashcardDecks: Record<string, RawFlashcard[]> = {
+export const flashcardDecks: Record<string, any[]> = {
   F1A_Cost_of_Bugs,
   F1B_Verification_Mindset,
   F1C_Why_SystemVerilog,

@@ -156,6 +156,10 @@ const FactoryOverrideExplorerVisualizer = dynamic(
   () => import('@/components/visualizers/FactoryOverrideExplorerVisualizer').then(mod => mod.FactoryOverrideExplorerVisualizer),
   { ssr: false, loading: () => <VisualizationFallback /> }
 );
+const ConstraintSolverHeatmapVisualizer = dynamic(
+  () => import('@/components/visualizers/ConstraintSolverHeatmapVisualizer').then(mod => mod.ConstraintSolverHeatmapVisualizer),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -251,6 +255,7 @@ const components = {
   SVSchedulerRegionVisualizer,
   TlmConnectionBuilderVisualizer,
   FactoryOverrideExplorerVisualizer,
+  ConstraintSolverHeatmapVisualizer,
   UvmPhaseTimelineVisualizer: dynamic(() => import('@/components/visualizers/UvmPhaseTimelineVisualizer').then(mod => mod.UvmPhaseTimelineVisualizer), { ssr: false, loading: () => <VisualizationFallback /> }),
 };
 

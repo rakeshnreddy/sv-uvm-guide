@@ -17,7 +17,7 @@
 | 7 | VIZ-2-UVM-PHASE-TIMELINE | P0 | complete | none | Build UvmPhaseTimelineVisualizer.tsx: interactive phasing swimlane with click-to-expand. |
 | 8 | VIZ-3-TLM-CONNECTION-BUILDER | P0 | complete | none | Build TlmConnectionBuilderVisualizer.tsx: drag-and-drop TLM port/socket wiring. |
 | 9 | VIZ-4-FACTORY-OVERRIDE-EXPLORER | P0 | complete | none | Build FactoryOverrideExplorerVisualizer.tsx: live factory registry with override simulation. |
-| 10 | VIZ-5-CONSTRAINT-HEATMAP | P1 | todo | none | Build ConstraintSolverHeatmapVisualizer.tsx: distribution heatmap for rand variables. |
+| 10 | VIZ-5-CONSTRAINT-HEATMAP | P1 | complete | none | Build ConstraintSolverHeatmapVisualizer.tsx: distribution heatmap for rand variables. |
 | 11 | VIZ-6-SVA-WAVEFORM | P1 | todo | none | Build SvaSequenceWaveformVisualizer.tsx: waveform-style temporal sequence stepper. |
 | 12 | VIZ-7-COVERAGE-CROSS-EXPLORER | P1 | todo | none | Build CoverageCrossExplorerVisualizer.tsx: interactive covergroup cross-bin matrix. |
 | 13 | VIZ-8-RAL-REGISTER-MAP | P1 | todo | CONTENT-T3-RAL-ENHANCE | Build RalRegisterMapVisualizer.tsx: hierarchical register map with field-level drill-down. |
@@ -336,7 +336,7 @@
 
 ### `VIZ-5-CONSTRAINT-HEATMAP`
 - **Priority:** P1
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `none`
 - **Primary surfaces:**
   - `src/components/visualizers/ConstraintSolverHeatmapVisualizer.tsx` (create)
@@ -354,11 +354,11 @@
   7. Register in MDX map and embed in `I-SV-2A`.
   8. Vitest tests: renders without crash, constraint toggle changes heatmap data array.
 - **Deliverable checklist:**
-  - [ ] Heatmap renders initial uniform distribution
-  - [ ] Each constraint toggle visibly changes heatmap
-  - [ ] Marginal distribution bar chart updates synchronously
-  - [ ] Component registered in MDX map
-  - [ ] Vitest tests pass
+  - [x] Heatmap renders initial uniform distribution
+  - [x] Each constraint toggle visibly changes heatmap
+  - [x] Marginal distribution bar chart updates synchronously
+  - [x] Component registered in MDX map
+  - [x] Vitest tests pass
 - **Validation:**
   - `npx vitest run src/components/visualizers/ConstraintSolverHeatmapVisualizer.test.tsx`
   - `npm run build`
