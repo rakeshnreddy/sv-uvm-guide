@@ -26,7 +26,7 @@
 | 16 | CONTENT-T3-VIP | P1 | complete | CONTENT-T3-SCOREBOARD | Author A-UVM-7_VIP_Construction module in T3_Advanced. |
 | 17 | CONTENT-T3-MULTI-AGENT | P1 | complete | CONTENT-T3-SCOREBOARD | Author A-UVM-8_Multi_Agent_Topologies module in T3_Advanced. |
 | 18 | CONTENT-T4-PSS | P0 | complete | none | Author E-PSS-1_Portable_Stimulus_Standard module in T4_Expert. |
-| 19 | VIZ-10-PSS-INTENT-MAP | P1 | todo | CONTENT-T4-PSS | Build PssIntentMapVisualizer.tsx: PSS action/resource graph with portability toggle. |
+| 19 | VIZ-10-PSS-INTENT-MAP | P1 | complete | CONTENT-T4-PSS | Build PssIntentMapVisualizer.tsx: PSS action/resource graph with portability toggle. |
 | 20 | CONTENT-T4-PYUVM | P0 | complete | none | Author E-PYUVM-1_Python_Based_Verification module in T4_Expert. |
 | 21 | CONTENT-T4-AI-VERIF | P1 | complete | CONTENT-T4-PYUVM | Author E-AI-1_AI_Driven_Verification module in T4_Expert. |
 | 22 | CONTENT-T4-RISCV | P1 | complete | none | Author E-RISCV-1_RISC_V_Verification_Methodology module in T4_Expert. |
@@ -601,7 +601,7 @@
 
 ### `VIZ-10-PSS-INTENT-MAP`
 - **Priority:** P1
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `CONTENT-T4-PSS`
 - **Primary surfaces:**
   - `src/components/visualizers/PssIntentMapVisualizer.tsx` (create)
@@ -618,11 +618,11 @@
   6. Register in MDX map and embed in `E-PSS-1`.
   7. Vitest tests: renders, compile target toggle changes displayed code, all 3 targets render without error.
 - **Deliverable checklist:**
-  - [ ] Action graph renders with all 3 nodes and edges
-  - [ ] All 3 compile targets produce distinct output
-  - [ ] Generated code panel updates on target change
-  - [ ] Component registered in MDX map
-  - [ ] Vitest tests pass
+  - [x] Action graph renders with all 3 nodes and edges
+  - [x] All 3 compile targets produce distinct output
+  - [x] Generated code panel updates on target change
+  - [x] Component registered in MDX map
+  - [x] Vitest tests pass (7/7)
 - **Validation:**
   - `npx vitest run src/components/visualizers/PssIntentMapVisualizer.test.tsx`
   - `npm run build`

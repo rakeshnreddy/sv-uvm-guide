@@ -176,6 +176,10 @@ const UvmSequenceHierarchyVisualizer = dynamic(
   () => import('@/components/visualizers/UvmSequenceHierarchyVisualizer').then(mod => mod.UvmSequenceHierarchyVisualizer),
   { ssr: false, loading: () => <VisualizationFallback /> }
 );
+const PssIntentMapVisualizer = dynamic(
+  () => import('@/components/visualizers/PssIntentMapVisualizer').then(mod => mod.PssIntentMapVisualizer),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -277,6 +281,7 @@ const components = {
   RalRegisterMapVisualizer,
   UvmPhaseTimelineVisualizer: dynamic(() => import('@/components/visualizers/UvmPhaseTimelineVisualizer').then(mod => mod.UvmPhaseTimelineVisualizer), { ssr: false, loading: () => <VisualizationFallback /> }),
   UvmSequenceHierarchyVisualizer,
+  PssIntentMapVisualizer,
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {
