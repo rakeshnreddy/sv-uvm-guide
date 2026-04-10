@@ -19,7 +19,7 @@
 | 9 | VIZ-4-FACTORY-OVERRIDE-EXPLORER | P0 | complete | none | Build FactoryOverrideExplorerVisualizer.tsx: live factory registry with override simulation. |
 | 10 | VIZ-5-CONSTRAINT-HEATMAP | P1 | complete | none | Build ConstraintSolverHeatmapVisualizer.tsx: distribution heatmap for rand variables. |
 | 11 | VIZ-6-SVA-WAVEFORM | P1 | complete | none | Build SvaSequenceWaveformVisualizer.tsx: waveform-style temporal sequence stepper. |
-| 12 | VIZ-7-COVERAGE-CROSS-EXPLORER | P1 | todo | none | Build CoverageCrossExplorerVisualizer.tsx: interactive covergroup cross-bin matrix. |
+| 12 | VIZ-7-COVERAGE-CROSS-EXPLORER | P1 | complete | none | Build CoverageCrossExplorerVisualizer.tsx: interactive covergroup cross-bin matrix. |
 | 13 | VIZ-8-RAL-REGISTER-MAP | P1 | todo | CONTENT-T3-RAL-ENHANCE | Build RalRegisterMapVisualizer.tsx: hierarchical register map with field-level drill-down. |
 | 14 | VIZ-9-SEQUENCE-HIERARCHY | P1 | todo | none | Build UvmSequenceHierarchyVisualizer.tsx: collapsible tree of nested sequence invocations. |
 | 15 | CONTENT-T3-SCOREBOARD | P0 | complete | none | Author A-UVM-6_Scoreboards_and_Reference_Models module in T3_Advanced. |
@@ -399,7 +399,7 @@
 
 ### `VIZ-7-COVERAGE-CROSS-EXPLORER`
 - **Priority:** P1
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `none`
 - **Primary surfaces:**
   - `src/components/visualizers/CoverageCrossExplorerVisualizer.tsx` (create)
@@ -418,13 +418,13 @@
   8. Register in MDX map and embed in `I-SV-3A`.
   9. Vitest tests: matrix renders 9 cells initially, randomize button hits at least one cell, coverage percentage increases.
 - **Deliverable checklist:**
-  - [ ] 3×3 cross-product matrix renders
-  - [ ] Randomize adds green cells correctly
-  - [ ] 100% coverage mode works
-  - [ ] Ignore bins mechanism removes cells from count
-  - [ ] Real-time percentage counter works
-  - [ ] Component registered in MDX map
-  - [ ] Vitest tests pass
+  - [x] 3×3 cross-product matrix renders
+  - [x] Randomize adds green cells correctly
+  - [x] 100% coverage mode works
+  - [x] Ignore bins mechanism removes cells from count
+  - [x] Real-time percentage counter works
+  - [x] Component registered in MDX map
+  - [x] Vitest tests pass
 - **Validation:**
   - `npx vitest run src/components/visualizers/CoverageCrossExplorerVisualizer.test.tsx`
   - `npm run build`
