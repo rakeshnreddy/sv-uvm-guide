@@ -172,6 +172,10 @@ const RalRegisterMapVisualizer = dynamic(
   () => import('@/components/visualizers/RalRegisterMapVisualizer').then(mod => mod.RalRegisterMapVisualizer),
   { ssr: false, loading: () => <VisualizationFallback /> }
 );
+const UvmSequenceHierarchyVisualizer = dynamic(
+  () => import('@/components/visualizers/UvmSequenceHierarchyVisualizer').then(mod => mod.UvmSequenceHierarchyVisualizer),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -272,6 +276,7 @@ const components = {
   CoverageCrossExplorerVisualizer,
   RalRegisterMapVisualizer,
   UvmPhaseTimelineVisualizer: dynamic(() => import('@/components/visualizers/UvmPhaseTimelineVisualizer').then(mod => mod.UvmPhaseTimelineVisualizer), { ssr: false, loading: () => <VisualizationFallback /> }),
+  UvmSequenceHierarchyVisualizer,
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {

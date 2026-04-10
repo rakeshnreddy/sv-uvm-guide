@@ -21,7 +21,7 @@
 | 11 | VIZ-6-SVA-WAVEFORM | P1 | complete | none | Build SvaSequenceWaveformVisualizer.tsx: waveform-style temporal sequence stepper. |
 | 12 | VIZ-7-COVERAGE-CROSS-EXPLORER | P1 | complete | none | Build CoverageCrossExplorerVisualizer.tsx: interactive covergroup cross-bin matrix. |
 | 13 | VIZ-8-RAL-REGISTER-MAP | P1 | complete | CONTENT-T3-RAL-ENHANCE | Build RalRegisterMapVisualizer.tsx: hierarchical register map with field-level drill-down. |
-| 14 | VIZ-9-SEQUENCE-HIERARCHY | P1 | todo | none | Build UvmSequenceHierarchyVisualizer.tsx: collapsible tree of nested sequence invocations. |
+| 14 | VIZ-9-SEQUENCE-HIERARCHY | P1 | complete | none | Build UvmSequenceHierarchyVisualizer.tsx: collapsible tree of nested sequence invocations. |
 | 15 | CONTENT-T3-SCOREBOARD | P0 | complete | none | Author A-UVM-6_Scoreboards_and_Reference_Models module in T3_Advanced. |
 | 16 | CONTENT-T3-VIP | P1 | complete | CONTENT-T3-SCOREBOARD | Author A-UVM-7_VIP_Construction module in T3_Advanced. |
 | 17 | CONTENT-T3-MULTI-AGENT | P1 | complete | CONTENT-T3-SCOREBOARD | Author A-UVM-8_Multi_Agent_Topologies module in T3_Advanced. |
@@ -465,7 +465,7 @@
 
 ### `VIZ-9-SEQUENCE-HIERARCHY`
 - **Priority:** P1
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `none`
 - **Primary surfaces:**
   - `src/components/visualizers/UvmSequenceHierarchyVisualizer.tsx` (create)
@@ -483,12 +483,12 @@
   7. Register in MDX map and embed in `I-UVM-3A`.
   8. Vitest tests: tree renders, step execution advances, collapse/expand works.
 - **Deliverable checklist:**
-  - [ ] 3-level sequence tree renders
-  - [ ] Expand/collapse works per node
-  - [ ] Step execution highlights correct node and adds to log
-  - [ ] Virtual sequencer preset works
-  - [ ] Component registered in MDX map
-  - [ ] Vitest tests pass
+  - [x] 3-level sequence tree renders
+  - [x] Expand/collapse works per node
+  - [x] Step execution highlights correct node and adds to log
+  - [x] Virtual sequencer preset works
+  - [x] Component registered in MDX map
+  - [x] Vitest tests pass (8/8)
 - **Validation:**
   - `npx vitest run src/components/visualizers/UvmSequenceHierarchyVisualizer.test.tsx`
   - `npm run build`
