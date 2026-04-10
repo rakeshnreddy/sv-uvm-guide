@@ -20,7 +20,7 @@
 | 10 | VIZ-5-CONSTRAINT-HEATMAP | P1 | complete | none | Build ConstraintSolverHeatmapVisualizer.tsx: distribution heatmap for rand variables. |
 | 11 | VIZ-6-SVA-WAVEFORM | P1 | complete | none | Build SvaSequenceWaveformVisualizer.tsx: waveform-style temporal sequence stepper. |
 | 12 | VIZ-7-COVERAGE-CROSS-EXPLORER | P1 | complete | none | Build CoverageCrossExplorerVisualizer.tsx: interactive covergroup cross-bin matrix. |
-| 13 | VIZ-8-RAL-REGISTER-MAP | P1 | todo | CONTENT-T3-RAL-ENHANCE | Build RalRegisterMapVisualizer.tsx: hierarchical register map with field-level drill-down. |
+| 13 | VIZ-8-RAL-REGISTER-MAP | P1 | complete | CONTENT-T3-RAL-ENHANCE | Build RalRegisterMapVisualizer.tsx: hierarchical register map with field-level drill-down. |
 | 14 | VIZ-9-SEQUENCE-HIERARCHY | P1 | todo | none | Build UvmSequenceHierarchyVisualizer.tsx: collapsible tree of nested sequence invocations. |
 | 15 | CONTENT-T3-SCOREBOARD | P0 | complete | none | Author A-UVM-6_Scoreboards_and_Reference_Models module in T3_Advanced. |
 | 16 | CONTENT-T3-VIP | P1 | complete | CONTENT-T3-SCOREBOARD | Author A-UVM-7_VIP_Construction module in T3_Advanced. |
@@ -433,7 +433,7 @@
 
 ### `VIZ-8-RAL-REGISTER-MAP`
 - **Priority:** P1
-- **Status:** `todo`
+- **Status:** `complete`
 - **Depends On:** `CONTENT-T3-SCOREBOARD` (ensures T3 content is being built)
 - **Primary surfaces:**
   - `src/components/visualizers/RalRegisterMapVisualizer.tsx` (create)
@@ -451,12 +451,12 @@
   7. Register in MDX map and embed in `A-UVM-4A`.
   8. Vitest tests: tree renders, clicking register shows correct fields, bit-field diagram renders correct number of field blocks.
 - **Deliverable checklist:**
-  - [ ] Collapsible tree renders `i2c_block` hierarchy
-  - [ ] Register details panel shows correct metadata
-  - [ ] Bit-field diagram renders proportional field widths
-  - [ ] Frontdoor write animation works
-  - [ ] Component registered in MDX map
-  - [ ] Vitest tests pass
+  - [x] Collapsible tree renders `i2c_block` hierarchy
+  - [x] Register details panel shows correct metadata
+  - [x] Bit-field diagram renders proportional field widths
+  - [x] Frontdoor write animation works
+  - [x] Component registered in MDX map
+  - [x] Vitest tests pass
 - **Validation:**
   - `npx vitest run src/components/visualizers/RalRegisterMapVisualizer.test.tsx`
   - `npm run build`

@@ -168,6 +168,10 @@ const CoverageCrossExplorerVisualizer = dynamic(
   () => import('@/components/visualizers/CoverageCrossExplorerVisualizer').then(mod => mod.CoverageCrossExplorerVisualizer),
   { ssr: false, loading: () => <VisualizationFallback /> }
 );
+const RalRegisterMapVisualizer = dynamic(
+  () => import('@/components/visualizers/RalRegisterMapVisualizer').then(mod => mod.RalRegisterMapVisualizer),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -266,6 +270,7 @@ const components = {
   ConstraintSolverHeatmapVisualizer,
   SvaSequenceWaveformVisualizer,
   CoverageCrossExplorerVisualizer,
+  RalRegisterMapVisualizer,
   UvmPhaseTimelineVisualizer: dynamic(() => import('@/components/visualizers/UvmPhaseTimelineVisualizer').then(mod => mod.UvmPhaseTimelineVisualizer), { ssr: false, loading: () => <VisualizationFallback /> }),
 };
 
