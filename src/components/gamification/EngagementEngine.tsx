@@ -242,20 +242,19 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId, useMockData
 
         if (data.patterns) {
           setPatterns(data.patterns);
+          setActivityChart(data.activityChart ?? EMPTY_CHART_DATA);
         } else {
-          analyzePatterns(history);
+          analyzePatternsAndChart(history);
         }
 
         setProfile(data.motivationalProfile ?? null);
         setGoals(data.goals ?? []);
         setMentorMessage(data.mentorMessage ?? FALLBACK_MENTOR_MESSAGE);
-        setActivityChart(data.activityChart ?? buildActivityChart(history));
       } catch (error) {
         if (mockEnabled) {
           setMetrics(FALLBACK_DATA.metrics);
           setActivityHistory(FALLBACK_DATA.activityHistory);
-          setActivityChart(buildActivityChart(FALLBACK_DATA.activityHistory));
-          analyzePatterns(FALLBACK_DATA.activityHistory);
+          analyzePatternsAndChart(FALLBACK_DATA.activityHistory);
           setProfile(FALLBACK_DATA.motivationalProfile);
           setGoals(FALLBACK_DATA.goals);
           setMentorMessage(FALLBACK_MENTOR_MESSAGE);
@@ -280,57 +279,67 @@ const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId, useMockData
   // --- ENGAGEMENT LOGIC ---
 
   /**
-   * Analyzes user activity history to derive engagement patterns.
+   * Analyzes user activity history to derive engagement patterns and chart data.
    * In a real system, this logic might live on the backend.
+   * Optimized to perform all calculations in a single O(N) pass.
    */
-  const analyzePatterns = (activity: ActivityLog[]): EngagementPattern => {
-    const dayMap = activity.reduce((acc, log) => {
-      const day = log.timestamp.toLocaleString('en-US', { weekday: 'long' });
-      acc[day] = (acc[day] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+  const analyzePatternsAndChart = (activity: ActivityLog[]) => {
+    if (!activity.length) {
+      setPatterns(null);
+      setActivityChart(EMPTY_CHART_DATA);
+      return;
+    }
 
-    const dayEntries = Object.entries(dayMap);
-    const mostActiveDay = dayEntries.length
-      ? dayEntries.reduce((max, current) => (current[1] > max[1] ? current : max))[0]
-      : 'N/A';
+    const DAYS_LONG = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const dayCounts = new Int32Array(7);
+    const lessonCounts = new Map<string, number>();
 
-    const lessonCounts = activity.reduce((acc, log) => {
+    let maxDayCount = -1;
+    let mostActiveDayIndex = -1;
+    let maxLessonCount = -1;
+    let preferredTopic = 'General Skill Building';
+
+    for (let i = 0; i < activity.length; i++) {
+      const log = activity[i];
+      const dayIndex = log.timestamp.getDay();
+
+      // Track day frequency for mostActiveDay and buildActivityChart
+      dayCounts[dayIndex]++;
+      if (dayCounts[dayIndex] > maxDayCount) {
+        maxDayCount = dayCounts[dayIndex];
+        mostActiveDayIndex = dayIndex;
+      }
+
+      // Track lesson frequency for preferredTopic
       const lesson = typeof log.details.lesson === 'string' ? log.details.lesson : null;
       if (lesson) {
-        acc.set(lesson, (acc.get(lesson) ?? 0) + 1);
+        const currentCount = (lessonCounts.get(lesson) ?? 0) + 1;
+        lessonCounts.set(lesson, currentCount);
+        if (currentCount > maxLessonCount) {
+          maxLessonCount = currentCount;
+          preferredTopic = lesson;
+        }
       }
-      return acc;
-    }, new Map<string, number>());
+    }
 
-    const preferredTopic = lessonCounts.size
-      ? [...lessonCounts.entries()].reduce((max, current) => (current[1] > max[1] ? current : max))[0]
-      : 'General Skill Building';
-
+    const mostActiveDay = mostActiveDayIndex !== -1 ? DAYS_LONG[mostActiveDayIndex] : 'N/A';
     const learningStyle: EngagementPattern['learningStyle'] = activity.length > 5 ? 'steady-progress' : 'binge-learner';
 
-    const derived = {
+    const patterns = {
       mostActiveDay,
       preferredTopic,
       learningStyle,
     } satisfies EngagementPattern;
 
-    setPatterns(derived);
-    return derived;
-  };
-
-  const buildActivityChart = (activity: ActivityLog[]) => {
-    if (!activity.length) {
-      return EMPTY_CHART_DATA;
-    }
-    const dayBuckets = new Map<string, number>();
-    activity.forEach(log => {
-      const day = log.timestamp.toLocaleString('en-US', { weekday: 'short' });
-      dayBuckets.set(day, (dayBuckets.get(day) ?? 0) + 1);
-    });
-
     const orderedDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    return orderedDays.map(name => ({ name, activity: dayBuckets.get(name) ?? 0 }));
+    const activityChartData = orderedDays.map((name, i) => ({
+      name,
+      activity: dayCounts[i],
+    }));
+
+    setPatterns(patterns);
+    setActivityChart(activityChartData);
+    return patterns;
   };
 
   /**
