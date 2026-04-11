@@ -4,7 +4,7 @@
  * challenges and quests, from debugging to architecture design.
  */
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
@@ -132,6 +132,13 @@ const ChallengeQuestSystem: React.FC<ChallengeQuestSystemProps> = ({ userId }) =
   const storyChapters = mockStory;
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
 
+  const challengesMap = useMemo(() => {
+    return challenges.reduce((acc, challenge) => {
+      acc[challenge.id] = challenge;
+      return acc;
+    }, {} as Record<string, Challenge>);
+  }, [challenges]);
+
 
   useEffect(() => {
     // Fetch challenges for the user
@@ -147,13 +154,16 @@ const ChallengeQuestSystem: React.FC<ChallengeQuestSystemProps> = ({ userId }) =
     // Check if current chapter is complete
     const chapter = storyChapters[currentChapterIndex];
     if (chapter) {
-      const completed = chapter.relatedChallenges.every(id => challenges.find(c => c.id === id && c.status === 'Completed'));
+      const completed = chapter.relatedChallenges.every(id => {
+        const ch = challengesMap[id];
+        return ch && ch.status === 'Completed';
+      });
       if (completed && currentChapterIndex < storyChapters.length - 1) {
         setCurrentChapterIndex(i => i + 1);
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [challenges, currentChapterIndex]);
+  }, [challengesMap, currentChapterIndex]);
 
   const currentChapter = storyChapters[currentChapterIndex];
 
@@ -176,7 +186,7 @@ const ChallengeQuestSystem: React.FC<ChallengeQuestSystemProps> = ({ userId }) =
             <p className="text-xs text-muted-foreground mb-2">{currentChapter.description} Mentor: {currentChapter.mentor}</p>
             <div className="flex gap-2 flex-wrap">
               {currentChapter.relatedChallenges.map(id => {
-                const ch = challenges.find(c => c.id === id);
+                const ch = challengesMap[id];
                 return ch ? <span key={id} className={cn('px-2 py-1 text-xs rounded border', ch.status === 'Completed' ? 'bg-primary text-primary-foreground' : '')}>{ch.title}</span> : null;
               })}
             </div>
