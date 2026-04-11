@@ -69,8 +69,12 @@ export const challenges: Challenge[] = [
       return curr;
     },
     testCases: [
+      { input: [0], expected: 0 },
+      { input: [1], expected: 1 },
+      { input: [2], expected: 1 },
       { input: [5], expected: 5 },
-      { input: [10], expected: 55 }
+      { input: [10], expected: 55 },
+      { input: [20], expected: 6765 }
     ]
   }
 ];
