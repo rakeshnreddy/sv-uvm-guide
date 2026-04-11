@@ -1,5 +1,5 @@
 # TASKS.md — sv-uvm-guide Next-Generation Backlog
-# Generated: 2026-03-21 | Auditor: Principal Verification Engineer / Technical Curriculum Architect
+# Generated: 2026-04-11 | Auditor: Principal Verification Engineer / Technical Curriculum Architect
 # Purpose: Machine-readable backlog for autonomous AI coding agent execution.
 
 ---
@@ -38,6 +38,36 @@
 | 28 | INFRA-4-VITEST-SUITE | P1 | complete | VIZ-1-SV-SCHEDULER | Write Vitest unit tests for all new visualizer components (VIZ-1 through VIZ-10). |
 | 29 | INFRA-5-PLAYWRIGHT-E2E | P2 | complete | INFRA-4-VITEST-SUITE | Write Playwright E2E smoke tests for all new T3/T4 curriculum pages. |
 | 30 | INFRA-6-3D-VIZ-PORT | P2 | complete | INFRA-3-APPROUTER-MIGRATION | Port 3dvisualization.html prototype to a proper react-three-fiber component. |
+| 31 | PLAN-2-AMBA-CURRICULUM-SPEC | P0 | complete | none | Publish the AHB/AXI curriculum expansion spec covering module breakdown, visualizers, labs, verification scope, and interview prep. |
+| 32 | INFRA-7-PROTOCOL-WAVEFORM-FOUNDATION | P0 | todo | PLAN-2-AMBA-CURRICULUM-SPEC | Add reusable protocol timing-diagram primitives for AMBA lessons, using MDX-friendly WaveDrom/React wrappers and shared styling. |
+| 33 | CONTENT-PROT-1-AMBA-FOUNDATIONS | P0 | todo | INFRA-7-PROTOCOL-WAVEFORM-FOUNDATION | Author the AMBA protocol family overview module: AHB vs AHB-Lite vs AXI4 vs AXI4-Lite vs AXI4-Stream, terminology, and design tradeoffs. |
+| 34 | CONTENT-AHB-1-DESIGN-TIMING | P0 | todo | INFRA-7-PROTOCOL-WAVEFORM-FOUNDATION | Author the AHB/AHB-Lite protocol design and timing module with address/data pipelining, wait states, responses, bursts, and arbitration context. |
+| 35 | VIZ-11-AHB-PIPELINE-BURST | P0 | todo | CONTENT-AHB-1-DESIGN-TIMING | Build the interactive AHB timing suite showing single transfers, pipelined phases, wait-state stretching, and burst progression. |
+| 36 | CONTENT-AHB-2-VERIFICATION | P0 | todo | CONTENT-AHB-1-DESIGN-TIMING, VIZ-11-AHB-PIPELINE-BURST | Author the AHB verification module covering transaction modeling, VIP architecture, assertions, coverage, debug patterns, and interview questions. |
+| 37 | CONTENT-AXI-1-CHANNEL-ARCHITECTURE | P0 | todo | INFRA-7-PROTOCOL-WAVEFORM-FOUNDATION | Author the AXI fundamentals module covering the five channels, VALID/READY rules, read/write flows, and AXI-Lite/Stream deltas. |
+| 38 | VIZ-12-AXI-TRANSACTION-ORDERING | P0 | todo | CONTENT-AXI-1-CHANNEL-ARCHITECTURE | Build the AXI visualization suite for channel independence, burst addressing, backpressure, outstanding transactions, and ID-based ordering. |
+| 39 | CONTENT-AXI-2-ADVANCED-TRANSACTIONS | P0 | todo | CONTENT-AXI-1-CHANNEL-ARCHITECTURE, VIZ-12-AXI-TRANSACTION-ORDERING | Author the advanced AXI module covering bursts, WSTRB, 4 KB boundaries, responses, interconnect behavior, and performance corner cases. |
+| 40 | CONTENT-AXI-3-VERIFICATION | P0 | todo | CONTENT-AXI-2-ADVANCED-TRANSACTIONS, VIZ-12-AXI-TRANSACTION-ORDERING | Author the AXI verification module covering monitor reconstruction, scoreboards, per-ID ordering, assertions, coverage, debug, and interview questions. |
+| 41 | CONTENT-PROT-2-BRIDGES-DEBUG-INTERVIEW | P1 | todo | CONTENT-AHB-2-VERIFICATION, CONTENT-AXI-3-VERIFICATION | Author the expert AMBA integration module for AHB↔AXI bridges, formal/property strategy, performance bottlenecks, debug case studies, and whiteboard interview drills. |
+| 42 | LAB-3-AHB-CHECKER-LAB | P1 | todo | CONTENT-AHB-2-VERIFICATION | Create the hands-on AHB lab where learners build an AHB-Lite monitor/checker, add assertions, and close protocol coverage. |
+| 43 | LAB-4-AXI-SCOREBOARD-LAB | P1 | todo | CONTENT-AXI-3-VERIFICATION | Create the hands-on AXI lab where learners reconstruct channel traffic into transactions and verify outstanding reads/writes with a scoreboard. |
+| 44 | LAB-5-AHB-AXI-BRIDGE-DEBUG | P2 | todo | CONTENT-PROT-2-BRIDGES-DEBUG-INTERVIEW | Create the advanced bridge debug lab focused on burst conversion, response propagation, and backpressure bugs across an AHB-to-AXI adapter. |
+| 45 | FLASH-2-AMBA-PROTOCOL-COVERAGE | P1 | todo | CONTENT-PROT-1-AMBA-FOUNDATIONS, CONTENT-AHB-2-VERIFICATION, CONTENT-AXI-3-VERIFICATION | Create flashcards and reusable interview-question banks for all AHB/AXI protocol modules. |
+| 46 | INFRA-8-AMBA-QA-SUITE | P1 | todo | VIZ-11-AHB-PIPELINE-BURST, VIZ-12-AXI-TRANSACTION-ORDERING, CONTENT-PROT-2-BRIDGES-DEBUG-INTERVIEW | Add Vitest and Playwright coverage for all new AMBA visualizers, curriculum pages, and end-to-end navigation flows. |
+
+---
+
+## Next Workstream: AHB / AXI Protocol Deep Dive
+
+- **Status:** The current modernization task is considered complete; the next planned workstream is a dedicated AHB/AXI protocol expansion.
+- **Planning artifact:** `docs/planning/ahb-axi-protocol-guide-plan.md`
+- **Curriculum footprint:** 8 protocol modules across `T3_Advanced` and `T4_Expert`, 2 core labs plus 1 advanced bridge-debug lab, 2 visualization epics, flashcards, interview drills, and a QA pass.
+- **Execution order:**
+  1. Land shared waveform/timing infrastructure so protocol pages can render accurate timing diagrams without bespoke one-off markup.
+  2. Ship the AMBA foundations and AHB design/verification sequence first because AHB is the simpler on-ramp to pipelined bus reasoning.
+  3. Ship the AXI channel architecture, advanced transactions, and AXI verification sequence second because it depends on learners already understanding bus timing and response semantics.
+  4. Finish with bridges, debug clinics, interview preparation, labs, flashcards, and automated QA.
+- **Design principle:** Every protocol module must teach both sides of the problem: how the protocol is designed to work in silicon and how a verification engineer proves it under legal, stressful, and broken conditions.
 
 ---
 
