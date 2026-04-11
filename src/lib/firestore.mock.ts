@@ -128,10 +128,3 @@ export const docMock = (collectionPath: string, docId: string): string => `${col
 export const collectionMock = (basePath: string): string => basePath; // For simple collection paths
 
 console.log("Using MOCK Firebase Firestore service.");
-
-// Example usage:
-// import { getDocMock as getDoc, setDocMock as setDoc } from '@/lib/firestore.mock';
-// const userDocPath = docMock('users', 'someUserId');
-// await setDoc(userDocPath, { name: "Test User", progress: {} });
-// const userDoc = await getDoc(userDocPath);
-// if (userDoc.exists()) console.log(userDoc.data());
