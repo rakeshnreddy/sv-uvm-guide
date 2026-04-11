@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { validateAIInput } from '@/lib/ai-validation';
 
 // This would typically come from a .env.local file
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
@@ -19,19 +20,35 @@ export async function POST(req: NextRequest) {
     const body = await req.json();
     const { systemPrompt, pageContext, userQuestion } = body;
 
-    if (!userQuestion) {
+    const validatedSystemPrompt = systemPrompt ? validateAIInput(systemPrompt, 1000, 'System Prompt') : { isValid: true, sanitizedContent: '' };
+    const validatedPageContext = pageContext ? validateAIInput(pageContext, 5000, 'Page Context') : { isValid: true, sanitizedContent: '' };
+    const validatedUserQuestion = validateAIInput(userQuestion, 2000, 'User Question');
+
+    if (!validatedUserQuestion.isValid) {
       return NextResponse.json(
-        { error: "User question is missing." },
+        { error: validatedUserQuestion.error },
+        { status: 400 }
+      );
+    }
+    if (systemPrompt && !validatedSystemPrompt.isValid) {
+      return NextResponse.json(
+        { error: validatedSystemPrompt.error },
+        { status: 400 }
+      );
+    }
+    if (pageContext && !validatedPageContext.isValid) {
+      return NextResponse.json(
+        { error: validatedPageContext.error },
         { status: 400 }
       );
     }
 
     // Construct the full prompt for Gemini
-    let fullPrompt = `${systemPrompt}\n\n`;
+    let fullPrompt = `${validatedSystemPrompt.sanitizedContent}\n\n`;
     if (pageContext) {
-      fullPrompt += `CONTEXT:\n${pageContext}\n\n`;
+      fullPrompt += `CONTEXT:\n${validatedPageContext.sanitizedContent}\n\n`;
     }
-    fullPrompt += `USER QUESTION:\n${userQuestion}`;
+    fullPrompt += `USER QUESTION:\n${validatedUserQuestion.sanitizedContent}`;
 
     const { GoogleGenerativeAI } = await import("@google/generative-ai");
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);

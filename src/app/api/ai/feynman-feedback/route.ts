@@ -1,10 +1,16 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { validateAIInput } from '@/lib/ai-validation';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
 export async function POST(request: Request) {
   const { content } = await request.json();
+
+  const validation = validateAIInput(content, 3000, 'Explanation content');
+  if (!validation.isValid) {
+    return NextResponse.json({ error: validation.error }, { status: 400 });
+  }
 
   if (!process.env.GEMINI_API_KEY) {
     return NextResponse.json({ error: 'Gemini API key not configured' }, { status: 500 });
@@ -12,7 +18,7 @@ export async function POST(request: Request) {
 
   try {
     const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-    const prompt = `Provide feedback on the following explanation using the Feynman technique. Score it out of 100 and provide constructive feedback on how to improve it.\n\nExplanation: "${content}"`;
+    const prompt = `Provide feedback on the following explanation using the Feynman technique. Score it out of 100 and provide constructive feedback on how to improve it.\n\nExplanation: "${validation.sanitizedContent}"`;
 
     const result = await model.generateContent(prompt);
     const response = await result.response;
