@@ -336,7 +336,7 @@ const Navbar = () => {
               <PanelLeft className="h-6 w-6" />
               <span className="sr-only">Open sidebar</span>
             </button>
-            <button className="rounded-2xl border border-white/10 bg-white/5 p-2 text-[var(--blueprint-foreground)] transition hover:border-white/20 hover:bg-white/10">
+            <button aria-label="Search" className="rounded-2xl border border-white/10 bg-white/5 p-2 text-[var(--blueprint-foreground)] transition hover:border-white/20 hover:bg-white/10">
                 <Search className="h-6 w-6" />
             </button>
             <button
