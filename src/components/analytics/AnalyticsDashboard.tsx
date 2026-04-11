@@ -12,10 +12,16 @@ interface AnalyticsDashboardProps {
   events: AnalyticsEvent[];
 }
 
-export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ events }) => {
-  const competency = computeCompetency(events).toFixed(2);
-  const engagement = computeEngagement(events);
-  const performance = predictPerformance(events).toFixed(2);
+// ⚡ Bolt: Wrapped analytics calculations in useMemo and component in React.memo to prevent unnecessary re-renders
+export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = React.memo(({ events }) => {
+  const { competency, engagement, performance } = React.useMemo(() => {
+    return {
+      competency: computeCompetency(events).toFixed(2),
+      engagement: computeEngagement(events),
+      performance: predictPerformance(events).toFixed(2),
+    };
+  }, [events]);
+
   return (
     <div className="p-4 border rounded">
       <h3 className="font-semibold mb-2">Learning Analytics</h3>
@@ -26,6 +32,8 @@ export const AnalyticsDashboard: React.FC<AnalyticsDashboardProps> = ({ events }
       </ul>
     </div>
   );
-};
+});
+
+AnalyticsDashboard.displayName = 'AnalyticsDashboard';
 
 export default AnalyticsDashboard;

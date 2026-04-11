@@ -14,26 +14,31 @@ const chartDimensions = {
   margin: { top: 20, right: 16, bottom: 48, left: 48 },
 };
 
-export const EngagementActivityChart: React.FC<EngagementActivityChartProps> = ({ data }) => {
+// ⚡ Bolt: Wrapped expensive D3 scale calculations in useMemo and component in React.memo to prevent unnecessary re-renders
+export const EngagementActivityChart: React.FC<EngagementActivityChartProps> = React.memo(({ data }) => {
   const { width, height, margin } = chartDimensions;
   const innerWidth = width - margin.left - margin.right;
   const innerHeight = height - margin.top - margin.bottom;
 
-  const domain = data.map((d) => d.name);
-  const maxValue = max(data, (d) => d.activity) ?? 0;
-  const yDomainMax = maxValue === 0 ? 1 : maxValue;
+  const { domain, xScale, yScale, yTicks } = React.useMemo(() => {
+    const domain = data.map((d) => d.name);
+    const maxValue = max(data, (d) => d.activity) ?? 0;
+    const yDomainMax = maxValue === 0 ? 1 : maxValue;
 
-  const xScale = scaleBand<string>()
-    .domain(domain)
-    .range([0, innerWidth])
-    .padding(0.2);
+    const xScale = scaleBand<string>()
+      .domain(domain)
+      .range([0, innerWidth])
+      .padding(0.2);
 
-  const yScale = scaleLinear()
-    .domain([0, yDomainMax])
-    .range([innerHeight, 0])
-    .nice();
+    const yScale = scaleLinear()
+      .domain([0, yDomainMax])
+      .range([innerHeight, 0])
+      .nice();
 
-  const yTicks = yScale.ticks(4);
+    const yTicks = yScale.ticks(4);
+
+    return { domain, xScale, yScale, yTicks };
+  }, [data, innerWidth, innerHeight]);
 
   const barColor = "hsl(var(--primary))";
 
@@ -129,6 +134,8 @@ export const EngagementActivityChart: React.FC<EngagementActivityChartProps> = (
       </svg>
     </div>
   );
-};
+});
+
+EngagementActivityChart.displayName = 'EngagementActivityChart';
 
 export default EngagementActivityChart;
