@@ -4,7 +4,7 @@
  * recognition they have earned through their learning journey.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 import { Gift, Badge, Star, Briefcase, Ticket, Key, BookOpen, Award } from 'lucide-react';
@@ -49,6 +49,19 @@ const mockRewards: Reward[] = [
   { id: 'r9', title: 'Industry Partner Shoutout', description: 'Featured by an industry partner for outstanding project work.', type: 'IndustryRecognition', icon: <Briefcase />, isRedeemed: false, isRedeemable: false, dateEarned: new Date('2024-09-20') },
   { id: 'r10', title: 'Professional Workshop Pass', description: 'Access to an advanced verification workshop.', type: 'ProfessionalDevelopment', icon: <BookOpen />, isRedeemed: false, isRedeemable: true, dateEarned: new Date('2024-09-22') },
 ];
+
+const BADGE_TYPES = new Set<RewardType>([
+  'Badge',
+  'Certificate',
+  'SkillEndorsement',
+  'ExpertRecognition',
+]);
+
+const CAREER_TYPES = new Set<RewardType>([
+  'CareerOpportunity',
+  'IndustryRecognition',
+  'ProfessionalDevelopment',
+]);
 
 // --- CHILD COMPONENT: RewardCard ---
 
@@ -106,9 +119,28 @@ const RewardRecognitionHub: React.FC<RewardRecognitionHubProps> = ({ userId }) =
     );
   };
 
-  const myBadges = rewards.filter(r => ['Badge', 'Certificate', 'SkillEndorsement', 'ExpertRecognition'].includes(r.type));
-  const redeemableRewards = rewards.filter(r => r.isRedeemable && !myBadges.includes(r));
-  const careerOpportunities = rewards.filter(r => ['CareerOpportunity', 'IndustryRecognition', 'ProfessionalDevelopment'].includes(r.type));
+  const { myBadges, redeemableRewards, careerOpportunities } = useMemo(() => {
+    const badges: Reward[] = [];
+    const career: Reward[] = [];
+    const badgeSet = new Set<string>();
+
+    for (const r of rewards) {
+      if (BADGE_TYPES.has(r.type)) {
+        badges.push(r);
+        badgeSet.add(r.id);
+      } else if (CAREER_TYPES.has(r.type)) {
+        career.push(r);
+      }
+    }
+
+    const redeemable = rewards.filter(r => r.isRedeemable && !badgeSet.has(r.id));
+
+    return {
+      myBadges: badges,
+      redeemableRewards: redeemable,
+      careerOpportunities: career,
+    };
+  }, [rewards]);
 
   return (
     <Card className="w-full">
@@ -132,7 +164,7 @@ const RewardRecognitionHub: React.FC<RewardRecognitionHubProps> = ({ userId }) =
         <div>
           <h3 className="text-xl font-semibold mb-4">Redeemable Rewards</h3>
            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {redeemableRewards.filter(r => !myBadges.includes(r)).map(reward => (
+            {redeemableRewards.map(reward => (
               <RewardCard key={reward.id} reward={reward} onRedeem={handleRedeem} />
             ))}
           </div>
