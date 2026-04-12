@@ -11,21 +11,6 @@ export const firebaseConfigMock = {
   measurementId: process.env.NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID || "MOCK_MEASUREMENT_ID" // Optional, for Analytics
 };
 
-// In a real setup, you would initialize Firebase like this:
-// import { initializeApp, getApps, getApp } from "firebase/app";
-// import { getAuth } from "firebase/auth";
-// import { getFirestore } from "firebase/firestore";
-
-// let firebaseApp;
-// if (!getApps().length) {
-//   firebaseApp = initializeApp(firebaseConfig);
-// } else {
-//   firebaseApp = getApp();
-// }
-
-// export const auth = getAuth(firebaseApp);
-// export const db = getFirestore(firebaseApp);
-
 console.log("Using MOCK Firebase configuration. Replace with actual Firebase setup later.");
 
 // For now, we'll export mock objects or functions directly from service files.
