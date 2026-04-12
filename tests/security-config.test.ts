@@ -19,44 +19,44 @@ describe('Security Configuration', () => {
   });
 
   describe('session-options', () => {
-    it('throws an error in production if SESSION_SECRET is missing', async () => {
+    it('throws an error if SESSION_SECRET is missing in production', async () => {
       vi.stubEnv('NODE_ENV', 'production');
       delete process.env.SESSION_SECRET;
 
       await expect(loadSessionOptions()).rejects.toThrow(
-        'SESSION_SECRET must be set in production to ensure secure sessions.'
+        'SESSION_SECRET must be set to ensure secure sessions.'
       );
     });
 
-    it('does not throw in development if SESSION_SECRET is missing', async () => {
+    it('throws an error if SESSION_SECRET is missing in development', async () => {
       vi.stubEnv('NODE_ENV', 'development');
       delete process.env.SESSION_SECRET;
 
-      const mod = await loadSessionOptions();
-      expect(mod.sessionOptions.password).toBe('test-secret-development-key-that-is-32-bytes-long');
+      await expect(loadSessionOptions()).rejects.toThrow(
+        'SESSION_SECRET must be set to ensure secure sessions.'
+      );
     });
   });
 
   describe('auth-route', () => {
-    it('throws an error in production if both secrets are missing', async () => {
+    it('throws an error if both secrets are missing in production', async () => {
       vi.stubEnv('NODE_ENV', 'production');
       delete process.env.NEXTAUTH_SECRET;
       delete process.env.SESSION_SECRET;
 
       await expect(loadAuthRoute()).rejects.toThrow(
-        'NEXTAUTH_SECRET or SESSION_SECRET must be set in production to ensure secure sessions.'
+        'NEXTAUTH_SECRET or SESSION_SECRET must be set to ensure secure sessions.'
       );
     });
 
-    it('does not throw in development if secrets are missing', async () => {
+    it('throws an error if both secrets are missing in development', async () => {
       vi.stubEnv('NODE_ENV', 'development');
       delete process.env.NEXTAUTH_SECRET;
       delete process.env.SESSION_SECRET;
 
-      const mod = await loadAuthRoute();
-      // Since it's an ESM module and we're importing it, we just check it doesn't throw.
-      // The actual value would be in the internal NextAuth call which we can't easily inspect without more mocking.
-      expect(mod).toBeDefined();
+      await expect(loadAuthRoute()).rejects.toThrow(
+        'NEXTAUTH_SECRET or SESSION_SECRET must be set to ensure secure sessions.'
+      );
     });
   });
 });
