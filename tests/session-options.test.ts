@@ -16,8 +16,7 @@ describe('sessionOptions', () => {
     expect(mod.sessionOptions.password).toBe('secret');
   });
 
-  it('falls back to test-secret when SESSION_SECRET missing', async () => {
-    const mod = await loadModule();
-    expect(mod.sessionOptions.password).toBe('test-secret-development-key-that-is-32-bytes-long');
+  it('throws error when SESSION_SECRET missing', async () => {
+    await expect(loadModule()).rejects.toThrow('SESSION_SECRET must be set to ensure secure sessions.');
   });
 });

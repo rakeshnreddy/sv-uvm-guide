@@ -34,14 +34,14 @@ if (googleClientId && googleClientSecret) {
 
 const secret = process.env.NEXTAUTH_SECRET ?? process.env.SESSION_SECRET;
 
-if (!secret && process.env.NODE_ENV === 'production') {
+if (!secret) {
   throw new Error(
-    "NEXTAUTH_SECRET or SESSION_SECRET must be set in production to ensure secure sessions.",
+    "NEXTAUTH_SECRET or SESSION_SECRET must be set to ensure secure sessions.",
   );
 }
 
 const authOptions: NextAuthOptions = {
-  secret: secret ?? 'development-nextauth-secret',
+  secret: secret,
   providers,
 };
 
