@@ -682,6 +682,17 @@ export const curriculumData: Module[] = [
             "description": "An overview of the AMBA protocol landscape, comparing AHB, AXI, and their derivatives to understand when and why each is used."
           }
         ]
+      },
+      {
+        "title": "AMBA Protocol Intuition & Memory Hooks",
+        "slug": "B-AMBA-2_Protocol_Intuition_and_Memory_Hooks",
+        "topics": [
+          {
+            "title": "AMBA Protocol Intuition & Memory Hooks",
+            "slug": "index",
+            "description": "Build a permanent mental model of AMBA protocols using intuitive analogies, ensuring you never forget channel directions or handshake rules."
+          }
+        ]
       }
     ]
   },
