@@ -13,7 +13,6 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
 
     // Basic auto-resize logic (can be enhanced)
     const internalRef = React.useRef<HTMLTextAreaElement>(null);
-    // const [currentValue, setCurrentValue] = React.useState(props.value || props.defaultValue || ""); // Unused
 
     React.useImperativeHandle(ref, () => internalRef.current as HTMLTextAreaElement);
 
@@ -25,7 +24,6 @@ const Textarea = React.forwardRef<HTMLTextAreaElement, TextareaProps>(
       if (props.onChange) {
         props.onChange(event);
       }
-      // setCurrentValue(event.target.value); // Unused
     };
 
     React.useEffect(() => {
