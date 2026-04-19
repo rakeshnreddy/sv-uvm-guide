@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { validateAIInput } from '@/lib/ai-validation';
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
 
@@ -11,10 +12,16 @@ export async function POST(request: Request) {
   }
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-pro' });
-    const prompt = `Provide feedback on the following explanation using the Feynman technique. Score it out of 100 and provide constructive feedback on how to improve it.\n\nExplanation: "${content}"`;
+    const sanitizedContent = validateAIInput(content);
 
-    const result = await model.generateContent(prompt);
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-pro',
+      systemInstruction: 'Provide feedback on the following explanation using the Feynman technique. Score it out of 100 and provide constructive feedback on how to improve it. Always return in the format: "Score: XX\n\nFeedback: ..."'
+    });
+
+    const promptParts = [`Explanation: "${sanitizedContent}"`];
+
+    const result = await model.generateContent(promptParts);
     const response = await result.response;
     const text = response.text();
 
