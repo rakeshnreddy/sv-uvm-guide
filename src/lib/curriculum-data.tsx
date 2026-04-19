@@ -671,6 +671,17 @@ export const curriculumData: Module[] = [
             "description": "Coordinate multiple protocol agents across complex SoC environments using virtual sequencers, virtual sequences, and cross-agent synchronization patterns."
           }
         ]
+      },
+      {
+        "title": "AMBA Protocol Families & Tradeoffs",
+        "slug": "B-AMBA-1_Protocol_Families_and_Tradeoffs",
+        "topics": [
+          {
+            "title": "AMBA Protocol Families & Tradeoffs",
+            "slug": "index",
+            "description": "An overview of the AMBA protocol landscape, comparing AHB, AXI, and their derivatives to understand when and why each is used."
+          }
+        ]
       }
     ]
   },

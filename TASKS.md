@@ -39,8 +39,8 @@
 | 29 | INFRA-5-PLAYWRIGHT-E2E | P2 | complete | INFRA-4-VITEST-SUITE | Write Playwright E2E smoke tests for all new T3/T4 curriculum pages. |
 | 30 | INFRA-6-3D-VIZ-PORT | P2 | complete | INFRA-3-APPROUTER-MIGRATION | Port 3dvisualization.html prototype to a proper react-three-fiber component. |
 | 31 | PLAN-2-AMBA-CURRICULUM-SPEC | P0 | complete | none | Publish the AHB/AXI curriculum expansion spec covering module breakdown, visualizers, labs, verification scope, and interview prep. |
-| 32 | INFRA-7-PROTOCOL-WAVEFORM-FOUNDATION | P0 | todo | PLAN-2-AMBA-CURRICULUM-SPEC | Add reusable protocol timing-diagram primitives for AMBA lessons, using MDX-friendly WaveDrom/React wrappers and shared styling. |
-| 33 | CONTENT-PROT-1-AMBA-FOUNDATIONS | P0 | todo | INFRA-7-PROTOCOL-WAVEFORM-FOUNDATION | Author the AMBA protocol family overview module: AHB vs AHB-Lite vs AXI4 vs AXI4-Lite vs AXI4-Stream, terminology, and design tradeoffs. |
+| 32 | INFRA-7-PROTOCOL-WAVEFORM-FOUNDATION | P0 | complete | PLAN-2-AMBA-CURRICULUM-SPEC | Add reusable protocol timing-diagram primitives for AMBA lessons, using MDX-friendly WaveDrom/React wrappers and shared styling. |
+| 33 | CONTENT-PROT-1-AMBA-FOUNDATIONS | P0 | complete | INFRA-7-PROTOCOL-WAVEFORM-FOUNDATION | Author the AMBA protocol family overview module: AHB vs AHB-Lite vs AXI4 vs AXI4-Lite vs AXI4-Stream, terminology, and design tradeoffs. |
 | 34 | CONTENT-AHB-1-DESIGN-TIMING | P0 | todo | INFRA-7-PROTOCOL-WAVEFORM-FOUNDATION | Author the AHB/AHB-Lite protocol design and timing module with address/data pipelining, wait states, responses, bursts, and arbitration context. |
 | 35 | VIZ-11-AHB-PIPELINE-BURST | P0 | todo | CONTENT-AHB-1-DESIGN-TIMING | Build the interactive AHB timing suite showing single transfers, pipelined phases, wait-state stretching, and burst progression. |
 | 36 | CONTENT-AHB-2-VERIFICATION | P0 | todo | CONTENT-AHB-1-DESIGN-TIMING, VIZ-11-AHB-PIPELINE-BURST | Author the AHB verification module covering transaction modeling, VIP architecture, assertions, coverage, debug patterns, and interview questions. |

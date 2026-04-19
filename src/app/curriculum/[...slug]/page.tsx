@@ -184,6 +184,10 @@ const ProtocolWaveform = dynamic(
   () => import('@/components/mdx/ProtocolWaveform').then(mod => mod.ProtocolWaveform),
   { ssr: false, loading: () => <VisualizationFallback /> }
 );
+const AmbaFamilyExplorer = dynamic(
+  () => import('@/components/visualizers/AmbaFamilyExplorer').then(mod => mod.AmbaFamilyExplorer),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -287,6 +291,7 @@ const components = {
   UvmSequenceHierarchyVisualizer,
   PssIntentMapVisualizer,
   ProtocolWaveform,
+  AmbaFamilyExplorer,
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {
