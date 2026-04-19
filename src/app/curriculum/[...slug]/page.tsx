@@ -180,6 +180,10 @@ const PssIntentMapVisualizer = dynamic(
   () => import('@/components/visualizers/PssIntentMapVisualizer').then(mod => mod.PssIntentMapVisualizer),
   { ssr: false, loading: () => <VisualizationFallback /> }
 );
+const ProtocolWaveform = dynamic(
+  () => import('@/components/mdx/ProtocolWaveform').then(mod => mod.ProtocolWaveform),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -282,6 +286,7 @@ const components = {
   UvmPhaseTimelineVisualizer: dynamic(() => import('@/components/visualizers/UvmPhaseTimelineVisualizer').then(mod => mod.UvmPhaseTimelineVisualizer), { ssr: false, loading: () => <VisualizationFallback /> }),
   UvmSequenceHierarchyVisualizer,
   PssIntentMapVisualizer,
+  ProtocolWaveform,
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {

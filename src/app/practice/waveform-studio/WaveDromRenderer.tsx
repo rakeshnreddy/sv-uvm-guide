@@ -1,71 +1,50 @@
 "use client";
 
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  createWaveDromIndex,
+  parseWaveDromSource,
+  renderWaveDromToElement,
+} from '@/lib/wavedrom';
 
 interface WaveDromRendererProps {
   waveJson: string;
 }
 
-declare global {
-  interface Window {
-    WaveDrom: {
-      ProcessAll: () => void;
-    };
-  }
-}
-
 const WaveDromRenderer: React.FC<WaveDromRendererProps> = ({ waveJson }) => {
   const containerRef = useRef<HTMLDivElement>(null);
+  const renderIndexRef = useRef<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  if (renderIndexRef.current === undefined) {
+    renderIndexRef.current = createWaveDromIndex();
+  }
 
   useEffect(() => {
-    const renderWaveDrom = () => {
-      if (containerRef.current) {
-        try {
-          const parsedJson = JSON.parse(waveJson);
-          const script = document.createElement("script");
-          script.type = "text/json";
-          script.innerHTML = JSON.stringify(parsedJson);
+    if (!containerRef.current) {
+      return;
+    }
 
-          // Clear previous content
-          while (containerRef.current.firstChild) {
-            containerRef.current.removeChild(containerRef.current.firstChild);
-          }
-
-          const container = document.createElement('div');
-          container.id = `wavedrom-container-${Date.now()}`;
-          container.className = 'wavedrom-container';
-
-          const scriptContainer = document.createElement('div');
-          scriptContainer.style.display = 'none';
-          scriptContainer.appendChild(script);
-
-          container.appendChild(scriptContainer);
-          containerRef.current.appendChild(container);
-
-          if (window.WaveDrom) {
-            window.WaveDrom.ProcessAll();
-          }
-        } catch (error) {
-          console.error("Invalid WaveJSON:", error);
-          if (containerRef.current) {
-            containerRef.current.innerHTML = "<p class='text-red-500'>Invalid WaveJSON</p>";
-          }
-        }
-      }
-    };
-
-    if (window.WaveDrom) {
-      renderWaveDrom();
-    } else {
-      const script = document.querySelector('script[src*="wavedrom"]');
-      if (script) {
-        script.addEventListener('load', renderWaveDrom);
-        return () => script.removeEventListener('load', renderWaveDrom);
-      }
+    try {
+      const source = parseWaveDromSource(waveJson);
+      renderWaveDromToElement({
+        index: renderIndexRef.current ?? 0,
+        source,
+        outputElement: containerRef.current,
+      });
+      setError(null);
+    } catch (renderError) {
+      containerRef.current.replaceChildren();
+      setError(renderError instanceof Error ? renderError.message : 'Invalid WaveJSON');
     }
   }, [waveJson]);
 
-  return <div ref={containerRef} id="wavedrom-output"></div>;
+  return (
+    <div>
+      <div ref={containerRef} id="wavedrom-output" />
+      {error && <p className="mt-2 text-sm text-red-500">{error}</p>}
+    </div>
+  );
 };
 
 export default WaveDromRenderer;
