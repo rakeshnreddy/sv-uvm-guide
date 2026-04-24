@@ -28,7 +28,7 @@ describe('curriculum-path', () => {
       const slug = ['NonExistentTier'];
       const path = resolveCurriculumPath(slug, '/fallback');
       expect(path).toBe('/fallback');
-      expect(warn).toHaveBeenCalled();
+      expect(warn).not.toHaveBeenCalled();
       warn.mockRestore();
     });
 

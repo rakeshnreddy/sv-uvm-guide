@@ -1,22 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { validateAIInput } from '@/lib/ai-validation';
-
-// This would typically come from a .env.local file
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 // The actual Gemini API endpoint or SDK import would go here.
 // For example, if using Google's Generative AI SDK:
 // import { GoogleGenerativeAI } from "@google/generative-ai";
 
 export async function POST(req: NextRequest) {
-  if (!GEMINI_API_KEY) {
-    console.error("Gemini API key is not configured.");
-    return NextResponse.json(
-      { error: "AI service is not configured." },
-      { status: 500 }
-    );
-  }
-
   try {
+    const geminiApiKey = process.env.GEMINI_API_KEY;
     const body = await req.json();
     const { systemPrompt, pageContext, userQuestion } = body;
 
@@ -27,12 +17,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if (!geminiApiKey) {
+      console.error("Gemini API key is not configured.");
+      return NextResponse.json(
+        { error: "AI service is not configured." },
+        { status: 500 }
+      );
+    }
+
     // Validate and sanitize user inputs
     const sanitizedUserQuestion = validateAIInput(userQuestion);
     const sanitizedPageContext = pageContext ? validateAIInput(pageContext) : "";
 
     const { GoogleGenerativeAI } = await import("@google/generative-ai");
-    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+    const genAI = new GoogleGenerativeAI(geminiApiKey);
 
     // Use systemInstruction to properly isolate the system prompt from user input
     const model = genAI.getGenerativeModel({
