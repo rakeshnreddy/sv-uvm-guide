@@ -1,0 +1,226 @@
+---
+title: "AXI Verification & Performance"
+description: "Master the architecture of an AXI Verification IP (VIP), from channel-level monitors to per-ID scoreboards, protocol assertions, and transaction latency measurement."
+order: 11
+flashcards: []
+---
+
+# AXI Verification & Performance
+
+Verifying an AXI master, slave, or interconnect is significantly more complex than verifying simpler protocols like AHB. Because AXI uses five independent, decoupled channels, the verification environment must reconstruct these separate handshakes into cohesive, end-to-end transactions before they can be checked.
+
+In this module, we will explore the architecture of an AXI Verification IP (VIP), focusing on monitor reconstruction, per-ID scoreboards, protocol assertions, and measuring bus performance.
+
+<QuickTake>
+- **Monitor Reconstruction:** The monitor must watch all 5 channels independently and merge them into `axi_transaction` objects.
+- **Scoreboards:** Must track outstanding transactions using associative arrays keyed by `AxID`.
+- **Protocol Assertions:** Catch illegal handshakes (`VALID` dropping without `READY`) and boundary violations.
+- **Latency Measurement:** High-performance environments must measure address-to-data latency to verify QoS and bandwidth constraints.
+</QuickTake>
+
+---
+
+## 1. Monitor Reconstruction
+
+The most difficult component of an AXI VIP is the Monitor.
+Unlike AHB, where address and data are locked in a fixed pipeline, an AXI write involves the AW channel, W channel, and B channel happening at different times, potentially interleaved with other IDs.
+
+### The Decoupled Monitor Architecture
+
+A robust AXI monitor uses a separate concurrent thread (or process) for each of the 5 channels.
+
+```systemverilog
+class axi_monitor extends uvm_monitor;
+  // Analysis ports for completed transactions
+  uvm_analysis_port #(axi_transaction) write_ap;
+  uvm_analysis_port #(axi_transaction) read_ap;
+
+  // Internal queues to hold partial transactions
+  axi_transaction pending_writes[int]; // Keyed by AWID
+  axi_transaction pending_reads[int];  // Keyed by ARID
+
+  virtual task run_phase(uvm_phase phase);
+    fork
+      monitor_aw_channel();
+      monitor_w_channel();
+      monitor_b_channel();
+      monitor_ar_channel();
+      monitor_r_channel();
+    join
+  endtask
+
+  // Example: AW Channel thread
+  virtual task monitor_aw_channel();
+    forever begin
+      @(posedge vif.ACLK);
+      if (vif.AWVALID && vif.AWREADY) begin
+        axi_transaction txn = axi_transaction::type_id::create("txn");
+        txn.addr = vif.AWADDR;
+        txn.id = vif.AWID;
+        txn.len = vif.AWLEN;
+        
+        // Store the partial transaction in the array
+        pending_writes[vif.AWID] = txn;
+      end
+    end
+  endtask
+endclass
+```
+
+### Reassembly on Completion
+
+The transaction is only considered "complete" and broadcast to the scoreboard when the final response handshake occurs.
+
+- For **Writes**: The transaction is complete when `BVALID && BREADY`.
+- For **Reads**: The transaction is complete when `RVALID && RREADY && RLAST`.
+
+```systemverilog
+  virtual task monitor_b_channel();
+    forever begin
+      @(posedge vif.ACLK);
+      if (vif.BVALID && vif.BREADY) begin
+        int id = vif.BID;
+        if (pending_writes.exists(id)) begin
+          axi_transaction txn = pending_writes[id];
+          txn.bresp = vif.BRESP;
+          
+          // Broadcast completed write to scoreboard
+          write_ap.write(txn);
+          
+          // Remove from pending
+          pending_writes.delete(id);
+        end else begin
+          `uvm_error("MON", $sformatf("Received BRESP for ID %0d with no pending AW", id))
+        end
+      end
+    end
+  endtask
+```
+
+---
+
+## 2. Per-ID Scoreboards
+
+Because AXI allows out-of-order completion for different IDs, a simple FIFO-based scoreboard will fail.
+If the reference model expects Read A (ID=1) then Read B (ID=2), but the DUT returns Read B data first, a strict FIFO comparator will flag a false error.
+
+### Associative Array Trackers
+
+An AXI Scoreboard must maintain separate queues for each active ID.
+
+```systemverilog
+class axi_scoreboard extends uvm_scoreboard;
+  // One queue per ID for writes and reads
+  axi_transaction expected_writes[int][$];
+  axi_transaction expected_reads[int][$];
+
+  virtual function void write_expected(axi_transaction txn);
+    if (txn.is_write)
+      expected_writes[txn.id].push_back(txn);
+    else
+      expected_reads[txn.id].push_back(txn);
+  endfunction
+
+  virtual function void write_actual(axi_transaction txn);
+    if (txn.is_write) begin
+      if (expected_writes[txn.id].size() > 0) begin
+        axi_transaction exp = expected_writes[txn.id].pop_front();
+        if (!exp.compare(txn))
+          `uvm_error("SCB_MISMATCH", "Write transaction data mismatch")
+      end else begin
+        `uvm_error("SCB_UNEXPECTED", $sformatf("Unexpected write for ID %0d", txn.id))
+      end
+    end
+    // ... similar for reads
+  endfunction
+endclass
+```
+
+---
+
+## 3. Protocol Assertions
+
+While the UVM monitor extracts data, **SystemVerilog Assertions (SVA)** bound to the interface catch low-level protocol violations instantly.
+
+### VALID Stability
+Once `VALID` is asserted, all payload signals must remain stable until `READY` is asserted.
+
+```systemverilog
+property p_aw_stability;
+  @(posedge ACLK) disable iff (!ARESETn)
+    (AWVALID && !AWREADY) |=> 
+      (AWVALID && $stable(AWADDR) && $stable(AWID) && $stable(AWLEN));
+endproperty
+assert property (p_aw_stability) else `uvm_error("SVA", "AW payload changed while waiting for READY")
+```
+
+### X-State Checking
+Payload signals must not be `X` or `Z` when `VALID` is high.
+
+```systemverilog
+property p_wdata_unknown;
+  @(posedge ACLK) disable iff (!ARESETn)
+    WVALID |-> !$isunknown(WDATA);
+endproperty
+assert property (p_wdata_unknown) else `uvm_error("SVA", "WDATA contains X/Z during WVALID")
+```
+
+---
+
+## 4. Latency and Performance Measurement
+
+In high-performance SoCs, verifying that the data is *correct* is only half the job. You must also verify that it arrived *on time*.
+
+An AXI monitor should record timestamps at key events to calculate latency metrics:
+
+1. **Address Latency (AW to W):** Time between `AWVALID/AWREADY` and the first `WVALID/WREADY`. (Measures how fast the master supplies data).
+2. **Read Access Latency (AR to first R):** Time between `ARVALID/ARREADY` and the first `RVALID/RREADY`. (Measures memory read access time).
+3. **Write Response Latency (last W to B):** Time between `WLAST` and `BVALID/BREADY`. (Measures how fast the slave commits the write).
+
+### Calculating Bandwidth
+
+Bandwidth is calculated as the total bytes transferred divided by the elapsed time.
+In UVM, this is typically done in the `extract_phase` or `report_phase` of a performance monitor component.
+
+```systemverilog
+// In the monitor, record the timestamps
+txn.start_time = $time;
+// ... later ...
+txn.end_time = $time;
+txn.latency = txn.end_time - txn.start_time;
+```
+
+---
+
+## Summary
+
+Verifying AXI requires:
+1. **Concurrency:** 5 separate threads in the monitor to capture decoupled handshakes.
+2. **State Tracking:** Associative arrays keyed by `AxID` in the scoreboard to handle out-of-order completion.
+3. **Rigorous SVA:** Interface-level assertions to enforce `VALID` stability and channel dependency rules.
+4. **Performance Metrics:** Timestamp tracking to prove the interconnect meets SoC bandwidth and latency requirements.
+
+<Quiz>
+  <QuizQuestion
+    question="In an AXI monitor, when is an AXI Read transaction considered 'complete' and ready to be sent to the scoreboard?"
+    options={[
+      "When ARVALID and ARREADY are both high.",
+      "When the first RVALID and RREADY occur.",
+      "When RVALID, RREADY, and RLAST are all high.",
+      "When BVALID and BREADY are high."
+    ]}
+    correctAnswer="When RVALID, RREADY, and RLAST are all high."
+    explanation="A read transaction consists of an address phase and one or more data beats. The transaction is only fully complete when the final data beat is transferred, indicated by RLAST being asserted alongside RVALID and RREADY."
+  />
+  <QuizQuestion
+    question="Why can't an AXI Scoreboard use a single FIFO to compare expected and actual read responses?"
+    options={[
+      "Because AXI read responses are always in reverse order.",
+      "Because transactions with different IDs can complete out of order.",
+      "Because scoreboards in UVM do not support FIFOs.",
+      "Because FIFOs cannot store objects with variable lengths."
+    ]}
+    correctAnswer="Because transactions with different IDs can complete out of order."
+    explanation="AXI allows slaves to return data for different IDs out of order. A strict single FIFO would report a mismatch if Read B (ID=2) returned before Read A (ID=1). Separate queues per ID must be used."
+  />
+</Quiz>

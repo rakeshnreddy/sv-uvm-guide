@@ -1,0 +1,193 @@
+---
+title: "AXI Expert Features: Cache, Prot, QoS & Atomics"
+description: "Master advanced AXI sideband signals: AxCACHE memory types, AxPROT privilege levels, AxQOS routing, and Exclusive Accesses (LDREX/STREX) for atomic operations."
+order: 9
+flashcards: []
+---
+
+# AXI Expert Features: Cache, Prot, QoS & Atomics
+
+While `AxADDR`, `AxLEN`, and `AxSIZE` define *where* and *how much* data to move, AXI includes several **sideband signals** that define *how* the interconnect and memory controllers should treat the transaction.
+
+These "expert features" are critical for building complex, multi-core SoCs where security, caching, and atomic synchronization are required.
+
+<QuickTake>
+- **`AxCACHE` (Memory Type):** Tells interconnects and caches if a transaction is bufferable, cacheable, or strictly ordered.
+- **`AxPROT` (Protection):** Defines privilege (User vs. Privileged), security (Secure vs. Non-secure), and instruction vs. data access.
+- **`AxQOS` (Quality of Service):** A 4-bit priority hint for interconnect arbitration and routing.
+- **Exclusive Accesses (`AxLOCK`):** Enables atomic read-modify-write operations (like `LDREX`/`STREX` in ARM) across the bus.
+</QuickTake>
+
+---
+
+## 1. Memory Types (`AxCACHE[3:0]`)
+
+Despite the name, `AxCACHE` is not just about caches. It defines the **memory attributes** of a transaction, telling the interconnect if it can buffer or combine the access.
+
+| Bit | Name | Meaning |
+|---|---|---|
+| `[0]` | **Bufferable (B)** | If 1, the interconnect can issue a write response `BRESP` *before* the data reaches the final destination. |
+| `[1]` | **Modifiable / Cacheable (C)** | If 1, the transaction can be cached. The interconnect can modify the burst (split, merge, prefetch). If 0, the access must be strictly ordered (e.g., to a device register). |
+| `[2]` | **Read Allocate (RA)** | If 1, a read miss should allocate a cache line. |
+| `[3]` | **Write Allocate (WA)** | If 1, a write miss should allocate a cache line. |
+
+### Common Use Cases
+
+- **Device I/O (`AxCACHE = 4'b0000`):** Non-bufferable, non-cacheable. Used for accessing peripheral registers. The interconnect cannot combine accesses or return early `BRESP`.
+- **Normal Memory (`AxCACHE = 4'b0011` or `4'b1111`):** Bufferable and cacheable. Used for DRAM. The interconnect can aggressively optimize, prefetch, and buffer.
+
+> [!WARNING]
+> Setting `AxCACHE` to cacheable for a device register (like a UART FIFO) will cause catastrophic failures, as the CPU might read a stale cached value instead of popping the actual FIFO.
+
+---
+
+## 2. Protection & Security (`AxPROT[2:0]`)
+
+`AxPROT` defines the access permissions for the transaction. Slaves (like memory controllers or peripheral bridges) use this to reject illegal accesses.
+
+| Bit | Name | `0` Meaning | `1` Meaning |
+|---|---|---|---|
+| `[0]` | **Privilege** | Unprivileged (User mode) | Privileged (Kernel/Supervisor mode) |
+| `[1]` | **Security** | Secure access (TrustZone) | Non-secure access |
+| `[2]` | **Instruction/Data**| Data access | Instruction fetch |
+
+### TrustZone & Security
+
+Bit `[1]` is the cornerstone of ARM TrustZone hardware security.
+- A **Non-secure** master (`AxPROT[1] = 1`) attempting to read a **Secure** memory region will be blocked by the slave or a firewall (TrustZone Address Space Controller), resulting in an `DECERR` (Decode Error) or `SLVERR` (Slave Error).
+- Note the inverse logic: `0` means Secure, `1` means Non-secure.
+
+---
+
+## 3. Quality of Service (`AxQOS[3:0]`)
+
+`AxQOS` was introduced in AXI4 to help interconnects prioritize traffic. It is a 4-bit value where a higher number indicates higher priority.
+
+- **`4'b0000`**: Default, lowest priority.
+- **`4'b1111`**: Highest priority.
+
+### Why QoS?
+
+In an SoC, a GPU fetching textures and a Display Controller fetching frame pixels both read from the same DRAM.
+If the GPU dominates the bus, the Display Controller will starve, resulting in visual screen tearing (a missed VSYNC).
+By assigning a higher `AxQOS` to the Display Controller, the interconnect will arbitrate in its favor, guaranteeing its bandwidth.
+
+> [!NOTE]
+> `AxQOS` is a **hint**. The interconnect is not strictly required to honor it, but compliant high-performance fabrics use it to manage arbitration weights and queuing.
+
+---
+
+## 4. Exclusive Accesses (Atomics)
+
+In a multi-core system, cores need a way to perform **atomic read-modify-write** operations (e.g., implementing semaphores or spinlocks).
+If Core A reads a lock, modifies it, and writes it back, it must ensure Core B didn't modify it in the meantime.
+
+AXI supports this using **Exclusive Accesses** via the `AxLOCK` signal.
+
+### The Exclusive Access Flow
+
+1. **Exclusive Read:** The master issues an `AR` transaction with `ARLOCK = 1`.
+2. **Monitor Tracking:** The slave (or interconnect) has a hardware "Exclusive Monitor" that records the address and the ID of the master.
+3. **Slave Response:** The slave returns the read data with an `EXOKAY` (Exclusive Okay) response.
+4. **Master Modifies:** The master modifies the data locally.
+5. **Exclusive Write:** The master issues an `AW` transaction to the *same address* with `AWLOCK = 1`.
+6. **Monitor Check:** The slave checks the monitor.
+   - If no other master has written to that address, the slave updates the memory and returns `EXOKAY`. The atomic operation **succeeded**.
+   - If another master *did* write to that address, the slave rejects the write (does not update memory) and returns `OKAY`. The atomic operation **failed**.
+7. **Retry on Failure:** If the master sees `OKAY` instead of `EXOKAY` on its exclusive write, it knows it failed and must retry the entire read-modify-write sequence.
+
+### Global vs. Local Monitors
+
+- **Local Monitor:** Sits close to the master (e.g., in the L1 cache). Handles exclusives that hit in the cache.
+- **Global Monitor:** Sits at the interconnect or slave. Handles exclusives that miss the cache and go out to shared memory.
+
+<InteractiveWrapper>
+  <ExclusiveAccessVisualizer />
+</InteractiveWrapper>
+
+---
+
+## 5. Verification Strategy
+
+Verifying expert features requires targeted test sequences:
+
+### Cache & Protection VIP Support
+Your AXI VIP must be able to inject illegal accesses (e.g., unprivileged write to a privileged-only register) and verify that the DUT responds with an `SLVERR` and does not update the internal state.
+
+### Exclusive Access Sequences
+To verify an exclusive monitor, you must create a virtual sequence that deliberately induces **collisions**:
+1. Master 0 issues Exclusive Read.
+2. Master 1 issues Exclusive Read to the same address.
+3. Master 1 issues Exclusive Write (should succeed, receive `EXOKAY`).
+4. Master 0 issues Exclusive Write (must fail, receive `OKAY`, memory unchanged).
+
+```systemverilog
+// SVA: Exclusive Write must be preceded by an Exclusive Read from same ID
+property p_exclusive_write_protocol;
+  @(posedge ACLK) disable iff (!ARESETn)
+    (AWVALID && AWREADY && AWLOCK == 1) |->
+      has_prior_exclusive_read(AWID, AWADDR);
+endproperty
+```
+
+### Coverage Plan
+
+```systemverilog
+covergroup axi_expert_cg @(posedge ACLK iff ARVALID && ARREADY);
+  cp_prot: coverpoint ARPROT {
+    bins secure_priv   = {3'b000};
+    bins nonsec_priv   = {3'b010};
+    bins secure_user   = {3'b001};
+    bins nonsec_user   = {3'b011};
+  }
+  cp_cache: coverpoint ARCACHE {
+    bins device        = {4'b0000};
+    bins normal_nc     = {4'b0011};
+    bins normal_c      = {4'b1111};
+  }
+  cp_lock: coverpoint ARLOCK {
+    bins normal    = {0};
+    bins exclusive = {1};
+  }
+  // Ensure we see exclusive accesses across different security states
+  cx_lock_prot: cross cp_lock, cp_prot;
+endgroup
+```
+
+---
+
+<Quiz>
+  <QuizQuestion
+    question="If a master wants to poll a hardware status register, what should its AxCACHE value be?"
+    options={[
+      "4'b1111 (Bufferable, Cacheable) to maximize bus speed",
+      "4'b0000 (Non-bufferable, Non-cacheable) to ensure strict ordering",
+      "4'b0010 (Cacheable, Read-allocate) to cache the status",
+      "It doesn't matter, AxCACHE is ignored for registers"
+    ]}
+    correctAnswer="4'b0000 (Non-bufferable, Non-cacheable) to ensure strict ordering"
+    explanation="Accessing hardware registers must be strictly ordered. If AxCACHE is set to cacheable, the master might read a stale value from a cache instead of the live register value, causing infinite polling loops."
+  />
+  <QuizQuestion
+    question="Master A performs an Exclusive Read. Master B then performs a normal Write to the same address. What happens when Master A performs its Exclusive Write?"
+    options={[
+      "Master A receives EXOKAY and the write succeeds",
+      "Master A receives SLVERR and the bus locks up",
+      "Master A receives OKAY and the write fails",
+      "Master B's write is rejected"
+    ]}
+    correctAnswer="Master A receives OKAY and the write fails"
+    explanation="Master B's normal write clears Master A's exclusive monitor reservation. When Master A attempts its Exclusive Write, the monitor sees the address was modified, blocks the write, and returns OKAY (indicating failure) instead of EXOKAY."
+  />
+  <QuizQuestion
+    question="Which AxPROT configuration represents a Secure, Privileged Data access?"
+    options={[
+      "3'b000",
+      "3'b011",
+      "3'b111",
+      "3'b010"
+    ]}
+    correctAnswer="3'b000"
+    explanation="AxPROT[0]=0 (Privileged), AxPROT[1]=0 (Secure), AxPROT[2]=0 (Data access). Note that AxPROT[1]=0 means Secure (active low logically for security)."
+  />
+</Quiz>

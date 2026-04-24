@@ -759,6 +759,39 @@ export const curriculumData: Module[] = [
             "description": "Understand AXI outstanding transactions, ID-based routing, same-ID ordering guarantees, out-of-order completion, and interconnect reordering rules."
           }
         ]
+      },
+      {
+        "title": "AXI Expert Features: Cache, Prot, QoS & Atomics",
+        "slug": "B-AXI-4_AXI_Expert_Features_Cache_Atomics",
+        "topics": [
+          {
+            "title": "AXI Expert Features: Cache, Prot, QoS & Atomics",
+            "slug": "index",
+            "description": "Master advanced AXI sideband signals: AxCACHE memory types, AxPROT privilege levels, AxQOS routing, and Exclusive Accesses (LDREX/STREX) for atomic operations."
+          }
+        ]
+      },
+      {
+        "title": "AXI Pitfalls & Interconnect Deadlocks",
+        "slug": "B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks",
+        "topics": [
+          {
+            "title": "AXI Pitfalls & Interconnect Deadlocks",
+            "slug": "index",
+            "description": "Learn how subtle design flaws in AXI channel handling lead to catastrophic system deadlocks, including circular channel dependencies and cyclic interconnect routing deadlocks."
+          }
+        ]
+      },
+      {
+        "title": "AXI Verification & Performance",
+        "slug": "B-AXI-6_AXI_Verification_Performance",
+        "topics": [
+          {
+            "title": "AXI Verification & Performance",
+            "slug": "index",
+            "description": "Master the architecture of an AXI Verification IP (VIP), from channel-level monitors to per-ID scoreboards, protocol assertions, and transaction latency measurement."
+          }
+        ]
       }
     ]
   },

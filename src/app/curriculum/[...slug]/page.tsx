@@ -208,6 +208,14 @@ const AxiIdOrderingVisualizer = dynamic(
   () => import('@/components/visualizers/AxiIdOrderingVisualizer').then(mod => mod.default),
   { ssr: false, loading: () => <VisualizationFallback /> }
 );
+const ExclusiveAccessVisualizer = dynamic(
+  () => import('@/components/visualizers/ExclusiveAccessVisualizer').then(mod => mod.default),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
+const AxiDeadlockSimulator = dynamic(
+  () => import('@/components/visualizers/AxiDeadlockSimulator').then(mod => mod.default),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -317,6 +325,8 @@ const components = {
   AxiChannelHandshakeVisualizer,
   AxiMemoryMathVisualizer,
   AxiIdOrderingVisualizer,
+  ExclusiveAccessVisualizer,
+  AxiDeadlockSimulator,
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {

@@ -1,0 +1,180 @@
+---
+title: "AXI Pitfalls & Interconnect Deadlocks"
+description: "Learn how subtle design flaws in AXI channel handling lead to catastrophic system deadlocks, including circular channel dependencies and cyclic interconnect routing deadlocks."
+order: 10
+flashcards: []
+---
+
+# AXI Pitfalls & Interconnect Deadlocks
+
+Because the AXI protocol decouples the address, data, and response channels, it relies on strict rules about how channels interact. If a master or slave violates these rules, the result isn't just data corruption—it is often a **catastrophic system deadlock** that hangs the entire SoC.
+
+In this module, we will dissect the most common AXI design flaws, why they cause deadlocks, and how to write verification assertions to catch them.
+
+<QuickTake>
+- **Channel Dependencies:** A channel handshake (`VALID`/`READY`) must never wait on another channel's handshake to complete if it creates a circular dependency.
+- **Master Rule:** Must not wait for `AWREADY` before asserting `WVALID`.
+- **Slave Rule:** Must not wait for `WVALID` before asserting `AWREADY`.
+- **Cyclic Deadlocks:** Poor interconnect topology can cause traffic jams where multiple masters block each other in a circle.
+- **4KB Boundary Violations:** Crossing a 4KB page boundary in a single burst causes slave addressing errors and data corruption.
+</QuickTake>
+
+---
+
+## 1. Channel Dependency Deadlocks
+
+The most common AXI deadlock occurs during a Write transaction when the master and slave each wait for the other to act first.
+
+### The AXI Dependency Rules
+
+The AXI spec defines strict rules for channel dependencies to prevent deadlocks. An arrow (`→`) means "can wait for":
+
+1. **`AWVALID` → `WVALID`**: A master **can** wait for `AWREADY` before asserting `WVALID`. (But it doesn't have to).
+2. **`WVALID` ↛ `AWREADY`**: A slave **MUST NOT** wait for `WVALID` before asserting `AWREADY`.
+3. **`AWVALID` ↛ `WVALID`**: A master **MUST NOT** wait for `AWREADY` before asserting `WVALID` **IF** the slave waits for `AWVALID` before asserting `WREADY` (which is legal).
+
+To simplify this into a golden rule: **Channels should be as independent as possible.**
+
+### The Classic Deadlock Scenario
+
+Imagine a naive Master and a naive Slave:
+
+- **Naive Master Design:** "I won't put data on the bus until the slave accepts my address." -> Master waits for `AWREADY` before asserting `WVALID`.
+- **Naive Slave Design:** "I won't accept an address until the master actually gives me the data." -> Slave waits for `WVALID` before asserting `AWREADY`.
+
+**Result:** The Master is waiting for the Slave, and the Slave is waiting for the Master. Neither asserts their signal. **Deadlock.**
+
+<InteractiveWrapper>
+  <AxiDeadlockSimulator />
+</InteractiveWrapper>
+
+### How to Verify Channel Independence
+
+You must write SystemVerilog Assertions (SVA) to ensure the slave does not illegally stall `AWREADY`.
+
+```systemverilog
+// SVA: Slave must eventually assert AWREADY if AWVALID is high, 
+// regardless of the state of the W channel.
+property p_no_awready_deadlock;
+  @(posedge ACLK) disable iff (!ARESETn)
+    AWVALID |-> s_eventually AWREADY;
+endproperty
+```
+
+---
+
+## 2. Cyclic Interconnect Deadlocks
+
+Even if every Master and Slave strictly obeys the channel dependency rules, the system can still deadlock due to the **topology of the interconnect**.
+
+### The Traffic Jam
+
+Imagine a system with two Masters (M1, M2) and two Slaves (S1, S2).
+Both masters can access both slaves through a crossbar switch.
+
+1. **M1** issues a burst to **S1**. The interconnect buffers it.
+2. **M2** issues a burst to **S2**. The interconnect buffers it.
+3. Now, before those finish:
+   - **M1** issues a burst to **S2**.
+   - **M2** issues a burst to **S1**.
+
+If the interconnect's internal FIFOs fill up, and it doesn't have independent paths or virtual channels for different routes, a **cyclic deadlock** occurs:
+- M1's path to S2 is blocked by M2's traffic.
+- M2's path to S1 is blocked by M1's traffic.
+
+### Solving Cyclic Deadlocks
+
+System architects solve this by:
+1. **Breaking the cycle:** Designing the interconnect as a tree rather than a full mesh where possible.
+2. **Virtual Channels:** Using separate internal FIFOs for different masters or transaction types.
+3. **Strict Ordering:** Forcing responses to clear out before accepting new cross-traffic.
+
+From a verification perspective, you find these by writing a **Stress Sequence** that unleashes maximum outstanding transactions from all masters to all slaves simultaneously with random delays.
+
+---
+
+## 3. The 4KB Boundary Violation
+
+AXI enforces a strict rule: **A single burst must not cross a 4 Kilobyte (0x1000) address boundary.**
+
+### Why does this rule exist?
+
+In modern systems with Memory Management Units (MMUs), physical memory is divided into 4KB pages.
+If a burst starts at address `0x0FF0` and is 64 bytes long, it will cross into `0x1000`.
+- Page 0 (ends at `0x0FFF`) might be mapped to physical DRAM.
+- Page 1 (starts at `0x1000`) might be unmapped, or mapped to a read-only peripheral.
+
+If the AXI interconnect allowed the burst to cross the boundary, the hardware would have to pause the burst in the middle, check the MMU, potentially trigger a software page fault, and then resume. This is too complex for high-speed hardware.
+
+### The Pitfall
+
+If a Master issues a burst that crosses a 4KB boundary, the slave or interconnect will return an **`SLVERR`** or **`DECERR`**, or worse, it will wrap the address incorrectly and corrupt data.
+
+### The Verification Check
+
+Your monitor or scoreboard should catch this immediately:
+
+```systemverilog
+function void check_4kb_boundary(axi_transaction txn);
+  bit [31:0] start_addr = txn.addr;
+  bit [31:0] end_addr = txn.addr + (txn.len + 1) * (1 << txn.size) - 1;
+  
+  // If the top 20 bits change, we crossed a 4KB boundary
+  if ((start_addr & 32'hFFFF_F000) != (end_addr & 32'hFFFF_F000)) begin
+    `uvm_error("AXI_VIOLATION", $sformatf("Burst crossed 4KB boundary! Start: %0h, End: %0h", start_addr, end_addr))
+  end
+endfunction
+```
+
+---
+
+## 4. Misaligned Strobes (`WSTRB`)
+
+The `WSTRB` (Write Strobe) signal allows a master to update only specific bytes within a data word.
+A common pitfall is miscalculating the `WSTRB` for **unaligned accesses**.
+
+If a master wants to write 2 bytes starting at address `0x1` on a 32-bit (4-byte) bus:
+- The data word must contain the bytes in lanes 1 and 2.
+- The `WSTRB` must be `4'b0110`.
+
+### The Pitfall
+Many custom DMA controllers incorrectly assume that if they are writing 2 bytes, they should just put the bytes at the bottom of the data bus and set `WSTRB = 4'b0011`. 
+Because the address is `0x1`, the slave expects the data on lanes 1 and 2, but sees `WSTRB = 4'b0011` (lanes 0 and 1). This results in the wrong bytes being written to memory.
+
+---
+
+<Quiz>
+  <QuizQuestion
+    question="According to the AXI specification, which of the following channel dependencies is strictly ILLEGAL?"
+    options={[
+      "Master waiting for AWREADY before asserting WVALID",
+      "Slave waiting for AWVALID before asserting AWREADY",
+      "Slave waiting for WVALID before asserting AWREADY",
+      "Master asserting AWVALID and WVALID in the same cycle"
+    ]}
+    correctAnswer="Slave waiting for WVALID before asserting AWREADY"
+    explanation="A slave MUST NOT wait for WVALID before asserting AWREADY. If it does, and the master is waiting for AWREADY before asserting WVALID, the system will instantly deadlock."
+  />
+  <QuizQuestion
+    question="A master issues an INCR burst starting at address 0x0FE0. The burst consists of 8 beats, and each beat is 8 bytes (AxSIZE = 3). Is this transaction legal?"
+    options={[
+      "Yes, it is a standard 64-byte burst.",
+      "No, the burst crosses a 4KB boundary.",
+      "No, INCR bursts cannot have an 8-byte AxSIZE.",
+      "Yes, but only if AxCACHE is set to bufferable."
+    ]}
+    correctAnswer="No, the burst crosses a 4KB boundary."
+    explanation="The burst length is 8 beats * 8 bytes = 64 bytes. Start address is 0x0FE0. End address is 0x0FE0 + 64 - 1 = 0x101F. Because it crosses from 0x0FFF to 0x1000, it violates the 4KB boundary rule."
+  />
+  <QuizQuestion
+    question="On a 32-bit data bus, a master writes 1 byte to address 0x3. What should the WSTRB value be?"
+    options={[
+      "4'b0001",
+      "4'b1000",
+      "4'b0111",
+      "4'b1111"
+    ]}
+    correctAnswer="4'b1000"
+    explanation="Address 0x3 corresponds to the highest byte lane (lane 3) of the 32-bit (4-byte) word. Therefore, only bit 3 of the WSTRB should be asserted: 4'b1000."
+  />
+</Quiz>
