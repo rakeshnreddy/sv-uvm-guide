@@ -1,0 +1,142 @@
+---
+title: "AHB Protocol Design & Timing"
+description: "Master the timing mechanics of AHB, including address/data pipelining, wait states, and burst types."
+order: 3
+flashcards: []
+---
+
+# AHB Protocol Design & Timing
+
+In the previous module, we established that AHB is fundamentally a **shared bus**. Because only one master can use the bus at a time, the protocol must be highly optimized to maximize throughput. 
+
+AHB achieves this optimization through **pipelining**. It overlaps the address phase of one transaction with the data phase of the previous transaction.
+
+<QuickTake>
+- **Pipelining:** The Address Phase of Transaction N happens at the same time as the Data Phase of Transaction N-1.
+- **HREADY:** The slave uses `HREADY` to insert wait states, extending the data phase (which consequently stalls the address phase of the next transaction).
+- **HTRANS:** Defines the type of transfer (IDLE, BUSY, NONSEQ, SEQ).
+</QuickTake>
+
+---
+
+## 1. Signal Taxonomy
+
+Before looking at timing, let's categorize the core AHB signals:
+
+### Master $\rightarrow$ Slave (Address & Control)
+These signals are driven by the Master during the **Address Phase**:
+- `HADDR [31:0]`: The byte address of the transfer.
+- `HWRITE`: High for Write, Low for Read.
+- `HTRANS [1:0]`: Transfer type.
+  - `00` (IDLE): Master doesn't want to transfer data.
+  - `01` (BUSY): Master is in a burst but needs to pause.
+  - `10` (NONSEQ): Single transfer or the *first* transfer of a burst.
+  - `11` (SEQ): Subsequent transfers in a burst.
+- `HSIZE [2:0]`: Size of the transfer (8-bit, 16-bit, 32-bit, etc.).
+- `HBURST [2:0]`: Type of burst (Single, INCR4, WRAP4, etc.).
+
+### Master $\leftrightarrow$ Slave (Data)
+These signals carry the actual payload during the **Data Phase**:
+- `HWDATA [31:0]`: Write data driven by Master.
+- `HRDATA [31:0]`: Read data driven by Slave.
+
+### Slave $\rightarrow$ Master (Response)
+These signals are driven by the Slave during the **Data Phase**:
+- `HREADY`: High when the slave is finished with the data phase, Low when it needs more time (inserts wait states).
+- `HRESP`: High for ERROR, Low for OKAY.
+
+---
+
+## 2. Address/Data Phase Pipelining
+
+Every AHB transfer consists of two distinct phases:
+1. **Address Phase:** Lasts exactly one clock cycle. The master drives address and control signals.
+2. **Data Phase:** May require multiple clock cycles if the slave inserts wait states. Data is sampled at the end of this phase.
+
+To maximize throughput, the Address phase of the *next* transfer overlaps with the Data phase of the *current* transfer.
+
+<ProtocolWaveform
+  title="AHB Basic Pipelining"
+  spec={{
+    signal: [
+      { name: "HCLK", wave: "p......" },
+      { name: "HADDR", wave: "x==x...", data: ["A", "B"] },
+      { name: "HWDATA", wave: "xx==x..", data: ["Data A", "Data B"] },
+      { name: "HREADY", wave: "1......" }
+    ]
+  }}
+  caption="Notice how the Address phase of Transfer B occurs during the Data phase of Transfer A."
+/>
+
+> [!IMPORTANT]
+> The pipelined nature of AHB means that the master is always "thinking one step ahead." While the slave is processing data for Address A, the master is already broadcasting Address B to the bus decoder.
+
+---
+
+## 3. Wait-State Insertion
+
+Slaves are not always fast enough to process data in a single clock cycle. If a slave needs more time, it pulls `HREADY` low. This inserts a **Wait State**.
+
+Crucially, because of the pipeline, stalling the Data phase of Transfer A *also stalls the Address phase of Transfer B*.
+
+<ProtocolWaveform
+  title="Wait-State Insertion"
+  spec={{
+    signal: [
+      { name: "HCLK", wave: "p......." },
+      { name: "HADDR", wave: "x==.x...", data: ["A", "B", "C"] },
+      { name: "HWDATA", wave: "xx..=x..", data: ["Data A", "Data B"] },
+      { name: "HREADY", wave: "101.1..." }
+    ]
+  }}
+  caption="The slave pulls HREADY low to extend the Data phase of Transfer A. Consequently, the Master must hold Address B stable for an extra cycle."
+/>
+
+### The Rules of `HREADY`
+- The slave samples `HWDATA` (for writes) or the master samples `HRDATA` (for reads) only on the rising clock edge where `HREADY` is **High**.
+- The master must hold the address and control signals stable as long as `HREADY` is Low.
+
+---
+
+## 4. Burst Types and Alignment
+
+A burst is a sequence of transfers. Instead of negotiating for bus access for every single data word, a master can request a burst. 
+
+- **Single:** A standalone transfer.
+- **Incrementing (INCR):** The address increments linearly. Can be specified length (INCR4, INCR8) or unspecified length (INCR).
+- **Wrapping (WRAP):** The address increments linearly but wraps around a memory boundary when it reaches a limit. Wrapping bursts are primarily used for cache line fills.
+
+<InteractiveWrapper>
+  <AhbPipelineBurstVisualizer />
+</InteractiveWrapper>
+
+---
+
+## Summary
+
+Pipelining and wait states are the beating heart of AHB timing. If you can trace exactly when `HREADY` is high, you know exactly when data is sampled. In the next module, we will explore what happens when `HREADY` and `HRESP` interact to create error conditions.
+
+<Quiz>
+  <QuizQuestion
+    question="During which phase does the Master drive the HTRANS and HSIZE control signals?"
+    options={[
+      "The Data Phase",
+      "The Address Phase",
+      "Both phases simultaneously",
+      "Only when HREADY is low"
+    ]}
+    correctAnswer="The Address Phase"
+    explanation="Control signals (including HTRANS, HSIZE, HBURST, and HWRITE) are broadcast alongside the address during the Address Phase."
+  />
+  <QuizQuestion
+    question="If a slave pulls HREADY low during the data phase of Transfer A, what must the master do with Address B?"
+    options={[
+      "Abort Transfer B",
+      "Send the data for Transfer B immediately",
+      "Hold Address B stable until HREADY goes high",
+      "Retract Address B and send IDLE"
+    ]}
+    correctAnswer="Hold Address B stable until HREADY goes high"
+    explanation="Because the pipeline is stalled, the master must hold the pending address (Address B) stable on the bus until the current data phase completes."
+  />
+</Quiz>

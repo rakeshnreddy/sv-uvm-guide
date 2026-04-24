@@ -673,6 +673,39 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "AHB Protocol Design & Timing",
+        "slug": "B-AHB-1_AHB_Design_Timing_Mechanics",
+        "topics": [
+          {
+            "title": "AHB Protocol Design & Timing",
+            "slug": "index",
+            "description": "Master the timing mechanics of AHB, including address/data pipelining, wait states, and burst types."
+          }
+        ]
+      },
+      {
+        "title": "AHB Pitfalls & Real-World Failures",
+        "slug": "B-AHB-2_AHB_Pitfalls_and_Deadlocks",
+        "topics": [
+          {
+            "title": "AHB Pitfalls & Real-World Failures",
+            "slug": "index",
+            "description": "Learn the most common AHB protocol violations—HREADY mishandling, two-cycle ERROR responses, arbitration deadlocks, and 1 KB boundary crossing failures—and the verification strategies that catch them."
+          }
+        ]
+      },
+      {
+        "title": "AHB Verification Methodology",
+        "slug": "B-AHB-3_AHB_Verification",
+        "topics": [
+          {
+            "title": "AHB Verification Methodology",
+            "slug": "index",
+            "description": "Build a complete AHB verification environment: transaction modeling, monitor/checker architecture, protocol assertions, functional coverage, debug strategies, and interview-ready knowledge."
+          }
+        ]
+      },
+      {
         "title": "AMBA Protocol Families & Tradeoffs",
         "slug": "B-AMBA-1_Protocol_Families_and_Tradeoffs",
         "topics": [
@@ -691,6 +724,39 @@ export const curriculumData: Module[] = [
             "title": "AMBA Protocol Intuition & Memory Hooks",
             "slug": "index",
             "description": "Build a permanent mental model of AMBA protocols using intuitive analogies, ensuring you never forget channel directions or handshake rules."
+          }
+        ]
+      },
+      {
+        "title": "AXI4 Channel Architecture & Handshake Protocol",
+        "slug": "B-AXI-1_AXI_Channel_Architecture",
+        "topics": [
+          {
+            "title": "AXI4 Channel Architecture & Handshake Protocol",
+            "slug": "index",
+            "description": "Master the five-channel AXI4 architecture: Write Address, Write Data, Write Response, Read Address, and Read Data channels, with the VALID/READY handshake contract and combinatorial loop prevention."
+          }
+        ]
+      },
+      {
+        "title": "AXI Burst Math & Address Calculation",
+        "slug": "B-AXI-2_AXI_Burst_Math",
+        "topics": [
+          {
+            "title": "AXI Burst Math & Address Calculation",
+            "slug": "index",
+            "description": "Master AXI burst address computation: AWLEN/ARLEN, AWSIZE/ARSIZE, AWBURST/ARBURST, wrap boundary math, WSTRB generation, and the critical 4 KB boundary rule."
+          }
+        ]
+      },
+      {
+        "title": "AXI Transaction Ordering & IDs",
+        "slug": "B-AXI-3_AXI_Ordering_and_IDs",
+        "topics": [
+          {
+            "title": "AXI Transaction Ordering & IDs",
+            "slug": "index",
+            "description": "Understand AXI outstanding transactions, ID-based routing, same-ID ordering guarantees, out-of-order completion, and interconnect reordering rules."
           }
         ]
       }

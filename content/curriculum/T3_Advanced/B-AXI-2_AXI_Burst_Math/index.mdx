@@ -1,0 +1,307 @@
+---
+title: "AXI Burst Math & Address Calculation"
+description: "Master AXI burst address computation: AWLEN/ARLEN, AWSIZE/ARSIZE, AWBURST/ARBURST, wrap boundary math, WSTRB generation, and the critical 4 KB boundary rule."
+order: 7
+flashcards: []
+---
+
+# AXI Burst Math & Address Calculation
+
+In the previous module you learned that AXI uses five independent channels with VALID/READY handshakes.
+Now we focus on *what travels on those channels* — specifically, how burst parameters control address generation and byte-lane selection.
+
+Getting burst math wrong causes **silent data corruption** — the most dangerous class of bug in interconnect design.
+
+<QuickTake>
+- **AxLEN** sets the number of beats (0 = 1 beat, 15 = 16 beats for AXI3; up to 255 for AXI4).
+- **AxSIZE** sets the bytes per beat (encoded as 2^N: size=2 means 4 bytes per beat).
+- **AxBURST** controls address progression: FIXED, INCR, or WRAP.
+- **WSTRB** is a byte-level write enable mask derived from address alignment and transfer size.
+- **No burst may cross a 4 KB address boundary** — the most commonly violated AXI rule.
+</QuickTake>
+
+---
+
+## 1. Burst Parameters
+
+Every AXI address-channel transaction carries three burst control fields:
+
+### AxLEN — Burst Length
+
+`AxLEN` encodes the number of data beats **minus one**:
+
+| AxLEN Value | Number of Beats |
+|---|---|
+| 0 | 1 |
+| 1 | 2 |
+| 3 | 4 |
+| 7 | 8 |
+| 15 | 16 (AXI3 max) |
+| 255 | 256 (AXI4 max) |
+
+> [!NOTE]
+> AXI3 limits bursts to 16 beats maximum.  AXI4 extends this to 256 beats for INCR bursts, but WRAP bursts are still limited to 2, 4, 8, or 16 beats.
+
+### AxSIZE — Bytes per Beat
+
+`AxSIZE` is encoded as a power of 2:
+
+| AxSIZE Value | Bytes per Beat |
+|---|---|
+| 0 | 1 byte |
+| 1 | 2 bytes |
+| 2 | 4 bytes (32-bit) |
+| 3 | 8 bytes (64-bit) |
+| 4 | 16 bytes (128-bit) |
+
+The transfer size **must not exceed the data bus width**.  A 32-bit data bus cannot use `AxSIZE = 3` (8 bytes).
+
+### AxBURST — Burst Type
+
+| AxBURST Value | Type | Address Behavior |
+|---|---|---|
+| 0 | **FIXED** | Same address for every beat (used for FIFO access) |
+| 1 | **INCR** | Address increments by `2^AxSIZE` each beat |
+| 2 | **WRAP** | Address increments then wraps at a calculated boundary |
+
+---
+
+## 2. Address Calculation
+
+### INCR Bursts
+
+For an incrementing burst, each beat's address is calculated as:
+
+```
+Address_N = Start_Address + N × (2^AxSIZE)
+```
+
+**Example:** A 4-beat INCR burst with `AxSIZE = 2` (4 bytes) starting at `0x1000`:
+
+| Beat | Calculation | Address |
+|---|---|---|
+| 0 | 0x1000 + 0×4 | **0x1000** |
+| 1 | 0x1000 + 1×4 | **0x1004** |
+| 2 | 0x1000 + 2×4 | **0x1008** |
+| 3 | 0x1000 + 3×4 | **0x100C** |
+
+### WRAP Bursts
+
+Wrapping bursts are used for **cache line fills**.  The address increments normally but wraps at a boundary calculated as:
+
+```
+Wrap_Boundary = (Number_of_Beats × 2^AxSIZE)
+Lower_Wrap    = INT(Start_Address / Wrap_Boundary) × Wrap_Boundary
+Upper_Wrap    = Lower_Wrap + Wrap_Boundary
+```
+
+When the incremented address reaches `Upper_Wrap`, it wraps back to `Lower_Wrap`.
+
+**Example:** A WRAP4 burst with `AxSIZE = 2` (4 bytes) starting at `0x1004`:
+
+```
+Wrap_Boundary = 4 × 4 = 16 bytes
+Lower_Wrap    = INT(0x1004 / 16) × 16 = 0x1000
+Upper_Wrap    = 0x1000 + 16 = 0x1010
+```
+
+| Beat | Raw Address | After Wrap | Explanation |
+|---|---|---|---|
+| 0 | 0x1004 | **0x1004** | Start address |
+| 1 | 0x1008 | **0x1008** | Normal increment |
+| 2 | 0x100C | **0x100C** | Normal increment |
+| 3 | 0x1010 | **0x1000** | Wraps to lower boundary! |
+
+> [!IMPORTANT]
+> **WRAP burst start addresses must be aligned** to the transfer size.
+> A WRAP4 burst of 4-byte transfers starting at `0x1003` is illegal because 0x1003 is not 4-byte aligned.
+
+### FIXED Bursts
+
+All beats access the same address.  This is used for FIFO-mapped peripherals where repeated writes to the same address push data into a hardware queue.
+
+---
+
+## 3. WSTRB — Write Strobe Generation
+
+`WSTRB` is a bitmask where each bit corresponds to one byte lane of the data bus.
+A bit set to `1` means that byte lane contains valid write data.
+
+For a 32-bit (4-byte) data bus, `WSTRB` is 4 bits wide:
+- `WSTRB = 4'b1111` — all 4 bytes valid (full-word write)
+- `WSTRB = 4'b0011` — lower 2 bytes valid (half-word write to bytes 0-1)
+- `WSTRB = 4'b0100` — only byte 2 valid (single byte write)
+
+### WSTRB Calculation
+
+The active byte lanes depend on the **transfer address** and **transfer size**:
+
+```systemverilog
+function automatic logic [DATA_WIDTH/8-1:0] calculate_wstrb(
+  input logic [31:0] addr,
+  input logic [2:0]  size
+);
+  int unsigned num_bytes = 1 << size;
+  int unsigned start_lane = addr % (DATA_WIDTH / 8);
+  logic [DATA_WIDTH/8-1:0] strb = '0;
+
+  for (int i = 0; i < num_bytes; i++)
+    strb[start_lane + i] = 1'b1;
+
+  return strb;
+endfunction
+```
+
+**Example on a 64-bit (8-byte) data bus:**
+
+| Address | AxSIZE | Bytes | WSTRB |
+|---|---|---|---|
+| 0x1000 | 2 (4B) | 4 | `8'b0000_1111` |
+| 0x1004 | 2 (4B) | 4 | `8'b1111_0000` |
+| 0x1001 | 0 (1B) | 1 | `8'b0000_0010` |
+| 0x1000 | 3 (8B) | 8 | `8'b1111_1111` |
+
+> [!WARNING]
+> **A common RTL bug:** Computing WSTRB based only on AxSIZE without considering the address alignment.
+> This produces incorrect byte-lane selection for narrow transfers on wide buses.
+
+---
+
+## 4. The 4 KB Boundary Rule
+
+The AXI specification mandates:
+
+> **No burst may cross a 4 KB (0x1000) address boundary.**
+
+This is the most commonly violated rule in AXI designs and the source of countless silicon bugs.
+
+### Why 4 KB?
+
+The 4 KB boundary corresponds to the minimum page size in most memory management systems.
+The AXI interconnect's address decoder maps slaves to address regions at page boundaries.
+A burst crossing this boundary would need to be routed to two different slaves — which the interconnect cannot handle in a single burst.
+
+### Boundary Check Formula
+
+```
+Start_Address = AxADDR
+Total_Bytes   = (AxLEN + 1) × 2^AxSIZE
+End_Address   = Start_Address + Total_Bytes - 1
+
+// LEGAL if:
+//   floor(Start_Address / 4096) == floor(End_Address / 4096)
+// i.e., both addresses fall in the same 4 KB page
+```
+
+**Example — LEGAL burst:**
+- Start: `0x0FF0`, AxLEN=3, AxSIZE=0 (1 byte): End = 0x0FF3 → same 4 KB page ✓
+
+**Example — ILLEGAL burst:**
+- Start: `0x0FF0`, AxLEN=3, AxSIZE=2 (4 bytes): End = 0x0FFF + 1 = 0x1000 → crosses into next 4 KB page ✗
+
+### SVA Assertion
+
+```systemverilog
+property p_no_4kb_crossing(valid, addr, len, size);
+  @(posedge ACLK) disable iff (!ARESETn)
+    valid |-> ((addr[11:0] + ((len + 1) << size)) <= 13'h1000);
+endproperty
+
+a_aw_4kb: assert property (p_no_4kb_crossing(AWVALID && AWREADY, AWADDR, AWLEN, AWSIZE))
+  else $error("Write burst crosses 4 KB boundary at 0x%08h", AWADDR);
+
+a_ar_4kb: assert property (p_no_4kb_crossing(ARVALID && ARREADY, ARADDR, ARLEN, ARSIZE))
+  else $error("Read burst crosses 4 KB boundary at 0x%08h", ARADDR);
+```
+
+### How Masters Handle This
+
+When a master needs to transfer data that *would* cross a 4 KB boundary, it must **split the burst** into two separate bursts:
+
+1. First burst: from the start address to the 4 KB boundary.
+2. Second burst: from the 4 KB boundary to the end address.
+
+This splitting logic is a common source of bugs in DMA controllers and bridge adapters.
+
+---
+
+## 5. Narrow Transfers
+
+A **narrow transfer** occurs when `AxSIZE` is smaller than the data bus width.
+For example, a 2-byte transfer on a 4-byte bus.
+
+During narrow transfers:
+- Only a subset of byte lanes carry valid data (controlled by WSTRB).
+- The active byte lanes **shift** on each beat of an INCR burst, cycling through the data bus.
+
+**Example:** 2-byte INCR burst on a 4-byte bus starting at `0x1000`:
+
+| Beat | Address | Active Bytes | WSTRB |
+|---|---|---|---|
+| 0 | 0x1000 | Bytes 0-1 | `4'b0011` |
+| 1 | 0x1002 | Bytes 2-3 | `4'b1100` |
+| 2 | 0x1004 | Bytes 0-1 | `4'b0011` |
+| 3 | 0x1006 | Bytes 2-3 | `4'b1100` |
+
+<InteractiveWrapper>
+  <AxiMemoryMathVisualizer />
+</InteractiveWrapper>
+
+## Summary
+
+| Parameter | What It Controls | Key Rule |
+|---|---|---|
+| **AxLEN** | Number of beats (N+1) | AXI4 INCR: up to 256; WRAP: 2, 4, 8, or 16 |
+| **AxSIZE** | Bytes per beat (2^N) | Must not exceed data bus width |
+| **AxBURST** | Address progression | FIXED, INCR, or WRAP |
+| **WSTRB** | Byte-lane enables | Derived from address + size |
+| **4 KB rule** | Boundary constraint | No burst may cross a 4 KB page boundary |
+
+In the next module, we will explore AXI transaction ordering, IDs, and how the interconnect handles out-of-order completion.
+
+<Quiz>
+  <QuizQuestion
+    question="If AxLEN = 7 and AxSIZE = 2, how many total bytes does the burst transfer?"
+    options={[
+      "7 bytes",
+      "28 bytes",
+      "32 bytes",
+      "8 bytes"
+    ]}
+    correctAnswer="32 bytes"
+    explanation="Number of beats = AxLEN + 1 = 8. Bytes per beat = 2^AxSIZE = 2^2 = 4 bytes. Total = 8 × 4 = 32 bytes."
+  />
+  <QuizQuestion
+    question="A WRAP4 burst with AxSIZE=2 starts at 0x100C. What is the address of beat 1?"
+    options={[
+      "0x1010",
+      "0x1000",
+      "0x100C",
+      "0x1014"
+    ]}
+    correctAnswer="0x1000"
+    explanation="Wrap boundary = 4 beats × 4 bytes = 16 bytes. Lower wrap = 0x1000, upper wrap = 0x1010. Beat 0 = 0x100C, beat 1 = 0x100C + 4 = 0x1010 → wraps to 0x1000."
+  />
+  <QuizQuestion
+    question="On a 64-bit data bus, what is WSTRB for a 4-byte write starting at address 0x1004?"
+    options={[
+      "8'b0000_1111",
+      "8'b1111_0000",
+      "8'b1111_1111",
+      "8'b0001_0000"
+    ]}
+    correctAnswer="8'b1111_0000"
+    explanation="On a 64-bit (8-byte) bus, address 0x1004 maps to byte lanes 4-7. A 4-byte write enables bytes 4, 5, 6, 7 → WSTRB = 8'b1111_0000."
+  />
+  <QuizQuestion
+    question="A master needs an INCR burst of 16 beats × 4 bytes starting at 0x0FC4. Is this legal?"
+    options={[
+      "Yes — it fits within a single 4 KB page",
+      "No — it crosses the 4 KB boundary at 0x1000",
+      "No — 16 beats is too many for AXI",
+      "Yes — the 4 KB rule only applies to WRAP bursts"
+    ]}
+    correctAnswer="No — it crosses the 4 KB boundary at 0x1000"
+    explanation="Total bytes = 16 × 4 = 64. End address = 0x0FC4 + 63 = 0x1003. Start page = floor(0x0FC4/4096) = 0, end page = floor(0x1003/4096) = 1. The burst spans two pages, crossing the boundary at 0x1000. The master must split this into two separate bursts."
+  />
+</Quiz>

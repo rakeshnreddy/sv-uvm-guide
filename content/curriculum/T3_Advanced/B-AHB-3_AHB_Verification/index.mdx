@@ -1,0 +1,495 @@
+---
+title: "AHB Verification Methodology"
+description: "Build a complete AHB verification environment: transaction modeling, monitor/checker architecture, protocol assertions, functional coverage, debug strategies, and interview-ready knowledge."
+order: 5
+flashcards: []
+---
+
+# AHB Verification Methodology
+
+You now understand how AHB *should* work (Module B-AHB-1) and how it *breaks* (Module B-AHB-2).
+This module closes the loop: **how do you prove the design is correct?**
+
+We will build up a complete AHB verification methodology from first principles — the same approach used by VIP teams at ARM, Synopsys, and Cadence to verify AHB interconnects and slave controllers.
+
+<QuickTake>
+- **Transaction modeling** converts raw pin-level AHB signals into high-level objects for scoreboarding.
+- **Monitor + Checker** is the core passive verification component — it watches and validates without driving.
+- **Protocol assertions** catch violations in real time; functional **coverage** proves you exercised enough scenarios.
+- **Debug patterns** turn a failing waveform into a root cause in minutes, not days.
+</QuickTake>
+
+---
+
+## 1. Transaction Modeling
+
+The first step in any bus verification environment is defining a **transaction object** that captures everything about a single AHB transfer.
+
+```systemverilog
+class ahb_transaction extends uvm_sequence_item;
+  `uvm_object_utils(ahb_transaction)
+
+  // Address phase fields
+  rand bit [31:0] addr;
+  rand bit        write;
+  rand bit [2:0]  size;      // HSIZE encoding
+  rand bit [2:0]  burst;     // HBURST encoding
+  rand bit [1:0]  trans;     // HTRANS encoding
+
+  // Data phase fields
+  rand bit [31:0] data;
+  bit             resp;       // 0=OKAY, 1=ERROR
+  int unsigned    wait_cycles; // number of wait states observed
+
+  // Burst tracking
+  int unsigned    beat_index;  // which beat within a burst (0..N-1)
+  bit             is_last_beat;
+
+  function new(string name = "ahb_transaction");
+    super.new(name);
+  endfunction
+
+  function string convert2string();
+    return $sformatf("%s addr=0x%08h data=0x%08h size=%0d burst=%0d waits=%0d resp=%s",
+      write ? "WR" : "RD", addr, data, size, burst, wait_cycles,
+      resp ? "ERROR" : "OKAY");
+  endfunction
+endclass
+```
+
+> [!NOTE]
+> The `wait_cycles` field is critical for performance analysis.
+> By tracking how many wait states each transfer accumulates, you can build latency distribution coverage and identify slow slaves.
+
+---
+
+## 2. Monitor Architecture
+
+The AHB monitor is a **passive** component.  It observes the bus without driving any signals.
+Its job is to reconstruct complete transactions from the raw signal waveforms.
+
+### The Challenge: Pipelining
+
+Because AHB pipelines the address and data phases, the monitor must **buffer** the address phase information and pair it with the data phase that arrives one or more cycles later.
+
+```systemverilog
+class ahb_monitor extends uvm_monitor;
+  `uvm_component_utils(ahb_monitor)
+
+  uvm_analysis_port #(ahb_transaction) ap;
+  virtual ahb_if vif;
+
+  // Pipeline buffer: stores the address phase until data phase completes
+  ahb_transaction pending_txn;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    ap = new("ap", this);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    forever begin
+      @(posedge vif.HCLK);
+
+      // ── Data phase sampling (for the PREVIOUS address phase) ──
+      if (pending_txn != null && vif.HREADY) begin
+        // Data phase is complete
+        if (pending_txn.write)
+          pending_txn.data = vif.HWDATA;
+        else
+          pending_txn.data = vif.HRDATA;
+        pending_txn.resp = vif.HRESP;
+
+        ap.write(pending_txn);  // broadcast to scoreboard
+        pending_txn = null;
+      end else if (pending_txn != null && !vif.HREADY) begin
+        pending_txn.wait_cycles++;
+      end
+
+      // ── Address phase capture (for the CURRENT cycle) ──
+      if (vif.HTRANS inside {NONSEQ, SEQ} && vif.HREADY) begin
+        pending_txn = ahb_transaction::type_id::create("txn");
+        pending_txn.addr  = vif.HADDR;
+        pending_txn.write = vif.HWRITE;
+        pending_txn.size  = vif.HSIZE;
+        pending_txn.burst = vif.HBURST;
+        pending_txn.trans = vif.HTRANS;
+      end
+    end
+  endtask
+endclass
+```
+
+### Key Design Decision: When to Sample
+
+The monitor **only samples the address phase when `HREADY` is high**.
+This is because during a wait state, the address phase of the next transfer hasn't actually been accepted yet — the master is just holding it stable.
+
+> [!IMPORTANT]
+> A common VIP bug is to capture the address phase on every cycle regardless of `HREADY`.
+> This produces duplicate transactions in the analysis stream and corrupts the scoreboard.
+
+---
+
+## 3. Checker: Protocol Compliance
+
+The checker runs alongside the monitor and validates every cycle against the AHB specification rules.
+A production AHB checker typically contains 20–40 SVA properties.  Here are the essential ones:
+
+### 3A. Core Protocol Assertions
+
+```systemverilog
+module ahb_protocol_checker (
+  input logic        HCLK,
+  input logic        HRESETn,
+  input logic [31:0] HADDR,
+  input logic [1:0]  HTRANS,
+  input logic [2:0]  HBURST,
+  input logic [2:0]  HSIZE,
+  input logic        HWRITE,
+  input logic        HREADY,
+  input logic        HRESP
+);
+
+  // ═══════════════════════════════════════════════
+  // 1. Address stability during wait states
+  // ═══════════════════════════════════════════════
+  property p_addr_stable;
+    @(posedge HCLK) disable iff (!HRESETn)
+      (!HREADY && HTRANS != 2'b00) |=> $stable(HADDR);
+  endproperty
+  assert property (p_addr_stable)
+    else $error("[AHB-CHK] HADDR changed during wait state");
+
+  // ═══════════════════════════════════════════════
+  // 2. Control signal stability during wait states
+  // ═══════════════════════════════════════════════
+  property p_ctrl_stable;
+    @(posedge HCLK) disable iff (!HRESETn)
+      (!HREADY && HTRANS != 2'b00) |=>
+        $stable(HTRANS) && $stable(HWRITE) && $stable(HSIZE) && $stable(HBURST);
+  endproperty
+  assert property (p_ctrl_stable)
+    else $error("[AHB-CHK] Control signals changed during wait state");
+
+  // ═══════════════════════════════════════════════
+  // 3. Two-cycle ERROR response protocol
+  // ═══════════════════════════════════════════════
+  property p_error_phase1;
+    @(posedge HCLK) disable iff (!HRESETn)
+      (HRESP && !HREADY) |=> (HRESP && HREADY);
+  endproperty
+  assert property (p_error_phase1)
+    else $error("[AHB-CHK] ERROR response did not complete two-cycle protocol");
+
+  // ═══════════════════════════════════════════════
+  // 4. HREADY timeout (configurable)
+  // ═══════════════════════════════════════════════
+  parameter MAX_WAIT = 16;
+  property p_hready_timeout;
+    @(posedge HCLK) disable iff (!HRESETn)
+      $fell(HREADY) |-> ##[1:MAX_WAIT] HREADY;
+  endproperty
+  assert property (p_hready_timeout)
+    else $error("[AHB-CHK] HREADY low for > %0d cycles", MAX_WAIT);
+
+  // ═══════════════════════════════════════════════
+  // 5. No burst crosses 1 KB boundary
+  // ═══════════════════════════════════════════════
+  property p_1kb_boundary;
+    @(posedge HCLK) disable iff (!HRESETn)
+      (HTRANS == 2'b10 && HBURST != 3'b000) |->
+        (HADDR[9:0] + (1 << HSIZE) * burst_length(HBURST)) <= 11'h400;
+  endproperty
+  assert property (p_1kb_boundary)
+    else $error("[AHB-CHK] Burst crosses 1 KB boundary at 0x%08h", HADDR);
+
+  // ═══════════════════════════════════════════════
+  // 6. Burst address alignment
+  // ═══════════════════════════════════════════════
+  property p_alignment;
+    @(posedge HCLK) disable iff (!HRESETn)
+      (HTRANS == 2'b10) |-> ((HADDR & ((1 << HSIZE) - 1)) == '0);
+  endproperty
+  assert property (p_alignment)
+    else $error("[AHB-CHK] Unaligned transfer: addr=0x%08h size=%0d", HADDR, HSIZE);
+
+  // ═══════════════════════════════════════════════
+  // 7. IDLE after reset
+  // ═══════════════════════════════════════════════
+  property p_idle_after_reset;
+    @(posedge HCLK)
+      $rose(HRESETn) |-> (HTRANS == 2'b00);
+  endproperty
+  assert property (p_idle_after_reset)
+    else $error("[AHB-CHK] Non-IDLE transfer immediately after reset");
+
+  // Helper function for burst length
+  function automatic int burst_length(input logic [2:0] hburst);
+    case (hburst)
+      3'b000: return 1;   // SINGLE
+      3'b001: return 0;   // INCR (undefined length — skip check)
+      3'b010: return 4;   // WRAP4
+      3'b011: return 4;   // INCR4
+      3'b100: return 8;   // WRAP8
+      3'b101: return 8;   // INCR8
+      3'b110: return 16;  // WRAP16
+      3'b111: return 16;  // INCR16
+      default: return 1;
+    endcase
+  endfunction
+
+endmodule
+```
+
+### 3B. Assertion Severity Strategy
+
+| Severity | When to Use | Example |
+|---|---|---|
+| `$error` | Definite protocol violation | Address changed during wait state |
+| `$warning` | Suspicious but legal behavior | Wait state count > 8 cycles |
+| `$info` | Telemetry and debug tracing | Transfer completed with 0 wait states |
+
+---
+
+## 4. Functional Coverage
+
+Protocol assertions prove the design *doesn't violate rules*.
+Functional coverage proves you *exercised enough scenarios* to trust the assertions.
+
+### 4A. Transfer-Level Coverage
+
+```systemverilog
+covergroup ahb_transfer_cg @(posedge HCLK iff HREADY && HTRANS inside {2'b10, 2'b11});
+  // Transfer type
+  cp_trans: coverpoint HTRANS {
+    bins nonseq = {2'b10};
+    bins seq    = {2'b11};
+  }
+
+  // Transfer direction
+  cp_write: coverpoint HWRITE {
+    bins read  = {1'b0};
+    bins write = {1'b1};
+  }
+
+  // Transfer size
+  cp_size: coverpoint HSIZE {
+    bins byte_txn = {3'b000};
+    bins half_txn = {3'b001};
+    bins word_txn = {3'b010};
+  }
+
+  // Burst type
+  cp_burst: coverpoint HBURST {
+    bins single = {3'b000};
+    bins incr   = {3'b001};
+    bins wrap4  = {3'b010};
+    bins incr4  = {3'b011};
+    bins wrap8  = {3'b100};
+    bins incr8  = {3'b101};
+  }
+
+  // Direction × Burst cross
+  cx_write_burst: cross cp_write, cp_burst;
+
+  // Direction × Size cross
+  cx_write_size: cross cp_write, cp_size;
+endgroup
+```
+
+### 4B. Wait-State Coverage
+
+This is often overlooked but critical for performance validation:
+
+```systemverilog
+covergroup ahb_wait_state_cg @(transaction_complete);
+  cp_wait_cycles: coverpoint txn.wait_cycles {
+    bins zero_wait    = {0};
+    bins one_wait     = {1};
+    bins few_waits    = {[2:4]};
+    bins many_waits   = {[5:15]};
+    bins extreme_wait = {[16:$]};
+  }
+
+  // Wait states per burst type
+  cx_wait_burst: cross cp_wait_cycles, cp_burst;
+endgroup
+```
+
+### 4C. Error Response Coverage
+
+```systemverilog
+covergroup ahb_error_cg @(transaction_complete);
+  cp_resp: coverpoint txn.resp {
+    bins okay  = {0};
+    bins error = {1};
+  }
+
+  // Errors on reads vs writes
+  cx_resp_dir: cross cp_resp, cp_write;
+
+  // Errors during bursts
+  cx_resp_burst: cross cp_resp, cp_burst;
+endgroup
+```
+
+> [!TIP]
+> **Coverage closure strategy:** Run your random test suite until you hit 100% on `cx_write_burst`.
+> Then write targeted directed tests for any remaining holes in `cx_resp_burst` (error during WRAP8 read, etc.).
+
+---
+
+## 5. Scoreboard Strategy
+
+For an AHB slave verification environment, the scoreboard compares expected vs. actual memory contents:
+
+```systemverilog
+class ahb_scoreboard extends uvm_scoreboard;
+  `uvm_component_utils(ahb_scoreboard)
+
+  uvm_analysis_imp #(ahb_transaction, ahb_scoreboard) ap;
+
+  // Reference model: shadow memory
+  bit [31:0] shadow_mem [bit [31:0]];
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    ap = new("ap", this);
+  endfunction
+
+  function void write(ahb_transaction txn);
+    if (txn.resp == 1) begin
+      // ERROR response — skip checking but log it
+      `uvm_info("SCB", $sformatf("ERROR response for %s", txn.convert2string()), UVM_MEDIUM)
+      return;
+    end
+
+    if (txn.write) begin
+      // Write: update shadow memory
+      shadow_mem[txn.addr] = apply_strobe(txn.data, txn.size, txn.addr);
+      `uvm_info("SCB", $sformatf("WRITE shadow[0x%08h] = 0x%08h", txn.addr, shadow_mem[txn.addr]), UVM_HIGH)
+    end else begin
+      // Read: compare against shadow memory
+      if (shadow_mem.exists(txn.addr)) begin
+        if (shadow_mem[txn.addr] !== txn.data) begin
+          `uvm_error("SCB", $sformatf("MISMATCH at 0x%08h: expected=0x%08h actual=0x%08h",
+            txn.addr, shadow_mem[txn.addr], txn.data))
+        end else begin
+          `uvm_info("SCB", $sformatf("MATCH at 0x%08h", txn.addr), UVM_HIGH)
+        end
+      end else begin
+        `uvm_warning("SCB", $sformatf("Read from unwritten address 0x%08h — cannot verify", txn.addr))
+      end
+    end
+  endfunction
+endclass
+```
+
+---
+
+## 6. Debug Patterns
+
+When a test fails, the waveform can be overwhelming.  These patterns let you triage AHB failures quickly.
+
+### Pattern 1: The "HREADY Trace"
+
+**Always start by finding `HREADY` transitions.**  If `HREADY` drops, find *which slave* pulled it low and *why*.
+In a multi-slave system, each slave's `HREADY` output feeds into a multiplexor — the arbiter's `HSEL` signal tells you which slave is active.
+
+### Pattern 2: The "Transaction Boundary Finder"
+
+Look for `HTRANS = NONSEQ` transitions — these mark the start of every new transfer or burst.
+Count `SEQ` beats after each `NONSEQ` to reconstruct the burst structure.
+
+### Pattern 3: The "ERROR Forensics"
+
+When you see `HRESP = ERROR`:
+1. Go back two cycles to find the address that caused the error.
+2. Check whether the address falls within the slave's address range.
+3. Check whether the access type (read/write) and size are legal for that register.
+4. Check whether a protection violation (`HPROT`) occurred.
+
+### Pattern 4: The "Starvation Detector"
+
+In multi-master systems, sort the waveform by master ID.
+Measure the time between successive grants for each master.
+If one master's inter-grant time grows without bound, you have a starvation bug.
+
+---
+
+## 7. Interview Questions & Answers
+
+These are real questions asked in verification engineer interviews at semiconductor companies:
+
+**Q1: How does the AHB monitor handle the pipeline when reconstructing transactions?**
+
+> The monitor buffers address-phase information (HADDR, HTRANS, HWRITE, HSIZE, HBURST) and pairs it with the data-phase signals (HWDATA/HRDATA, HRESP) that arrive one or more cycles later. The monitor only captures the address phase when HREADY is high, because during a wait state the pending address hasn't been accepted yet.
+
+**Q2: Why is the 1 KB boundary rule specific to AHB and not AXI?**
+
+> AHB uses a shared bus with centralized address decoding. The address decoder maps slaves to 1 KB-aligned regions. A burst crossing this boundary would target two different slaves, which the single-bus architecture cannot handle. AXI uses a point-to-point interconnect and has a larger 4 KB boundary rule because AXI address decoders typically work at page granularity.
+
+**Q3: How would you verify that an AHB arbiter correctly prevents priority inversion?**
+
+> Create a multi-master test scenario where:
+> (1) A low-priority master holds a locked transfer,
+> (2) A high-priority master requests the bus,
+> (3) A medium-priority master continuously requests.
+> Assert that all masters complete their transactions within a bounded time window.
+> The arbiter should implement priority inheritance or aging to prevent the medium-priority master from starving the low-priority locked master.
+
+**Q4: What is the minimum set of protocol assertions for an AHB VIP?**
+
+> At minimum: (1) address/control stability during wait states, (2) two-cycle ERROR response protocol, (3) HREADY timeout, (4) 1 KB boundary check, (5) burst alignment, (6) IDLE after reset. A production VIP typically adds 15-20 more covering burst sequencing, HBURST consistency, and HMASTLOCK rules.
+
+---
+
+## Summary
+
+A complete AHB verification environment has four layers:
+
+| Layer | Component | Purpose |
+|---|---|---|
+| **Observation** | Monitor | Reconstruct pin-level signals into transactions |
+| **Compliance** | Protocol Checker | SVA assertions catch rule violations in real time |
+| **Correctness** | Scoreboard | Compare DUT behavior against a reference model |
+| **Completeness** | Coverage | Prove you exercised enough scenarios to trust the results |
+
+In the next module, you will build an AHB-Lite monitor and checker from scratch in a hands-on lab.
+
+<Quiz>
+  <QuizQuestion
+    question="Why must the AHB monitor only capture the address phase when HREADY is high?"
+    options={[
+      "Because HADDR is invalid when HREADY is low",
+      "Because during a wait state the address is being held stable but has not been accepted — capturing it would produce duplicate transactions",
+      "Because the monitor must be synchronized to the data phase",
+      "Because the arbiter does not allow address sampling during wait states"
+    ]}
+    correctAnswer="Because during a wait state the address is being held stable but has not been accepted — capturing it would produce duplicate transactions"
+    explanation="During a wait state, the master holds the address stable but the transfer has not progressed. If the monitor captures the address on every cycle, it will produce duplicate transactions in the analysis stream, corrupting the scoreboard."
+  />
+  <QuizQuestion
+    question="What is the minimum number of SVA assertions considered essential for a production AHB protocol checker?"
+    options={[
+      "2-3 assertions",
+      "6-7 core assertions covering address stability, ERROR protocol, timeout, boundary, alignment, and reset",
+      "Only 1: the HREADY timeout",
+      "50+ assertions for full compliance"
+    ]}
+    correctAnswer="6-7 core assertions covering address stability, ERROR protocol, timeout, boundary, alignment, and reset"
+    explanation="The essential set includes: address/control stability during wait states, two-cycle ERROR response, HREADY timeout, 1 KB boundary check, burst alignment, and IDLE after reset. Production VIPs add more, but these are the minimum for meaningful protocol checking."
+  />
+  <QuizQuestion
+    question="In a functional coverage plan, why is wait-state coverage important even though it is not a protocol requirement?"
+    options={[
+      "Wait states indicate design bugs",
+      "The specification requires zero wait-state coverage",
+      "Wait-state distribution reveals slave performance characteristics and helps identify latency bottlenecks",
+      "Wait states only matter in simulation, not in silicon"
+    ]}
+    correctAnswer="Wait-state distribution reveals slave performance characteristics and helps identify latency bottlenecks"
+    explanation="While wait states are legal, their distribution reveals how slaves perform under various access patterns. Covering zero-wait, few-wait, and many-wait scenarios ensures you have validated both fast-path and slow-path behavior in the slave."
+  />
+</Quiz>

@@ -188,6 +188,26 @@ const AmbaFamilyExplorer = dynamic(
   () => import('@/components/visualizers/AmbaFamilyExplorer').then(mod => mod.AmbaFamilyExplorer),
   { ssr: false, loading: () => <VisualizationFallback /> }
 );
+const ProtocolAnalogyExplorer = dynamic(
+  () => import('@/components/visualizers/ProtocolAnalogyExplorer').then(mod => mod.ProtocolAnalogyExplorer),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
+const AhbPipelineBurstVisualizer = dynamic(
+  () => import('@/components/visualizers/AhbPipelineBurstVisualizer').then(mod => mod.default),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
+const AxiChannelHandshakeVisualizer = dynamic(
+  () => import('@/components/visualizers/AxiChannelHandshakeVisualizer').then(mod => mod.default),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
+const AxiMemoryMathVisualizer = dynamic(
+  () => import('@/components/visualizers/AxiMemoryMathVisualizer').then(mod => mod.default),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
+const AxiIdOrderingVisualizer = dynamic(
+  () => import('@/components/visualizers/AxiIdOrderingVisualizer').then(mod => mod.default),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -292,6 +312,11 @@ const components = {
   PssIntentMapVisualizer,
   ProtocolWaveform,
   AmbaFamilyExplorer,
+  ProtocolAnalogyExplorer,
+  AhbPipelineBurstVisualizer,
+  AxiChannelHandshakeVisualizer,
+  AxiMemoryMathVisualizer,
+  AxiIdOrderingVisualizer,
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {

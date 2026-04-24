@@ -1,0 +1,364 @@
+---
+title: "AXI4 Channel Architecture & Handshake Protocol"
+description: "Master the five-channel AXI4 architecture: Write Address, Write Data, Write Response, Read Address, and Read Data channels, with the VALID/READY handshake contract and combinatorial loop prevention."
+order: 6
+flashcards: []
+---
+
+# AXI4 Channel Architecture & Handshake Protocol
+
+AXI is the high-performance member of the AMBA family.
+Where AHB uses a single shared bus with pipelined phases, AXI uses **five independent channels** — each with its own handshake — to achieve maximum throughput and decoupling.
+
+This architectural difference is what allows AXI to support **outstanding transactions**, **out-of-order completion**, and **independent read/write paths** — features that are impossible on a shared bus.
+
+<QuickTake>
+- AXI has **five channels**: Write Address (AW), Write Data (W), Write Response (B), Read Address (AR), Read Data (R).
+- Each channel uses the same **VALID/READY handshake**: the sender asserts VALID, the receiver asserts READY, and the transfer occurs when both are high on the same clock edge.
+- Channels are **independent** — a write can proceed while a read is stalled.
+- The VALID/READY contract has strict rules to prevent **combinatorial loops** and **deadlocks**.
+</QuickTake>
+
+---
+
+## 1. The Five Channels
+
+AXI splits every memory transaction into separate address, data, and response phases, each carried on its own channel.
+
+### Write Path (3 channels)
+
+| Channel | Direction | Purpose | Key Signals |
+|---|---|---|---|
+| **AW** (Write Address) | Master → Slave | Carries the write address and burst parameters | `AWADDR`, `AWLEN`, `AWSIZE`, `AWBURST`, `AWID` |
+| **W** (Write Data) | Master → Slave | Carries the write data beats | `WDATA`, `WSTRB`, `WLAST` |
+| **B** (Write Response) | Slave → Master | Acknowledges the write | `BRESP`, `BID` |
+
+### Read Path (2 channels)
+
+| Channel | Direction | Purpose | Key Signals |
+|---|---|---|---|
+| **AR** (Read Address) | Master → Slave | Carries the read address and burst parameters | `ARADDR`, `ARLEN`, `ARSIZE`, `ARBURST`, `ARID` |
+| **R** (Read Data) | Slave → Master | Returns read data beats and response | `RDATA`, `RRESP`, `RLAST`, `RID` |
+
+> [!NOTE]
+> The write path has three channels because the master needs explicit acknowledgment that the slave received the data.
+> The read path only needs two because the data channel itself carries the response (`RRESP`).
+
+---
+
+## 2. The VALID/READY Handshake
+
+Every AXI channel uses the same handshake protocol.  This is the most important concept in AXI — if you understand this, you understand 80% of the protocol.
+
+### The Contract
+
+1. The **sender** asserts `VALID` when it has data/address/response to send.
+2. The **receiver** asserts `READY` when it can accept.
+3. The transfer occurs on the clock edge where **both VALID and READY are high**.
+4. Once `VALID` is asserted, the sender **must not de-assert it** until the transfer completes (VALID ∧ READY).
+
+<ProtocolWaveform
+  title="AXI VALID/READY Handshake"
+  spec={{
+    signal: [
+      { name: "ACLK",   wave: "p......" },
+      { name: "VALID",  wave: "01...0." },
+      { name: "READY",  wave: "0.1.0.." },
+      { name: "DATA",   wave: "x=...x.", data: ["D"] },
+      {},
+      { name: "Transfer", wave: "0..10..", data: ["✓"] }
+    ]
+  }}
+  caption="The transfer occurs at the clock edge where both VALID and READY are high simultaneously. VALID must not drop before READY arrives."
+/>
+
+### Three Legal Timing Scenarios
+
+There are exactly three legal orderings for VALID and READY:
+
+**Scenario A: VALID before READY**
+The sender has data ready before the receiver can accept.  The sender holds VALID and data stable until the receiver asserts READY.
+
+**Scenario B: READY before VALID**
+The receiver is pre-emptively signaling it can accept.  This is efficient because the transfer completes immediately when VALID rises.
+
+**Scenario C: VALID and READY simultaneously**
+Both assert on the same cycle.  The transfer completes in one cycle.
+
+<ProtocolWaveform
+  title="Three Legal Handshake Orderings"
+  spec={{
+    signal: [
+      { name: "ACLK",  wave: "p........" },
+      {},
+      ["Scenario A",
+        { name: "VALID", wave: "01..0...." },
+        { name: "READY", wave: "0..10...." }
+      ],
+      {},
+      ["Scenario B",
+        { name: "READY", wave: "0....1..." },
+        { name: "VALID", wave: "0....10.." }
+      ],
+      {},
+      ["Scenario C",
+        { name: "VALID", wave: "0......10" },
+        { name: "READY", wave: "0......10" }
+      ]
+    ]
+  }}
+  caption="All three scenarios are legal. The critical rule: once VALID is asserted, it must stay high until READY arrives."
+/>
+
+> [!IMPORTANT]
+> **VALID must never depend on READY.**
+> The sender must be able to assert VALID independently of whether READY is high.
+> If VALID waits for READY, and READY waits for VALID, you get a **deadlock**.
+> This is the single most important rule in AXI.
+
+---
+
+## 3. Preventing Combinatorial Loops
+
+The VALID/READY handshake has a critical asymmetry that prevents combinatorial loops:
+
+| Signal | May depend on the other? |
+|---|---|
+| **VALID** | ❌ Must NOT wait for READY |
+| **READY** | ✅ MAY depend on VALID |
+
+This means:
+- A slave **may** wait to see `AWVALID` before asserting `AWREADY`. This is legal and common for slaves that need to decode the address before accepting.
+- A master **must not** wait to see `AWREADY` before asserting `AWVALID`. The master must independently decide when it has a transaction to issue.
+
+### Why This Matters
+
+If both sides waited for each other, you'd get a combinatorial loop:
+```
+VALID = f(READY)   // master waits for slave
+READY = f(VALID)   // slave waits for master
+// → circular dependency → simulation hangs or synthesis generates a latch
+```
+
+The spec breaks this loop by forbidding the VALID → READY dependency direction.
+
+### The Stability Rule
+
+Once VALID is asserted:
+- The sender **must not change** the associated data/address/control signals until the handshake completes.
+- The sender **must not de-assert** VALID until the handshake completes.
+
+This guarantees the receiver can safely sample the payload at any time after seeing VALID.
+
+```systemverilog
+// Assertion: VALID must not drop before handshake completes
+property p_valid_stable(valid, ready);
+  @(posedge ACLK) disable iff (!ARESETn)
+    $rose(valid) |-> valid throughout (ready [->1]);
+endproperty
+
+// Apply to all channels
+a_awvalid_stable: assert property (p_valid_stable(AWVALID, AWREADY));
+a_wvalid_stable:  assert property (p_valid_stable(WVALID, WREADY));
+a_bvalid_stable:  assert property (p_valid_stable(BVALID, BREADY));
+a_arvalid_stable: assert property (p_valid_stable(ARVALID, ARREADY));
+a_rvalid_stable:  assert property (p_valid_stable(RVALID, RREADY));
+```
+
+---
+
+## 4. End-to-End Write Flow
+
+A complete AXI write involves coordination across three channels:
+
+### Step 1: Write Address Channel (AW)
+The master sends the address, burst length, burst size, and burst type.
+
+### Step 2: Write Data Channel (W)
+The master sends data beats.  Each beat includes `WSTRB` (write strobe) indicating which byte lanes are valid.  The last beat is marked with `WLAST = 1`.
+
+### Step 3: Write Response Channel (B)
+After the slave has accepted all data beats, it sends a response (`BRESP`) indicating success or failure.
+
+<ProtocolWaveform
+  title="Complete AXI Write Transaction"
+  spec={{
+    signal: [
+      { name: "ACLK",    wave: "p........" },
+      {},
+      ["AW Channel",
+        { name: "AWVALID", wave: "010......" },
+        { name: "AWREADY", wave: "010......" },
+        { name: "AWADDR",  wave: "x=x......", data: ["0x1000"] }
+      ],
+      {},
+      ["W Channel",
+        { name: "WVALID",  wave: "0.1..0..." },
+        { name: "WREADY",  wave: "0.1..0..." },
+        { name: "WDATA",   wave: "x.===x...", data: ["D0", "D1", "D2"] },
+        { name: "WLAST",   wave: "0...10..." }
+      ],
+      {},
+      ["B Channel",
+        { name: "BVALID",  wave: "0....010." },
+        { name: "BREADY",  wave: "0....010." },
+        { name: "BRESP",   wave: "x....=x..", data: ["OK"] }
+      ]
+    ]
+  }}
+  caption="A 3-beat write burst: address on AW, three data beats on W (with WLAST marking the final beat), and write response on B."
+/>
+
+> [!NOTE]
+> **AW and W are independent.**  The write data can arrive *before* the write address.
+> This is legal in AXI (the spec allows interleaving), though most practical designs send AW first or simultaneously.
+
+---
+
+## 5. End-to-End Read Flow
+
+A read is simpler — it uses only two channels:
+
+### Step 1: Read Address Channel (AR)
+The master sends the address and burst parameters.
+
+### Step 2: Read Data Channel (R)
+The slave returns data beats with `RRESP` and marks the last beat with `RLAST = 1`.
+
+<ProtocolWaveform
+  title="Complete AXI Read Transaction"
+  spec={{
+    signal: [
+      { name: "ACLK",    wave: "p........" },
+      {},
+      ["AR Channel",
+        { name: "ARVALID", wave: "010......" },
+        { name: "ARREADY", wave: "010......" },
+        { name: "ARADDR",  wave: "x=x......", data: ["0x2000"] }
+      ],
+      {},
+      ["R Channel",
+        { name: "RVALID",  wave: "0..1..0.." },
+        { name: "RREADY",  wave: "0..1..0.." },
+        { name: "RDATA",   wave: "x..===x..", data: ["D0", "D1", "D2"] },
+        { name: "RRESP",   wave: "x..===x..", data: ["OK", "OK", "OK"] },
+        { name: "RLAST",   wave: "0....10.." }
+      ]
+    ]
+  }}
+  caption="A 3-beat read burst: address on AR, then three data beats returned on R with RLAST marking the final beat."
+/>
+
+---
+
+## 6. Channel Independence and Backpressure
+
+The most powerful feature of AXI is that all five channels are **independent**.
+
+- The read path (AR + R) operates completely independently of the write path (AW + W + B).
+- A slow slave can apply **backpressure** on one channel by deasserting READY, without affecting other channels.
+
+### Backpressure Example
+
+If the slave's write buffer is full, it deasserts `WREADY`.  The master stalls on the W channel but can continue issuing read addresses on the AR channel.  Reads and writes proceed independently.
+
+This is fundamentally different from AHB, where a single `HREADY` signal stalls the entire bus.
+
+### Channel Ordering Rules
+
+While channels are independent, there are ordering constraints:
+1. **Write data must not complete before the write address** (the slave needs the address to know where to store data).
+2. **The write response must come after the last write data beat** (the slave can't acknowledge what it hasn't received).
+3. **Read data must come after the read address** (the slave needs to know what to read).
+
+These ordering rules are **per-transaction**, not global.  Different transactions (identified by their ID) can interleave freely.
+
+<InteractiveWrapper>
+  <AxiChannelHandshakeVisualizer />
+</InteractiveWrapper>
+
+---
+
+## 7. Reset Protocol
+
+AXI defines a simple asynchronous reset protocol:
+
+1. When `ARESETn` is deasserted (low), all VALID signals must be driven low.
+2. After `ARESETn` is asserted (high), the master must wait at least one clock cycle before asserting any VALID.
+3. The slave must not assert any VALID during reset.
+
+```systemverilog
+// Assertion: No VALID signals during reset
+property p_no_valid_during_reset(valid);
+  @(posedge ACLK)
+    !ARESETn |-> !valid;
+endproperty
+
+a_aw_reset: assert property (p_no_valid_during_reset(AWVALID));
+a_w_reset:  assert property (p_no_valid_during_reset(WVALID));
+a_b_reset:  assert property (p_no_valid_during_reset(BVALID));
+a_ar_reset: assert property (p_no_valid_during_reset(ARVALID));
+a_r_reset:  assert property (p_no_valid_during_reset(RVALID));
+```
+
+---
+
+## Summary
+
+| Concept | AHB | AXI |
+|---|---|---|
+| **Topology** | Shared bus | Point-to-point channels |
+| **Channels** | 1 (pipelined address/data) | 5 independent channels |
+| **Flow control** | Single HREADY | Per-channel VALID/READY |
+| **Reads & writes** | Serialized | Fully independent |
+| **Outstanding txns** | 1 | Multiple (via IDs) |
+| **Backpressure** | Stalls entire bus | Per-channel, independent |
+
+In the next module, we will dive into AXI burst math — how `AWLEN`, `AWSIZE`, and `AWBURST` interact to compute addresses, and the critical 4 KB boundary rule.
+
+<Quiz>
+  <QuizQuestion
+    question="Why must AWVALID never depend on AWREADY?"
+    options={[
+      "Because the spec says so, with no technical reason",
+      "Because if VALID waited for READY and READY waited for VALID, it would create a combinatorial loop / deadlock",
+      "Because AWVALID is driven by the slave",
+      "Because AWREADY is always high"
+    ]}
+    correctAnswer="Because if VALID waited for READY and READY waited for VALID, it would create a combinatorial loop / deadlock"
+    explanation="If VALID depended on READY and READY depended on VALID, you'd get a circular combinatorial dependency. The spec breaks this loop by requiring that VALID be asserted independently, while READY may optionally depend on VALID."
+  />
+  <QuizQuestion
+    question="How many channels are involved in a complete AXI write transaction?"
+    options={[
+      "2: Write Address and Write Data",
+      "3: Write Address, Write Data, and Write Response",
+      "5: All channels are always involved",
+      "1: A single shared channel"
+    ]}
+    correctAnswer="3: Write Address, Write Data, and Write Response"
+    explanation="An AXI write uses the AW channel (address), W channel (data beats with WLAST), and B channel (write response). The read channels (AR, R) are independent and not involved in writes."
+  />
+  <QuizQuestion
+    question="What is the key advantage of AXI's independent channels over AHB's shared bus?"
+    options={[
+      "AXI uses fewer wires",
+      "AXI is simpler to implement",
+      "Backpressure on one channel does not stall other channels — reads and writes can proceed independently",
+      "AXI does not require a clock signal"
+    ]}
+    correctAnswer="Backpressure on one channel does not stall other channels — reads and writes can proceed independently"
+    explanation="In AHB, a single HREADY signal stalls the entire bus. In AXI, each channel has its own VALID/READY handshake, so a slow write response does not block read transactions from proceeding."
+  />
+  <QuizQuestion
+    question="Once a master asserts AWVALID, what must it do?"
+    options={[
+      "It can freely toggle AWVALID on any cycle",
+      "It must hold AWVALID high and keep AWADDR/control signals stable until AWREADY is also high",
+      "It must immediately deassert AWVALID on the next cycle",
+      "It must wait for ARESETn to toggle"
+    ]}
+    correctAnswer="It must hold AWVALID high and keep AWADDR/control signals stable until AWREADY is also high"
+    explanation="The stability rule requires that once VALID is asserted, neither it nor the associated payload signals may change until the handshake completes (both VALID and READY high on the same clock edge)."
+  />
+</Quiz>
