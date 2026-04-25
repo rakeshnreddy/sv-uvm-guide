@@ -24,6 +24,20 @@ import A_UVM_5_Callbacks from '../../content/flashcards/A-UVM-5_UVM_Callbacks.js
 import A_UVM_6_Scoreboards from '../../content/flashcards/A-UVM-6_Scoreboards.json';
 import A_UVM_7_VIP_Construction from '../../content/flashcards/A-UVM-7_VIP_Construction.json';
 import A_UVM_8_Multi_Agent_Topologies from '../../content/flashcards/A-UVM-8_Multi_Agent_Topologies.json';
+import B_AMBA_1_Protocol_Families_and_Tradeoffs from '../../content/flashcards/B-AMBA-1_Protocol_Families_and_Tradeoffs.json';
+import B_AMBA_2_Protocol_Intuition_and_Memory_Hooks from '../../content/flashcards/B-AMBA-2_Protocol_Intuition_and_Memory_Hooks.json';
+import B_AHB_1_AHB_Design_Timing_Mechanics from '../../content/flashcards/B-AHB-1_AHB_Design_Timing_Mechanics.json';
+import B_AHB_2_AHB_Pitfalls_and_Deadlocks from '../../content/flashcards/B-AHB-2_AHB_Pitfalls_and_Deadlocks.json';
+import B_AHB_3_AHB_Verification from '../../content/flashcards/B-AHB-3_AHB_Verification.json';
+import B_AXI_1_AXI_Channel_Architecture from '../../content/flashcards/B-AXI-1_AXI_Channel_Architecture.json';
+import B_AXI_2_AXI_Burst_Math from '../../content/flashcards/B-AXI-2_AXI_Burst_Math.json';
+import B_AXI_3_AXI_Ordering_and_IDs from '../../content/flashcards/B-AXI-3_AXI_Ordering_and_IDs.json';
+import B_AXI_4_AXI_Expert_Features_Cache_Atomics from '../../content/flashcards/B-AXI-4_AXI_Expert_Features_Cache_Atomics.json';
+import B_AXI_5_AXI_Pitfalls_Interconnect_Deadlocks from '../../content/flashcards/B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks.json';
+import B_AXI_6_AXI_Verification_Performance from '../../content/flashcards/B-AXI-6_AXI_Verification_Performance.json';
+import B_AMBA_F1_Bridges_and_System_Integration from '../../content/flashcards/B-AMBA-F1_Bridges_and_System_Integration.json';
+import B_AMBA_F2_Future_Protocols_ACE_CHI from '../../content/flashcards/B-AMBA-F2_Future_Protocols_ACE_CHI.json';
+import B_AMBA_F3_Interview_Debug_Clinic from '../../content/flashcards/B-AMBA-F3_Interview_Debug_Clinic.json';
 // T4 Expert flashcard decks
 import E_CUST_1_Methodology_Customization from '../../content/flashcards/E-CUST-1_Methodology_Customization.json';
 import E_DBG_1_Advanced_Debug from '../../content/flashcards/E-DBG-1_Advanced_Debug.json';
@@ -38,9 +52,11 @@ import E_UVM_ML_1_Multi_Language from '../../content/flashcards/E-UVM-ML-1_Multi
 import E_EMU_1_Emulation from '../../content/flashcards/E-EMU-1_Emulation.json';
 
 export interface RawFlashcard {
-  id: string;
-  question: string;
-  answer: string;
+  id?: string;
+  question?: string;
+  answer?: string;
+  front?: string;
+  back?: string;
 }
 
 export const flashcardDecks: Record<string, any[]> = {
@@ -70,6 +86,20 @@ export const flashcardDecks: Record<string, any[]> = {
   'A-UVM-6_Scoreboards': A_UVM_6_Scoreboards,
   'A-UVM-7_VIP_Construction': A_UVM_7_VIP_Construction,
   'A-UVM-8_Multi_Agent_Topologies': A_UVM_8_Multi_Agent_Topologies,
+  'B-AMBA-1_Protocol_Families_and_Tradeoffs': B_AMBA_1_Protocol_Families_and_Tradeoffs,
+  'B-AMBA-2_Protocol_Intuition_and_Memory_Hooks': B_AMBA_2_Protocol_Intuition_and_Memory_Hooks,
+  'B-AHB-1_AHB_Design_Timing_Mechanics': B_AHB_1_AHB_Design_Timing_Mechanics,
+  'B-AHB-2_AHB_Pitfalls_and_Deadlocks': B_AHB_2_AHB_Pitfalls_and_Deadlocks,
+  'B-AHB-3_AHB_Verification': B_AHB_3_AHB_Verification,
+  'B-AXI-1_AXI_Channel_Architecture': B_AXI_1_AXI_Channel_Architecture,
+  'B-AXI-2_AXI_Burst_Math': B_AXI_2_AXI_Burst_Math,
+  'B-AXI-3_AXI_Ordering_and_IDs': B_AXI_3_AXI_Ordering_and_IDs,
+  'B-AXI-4_AXI_Expert_Features_Cache_Atomics': B_AXI_4_AXI_Expert_Features_Cache_Atomics,
+  'B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks': B_AXI_5_AXI_Pitfalls_Interconnect_Deadlocks,
+  'B-AXI-6_AXI_Verification_Performance': B_AXI_6_AXI_Verification_Performance,
+  'B-AMBA-F1_Bridges_and_System_Integration': B_AMBA_F1_Bridges_and_System_Integration,
+  'B-AMBA-F2_Future_Protocols_ACE_CHI': B_AMBA_F2_Future_Protocols_ACE_CHI,
+  'B-AMBA-F3_Interview_Debug_Clinic': B_AMBA_F3_Interview_Debug_Clinic,
   // T4 Expert
   'E-CUST-1_Methodology_Customization': E_CUST_1_Methodology_Customization,
   'E-DBG-1_Advanced_Debug': E_DBG_1_Advanced_Debug,

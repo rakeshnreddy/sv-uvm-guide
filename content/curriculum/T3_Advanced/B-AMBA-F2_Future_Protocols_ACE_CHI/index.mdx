@@ -1,0 +1,254 @@
+---
+title: "Future AMBA Protocols: ACE and CHI"
+description: "Preview coherent AMBA protocols beyond AXI4: ACE cache coherency extensions and AMBA 5 CHI packetized interconnects for scalable multi-core systems."
+order: 13
+tier: "T3_Advanced"
+flashcards: "B-AMBA-F2_Future_Protocols_ACE_CHI"
+---
+
+# Future AMBA Protocols: ACE and CHI
+
+AXI4 is the protocol most verification engineers meet first, but high-end SoCs need more than fast reads and writes. Multi-core CPUs, GPUs, coherent accelerators, and cache-rich subsystems need a way to answer a harder question: **who owns the latest copy of this cache line?**
+
+That is where coherent AMBA protocols enter. **ACE** extends AXI with cache coherency channels. **CHI** goes further: it turns coherency into a packetized network protocol designed for large ring, mesh, and network-on-chip fabrics.
+
+<QuickTake>
+- **ACE** extends AXI with snoop channels so caches can stay coherent without software flushing every shared buffer.
+- **Coherency state** tracks whether a cache line is clean, dirty, shared, unique, or invalid, and determines who may supply data.
+- **CHI** replaces AXI-style signal bundles with packetized request, response, data, and snoop channels that scale across distributed interconnects.
+- **Verification difficulty** shifts from "did this burst obey the handshake?" to "did every cache line transition preserve single-writer, multi-reader correctness?"
+</QuickTake>
+
+---
+
+## 1. Why AXI4 Is Not Enough
+
+AXI4 is excellent for high-throughput memory traffic, but it is not inherently cache coherent. A CPU cache, GPU cache, and DMA engine can all interact with the same physical memory. Without a coherency protocol, one agent may read stale data while another agent holds a dirty modified copy.
+
+Consider this failure:
+
+1. CPU0 reads address `0x8000` and caches the line.
+2. CPU1 writes a new value to the same address, but the write stays dirty in CPU1's cache.
+3. A DMA engine reads memory at `0x8000`.
+4. The DMA sees the old memory value because CPU1 has not written back the dirty line.
+
+AXI can move the data, but it does not automatically know that CPU1 owns the latest copy. A coherent protocol adds the machinery to find, invalidate, clean, or transfer ownership of cached lines.
+
+---
+
+## 2. ACE: AXI Coherency Extensions
+
+ACE keeps the AXI mental model but adds coherency semantics. It still has the familiar AXI read and write channels, but coherent masters also participate in snoop traffic.
+
+### ACE Channel Additions
+
+| Channel | Direction | Purpose |
+|---------|-----------|---------|
+| `AC` Snoop Address | Interconnect to master | Ask a cache to check or change a line's state |
+| `CR` Snoop Response | Master to interconnect | Report whether the cache has the line, whether it is dirty, and what happened |
+| `CD` Snoop Data | Master to interconnect | Return dirty data when the cache must supply the latest copy |
+| AXI `AR/AW` attributes | Master to interconnect | Declare transaction intent such as read shared, read unique, clean, invalidate, or make unique |
+
+ACE is best understood as AXI plus a side conversation between the interconnect and caches. A normal AXI read asks memory for data. A coherent ACE read may first ask other caches whether they already hold a newer copy.
+
+### Coherency States
+
+Verification engineers do not need to memorize every encoding on day one, but they must understand the intent:
+
+| State | Meaning | Verification concern |
+|-------|---------|----------------------|
+| Invalid | Cache does not own a valid copy | Must not supply data |
+| Shared Clean | Multiple caches may read the same clean line | Any cache may drop it silently |
+| Unique Clean | One cache has the only clean copy | Can become dirty on write without external data fetch |
+| Unique Dirty | One cache has the only modified copy | Must be written back or supplied on snoop |
+| Shared Dirty / Owned-like state | A cache may supply modified data while others share clean copies | Response/data ordering becomes critical |
+
+### Prose Diagram: ACE Coherent Cluster
+
+Draw this as a left-to-right architecture:
+
+- On the left, two CPU cores each have an L1 cache.
+- In the middle, an ACE coherent interconnect has two paths: the normal AXI read/write path and a snoop path.
+- On the right, a memory controller holds DRAM.
+- When CPU0 performs `ReadShared`, the interconnect checks whether CPU1 has a dirty copy. If CPU1 does, the `AC` channel carries the snoop request to CPU1, `CR` reports the state, and `CD` returns dirty data if required.
+
+The important visual cue: memory is not always the authority. A peer cache may own the freshest value.
+
+### ACE Verification Checklist
+
+| Scenario | What to prove |
+|----------|---------------|
+| Read shared after another cache writes | The reader gets the dirty producer's latest data |
+| Make unique before write | Other shared copies are invalidated or downgraded |
+| Clean operation | Dirty data reaches the point of coherency |
+| Evict dirty line | Writeback occurs before ownership is lost |
+| Simultaneous snoop and local request | Arbitration preserves legal state transitions |
+
+The scoreboard for ACE is no longer just an address/data comparator. It is a **cache-line ownership model**.
+
+---
+
+## 3. CHI: Coherent Hub Interface
+
+AMBA 5 CHI was designed for larger coherent systems where a single centralized coherent interconnect becomes too expensive or too slow. CHI uses packets, nodes, and credit-based flow control rather than a simple AXI-style bus bundle.
+
+### CHI Node Roles
+
+| Node | Role | Typical block |
+|------|------|---------------|
+| Request Node (RN) | Initiates coherent requests | CPU cluster, GPU, coherent accelerator |
+| Home Node (HN) | Owns ordering and coherency decisions for an address region | Coherent directory, memory-side agent |
+| Subordinate Node (SN) | Services memory or peripheral access | DDR controller, IO bridge |
+| Snoop Node | Receives snoops and responds with state/data | Cache-owning request node |
+
+The most important change from ACE: the "interconnect" is no longer just a wire-level arbiter. It acts more like a distributed protocol router.
+
+### CHI Channel Families
+
+| Channel family | Carries | Example use |
+|----------------|---------|-------------|
+| Request | Commands and addresses | Read, write, make unique, clean, evict |
+| Response | Acknowledgments and state outcomes | Completion, retry, snoop response summary |
+| Data | Cache-line payloads | Read data, write data, dirty data transfer |
+| Snoop | Coherency probes | Ask another node to invalidate, clean, or supply a line |
+
+### Prose Diagram: CHI Mesh
+
+Draw this as a 3-by-3 mesh:
+
+- Top-left and top-right are CPU request nodes.
+- Center is a home node with directory state.
+- Bottom-left is a GPU request node.
+- Bottom-right is a memory subordinate node.
+- Links between nodes carry packets, not raw AXI channels.
+- A CPU read miss becomes a request packet to the home node. The home node checks directory state, sends snoop packets to possible owners, receives responses/data, then routes the final data packet back to the requester.
+
+The visual cue: CHI coherency is a routed conversation across multiple nodes, not a single master talking directly to a slave.
+
+### Why CHI Scales Better
+
+| Dimension | ACE | CHI |
+|-----------|-----|-----|
+| Transport style | AXI-like channels plus snoop channels | Packetized coherent network |
+| Topology | Coherent interconnect, often centralized | Ring, mesh, or distributed NoC |
+| Flow control | VALID/READY-style channel flow | Credit-based packet flow |
+| Coherency tracking | Interconnect-driven snooping | Home-node/directory-oriented protocol decisions |
+| Best fit | Smaller coherent clusters | Many-core, multi-cluster, cache-rich SoCs |
+
+CHI is harder to verify because ordering is distributed. A legal response may return from a different path than the original request, and snoop data may arrive independently of final completion.
+
+---
+
+## 4. Verification Strategy Shift
+
+AXI verification asks:
+
+- Did `VALID` stay stable until `READY`?
+- Did the burst avoid crossing 4KB?
+- Did reads and writes complete in legal ID order?
+
+ACE and CHI verification adds:
+
+- Is there exactly one writer for a cache line?
+- Did every reader observe the newest committed data?
+- Did dirty data reach the correct owner before invalidation?
+- Did retry, credit, and response ordering rules avoid deadlock?
+- Did the directory state match the real cache contents?
+
+### Coherency Scoreboard Model
+
+A coherent protocol scoreboard usually tracks each cache line:
+
+```systemverilog
+typedef enum {
+  LINE_INVALID,
+  LINE_SHARED_CLEAN,
+  LINE_UNIQUE_CLEAN,
+  LINE_UNIQUE_DIRTY
+} line_state_e;
+
+typedef struct {
+  line_state_e state_by_node[int];
+  bit [511:0]  latest_data;
+  int          owner_node;
+} coherent_line_model_s;
+```
+
+The scoreboard checks both data and ownership. If two nodes believe they both have `UNIQUE_DIRTY`, the protocol is broken even if the next read happens to return the right value.
+
+### Assertions Become Global
+
+Simple AXI assertions bind to one interface. Coherency assertions often need a global view:
+
+```systemverilog
+// Pseudo-property: two nodes may not both own a dirty unique copy.
+property p_single_dirty_owner(line_addr_t line);
+  @(posedge clk) disable iff (!reset_n)
+    count_nodes_with_unique_dirty(line) <= 1;
+endproperty
+```
+
+This is why coherent verification environments often combine protocol VIP, reference models, formal checks, and long randomized stress tests.
+
+---
+
+## 5. Debug Patterns
+
+| Symptom | Likely root cause | First signal/model to inspect |
+|---------|-------------------|-------------------------------|
+| CPU reads stale data after DMA or peer CPU write | Missing clean/invalidate or wrong ownership transfer | Cache-line state model |
+| Snoop returns clean when line is dirty | Incorrect cache state transition | `CR`/snoop response path |
+| System hangs under coherent stress | Credit leak, retry loop, or cyclic dependency | CHI request/response credits |
+| Rare data mismatch after eviction | Dirty writeback lost or reordered | Data channel and home-node completion log |
+| One cluster starves another | QoS or virtual-channel arbitration issue | Interconnect routing and credit counters |
+
+The practical rule: when debugging coherent protocols, do not start with a waveform at signal level. Start with a timeline of **line ownership events**, then drill into the channel waveforms that implement the suspicious transition.
+
+---
+
+## Summary
+
+ACE and CHI are the natural next step after AXI:
+
+1. **AXI4** moves data quickly but does not solve cache coherency.
+2. **ACE** extends AXI with snoop channels so coherent caches can share, clean, invalidate, and transfer dirty lines.
+3. **CHI** packetizes coherency for large distributed fabrics, using request, response, data, and snoop channel families across rings or meshes.
+4. Verification moves from transaction checking to global ownership modeling.
+
+If AXI teaches you how high-performance transfers work, ACE and CHI teach you how high-performance systems stay correct when many agents cache the same memory.
+
+<Quiz>
+  <QuizQuestion
+    question="What problem does ACE solve that plain AXI4 does not solve by itself?"
+    options={[
+      "It removes the VALID/READY handshake from AXI.",
+      "It adds cache coherency mechanisms so masters can discover, invalidate, clean, or obtain dirty cache lines.",
+      "It allows AXI bursts to cross 4KB boundaries.",
+      "It turns all AXI traffic into unidirectional streams."
+    ]}
+    correctAnswer="It adds cache coherency mechanisms so masters can discover, invalidate, clean, or obtain dirty cache lines."
+    explanation="Plain AXI4 moves read/write transactions but does not track cache-line ownership. ACE adds snoop and coherency semantics so caches can remain consistent."
+  />
+  <QuizQuestion
+    question="In a CHI-style coherent system, what is the role of a Home Node?"
+    options={[
+      "It is the only CPU allowed to issue requests.",
+      "It owns ordering and coherency decisions for an address region.",
+      "It converts AXI4-Lite control traffic into APB.",
+      "It disables snoops for all shared cache lines."
+    ]}
+    correctAnswer="It owns ordering and coherency decisions for an address region."
+    explanation="The Home Node tracks or consults directory/coherency state for an address region and coordinates requests, snoops, data movement, and completion."
+  />
+  <QuizQuestion
+    question="Why is a simple address/data scoreboard insufficient for ACE or CHI?"
+    options={[
+      "Coherent protocols never transfer data.",
+      "The scoreboard must also model cache-line ownership and legal state transitions, not just final data values.",
+      "All coherent traffic completes strictly in FIFO order.",
+      "ACE and CHI only use single-beat transactions."
+    ]}
+    correctAnswer="The scoreboard must also model cache-line ownership and legal state transitions, not just final data values."
+    explanation="A coherent system can return the right data once while still violating ownership rules. The reference model must track which node owns, shares, dirties, invalidates, or supplies each cache line."
+  />
+</Quiz>

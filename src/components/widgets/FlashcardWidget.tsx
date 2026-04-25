@@ -34,10 +34,10 @@ const FlashcardWidget: React.FC<FlashcardWidgetProps> = ({
     if (!cards && deckId) {
       const deck = flashcardDecks[deckId];
       if (deck) {
-        const formatted = deck.map((c: RawFlashcard) => ({
-          id: c.id,
-          front: c.question,
-          back: c.answer,
+        const formatted = deck.map((c: RawFlashcard, index: number) => ({
+          id: c.id ?? `${deckId}-${index}`,
+          front: c.question ?? c.front ?? "",
+          back: c.answer ?? c.back ?? "",
         }));
         setLoadedCards(formatted);
       }

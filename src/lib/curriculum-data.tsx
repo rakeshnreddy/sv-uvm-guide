@@ -739,6 +739,28 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "Future AMBA Protocols: ACE and CHI",
+        "slug": "B-AMBA-F2_Future_Protocols_ACE_CHI",
+        "topics": [
+          {
+            "title": "Future AMBA Protocols: ACE and CHI",
+            "slug": "index",
+            "description": "Preview coherent AMBA protocols beyond AXI4: ACE cache coherency extensions and AMBA 5 CHI packetized interconnects for scalable multi-core systems."
+          }
+        ]
+      },
+      {
+        "title": "AMBA Interview & Debug Clinic",
+        "slug": "B-AMBA-F3_Interview_Debug_Clinic",
+        "topics": [
+          {
+            "title": "AMBA Interview & Debug Clinic",
+            "slug": "index",
+            "description": "Practice AMBA whiteboard design, waveform triage, verification test planning, and common AHB/AXI trick questions used in senior verification interviews."
+          }
+        ]
+      },
+      {
         "title": "AXI4 Channel Architecture & Handshake Protocol",
         "slug": "B-AXI-1_AXI_Channel_Architecture",
         "topics": [

@@ -12,20 +12,24 @@ for (const file of files) {
   const data = JSON.parse(fs.readFileSync(filePath, 'utf8'));
   const ids = new Set();
   data.forEach((card, idx) => {
-    if (!card.id || !card.question || !card.answer) {
+    const cardId = card.id || `${path.basename(file, '.json')}-${idx}`;
+    const question = card.question || card.front;
+    const answer = card.answer || card.back;
+
+    if (!question || !answer) {
       console.error(`${file} card at index ${idx} has empty fields`);
       hasError = true;
     }
-    if (ids.has(card.id)) {
-      console.error(`${file} has duplicate id ${card.id}`);
+    if (ids.has(cardId)) {
+      console.error(`${file} has duplicate id ${cardId}`);
       hasError = true;
     }
-    if (globalIds.has(card.id)) {
-      console.error(`Duplicate id across files: ${card.id} in ${file}`);
+    if (globalIds.has(cardId)) {
+      console.error(`Duplicate id across files: ${cardId} in ${file}`);
       hasError = true;
     }
-    ids.add(card.id);
-    globalIds.add(card.id);
+    ids.add(cardId);
+    globalIds.add(cardId);
   });
 }
 

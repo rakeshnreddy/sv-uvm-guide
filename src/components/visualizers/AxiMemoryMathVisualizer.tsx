@@ -125,7 +125,7 @@ export default function AxiMemoryMathVisualizer() {
   const pageEnd = startPage + 4096;
 
   return (
-    <div className="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden">
+    <div className="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden" data-testid="axi-memory-math-visualizer">
       {/* Header */}
       <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700 flex items-center justify-between">
         <h3 className="text-base font-semibold text-white">AXI Burst Memory Math</h3>

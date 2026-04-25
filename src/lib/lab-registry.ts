@@ -432,6 +432,37 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
       }
     ]
   },
+  "ahb-axi-bridge-debug": {
+    id: "ahb-axi-bridge-debug",
+    title: "AHB-to-AXI Bridge Debug",
+    description: "Debug burst translation and 4KB boundary splitting in a buggy AHB-to-AXI bridge.",
+    owningModule: "B-AMBA-F1",
+    routeSlug: "ahb-axi-bridge-debug",
+    prerequisites: ["ahb-checker-lab", "axi-scoreboard-lab"],
+    assetLocation: "content/curriculum/labs/ahb_axi_bridge/lab1_bridge_debug",
+    status: "available",
+    graderType: "systemverilog",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Reproduce the Split Bug",
+        instructions: "Run `testbench.sv` and inspect the AXI AW log for the `crossing_4kb_bug` request. The first translated AXI burst crosses the 0x1000 boundary.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Complete the Checker",
+        instructions: "Open `bridge_split_checker.sv` and implement the 4KB boundary, first split length, size preservation, and W beat accounting checks.",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Fix the Split Function",
+        instructions: "Replace the buggy `beats_to_4kb_boundary_buggy()` logic with the corrected boundary calculation from `solution.sv`, then rerun the lab.",
+        starterCode: ""
+      }
+    ]
+  },
   "power_aware_retention": {
     id: "power_aware_retention",
     title: "Retention Bug and Isolation Sequencing",

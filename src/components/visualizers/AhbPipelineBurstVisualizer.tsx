@@ -219,7 +219,7 @@ export default function AhbPipelineBurstVisualizer() {
   const activeHready = cycles[currentCycle]?.hready;
 
   return (
-    <div className="w-full flex flex-col border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-950 shadow-sm my-8">
+    <div className="w-full flex flex-col border border-slate-200 dark:border-slate-800 rounded-xl overflow-hidden bg-white dark:bg-slate-950 shadow-sm my-8" data-testid="ahb-pipeline-burst-visualizer">
       {/* Header and Controls */}
       <div className="bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
         <div className="flex flex-col">

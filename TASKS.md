@@ -63,11 +63,11 @@
 | 53 | LAB-5-AXI-DEADLOCK-HUNT | P1 | complete | CONTENT-AXI-5-PITFALLS-DEADLOCKS | Create the advanced AXI lab where learners analyze a waveform to identify a subtle cyclic/channel-dependency deadlock and write a protocol assertion to catch it. |
 | 54 | CONTENT-AMBA-F1-BRIDGES-SYSTEM | P1 | complete | CONTENT-AHB-3-VERIFICATION, CONTENT-AXI-6-VERIFICATION | Author the expert integration module for AHB↔AXI bridges, burst splitting/merging hazards, formal/property strategy, and reset/CDC behavior. |
 | 55 | VIZ-18-BRIDGE-TRANSLATION | P1 | complete | CONTENT-AMBA-F1-BRIDGES-SYSTEM | Build the BridgeTranslationExplorer to visualize AHB requests splitting/merging into AXI transactions. |
-| 56 | LAB-6-AHB-AXI-BRIDGE-DEBUG | P2 | todo | CONTENT-AMBA-F1-BRIDGES-SYSTEM | Create the advanced bridge debug lab focused on burst translation and 4KB boundary splitting across an AHB-to-AXI adapter. |
-| 57 | CONTENT-AMBA-F2-FUTURE-PROTOCOLS | P2 | todo | CONTENT-AMBA-F1-BRIDGES-SYSTEM | Author the Future Protocols module previewing ACE (cache coherency) and AMBA 5 CHI (ring/mesh networks). |
-| 58 | CONTENT-AMBA-F3-INTERVIEW-CLINIC | P1 | todo | CONTENT-AMBA-F2-FUTURE-PROTOCOLS | Author the Interview and Debug Clinic module with whiteboard design questions, waveform triage drills, verification test-plan prompts, and common trick questions. |
-| 59 | FLASH-2-AMBA-PROTOCOL-COVERAGE | P1 | todo | CONTENT-AMBA-F3-INTERVIEW-CLINIC | Create flashcards and reusable interview-question banks for all AHB/AXI protocol modules. |
-| 60 | INFRA-8-AMBA-QA-SUITE | P1 | todo | CONTENT-AMBA-F3-INTERVIEW-CLINIC | Add Vitest and Playwright coverage for all new AMBA visualizers, curriculum pages, and end-to-end navigation flows. |
+| 56 | LAB-6-AHB-AXI-BRIDGE-DEBUG | P2 | complete | CONTENT-AMBA-F1-BRIDGES-SYSTEM | Create the advanced bridge debug lab focused on burst translation and 4KB boundary splitting across an AHB-to-AXI adapter. |
+| 57 | CONTENT-AMBA-F2-FUTURE-PROTOCOLS | P2 | complete | CONTENT-AMBA-F1-BRIDGES-SYSTEM | Author the Future Protocols module previewing ACE (cache coherency) and AMBA 5 CHI (ring/mesh networks). |
+| 58 | CONTENT-AMBA-F3-INTERVIEW-CLINIC | P1 | complete | CONTENT-AMBA-F2-FUTURE-PROTOCOLS | Author the Interview and Debug Clinic module with whiteboard design questions, waveform triage drills, verification test-plan prompts, and common trick questions. |
+| 59 | FLASH-2-AMBA-PROTOCOL-COVERAGE | P1 | complete | CONTENT-AMBA-F3-INTERVIEW-CLINIC | Create flashcards and reusable interview-question banks for all AHB/AXI protocol modules. |
+| 60 | INFRA-8-AMBA-QA-SUITE | P1 | complete | CONTENT-AMBA-F3-INTERVIEW-CLINIC | Add Vitest and Playwright coverage for all new AMBA visualizers, curriculum pages, and end-to-end navigation flows. |
 
 ---
 
