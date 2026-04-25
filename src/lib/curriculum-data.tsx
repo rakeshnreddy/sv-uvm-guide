@@ -728,6 +728,17 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "AHB↔AXI Bridges & System Integration",
+        "slug": "B-AMBA-F1_Bridges_and_System_Integration",
+        "topics": [
+          {
+            "title": "AHB↔AXI Bridges & System Integration",
+            "slug": "index",
+            "description": "Master the design and verification of protocol bridge IPs, including AHB-to-AXI burst translation, 4KB boundary splitting, reset domain crossings, and formal verification strategies for bridge correctness."
+          }
+        ]
+      },
+      {
         "title": "AXI4 Channel Architecture & Handshake Protocol",
         "slug": "B-AXI-1_AXI_Channel_Architecture",
         "topics": [

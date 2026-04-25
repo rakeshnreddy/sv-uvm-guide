@@ -1,0 +1,368 @@
+---
+title: "AHB↔AXI Bridges & System Integration"
+description: "Master the design and verification of protocol bridge IPs, including AHB-to-AXI burst translation, 4KB boundary splitting, reset domain crossings, and formal verification strategies for bridge correctness."
+order: 12
+flashcards: []
+---
+
+# AHB↔AXI Bridges & System Integration
+
+Real SoC designs rarely use a single bus protocol. A modern chip might have an AXI4 interconnect for high-performance masters (CPU, DMA, GPU) while using AHB-Lite for lower-bandwidth peripherals (UART, SPI, GPIO). **Protocol bridge IPs** sit between these domains, translating transactions from one protocol to another.
+
+These bridges are deceptively complex — they must handle burst splitting, response mapping, flow control mismatches, and boundary rules that differ between protocols. Bridge bugs are some of the hardest to debug because they corrupt data silently or create deadlocks that appear to be in the master or slave, not the bridge itself.
+
+<QuickTake>
+- **Protocol Bridges** translate transactions between AHB and AXI, handling the fundamental asymmetry between a pipelined single-channel protocol and a decoupled five-channel protocol.
+- **Burst Translation** is the hardest part: an AXI INCR burst of 16 beats must be split into multiple AHB bursts (max 16 beats, but with different boundary rules).
+- **4KB Boundary Splitting** is required because AXI enforces a 4KB boundary rule that AHB does not — the bridge must split AHB bursts that would cross a 4KB AXI boundary.
+- **Formal Verification** is the gold standard for bridge correctness because the combinatorial space of burst types, sizes, and boundary conditions is too large for directed testing.
+</QuickTake>
+
+---
+
+## 1. Why Protocol Bridges Exist
+
+### The Two-Speed SoC
+
+Modern SoCs are built with a hierarchy of interconnects:
+
+| Layer | Protocol | Typical Masters | Typical Bandwidth |
+|-------|----------|----------------|-------------------|
+| High-Performance Fabric | AXI4 | CPU cores, DMA engines, GPU | 10+ GB/s |
+| Peripheral Bus | AHB-Lite / APB | UART, SPI, I2C, GPIO, Timer | 100 MB/s |
+| Configuration Bus | APB | Register access, debug | 10 MB/s |
+
+A **bridge IP** connects these layers. The two most common bridges are:
+
+1. **AHB-to-AXI Bridge** — An AHB master (e.g., a DMA engine on the peripheral bus) needs to access AXI memory space. The bridge converts AHB single-channel pipelined transfers into AXI five-channel transactions.
+2. **AXI-to-AHB Bridge** — An AXI master (e.g., CPU) needs to access AHB peripherals. The bridge converts decoupled AXI transactions into sequential AHB pipelined transfers.
+
+### Why Bridges Are Hard
+
+The fundamental problem is **protocol asymmetry**:
+
+| Feature | AHB | AXI |
+|---------|-----|-----|
+| Channels | 1 (shared address/data) | 5 (AW, W, B, AR, R) |
+| Pipelining | Address phase overlaps with previous data phase | Fully decoupled — address and data are independent |
+| Outstanding Transactions | 1 (inherently in-order) | Multiple per ID (out-of-order across IDs) |
+| Burst Length | Up to 16 beats (INCR), 4/8/16 (WRAP) | Up to 256 beats (INCR) |
+| 4KB Boundary | No enforcement | Strictly enforced — burst must not cross |
+| Response Timing | Immediate (same cycle as data) | Decoupled (B channel fires after all W beats) |
+
+Every row in this table is a potential source of bridge bugs.
+
+---
+
+## 2. AHB-to-AXI Bridge Architecture
+
+<InteractiveWrapper>
+  <BridgeTranslationExplorer />
+</InteractiveWrapper>
+
+### Block Diagram
+
+An AHB-to-AXI bridge contains these key blocks:
+
+1. **AHB Slave Interface** — Accepts AHB transactions from the AHB master.
+2. **Address Decoder & Splitter** — Determines if the AXI burst needs to be split (4KB boundary, maximum burst length).
+3. **Write Buffer** — Stores AHB write data beats until a complete AXI write burst can be issued.
+4. **Read Buffer** — Stores AXI read response data until it can be returned to AHB.
+5. **AXI Master Interface** — Issues AXI transactions downstream.
+6. **Response Mapper** — Converts AXI response codes (OKAY, SLVERR, DECERR) to AHB response (OKAY, ERROR).
+
+### Transaction Flow: AHB Write → AXI Write
+
+```
+AHB Master → Bridge AHB Slave Interface
+  1. AHB master drives HADDR, HTRANS=NONSEQ, HWRITE=1, HBURST=INCR8
+  2. Bridge accepts the address phase, starts collecting data beats
+  3. Over the next 8 cycles, AHB master drives HWDATA for each beat
+  4. Bridge buffers the data in its write buffer
+
+Bridge Internal → AXI Master Interface
+  5. Bridge issues AWVALID with translated burst parameters
+  6. Bridge drives WVALID for each buffered data beat
+  7. Bridge waits for BVALID on the B channel
+
+Bridge → AHB Master
+  8. Bridge maps BRESP to HRESP and returns to the AHB master
+```
+
+---
+
+## 3. Burst Translation Rules
+
+### AXI Burst Length Limits
+
+AXI4 supports bursts up to 256 beats (`AWLEN = 255`). AHB-Lite supports:
+- **INCR**: Undefined length (can be any number of beats)
+- **INCR4/INCR8/INCR16**: Fixed length bursts of 4, 8, or 16 beats
+- **WRAP4/WRAP8/WRAP16**: Wrapping bursts of 4, 8, or 16 beats
+
+When an AHB master issues an INCR burst that would translate to more than 256 AXI beats, the bridge must split it into multiple AXI transactions.
+
+### 4KB Boundary Splitting
+
+The most critical translation rule: **AXI bursts must not cross a 4KB (0x1000) address boundary.** AHB has no such restriction.
+
+When an AHB master issues a burst starting at address `0x0FE0` with 8 beats of 8 bytes each:
+- Total transfer: 64 bytes
+- End address: `0x0FE0 + 64 - 1 = 0x101F`
+- This crosses the `0x1000` boundary!
+
+The bridge must split this into two AXI bursts:
+1. **Burst 1:** `0x0FE0` → `0x0FFF` (4 beats)
+2. **Burst 2:** `0x1000` → `0x101F` (4 beats)
+
+```systemverilog
+// Bridge 4KB boundary split logic
+function automatic int calc_beats_to_boundary(
+  input logic [31:0] start_addr,
+  input int          beat_size_bytes
+);
+  // Distance to next 4KB boundary
+  logic [31:0] boundary = (start_addr & 32'hFFFF_F000) + 32'h1000;
+  int bytes_to_boundary = boundary - start_addr;
+  return bytes_to_boundary / beat_size_bytes;
+endfunction
+
+// Example usage in bridge FSM
+int total_beats = ahb_burst_len;
+int remaining = total_beats;
+logic [31:0] current_addr = ahb_start_addr;
+
+while (remaining > 0) begin
+  int to_boundary = calc_beats_to_boundary(current_addr, beat_size);
+  int this_burst = (remaining < to_boundary) ? remaining : to_boundary;
+  
+  // Clamp to AXI max burst length (256)
+  if (this_burst > 256) this_burst = 256;
+  
+  issue_axi_burst(current_addr, this_burst - 1); // AWLEN = beats - 1
+  
+  current_addr += this_burst * beat_size;
+  remaining    -= this_burst;
+end
+```
+
+### WRAP Burst Translation
+
+AHB WRAP bursts have a different wrapping boundary than AXI WRAP bursts, and the wrap address calculation must account for the transfer size:
+
+- AHB WRAP boundary: `start_addr aligned to (beats × size)`
+- AXI WRAP boundary: Same formula, but AXI enforces that WRAP lengths must be 2, 4, 8, or 16
+
+If the AHB WRAP parameters don't match AXI's supported WRAP lengths, the bridge must convert the WRAP burst into one or more INCR bursts.
+
+---
+
+## 4. Response Mapping and Error Handling
+
+### Response Code Translation
+
+| AXI Response | AHB Response | Bridge Action |
+|-------------|-------------|---------------|
+| `OKAY (2'b00)` | `OKAY` | Pass through |
+| `EXOKAY (2'b01)` | `OKAY` | Map to OKAY (AHB has no exclusive) |
+| `SLVERR (2'b10)` | `ERROR` | Terminate remaining beats with ERROR |
+| `DECERR (2'b11)` | `ERROR` | Terminate remaining beats with ERROR |
+
+### The Error Termination Problem
+
+When an AXI slave returns `SLVERR` on beat 3 of an 8-beat burst, the bridge must:
+
+1. Continue accepting the remaining 5 AXI data beats (AXI requires all beats to complete).
+2. Return `HRESP = ERROR` for beat 3 to the AHB master.
+3. Decide whether to return ERROR for beats 4-8 as well, or attempt to continue.
+
+Most bridges follow the **conservative approach**: once an error is received, all remaining beats for that burst return ERROR to the AHB master.
+
+```systemverilog
+// Bridge response handling
+always_ff @(posedge ACLK) begin
+  if (axi_rresp == 2'b10 || axi_rresp == 2'b11) begin
+    error_flag <= 1;  // Latch the error
+  end
+  
+  // Map to AHB response
+  if (error_flag)
+    ahb_hresp <= 1'b1;  // ERROR
+  else
+    ahb_hresp <= 1'b0;  // OKAY
+end
+```
+
+---
+
+## 5. Reset and Clock Domain Crossing (CDC)
+
+### Synchronous Bridges
+
+If both the AHB and AXI domains share the same clock, the bridge is purely combinational/registered logic. This is the simpler case.
+
+### Asynchronous Bridges (CDC)
+
+When the AHB domain runs at a different clock frequency than the AXI domain, the bridge must include **Clock Domain Crossing (CDC)** structures:
+
+1. **Async FIFOs** — For buffering address and data across clock domains.
+2. **Gray-code pointers** — For safe pointer transfer across the CDC boundary.
+3. **Synchronizers** — Two-flop synchronizers on control signals (VALID/READY handshakes).
+4. **Reset synchronization** — Both domains may have independent resets that must be properly sequenced.
+
+### CDC Verification
+
+CDC bugs are the most insidious bridge failures. They manifest as:
+- **Data corruption** — A metastable flop resolves to the wrong value.
+- **Lost transactions** — A VALID pulse is too short and missed by the receiving domain.
+- **Deadlocks** — A READY signal from the other domain is never sampled.
+
+Verification approaches:
+1. **Formal CDC tools** (Cadence Conformal CDC, Synopsys SpyGlass CDC) — Structurally verify all crossings.
+2. **Multi-clock simulation** — Run the bridge with intentionally mismatched clocks and random phase offsets.
+3. **Reset sequencing tests** — Verify bridge behavior when one domain resets independently.
+
+---
+
+## 6. Formal Verification Strategy for Bridges
+
+Formal verification is the **most effective** technique for bridge verification because:
+
+1. **Exhaustive state coverage** — Formal explores all possible burst types, sizes, addresses, and boundary conditions.
+2. **Equivalence checking** — You can prove that every AHB transaction maps to the correct AXI transaction(s).
+3. **Deadlock detection** — Formal can prove that the bridge never enters a state where it stops making progress.
+
+### Key Formal Properties
+
+```systemverilog
+// Property: Bridge must eventually complete every accepted AHB transaction
+property p_bridge_liveness;
+  @(posedge ACLK) disable iff (!ARESETn)
+    (ahb_htrans == NONSEQ) |-> s_eventually (ahb_hready == 1);
+endproperty
+
+// Property: 4KB boundary is never violated on the AXI side
+property p_no_4kb_violation;
+  @(posedge ACLK) disable iff (!ARESETn)
+    (AWVALID && AWREADY) |->
+      ((AWADDR & 32'hFFFFF000) == 
+       ((AWADDR + ((AWLEN + 1) << AWSIZE) - 1) & 32'hFFFFF000));
+endproperty
+
+// Property: Total data bytes in == total data bytes out
+// (data integrity across the bridge)
+property p_data_conservation;
+  @(posedge ACLK) disable iff (!ARESETn)
+    (bridge_state == IDLE && prev_state == COMPLETING) |->
+      (total_ahb_bytes == total_axi_bytes);
+endproperty
+```
+
+### Formal Constraints (Assumptions)
+
+You must constrain the formal environment to only present legal inputs:
+
+```systemverilog
+// Assume AHB master follows protocol
+assume property (@(posedge ACLK) disable iff (!ARESETn)
+  (HTRANS == NONSEQ) |-> (HSIZE <= 3'b010));  // Max 4-byte transfers
+
+// Assume AXI slave eventually responds
+assume property (@(posedge ACLK) disable iff (!ARESETn)
+  AWVALID |-> s_eventually AWREADY);
+```
+
+---
+
+## 7. Common Bridge Bugs
+
+### Bug 1: Off-by-One in Burst Splitting
+
+The bridge calculates 3 beats to the 4KB boundary but issues 4, causing the AXI burst to cross. **Root cause:** Using `>=` instead of `>` in the boundary comparison.
+
+### Bug 2: Write Data Misalignment
+
+When splitting a burst, the bridge must ensure the `WSTRB` for the first beat of the second AXI burst is correct. If the original AHB transfer was unaligned, the strobe mask changes at the split point.
+
+### Bug 3: Response Ordering on Split Bursts
+
+If an AHB burst is split into two AXI bursts, the bridge receives two B-channel responses. It must wait for **both** before signaling completion to AHB. A common bug is returning OKAY after the first response, then receiving SLVERR on the second.
+
+### Bug 4: WRAP-to-INCR Conversion Error
+
+Converting an AHB WRAP8 burst to AXI when the wrap boundary doesn't align with AXI's supported wrap lengths. The bridge must correctly compute the linear address sequence that the WRAP would have produced and issue it as INCR.
+
+### Bug 5: Outstanding Transaction Overflow
+
+An AXI-to-AHB bridge accepts multiple outstanding AXI transactions (different IDs) but AHB can only process one at a time. If the bridge's internal queue overflows, it must backpressure the AXI master by deasserting AWREADY/ARREADY — but must do so without creating a channel-dependency deadlock.
+
+---
+
+## 8. Verification Test Plan for Bridges
+
+A comprehensive bridge verification plan must cover:
+
+### Functional Scenarios
+- Single-beat read/write (all sizes: byte, halfword, word)
+- INCR bursts (all legal lengths)
+- WRAP4, WRAP8, WRAP16 bursts
+- Bursts that exactly hit a 4KB boundary
+- Bursts that must be split across a 4KB boundary
+- Back-to-back bursts with no idle cycles
+- Interleaved read and write traffic
+
+### Error Injection
+- AXI slave returns SLVERR on various beat positions
+- AXI slave returns DECERR
+- AXI slave stalls READY for extended periods
+- AHB master issues bursts with maximum outstanding depth
+
+### CDC Scenarios (for async bridges)
+- Asymmetric clock ratios (2:1, 3:1, 7:3)
+- Clock jitter injection
+- Independent reset assertion on each domain
+- Reset during mid-burst transfer
+
+### Formal Properties
+- Liveness: every accepted transaction eventually completes
+- Safety: no 4KB boundary violations on AXI side
+- Data integrity: bytes in == bytes out
+- No deadlock: bridge always makes forward progress
+
+---
+
+<Quiz>
+  <QuizQuestion
+    question="An AHB master issues an INCR burst starting at address 0x0FE0 with 8 beats of 4 bytes each. How does the AHB-to-AXI bridge handle this?"
+    options={[
+      "Issues a single AXI INCR burst of 8 beats starting at 0x0FE0.",
+      "Splits into two AXI bursts: 8 beats at 0x0FE0 and 0 beats at 0x1000.",
+      "Splits into two AXI bursts: first from 0x0FE0 to 0x0FFF, then from 0x1000.",
+      "Rejects the transaction because AHB does not support 4KB boundaries."
+    ]}
+    correctAnswer="Splits into two AXI bursts: first from 0x0FE0 to 0x0FFF, then from 0x1000."
+    explanation="The burst spans from 0x0FE0 to 0x0FFF + 0x1000 to 0x101F, crossing the 4KB boundary at 0x1000. The bridge must split it into two AXI bursts at the boundary. The first burst covers 8 bytes (2 beats), and the second covers 24 bytes (6 beats)."
+  />
+  <QuizQuestion
+    question="Why is formal verification particularly effective for protocol bridge verification?"
+    options={[
+      "Formal verification runs faster than simulation for bridges.",
+      "The combinatorial space of burst types, sizes, and boundaries is too large for directed testing to cover exhaustively.",
+      "Formal verification can generate waveform dumps automatically.",
+      "Bridges do not require simulation because they are purely combinational."
+    ]}
+    correctAnswer="The combinatorial space of burst types, sizes, and boundaries is too large for directed testing to cover exhaustively."
+    explanation="A bridge must handle every combination of burst type (INCR, WRAP, SINGLE), size (1-128 bytes), length (1-256 beats), and starting address (with 4KB boundary implications). This combinatorial explosion makes exhaustive directed testing impractical, but formal verification explores all states automatically."
+  />
+  <QuizQuestion
+    question="When an AXI slave returns SLVERR on beat 3 of an 8-beat write burst that was translated from AHB, what must the bridge do?"
+    options={[
+      "Immediately terminate the AXI burst and return ERROR on beat 3 to AHB.",
+      "Continue the AXI burst to completion (all 8 beats), then return ERROR to AHB.",
+      "Retry the entire burst from beat 1.",
+      "Convert the remaining beats to a new AXI burst with a different ID."
+    ]}
+    correctAnswer="Continue the AXI burst to completion (all 8 beats), then return ERROR to AHB."
+    explanation="The AXI protocol requires that all beats of a burst must be completed — you cannot terminate a burst mid-stream. The bridge must continue driving WVALID for all remaining beats, accept the error response on the B channel, and then return HRESP=ERROR to the AHB master."
+  />
+</Quiz>

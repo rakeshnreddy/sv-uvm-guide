@@ -263,6 +263,10 @@ const AxiDeadlockSimulator = dynamic(
   () => import('@/components/visualizers/AxiDeadlockSimulator').then(mod => mod.default),
   { ssr: false, loading: () => <VisualizationFallback /> }
 );
+const BridgeTranslationExplorer = dynamic(
+  () => import('@/components/visualizers/BridgeTranslationExplorer').then(mod => mod.default),
+  { ssr: false, loading: () => <VisualizationFallback /> }
+);
 
 type CurriculumTopicPageProps = {
   params: Promise<{ slug: string[] }>;
@@ -377,6 +381,7 @@ const components = {
   AxiIdOrderingVisualizer,
   ExclusiveAccessVisualizer,
   AxiDeadlockSimulator,
+  BridgeTranslationExplorer,
 };
 
 export default async function CurriculumTopicPage({ params }: CurriculumTopicPageProps) {
