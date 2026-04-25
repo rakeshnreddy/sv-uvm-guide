@@ -2,6 +2,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { POST } from '../../src/app/api/ai/chat/route';
 import { NextRequest } from 'next/server';
 
+type GenerativeAIMockModule = {
+  _generateContentSpy: ReturnType<typeof vi.fn>;
+  _getGenerativeModelSpy: ReturnType<typeof vi.fn>;
+};
+
 // Mock the Google Generative AI SDK
 vi.mock('@google/generative-ai', () => {
   const generateContentSpy = vi.fn().mockResolvedValue({
@@ -26,6 +31,8 @@ vi.mock('@google/generative-ai', () => {
 
 describe('AI Chat API Route', () => {
   const GEMINI_API_KEY = 'test-api-key';
+  const getMockModule = async (): Promise<GenerativeAIMockModule> =>
+    (await import('@google/generative-ai')) as unknown as GenerativeAIMockModule;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -48,7 +55,7 @@ describe('AI Chat API Route', () => {
 
     await POST(req);
 
-    const { GoogleGenerativeAI, _getGenerativeModelSpy, _generateContentSpy } = await import('@google/generative-ai');
+    const { _getGenerativeModelSpy, _generateContentSpy } = await getMockModule();
 
     // Verify model initialization
     expect(_getGenerativeModelSpy).toHaveBeenCalledWith({
@@ -74,7 +81,7 @@ describe('AI Chat API Route', () => {
 
     await POST(req);
 
-    const { _generateContentSpy } = await import('@google/generative-ai');
+    const { _generateContentSpy } = await getMockModule();
     const promptParts = _generateContentSpy.mock.calls[0][0];
 
     // Check that quotes are escaped in the prompt parts

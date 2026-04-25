@@ -27,8 +27,8 @@ const navLinks: NavLink[] = [
     label: "Practice",
     href: "/practice",
   },
-  { href: "/dashboard", label: "Dashboard" },
-  { href: "/community", label: "Community" },
+  ...(featureFlags.tracking ? [{ href: "/dashboard", label: "Dashboard" }] : []),
+  ...(featureFlags.community ? [{ href: "/community", label: "Community" }] : []),
 ];
 
 const UserProfileDropdown = () => {
@@ -58,7 +58,9 @@ const UserProfileDropdown = () => {
                         </div>
                         <p className="mb-2 text-xs text-[rgba(230,241,255,0.6)]">45% to next level</p>
                         <div className="-mx-4 my-2 border-t border-white/10" />
-                        <Link href="/dashboard" className="block rounded-2xl px-2 py-1.5 text-sm text-[rgba(230,241,255,0.7)] transition hover:bg-white/10">Dashboard</Link>
+                        {featureFlags.tracking && (
+                          <Link href="/dashboard" className="block rounded-2xl px-2 py-1.5 text-sm text-[rgba(230,241,255,0.7)] transition hover:bg-white/10">Dashboard</Link>
+                        )}
                         <Link href="/settings" className="block rounded-2xl px-2 py-1.5 text-sm text-[rgba(230,241,255,0.7)] transition hover:bg-white/10">Settings</Link>
                         <button className="mt-1 w-full rounded-2xl px-2 py-1.5 text-left text-sm text-[rgba(230,241,255,0.7)] transition hover:bg-white/10">Sign Out</button>
                     </motion.div>

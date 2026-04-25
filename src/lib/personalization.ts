@@ -59,8 +59,8 @@ export const DEFAULT_ENGAGEMENT_SNAPSHOT: EngagementSnapshot = {
       type: 'lesson_completed',
       timestamp: new Date(Date.now() - 86400000).toISOString(),
       details: {
-        lesson: 'UVM Basics',
-        lessonSlug: ['T2_Intermediate', 'I-UVM-1_UVM_Intro', 'index'],
+        lesson: 'UVM Components',
+        lessonSlug: ['T2_Intermediate', 'I-UVM-1A_Components', 'index'],
       },
     },
     {

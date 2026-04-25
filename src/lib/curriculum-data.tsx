@@ -953,14 +953,35 @@ export const curriculumData: Module[] = [
 
 // Helper functions to navigate the new structure
 
-export function normalizeSlug(slug: string[]): string[] {
-  if (slug.length >= 3) {
-    return slug.slice(0, 3);
+function safeDecodeURIComponent(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
   }
+}
+
+export function toPrettyCurriculumSlug(segment: string): string {
+  return safeDecodeURIComponent(segment)
+    .trim()
+    .replace(/_/g, '-')
+    .replace(/[^a-zA-Z0-9-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase();
+}
+
+function findBySlug<T extends { slug: string }>(items: T[], rawSlug: string | undefined): T | undefined {
+  if (!rawSlug) return undefined;
+  const prettySlug = toPrettyCurriculumSlug(rawSlug);
+  return items.find(item => item.slug === rawSlug || toPrettyCurriculumSlug(item.slug) === prettySlug);
+}
+
+export function normalizeSlug(slug: string[]): string[] {
   if (slug.length === 0) return [];
 
-  const [tierSlug, sectionSlug] = slug;
-  const courseModule = curriculumData.find(m => m.slug === tierSlug);
+  const [rawTierSlug, rawSectionSlug, rawTopicSlug] = slug;
+  const courseModule = findBySlug(curriculumData, rawTierSlug);
   if (!courseModule) return [];
 
   if (slug.length === 1) {
@@ -968,14 +989,21 @@ export function normalizeSlug(slug: string[]): string[] {
     if (!firstSection) return [];
     const firstTopic = firstSection.topics.find(t => t.slug === 'index') ?? firstSection.topics[0];
     if (!firstTopic) return [];
-    return [tierSlug, firstSection.slug, firstTopic.slug];
+    return [courseModule.slug, firstSection.slug, firstTopic.slug];
   }
 
-  const section = courseModule.sections.find(s => s.slug === sectionSlug);
+  const section = findBySlug(courseModule.sections, rawSectionSlug);
   if (!section) return [];
+
+  if (slug.length >= 3) {
+    const topic = findBySlug(section.topics, rawTopicSlug);
+    if (!topic) return [];
+    return [courseModule.slug, section.slug, topic.slug];
+  }
+
   const topic = section.topics.find(t => t.slug === 'index') ?? section.topics[0];
   if (!topic) return [];
-  return [tierSlug, section.slug, topic.slug];
+  return [courseModule.slug, section.slug, topic.slug];
 }
 
 export function findTopicBySlug(slug: string[]): Topic | undefined {

@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import { useNavigation } from '@/contexts/NavigationContext';
 import { useRouter } from 'next/navigation';
+import { featureFlags } from '@/tools/featureFlags';
 
 export const useKeyboardShortcuts = () => {
   const { toggleSidebar } = useNavigation();
@@ -46,10 +47,12 @@ export const useKeyboardShortcuts = () => {
                 router.push('/practice');
                 break;
             case '3':
+                if (!featureFlags.tracking) break;
                 event.preventDefault();
                 router.push('/dashboard');
                 break;
              case 'c':
+                if (!featureFlags.community) break;
                 event.preventDefault();
                 router.push('/community');
                 break;

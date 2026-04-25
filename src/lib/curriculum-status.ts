@@ -104,7 +104,7 @@ const overrides: Record<string, Partial<StatusMetadata>> = {
     notes: 'RTL Constructs split into three navigatable parts.',
   },
 
-  'T2_Intermediate/I-UVM-3_Sequences/index': {
+  'T2_Intermediate/I-UVM-3A_Fundamentals/index': {
     notes: 'New arbitration sandbox live—collect learner telemetry.',
   },
   'T2_Intermediate/I-SV-1_OOP/index': {

@@ -8,7 +8,7 @@ import { getFullKnowledgeGraph, wrapConceptsInText } from '@/lib/knowledge-graph
 import { notFound } from 'next/navigation';
 import Breadcrumbs from '@/components/layout/Breadcrumbs';
 import FeynmanPromptWidget from '@/components/widgets/FeynmanPromptWidget';
-import Quiz from '@/components/ui/Quiz';
+import QuizBase from '@/components/ui/Quiz';
 import Panel from '@/components/ui/Panel';
 import { InfoPage } from '@/components/templates/InfoPage';
 import LessonVisitTracker from '@/components/curriculum/LessonVisitTracker';
@@ -28,6 +28,53 @@ import { LabLink } from '@/components/mdx/LabLink';
 const VisualizationFallback = () => (
   <div className="flex h-48 items-center justify-center">Loading visualization...</div>
 );
+
+const InteractiveWrapper = ({ children }: { children?: React.ReactNode }) => (
+  <div className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4 md:p-6">
+    {children}
+  </div>
+);
+
+const QuickTake = ({ children }: { children?: React.ReactNode }) => (
+  <div className="my-6 rounded-2xl border border-blue-500/30 bg-blue-500/5 p-4 md:p-6">
+    <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-300">Quick Take</p>
+    <div className="prose prose-invert max-w-none">{children}</div>
+  </div>
+);
+
+type QuizQuestionShape = {
+  question: string;
+  options: string[];
+  correctAnswer: string;
+  explanation: string;
+};
+
+const QuizQuestion = (_props: QuizQuestionShape) => null;
+
+const Quiz = ({
+  questions,
+  children,
+}: {
+  questions?: QuizQuestionShape[];
+  children?: React.ReactNode;
+}) => {
+  const childQuestions = React.Children.toArray(children)
+    .filter(React.isValidElement)
+    .map((child) => (child as React.ReactElement<QuizQuestionShape>).props)
+    .filter(
+      (q): q is QuizQuestionShape =>
+        Boolean(
+          q &&
+            typeof q.question === 'string' &&
+            Array.isArray(q.options) &&
+            typeof q.correctAnswer === 'string' &&
+            typeof q.explanation === 'string',
+        ),
+    );
+
+  const resolvedQuestions = questions && questions.length > 0 ? questions : childQuestions;
+  return <QuizBase questions={resolvedQuestions} />;
+};
 
 const AnimatedUvmSequenceDriverHandshakeDiagram = dynamic(() => import('@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram').then(mod => mod.AnimatedUvmSequenceDriverHandshakeDiagram));
 const DataTypeComparisonChart = dynamic(
@@ -222,8 +269,11 @@ type CurriculumTopicPageProps = {
 };
 
 const components = {
+  InteractiveWrapper,
+  QuickTake,
   InteractiveCode,
   Quiz,
+  QuizQuestion,
   Panel,
   InfoPage,
   Accordion,

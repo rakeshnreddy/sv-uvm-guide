@@ -21,25 +21,73 @@ interface FormattedQuestion {
   explanation: string;
 }
 
-interface QuizProps {
-  questions: (FormattedQuestion | MdxQuestion)[];
+interface LegacyFormattedQuestion {
+  question: string;
+  options: string[];
+  answer: string;
+  explanation: string;
 }
 
-const toFormatted = (qs: (FormattedQuestion | MdxQuestion)[]): FormattedQuestion[] => {
+interface QuizProps {
+  questions: (FormattedQuestion | LegacyFormattedQuestion | MdxQuestion)[];
+}
+
+const toFormatted = (qs: (FormattedQuestion | LegacyFormattedQuestion | MdxQuestion)[]): FormattedQuestion[] => {
   return qs.map((q) => {
-    if ('options' in q && 'correctAnswer' in q) {
-      return q as FormattedQuestion;
+    const anyQ = q as any;
+
+    if (Array.isArray(anyQ.options)) {
+      const correct =
+        typeof anyQ.correctAnswer === 'string'
+          ? anyQ.correctAnswer
+          : typeof anyQ.answer === 'string'
+            ? anyQ.answer
+            : typeof anyQ.correct === 'string'
+              ? anyQ.correct
+              : undefined;
+      const options = anyQ.options.map((opt: unknown) => String(opt));
+
+      return {
+        question: String(anyQ.question),
+        options,
+        correctAnswer: correct ?? options[0] ?? '',
+        explanation: String(anyQ.explanation ?? ''),
+      };
     }
-    const mdxQ = q as MdxQuestion;
-    const correctAnswer = mdxQ.answers.find((a) => a.correct)?.text;
-    if (!correctAnswer) {
-      throw new Error(`Question has no correct answer: "${mdxQ.question}"`);
+
+    if (Array.isArray(anyQ.answers)) {
+      if (anyQ.answers.length > 0 && typeof anyQ.answers[0] === 'string') {
+        const correct =
+          typeof anyQ.correctAnswer === 'string'
+            ? anyQ.correctAnswer
+            : typeof anyQ.answer === 'string'
+              ? anyQ.answer
+              : undefined;
+        const options = anyQ.answers.map((opt: unknown) => String(opt));
+        return {
+          question: String(anyQ.question),
+          options,
+          correctAnswer: correct ?? options[0] ?? '',
+          explanation: String(anyQ.explanation ?? ''),
+        };
+      }
+
+      const mdxQ = anyQ as MdxQuestion;
+      const correctAnswer = mdxQ.answers.find((a) => a.correct)?.text;
+      const options = mdxQ.answers.map((a) => a.text);
+      return {
+        question: mdxQ.question,
+        options,
+        correctAnswer: correctAnswer ?? options[0] ?? '',
+        explanation: mdxQ.explanation,
+      };
     }
+
     return {
-      question: mdxQ.question,
-      options: mdxQ.answers.map((a) => a.text),
-      correctAnswer,
-      explanation: mdxQ.explanation,
+      question: String(anyQ?.question ?? 'Question unavailable'),
+      options: ['N/A'],
+      correctAnswer: 'N/A',
+      explanation: String(anyQ?.explanation ?? ''),
     };
   });
 };

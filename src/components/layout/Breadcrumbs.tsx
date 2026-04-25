@@ -1,7 +1,8 @@
 "use client";
 
+import React from "react";
 import Link from "next/link";
-import { getBreadcrumbs, curriculumData } from "@/lib/curriculum-data";
+import { getBreadcrumbs, curriculumData, normalizeSlug } from "@/lib/curriculum-data";
 import { buildCurriculumStatus, type TopicStatus } from "@/lib/curriculum-status";
 import { ChevronRight, ChevronsUpDown, CheckCircle, Circle, Clock } from "lucide-react";
 import { useState, useId } from "react";
@@ -59,7 +60,8 @@ const progressData: Record<string, ProgressState> = (() => {
 })();
 
 export default function Breadcrumbs({ slug }: BreadcrumbsProps) {
-  const breadcrumbs = getBreadcrumbs(slug);
+  const normalizedSlug = normalizeSlug(slug);
+  const breadcrumbs = getBreadcrumbs(normalizedSlug);
   const [isJumpToOpen, setJumpToOpen] = useState(false);
   const jumpMenuId = useId();
   const jumpMenuHeadingId = `${jumpMenuId}-heading`;
@@ -68,8 +70,8 @@ export default function Breadcrumbs({ slug }: BreadcrumbsProps) {
     return null;
   }
 
-  const currentModule = curriculumData.find(m => m.slug === slug[0]);
-  const currentSection = currentModule?.sections.find(s => s.slug === slug[1]);
+  const currentModule = curriculumData.find(m => m.slug === normalizedSlug[0]);
+  const currentSection = currentModule?.sections.find(s => s.slug === normalizedSlug[1]);
 
   const timeToComplete = currentSection ? currentSection.topics.length * 5 : 0; // 5 mins per topic
 
@@ -135,7 +137,6 @@ export default function Breadcrumbs({ slug }: BreadcrumbsProps) {
                                     role="menu"
                                     aria-labelledby={jumpMenuHeadingId}
                                     className="absolute top-full right-0 mt-2 w-72 bg-background border border-border/40 rounded-md shadow-lg z-10"
-                                    onMouseLeave={() => setJumpToOpen(false)}
                                 >
                                     <div id={jumpMenuHeadingId} className="p-2 font-semibold border-b border-border/40 text-sm">
                                         Topics in {currentSection.title}
@@ -146,7 +147,7 @@ export default function Breadcrumbs({ slug }: BreadcrumbsProps) {
                                                 key={topic.slug}
                                                 href={`/curriculum/${currentModule?.slug}/${currentSection?.slug}/${topic.slug}`}
                                                 onClick={() => setJumpToOpen(false)}
-                                                className={`block w-full text-left p-2 text-sm rounded-md hover:bg-muted ${slug[2] === topic.slug ? 'bg-muted font-semibold' : ''}`}
+                                                className={`block w-full text-left p-2 text-sm rounded-md hover:bg-muted ${normalizedSlug[2] === topic.slug ? 'bg-muted font-semibold' : ''}`}
                                                 role="menuitem"
                                             >
                                                 {topic.title}

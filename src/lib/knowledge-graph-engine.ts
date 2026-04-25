@@ -192,10 +192,24 @@ export const wrapConceptsInText = (text: string, nodes: ConceptNode[]): string =
     'gi'
   );
 
+  // Preserve JSX component blocks so we don't inject concept tags into JSX props/expressions.
+  // This avoids breaking constructs like:
+  // <Quiz questions={[{ question: "..." }]} />
+  const jsxSnippets: string[] = [];
+  const jsxPlaceholderPrefix = '@@JSX_SNIPPET_';
+  const withJsxPlaceholders = text.replace(
+    /<([A-Z][A-Za-z0-9_]*)[\s\S]*?<\/\1>|<([A-Z][A-Za-z0-9_]*)[\s\S]*?\/>/g,
+    (snippet) => {
+      const token = `${jsxPlaceholderPrefix}${jsxSnippets.length}@@`;
+      jsxSnippets.push(snippet);
+      return token;
+    },
+  );
+
   // Preserve InteractiveCode code props so we don't inject concept tags into string literals
   const codeSnippets: string[] = [];
   const placeholderPrefix = '@@CODE_SNIPPET_';
-  const sanitized = text.replace(/code={`[\s\S]*?`}/g, (snippet) => {
+  const sanitized = withJsxPlaceholders.replace(/code={`[\s\S]*?`}/g, (snippet) => {
     const token = `${placeholderPrefix}${codeSnippets.length}@@`;
     codeSnippets.push(snippet);
     return token;
@@ -219,9 +233,14 @@ export const wrapConceptsInText = (text: string, nodes: ConceptNode[]): string =
     });
   }).join('');
 
-  return codeSnippets.reduce(
+  const restoredCode = codeSnippets.reduce(
     (acc, snippet, index) => acc.replace(`${placeholderPrefix}${index}@@`, snippet),
     replaced,
+  );
+
+  return jsxSnippets.reduce(
+    (acc, snippet, index) => acc.replace(`${jsxPlaceholderPrefix}${index}@@`, snippet),
+    restoredCode,
   );
 };
 

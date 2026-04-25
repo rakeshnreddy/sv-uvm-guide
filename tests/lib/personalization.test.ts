@@ -29,7 +29,7 @@ const baseSnapshot: EngagementSnapshot = {
       timestamp: new Date().toISOString(),
       details: {
         lesson: 'UVM Phasing In-Depth',
-        lessonSlug: ['T2_Intermediate', 'I-UVM-5_Phasing_and_Synchronization', 'index'],
+        lessonSlug: ['T2_Intermediate', 'I-UVM-1C_UVM_Phasing', 'index'],
       },
     },
   ],
@@ -42,7 +42,7 @@ describe('derivePersonalization', () => {
     expect(result.lastLesson.title).toBe('UVM Phasing In-Depth');
     expect(result.lastLesson.slug).toEqual([
       'T2_Intermediate',
-      'I-UVM-5_Phasing_and_Synchronization',
+      'I-UVM-1C_UVM_Phasing',
       'index',
     ]);
     expect(result.streak).toBe(4);
@@ -72,7 +72,7 @@ describe('derivePersonalization', () => {
     expect(result.name).toBe('Avery');
     expect(result.lastLesson.slug).toEqual([
       'T2_Intermediate',
-      'I-UVM-1_UVM_Intro',
+      'I-UVM-1A_Components',
       'index',
     ]);
   });

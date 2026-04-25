@@ -8,6 +8,7 @@ import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/Select";
 import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
+import { WebGLFallbackBoundary } from "@/components/ui/WebGLFallbackBoundary";
 import { useSearchParams, useRouter } from "next/navigation";
 
 // ---- Shared Materials & Helpers ----
@@ -372,17 +373,19 @@ export function SystemVerilog3DVisualizer({ className, height = "720px", initial
     <div className={cn("relative w-full overflow-hidden rounded-3xl border border-border/60 bg-black/90", className)} style={{ height }} data-testid="sv-3d-visualizer">
       {/* 3D Canvas */}
       <div className="absolute inset-0 cursor-move">
-        <Canvas camera={{ position: [10, 8, 10], fov: 75 }}>
-          <ambientLight intensity={0.7} />
-          <directionalLight position={[5, 10, 7.5]} intensity={1} />
-          <Grid args={[50, 50]} cellColor="#444" sectionColor="#444" fadeDistance={30} infiniteGrid />
-          <OrbitControls makeDefault dampingFactor={0.1} />
-          
-          {mode === "dynamic" && <DynamicArrayView items={dynArray} />}
-          {mode === "queue" && <QueueView items={queueItems} />}
-          {mode === "assoc" && <AssocArrayView entries={entriesAsc} highlightKey={aaIterKey} />}
-          {mode === "fixed" && <FixedArrayView packed={packedDims} unpacked={unpackedDims} highlightIndices={activeHighlight} />}
-        </Canvas>
+        <WebGLFallbackBoundary>
+          <Canvas camera={{ position: [10, 8, 10], fov: 75 }}>
+            <ambientLight intensity={0.7} />
+            <directionalLight position={[5, 10, 7.5]} intensity={1} />
+            <Grid args={[50, 50]} cellColor="#444" sectionColor="#444" fadeDistance={30} infiniteGrid />
+            <OrbitControls makeDefault dampingFactor={0.1} />
+            
+            {mode === "dynamic" && <DynamicArrayView items={dynArray} />}
+            {mode === "queue" && <QueueView items={queueItems} />}
+            {mode === "assoc" && <AssocArrayView entries={entriesAsc} highlightKey={aaIterKey} />}
+            {mode === "fixed" && <FixedArrayView packed={packedDims} unpacked={unpackedDims} highlightIndices={activeHighlight} />}
+          </Canvas>
+        </WebGLFallbackBoundary>
       </div>
 
       {/* Control Panel overlay */}
