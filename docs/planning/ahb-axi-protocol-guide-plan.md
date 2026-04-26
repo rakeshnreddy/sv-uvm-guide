@@ -1,5 +1,7 @@
 # AHB / AXI Protocol Curriculum Expansion Plan
 
+> Historical note: this plan describes the completed AMBA expansion workstream. The active next workstream is tracked in `TASKS.md` rows 61-75 and `docs/planning/comprehensive-guide-enhancement-plan.md`.
+
 ## Objective
 Build an exhaustive, intuitive, and visually memorable AMBA protocol workstream that teaches AHB and AXI end to end: protocol intent, intuitive analogies, signal timing, micro-architectural tradeoffs, expert-level features (QoS, Atomics, Security), real-world pitfalls, UVM/SVA-based verification strategy, debug methodology, and interview readiness. The target outcome is a permanent mental model of how these protocols work, how they fail, and how to verify them, acting as a base for understanding any future protocol.
 

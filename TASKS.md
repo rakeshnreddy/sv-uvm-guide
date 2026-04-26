@@ -68,20 +68,37 @@
 | 58 | CONTENT-AMBA-F3-INTERVIEW-CLINIC | P1 | complete | CONTENT-AMBA-F2-FUTURE-PROTOCOLS | Author the Interview and Debug Clinic module with whiteboard design questions, waveform triage drills, verification test-plan prompts, and common trick questions. |
 | 59 | FLASH-2-AMBA-PROTOCOL-COVERAGE | P1 | complete | CONTENT-AMBA-F3-INTERVIEW-CLINIC | Create flashcards and reusable interview-question banks for all AHB/AXI protocol modules. |
 | 60 | INFRA-8-AMBA-QA-SUITE | P1 | complete | CONTENT-AMBA-F3-INTERVIEW-CLINIC | Add Vitest and Playwright coverage for all new AMBA visualizers, curriculum pages, and end-to-end navigation flows. |
+| 61 | BACK-01-HREADY-HREADYOUT-CORRECTION | P0 | todo | none | Correct AHB HREADY/HREADYOUT terminology across curriculum, visualizers, labs, and flashcards with Arm AHB-Lite source grounding. |
+| 62 | BACK-02-AXI-4KB-RULE-CORRECTION | P0 | todo | none | Tighten AXI 4KB boundary and WRAP burst alignment wording, examples, visualizer labels, and flashcards with Arm AXI source grounding. |
+| 63 | BACK-03-SV-SCHEDULING-REGIONS | P0 | todo | none | Add accurate SV scheduling region coverage, especially Observed/Reactive regions and clocking-block race avoidance. |
+| 64 | BACK-04-INTERVIEW-BANKS-RUBRICS | P1 | todo | BACK-01-HREADY-HREADYOUT-CORRECTION, BACK-02-AXI-4KB-RULE-CORRECTION, BACK-03-SV-SCHEDULING-REGIONS | Create reusable interview banks for SV, UVM, SVA/Formal, Debug, SoC, and AMBA with rubrics and model answers. |
+| 65 | BACK-05-UVM-PHASING-CONCURRENCY | P1 | todo | none | Correct and deepen UVM phasing content around run_phase concurrency with runtime sub-phases and senior trap questions. |
+| 66 | BACK-06-AXI-DEADLOCK-LAB | P1 | todo | BACK-02-AXI-4KB-RULE-CORRECTION | Add or formalize an AXI deadlock debug lab with broken RTL, SVA/watchdog checks, solution, and acceptance criteria. |
+| 67 | BACK-07-BRIDGE-SPLIT-TRANSACTION-LAB | P1 | todo | BACK-01-HREADY-HREADYOUT-CORRECTION, BACK-02-AXI-4KB-RULE-CORRECTION | Enhance or add bridge split-transaction lab coverage for backpressure, 4KB splitting, data ordering, and acceptance criteria. |
+| 68 | BACK-08-MINI-UVM-CAPSTONE | P1 | todo | BACK-04-INTERVIEW-BANKS-RUBRICS | Add a mini UVM environment capstone tying together agent, sequence, driver, monitor, scoreboard, coverage, and factory override concepts. |
+| 69 | BACK-09-SOC-VERIFICATION-STRATEGY | P1 | todo | BACK-04-INTERVIEW-BANKS-RUBRICS, BACK-08-MINI-UVM-CAPSTONE | Add staff-level SoC verification strategy curriculum and capstone with coverage, debug, formal/liveness, and signoff rubrics. |
+| 70 | BACK-10-ACE-CHI-COHERENCY-DEEPENING | P1 | todo | BACK-04-INTERVIEW-BANKS-RUBRICS | Reframe ACE/CHI as current coherency protocols and deepen coherency curriculum, flashcards, and staff-level interview prompts. |
+| 71 | BACK-11-SOURCE-METADATA-GATE | P1 | todo | BACK-01-HREADY-HREADYOUT-CORRECTION, BACK-02-AXI-4KB-RULE-CORRECTION, BACK-03-SV-SCHEDULING-REGIONS | Add source metadata schema and tests for source-critical curriculum pages. |
+| 72 | BACK-12-VISUALIZER-ACCURACY-A11Y | P2 | todo | BACK-01-HREADY-HREADYOUT-CORRECTION, BACK-03-SV-SCHEDULING-REGIONS | Improve visualizer accuracy, accessibility labels, color-independent state cues, and reduced-motion behavior. |
+| 73 | BACK-13-FLASHCARD-DEPTH-ALIGNMENT | P2 | todo | BACK-01-HREADY-HREADYOUT-CORRECTION, BACK-02-AXI-4KB-RULE-CORRECTION, BACK-10-ACE-CHI-COHERENCY-DEEPENING | Expand thin decks and add missing senior/staff flashcard decks with registration tests. |
+| 74 | BACK-14-E2E-REGRESSION-GATES | P2 | todo | BACK-11-SOURCE-METADATA-GATE | Add stronger Playwright gates for breadcrumbs, prev/next, lab links, flashcard flip, quiz remediation, and broken internal links. |
+| 75 | BACK-15-AI-CONTENT-CLAIM-TIGHTENING | P3 | todo | none | Tighten AI-driven verification claims so coverage-closure language is careful, sourced, and not overstated. |
 
 ---
 
-## Next Workstream: AHB / AXI Protocol Deep Dive
+## Next Workstream: Comprehensive Interviewing & Learning Guide Upgrade
 
-- **Status:** The current modernization task is considered complete; the next planned workstream is a dedicated AHB/AXI protocol expansion.
-- **Planning artifact:** `docs/planning/ahb-axi-protocol-guide-plan.md`
-- **Curriculum footprint:** 8 protocol modules across `T3_Advanced` and `T4_Expert`, 2 core labs plus 1 advanced bridge-debug lab, 2 visualization epics, flashcards, interview drills, and a QA pass.
+- **Status:** Ready for execution from audit-derived backlog rows 61-75.
+- **Planning artifact:** `docs/planning/comprehensive-guide-enhancement-plan.md`
+- **Historical context:** `docs/planning/ahb-axi-protocol-guide-plan.md` describes the completed AMBA expansion and should not be treated as the active plan.
+- **Goal:** Raise the guide from a broad SV/UVM/AMBA curriculum into a source-backed learning and interviewing guide for junior, mid-level, senior, staff, and senior staff verification engineers.
 - **Execution order:**
-  1. Land shared waveform/timing infrastructure so protocol pages can render accurate timing diagrams without bespoke one-off markup.
-  2. Ship the AMBA foundations and AHB design/verification sequence first because AHB is the simpler on-ramp to pipelined bus reasoning.
-  3. Ship the AXI channel architecture, advanced transactions, and AXI verification sequence second because it depends on learners already understanding bus timing and response semantics.
-  4. Finish with bridges, debug clinics, interview preparation, labs, flashcards, and automated QA.
-- **Design principle:** Every protocol module must teach both sides of the problem: how the protocol is designed to work in silicon and how a verification engineer proves it under legal, stressful, and broken conditions.
+  1. Complete the P0 technical accuracy fixes: HREADY/HREADYOUT, AXI 4KB boundary rules, and SV scheduling regions.
+  2. Add interview-bank infrastructure with rubrics/model answers across SV, UVM, SVA/Formal, Debug, SoC, and AMBA.
+  3. Add senior/staff labs and capstones: AXI deadlock, bridge split-transaction, mini UVM environment, and SoC verification strategy.
+  4. Add source metadata gates, visualizer/accessibility improvements, flashcard depth, E2E gates, and AI claim cleanup.
+- **Tracking rule:** Update `TASKS.md` status for each row 61-75 and keep `SESSION_HANDOFF.txt` current after every execution batch.
+- **Design principle:** Accuracy is the first gate. Any normative protocol, SystemVerilog, SVA, or UVM claim must be backed by primary sources before it becomes interview preparation material.
 
 ---
 
