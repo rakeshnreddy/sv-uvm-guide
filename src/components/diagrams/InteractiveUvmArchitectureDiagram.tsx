@@ -12,6 +12,11 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
     () => verificationStackLinks.filter(link => link.componentId),
     [],
   );
+
+  const flowMap = useMemo(() => {
+    return new Map(flow.map(node => [node.id, node]));
+  }, [flow]);
+
   const quickSummaryLink = useMemo(
     () => verificationStackLinks.find(link => link.id === 'interactive'),
     [],
@@ -20,8 +25,8 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
   const [activeId, setActiveId] = useState<string | null>(flow[0]?.id ?? null);
 
   const activeNode = useMemo(() => {
-    return flow.find(node => node.id === activeId) ?? flow[0] ?? null;
-  }, [activeId, flow]);
+    return (activeId ? flowMap.get(activeId) : null) ?? flow[0] ?? null;
+  }, [activeId, flowMap, flow]);
 
   const downstreamNodes = useMemo(() => {
     if (!activeNode?.next?.length) {
@@ -29,9 +34,9 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
     }
 
     return activeNode.next
-      .map(nextId => flow.find(node => node.id === nextId))
+      .map(nextId => flowMap.get(nextId))
       .filter((node): node is NonNullable<typeof node> => Boolean(node));
-  }, [activeNode, flow]);
+  }, [activeNode, flowMap]);
 
   if (!activeNode) {
     return <SimplifiedUvmDiagram />;

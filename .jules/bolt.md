@@ -1,4 +1,3 @@
-
-## 2024-05-18 - [React.memo on expensive syntax highlighters]
-**Learning:** SyntaxHighlighter within `CodeBlock` components are deeply nested and expensive to render. As these are commonly used across MDX and project pages, they become a performance bottleneck when parent components (like layouts or theme switchers) trigger re-renders.
-**Action:** Always wrap heavy, text-rendering UI components like `CodeBlock` with `React.memo` to skip unnecessary re-renders when their text and style props remain identical.
+## 2025-05-14 - Optimized node lookup in UVM architecture diagram
+**Learning:** Mapping over an array and performing an `Array.find` inside the map results in O(N*M) complexity. Pre-indexing the array into a Map allows for O(1) lookups, reducing total complexity to O(N+M).
+**Action:** Use `useMemo` to create a lookup Map for collections when performing multiple lookups by ID in React components.
