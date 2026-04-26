@@ -487,6 +487,37 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
         starterCode: ""
       }
     ]
+  },
+  "axi-deadlock-hunt-lab": {
+    id: "axi-deadlock-hunt-lab",
+    title: "AXI Deadlock Hunt: Channel Dependency Analysis",
+    description: "Analyze a waveform to identify a subtle cyclic channel-dependency deadlock between an AXI master and slave, then write SVA protocol assertions to catch and prevent it.",
+    owningModule: "B-AXI-5",
+    routeSlug: "axi-deadlock-hunt-lab",
+    prerequisites: ["axi-scoreboard-lab"],
+    assetLocation: "content/curriculum/labs/axi_deadlock/lab1_hunt",
+    status: "available",
+    graderType: "systemverilog",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Run and Observe",
+        instructions: "Run testbench.sv. The simulation hangs after the master asserts AWVALID. Examine which signals are high/low when the deadlock occurs.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Analyze the Dependency",
+        instructions: "Identify what the master waits for (AWREADY) and what the slave waits for (WVALID). Trace the circular dependency and explain why the read also hangs.",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Complete the Assertions",
+        instructions: "Open axi_deadlock_checker.sv and implement the five SVA assertions: p_aw_no_deadlock, p_w_no_deadlock, p_ar_no_deadlock, p_valid_stability, and p_no_cross_channel_stall.",
+        starterCode: ""
+      }
+    ]
   }
 };
 

@@ -54,6 +54,53 @@ endclass
 If you forget to drop an objection, your simulation hangs. Automate safety nets with `uvm_objection::set_drain_time` to let sequences drain gracefully.
 
 ## Advanced Mechanics
+
+### 🔥 Critical: `run_phase` Concurrency with Runtime Sub-Phases
+
+> **Senior/Staff Interview Trap:** `run_phase` and the runtime sub-phases (`pre_reset_phase`, `reset_phase`, `configure_phase`, `main_phase`, `shutdown_phase`, etc.) execute **concurrently in parallel domains**, not sequentially.
+
+This is the most commonly misunderstood aspect of UVM phasing. Here is what actually happens at runtime (IEEE 1800.2-2020 §9.2–9.3):
+
+1. **`run_phase`** executes in the **common domain** — it is a single task-based phase shared by all components.
+2. **Runtime sub-phases** (`pre_reset_phase` through `post_shutdown_phase`) execute in the **`uvm` domain** — they proceed sequentially within their domain, but the entire domain runs **in parallel** with `run_phase`.
+3. **Both must complete** (all objections dropped in both domains) before cleanup phases (`extract_phase`, `check_phase`, `report_phase`) begin.
+
+<InteractiveCode>
+```systemverilog
+// COMMON FAILURE: Raising objection only in run_phase
+// does NOT keep main_phase alive — they are independent!
+class my_test extends uvm_test;
+  `uvm_component_utils(my_test)
+
+  // This objection keeps run_phase alive...
+  task run_phase(uvm_phase phase);
+    phase.raise_objection(this, "run_phase work");
+    #1000;
+    phase.drop_objection(this);
+  endtask
+
+  // ...but main_phase has its OWN objection count.
+  // If nothing raises an objection here, main_phase ends immediately!
+  task main_phase(uvm_phase phase);
+    phase.raise_objection(this, "main_phase work");
+    // Your actual stimulus goes here
+    my_seq.start(env.agent.sequencer);
+    phase.drop_objection(this);
+  endtask
+endclass
+```
+</InteractiveCode>
+
+**Common failure modes:**
+- **Hanging simulation:** `run_phase` raises an objection but never drops it. Even if all sub-phases complete, the simulation hangs because `run_phase` never finishes.
+- **Premature end:** A sub-phase ends immediately because no component raised an objection in that specific sub-phase, even though `run_phase` is still active. Stimulus that was intended to run during `main_phase` never executes.
+- **Phase confusion:** An engineer implements logic in both `run_phase` and `main_phase` expecting them to execute sequentially — instead, they race.
+
+**Best practice:** Choose one approach consistently across your environment:
+- **Option A (recommended for most teams):** Use only `run_phase` for all runtime work. Ignore the sub-phases entirely.
+- **Option B (structured environments):** Use only the runtime sub-phases (`reset_phase`, `configure_phase`, `main_phase`, `shutdown_phase`). Leave `run_phase` empty (do NOT raise objections in it).
+- **Never mix both** unless you fully understand the parallel domain semantics.
+
 ### Domains and Phase Jumping
 Phases execute in a **domain**. The default *common* domain runs all components together. You can create additional domains to run a subset of components on their own schedule (e.g., a configuration agent that stays alive while the rest of the test jumps phases).
 
@@ -111,6 +158,16 @@ If you try to call `<port>.connect(<export>)` inside the `build_phase`, you will
       { text: 'phase.jump()', correct: false }
     ],
     explanation: 'A `uvm_barrier` configured with a threshold of 3 will block `wait_for()` calls until 3 processes arrive.'
+  },
+  {
+    question: 'Does run_phase execute concurrently with the runtime sub-phases (reset_phase, main_phase, etc.)?',
+    answers: [
+      { text: 'No — run_phase completes first, then sub-phases execute sequentially.', correct: false },
+      { text: 'Yes — they execute in parallel in separate phase domains.', correct: true },
+      { text: 'It depends on the simulator implementation.', correct: false },
+      { text: 'Only if you explicitly enable parallel domains.', correct: false }
+    ],
+    explanation: 'run_phase and runtime sub-phases execute concurrently in parallel domains (common vs uvm domain). Both must complete before cleanup phases begin. This is a common senior/staff interview trap.'
   }
 ]} />
 

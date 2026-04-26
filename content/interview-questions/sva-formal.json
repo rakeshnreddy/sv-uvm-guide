@@ -1,0 +1,68 @@
+{
+  "id": "sva-formal-interview-bank",
+  "title": "SVA & Formal Verification Interview Question Bank",
+  "description": "Interview preparation covering SystemVerilog Assertions, concurrent vs immediate assertions, temporal operators, formal verification, and assumption/constraint methodology.",
+  "topic": "sva",
+  "questions": [
+    {
+      "id": "sva-concurrent-vs-immediate",
+      "topic": "sva",
+      "level": "junior",
+      "category": "concept",
+      "prompt": "What is the difference between a concurrent and an immediate assertion?",
+      "rubric": "Immediate assertions execute procedurally at a point in time like an if-statement. Concurrent assertions are temporal, evaluated over clock cycles, and use sequence/property syntax with |->, |=>.",
+      "model_answer": "Immediate assertions (assert()) execute once at the point of evaluation, like an if-check. They fire in the Active region. Concurrent assertions (assert property()) are clock-based, evaluate over multiple cycles using temporal operators, and sample in the Observed region. Concurrent assertions can span unbounded time (s_eventually) while immediate cannot.",
+      "sources": ["IEEE 1800-2023 §16 (assertions)"]
+    },
+    {
+      "id": "sva-implication-operators",
+      "topic": "sva",
+      "level": "mid",
+      "category": "concept",
+      "prompt": "Explain |-> vs |=> in SVA. What is vacuous truth?",
+      "rubric": "|-> is overlapping implication (consequent starts same cycle as antecedent match). |=> is non-overlapping (consequent starts next cycle). Vacuous truth occurs when antecedent never matches — the property passes trivially.",
+      "model_answer": "|-> (overlapping): if the antecedent matches at cycle N, the consequent is checked starting at cycle N. |=> (non-overlapping): consequent checked starting at cycle N+1. Equivalent to |-> ##1. Vacuous truth: if the antecedent never matches, the property is trivially true. This is dangerous in formal — you may think a property is proven but the assumption prevents the antecedent from ever firing. Use cover properties to ensure antecedents are reachable.",
+      "sources": ["IEEE 1800-2023 §16.12.6", "IEEE 1800-2023 §16.12.7"]
+    },
+    {
+      "id": "sva-past-sampling",
+      "topic": "sva",
+      "level": "senior",
+      "category": "trick",
+      "prompt": "You write `assert property (@(posedge clk) req |-> ack)`. The DUT asserts req and ack on the same clock edge. Does it pass?",
+      "rubric": "Yes — overlapping implication checks ack on the same cycle. But there's a subtlety: assertions sample in Observed (post-NBA), so they see the settled value of ack. If ack is driven by NBA in the same cycle, it will be visible. If ack is combinational from req, it also passes. The trap is asking whether this catches ack being one cycle late.",
+      "model_answer": "Yes, it passes. With |-> (overlapping), the consequent is checked on the same cycle as the antecedent. Since assertions sample in Observed (after NBA), they see ack's settled value. If you want ack one cycle after req, use |=> or |-> ##1 ack. The trap: engineers sometimes write |-> when they mean |=>, accidentally making the assertion weaker.",
+      "sources": ["IEEE 1800-2023 §16.12.6"]
+    },
+    {
+      "id": "sva-formal-overconstraint",
+      "topic": "sva",
+      "level": "senior",
+      "category": "waveform-debug",
+      "prompt": "A formal tool says your property is proven in 0 seconds. What went wrong?",
+      "rubric": "Over-constrained assumptions made the antecedent unreachable. The property is vacuously true because the formal engine can never reach a state where the antecedent fires. Must mention using cover properties to verify reachability.",
+      "model_answer": "An instantaneous proof usually means over-constrained assumptions. The assumptions restrict the state space so severely that the property's antecedent can never fire — so it's vacuously true. Debug: (1) Remove assumptions one at a time. (2) Write cover properties for the antecedent to verify it is reachable. (3) Check if your assumptions contradict each other (creating an empty state space). (4) Use the formal tool's assumption analysis to find dead assumptions.",
+      "sources": ["IEEE 1800-2023 §16.14 (assume)", "Formal verification methodology guides (secondary)"]
+    },
+    {
+      "id": "sva-repetition-operators",
+      "topic": "sva",
+      "level": "mid",
+      "category": "coding",
+      "prompt": "Write an SVA property that checks: after req rises, ack must go high within 1 to 4 cycles and stay high for exactly 2 cycles.",
+      "rubric": "Should use $rose(req) |-> ##[1:4] (ack [*2]) or equivalent. Must handle the range correctly and understand consecutive repetition [*N].",
+      "model_answer": "```systemverilog\nproperty p_req_ack;\n  @(posedge clk) disable iff (!rst_n)\n    $rose(req) |-> ##[1:4] (ack [*2] ##1 !ack);\nendproperty\nassert property (p_req_ack);\n```\n$rose(req) triggers on rising edge. ##[1:4] allows 1-4 cycle delay. ack [*2] requires ack high for two consecutive cycles. ##1 !ack ensures it deasserts afterward.",
+      "sources": ["IEEE 1800-2023 §16.9.2 (repetition)"]
+    },
+    {
+      "id": "sva-staff-formal-strategy",
+      "topic": "sva",
+      "level": "staff",
+      "category": "staff-system-design",
+      "prompt": "Design a formal verification strategy for an AXI interconnect. What properties would you prove? What assumptions are needed?",
+      "rubric": "Properties: no 4KB crossing, VALID/READY handshake rules, no deadlock (liveness), ID ordering preservation, response routing correctness. Assumptions: legal master behavior, bounded outstanding transactions. Must discuss liveness vs safety.",
+      "model_answer": "Safety properties: (1) No burst crosses 4KB boundary. (2) VALID stability until handshake. (3) WLAST asserted on correct beat. (4) Response ID matches request ID. (5) No data corruption in routing. Liveness properties: (6) Every VALID eventually gets READY (s_eventually). (7) No deadlock — every outstanding transaction eventually completes. Assumptions: (8) Masters follow VALID/READY rules. (9) Outstanding transaction count is bounded. (10) No reset during mid-transaction. Strategy: prove safety properties unbounded, bound liveness with reasonable depth, use abstractions to reduce state space (e.g., data path abstraction).",
+      "sources": ["Arm IHI0022H §A3-A4", "IEEE 1800-2023 §16"]
+    }
+  ]
+}

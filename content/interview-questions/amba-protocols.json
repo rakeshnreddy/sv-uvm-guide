@@ -1,231 +1,98 @@
 {
   "id": "amba-protocol-interview-bank",
   "title": "AMBA Protocol Interview Question Bank",
-  "description": "Reusable whiteboard, waveform triage, and verification-plan prompts for AHB, AXI, bridge, ACE, and CHI curriculum modules.",
-  "groups": [
+  "description": "Interview preparation covering AHB, AXI, bridges, ACE, and CHI with rubrics and model answers for whiteboard, waveform triage, and verification-plan prompts.",
+  "topic": "amba",
+  "questions": [
     {
-      "moduleId": "B-AMBA-1_Protocol_Families_and_Tradeoffs",
-      "focus": "Protocol selection",
-      "questions": [
-        {
-          "id": "amba-family-choose-bus",
-          "prompt": "A firmware-visible register block sits behind a high-throughput DMA fabric. Which AMBA protocols would you use on each side and why?",
-          "lookFor": "AXI for DMA/fabric throughput, APB for low-cost registers, bridge placement, latency and verification tradeoffs."
-        },
-        {
-          "id": "amba-family-ahb-vs-axi",
-          "prompt": "When would an SoC team intentionally choose AHB instead of AXI?",
-          "lookFor": "Lower area/control complexity, in-order traffic, simple masters/slaves, lower outstanding transaction needs."
-        }
-      ]
+      "id": "amba-family-choose-bus",
+      "topic": "amba",
+      "level": "mid",
+      "category": "concept",
+      "prompt": "A firmware-visible register block sits behind a high-throughput DMA fabric. Which AMBA protocols would you use on each side and why?",
+      "rubric": "AXI for DMA/fabric throughput, APB for low-cost registers, bridge placement, latency and verification tradeoffs.",
+      "model_answer": "Use AXI for the DMA data path — it supports outstanding transactions, out-of-order completion, and high burst throughput. Use APB for the register block — it is simple, low-gate-count, and sufficient for firmware-speed accesses. Place an AXI-to-APB bridge between them. The bridge translates single-beat AXI reads/writes to APB cycles and handles wait states.",
+      "sources": ["Arm IHI0022H", "Arm IHI0024C (APB)"]
     },
     {
-      "moduleId": "B-AMBA-2_Protocol_Intuition_and_Memory_Hooks",
-      "focus": "Protocol intuition",
-      "questions": [
-        {
-          "id": "amba-intuition-intent-completion",
-          "prompt": "Explain the difference between a protocol expressing intent and proving completion.",
-          "lookFor": "Address/control phase as intent, data/response as completion, and monitors that preserve transaction boundaries."
-        },
-        {
-          "id": "amba-intuition-backpressure",
-          "prompt": "How does receiver backpressure show up differently in AHB and AXI?",
-          "lookFor": "HREADY stalls the shared AHB pipeline; AXI READY applies independently per channel and can create per-channel congestion."
-        }
-      ]
+      "id": "amba-ahb-hready-hreadyout",
+      "topic": "amba",
+      "level": "senior",
+      "category": "trick",
+      "prompt": "Explain the difference between HREADY and HREADYOUT in AHB. Why does this distinction matter for verification?",
+      "rubric": "HREADYOUT is the per-slave ready output. HREADY is the muxed bus-level signal formed by the interconnect from the selected slave's HREADYOUT. Masters and other slaves sample HREADY (not HREADYOUT). Getting this wrong in a VIP causes incorrect wait-state modeling.",
+      "model_answer": "HREADYOUT is a per-slave output indicating the slave can complete the current data phase. The interconnect's slave multiplexor selects the active slave's HREADYOUT and broadcasts it as HREADY. Masters sample HREADY for pipelining and data capture. Other slaves also sample HREADY to know when a new address phase begins. In verification, the monitor must sample HREADY (bus-level) for transaction boundary detection, while a slave VIP drives HREADYOUT. Confusing them causes incorrect wait-state counting.",
+      "sources": ["Arm IHI0033B §3.1 (HREADY)", "Arm IHI0033B §3.3"]
     },
     {
-      "moduleId": "B-AHB-1_AHB_Design_Timing_Mechanics",
-      "focus": "AHB timing",
-      "questions": [
-        {
-          "id": "ahb-hready-stall",
-          "prompt": "Draw an AHB transfer with two wait states and explain which signals must remain stable.",
-          "lookFor": "Two-phase pipeline, HREADY low extending data phase, address/control stability, correct sample point."
-        },
-        {
-          "id": "ahb-burst-seq",
-          "prompt": "How do HTRANS, HBURST, and HSIZE combine to describe a burst?",
-          "lookFor": "NONSEQ start, SEQ continuation, bytes per beat, alignment, BUSY/IDLE distinction."
-        }
-      ]
+      "id": "amba-axi-valid-ready-rule",
+      "topic": "amba",
+      "level": "mid",
+      "category": "concept",
+      "prompt": "Can AXI VALID depend on READY? Explain the rule and the failure mode.",
+      "rubric": "VALID cannot wait for READY. Payload must be stable once VALID asserts. Both sides waiting creates deadlock.",
+      "model_answer": "AXI rule A3.3.1: a source MUST NOT wait for READY before asserting VALID. VALID asserts when data is available, regardless of READY. Once VALID is high, the payload must remain stable until the handshake completes. If both master and slave wait for each other (VALID waits for READY, READY waits for VALID), deadlock occurs. READY may depend on VALID (slave can wait to see the request before accepting it).",
+      "sources": ["Arm IHI0022H §A3.3.1"]
     },
     {
-      "moduleId": "B-AHB-2_AHB_Pitfalls_and_Deadlocks",
-      "focus": "AHB failure analysis",
-      "questions": [
-        {
-          "id": "ahb-wait-deadlock",
-          "prompt": "An AHB slave waits for HADDR to change before releasing HREADY. Why can this deadlock?",
-          "lookFor": "Master holds address/control stable while HREADY is low, so the slave is waiting for an event the protocol forbids."
-        },
-        {
-          "id": "ahb-error-recovery",
-          "prompt": "What should a master and slave each do when an AHB transfer returns ERROR?",
-          "lookFor": "Legal response timing, no successful data commit, recovery to valid next transfer, scoreboard handling."
-        }
-      ]
+      "id": "amba-axi-4kb-boundary",
+      "topic": "amba",
+      "level": "mid",
+      "category": "concept",
+      "prompt": "A 32-bit INCR burst starts at 0x0FF0 with AxLEN=7. Is it legal?",
+      "rubric": "8 beats × 4 bytes = 32 bytes. 0x0FF0 + 32 - 1 = 0x100F. First byte at 0x0FF0 is in page 0x0xxx, last byte at 0x100F is in page 0x1xxx. Crosses 4KB. Must split.",
+      "model_answer": "Illegal. 8 beats × 4 bytes = 32 bytes total. Start address 0x0FF0, last byte address = 0x0FF0 + 31 = 0x100F. Start page = 0x0FF0[31:12] = 0x0. End page = 0x100F[31:12] = 0x1. Different pages — the burst crosses the 4KB boundary at 0x1000. The master or bridge must split into two bursts: 4 beats at 0x0FF0 (ending at 0x0FFF) and 4 beats at 0x1000.",
+      "sources": ["Arm IHI0022H §A3.4.1"]
     },
     {
-      "moduleId": "B-AHB-3_AHB_Verification",
-      "focus": "AHB verification planning",
-      "questions": [
-        {
-          "id": "ahb-monitor-design",
-          "prompt": "Design an AHB monitor that records completed transactions under arbitrary wait states.",
-          "lookFor": "Accepted address/control queue, data-phase alignment, HREADY gating, response capture."
-        },
-        {
-          "id": "ahb-coverage-plan",
-          "prompt": "What coverage model would you build for an AHB slave VIP?",
-          "lookFor": "Transfer type, size, burst, response, wait-depth, reset/error scenarios, cross coverage."
-        }
-      ]
+      "id": "amba-axi-deadlock-channels",
+      "topic": "amba",
+      "level": "senior",
+      "category": "waveform-debug",
+      "prompt": "Describe a circular backpressure deadlock in an AXI crossbar.",
+      "rubric": "Blocked B/R path prevents W/AW/AR progress. Finite buffers fill, no channel can drain. Must understand channel dependency rules.",
+      "model_answer": "Scenario: Master M1 sends writes to Slave S1, filling the W channel buffer. S1 needs to send B responses but the B channel buffer back to M1 is full (M1 is blocked reading from S2 and can't accept B). S1 stalls WREADY waiting for B buffer space. M1 stalls waiting for WREADY. Meanwhile, M1's read to S2 is blocked because S2 is waiting for writes from M2 which is blocked on S1. Result: circular wait where no channel can drain. Solution: ensure B/R channels always have higher priority than AW/W/AR in buffer allocation.",
+      "sources": ["Arm IHI0022H §A3.3", "Arm IHI0022H §A10"]
     },
     {
-      "moduleId": "B-AXI-1_AXI_Channel_Architecture",
-      "focus": "AXI handshakes",
-      "questions": [
-        {
-          "id": "axi-valid-ready-rule",
-          "prompt": "Can AXI VALID depend on READY? Explain the rule and the failure mode.",
-          "lookFor": "VALID cannot wait for READY, payload stability until handshake, deadlock if both sides wait."
-        },
-        {
-          "id": "axi-five-channel-debug",
-          "prompt": "A write never completes. Which AXI channels do you inspect first and why?",
-          "lookFor": "AW/W acceptance, WLAST, B response generation, independent channel stalls, outstanding counters."
-        }
-      ]
+      "id": "amba-bridge-4kb-split",
+      "topic": "amba",
+      "level": "senior",
+      "category": "coding",
+      "prompt": "Design the split logic for an AHB-to-AXI bridge when a burst crosses 4KB.",
+      "rubric": "Must include: bytes-to-boundary calculation, first and second AXI bursts, AxLEN encoding, data/response correlation, and handling of the general case (more than two splits).",
+      "model_answer": "```\nbytes_to_boundary = 4096 - addr[11:0];\nbeats_to_boundary = bytes_to_boundary / bytes_per_beat;\nfirst_burst_len = min(remaining_beats, beats_to_boundary);\n// Issue first AXI burst: AWADDR = addr, AWLEN = first_burst_len - 1\n// After first burst completes:\naddr += first_burst_len * bytes_per_beat;\nremaining -= first_burst_len;\n// Issue second burst: AWADDR = addr (now 4KB-aligned), AWLEN = remaining - 1\n```\nGeneral case: loop until remaining == 0, recalculating beats_to_boundary at each new start address. Correlate W beats and B responses per split burst.",
+      "sources": ["Arm IHI0022H §A3.4.1", "Arm IHI0033B §3.7"]
     },
     {
-      "moduleId": "B-AXI-2_AXI_Burst_Math",
-      "focus": "Burst calculation",
-      "questions": [
-        {
-          "id": "axi-boundary-split",
-          "prompt": "A 32-bit INCR burst starts at 0x0FF0 with AxLEN=7. Is it legal?",
-          "lookFor": "8 beats, 4 bytes each, spans 0x0FF0 through 0x100F, crosses 4KB, must split."
-        },
-        {
-          "id": "axi-wrap-burst",
-          "prompt": "How do you compute the address sequence for an AXI WRAP burst?",
-          "lookFor": "Aligned wrap region, region size equals beats times bytes per beat, address wraps within region."
-        }
-      ]
+      "id": "amba-ace-snoop-flow",
+      "topic": "amba",
+      "level": "staff",
+      "category": "concept",
+      "prompt": "Walk through a dirty cache-line read by another master in ACE.",
+      "rubric": "Must cover: ReadOnce/ReadShared, interconnect snoop to dirty owner, DatResp with dirty data, state transition (M→I or M→S), memory update policy.",
+      "model_answer": "1) Master A issues ReadShared for address X. 2) Interconnect checks its directory — Master B holds X in Modified state. 3) Interconnect sends a snoop (AC channel) to Master B: MakeInvalid or CleanInvalid. 4) Master B responds on CR with data transfer indication, then sends dirty data on CD channel. 5) Interconnect forwards data to Master A (R channel). 6) Master B transitions from M→I (if MakeInvalid). 7) Interconnect optionally writes the dirty data to memory (write-back). 8) Master A receives data in Shared or Exclusive state depending on snoop response.",
+      "sources": ["Arm IHI0022H Part D (ACE)"]
     },
     {
-      "moduleId": "B-AXI-3_AXI_Ordering_and_IDs",
-      "focus": "Ordering and scoreboards",
-      "questions": [
-        {
-          "id": "axi-same-id-order",
-          "prompt": "Two reads use the same ARID and return out of issue order. Is that legal?",
-          "lookFor": "Not legal for same ID; per-ID ordering must be preserved."
-        },
-        {
-          "id": "axi-scoreboard-by-id",
-          "prompt": "Sketch a scoreboard for out-of-order AXI reads.",
-          "lookFor": "Associative array by ID, ordered queue per ID, beat counters, RLAST and response checks."
-        }
-      ]
+      "id": "amba-chi-node-roles",
+      "topic": "amba",
+      "level": "staff",
+      "category": "concept",
+      "prompt": "Explain Request, Home, and Subordinate node roles in CHI.",
+      "rubric": "Requester initiates transactions. Home node (HN-F/HN-I) manages coherency directory and ordering. Subordinate node (SN-F/SN-I) services memory/device requests.",
+      "model_answer": "Request Node (RN): initiates read/write/atomic transactions. Can be a processor (RN-F with full coherency) or I/O device (RN-I non-coherent). Home Node (HN): manages coherency and ordering. HN-F handles fully-coherent addresses (has a directory/snoop filter). HN-I handles non-coherent/device addresses. Subordinate Node (SN): provides data storage. SN-F is a memory controller. SN-I is a device/peripheral. The interconnect routes requests from RN to HN, which decides if snoops are needed, then routes data from SN or a snooped RN back to the requester.",
+      "sources": ["Arm IHI0050F §2 (CHI architecture)"]
     },
     {
-      "moduleId": "B-AXI-4_AXI_Expert_Features_Cache_Atomics",
-      "focus": "Attributes and exclusives",
-      "questions": [
-        {
-          "id": "axi-exclusive-sequence",
-          "prompt": "What events make an AXI exclusive write fail?",
-          "lookFor": "Conflicting write to monitored address, mismatched address/size/ID rules, response status handling."
-        },
-        {
-          "id": "axi-cache-prot-qos",
-          "prompt": "Which verification checks would you add for AxCACHE, AxPROT, and AxQOS?",
-          "lookFor": "Attribute propagation, security/privilege filtering, cacheability paths, QoS arbitration effects."
-        }
-      ]
-    },
-    {
-      "moduleId": "B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks",
-      "focus": "Interconnect deadlocks",
-      "questions": [
-        {
-          "id": "axi-circular-backpressure",
-          "prompt": "Describe a circular backpressure deadlock in an AXI crossbar.",
-          "lookFor": "Blocked B/R path prevents W/AW/AR progress, finite buffers fill, no channel can drain."
-        },
-        {
-          "id": "axi-id-truncation",
-          "prompt": "What failure can ID truncation introduce when multiple masters share a slave?",
-          "lookFor": "Ordering streams alias, responses return to wrong master or wrong transaction, scoreboard mismatch."
-        }
-      ]
-    },
-    {
-      "moduleId": "B-AXI-6_AXI_Verification_Performance",
-      "focus": "Performance verification",
-      "questions": [
-        {
-          "id": "axi-throughput-plan",
-          "prompt": "How would you prove an AXI interconnect meets a throughput requirement?",
-          "lookFor": "Traffic model, channel utilization, stall attribution, outstanding depth, latency histogram, fairness."
-        },
-        {
-          "id": "axi-fairness-check",
-          "prompt": "What checks catch master starvation under heavy AXI traffic?",
-          "lookFor": "Bounded grant latency, QoS-aware arbitration, long-run bandwidth distribution, random stall stress."
-        }
-      ]
-    },
-    {
-      "moduleId": "B-AMBA-F1_Bridges_and_System_Integration",
-      "focus": "Bridge design",
-      "questions": [
-        {
-          "id": "bridge-4kb-split",
-          "prompt": "Design the split logic for an AHB-to-AXI bridge when a burst crosses 4KB.",
-          "lookFor": "Bytes-to-boundary calculation, first and second AXI bursts, AxLEN encoding, data/response correlation."
-        },
-        {
-          "id": "bridge-backpressure",
-          "prompt": "How should an AXI-side stall propagate back to an AHB master?",
-          "lookFor": "HREADY deassertion, source state stability, bounded buffering, response completion."
-        }
-      ]
-    },
-    {
-      "moduleId": "B-AMBA-F2_Future_Protocols_ACE_CHI",
-      "focus": "Coherency protocols",
-      "questions": [
-        {
-          "id": "ace-snoop-flow",
-          "prompt": "Walk through a dirty cache-line read by another master in ACE.",
-          "lookFor": "Snoop request, cache response/data, ownership/state transition, memory update policy."
-        },
-        {
-          "id": "chi-node-roles",
-          "prompt": "Explain request, home, and subordinate node roles in CHI.",
-          "lookFor": "Requester intent, home node directory/coherency decisions, subordinate memory/device service."
-        }
-      ]
-    },
-    {
-      "moduleId": "B-AMBA-F3_Interview_Debug_Clinic",
-      "focus": "Interview synthesis",
-      "questions": [
-        {
-          "id": "clinic-4m2s-interconnect",
-          "prompt": "Whiteboard an AXI interconnect for four masters and two slaves.",
-          "lookFor": "Decode, arbitration, ID expansion, buffering, route tables, response demux, deadlock checks, verification plan."
-        },
-        {
-          "id": "clinic-waveform-triage",
-          "prompt": "Given a stuck AXI waveform, describe your first five debug steps.",
-          "lookFor": "Identify stalled channel, check VALID/READY rules, outstanding counts, LAST, response routing, reset/error context."
-        }
-      ]
+      "id": "amba-staff-interconnect-design",
+      "topic": "amba",
+      "level": "staff",
+      "category": "staff-system-design",
+      "prompt": "Whiteboard an AXI interconnect for four masters and two slaves. Include your verification plan.",
+      "rubric": "Must include: decode logic, arbitration per slave, ID expansion, buffering strategy, response demux, deadlock avoidance. Verification: per-port VIP, routing correctness, arbitration fairness, deadlock formal, performance.",
+      "model_answer": "Architecture: 4 master ports → address decode (based on address map) → 2 slave port arbiters (round-robin with QoS). Each master port gets 2 ID bits appended (ID expansion) for response routing. Per-slave AW/W/AR buffers prevent head-of-line blocking. Response demux uses expanded ID prefix to route B/R to correct master. Deadlock prevention: response channels have higher buffer priority. Verification: 1) Per-port AXI VIP for protocol compliance. 2) Directed tests for all M→S routing paths. 3) Arbitration fairness under uniform and biased load. 4) Formal proof of deadlock freedom. 5) Performance: latency/bandwidth under synthetic traffic. 6) Stress: maximum outstanding transactions per master.",
+      "sources": ["Arm IHI0022H §A8 (ID signaling)", "Arm IHI0022H §A10 (ordering)"]
     }
   ]
 }

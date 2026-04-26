@@ -1,0 +1,108 @@
+{
+  "id": "uvm-interview-bank",
+  "title": "UVM Interview Question Bank",
+  "description": "Interview preparation covering UVM architecture, factory, phasing, TLM, sequences, config_db, and methodology.",
+  "topic": "uvm",
+  "questions": [
+    {
+      "id": "uvm-factory-purpose",
+      "topic": "uvm",
+      "level": "junior",
+      "category": "concept",
+      "prompt": "What is the UVM factory and why is it important?",
+      "rubric": "Must explain that the factory decouples type creation from type identity, enabling type and instance overrides without modifying source code. Should mention type_id::create() vs new().",
+      "model_answer": "The UVM factory is a singleton registry that maps type names to constructors. Instead of calling new() directly, components call type_id::create(), allowing tests to substitute derived types via set_type_override_by_type() or set_inst_override_by_type() without modifying the original component code. This enables test-specific customization and reuse.",
+      "sources": ["IEEE 1800.2-2020 §3 (Factory)"]
+    },
+    {
+      "id": "uvm-objection-mechanism",
+      "topic": "uvm",
+      "level": "junior",
+      "category": "concept",
+      "prompt": "How do objections work in UVM? What happens if you forget to drop one?",
+      "rubric": "Objections are cooperative counters that keep task-based phases alive. raise_objection increments, drop_objection decrements. Phase ends when count reaches zero. Forgetting to drop causes simulation hang.",
+      "model_answer": "Objections are reference counters on task-based phases (like run_phase). Each component calls phase.raise_objection() before work and phase.drop_objection() after. The phase ends only when the global count reaches zero. Forgetting to drop an objection causes an infinite hang. Use set_drain_time() as a safety net.",
+      "sources": ["IEEE 1800.2-2020 §9.4 (Objections)"]
+    },
+    {
+      "id": "uvm-config-db-vs-resource-db",
+      "topic": "uvm",
+      "level": "mid",
+      "category": "concept",
+      "prompt": "What is the difference between uvm_config_db and uvm_resource_db?",
+      "rubric": "config_db is a convenience layer over resource_db with hierarchical path scoping. resource_db is global name/type lookup. config_db::set uses hierarchical context; resource_db::set uses a global scope string.",
+      "model_answer": "uvm_config_db is a typed, hierarchically-scoped configuration mechanism built on top of uvm_resource_db. config_db::set(context, inst_name, field_name, value) scopes the setting to a specific component subtree. resource_db::set(scope, name, value) uses a global string scope. config_db handles precedence: later sets at the same or higher hierarchy level override earlier ones. Always prefer config_db for component configuration.",
+      "sources": ["IEEE 1800.2-2020 §12 (Configuration)"]
+    },
+    {
+      "id": "uvm-sequence-vs-sequence-item",
+      "topic": "uvm",
+      "level": "mid",
+      "category": "concept",
+      "prompt": "Explain the relationship between uvm_sequence, uvm_sequence_item, and uvm_sequencer.",
+      "rubric": "Sequence items are individual transactions. Sequences are generators that create and send items via start_item/finish_item. Sequencer arbitrates between sequences and provides items to the driver via seq_item_port.",
+      "model_answer": "uvm_sequence_item is a single transaction (data packet). uvm_sequence is a generator that creates sequence_items and sends them to a sequencer via start_item()/finish_item(). The uvm_sequencer arbitrates between multiple sequences and provides items to the driver through the seq_item_port/seq_item_export handshake. Sequences can be nested — a parent sequence can start child sequences.",
+      "sources": ["IEEE 1800.2-2020 §5 (Sequences)"]
+    },
+    {
+      "id": "uvm-phase-concurrency-trap",
+      "topic": "uvm",
+      "level": "senior",
+      "category": "trick",
+      "prompt": "Does run_phase execute concurrently with the runtime sub-phases (reset_phase, main_phase, etc.)?",
+      "rubric": "YES — this is the senior trap. run_phase and the runtime sub-phases execute in parallel in separate domains. run_phase objections are independent of sub-phase objections. Both must complete for the run-time group to end.",
+      "model_answer": "Yes! run_phase and the runtime sub-phases (pre_reset through post_shutdown) execute concurrently in parallel domains. run_phase runs in the common domain while sub-phases run in the uvm_domain. Both sets of phases must complete (all objections dropped in both) before cleanup phases begin. A common trap: raising an objection only in run_phase but expecting it to keep main_phase alive — it won't, because they have independent objection counts. Similarly, if run_phase never drops its objection, the simulation hangs even if all sub-phases complete.",
+      "sources": ["IEEE 1800.2-2020 §9.2 (Phase scheduling)", "IEEE 1800.2-2020 §9.3 (Run-time phases)"]
+    },
+    {
+      "id": "uvm-tlm-analysis-port",
+      "topic": "uvm",
+      "level": "mid",
+      "category": "concept",
+      "prompt": "What is an analysis port and how does it differ from a regular TLM port?",
+      "rubric": "Analysis port is one-to-many broadcast (write-only, non-blocking). Regular TLM port is one-to-one (put/get, can block). Analysis port calls write() on all connected subscribers.",
+      "model_answer": "uvm_analysis_port is a one-to-many broadcast port. When a monitor calls ap.write(txn), every connected subscriber receives a copy. It is non-blocking and cannot flow-control the sender. Regular TLM ports (uvm_blocking_put_port, uvm_blocking_get_port) are one-to-one and can block the caller. Use analysis ports for monitors broadcasting to scoreboards and coverage collectors.",
+      "sources": ["IEEE 1800.2-2020 §6 (TLM)"]
+    },
+    {
+      "id": "uvm-virtual-sequencer",
+      "topic": "uvm",
+      "level": "senior",
+      "category": "coding",
+      "prompt": "How do you coordinate stimulus across multiple protocol agents (e.g., AXI + APB) in a UVM environment?",
+      "rubric": "Use a virtual sequencer that holds handles to typed sub-sequencers. Virtual sequences run on the virtual sequencer and call child sequences on specific sub-sequencers. Must mention p_sequencer and casting.",
+      "model_answer": "Create a virtual_sequencer extending uvm_sequencer with handles to each protocol sequencer (axi_sqr, apb_sqr). In the env's connect_phase, assign these handles. Virtual sequences use `p_sequencer.axi_sqr` to target specific agents. The virtual sequence body() calls child sequences with child_seq.start(p_sequencer.axi_sqr). This coordinates cross-protocol traffic from a single control point.",
+      "sources": ["IEEE 1800.2-2020 §5.5 (Virtual sequences)"]
+    },
+    {
+      "id": "uvm-staff-env-architecture",
+      "topic": "uvm",
+      "level": "staff",
+      "category": "staff-system-design",
+      "prompt": "Design the UVM environment architecture for a DMA engine that bridges AXI master, APB slave config, and interrupt lines.",
+      "rubric": "Must include: AXI master agent, APB slave agent, interrupt agent, DMA register model (RAL), reference model/scoreboard, coverage model, virtual sequencer, and config objects. Should discuss scoreboard strategy for out-of-order DMA completion.",
+      "model_answer": "Environment contains: (1) AXI master UVC with driver/monitor/sequencer for DMA data path, (2) APB slave UVC for register configuration, (3) Interrupt agent for completion signaling, (4) RAL model for DMA registers with auto-prediction, (5) DMA reference model that predicts transfers from register writes, (6) Scoreboard with per-channel queues to handle out-of-order DMA completion, (7) Coverage: functional (channel configs, sizes, alignment), protocol (AXI burst types), and cross coverage, (8) Virtual sequencer coordinating config-then-transfer sequences. Key design decision: scoreboard uses channel ID as the ordering key since DMA channels complete independently.",
+      "sources": ["IEEE 1800.2-2020 §2 (Architecture)", "IEEE 1800.2-2020 §7 (RAL)"]
+    },
+    {
+      "id": "uvm-staff-debug-hanging-sim",
+      "topic": "uvm",
+      "level": "staff",
+      "category": "waveform-debug",
+      "prompt": "Your UVM simulation hangs at time 0 with no error messages. Walk through your debug methodology.",
+      "rubric": "Systematic approach: check objections (raise without drop), check for missing #delay in run_phase loops, check config_db failures, check factory registration, use +UVM_PHASE_TRACE, check for blocking TLM calls with no producer.",
+      "model_answer": "Debug steps: (1) Run with +UVM_PHASE_TRACE to see which phase is stuck. (2) Run with +UVM_OBJECTION_TRACE to see who raised without dropping. (3) If stuck in run_phase, check for infinite loops without time consumption (#delay or @event). (4) Check for blocking get() on an empty TLM FIFO (no monitor connected). (5) Check config_db — a failed get() with uvm_fatal may not appear if build_phase hasn't completed. (6) Check factory registration — missing `uvm_component_utils causes create() to return null. (7) Use simulator's thread debugger to see which process is blocked.",
+      "sources": ["IEEE 1800.2-2020 §9 (Phasing)", "Accellera UVM debug guide"]
+    },
+    {
+      "id": "uvm-senior-staff-methodology",
+      "topic": "uvm",
+      "level": "senior-staff",
+      "category": "staff-system-design",
+      "prompt": "How would you structure a UVM verification platform to support both simulation and emulation targets without maintaining separate environments?",
+      "rubric": "Must discuss: transaction-level acceleration (TLA) vs pin-level, abstract/concrete driver pattern, emulation-aware sequences, compile-time vs runtime configuration, and clock/reset abstraction.",
+      "model_answer": "Use a dual-mode architecture: (1) Abstract base driver with virtual drive_transaction() method — simulation subclass drives pin-level; emulation subclass uses TLA APIs. (2) Factory override selects the concrete driver based on a +UVM_TESTNAME or config_db setting. (3) Sequences remain unchanged — they generate transactions, not pin wiggles. (4) Monitors use a similar abstract/concrete pattern. (5) Remove $display and string formatting from synthesizable paths. (6) Use a clock generator abstraction that maps to real clock domains in simulation and to emulator-provided clocks in emulation. This lets 95% of the environment be shared.",
+      "sources": ["IEEE 1800.2-2020 §2", "Cadence Palladium TLA documentation (secondary)"]
+    }
+  ]
+}

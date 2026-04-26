@@ -54,22 +54,20 @@ describe('AMBA flashcard coverage', () => {
     });
   });
 
-  it('covers every AMBA module in the reusable interview question bank', () => {
+  it('covers AMBA topics in the reusable interview question bank', () => {
     const bankPath = path.join(repoRoot, 'content', 'interview-questions', 'amba-protocols.json');
     const bank = JSON.parse(readFileSync(bankPath, 'utf8')) as {
-      groups: Array<{ moduleId: string; questions: Array<{ prompt?: string; lookFor?: string }> }>;
+      id: string;
+      topic: string;
+      questions: Array<{ id: string; prompt: string; rubric: string; model_answer: string }>;
     };
-    const groupsByModule = new Map(bank.groups.map((group) => [group.moduleId, group]));
 
-    ambaModules.forEach((moduleId) => {
-      const group = groupsByModule.get(moduleId);
-
-      expect(group, `${moduleId} should have an interview question group`).toBeDefined();
-      expect(group?.questions.length, `${moduleId} should have reusable prompts`).toBeGreaterThanOrEqual(2);
-      group?.questions.forEach((question, index) => {
-        expect(question.prompt, `${moduleId} prompt ${index} should be written`).toBeTruthy();
-        expect(question.lookFor, `${moduleId} rubric ${index} should be written`).toBeTruthy();
-      });
+    expect(bank.topic).toBe('amba');
+    expect(bank.questions.length).toBeGreaterThanOrEqual(5);
+    bank.questions.forEach((question, index) => {
+      expect(question.prompt, `question ${index} should have a prompt`).toBeTruthy();
+      expect(question.rubric, `question ${index} should have a rubric`).toBeTruthy();
+      expect(question.model_answer, `question ${index} should have a model answer`).toBeTruthy();
     });
   });
 });

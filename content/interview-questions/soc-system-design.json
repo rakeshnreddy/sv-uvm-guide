@@ -1,0 +1,68 @@
+{
+  "id": "soc-system-design-interview-bank",
+  "title": "SoC & System-Design Interview Question Bank",
+  "description": "Staff and senior-staff level interview preparation covering SoC verification strategy, coherency, interconnect design, system-level debug, and verification signoff.",
+  "topic": "soc",
+  "questions": [
+    {
+      "id": "soc-address-map-decode",
+      "topic": "soc",
+      "level": "mid",
+      "category": "concept",
+      "prompt": "What is an SoC address map and why is it critical for verification?",
+      "rubric": "Must explain that the address map defines which address ranges route to which slaves (DRAM, peripherals, config space). Verification must check that every master-slave path decodes correctly and that accesses to unmapped regions return DECERR.",
+      "model_answer": "An SoC address map is a table mapping address ranges to specific slaves: DRAM (e.g., 0x0000_0000–0x3FFF_FFFF), peripherals (0x4000_0000–0x400F_FFFF), config registers (0x5000_0000–0x5000_0FFF). The interconnect's address decoder routes transactions based on this map. Verification must check: 1) Every valid address routes to the correct slave. 2) Accesses to unmapped/hole regions return DECERR via a default slave. 3) Overlapping ranges are impossible. 4) Each master's view is correct (some masters may have restricted access via TrustZone or TZMA). This is typically the first thing verified at SoC integration.",
+      "sources": ["Arm IHI0022H §A4 (address decoding)", "SoC integration methodology (secondary)"]
+    },
+    {
+      "id": "soc-block-to-system",
+      "topic": "soc",
+      "level": "senior",
+      "category": "verification-plan",
+      "prompt": "How does verification strategy change when moving from block-level to SoC-level?",
+      "rubric": "Must discuss: agent mode changes (active→passive), abstract vs pin-level stimulation, memory subsystem modeling, interrupt handling, boot sequence, software-driven tests, coverage model changes.",
+      "model_answer": "Key changes: 1) Block-level active agents become passive monitors at SoC level (firmware drives the DUT). 2) Stimulus shifts from sequence-driven to software-driven (C tests via embedded processor). 3) Coverage models shift from protocol-level to scenario-level (e.g., concurrent DMA + interrupt + cache flush). 4) Scoreboards need memory subsystem models for coherency checking. 5) Debug shifts from waveform-centric to log-centric (firmware printf + bus trace). 6) Performance verification becomes critical (latency, bandwidth under realistic traffic). 7) Reset and power-domain sequencing must be verified across the full SoC.",
+      "sources": ["IEEE 1800.2-2020 §2 (Architecture)", "SoC verification methodology (secondary)"]
+    },
+    {
+      "id": "soc-coherency-verification",
+      "topic": "soc",
+      "level": "staff",
+      "category": "staff-system-design",
+      "prompt": "How would you verify cache coherency in a quad-core system with ACE interconnect?",
+      "rubric": "Must mention: snoop transaction coverage, MOESI/MESI state transitions, coherency protocol checker, stress tests with shared data, ordering verification across cores.",
+      "model_answer": "Verification strategy: 1) Build a coherency reference model tracking line states per cache (MOESI). 2) Verify all state transitions: I→E (exclusive read), E→M (write), M→S (snoop clean), etc. 3) Protocol checker verifying ACE snoop request/response sequences per Arm IHI0022H. 4) Stress tests: all cores hammer the same cache line with read-modify-write sequences. 5) Ordering: verify that all cores observe writes in a consistent order (total store order or release consistency). 6) Coverage: cross(core_id, access_type, initial_state, final_state). 7) Formal: prove that the interconnect cannot create a state where two caches hold the same line in Modified state.",
+      "sources": ["Arm IHI0022H (ACE)", "Arm IHI0050F (CHI)"]
+    },
+    {
+      "id": "soc-staff-dma-system-design",
+      "topic": "soc",
+      "level": "staff",
+      "category": "staff-system-design",
+      "prompt": "Design the verification plan for a multi-channel DMA engine that supports scatter-gather and chained descriptors.",
+      "rubric": "Must cover: descriptor chain traversal, scatter-gather address list verification, channel priority/arbitration, error injection (invalid descriptors, bus errors), interrupt generation, and memory coherency.",
+      "model_answer": "Verification plan: 1) Descriptor chain: verify linear chains, circular chains, and chain termination. 2) Scatter-gather: verify non-contiguous source/dest address lists with varying chunk sizes. 3) Multi-channel: verify priority-based arbitration, channel independence, and simultaneous operation. 4) Error handling: inject invalid descriptor addresses, bus errors mid-transfer, and abort requests. 5) Interrupts: verify per-channel completion, error, and threshold interrupts. 6) Data integrity: scoreboard per channel comparing source memory to destination memory. 7) Coherency: ensure DMA-written data is visible to CPU after completion interrupt (cache maintenance). 8) Performance: measure per-channel bandwidth under contention.",
+      "sources": ["SoC verification methodology (secondary)", "IEEE 1800.2-2020 §7 (RAL)"]
+    },
+    {
+      "id": "soc-senior-staff-interconnect",
+      "topic": "soc",
+      "level": "senior-staff",
+      "category": "staff-system-design",
+      "prompt": "You are the verification lead for a new SoC interconnect supporting 8 masters and 4 slaves with QoS. Define your verification strategy and team structure.",
+      "rubric": "Must address: architecture understanding, protocol compliance (per-channel), routing correctness, arbitration fairness, QoS enforcement, deadlock freedom, performance, team allocation, and milestone planning.",
+      "model_answer": "Strategy: 1) Protocol compliance: reuse VIP for AXI/ACE per-port verification (1-2 engineers). 2) Routing: verify all master→slave paths, address decode, and default slave behavior (1 engineer). 3) Arbitration: verify fairness under uniform load, QoS priority enforcement, and starvation freedom (1 engineer). 4) Deadlock: formal verification of channel dependency freedom + simulation stress tests (1 senior engineer). 5) Performance: bandwidth/latency characterization under synthetic and realistic traffic profiles (1 engineer). 6) Integration: SoC-level tests with real IP behind the interconnect (shared with IP teams). Team: 5-6 verification engineers + 1 lead. Milestones: M1 (port-level VIP pass), M2 (routing + arbitration), M3 (deadlock formal + stress), M4 (performance + SoC integration), M5 (signoff).",
+      "sources": ["Arm IHI0022H", "Interconnect verification methodology (secondary)"]
+    },
+    {
+      "id": "soc-power-verification",
+      "topic": "soc",
+      "level": "staff",
+      "category": "staff-system-design",
+      "prompt": "How do you verify power-domain crossings and retention across multiple voltage islands in an SoC?",
+      "rubric": "Must discuss: isolation cells, retention registers, power-up/down sequences, UPF/CPF, level shifters, and verification tools (Questa Power Aware, PrimePower).",
+      "model_answer": "1) Model power intent with UPF (Unified Power Format). 2) Verify isolation: when a domain powers down, all outputs from that domain must be isolated (clamped to a defined value). 3) Verify retention: after power-up, retained registers restore their saved state before the domain becomes active. 4) Verify sequencing: isolation → save → power-down → power-up → restore → de-isolate. Wrong ordering causes corruption. 5) Level shifters: verify correct voltage translation at domain boundaries. 6) Tools: Questa Power Aware or VCS-PA for automated UPF checking. 7) Functional verification: run a workload, power down a domain, power up, and verify the system resumes correctly.",
+      "sources": ["IEEE 1801-2015 (UPF)", "Power-aware verification methodology (secondary)"]
+    }
+  ]
+}
