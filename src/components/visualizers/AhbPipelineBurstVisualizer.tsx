@@ -77,7 +77,7 @@ const SCENARIOS: Record<string, Scenario> = {
   wait_state: {
     id: "wait_state",
     name: "Wait-State Stretching",
-    description: "The slave inserts a wait state (HREADY=0), stalling the pipeline.",
+    description: "The slave inserts a wait state (HREADYOUT=0), stalling the pipeline.",
     maxCycles: 7,
     transfers: [
       {
@@ -226,9 +226,12 @@ export default function AhbPipelineBurstVisualizer() {
           <h3 className="font-semibold text-slate-800 dark:text-slate-200 m-0 text-base">
             AHB Timing Visualizer
           </h3>
-          <p className="text-sm text-slate-500 dark:text-slate-400 m-0">
+          <div className="text-sm text-slate-500 dark:text-slate-400 m-0">
             {scenario.description}
-          </p>
+            <span className="block text-[11px] italic mt-1 opacity-80">
+              *Note: Shows simplified global HREADY. In a real system, the selected slave drives HREADYOUT, which the interconnect multiplexes into HREADY.
+            </span>
+          </div>
         </div>
 
         <div className="flex items-center gap-3 w-full sm:w-auto flex-wrap">

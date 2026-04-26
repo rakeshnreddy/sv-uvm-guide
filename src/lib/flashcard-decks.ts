@@ -4,7 +4,9 @@ import F1C_Why_SystemVerilog from '../../content/flashcards/F1C_Why_SystemVerilo
 import F2_Data_Types from '../../content/flashcards/F2_Data_Types.json';
 import F2C_Operators from '../../content/flashcards/F2C_Operators.json';
 import F3A_Procedural_Blocks_and_Flow_Control from '../../content/flashcards/F3A_Procedural_Blocks_and_Flow_Control.json';
+import F3B_Scheduling_Regions from '../../content/flashcards/F3B_Scheduling_Regions.json';
 import F4_RTL_and_Testbench_Constructs from '../../content/flashcards/F4_RTL_and_Testbench_Constructs.json';
+import F4C_Clocking_Blocks from '../../content/flashcards/F4C_Clocking_Blocks.json';
 import F2_HDL_Primer from '../../content/flashcards/F2_HDL_Primer.json';
 import I_SV_1_OOP from '../../content/flashcards/I-SV-1_OOP.json';
 import I_SV_2_Constrained_Randomization from '../../content/flashcards/I-SV-2_Constrained_Randomization.json';
@@ -66,7 +68,9 @@ export const flashcardDecks: Record<string, any[]> = {
   F2_Data_Types,
   F2C_Operators,
   F3A_Procedural_Blocks_and_Flow_Control,
+  F3B_Scheduling_Regions,
   F4_RTL_and_Testbench_Constructs,
+  F4C_Clocking_Blocks,
   F2_HDL_Primer,
   'I-SV-1_OOP': I_SV_1_OOP,
   'I-SV-2_Constrained_Randomization': I_SV_2_Constrained_Randomization,

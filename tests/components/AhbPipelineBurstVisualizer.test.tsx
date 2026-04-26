@@ -32,7 +32,7 @@ describe('AhbPipelineBurstVisualizer', () => {
     fireEvent.change(select, { target: { value: 'wait_state' } });
     
     expect(select).toHaveValue('wait_state');
-    expect(screen.getByText('The slave inserts a wait state (HREADY=0), stalling the pipeline.')).toBeInTheDocument();
+    expect(screen.getByText('The slave inserts a wait state (HREADYOUT=0), stalling the pipeline.')).toBeInTheDocument();
   });
 
   it('steps forward through clock cycles', () => {

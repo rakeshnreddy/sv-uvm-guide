@@ -171,7 +171,7 @@ endfunction
 
 The AXI specification mandates:
 
-> **No burst may cross a 4 KB (0x1000) address boundary.**
+> **A burst must not cross a 4 KB (0x1000) address boundary.** Every beat address in a burst must remain inside the same 4 KB page as the first transfer.
 
 This is the most commonly violated rule in AXI designs and the source of countless silicon bugs.
 
@@ -181,17 +181,23 @@ The 4 KB boundary corresponds to the minimum page size in most memory management
 The AXI interconnect's address decoder maps slaves to address regions at page boundaries.
 A burst crossing this boundary would need to be routed to two different slaves — which the interconnect cannot handle in a single burst.
 
-### Boundary Check Formula
+### INCR Boundary Check Formula
+
+For INCR bursts, the check is based on the start page and the last byte address:
 
 ```
 Start_Address = AxADDR
 Total_Bytes   = (AxLEN + 1) × 2^AxSIZE
-End_Address   = Start_Address + Total_Bytes - 1
+Last_Byte_Address = Start_Address + Total_Bytes - 1
 
 // LEGAL if:
-//   floor(Start_Address / 4096) == floor(End_Address / 4096)
-// i.e., both addresses fall in the same 4 KB page
+//   floor(Start_Address / 4096) == floor(Last_Byte_Address / 4096)
+// i.e., both the first and last byte fall in the same 4 KB page
 ```
+
+### WRAP Burst Alignment & Boundaries
+
+WRAP bursts have stricter alignment constraints but their boundaries are naturally confined. Because the maximum WRAP burst size is 16 beats of 128 bytes (2048 bytes total), and the burst always wraps within an aligned `Wrap_Boundary`, a legally aligned WRAP burst is mathematically guaranteed to never cross a 4 KB boundary. Therefore, ensuring WRAP bursts are naturally aligned to the transfer size is the primary constraint.
 
 **Example — LEGAL burst:**
 - Start: `0x0FF0`, AxLEN=3, AxSIZE=0 (1 byte): End = 0x0FF3 → same 4 KB page ✓

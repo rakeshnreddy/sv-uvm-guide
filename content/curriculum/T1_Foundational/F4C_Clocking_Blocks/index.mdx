@@ -14,11 +14,24 @@ import { InteractiveCode, Quiz } from '@/components/ui';
 ## Build Your Mental Model
 
 ### The Race Condition Problem
-In a standard Verilog simulation, if a `DUT` updates a signal at the rising edge of `clk`, and the `Testbench` reads it at the same rising edge, the order of execution is undefined. You might read the *old* value or the *new* value.
+
+In a standard Verilog simulation, if a `DUT` updates a signal at the rising edge of `clk`, and the `Testbench` reads it at the same rising edge using a blocking assignment, the order of execution in the **Active** region is undefined. You might read the *old* value or the *new* value.
+
+**Race-Prone Testbench (Avoid this):**
+```systemverilog
+// RTL (executes in Active -> NBA)
+always_ff @(posedge clk) q <= d;
+
+// Testbench (executes in Active)
+always @(posedge clk) begin
+  // RACE! Does this execute before or after q <= d?
+  if (q == expected) $display("Pass!"); 
+end
+```
 
 **Clocking blocks solve this by:**
-1.  **Sampling** inputs just *before* the clock edge (Preponed region).
-2.  **Driving** outputs just *after* the clock edge (Observed/Reactive region).
+1.  **Sampling** inputs just *before* the clock edge in the **Preponed** region. The testbench is guaranteed to read the stable, old value.
+2.  **Driving** outputs synchronized to the clock edge, scheduling updates in the **NBA** or **Re-NBA** region (depending on whether the drive originated from an Active or Reactive region block).
 
 ### Interactive Example: The Clocking Block Solution
 <InteractiveCode
@@ -101,6 +114,16 @@ endmodule
       </summary>
       <div className="mt-4 text-sm text-slate-300 leading-relaxed">
         <p>It tells the clocking block to sample inputs in the <strong>Preponed</strong> region (immediately before the clock edge). This ensures that the testbench reads the stable "old" value of the signal, effectively ignoring any changes that happen exactly at the clock edge (avoiding race conditions).</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        If you drive a clocking block output with default #0 skew (e.g. `cb.sig <= 1`), in which scheduling region does the update actually occur?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>It depends on where the drive originated. If driven from a standard module (Active region), the update is scheduled in the <strong>NBA</strong> region. If driven from a program block (Reactive region), the update is scheduled in the <strong>Re-NBA</strong> region. In both cases, this strict scheduling guarantees it will not race with the RTL's Active region blocking assignments.</p>
       </div>
     </details>
 

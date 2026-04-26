@@ -68,9 +68,9 @@
 | 58 | CONTENT-AMBA-F3-INTERVIEW-CLINIC | P1 | complete | CONTENT-AMBA-F2-FUTURE-PROTOCOLS | Author the Interview and Debug Clinic module with whiteboard design questions, waveform triage drills, verification test-plan prompts, and common trick questions. |
 | 59 | FLASH-2-AMBA-PROTOCOL-COVERAGE | P1 | complete | CONTENT-AMBA-F3-INTERVIEW-CLINIC | Create flashcards and reusable interview-question banks for all AHB/AXI protocol modules. |
 | 60 | INFRA-8-AMBA-QA-SUITE | P1 | complete | CONTENT-AMBA-F3-INTERVIEW-CLINIC | Add Vitest and Playwright coverage for all new AMBA visualizers, curriculum pages, and end-to-end navigation flows. |
-| 61 | BACK-01-HREADY-HREADYOUT-CORRECTION | P0 | todo | none | Correct AHB HREADY/HREADYOUT terminology across curriculum, visualizers, labs, and flashcards with Arm AHB-Lite source grounding. |
-| 62 | BACK-02-AXI-4KB-RULE-CORRECTION | P0 | todo | none | Tighten AXI 4KB boundary and WRAP burst alignment wording, examples, visualizer labels, and flashcards with Arm AXI source grounding. |
-| 63 | BACK-03-SV-SCHEDULING-REGIONS | P0 | todo | none | Add accurate SV scheduling region coverage, especially Observed/Reactive regions and clocking-block race avoidance. |
+| 61 | BACK-01-HREADY-HREADYOUT-CORRECTION | P0 | complete | none | Correct AHB HREADY/HREADYOUT terminology across curriculum, visualizers, labs, and flashcards with Arm AHB-Lite source grounding. |
+| 62 | BACK-02-AXI-4KB-RULE-CORRECTION | P0 | complete | none | Tighten AXI 4KB boundary and WRAP burst alignment wording, examples, visualizer labels, and flashcards with Arm AXI source grounding. |
+| 63 | BACK-03-SV-SCHEDULING-REGIONS | P0 | complete | none | Add accurate SV scheduling region coverage, especially Observed/Reactive regions and clocking-block race avoidance. |
 | 64 | BACK-04-INTERVIEW-BANKS-RUBRICS | P1 | todo | BACK-01-HREADY-HREADYOUT-CORRECTION, BACK-02-AXI-4KB-RULE-CORRECTION, BACK-03-SV-SCHEDULING-REGIONS | Create reusable interview banks for SV, UVM, SVA/Formal, Debug, SoC, and AMBA with rubrics and model answers. |
 | 65 | BACK-05-UVM-PHASING-CONCURRENCY | P1 | todo | none | Correct and deepen UVM phasing content around run_phase concurrency with runtime sub-phases and senior trap questions. |
 | 66 | BACK-06-AXI-DEADLOCK-LAB | P1 | todo | BACK-02-AXI-4KB-RULE-CORRECTION | Add or formalize an AXI deadlock debug lab with broken RTL, SVA/watchdog checks, solution, and acceptance criteria. |
