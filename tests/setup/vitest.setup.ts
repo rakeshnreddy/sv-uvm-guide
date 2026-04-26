@@ -1,6 +1,8 @@
 import '@testing-library/jest-dom/vitest';
 import { afterAll, beforeAll, vi } from 'vitest';
 
+process.env.SESSION_SECRET = 'test-session-secret-32-bytes-minimum';
+
 const originalWarn = console.warn;
 let warnSpy: ReturnType<typeof vi.spyOn> | undefined;
 
