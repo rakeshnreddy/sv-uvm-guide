@@ -93,8 +93,7 @@ export const ImmersiveLabEnvironment = () => {
 
   const startXrSession = async () => {
     try {
-      const session = await (navigator as any).xr.requestSession('immersive-vr');
-      console.log('XR session started', session);
+      await (navigator as any).xr.requestSession('immersive-vr');
     } catch (err) {
       console.error('XR session failed', err);
     }
