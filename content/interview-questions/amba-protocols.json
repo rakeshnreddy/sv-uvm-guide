@@ -93,6 +93,46 @@
       "rubric": "Must include: decode logic, arbitration per slave, ID expansion, buffering strategy, response demux, deadlock avoidance. Verification: per-port VIP, routing correctness, arbitration fairness, deadlock formal, performance.",
       "model_answer": "Architecture: 4 master ports → address decode (based on address map) → 2 slave port arbiters (round-robin with QoS). Each master port gets 2 ID bits appended (ID expansion) for response routing. Per-slave AW/W/AR buffers prevent head-of-line blocking. Response demux uses expanded ID prefix to route B/R to correct master. Deadlock prevention: response channels have higher buffer priority. Verification: 1) Per-port AXI VIP for protocol compliance. 2) Directed tests for all M→S routing paths. 3) Arbitration fairness under uniform and biased load. 4) Formal proof of deadlock freedom. 5) Performance: latency/bandwidth under synthetic traffic. 6) Stress: maximum outstanding transactions per master.",
       "sources": ["Arm IHI0022H §A8 (ID signaling)", "Arm IHI0022H §A10 (ordering)"]
+    },
+    {
+      "id": "amba-ace-state-transition-debug",
+      "topic": "amba",
+      "level": "staff",
+      "category": "waveform-debug",
+      "prompt": "Two cores share a cache line. After a write by Core 0 and a subsequent read by Core 1, Core 1 reads stale data. Walk through how you would debug this using ACE coherency state transitions.",
+      "rubric": "Must cover: identifying the expected state transitions (I→UC→UD for writer, SC or I for reader after snoop), checking AC/CR/CD snoop flow, verifying interconnect directory update, checking for missing MakeInvalid or CleanInvalid, examining whether the snoop response was lost or misrouted.",
+      "model_answer": "Debug steps: 1) Check Core 0's write: did it issue MakeUnique or CleanUnique before writing? The line should transition to Unique Dirty (UD). 2) Check the interconnect directory: does it record Core 0 as dirty owner? 3) When Core 1 issues ReadShared, check whether the interconnect sent a snoop (AC) to Core 0. 4) If AC was sent, check CR response — did Core 0 report dirty data? 5) If CR indicated dirty data, check CD channel — was dirty data actually transferred? 6) Check timing: did Core 1's read complete before the snoop to Core 0 was processed (race condition)? 7) Check for a directory update bug where Core 0's dirty state was not recorded, causing the interconnect to read stale memory instead of snooping. Root cause is typically: missing snoop due to directory not updated, snoop response lost, or read completing against memory before snoop could intervene.",
+      "sources": ["Arm IHI0022H Part D §D3 (ACE coherency states)", "Arm IHI0022H Part D §D4 (snoop transactions)"]
+    },
+    {
+      "id": "amba-chi-credit-deadlock",
+      "topic": "amba",
+      "level": "senior-staff",
+      "category": "staff-system-design",
+      "prompt": "Explain how a credit deadlock can occur in a CHI interconnect. How would you design assertions or formal properties to prevent it?",
+      "rubric": "Must cover: credit-based flow control mechanics, scenario where all credits are consumed by requests waiting for responses that need credits on another channel, circular dependency between REQ/RSP/DAT channels, assertion strategy for credit conservation (credits_issued == credits_returned + credits_in_flight), formal liveness property showing every request eventually completes.",
+      "model_answer": "Credit deadlock scenario: RN-F₀ sends N requests to HN-F, consuming all REQ credits. HN-F processes them and needs to send snoop requests to RN-F₁, but RN-F₁'s SNP credits are exhausted because RN-F₁ is waiting for RSP credits from HN-F (which is blocked waiting for snoop responses). Circular wait: RN-F₀ blocked on REQ credits → HN-F blocked on SNP credits → RN-F₁ blocked on RSP credits → back to HN-F. Prevention: 1) Reserve credits per channel family so responses always have guaranteed capacity. 2) Separate virtual channels for requests and responses. Assertions: a) Credit conservation: `assert property (@(posedge clk) credits_issued == credits_returned + credits_in_flight)`. b) Credit liveness: `assert property (@(posedge clk) credits_consumed |-> ##[1:MAX_LATENCY] credit_returned)`. c) No zero-credit stall beyond timeout: `assert property (@(posedge clk) (available_credits == 0) |-> ##[1:TIMEOUT] (available_credits > 0))`. Formal: prove that for any reachable state, there exists a sequence of events that returns at least one credit per channel.",
+      "sources": ["Arm IHI0050F §2.3 (link layer credits)", "Arm IHI0050F §2.11 (protocol layer flow)"]
+    },
+    {
+      "id": "amba-coherency-scoreboard-design",
+      "topic": "amba",
+      "level": "staff",
+      "category": "coding",
+      "prompt": "Design a coherency reference model scoreboard for an ACE cluster with four cores. What data structures and invariant checks would you implement?",
+      "rubric": "Must include: per-line state tracking (MOESI per node), single-dirty-owner invariant, data consistency check (latest writer's data matches reads), snoop response validation, eviction tracking, and coverage of all state transitions.",
+      "model_answer": "Data structures: 1) `map<addr_t, coherent_line_t>` where `coherent_line_t` contains: `line_state_e state[NUM_NODES]`, `data_t latest_data`, `int dirty_owner` (-1 if none), `int sharer_count`. 2) `state_transition_log` recording every (node, addr, old_state, new_state, cause) tuple. Invariant checks on every state update: a) At most one node in UD or SD state per line. b) If any node is UC, no other node has a valid copy. c) `sharer_count` matches count of nodes in SC/SD state. d) Data returned on read matches `latest_data` for that line. e) On eviction of dirty line, writeback data matches `latest_data`. Transaction processing: on ReadShared, check snoop responses and update states. On MakeUnique, verify all other sharers transition to Invalid. On CleanInvalid, verify dirty data reaches point of coherency. Coverage: cross(node_id, transaction_type, initial_state, final_state) should hit all legal MOESI transitions.",
+      "sources": ["Arm IHI0022H Part D §D3 (ACE state model)", "Arm IHI0022H Part D §D8 (ACE ordering)"]
+    },
+    {
+      "id": "amba-chi-retry-verification",
+      "topic": "amba",
+      "level": "staff",
+      "category": "verification-plan",
+      "prompt": "Write a verification plan for the CHI retry protocol (RetryAck → PCrdGrant → retry). What corner cases must be covered?",
+      "rubric": "Must cover: basic retry flow, retry under buffer full conditions, multiple outstanding retries from different requesters, PCrdGrant ordering fairness, interaction with snoops during retry wait, credit type matching (REQ vs RSP vs DAT), and starvation prevention.",
+      "model_answer": "Verification plan: 1) Basic flow: RN sends request → HN returns RetryAck → RN waits → HN sends PCrdGrant → RN retries with same TxnID. Verify completion. 2) Buffer pressure: force HN buffers full, verify all requests get RetryAck, then drain buffers and verify all get PCrdGrant and complete. 3) Multi-requester fairness: 4 RNs all retried simultaneously — verify no RN starves (all get PCrdGrant within bounded time). 4) Credit type: verify PCrdGrant credit type matches the original request's channel (don't grant RSP credit for a REQ retry). 5) Snoop during retry: while RN is waiting for PCrdGrant, HN sends a snoop for the same address — verify snoop completes independently and retry is not corrupted. 6) Rapid retry: request retried immediately after PCrdGrant — verify no off-by-one in credit accounting. 7) TxnID reuse: verify the retried request uses the same TxnID as the original. 8) Timeout: if PCrdGrant never arrives (bug), verify RN does not retry without credit (protocol violation). Coverage: cross(retry_reason, requester_type, concurrent_snoops, buffer_occupancy).",
+      "sources": ["Arm IHI0050F §2.3.1 (retry mechanism)", "Arm IHI0050F §2.6 (request retry)"]
     }
   ]
 }

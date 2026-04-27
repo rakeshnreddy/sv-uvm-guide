@@ -61,6 +61,19 @@ Block-level focuses on endpoints. SoC-level focuses on the network connecting th
 - **Latency Tracking:** Tag transactions with timestamps at ingress and compare them at egress to catch Quality of Service (QoS) violations.
 - **Coherency Checkers:** Passive VIP attached to cache interfaces to ensure multi-core snooping logic holds up.
 
+### Staff-Level Strategy Artifact
+
+A staff-level SoC plan is a reviewable engineering artifact, not a list of tests. It must make ownership, observability, and signoff evidence explicit enough that block teams, firmware, formal, and SoC DV can execute without interpreting intent differently.
+
+| Strategy area | Staff-level question | Evidence expected at review |
+| --- | --- | --- |
+| Scope split | Which bugs remain block-owned, and which only appear at SoC scope? | Block/subsystem/SoC responsibility matrix |
+| VIP reuse | Which agents are active, passive, or disabled under firmware control? | Build log audit, monitor heartbeat coverage, config DB map |
+| Coverage model | Which scenarios prove system behavior instead of repeating block coverage? | Master x slave x response, interrupt routing, security, reset, QoS, and coherency crosses |
+| Formal/liveness | Which failures should never wait for a 12-hour simulation timeout? | Request eventual-response, no channel-dependency cycle, reset convergence, interrupt delivery, security isolation properties |
+| Debug ownership | What evidence determines whether a failure belongs to firmware, UVM, RTL, or test intent? | Seed, firmware hash, RTL hash, plusargs, failing transaction window, waveform trigger, and owner bucket |
+| Signoff risks | Which risks can still invalidate the schedule after the tests are green? | Risk register with owner, mitigation, and exit criteria |
+
 ## Make It Work: SoC Operations
 
 SoC verification isn't just bigger UVM; it's a completely different operational workflow.
@@ -95,18 +108,41 @@ Define strict deliverables before accepting an IP block into the SoC repo:
 - RAL models must be clean and compiled without warnings.
 - "No raw `$display` statements"—everything must use `uvm_report` for central filtering.
 
+### 4. Formal and Liveness Review
+
+Simulation is necessary, but it is a poor way to discover rare liveness bugs. Every SoC strategy should name which properties belong in formal or assertion-based verification:
+
+- **Accepted request eventual response:** any accepted interconnect request must eventually receive data, completion, or an error response.
+- **No channel-dependency cycle:** no legal backpressure state may require two independent channels to wait on each other forever.
+- **Reset convergence:** reset asserted during outstanding traffic must drain, cancel, or invalidate in-flight work and return the fabric to a known idle state.
+- **Interrupt eventual delivery:** an enabled interrupt source must eventually be visible at the configured target or a masked-status register.
+- **Security isolation:** denied accesses must not produce protected-slave side effects.
+
+For review, list each property with its trigger, obligation, failure meaning, owner, and proof boundary. A property without a failure meaning is not ready for staff review.
+
+### 5. Signoff Risk Register
+
+Before signoff, maintain a small risk table that is reviewed weekly:
+
+| Risk | Mitigation | Exit criteria |
+| --- | --- | --- |
+| Passive VIP is connected but not observing traffic | Monitor heartbeat coverpoints and build-log audit | Every enabled passive monitor observes smoke-suite traffic |
+| Firmware boot instability hides RTL failures | Firmware phase markers and separate firmware-owned bucket | Boot failures are reproducible and isolated from RTL checks |
+| NoC deadlock only appears under rare backpressure | Formal liveness plus weekly backpressure stress | No open liveness counterexamples or stress timeouts |
+| Coverage chases unreachable block states | System-level coverage review and waiver policy | Every waived bin has reachability rationale |
+| Failure artifacts do not identify an owner | Mandatory CI artifact schema | P0/P1 failures can be bucketed without rerun |
+
 ## Practice & Reinforce
 
-<LabLink
-  id="soc-vip-reuse"
-  title="Lab: Block to SoC VIP Modes"
-  description="Configure a block-level SPI agent into passive mode so it monitors traffic driven by an embedded processor without causing bus collisions."
-/>
+<LabLink labId="soc-vip-reuse" />
+
+<LabLink labId="soc-strategy-capstone" />
 
 **Checklist before moving on:**
 - [ ] You understand why leaving block VIP in Active mode breaks SoC bring-up.
 - [ ] You can explain how UVM tracks firmware progress via memory mailboxes.
 - [ ] You know how to categorize pull-request smoke tests vs nightly regressions.
+- [ ] You can defend a staff-level SoC strategy using coverage, liveness, debug, regression, and risk evidence.
 
 ## References & Next Topics
 - **IEEE 1800.2-2020 Clause 4.1.1** — UVM Component lifecycle and configuration setup for topology modification.

@@ -2,26 +2,61 @@
   {
     "id": "b-amba-f2-1",
     "question": "What problem does ACE add on top of AXI?",
-    "answer": "ACE adds cache coherency so multiple caches can share memory while maintaining a consistent view of clean and dirty cache lines."
+    "answer": "ACE adds cache coherency so multiple caches can share memory while maintaining a consistent view of clean and dirty cache lines, using snoop channels and MOESI-style state tracking."
   },
   {
     "id": "b-amba-f2-2",
-    "question": "What are the ACE snoop channels used for?",
-    "answer": "AC sends snoop requests, CR returns snoop responses, and CD carries snoop data when a cache must provide a line."
+    "question": "What are the three ACE snoop channels and their directions?",
+    "answer": "AC (Snoop Address): interconnect → master, sends snoop requests. CR (Snoop Response): master → interconnect, reports cache state and dirty status. CD (Snoop Data): master → interconnect, returns dirty data when the cache must supply a line."
   },
   {
     "id": "b-amba-f2-3",
-    "question": "Why does CHI move beyond AXI-style shared fabrics?",
-    "answer": "CHI is designed for scalable coherent systems using packetized request, response, data, and snoop traffic across ring or mesh interconnects."
+    "question": "What is the critical single-writer invariant in ACE/CHI coherency?",
+    "answer": "At most one cache may hold a cache line in a Dirty (Modified) state at any time. If two nodes both believe they have UNIQUE_DIRTY, the protocol is broken regardless of whether reads currently return correct data."
   },
   {
     "id": "b-amba-f2-4",
-    "question": "What are common CHI node roles?",
-    "answer": "Request nodes issue transactions, home nodes manage coherency and directory state, and subordinate nodes connect memory or devices."
+    "question": "What are the five MOESI-like coherency states in ACE?",
+    "answer": "Invalid (I): no valid copy. Shared Clean (SC): shared readable copy. Unique Clean (UC): only clean copy, can silently write. Unique Dirty (UD): only modified copy, must writeback on eviction. Shared Dirty (SD): modified copy with other clean sharers, responsible for writeback."
   },
   {
     "id": "b-amba-f2-5",
+    "question": "How does a ReadShared resolve when another cache holds a dirty copy in ACE?",
+    "answer": "1) Requester sends ReadShared on AR. 2) Interconnect snoops dirty owner via AC. 3) Owner responds on CR (dirty, data transfer). 4) Owner sends dirty data on CD. 5) Interconnect forwards data to requester on R. 6) Owner transitions M→I or M→SC. 7) Requester caches line as Shared Clean."
+  },
+  {
+    "id": "b-amba-f2-6",
+    "question": "What distinguishes CHI from ACE architecturally?",
+    "answer": "CHI uses packetized flits instead of AXI-style channels, credit-based flow control instead of VALID/READY, directory-based home nodes instead of centralized snooping, and supports peer-to-peer data transfer between request nodes."
+  },
+  {
+    "id": "b-amba-f2-7",
+    "question": "Name the five CHI node types and their roles.",
+    "answer": "RN-F: fully-coherent requester (CPU/GPU). RN-I: I/O-coherent requester (DMA). RN-D: DVM-only requester (SMMU). HN-F: fully-coherent home node with directory. HN-I: non-coherent home node. SN-F: memory subordinate. SN-I: device subordinate."
+  },
+  {
+    "id": "b-amba-f2-8",
+    "question": "What are the four main CHI channel families?",
+    "answer": "REQ (Request): commands and addresses. RSP (Response): acknowledgments and state outcomes. DAT (Data): cache-line payloads. SNP (Snoop): coherency probes from HN to RN."
+  },
+  {
+    "id": "b-amba-f2-9",
+    "question": "How does CHI credit-based flow control work?",
+    "answer": "A receiver advertises how many flits it can accept per channel. The sender consumes one credit per flit sent. When credits run out, the sender must wait. This eliminates combinatorial sender-receiver dependencies but makes credit leaks a first-class verification target."
+  },
+  {
+    "id": "b-amba-f2-10",
     "question": "What changes most in verification when moving from AXI to ACE or CHI?",
-    "answer": "The scoreboard must model global coherency state, snoop side effects, line ownership, and legal transient states instead of only request/response matching."
+    "answer": "The scoreboard must model global coherency state, snoop side effects, per-node line ownership, and legal transient states. Assertions must be global (cross-node), not per-interface. Deadlock analysis adds credit/retry dimensions."
+  },
+  {
+    "id": "b-amba-f2-11",
+    "question": "What is the CHI retry protocol and why is it a verification target?",
+    "answer": "When a home node cannot immediately service a request, it returns RetryAck. The requester must wait for a PCrdGrant (protocol credit grant) before retrying. Incorrect retry handling causes deadlocks or protocol violations. Verification must cover: retry under full buffers, credit grant ordering, and no request starvation."
+  },
+  {
+    "id": "b-amba-f2-12",
+    "question": "Why can data flow peer-to-peer in CHI but not in ACE?",
+    "answer": "CHI supports direct cache-to-cache (RN-to-RN) data transfers, bypassing memory for lower latency. In ACE, all data flows through the interconnect. Verification must ensure peer-to-peer data is correctly ordered and that the home node's directory state is updated even when data bypasses it."
   }
 ]

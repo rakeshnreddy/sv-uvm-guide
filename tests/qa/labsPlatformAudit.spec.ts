@@ -52,6 +52,33 @@ describe('W8 labs platform audit', () => {
     });
   });
 
+  it('keeps LabLink MDX usages on registered lab ids', () => {
+    const mdxFiles = walkFiles(curriculumRoot, '.mdx');
+    const registeredLabIds = new Set(getAllLabs().map((lab) => lab.id));
+    const invalidLinks: string[] = [];
+
+    mdxFiles.forEach((filePath) => {
+      const source = fs.readFileSync(filePath, 'utf8');
+      const labLinkTags = source.match(/<LabLink\b[\s\S]*?\/>/g) ?? [];
+
+      labLinkTags.forEach((tag) => {
+        const labId = tag.match(/\blabId=["']([^"']+)["']/)?.[1];
+        const relativePath = path.relative(repoRoot, filePath);
+
+        if (!labId) {
+          invalidLinks.push(`${relativePath}: LabLink must use labId`);
+          return;
+        }
+
+        if (!registeredLabIds.has(labId)) {
+          invalidLinks.push(`${relativePath}: unknown labId ${labId}`);
+        }
+      });
+    });
+
+    expect(invalidLinks, `invalid LabLink usages: ${invalidLinks.join('; ')}`).toEqual([]);
+  });
+
   (strictLabsAudit ? it : it.skip)(
     'makes every available lab discoverable from curriculum content through a stable link',
     () => {

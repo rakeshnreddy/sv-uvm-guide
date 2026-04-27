@@ -1,21 +1,30 @@
 ---
-title: "Future AMBA Protocols: ACE and CHI"
-description: "Preview coherent AMBA protocols beyond AXI4: ACE cache coherency extensions and AMBA 5 CHI packetized interconnects for scalable multi-core systems."
+title: "AMBA Coherency Protocols: ACE and CHI"
+description: "Master coherent AMBA protocols in production today: ACE cache coherency extensions for AXI and AMBA 5 CHI packetized interconnects for scalable multi-core SoCs."
 order: 13
 tier: "T3_Advanced"
 flashcards: "B-AMBA-F2_Future_Protocols_ACE_CHI"
+sources:
+  - title: "Arm AMBA AXI and ACE Protocol Specification"
+    type: "standard"
+    identifier: "IHI0022H"
+    version: "H"
+  - title: "Arm AMBA 5 CHI Architecture Specification"
+    type: "standard"
+    identifier: "IHI0050F"
+    version: "F"
 ---
 
-# Future AMBA Protocols: ACE and CHI
+# AMBA Coherency Protocols: ACE and CHI
 
 AXI4 is the protocol most verification engineers meet first, but high-end SoCs need more than fast reads and writes. Multi-core CPUs, GPUs, coherent accelerators, and cache-rich subsystems need a way to answer a harder question: **who owns the latest copy of this cache line?**
 
-That is where coherent AMBA protocols enter. **ACE** extends AXI with cache coherency channels. **CHI** goes further: it turns coherency into a packetized network protocol designed for large ring, mesh, and network-on-chip fabrics.
+ACE and CHI are not future or emerging protocols — they are in production today across Arm Cortex-A and Neoverse platforms, server-class SoCs, and datacenter accelerators. **ACE** extends AXI with cache coherency channels. **CHI** goes further: it turns coherency into a packetized network protocol designed for large ring, mesh, and network-on-chip fabrics.
 
 <QuickTake>
-- **ACE** extends AXI with snoop channels so caches can stay coherent without software flushing every shared buffer.
+- **ACE** (AMBA 4) extends AXI with snoop channels so caches can stay coherent without software flushing every shared buffer. It is in production in Cortex-A class SoCs.
 - **Coherency state** tracks whether a cache line is clean, dirty, shared, unique, or invalid, and determines who may supply data.
-- **CHI** replaces AXI-style signal bundles with packetized request, response, data, and snoop channels that scale across distributed interconnects.
+- **CHI** (AMBA 5) replaces AXI-style signal bundles with packetized request, response, data, and snoop channels that scale across distributed interconnects. It powers Arm Neoverse and many datacenter SoCs.
 - **Verification difficulty** shifts from "did this burst obey the handshake?" to "did every cache line transition preserve single-writer, multi-reader correctness?"
 </QuickTake>
 
@@ -36,43 +45,59 @@ AXI can move the data, but it does not automatically know that CPU1 owns the lat
 
 ---
 
-## 2. ACE: AXI Coherency Extensions
+## 2. ACE: AXI Coherency Extensions (AMBA 4)
 
-ACE keeps the AXI mental model but adds coherency semantics. It still has the familiar AXI read and write channels, but coherent masters also participate in snoop traffic.
+ACE keeps the AXI mental model but adds coherency semantics. It still has the familiar AXI read and write channels, but coherent masters also participate in snoop traffic. ACE is defined in Part D of the AMBA AXI and ACE Protocol Specification (Arm IHI0022H) and is the coherency foundation for Arm CCI, CCN, and early CMN interconnects.
 
 ### ACE Channel Additions
 
 | Channel | Direction | Purpose |
 |---------|-----------|---------|
-| `AC` Snoop Address | Interconnect to master | Ask a cache to check or change a line's state |
-| `CR` Snoop Response | Master to interconnect | Report whether the cache has the line, whether it is dirty, and what happened |
-| `CD` Snoop Data | Master to interconnect | Return dirty data when the cache must supply the latest copy |
-| AXI `AR/AW` attributes | Master to interconnect | Declare transaction intent such as read shared, read unique, clean, invalidate, or make unique |
+| `AC` Snoop Address | Interconnect → master | Ask a cache to check or change a line's state |
+| `CR` Snoop Response | Master → interconnect | Report whether the cache has the line, whether it is dirty, and what happened |
+| `CD` Snoop Data | Master → interconnect | Return dirty data when the cache must supply the latest copy |
+| AXI `AR/AW` attributes | Master → interconnect | Declare transaction intent: `ReadShared`, `ReadUnique`, `CleanInvalid`, `MakeUnique`, etc. |
 
 ACE is best understood as AXI plus a side conversation between the interconnect and caches. A normal AXI read asks memory for data. A coherent ACE read may first ask other caches whether they already hold a newer copy.
 
-### Coherency States
+### ACE Transaction Types
 
-Verification engineers do not need to memorize every encoding on day one, but they must understand the intent:
+ACE extends the AXI `AxDOMAIN` and `AxSNOOP` fields to encode coherent transaction types. The key ones verification engineers must know:
+
+| Transaction | Purpose | Snoop behavior |
+|-------------|---------|----------------|
+| `ReadShared` | Read a line that may be shared | Interconnect may snoop other caches |
+| `ReadUnique` | Read a line with exclusive write intent | Interconnect invalidates other copies |
+| `CleanShared` | Clean a dirty line to memory, keep shared copy | No invalidation |
+| `CleanInvalid` | Clean a dirty line to memory, invalidate local copy | |
+| `MakeInvalid` | Invalidate other caches' copies without reading data | Used before writing |
+| `MakeUnique` | Obtain exclusive write permission without data fetch | Assumes local copy is valid |
+
+### Coherency States (MOESI Model)
+
+ACE implements a variant of the MOESI coherency model. Verification engineers do not need to memorize every encoding on day one, but they must understand the intent:
 
 | State | Meaning | Verification concern |
 |-------|---------|----------------------|
-| Invalid | Cache does not own a valid copy | Must not supply data |
-| Shared Clean | Multiple caches may read the same clean line | Any cache may drop it silently |
-| Unique Clean | One cache has the only clean copy | Can become dirty on write without external data fetch |
-| Unique Dirty | One cache has the only modified copy | Must be written back or supplied on snoop |
-| Shared Dirty / Owned-like state | A cache may supply modified data while others share clean copies | Response/data ordering becomes critical |
+| **Invalid (I)** | Cache does not own a valid copy | Must not supply data |
+| **Shared Clean (SC)** | Multiple caches may read the same clean line | Any cache may drop it silently |
+| **Unique Clean (UC)** | One cache has the only clean copy | Can become dirty on write without external data fetch |
+| **Unique Dirty (UD)** | One cache has the only modified copy | Must be written back or supplied on snoop |
+| **Shared Dirty (SD)** | Cache holds a modified copy while others share clean copies | Response/data ordering becomes critical; this cache is responsible for writeback |
 
-### Prose Diagram: ACE Coherent Cluster
+The critical invariant: **at most one cache may hold a line in a Dirty state at any time**. If two nodes believe they both have `UNIQUE_DIRTY`, the protocol is broken even if the next read happens to return the right value.
 
-Draw this as a left-to-right architecture:
+### ACE Snoop Flow Example
 
-- On the left, two CPU cores each have an L1 cache.
-- In the middle, an ACE coherent interconnect has two paths: the normal AXI read/write path and a snoop path.
-- On the right, a memory controller holds DRAM.
-- When CPU0 performs `ReadShared`, the interconnect checks whether CPU1 has a dirty copy. If CPU1 does, the `AC` channel carries the snoop request to CPU1, `CR` reports the state, and `CD` returns dirty data if required.
+When CPU0 performs `ReadShared` on a line held by CPU1 in Modified state:
 
-The important visual cue: memory is not always the authority. A peer cache may own the freshest value.
+1. **CPU0 → Interconnect**: `ReadShared` on `AR` channel with coherent domain attributes.
+2. **Interconnect → CPU1**: Snoop request on `AC` channel (e.g., `ReadOnce` snoop).
+3. **CPU1 → Interconnect**: `CR` response indicating data transfer and dirty status.
+4. **CPU1 → Interconnect**: Dirty cache-line data on `CD` channel.
+5. **Interconnect → CPU0**: Data returned on `R` channel. CPU0 caches in Shared Clean state.
+6. **CPU1**: Transitions from Modified to Invalid (if `MakeInvalid`) or Shared Clean (if `CleanShared`).
+7. **Interconnect → Memory**: Optionally writes dirty data to memory (write-back policy).
 
 ### ACE Verification Checklist
 
@@ -83,57 +108,77 @@ The important visual cue: memory is not always the authority. A peer cache may o
 | Clean operation | Dirty data reaches the point of coherency |
 | Evict dirty line | Writeback occurs before ownership is lost |
 | Simultaneous snoop and local request | Arbitration preserves legal state transitions |
+| Back-to-back snoops on same line | State machine handles rapid transitions correctly |
+| Barrier/fence operations | All preceding transactions complete before barrier passes |
 
 The scoreboard for ACE is no longer just an address/data comparator. It is a **cache-line ownership model**.
 
 ---
 
-## 3. CHI: Coherent Hub Interface
+## 3. CHI: Coherent Hub Interface (AMBA 5)
 
-AMBA 5 CHI was designed for larger coherent systems where a single centralized coherent interconnect becomes too expensive or too slow. CHI uses packets, nodes, and credit-based flow control rather than a simple AXI-style bus bundle.
+AMBA 5 CHI was designed for larger coherent systems where a single centralized coherent interconnect becomes too expensive or too slow. CHI uses packets, nodes, and credit-based flow control rather than AXI-style signal bundles. CHI is specified in the Arm AMBA 5 CHI Architecture Specification (IHI0050F) and powers the Arm CMN-600, CMN-700, and Neoverse interconnect family.
 
 ### CHI Node Roles
 
-| Node | Role | Typical block |
-|------|------|---------------|
-| Request Node (RN) | Initiates coherent requests | CPU cluster, GPU, coherent accelerator |
-| Home Node (HN) | Owns ordering and coherency decisions for an address region | Coherent directory, memory-side agent |
-| Subordinate Node (SN) | Services memory or peripheral access | DDR controller, IO bridge |
-| Snoop Node | Receives snoops and responds with state/data | Cache-owning request node |
+| Node | Full Name | Role | Typical block |
+|------|-----------|------|---------------|
+| **RN-F** | Request Node – Fully coherent | Initiates coherent requests, participates in snoops | CPU cluster, GPU with coherency |
+| **RN-I** | Request Node – I/O coherent | Initiates requests but does not cache | DMA engine, non-coherent accelerator |
+| **RN-D** | Request Node – DVM only | Handles Distributed Virtual Memory messages | SMMU/IOMMU |
+| **HN-F** | Home Node – Fully coherent | Owns ordering and coherency decisions for an address region; maintains directory/snoop filter | Coherent directory agent |
+| **HN-I** | Home Node – I/O | Services non-coherent/device address regions | Peripheral interconnect endpoint |
+| **SN-F** | Subordinate Node – memory | Services memory read/write requests | DDR controller |
+| **SN-I** | Subordinate Node – device | Services peripheral/device access | IO bridge |
 
 The most important change from ACE: the "interconnect" is no longer just a wire-level arbiter. It acts more like a distributed protocol router.
 
 ### CHI Channel Families
 
-| Channel family | Carries | Example use |
-|----------------|---------|-------------|
-| Request | Commands and addresses | Read, write, make unique, clean, evict |
-| Response | Acknowledgments and state outcomes | Completion, retry, snoop response summary |
-| Data | Cache-line payloads | Read data, write data, dirty data transfer |
-| Snoop | Coherency probes | Ask another node to invalidate, clean, or supply a line |
+CHI defines five logical channel families, each carrying structured packets (called flits):
 
-### Prose Diagram: CHI Mesh
+| Channel | Abbreviation | Carries | Example use |
+|---------|-------------|---------|-------------|
+| Request | REQ | Commands and addresses | Read, write, make unique, clean, evict |
+| Response | RSP | Acknowledgments and state outcomes | Completion, retry, snoop response summary |
+| Data | DAT | Cache-line payloads (typically 64 bytes) | Read data, write data, dirty data transfer |
+| Snoop | SNP | Coherency probes from HN to RN | Ask another node to invalidate, clean, or supply a line |
+| Misc | — | Protocol credits, DVM messages | Link credit flow, cache maintenance |
 
-Draw this as a 3-by-3 mesh:
+### CHI Credit-Based Flow Control
 
-- Top-left and top-right are CPU request nodes.
-- Center is a home node with directory state.
-- Bottom-left is a GPU request node.
-- Bottom-right is a memory subordinate node.
-- Links between nodes carry packets, not raw AXI channels.
-- A CPU read miss becomes a request packet to the home node. The home node checks directory state, sends snoop packets to possible owners, receives responses/data, then routes the final data packet back to the requester.
+Unlike AXI's `VALID`/`READY` per-channel handshake, CHI uses **link-level credits**. A receiver advertises how many flits it can accept per channel. A sender consumes a credit for each flit sent. If credits run out, the sender must wait.
 
-The visual cue: CHI coherency is a routed conversation across multiple nodes, not a single master talking directly to a slave.
+This decoupling means:
+- No combinatorial dependency between sender and receiver.
+- Deadlock analysis shifts from "who blocks READY?" to "who consumes credits without returning them?"
+- Credit leaks are a first-class verification target.
+
+### CHI Transaction Flow Example
+
+A ReadShared by RN-F₀ to an address owned by RN-F₁ in Modified state:
+
+1. **RN-F₀ → HN-F**: `ReadShared` request flit on REQ channel.
+2. **HN-F**: Checks directory — RN-F₁ has the line Modified.
+3. **HN-F → RN-F₁**: `SnpCleanInvalid` snoop flit on SNP channel.
+4. **RN-F₁ → HN-F**: `SnpResp` flit on RSP channel (state = dirty, will transfer data).
+5. **RN-F₁ → RN-F₀**: `CompData` flit on DAT channel (direct data transfer, bypassing memory).
+6. **HN-F → RN-F₀**: `Comp` response flit confirming completion.
+7. **HN-F**: Updates directory: RN-F₀ = Shared Clean, RN-F₁ = Invalid.
+8. **HN-F → SN-F**: Optionally writes the dirty data to memory.
+
+Note how data can flow directly between request nodes (peer-to-peer), bypassing the home node for latency. This is a key CHI optimization absent in ACE.
 
 ### Why CHI Scales Better
 
 | Dimension | ACE | CHI |
 |-----------|-----|-----|
-| Transport style | AXI-like channels plus snoop channels | Packetized coherent network |
+| Transport style | AXI-like channels plus snoop channels | Packetized coherent network (flits) |
 | Topology | Coherent interconnect, often centralized | Ring, mesh, or distributed NoC |
 | Flow control | VALID/READY-style channel flow | Credit-based packet flow |
 | Coherency tracking | Interconnect-driven snooping | Home-node/directory-oriented protocol decisions |
-| Best fit | Smaller coherent clusters | Many-core, multi-cluster, cache-rich SoCs |
+| Data routing | All data through interconnect | Peer-to-peer data transfer supported |
+| Best fit | Smaller coherent clusters (2–8 cores) | Many-core, multi-cluster, cache-rich SoCs |
 
 CHI is harder to verify because ordering is distributed. A legal response may return from a different path than the original request, and snoop data may arrive independently of final completion.
 
@@ -149,11 +194,12 @@ AXI verification asks:
 
 ACE and CHI verification adds:
 
-- Is there exactly one writer for a cache line?
+- Is there exactly one writer for a cache line at any instant?
 - Did every reader observe the newest committed data?
 - Did dirty data reach the correct owner before invalidation?
 - Did retry, credit, and response ordering rules avoid deadlock?
 - Did the directory state match the real cache contents?
+- Did barrier operations enforce ordering across all preceding transactions?
 
 ### Coherency Scoreboard Model
 
@@ -164,13 +210,15 @@ typedef enum {
   LINE_INVALID,
   LINE_SHARED_CLEAN,
   LINE_UNIQUE_CLEAN,
-  LINE_UNIQUE_DIRTY
+  LINE_UNIQUE_DIRTY,
+  LINE_SHARED_DIRTY
 } line_state_e;
 
 typedef struct {
-  line_state_e state_by_node[int];
+  line_state_e state_by_node[int]; // indexed by node ID
   bit [511:0]  latest_data;
-  int          owner_node;
+  int          owner_node;         // node responsible for writeback
+  int          sharer_count;       // number of sharers
 } coherent_line_model_s;
 ```
 
@@ -181,14 +229,32 @@ The scoreboard checks both data and ownership. If two nodes believe they both ha
 Simple AXI assertions bind to one interface. Coherency assertions often need a global view:
 
 ```systemverilog
-// Pseudo-property: two nodes may not both own a dirty unique copy.
+// Property: at most one node may hold a dirty unique copy (IHI0022H §D3).
 property p_single_dirty_owner(line_addr_t line);
   @(posedge clk) disable iff (!reset_n)
     count_nodes_with_unique_dirty(line) <= 1;
 endproperty
+
+// Property: shared dirty requires all other sharers to be clean (IHI0022H §D3).
+property p_shared_dirty_others_clean(line_addr_t line, int node_id);
+  @(posedge clk) disable iff (!reset_n)
+    (state_by_node[node_id] == LINE_SHARED_DIRTY) |->
+      (count_nodes_with_dirty(line) == 1);
+endproperty
 ```
 
 This is why coherent verification environments often combine protocol VIP, reference models, formal checks, and long randomized stress tests.
+
+### CHI-Specific Verification Targets
+
+| Target | What to verify |
+|--------|---------------|
+| Credit flow | Credits are consumed, returned, and never leaked |
+| Retry protocol | RetryAck → PCrdGrant → retry sequence completes correctly |
+| Exclusive access | LDREX/STREX atomicity across nodes |
+| DVM operations | TLB invalidate broadcast reaches all affected nodes |
+| Ordering | Ordered/Endpoint-order transactions complete in legal sequence |
+| Peer-to-peer data | Direct RN-to-RN data transfer is correct and ordered |
 
 ---
 
@@ -197,23 +263,37 @@ This is why coherent verification environments often combine protocol VIP, refer
 | Symptom | Likely root cause | First signal/model to inspect |
 |---------|-------------------|-------------------------------|
 | CPU reads stale data after DMA or peer CPU write | Missing clean/invalidate or wrong ownership transfer | Cache-line state model |
-| Snoop returns clean when line is dirty | Incorrect cache state transition | `CR`/snoop response path |
-| System hangs under coherent stress | Credit leak, retry loop, or cyclic dependency | CHI request/response credits |
+| Snoop returns clean when line is dirty | Incorrect cache state transition | `CR`/snoop response path or SNP response |
+| System hangs under coherent stress | Credit leak, retry loop, or cyclic dependency | CHI request/response credits; ACE channel stalls |
 | Rare data mismatch after eviction | Dirty writeback lost or reordered | Data channel and home-node completion log |
 | One cluster starves another | QoS or virtual-channel arbitration issue | Interconnect routing and credit counters |
+| Directory state disagrees with cache | Snoop response lost or state transition bug | Directory dump vs. cache probe |
 
 The practical rule: when debugging coherent protocols, do not start with a waveform at signal level. Start with a timeline of **line ownership events**, then drill into the channel waveforms that implement the suspicious transition.
 
 ---
 
+## 6. Industry Context
+
+ACE and CHI are not experimental or future protocols. They represent the current production standard for coherent SoC interconnects:
+
+- **ACE** is used in Arm CCI-400, CCI-500, and CCN-502/504 interconnects, powering mobile SoCs (Cortex-A class) across Qualcomm, Samsung, MediaTek, and others.
+- **CHI** is used in Arm CMN-600, CMN-700, and CMN-S3 interconnects, powering server-class Neoverse platforms, datacenter accelerators, and high-performance computing SoCs.
+- Both protocols are actively used in production silicon shipping today.
+
+Understanding ACE/CHI at a staff-level depth is essential for engineers working on CPU subsystem verification, cache hierarchy validation, interconnect design verification, or SoC-level coherency signoff.
+
+---
+
 ## Summary
 
-ACE and CHI are the natural next step after AXI:
+ACE and CHI are the coherency protocols that make modern multi-core SoCs work:
 
 1. **AXI4** moves data quickly but does not solve cache coherency.
-2. **ACE** extends AXI with snoop channels so coherent caches can share, clean, invalidate, and transfer dirty lines.
-3. **CHI** packetizes coherency for large distributed fabrics, using request, response, data, and snoop channel families across rings or meshes.
-4. Verification moves from transaction checking to global ownership modeling.
+2. **ACE** (AMBA 4) extends AXI with snoop channels (AC/CR/CD) so coherent caches can share, clean, invalidate, and transfer dirty lines. It uses MOESI-style state tracking.
+3. **CHI** (AMBA 5) packetizes coherency for large distributed fabrics, using request, response, data, and snoop channel families with credit-based flow control across rings or meshes.
+4. Verification moves from transaction checking to global ownership modeling, with scoreboards that track per-node cache-line state and assertions that enforce single-writer invariants.
+5. Both protocols are in production today across mobile, server, and datacenter SoCs.
 
 If AXI teaches you how high-performance transfers work, ACE and CHI teach you how high-performance systems stay correct when many agents cache the same memory.
 
@@ -250,5 +330,16 @@ If AXI teaches you how high-performance transfers work, ACE and CHI teach you ho
     ]}
     correctAnswer="The scoreboard must also model cache-line ownership and legal state transitions, not just final data values."
     explanation="A coherent system can return the right data once while still violating ownership rules. The reference model must track which node owns, shares, dirties, invalidates, or supplies each cache line."
+  />
+  <QuizQuestion
+    question="How does CHI's flow control differ from AXI's VALID/READY?"
+    options={[
+      "CHI has no flow control and drops packets freely.",
+      "CHI uses credit-based flow control where a receiver advertises capacity and the sender consumes credits per flit.",
+      "CHI uses the same VALID/READY handshake as AXI.",
+      "CHI requires all transactions to complete before new ones can start."
+    ]}
+    correctAnswer="CHI uses credit-based flow control where a receiver advertises capacity and the sender consumes credits per flit."
+    explanation="Credit-based flow eliminates combinatorial dependencies between sender and receiver. Deadlock analysis focuses on credit consumption and return rather than READY signal blocking."
   />
 </Quiz>

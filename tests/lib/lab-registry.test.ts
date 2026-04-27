@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { getAllLabs, getLabById, LAB_REGISTRY } from '@/lib/lab-registry';
+
+const repoRoot = process.cwd();
 
 describe('lab-registry utilities', () => {
   describe('getAllLabs', () => {
@@ -43,6 +47,52 @@ describe('lab-registry utilities', () => {
     it('returns undefined for an empty string ID', () => {
       const result = getLabById('');
       expect(result).toBeUndefined();
+    });
+  });
+
+  describe('capstone lab registration', () => {
+    it('registers the UVM mini capstone with matching lab metadata and assets', () => {
+      const lab = getLabById('uvm-mini-capstone');
+      expect(lab).toBeDefined();
+      expect(lab?.status).toBe('available');
+      expect(lab?.graderType).toBe('uvm');
+      expect(lab?.steps).toHaveLength(4);
+
+      const assetPath = path.join(repoRoot, lab!.assetLocation);
+      const metadataPath = path.join(assetPath, 'lab.json');
+      const starterPath = path.join(assetPath, 'testbench.sv');
+      const solutionPath = path.join(assetPath, 'solution.sv');
+
+      expect(fs.existsSync(metadataPath)).toBe(true);
+      expect(fs.existsSync(starterPath)).toBe(true);
+      expect(fs.existsSync(solutionPath)).toBe(true);
+
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+      expect(metadata.id).toBe(lab?.id);
+      expect(metadata.title).toBe(lab?.title);
+    });
+
+    it('registers the SoC strategy capstone with template, model answer, and rubric assets', () => {
+      const lab = getLabById('soc-strategy-capstone');
+      expect(lab).toBeDefined();
+      expect(lab?.status).toBe('available');
+      expect(lab?.owningModule).toBe('E-SOC-1');
+      expect(lab?.steps).toHaveLength(4);
+
+      const assetPath = path.join(repoRoot, lab!.assetLocation);
+      const metadataPath = path.join(assetPath, 'lab.json');
+      const templatePath = path.join(assetPath, 'strategy_template.md');
+      const modelPath = path.join(assetPath, 'model_solution.md');
+      const readmePath = path.join(assetPath, 'README.md');
+
+      expect(fs.existsSync(metadataPath)).toBe(true);
+      expect(fs.existsSync(templatePath)).toBe(true);
+      expect(fs.existsSync(modelPath)).toBe(true);
+      expect(fs.existsSync(readmePath)).toBe(true);
+
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+      expect(metadata.id).toBe(lab?.id);
+      expect(metadata.description).toContain('formal/liveness');
     });
   });
 });

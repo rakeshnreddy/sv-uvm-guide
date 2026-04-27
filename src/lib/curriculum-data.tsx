@@ -739,13 +739,13 @@ export const curriculumData: Module[] = [
         ]
       },
       {
-        "title": "Future AMBA Protocols: ACE and CHI",
+        "title": "AMBA Coherency Protocols: ACE and CHI",
         "slug": "B-AMBA-F2_Future_Protocols_ACE_CHI",
         "topics": [
           {
-            "title": "Future AMBA Protocols: ACE and CHI",
+            "title": "AMBA Coherency Protocols: ACE and CHI",
             "slug": "index",
-            "description": "Preview coherent AMBA protocols beyond AXI4: ACE cache coherency extensions and AMBA 5 CHI packetized interconnects for scalable multi-core systems."
+            "description": "Master coherent AMBA protocols in production today: ACE cache coherency extensions for AXI and AMBA 5 CHI packetized interconnects for scalable multi-core SoCs."
           }
         ]
       },

@@ -61,16 +61,16 @@ Secondary sources, such as Siemens, Synopsys, Cadence, Arm implementation guides
 
 | ID | Priority | Status | Depends On | Primary Surfaces |
 | --- | --- | --- | --- | --- |
-| BACK-01-HREADY-HREADYOUT-CORRECTION | P0 | todo | none | AHB curriculum, AHB visualizer, AHB flashcards |
-| BACK-02-AXI-4KB-RULE-CORRECTION | P0 | todo | none | AXI burst curriculum, bridge curriculum, burst visualizer, AXI flashcards |
-| BACK-03-SV-SCHEDULING-REGIONS | P0 | todo | none | SV scheduling modules, clocking-block content, scheduling visualizer, flashcards |
-| BACK-04-INTERVIEW-BANKS-RUBRICS | P1 | todo | BACK-01, BACK-02, BACK-03 | `content/interview-questions/`, schema tests |
-| BACK-05-UVM-PHASING-CONCURRENCY | P1 | todo | none | I-UVM phasing module, phase visualizer, UVM interview bank |
-| BACK-06-AXI-DEADLOCK-LAB | P1 | todo | BACK-02 | AXI labs, deadlock curriculum, lab registry |
-| BACK-07-BRIDGE-SPLIT-TRANSACTION-LAB | P1 | todo | BACK-01, BACK-02 | bridge labs, bridge curriculum, lab registry |
-| BACK-08-MINI-UVM-CAPSTONE | P1 | todo | BACK-04 | UVM capstone lab, scoreboards/coverage/factory topics |
-| BACK-09-SOC-VERIFICATION-STRATEGY | P1 | todo | BACK-04, BACK-08 | staff-level SoC module, strategy capstone lab |
-| BACK-10-ACE-CHI-COHERENCY-DEEPENING | P1 | todo | BACK-04 | ACE/CHI curriculum, coherency interview bank, flashcards |
+| BACK-01-HREADY-HREADYOUT-CORRECTION | P0 | complete | none | AHB curriculum, AHB visualizer, AHB flashcards |
+| BACK-02-AXI-4KB-RULE-CORRECTION | P0 | complete | none | AXI burst curriculum, bridge curriculum, burst visualizer, AXI flashcards |
+| BACK-03-SV-SCHEDULING-REGIONS | P0 | complete | none | SV scheduling modules, clocking-block content, scheduling visualizer, flashcards |
+| BACK-04-INTERVIEW-BANKS-RUBRICS | P1 | complete | BACK-01, BACK-02, BACK-03 | `content/interview-questions/`, schema tests |
+| BACK-05-UVM-PHASING-CONCURRENCY | P1 | complete | none | I-UVM phasing module, phase visualizer, UVM interview bank |
+| BACK-06-AXI-DEADLOCK-LAB | P1 | complete | BACK-02 | AXI labs, deadlock curriculum, lab registry |
+| BACK-07-BRIDGE-SPLIT-TRANSACTION-LAB | P1 | complete | BACK-01, BACK-02 | bridge labs, bridge curriculum, lab registry |
+| BACK-08-MINI-UVM-CAPSTONE | P1 | complete | BACK-04 | UVM capstone lab, scoreboards/coverage/factory topics |
+| BACK-09-SOC-VERIFICATION-STRATEGY | P1 | complete | BACK-04, BACK-08 | staff-level SoC module, strategy capstone lab |
+| BACK-10-ACE-CHI-COHERENCY-DEEPENING | P1 | complete | BACK-04 | ACE/CHI curriculum, coherency interview bank, flashcards |
 | BACK-11-SOURCE-METADATA-GATE | P1 | todo | BACK-01, BACK-02, BACK-03 | MDX frontmatter, source schema tests |
 | BACK-12-VISUALIZER-ACCURACY-A11Y | P2 | todo | BACK-01, BACK-03 | AHB, scheduling, SVA, RAL, visualizer accessibility |
 | BACK-13-FLASHCARD-DEPTH-ALIGNMENT | P2 | todo | BACK-01, BACK-02, BACK-10 | flashcard decks, deck registration tests |

@@ -93,6 +93,74 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
       }
     ]
   },
+  "scoreboard-reference-model": {
+    id: "scoreboard-reference-model",
+    title: "Self-Checking Scoreboard with Reference Model",
+    description: "Implement a UVM scoreboard that consumes monitor transactions, predicts expected ALU results, and reports mismatches automatically.",
+    owningModule: "A-UVM-6",
+    routeSlug: "scoreboard-reference-model",
+    prerequisites: ["scoreboard-decoupling"],
+    assetLocation: "content/curriculum/labs/scoreboard/lab1_reference_model",
+    status: "available",
+    graderType: "uvm",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Implement the Scoreboard",
+        instructions: "Open `testbench.sv` and implement `alu_scoreboard` with a `uvm_tlm_analysis_fifo`, reference model, and compare logic.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Wire Analysis Traffic",
+        instructions: "Create the scoreboard in `alu_env` and connect `monitor.ap` to the scoreboard FIFO's `analysis_export` in `connect_phase`.",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Verify Self-Checking Behavior",
+        instructions: "Run the lab and confirm each random ALU transaction produces a PASS comparison; then intentionally corrupt the reference model to see `uvm_error` mismatches.",
+        starterCode: ""
+      }
+    ]
+  },
+  "uvm-mini-capstone": {
+    id: "uvm-mini-capstone",
+    title: "Mini UVM FIFO Environment Capstone",
+    description: "Build a complete FIFO UVM environment with an active agent, sequence, driver, monitor, scoreboard, coverage subscriber, and factory override.",
+    owningModule: "A-UVM-6",
+    routeSlug: "uvm-mini-capstone",
+    prerequisites: ["scoreboard-reference-model", "scoreboard-decoupling"],
+    assetLocation: "content/curriculum/labs/uvm_capstone/lab1_fifo_env",
+    status: "available",
+    graderType: "uvm",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Complete the Active Agent",
+        instructions: "Fill in the transaction, sequence helpers, driver, monitor, sequencer, and active-agent construction in `testbench.sv`.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Wire Checking and Coverage",
+        instructions: "Connect the monitor analysis port to the scoreboard FIFO and coverage subscriber, then implement queue-based compare logic and required coverage bins.",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Exercise the Factory Override",
+        instructions: "Override `fifo_base_seq` with `fifo_capstone_seq`, create the base type through the factory, and confirm the capstone sequence runs.",
+        starterCode: ""
+      },
+      {
+        id: "4",
+        title: "Step 4: Prove the Bug and Closure",
+        instructions: "Run once with `+define+INJECT_FIFO_BUG` to see a scoreboard mismatch, then run without the define to confirm zero mismatches and coverage closure.",
+        starterCode: ""
+      }
+    ]
+  },
   "config-debug": {
     id: "config-debug",
     title: "Null Virtual Interface",
@@ -120,6 +188,37 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
         id: "3",
         title: "Step 3: Fix the Typo",
         instructions: "Realign the strings so they match, then run the simulation and look for `[DRV] Wiggling pins`.",
+        starterCode: ""
+      }
+    ]
+  },
+  "debug-waveform-trigger": {
+    id: "debug-waveform-trigger",
+    title: "Triggering Waveforms via Event Bus",
+    description: "Build an event bus subscriber that listens for watchdog timeout tags and starts selective waveform capture only when the failure is near.",
+    owningModule: "E-DBG-1",
+    routeSlug: "debug-waveform-trigger",
+    prerequisites: ["config-debug"],
+    assetLocation: "content/curriculum/labs/uvm_debug/lab1_waveform_trigger",
+    status: "available",
+    graderType: "uvm",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Inspect the Event Bus",
+        instructions: "Open `testbench.sv` and locate the `debug_event_bus` plus the watchdog publisher that emits `WATCHDOG_TIMEOUT`.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Add the Subscriber",
+        instructions: "Implement `waveform_trigger_sub` as a `uvm_subscriber#(debug_event)` and trigger waveform capture when the timeout tag appears.",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Wire and Verify",
+        instructions: "Connect the subscriber to the event bus, rerun, and confirm selective waveform capture starts only near the timeout.",
         starterCode: ""
       }
     ]
@@ -397,6 +496,43 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
         id: "3",
         title: "Step 3: Verify Monitor Behavior",
         instructions: "Rerun the simulation. Verify the driver is disabled but the `[SPI_MON]` continues to log firmware traffic.",
+        starterCode: ""
+      }
+    ]
+  },
+  "soc-strategy-capstone": {
+    id: "soc-strategy-capstone",
+    title: "Staff-Level SoC Verification Strategy Review",
+    description: "Create and review a staff-level SoC verification strategy covering VIP reuse, coverage, formal/liveness, debug triage, regression gates, and signoff risks.",
+    owningModule: "E-SOC-1",
+    routeSlug: "soc-strategy-capstone",
+    prerequisites: ["soc-vip-reuse", "uvm-mini-capstone"],
+    assetLocation: "content/curriculum/labs/soc_level/lab2_soc_strategy_capstone",
+    status: "available",
+    graderType: "none",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Define Strategy Boundaries",
+        instructions: "Open `strategy_template.md` and split responsibilities across block, subsystem, SoC, firmware, and formal owners.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Build the Coverage and Liveness Plan",
+        instructions: "Fill in measurable system coverage goals plus formal/liveness properties with trigger, obligation, failure meaning, and owner.",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Add Debug, Regression, and Risks",
+        instructions: "Define the failure evidence package, bucketing workflow, smoke/nightly/stress/signoff suites, and risk register.",
+        starterCode: ""
+      },
+      {
+        id: "4",
+        title: "Step 4: Peer Review Against the Rubric",
+        instructions: "Score the plan with the rubric, then compare against `model_solution.md` to identify missing staff-level reasoning.",
         starterCode: ""
       }
     ]
