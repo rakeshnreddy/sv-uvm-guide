@@ -46,6 +46,7 @@ import E_DBG_1_Advanced_Debug from '../../content/flashcards/E-DBG-1_Advanced_De
 import E_INT_1_UVM_Formal from '../../content/flashcards/E-INT-1_UVM_Formal.json';
 import E_PERF_1_UVM_Performance from '../../content/flashcards/E-PERF-1_UVM_Performance.json';
 import E_SOC_1_SoC_Verification from '../../content/flashcards/E-SOC-1_SoC_Verification.json';
+import E_PWR_1_Power_Aware_Verification from '../../content/flashcards/E-PWR-1_Power_Aware_Verification.json';
 import E_PSS_1_PSS from '../../content/flashcards/E-PSS-1_PSS.json';
 import E_PYUVM_1_Python_Verification from '../../content/flashcards/E-PYUVM-1_Python_Verification.json';
 import E_AI_1_AI_Driven_Verification from '../../content/flashcards/E-AI-1_AI_Driven_Verification.json';
@@ -110,6 +111,7 @@ export const flashcardDecks: Record<string, any[]> = {
   'E-INT-1_UVM_Formal': E_INT_1_UVM_Formal,
   'E-PERF-1_UVM_Performance': E_PERF_1_UVM_Performance,
   'E-SOC-1_SoC_Verification': E_SOC_1_SoC_Verification,
+  'E-PWR-1_Power_Aware_Verification': E_PWR_1_Power_Aware_Verification,
   'E-PSS-1_PSS': E_PSS_1_PSS,
   'E-PYUVM-1_Python_Verification': E_PYUVM_1_Python_Verification,
   'E-AI-1_AI_Driven_Verification': E_AI_1_AI_Driven_Verification,

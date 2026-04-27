@@ -73,7 +73,7 @@ Secondary sources, such as Siemens, Synopsys, Cadence, Arm implementation guides
 | BACK-10-ACE-CHI-COHERENCY-DEEPENING | P1 | complete | BACK-04 | ACE/CHI curriculum, coherency interview bank, flashcards |
 | BACK-11-SOURCE-METADATA-GATE | P1 | complete | BACK-01, BACK-02, BACK-03 | MDX frontmatter, source schema tests |
 | BACK-12-VISUALIZER-ACCURACY-A11Y | P2 | complete | BACK-01, BACK-03 | Improve visualizer accuracy, accessibility labels, color-independent state cues, and reduced-motion behavior. |
-| BACK-13-FLASHCARD-DEPTH-ALIGNMENT | P2 | todo | BACK-01, BACK-02, BACK-10 | flashcard decks, deck registration tests |
+| BACK-13-FLASHCARD-DEPTH-ALIGNMENT | P2 | complete | BACK-01, BACK-02, BACK-10 | Expand thin decks and add missing senior/staff flashcard decks with registration tests. |
 | BACK-14-E2E-REGRESSION-GATES | P2 | todo | BACK-11 | Playwright navigation, lab links, broken-link crawler |
 | BACK-15-AI-CONTENT-CLAIM-TIGHTENING | P3 | todo | none | AI-driven verification curriculum and flashcards |
 
