@@ -28,7 +28,7 @@ describe('SVSchedulerRegionVisualizer', () => {
     
     // Initial step is 0 (Pre-Active)
     expect(screen.getByText('Cycle Step: 0/6')).toBeInTheDocument();
-    expect(screen.getByText('Pre-Active Phase')).toBeInTheDocument();
+    expect(screen.getByText('Preponed Phase')).toBeInTheDocument();
     
     // Click Next -> step 1 (Active)
     fireEvent.click(nextBtn);

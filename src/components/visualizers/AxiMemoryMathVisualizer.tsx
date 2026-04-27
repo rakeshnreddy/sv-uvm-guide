@@ -129,7 +129,7 @@ export default function AxiMemoryMathVisualizer() {
       {/* Header */}
       <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700 flex items-center justify-between">
         <h3 className="text-base font-semibold text-white">AXI Burst Memory Math</h3>
-        <button onClick={reset} title="Reset" className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors">
+        <button onClick={reset} title="Reset" aria-label="Reset parameters" className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors">
           <RotateCcw size={16} />
         </button>
       </div>
@@ -145,6 +145,7 @@ export default function AxiMemoryMathVisualizer() {
                 ? 'bg-blue-600 text-white'
                 : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
             }`}
+            aria-pressed={JSON.stringify(config) === JSON.stringify(p.config)}
           >
             {p.name}
           </button>
@@ -212,6 +213,7 @@ export default function AxiMemoryMathVisualizer() {
                         ? 'bg-blue-600 text-white'
                         : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                     }`}
+                    aria-pressed={config.axburst === i}
                   >
                     {name}
                   </button>
@@ -232,6 +234,7 @@ export default function AxiMemoryMathVisualizer() {
                         ? 'bg-purple-600 text-white'
                         : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
                     }`}
+                    aria-pressed={busWidth === w}
                   >
                     {w}-bit
                   </button>

@@ -257,6 +257,7 @@ export default function AhbPipelineBurstVisualizer() {
               disabled={currentCycle === 0}
               className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
               title="Step Backward"
+              aria-label="Step Backward"
             >
               <SkipBack size={18} />
             </button>
@@ -265,6 +266,7 @@ export default function AhbPipelineBurstVisualizer() {
               disabled={currentCycle >= scenario.maxCycles}
               className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed border-x border-slate-300 dark:border-slate-700 transition-colors"
               title={isPlaying ? "Pause" : "Play"}
+              aria-label={isPlaying ? "Pause simulation" : "Play simulation"}
             >
               {isPlaying ? <Pause size={18} /> : <Play size={18} />}
             </button>
@@ -276,6 +278,7 @@ export default function AhbPipelineBurstVisualizer() {
               disabled={currentCycle >= scenario.maxCycles - 1}
               className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed border-r border-slate-300 dark:border-slate-700 transition-colors"
               title="Step Forward"
+              aria-label="Step Forward"
             >
               <SkipForward size={18} />
             </button>
@@ -283,6 +286,7 @@ export default function AhbPipelineBurstVisualizer() {
               onClick={handleReset}
               className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
               title="Reset"
+              aria-label="Reset simulation"
             >
               <RotateCcw size={18} />
             </button>

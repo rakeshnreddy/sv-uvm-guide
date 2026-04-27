@@ -17,13 +17,13 @@ interface RegionStep {
 }
 
 const REGIONS = [
-  'Pre-Active',
+  'Preponed',
   'Active',
   'Inactive',
   'NBA',
   'Observed',
   'Reactive',
-  'Re-Inactive'
+  'Postponed'
 ];
 
 const SCENARIOS: Record<ScenarioMode, { title: string; code: string; timeline: RegionStep[] }> = {
@@ -31,20 +31,20 @@ const SCENARIOS: Record<ScenarioMode, { title: string; code: string; timeline: R
     title: 'Normal Flip-Flop (Non-Blocking)',
     code: `always_ff @(posedge clk) begin\n  q <= d; // NBA update scheduled\nend`,
     timeline: [
-      { region: 'Pre-Active', description: 'Sample inputs before clock edge.', tokenPosition: 0, highlightCode: '', values: { clk: '0', d: '1', q: '0' } },
+      { region: 'Preponed', description: 'Sample inputs before clock edge.', tokenPosition: 0, highlightCode: '', values: { clk: '0', d: '1', q: '0' } },
       { region: 'Active', description: 'clk posedge detected. Evaluate RHS of q <= d (d is 1). Schedule NBA update.', tokenPosition: 1, highlightCode: 'q <= d', values: { clk: '1', d: '1', q: '0' } },
       { region: 'Inactive', description: 'Process #0 delays. (None in this example, skipping).', tokenPosition: 2, highlightCode: '', values: { clk: '1', d: '1', q: '0' } },
       { region: 'NBA', description: 'Execute scheduled non-blocking updates. q becomes 1.', tokenPosition: 3, highlightCode: 'q <= d', values: { clk: '1', d: '1', q: '1' } },
       { region: 'Observed', description: 'Evaluate concurrent assertions with stable values.', tokenPosition: 4, highlightCode: '', values: { clk: '1', d: '1', q: '1' } },
       { region: 'Reactive', description: 'Program blocks (testbench) execute using observed values.', tokenPosition: 5, highlightCode: '', values: { clk: '1', d: '1', q: '1' } },
-      { region: 'Re-Inactive', description: 'Final cleanup before advancing simulation time.', tokenPosition: 6, highlightCode: '', values: { clk: '1', d: '1', q: '1' } }
+      { region: 'Postponed', description: 'Final cleanup before advancing simulation time.', tokenPosition: 6, highlightCode: '', values: { clk: '1', d: '1', q: '1' } }
     ]
   },
   race: {
     title: 'Race Condition (Blocking)',
     code: `always @(posedge clk) q1 = d;  // Process A\nalways @(posedge clk) q2 = q1; // Process B`,
     timeline: [
-      { region: 'Pre-Active', description: 'Initial state before clock edge.', tokenPosition: 0, highlightCode: '', values: { clk: '0', d: '1', q1: '0', q2: '0' } },
+      { region: 'Preponed', description: 'Initial state before clock edge.', tokenPosition: 0, highlightCode: '', values: { clk: '0', d: '1', q1: '0', q2: '0' } },
       { region: 'Active', description: 'Process A executes: q1 = d. q1 updates immediately to 1.', tokenPosition: 1, highlightCode: 'q1 = d', values: { clk: '1', d: '1', q1: '1', q2: '0' } },
       { region: 'Active', description: 'Process B executes: q2 = q1. It sees the new q1 value (1). (If B ran first, it would see 0!)', tokenPosition: 1, highlightCode: 'q2 = q1', values: { clk: '1', d: '1', q1: '1', q2: '1' } },
       { region: 'Inactive', description: 'Skip Inactive region.', tokenPosition: 2, highlightCode: '', values: { clk: '1', d: '1', q1: '1', q2: '1' } },
@@ -110,6 +110,8 @@ export const SVSchedulerRegionVisualizer = () => {
               size="sm"
               onClick={() => setScenario('normal')}
               data-testid="mode-normal"
+              aria-label="Select normal flip-flop scenario"
+              aria-pressed={mode === 'normal'}
             >
               Normal Flip-Flop
             </Button>
@@ -118,6 +120,8 @@ export const SVSchedulerRegionVisualizer = () => {
               size="sm"
               onClick={() => setScenario('race')}
               data-testid="mode-race"
+              aria-label="Select race condition scenario"
+              aria-pressed={mode === 'race'}
             >
               Race Condition
             </Button>
@@ -245,19 +249,19 @@ export const SVSchedulerRegionVisualizer = () => {
 
         {/* Controls */}
         <div className="flex flex-wrap items-center justify-center gap-2 mt-8 md:mt-10 pt-6 border-t border-slate-100 dark:border-slate-800/50">
-          <Button variant="outline" size="sm" onClick={handleReset} data-testid="btn-reset">
+          <Button variant="outline" size="sm" onClick={handleReset} data-testid="btn-reset" aria-label="Reset simulation to beginning">
             <RotateCcw className="w-4 h-4 mr-2 text-slate-500" />
             Reset
           </Button>
           <div className="flex ml-2 mr-2 bg-slate-100 dark:bg-slate-800 rounded-lg p-1">
-            <Button variant="ghost" size="sm" onClick={handlePrev} disabled={step === 0 || isPlaying} data-testid="btn-prev">
+            <Button variant="ghost" size="sm" onClick={handlePrev} disabled={step === 0 || isPlaying} data-testid="btn-prev" aria-label="Previous step">
               <SkipBack className="w-4 h-4 text-slate-600" />
             </Button>
-            <Button variant="default" size="sm" onClick={togglePlay} className="px-6" data-testid="btn-play">
+            <Button variant="default" size="sm" onClick={togglePlay} className="px-6" data-testid="btn-play" aria-label={isPlaying ? 'Pause simulation' : step >= scenario.timeline.length - 1 ? 'Replay simulation' : 'Play simulation'}>
               {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
                <span className="hidden sm:inline-block ml-2">{isPlaying ? 'Pause' : step >= scenario.timeline.length - 1 ? 'Replay' : 'Play'}</span>
             </Button>
-            <Button variant="ghost" size="sm" onClick={handleNext} disabled={step >= scenario.timeline.length - 1 || isPlaying} data-testid="btn-next">
+            <Button variant="ghost" size="sm" onClick={handleNext} disabled={step >= scenario.timeline.length - 1 || isPlaying} data-testid="btn-next" aria-label="Next step">
               <SkipForward className="w-4 h-4 text-slate-600" />
             </Button>
           </div>

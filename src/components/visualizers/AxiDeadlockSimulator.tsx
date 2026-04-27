@@ -354,16 +354,16 @@ export default function AxiDeadlockSimulator() {
 
       {/* Controls */}
       <div className="px-4 py-3 bg-slate-800/50 border-t border-slate-700 flex items-center justify-center gap-2">
-        <button onClick={reset} title="Reset" className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors">
+        <button onClick={reset} title="Reset" aria-label="Reset simulation" className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors">
           <RotateCcw size={16} />
         </button>
-        <button onClick={stepBackward} title="Step Backward" disabled={cycle <= 0} className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+        <button onClick={stepBackward} title="Step Backward" aria-label="Step Backward" disabled={cycle <= 0} className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
           <SkipBack size={16} />
         </button>
-        <button onClick={() => setIsPlaying(!isPlaying)} title={isPlaying ? 'Pause' : 'Play'} className="p-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors">
+        <button onClick={() => setIsPlaying(!isPlaying)} title={isPlaying ? 'Pause' : 'Play'} aria-label={isPlaying ? 'Pause simulation' : 'Play simulation'} className="p-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors">
           {isPlaying ? <Pause size={18} /> : <Play size={18} />}
         </button>
-        <button onClick={stepForward} title="Step Forward" disabled={cycle >= maxCycle} className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
+        <button onClick={stepForward} title="Step Forward" aria-label="Step Forward" disabled={cycle >= maxCycle} className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
           <SkipForward size={16} />
         </button>
       </div>
