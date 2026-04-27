@@ -81,8 +81,8 @@
 | 71 | BACK-11-SOURCE-METADATA-GATE | P1 | complete | BACK-01-HREADY-HREADYOUT-CORRECTION, BACK-02-AXI-4KB-RULE-CORRECTION, BACK-03-SV-SCHEDULING-REGIONS | Add source metadata schema and tests for source-critical curriculum pages. |
 | 72 | BACK-12-VISUALIZER-ACCURACY-A11Y | P2 | complete | BACK-01-HREADY-HREADYOUT-CORRECTION, BACK-03-SV-SCHEDULING-REGIONS | Improve visualizer accuracy, accessibility labels, color-independent state cues, and reduced-motion behavior. |
 | 73 | BACK-13-FLASHCARD-DEPTH-ALIGNMENT | P2 | complete | BACK-01-HREADY-HREADYOUT-CORRECTION, BACK-02-AXI-4KB-RULE-CORRECTION, BACK-10-ACE-CHI-COHERENCY-DEEPENING | Expand thin decks and add missing senior/staff flashcard decks with registration tests. |
-| 74 | BACK-14-E2E-REGRESSION-GATES | P2 | todo | BACK-11-SOURCE-METADATA-GATE | Add stronger Playwright gates for breadcrumbs, prev/next, lab links, flashcard flip, quiz remediation, and broken internal links. |
-| 75 | BACK-15-AI-CONTENT-CLAIM-TIGHTENING | P3 | todo | none | Tighten AI-driven verification claims so coverage-closure language is careful, sourced, and not overstated. |
+| 74 | BACK-14-E2E-REGRESSION-GATES | P2 | complete | BACK-11-SOURCE-METADATA-GATE | Add stronger Playwright gates for breadcrumbs, prev/next, lab links, flashcard flip, quiz remediation, and broken internal links. |
+| 75 | BACK-15-AI-CONTENT-CLAIM-TIGHTENING | P3 | complete | none | Tighten AI-driven verification claims so coverage-closure language is careful, sourced, and not overstated. |
 
 ---
 
