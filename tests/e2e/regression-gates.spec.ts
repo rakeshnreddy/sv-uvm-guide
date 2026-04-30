@@ -28,16 +28,20 @@ test.describe('Curriculum Interaction Gates', () => {
     });
 
     await test.step('Quiz validation', async () => {
-      const quizSection = page.locator('article .Quiz, article div:has(h3)').filter({ has: page.locator('button') }).first();
-      await expect(quizSection).toBeVisible({ timeout: 30000 });
-      await quizSection.scrollIntoViewIfNeeded();
+      const firstQuestion = page.getByRole('heading', {
+        name: /If a master wants to poll a hardware status register/,
+      });
+      await expect(firstQuestion).toBeVisible({ timeout: 30000 });
+      await firstQuestion.scrollIntoViewIfNeeded();
 
-      const options = quizSection.locator('button.outline');
-      await expect(options.first()).toBeVisible({ timeout: 15000 });
-      await options.first().click();
+      const firstAnswer = page.getByRole('button', {
+        name: "4'b0000 (Non-bufferable, Non-cacheable) to ensure strict ordering",
+      });
+      await expect(firstAnswer).toBeVisible({ timeout: 15000 });
+      await firstAnswer.click();
 
-      await expect(quizSection.locator('text=/Correct!|Incorrect./')).toBeVisible({ timeout: 15000 });
-      await expect(quizSection.getByRole('button', { name: 'Next Question' })).toBeVisible({ timeout: 15000 });
+      await expect(page.getByText(/Correct!|Incorrect\./).first()).toBeVisible({ timeout: 15000 });
+      await expect(page.getByRole('button', { name: 'Next Question' })).toBeVisible({ timeout: 15000 });
     });
   });
 
@@ -46,7 +50,7 @@ test.describe('Curriculum Interaction Gates', () => {
     await expect(page.locator('header h1')).toBeVisible({ timeout: 60000 });
 
     await test.step('LabLink validation', async () => {
-      const labLink = page.locator('a[href^="/labs/"]').first();
+      const labLink = page.locator('a[href^="/practice/lab/"]').first();
       await labLink.scrollIntoViewIfNeeded();
       await expect(labLink).toBeVisible({ timeout: 30000 });
       const labHref = await labLink.getAttribute('href');

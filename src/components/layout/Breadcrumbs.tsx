@@ -77,7 +77,7 @@ export default function Breadcrumbs({ slug }: BreadcrumbsProps) {
 
   return (
     <div className="bg-muted/20 border-b border-border/40 mb-8 -mt-8 print:hidden">
-        <nav className="container mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between text-sm text-muted-foreground h-14">
+        <nav aria-label="Breadcrumb" className="container mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between text-sm text-muted-foreground h-14">
             <div className="flex items-center overflow-x-auto whitespace-nowrap py-4">
                 {breadcrumbs.map((breadcrumb, index) => {
                     const status = progressData[breadcrumb.path];
