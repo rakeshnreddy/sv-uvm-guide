@@ -311,7 +311,7 @@ export function BridgeTranslationExplorer() {
   const [isAnimating, setIsAnimating] = useState(false);
 
   const scenario = SCENARIOS[scenarioIndex];
-  const result = useMemo(() => translate(scenario.ahb), [scenarioIndex]);
+  const result = useMemo(() => translate(scenario.ahb), [scenario.ahb]);
 
   const resetAnim = useCallback(() => {
     setAnimStep(0);

@@ -101,6 +101,7 @@ describe('lab-registry utilities', () => {
       expect(lab?.status).toBe('available');
       expect(lab?.owningModule).toBe('E-PSS-1');
       expect(lab?.graderType).toBe('custom');
+      expect(lab?.moduleHref).toBe('/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index');
       expect(lab?.steps).toHaveLength(3);
 
       const assetPath = path.join(repoRoot, lab!.assetLocation);

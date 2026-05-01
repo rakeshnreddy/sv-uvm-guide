@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import { Play, FastForward, RotateCcw } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
@@ -44,27 +44,26 @@ export const CoverageCrossExplorerVisualizer: React.FC = () => {
     setIsRunning(false);
   };
 
-  const simulateTransactions = (count: number) => {
-    // We update atomically
+  const simulateTransactions = useCallback((count: number) => {
+    const transactions = Array.from({ length: count }, () => ({
+      addr: ADDR_BINS[Math.floor(Math.random() * ADDR_BINS.length)],
+      op: OP_BINS[Math.floor(Math.random() * OP_BINS.length)],
+    }));
+
     setBins(prevBins => {
       const newBins = [...prevBins];
-      let newCount = transactionCount;
-      for (let i = 0; i < count; i++) {
-        const addrIndex = Math.floor(Math.random() * ADDR_BINS.length);
-        const opIndex = Math.floor(Math.random() * OP_BINS.length);
-        const addr = ADDR_BINS[addrIndex];
-        const op = OP_BINS[opIndex];
-        
+
+      transactions.forEach(({ addr, op }) => {
         const binIndex = newBins.findIndex(b => b.addr === addr && b.op === op);
         if (binIndex !== -1) {
           newBins[binIndex] = { ...newBins[binIndex], hitCount: newBins[binIndex].hitCount + 1 };
         }
-        newCount++;
-      }
-      setTransactionCount(newCount);
+      });
+
       return newBins;
     });
-  };
+    setTransactionCount(prev => prev + count);
+  }, []);
 
   // Run until 100%
   useEffect(() => {
@@ -83,7 +82,7 @@ export const CoverageCrossExplorerVisualizer: React.FC = () => {
     return () => {
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [isRunning, bins, coveragePercentage]);
+  }, [isRunning, bins, coveragePercentage, simulateTransactions]);
 
   const toggleRunUntil100 = () => {
     if (coveragePercentage >= 100 && !isRunning) {

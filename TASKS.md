@@ -1,13 +1,11 @@
 # TASKS.md — Active Backlog and Site State
 
-Last Updated: 2026-04-30
+Last Updated: 2026-05-01
 Purpose: single source of truth for active pending work. Completed historical task details were intentionally removed from this tracker so future coding sessions can start from the current state without scanning obsolete backlog.
 
 ---
 
 ## Active Pending Tasks
-
-No pending implementation tasks are currently tracked.
 
 | Order | ID | Priority | Status | Description | Next Action |
 |---:|---|---|---|---|---|
@@ -21,13 +19,18 @@ No pending implementation tasks are currently tracked.
 - **Practice labs:** 27 registered labs in `src/lib/lab-registry.ts`; canonical lab assets live under `content/curriculum/labs/`.
 - **Flashcards:** 56 JSON flashcard decks under `content/flashcards/`.
 - **Interview banks:** 6 JSON banks under `content/interview-questions/`: AMBA, Debug, SoC/System Design, SVA/Formal, SystemVerilog, and UVM.
-- **Quality gates:** Vitest component/library tests, curriculum/source metadata audits, lab registry audits, and Playwright regression gates for navigation, breadcrumbs, flashcards, quizzes, and lab links.
+- **Quality gates:** Vitest component/library tests, curriculum/source metadata audits, strict lab registry audits, and Playwright regression gates for navigation, breadcrumbs, flashcards, quizzes, lab links, and learner-flow paths.
 
 ## Recently Closed In This Cleanup
 
 - `LAB-1-T3-SCOREBOARD`: already complete through the canonical `scoreboard-reference-model` lab and linked from `A-UVM-6`.
 - `LAB-2-T4-PSS`: completed through the canonical `pss-portable-intent` lab, now registered, linked from `E-PSS-1`, and backed by starter PSS plus generated UVM/C target examples.
 - Tracker cleanup: old completed task details removed from `TASKS.md`; current site state captured above.
+- `LAB-PLATFORM-1-ASSET-VIEWER`: practice lab pages now load canonical lab assets, expose multi-file file browsing, support starter/solution/reference roles, and use language-aware Monaco modes for SV, PSS, C, Markdown, and JSON.
+- `QA-STRICT-LABS-1`: strict lab audit passes through the new `npm run test:labs:strict` script.
+- `WARN-1-REACT-HOOK-DEPS`: fixed the production-build hook dependency warnings in `BridgeTranslationExplorer` and `CoverageCrossExplorerVisualizer`.
+- `E2E-LEARNER-FLOW-1`: added Playwright coverage for curriculum -> lab -> module return -> flashcards -> quiz -> next module.
+- `AUDIT-1-FRESH-CONTENT-PASS`: added `docs/planning/post-completion-audit-2026-05-01.md`; no new blocking implementation findings were opened.
 
 ## Validation Baseline
 
@@ -39,12 +42,14 @@ npm run type-check
 npm test
 npm run build
 npx playwright test tests/e2e/regression-gates.spec.ts --reporter=line
+npx playwright test tests/e2e/learner-flow.spec.ts --reporter=line
 ```
 
 For lab-specific edits, also run:
 
 ```bash
 npm test -- tests/lib/lab-registry.test.ts tests/qa/labsPlatformAudit.spec.ts
+npm run test:labs:strict
 ```
 
 ## New Task Intake Template

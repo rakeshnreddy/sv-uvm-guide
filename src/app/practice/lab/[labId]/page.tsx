@@ -1,5 +1,6 @@
 import React from 'react';
 import LabClientPage from './LabClientPage';
+import { getLabAssets } from '@/lib/lab-assets';
 import { getLabById } from '@/lib/lab-registry';
 import { notFound } from 'next/navigation';
 
@@ -17,5 +18,5 @@ export default async function LabPage({ params }: LabPageProps) {
     notFound();
   }
 
-  return <LabClientPage lab={lab} />;
+  return <LabClientPage lab={lab} assets={getLabAssets(lab)} />;
 }
