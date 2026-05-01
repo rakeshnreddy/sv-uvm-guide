@@ -599,6 +599,37 @@ export const LAB_REGISTRY: Record<string, LabMetadata> = {
       }
     ]
   },
+  "pss-portable-intent": {
+    id: "pss-portable-intent",
+    title: "Memory Read/Write Portable Intent",
+    description: "Write one PSS read-after-write memory intent and inspect the generated UVM sequence and C bare-metal equivalents.",
+    owningModule: "E-PSS-1",
+    routeSlug: "pss-portable-intent",
+    prerequisites: ["A-UVM-1", "E-PSS-1"],
+    assetLocation: "content/curriculum/labs/pss/lab1_portable_intent",
+    status: "available",
+    graderType: "custom",
+    steps: [
+      {
+        id: "1",
+        title: "Step 1: Complete the Write Action",
+        instructions: "Open `starter/mem_test.pss` and add the 4-byte address alignment constraint plus the `0x0000` through `0xffff` data range constraint.",
+        starterCode: ""
+      },
+      {
+        id: "2",
+        title: "Step 2: Bind Read-Verify to the Write",
+        instructions: "Add the `write_mem` input handle to `read_verify`, then bind `rd.wr == wr` in the activity graph so the read checks the exact write action.",
+        starterCode: ""
+      },
+      {
+        id: "3",
+        title: "Step 3: Compare Generated Targets",
+        instructions: "Review `solution/generated_uvm_sequence.sv` and `solution/generated_baremetal_test.c`; identify how the same PSS constraints become UVM randomization and C helper calls.",
+        starterCode: ""
+      }
+    ]
+  },
   "power_aware_retention": {
     id: "power_aware_retention",
     title: "Retention Bug and Isolation Sequencing",

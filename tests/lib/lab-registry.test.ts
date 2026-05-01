@@ -94,5 +94,33 @@ describe('lab-registry utilities', () => {
       expect(metadata.id).toBe(lab?.id);
       expect(metadata.description).toContain('formal/liveness');
     });
+
+    it('registers the PSS portable intent lab with starter, solution, and generated target assets', () => {
+      const lab = getLabById('pss-portable-intent');
+      expect(lab).toBeDefined();
+      expect(lab?.status).toBe('available');
+      expect(lab?.owningModule).toBe('E-PSS-1');
+      expect(lab?.graderType).toBe('custom');
+      expect(lab?.steps).toHaveLength(3);
+
+      const assetPath = path.join(repoRoot, lab!.assetLocation);
+      const metadataPath = path.join(assetPath, 'lab.json');
+      const readmePath = path.join(assetPath, 'README.md');
+      const starterPath = path.join(assetPath, 'starter', 'mem_test.pss');
+      const solutionPath = path.join(assetPath, 'solution', 'mem_test.pss');
+      const generatedSvPath = path.join(assetPath, 'solution', 'generated_uvm_sequence.sv');
+      const generatedCPath = path.join(assetPath, 'solution', 'generated_baremetal_test.c');
+
+      expect(fs.existsSync(metadataPath)).toBe(true);
+      expect(fs.existsSync(readmePath)).toBe(true);
+      expect(fs.existsSync(starterPath)).toBe(true);
+      expect(fs.existsSync(solutionPath)).toBe(true);
+      expect(fs.existsSync(generatedSvPath)).toBe(true);
+      expect(fs.existsSync(generatedCPath)).toBe(true);
+
+      const metadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+      expect(metadata.id).toBe(lab?.id);
+      expect(metadata.description).toContain('generated UVM sequence and C bare-metal');
+    });
   });
 });

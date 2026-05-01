@@ -1,49 +1,66 @@
-# Lab: Writing a Portable Test Intent Specification
+# Lab: Memory Read/Write Portable Intent
 
 ## Scenario
 
-You are verifying a DMA controller that supports the following operations:
-- **Configure:** Set source address, destination address, and transfer length via a register interface
-- **Transfer:** Start a DMA transfer and wait for completion
-- **Verify:** Read back the destination memory and compare against the source
+You are verifying a memory subsystem that must run the same read-after-write test in RTL simulation and on a bare-metal validation target. The team already has hand-written UVM and C versions, but every change to the address constraints or data range must be duplicated.
 
-Currently, your team has separate tests for simulation (SV UVM sequences) and validation (C bare-metal tests). Every time the DMA spec changes, both test suites must be updated independently. Your manager wants you to explore PSS as a "write once, target many" solution.
+This lab asks you to capture the intent once in PSS: write a value to an aligned address, read the same address back, and verify the data.
 
 ## Objective
 
-1. Review the PSS specification skeleton in `starter.pss` that defines the DMA component and basic actions.
-2. Complete the following TODOs:
-   - **Define the `dma_configure` action** with fields for `src_addr`, `dst_addr`, and `length`, each with appropriate constraints.
-   - **Define the `dma_transfer` action** that reads the configured parameters and initiates the transfer.
-   - **Define an activity graph** that sequences: configure → transfer → verify, with the constraint that `length` must be a power of 2 and ≤ 4096.
-3. Review `solution.pss` to compare your implementation against the reference.
-4. Analyze how the same PSS specification would map to:
-   - A UVM sequence in SystemVerilog (register writes → DMA trigger → polling loop)
-   - A C bare-metal test (memory-mapped I/O writes → interrupt wait → memcmp)
-
-## Key Concepts
-
-- **Actions** define atomic verification operations (configure, transfer, verify)
-- **Components** own resources (the DMA controller, memory regions)
-- **Activity graphs** define execution order and parallelism between actions
-- **Constraints** limit the random space (valid addresses, aligned lengths)
-- **Portability** — one spec compiles to SV sequences and C tests
+1. Open `starter/mem_test.pss`.
+2. Complete the TODOs so the PSS model expresses:
+   - A write action followed by a read-verify action.
+   - A 4-byte aligned address constraint.
+   - A write-data constraint from `0x0000` through `0xffff`.
+   - A cross-action data dependency so the read verifies the exact address/data chosen by the write.
+3. Compare your work with `solution/mem_test.pss`.
+4. Review the generated target examples:
+   - `solution/generated_uvm_sequence.sv`
+   - `solution/generated_baremetal_test.c`
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `starter.pss` | Skeleton PSS spec with TODOs to complete |
-| `solution.pss` | Reference implementation |
-| `README.md` | This file |
+| `starter/mem_test.pss` | PSS skeleton with TODOs |
+| `solution/mem_test.pss` | Complete reference PSS intent |
+| `solution/generated_uvm_sequence.sv` | Simplified UVM sequence generated from the PSS intent |
+| `solution/generated_baremetal_test.c` | Simplified C bare-metal test generated from the same PSS intent |
 
-## Success Criteria
+## Mapping Guide
 
-- All three actions are defined with correct field types and constraints
-- The activity graph enforces configure → transfer → verify ordering
-- The `length` constraint limits values to powers of 2, max 4096
-- You can explain how each action would map to SV and C implementations
+| PSS construct | Generated UVM target | Generated C target |
+|---|---|---|
+| `action write_mem` | Randomized write sequence item and `mem_agent.write()` call | `mem_write32(addr, data)` |
+| `action read_verify` | `mem_agent.read()` followed by `uvm_error` on mismatch | `mem_read32()` followed by `test_fail()` on mismatch |
+| `constraint addr[1:0] == 0` | `addr % 4 == 0` randomization constraint | `rand_aligned_addr(..., 4)` helper |
+| `constraint data <= 32'h0000ffff` | `data inside {[0:32'hffff]}` randomization constraint | `rand32() & 0xffffu` |
+| `rd.wr == wr` | Read sequence copies the write action's address and expected data | Readback compares against the same write data |
+
+## Side-by-Side Diff
+
+```diff
+ activity {
+-  // TODO: instantiate write and read_verify actions
+-  // TODO: bind the read_verify action to the write action
++  do write_mem as wr;
++  do read_verify as rd with {
++    rd.wr == wr;
++  };
+ }
+```
+
+## Expected Outcome
+
+The completed PSS solution describes one portable test intent. A PSS compiler can lower that intent into target-specific code while preserving the same scenario contract:
+
+```text
+WRITE addr=0x00001040 data=0x0000beef
+READ  addr=0x00001040 data=0x0000beef
+PASS  read-after-write data matched
+```
 
 ## Need Help?
 
-Review the [E-PSS-1: Portable Stimulus Standard](../../../T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index.mdx) lesson for PSS syntax and compilation examples.
+Review [E-PSS-1: Portable Stimulus Standard](../../../T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index.mdx), especially the sections on actions, activity graphs, and target compilation.

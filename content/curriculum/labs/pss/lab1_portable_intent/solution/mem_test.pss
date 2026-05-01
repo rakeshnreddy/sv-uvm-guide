@@ -1,0 +1,67 @@
+// =============================================================
+// Lab Solution: Memory Read/Write Portable Intent
+// File: solution/mem_test.pss
+// =============================================================
+
+component mem_portability_lab {
+  typedef bit [31:0] addr_t;
+  typedef bit [31:0] data_t;
+
+  addr_t base_addr = 32'h0000_1000;
+  addr_t limit_addr = 32'h0000_1fff;
+
+  action write_mem {
+    rand addr_t addr;
+    rand data_t data;
+
+    constraint legal_write {
+      addr >= base_addr;
+      addr <= limit_addr;
+      addr[1:0] == 2'b00;
+      data <= 32'h0000_ffff;
+    }
+
+    exec body SV = """
+      mem_write_seq wr_seq = mem_write_seq::type_id::create("wr_seq");
+      wr_seq.addr = {{addr}};
+      wr_seq.data = {{data}};
+      wr_seq.start(p_sequencer.mem_sqr);
+    """;
+
+    exec body C = """
+      mem_write32({{addr}}, {{data}});
+    """;
+  }
+
+  action read_verify {
+    input write_mem wr;
+
+    exec body SV = """
+      mem_read_seq rd_seq = mem_read_seq::type_id::create("rd_seq");
+      rd_seq.addr = {{wr.addr}};
+      rd_seq.start(p_sequencer.mem_sqr);
+      if (rd_seq.data !== {{wr.data}}) begin
+        `uvm_error("PSS_MEM_VERIFY",
+          $sformatf("addr=0x%08x expected=0x%08x actual=0x%08x",
+                    {{wr.addr}}, {{wr.data}}, rd_seq.data))
+      end
+    """;
+
+    exec body C = """
+      uint32_t actual = mem_read32({{wr.addr}});
+      if (actual != {{wr.data}}) {
+          test_fail("addr=0x%08x expected=0x%08x actual=0x%08x",
+                    {{wr.addr}}, {{wr.data}}, actual);
+      }
+    """;
+  }
+
+  action mem_read_write_test {
+    activity {
+      do write_mem as wr;
+      do read_verify as rd with {
+        rd.wr == wr;
+      };
+    }
+  }
+}
