@@ -8,6 +8,11 @@ import { VerificationMethodologiesDiagram } from '@/components/visuals';
 import FirstBugHuntGame from '@/components/curriculum/f1/FirstBugHuntGame';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 
+## Quick Take
+- **What it is:** The mindset shift from "make it work" (design) to "make it fail" (verification) — and the systematic methodologies that make destructive thinking productive.
+- **Why it matters:** Bugs hide where designers don't look. Verification engineers are paid to think adversarially and measure their progress quantitatively.
+- **The Analogy:** A designer builds a bridge to carry 10 tons. A verifier asks: what happens at 10.001 tons? What about 10 tons with wind and an earthquake at the same time? What if the bridge was built with the wrong steel grade?
+
 ## Constructive vs. Destructive Thinking
 
 The most important tool in verification isn't SystemVerilog—it's your mindset.
@@ -31,6 +36,20 @@ The most important tool in verification isn't SystemVerilog—it's your mindset.
   </CardContent>
 </Card>
 
+### The Verification Engineer's Checklist for Any Feature
+
+When handed any new feature or block to verify, systematically ask:
+
+1. **What is the normal operation?** — Understand the golden path first.
+2. **What are the boundary values?** — Test min, max, and one-past-max.
+3. **What happens on illegal inputs?** — Should the design ignore, flag, or reset?
+4. **What are the concurrent interactions?** — What if two features fire at the same time?
+5. **What are the reset and power-on behaviors?** — Does the block come up clean?
+6. **What does the spec NOT say?** — Unspecified behavior is where bugs breed.
+
+> [!TIP]
+> **Interview Gold:** When asked "How would you verify X?", use this checklist structure. It shows systematic thinking, not just listing random test scenarios.
+
 ## Verification Methodologies
 
 How do we systematically break things?
@@ -41,33 +60,85 @@ How do we systematically break things?
 Manually writing a test for a specific scenario.
 *   **Pros:** Easy to write, deterministic, good for basic sanity checks.
 *   **Cons:** Cannot scale. You only find the bugs you can imagine.
+*   **When to use:** Bring-up, smoke tests, specific protocol compliance checks.
 
 ### 2. Constrained Random Verification (CRV)
 The industry standard (and the focus of this course). You define the *rules* (constraints) and let the solver generate the *scenarios*.
 *   **Pros:** Finds bugs you never thought of. Covers massive state space.
 *   **Cons:** Harder to debug. Requires functional coverage to know what happened.
+*   **When to use:** The backbone of any production verification environment.
 
 ### 3. Formal Verification
 Using mathematical proofs to verify properties.
 *   **Pros:** Exhaustive. Proves absence of bugs for specific properties.
 *   **Cons:** Doesn't scale to large full-chip designs. Requires assertions.
+*   **When to use:** Critical control logic, arbiters, FSM deadlock freedom, protocol compliance.
+
+### How They Work Together
+
+In practice, all three methods are used together:
+
+| Method | Strengths | Weaknesses | Ideal For |
+|--------|-----------|------------|-----------|
+| Directed | Deterministic, easy debug | Low coverage, doesn't scale | Smoke tests, bring-up |
+| CRV | High coverage, finds unexpected bugs | Hard to debug, needs infrastructure | Bulk regression |
+| Formal | Exhaustive proof | State explosion, limited scope | Critical properties, protocols |
+
+> [!IMPORTANT]
+> **A Common Interview Mistake:** Candidates often say "I'd use constrained random for everything." The correct answer acknowledges that different methods solve different problems. Formal proves properties exhaustively. Directed tests verify specific protocol sequences. CRV fills the gaps between them.
 
 ## Coverage: The Scoreboard
 
 If you are generating random tests, how do you know when you are done?
 
-*   **Code Coverage:** Did I execute every line of RTL code? (Automatic)
-*   **Functional Coverage:** Did I see every interesting scenario defined in the test plan? (Manual)
+*   **Code Coverage:** Did I execute every line of RTL code? (Automatic — measured by the simulator)
+*   **Functional Coverage:** Did I see every interesting scenario defined in the test plan? (Manual — defined by the verification engineer)
 
 > [!TIP]
 > **Code Coverage is Necessary but Not Sufficient**
 > You can have 100% code coverage and still miss a major bug if the feature was never implemented in the RTL! Functional coverage checks the *intent*, not just the *implementation*.
+
+### The Coverage Closure Trap
+
+Coverage closure follows a classic diminishing-returns curve:
+
+- **0–80% coverage:** Achieved quickly with basic random stimulus.
+- **80–95% coverage:** Requires constrained sequences targeting specific scenarios.
+- **95–100% coverage:** Demands highly targeted directed sequences, constraint tuning, or formal proofs. This "last mile" consumes a disproportionate amount of the schedule.
+
+Understanding this curve is critical for planning. Teams that don't plan for the last mile end up scrambling at tape-out.
 
 ## Interactive: Your First Bug Hunt
 
 You are the verifier. The designer has handed you a simple FIFO (First-In-First-Out) buffer. Your job is to break it.
 
 <FirstBugHuntGame />
+
+## Deeper Understanding
+
+### The Bug Taxonomy
+
+Not all bugs are created equal. Understanding bug categories helps prioritize verification effort:
+
+| Category | Example | Severity | Detection Method |
+|----------|---------|----------|-----------------|
+| **Functional** | Wrong ALU output for specific operands | Critical | Scoreboard comparison |
+| **Protocol** | AXI VALID drops before READY handshake | Critical | Protocol assertions (SVA) |
+| **Corner case** | FIFO overflow on simultaneous read+write at full | High | Constrained random + coverage |
+| **Reset** | Register doesn't return to spec'd reset value | High | RAL reset test sequences |
+| **Clock domain** | Metastability on async FIFO pointer crossing | Critical | CDC formal analysis |
+| **Performance** | Arbiter starvation under heavy load | Medium | Performance counters + assertions |
+| **Power** | Retention register corruption after power-down | Critical | Power-aware simulation (UPF) |
+
+### Real-World War Story: The One-Hot FSM Bug
+
+A verification team achieved 100% code coverage on an FSM. All states were visited, all transitions exercised. The chip taped out.
+
+In the lab, the FSM occasionally entered an **illegal state** — two bits of the one-hot encoding were set simultaneously. Why didn't code coverage catch it?
+
+Because code coverage measures what the *existing* code does. The FSM had no default/illegal-state handler — there was no code *to cover*. A single SVA assertion `assert property (one_hot(state))` would have caught it during simulation.
+
+**Lesson:** Code coverage tells you what you tested. Functional coverage and assertions tell you what you *should have* tested.
 
 ## Interview Questions
 
@@ -84,6 +155,7 @@ You are the verifier. The designer has handed you a simple FIFO (First-In-First-
       <div className="mt-4 text-sm text-slate-300 leading-relaxed">
         <p><strong>Verification</strong> answers "Are we building the product right?" (Does RTL match Spec?).</p>
         <p><strong>Validation</strong> answers "Are we building the right product?" (Does the chip meet the customer's needs in the real world?).</p>
+        <p><strong>Deeper point:</strong> Verification is pre-silicon (simulation, formal, emulation). Validation is post-silicon (lab testing with real software). A design can pass verification perfectly but fail validation if the specification itself was wrong.</p>
       </div>
     </details>
 
@@ -94,7 +166,59 @@ You are the verifier. The designer has handed you a simple FIFO (First-In-First-
       </summary>
       <div className="mt-4 text-sm text-slate-300 leading-relaxed">
         <p>No. Code coverage only tells you that the tests exercised the code that <em>exists</em>. It cannot tell you about missing features (code that <em>should</em> be there but isn't). You need <strong>Functional Coverage</strong> to verify that all requirements from the spec have been tested.</p>
+        <p><strong>Follow-up trap:</strong> An interviewer may ask "What about 100% functional coverage?" Even that isn't sufficient — your coverage model might have gaps if the test plan missed requirements from the spec.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        When would you use formal verification instead of simulation?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>Formal verification is ideal for:</p>
+        <ul className="list-disc pl-5 mt-2 space-y-1">
+          <li><strong>Protocol compliance:</strong> Proving VALID/READY handshake rules are never violated.</li>
+          <li><strong>Deadlock freedom:</strong> Proving an arbiter or FSM cannot enter a stuck state.</li>
+          <li><strong>Security properties:</strong> Proving data isolation between privilege levels.</li>
+          <li><strong>Small, critical blocks:</strong> Arbiters, FIFOs, CDC logic where exhaustive proof is feasible.</li>
+        </ul>
+        <p className="mt-2">Simulation is better for large designs, end-to-end data path validation, and performance testing where formal tools hit state explosion limits.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        How would you approach verifying a block you've never seen before?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>Systematic approach:</p>
+        <ol className="list-decimal pl-5 mt-2 space-y-1">
+          <li><strong>Read the spec</strong> — understand the intended behavior and all the interfaces.</li>
+          <li><strong>Write the test plan</strong> — map every spec requirement to a verification strategy.</li>
+          <li><strong>Define coverage</strong> — functional coverage goals for every feature and interesting scenario.</li>
+          <li><strong>Build infrastructure</strong> — UVM environment with scoreboard, assertions, coverage.</li>
+          <li><strong>Run regressions</strong> — start with directed bring-up, then constrained random.</li>
+          <li><strong>Close coverage</strong> — track coverage, write targeted tests for gaps.</li>
+        </ol>
+        <p className="mt-2">This systematic answer demonstrates maturity. Avoid jumping straight to "I'd write random tests."</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        What's the difference between a bug found by simulation vs. an assertion?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>A <strong>simulation-found bug</strong> requires checking infrastructure (scoreboard) to compare actual vs. expected outputs — it catches wrong results but often after the damage propagates through the design.</p>
+        <p>An <strong>assertion-caught bug</strong> fires at the exact point of violation — it catches protocol/timing errors immediately at the source, making debugging faster. Assertions are also reusable: they check every cycle, every seed, without extra test code.</p>
       </div>
     </details>
   </CardContent>
 </Card>
+
+## References & Next Topics
+- Wilson Research Group / Siemens EDA Functional Verification Study
+- Next: [Why SystemVerilog?](../F1C_Why_SystemVerilog/)

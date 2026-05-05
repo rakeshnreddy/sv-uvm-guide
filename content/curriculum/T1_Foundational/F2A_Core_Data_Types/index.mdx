@@ -14,52 +14,183 @@ import EnumMethodVisualizer from '@/components/visuals/EnumMethodVisualizer';
 - **What it is:** Nets, variables, and value systems that define how signals resolve, store, and surface contention.
 - **Why it matters:** Using 2-state math for DUT busses hides X/Z; driving a net procedurally masks contention bugs. Type intent makes verification observability possible.
 - **The Analogy:** Nets are copper traces; variables are flip-flops and RAM cells. Pick the right material before you solder the circuit together.
+- **The Standard:** IEEE 1800-2023 §6 (Data Types) and §7 (Aggregate Data Types).
 
 ## Build Your Mental Model
+
 ### Value Systems at a Glance
 <LogicStateDiagram />
 
-- **2-state (`bit`, `int`, `byte`):** Fast math, no unknowns. Great for counters, scoreboard arithmetic, and randomization helpers.
-- **4-state (`logic`, `wire`, `tri`):** Surfaces contention and float. Use on DUT interfaces, resets, and any shared resource.
-- Default values are teaching moments: variables start as `'x`, nets as `'z`. They force you to design reset and drive strategy early.
+SystemVerilog has two value systems — understanding which to use and why is a fundamental interview topic:
 
-### Nets vs. Variables—Pick the Right Driver
+| System | Values | Default | Types | When to Use |
+|--------|--------|---------|-------|-------------|
+| **4-state** | 0, 1, X, Z | `'x` (variables), `'z` (nets) | `logic`, `reg`, `integer`, `time`, `wire`, `tri` | DUT interfaces, reset logic, contention detection |
+| **2-state** | 0, 1 | `'0` | `bit`, `int`, `byte`, `shortint`, `longint`, `shortreal`, `real` | Scoreboard math, counters, randomization, performance-critical TB code |
+
+> [!WARNING]
+> **The X-Propagation Trap (IEEE 1800-2023 §6.11):** When a 4-state value containing X or Z is assigned to a 2-state variable, the X/Z bits silently become 0. This can mask reset bugs. For example:
+> ```systemverilog
+> logic [7:0] dut_data = 8'hxx;  // Uninitialized 4-state
+> bit   [7:0] tb_data;
+> tb_data = dut_data;            // tb_data becomes 8'h00 — BUG MASKED!
+> ```
+> **Best practice:** Use `$isunknown()` to check for X/Z before crossing the boundary, or use `===`/`!==` which are X/Z-aware.
+
+### Nets vs. Variables — The Complete Picture
+
+Understanding the net/variable distinction is essential. This is one of the most misunderstood areas of SystemVerilog:
+
 <div className="grid gap-4 md:grid-cols-2">
   <Card className="bg-background">
     <CardHeader>
-      <CardTitle className="text-base">Nets (structural)</CardTitle>
+      <CardTitle className="text-base">Nets (IEEE 1800-2023 §6.7)</CardTitle>
     </CardHeader>
     <CardContent className="space-y-2 text-sm text-muted-foreground">
       <p>Continuously driven, allow multiple drivers, resolve to `X` on conflict, default to `'z`.</p>
-      <p>Examples: `wire`, `tri`, `wand` for shared buses or pad rings.</p>
+      <p>Examples: `wire`, `tri`, `wand`, `wor`, `trireg` for shared buses or pad rings.</p>
+      <p><strong>Key property:</strong> Nets have <em>resolution functions</em> that determine the output when multiple drivers exist. `wire`/`tri` resolve to X on conflict; `wand`/`wor` resolve with AND/OR logic.</p>
     </CardContent>
   </Card>
   <Card className="bg-background">
     <CardHeader>
-      <CardTitle className="text-base">Variables (procedural)</CardTitle>
+      <CardTitle className="text-base">Variables (IEEE 1800-2023 §6.8)</CardTitle>
     </CardHeader>
     <CardContent className="space-y-2 text-sm text-muted-foreground">
       <p>Written in `always_comb`/`always_ff` or class methods. Single driver, default to `'x`.</p>
       <p>Examples: `logic`, `bit`, `int`, `byte` for registers, scoreboards, and transactions.</p>
+      <p><strong>Key property:</strong> Variables retain their last assigned value. Unlike nets, they don't "float" when undriven — they hold the last value written (or their default).</p>
     </CardContent>
   </Card>
 </div>
 
+### The `logic` vs. `wire` vs. `reg` Decision Tree
+
+This is a classic interview question. Here's the complete decision tree:
+
+```
+Is the signal driven by multiple sources (e.g., tri-state bus)?
+├─ YES → Use `wire` or `tri` (need resolution function)
+└─ NO → Is this in synthesizable RTL?
+    ├─ YES → Use `logic` everywhere (replaces both reg and wire for single-driver)
+    └─ NO (testbench) → Is X/Z visibility needed?
+        ├─ YES → Use `logic` (4-state)
+        └─ NO → Use `bit` (2-state, faster sim)
+```
+
+> [!TIP]
+> **IEEE 1800-2023 §6.11.2 clarification:** `logic` can be used anywhere that either `reg` or `wire` was used, *as long as there is a single driver*. The old `reg` keyword is retained for backward compatibility, but modern code should prefer `logic`. The name `reg` is misleading — it does NOT imply a hardware register.
+
+### The Complete Type Family
+
+| Category | Types | Size | Signed? | Use Case |
+|----------|-------|------|---------|----------|
+| **4-state integral** | `logic`, `reg`, `integer`, `time` | variable, variable, 32b, 64b | unsigned, unsigned, signed, unsigned | RTL signals, DUT interfaces |
+| **2-state integral** | `bit`, `int`, `byte`, `shortint`, `longint` | variable, 32b, 8b, 16b, 64b | unsigned, signed, signed, signed, signed | TB arithmetic, counters |
+| **Real** | `real`, `shortreal`, `realtime` | 64b, 32b, 64b | — | Analog modeling, timing |
+| **String** | `string` | dynamic | — | Report formatting, path manipulation |
+| **Enum** | `enum` | user-defined base | depends on base | FSM states, opcode encoding |
+| **Net types** | `wire`, `tri`, `wand`, `wor`, `trireg`, `supply0/1` | variable | unsigned | Multi-driver signals |
+
+> [!IMPORTANT]
+> **Signedness Trap (IEEE 1800-2023 §6.8.1):** `int` is **signed** but `bit` is **unsigned**. This catches people:
+> ```systemverilog
+> bit [7:0] counter = 8'hFF;  // unsigned: value is 255
+> int result = counter;        // signed: result is still 255 (zero-extended)
+> byte b = counter;            // signed: b is -1! (8'hFF reinterpreted as signed)
+> ```
+> Always be explicit about signedness when mixing types.
+
 ### Signedness and Type Families
 <SignednessVisualizer />
 
-- Declare intent up front: `logic signed [WIDTH-1:0] data_s;` or cast with `$signed()` when mixing arithmetic and packed busses.
+- Declare intent up front: `logic signed [WIDTH-1:0] data_s;` or cast with `$signed()` when mixing arithmetic and packed busses (IEEE 1800-2023 §6.24).
 - Keep math in `int/longint` and only slice into packed logic at the edges. It keeps overflow and sign extension predictable.
+
+### Packed vs. Unpacked Arrays — The Memory Layout
+
+Understanding packed vs. unpacked is critical for correct bit manipulation:
+
+```systemverilog
+// Packed: contiguous bits, can be sliced as a vector (IEEE 1800-2023 §7.4.1)
+logic [3:0][7:0] packed_data;    // 32 contiguous bits
+// Access: packed_data[2][3] or packed_data[23:16]
+
+// Unpacked: separate elements, each independently addressed (IEEE 1800-2023 §7.4.2)
+logic [7:0] unpacked_data [0:3]; // 4 separate 8-bit elements
+// Access: unpacked_data[2] — cannot slice across elements
+```
+
+| Aspect | Packed | Unpacked |
+|--------|--------|----------|
+| **Memory layout** | Contiguous bits | Separate elements |
+| **Bit slicing** | Yes — treat as one wide vector | No — index by element only |
+| **Part select** | `data[15:8]` works | Illegal across elements |
+| **Typical use** | Bus lanes, protocol fields | Memories, register files |
+| **Casting** | Can cast to integral type | Cannot (without streaming `<<`) |
 
 ### Strings and Enums That Pull Their Weight
 
 <StringMethodExplorer />
 
-- Strings are dynamic—perfect for report formatting and path manipulation.
+- Strings are dynamic—perfect for report formatting and path manipulation (IEEE 1800-2023 §6.16).
 
 <EnumMethodVisualizer />
 
-- Enums give type safety and built-in iterators (`first()`, `next()`). They beat magic numbers for FSMs and coverage bins.
+- Enums give type safety and built-in iterators (`first()`, `next()`). They beat magic numbers for FSMs and coverage bins (IEEE 1800-2023 §6.19).
+
+> [!WARNING]
+> **Enum Gotcha:** Enum base type matters for synthesis. An enum with no explicit base uses `int` (32-bit signed). For FSMs, always specify the base:
+> ```systemverilog
+> typedef enum logic [1:0] { IDLE, RUN, DONE, ERROR } state_t;  // 2-bit encoding
+> ```
+> Without `logic [1:0]`, the synthesizer may infer 32 bits or behave unexpectedly with X propagation.
+
+## Deeper Understanding
+
+### Why X-Pessimism and X-Optimism Matter
+
+Simulators handle X differently in different contexts, and this creates subtle bugs:
+
+| Context | X Behavior | Risk |
+|---------|-----------|------|
+| `if (x_signal)` | Treated as FALSE (X-optimistic) | Masks bugs — untested path silently skipped |
+| `case (x_signal)` | Falls to `default` (X-optimistic) | May execute wrong branch |
+| `casex` | X treated as don't-care (X-pessimistic in matching) | Matches too broadly |
+| Arithmetic `x + 1` | Result is X (X-pessimistic) | Correct — propagates unknown |
+| `===` operator | X matches X literally | Correct for TB checking |
+
+**Best practice for RTL:**
+- Use `unique case` or `priority case` to get simulator warnings on unmatched X values.
+- Use `always_comb` instead of `always @*` to get sensitivity list completeness checks.
+- Enable X-prop mode in your simulator (VCS: `-xprop`, Questa: `-xprop`) to catch optimistic X handling.
+
+### The `$cast` and Type Compatibility Rules
+
+When working with enum and class types, `$cast` (IEEE 1800-2023 §6.24.3) is essential:
+
+```systemverilog
+typedef enum { A, B, C } abc_t;
+int i = 1;
+abc_t e;
+
+// Direct assignment: works but no range check
+e = abc_t'(i);        // Compiles, but if i=5, e holds illegal value!
+
+// $cast: runtime check
+if (!$cast(e, i))
+  $error("Value %0d is not a valid abc_t", i);
+```
+
+### Real-World Corner Cases Interviewers Love
+
+1. **What is `trireg`?** — A net type that retains its last driven value when all drivers are high-Z. Used for charge storage modeling (capacitive nodes). Rarely seen in modern TB code but appears in interviews.
+
+2. **Can you assign to a `wire` in an `initial` block?** — No! Wires cannot be procedurally assigned. Use `force`/`release` for backdoor injection, or declare the signal as `logic` instead.
+
+3. **What happens when you `$display` an uninitialized `bit`?** — It prints `0` (2-state default), making it look initialized. This is why 4-state types are safer for DUT signals — uninitialized `logic` shows `x`, which is immediately visible.
+
+4. **What is the difference between `== 'x` and `=== 'x`?** — `==` with X always returns X (unknown), so `if (signal == 'x)` is NEVER true. Use `===` for literal X comparison, or `$isunknown()` to check if any bit is X/Z.
 
 ## Make It Work
 - Use the explorer to test your choices against the simulator:
@@ -75,8 +206,76 @@ import EnumMethodVisualizer from '@/components/visuals/EnumMethodVisualizer';
 
 <CurriculumDataTypeQuiz />
 
-- Interview drill: explain why `logic` is safer than `reg`, and when `bit` is the right call for counters.
+## Interview Questions
+
+<Card className="mt-8 border-slate-700 bg-slate-900">
+  <CardHeader>
+    <CardTitle>Ready for the Interview?</CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-4">
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        What is the difference between `logic`, `reg`, and `wire`? When do you use each?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p><code>wire</code> is a net type for continuous assignments with multiple driver resolution. <code>reg</code> is a legacy variable type for procedural assignments. <code>logic</code> (IEEE 1800-2023 §6.11.2) replaces both for single-driver signals — it can be used in continuous assigns, procedural blocks, and module port declarations.</p>
+        <p><strong>Use <code>wire</code></strong> only when multiple drivers exist (tri-state buses). <strong>Use <code>logic</code></strong> everywhere else in modern code. <strong>Avoid <code>reg</code></strong> — the name is misleading and exists only for backward compatibility.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        What happens when you assign a 4-state value with X to a 2-state variable?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>X and Z bits are silently converted to 0 (IEEE 1800-2023 §6.11). This is dangerous because it masks reset bugs and uninitialized signals. The testbench sees a clean 0 where the DUT has an unknown state.</p>
+        <p><strong>Mitigation:</strong> Use <code>$isunknown()</code> before the conversion, or keep DUT-facing signals as 4-state <code>logic</code> throughout the testbench.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        Explain packed vs. unpacked arrays. When would you choose each?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p><strong>Packed</strong> (IEEE 1800-2023 §7.4.1): bits are contiguous. Can be sliced as a vector. Use for protocol fields, bus data lanes, and anywhere you need bit-level manipulation across the entire array.</p>
+        <p><strong>Unpacked</strong> (IEEE 1800-2023 §7.4.2): elements are independent. Cannot slice across boundaries. Use for memories, register files, and collections of distinct elements.</p>
+        <p><strong>Key difference:</strong> <code>logic [3:0][7:0] data</code> (packed) is 32 contiguous bits you can part-select as <code>data[31:0]</code>. <code>logic [7:0] data [0:3]</code> (unpacked) is 4 separate bytes — <code>data[31:0]</code> is illegal.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        Why does `if (signal == 1'bx)` never evaluate true?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>The <code>==</code> operator is a "logical equality" — any X/Z in either operand makes the entire comparison result X, which is falsy in an <code>if</code> context (IEEE 1800-2023 §11.4.5). To detect X, use:</p>
+        <ul className="list-disc pl-5 mt-2 space-y-1">
+          <li><code>===</code> (case equality) — treats X as a literal matchable value</li>
+          <li><code>$isunknown(signal)</code> — returns 1 if any bit is X or Z</li>
+        </ul>
+        <p>This is one of the most common interview trick questions for verification engineers.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        What is the signedness of `int`, `bit`, `byte`, and `logic`? Why does it matter?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p><code>int</code>: signed. <code>bit</code>: unsigned. <code>byte</code>: signed. <code>logic</code>: unsigned (IEEE 1800-2023 §6.8.1).</p>
+        <p>It matters because mixing signed and unsigned in arithmetic causes silent sign extension or truncation bugs:</p>
+        <p><code>byte b = 8'hFF;</code> → b is -1 (signed). <code>bit [7:0] u = 8'hFF;</code> → u is 255 (unsigned). Comparing them or using them in expressions can produce surprising results.</p>
+      </div>
+    </details>
+  </CardContent>
+</Card>
 
 ## References & Next Topics
-- IEEE 1800-2023 §6–§7 (Nets, variables, value systems)
+- IEEE 1800-2023 §6 (Data Types), §7 (Aggregate Data Types), §6.11 (Type compatibility), §6.24 (Casting)
 - Next: [Dynamic Structures](../F2B_Dynamic_Structures/)

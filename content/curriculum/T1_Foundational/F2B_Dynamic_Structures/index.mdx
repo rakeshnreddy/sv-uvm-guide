@@ -12,38 +12,50 @@ import ArrayMethodExplorer from '@/components/visuals/ArrayMethodExplorer';
 - **What it is:** SystemVerilog collections that resize (`dynamic array`), preserve order (`queue`), or map sparse keys (`associative array`).
 - **Why it matters:** Choosing the wrong structure wastes sim time, hides ordering bugs, or burns memory. The right choice keeps scoreboards and stimulus responsive when traffic spikes.
 - **The Analogy:** Dynamic arrays are expandable trays, queues are conveyor belts, associative arrays are labeled drawers. Packed vs. unpacked tells you how the bits stack inside each drawer.
+- **The Standard:** IEEE 1800-2023 §7.4–§7.10 (Arrays) and §7.12 (Array manipulation methods).
 
 ## Build Your Mental Model
 ### Choose the Right Structure
+
 <div className="grid gap-4 md:grid-cols-3">
   <Card className="h-full bg-background">
     <CardHeader>
-      <CardTitle className="text-base">Dynamic Array</CardTitle>
+      <CardTitle className="text-base">Dynamic Array (§7.5)</CardTitle>
     </CardHeader>
     <CardContent className="text-sm text-muted-foreground space-y-2">
-      <p>Resizable with `new[size]` or `push_back()`. Great for buffers you re-measure mid-sim.</p>
-      <p>Indexed access is O(1); resizing copies elements.</p>
+      <p>Resizable with `new[size]` or assigned from another array. Great for buffers you re-measure mid-sim.</p>
+      <p>Indexed access is O(1); resizing allocates a new block and copies elements.</p>
     </CardContent>
   </Card>
   <Card className="h-full bg-background">
     <CardHeader>
-      <CardTitle className="text-base">Queue</CardTitle>
+      <CardTitle className="text-base">Queue (§7.10)</CardTitle>
     </CardHeader>
     <CardContent className="text-sm text-muted-foreground space-y-2">
-      <p>FIFO/LIFO with `push_front/back` and `pop_front/back`. Use bounds to model backpressure.</p>
+      <p>FIFO/LIFO with `push_front/back` and `pop_front/back`. Use bounds (`[$:N]`) to model backpressure.</p>
       <p>Middle inserts are O(N); avoid for hot paths.</p>
     </CardContent>
   </Card>
   <Card className="h-full bg-background">
     <CardHeader>
-      <CardTitle className="text-base">Associative Array</CardTitle>
+      <CardTitle className="text-base">Associative Array (§7.8)</CardTitle>
     </CardHeader>
     <CardContent className="text-sm text-muted-foreground space-y-2">
       <p>Sparse map keyed by integers, strings, or enums. Perfect for outstanding transactions and coverage bins.</p>
-      <p>Constant-time lookups with `exists()`/`find()`.</p>
+      <p>Constant-time lookups with `exists()`/`first()`/`next()`.</p>
     </CardContent>
   </Card>
 </div>
+
+### Decision Matrix: Which Structure For What?
+
+| Scenario | Best Choice | Why | Avoid |
+|----------|-------------|-----|-------|
+| Scoreboard tracking outstanding TXNs by ID | **Associative array** (keyed by ID) | Sparse, O(1) lookup by ID, auto-cleanup with `delete()` | Dynamic array (wastes memory for sparse IDs) |
+| Driver stimulus sequence of packets | **Queue** | Preserves order, push/pop at ends, bounded for backpressure | Associative array (no ordering guarantee) |
+| Coverage bin collection (known size) | **Dynamic array** | Fixed-size after init, O(1) access | Queue (unnecessary overhead) |
+| Monitor collecting variable-length bursts | **Queue** | Unknown length, grows naturally | Dynamic array (requires explicit resize) |
+| Protocol field lookup table | **Associative array** (keyed by enum/string) | Self-documenting, sparse | Queue (wrong abstraction) |
 
 ### See Them Move
 <DynamicStructureVisualizer />
@@ -69,6 +81,143 @@ import ArrayMethodExplorer from '@/components/visuals/ArrayMethodExplorer';
 - Jump into a volumetric view of capacity, head/tail markers, hash buckets, and packed/unpacked cubes to cement the spatial model.
 - View specific scenes: [Dynamic Array](/visualizations/systemverilog-3d?scene=dynamic-array) | [Queue](/visualizations/systemverilog-3d?scene=queue) | [Associative Array](/visualizations/systemverilog-3d?scene=associative) | [Packed Matrix](/visualizations/systemverilog-3d?scene=packed-matrix)
 
+## Code Patterns You'll Use Daily
+
+### Dynamic Array — Resize and Preserve
+
+```systemverilog
+// IEEE 1800-2023 §7.5.1 — dynamic array new[]
+logic [7:0] buffer [];
+
+initial begin
+  buffer = new[4];           // Allocate 4 elements
+  foreach (buffer[i]) buffer[i] = i * 10;
+
+  buffer = new[8](buffer);   // Grow to 8, PRESERVE first 4 elements
+  // buffer[0..3] = {0, 10, 20, 30}, buffer[4..7] = {0, 0, 0, 0}
+
+  buffer = new[2](buffer);   // Shrink to 2, TRUNCATES
+  // buffer = {0, 10} — elements [2..7] are LOST
+
+  buffer.delete();            // Free all memory; buffer.size() == 0
+end
+```
+
+> [!WARNING]
+> **Common bug:** `buffer = new[8]` without the copy argument `(buffer)` allocates a fresh array and **discards all existing data**. Always pass the old array when growing.
+
+### Queue — Bounded Backpressure
+
+```systemverilog
+// IEEE 1800-2023 §7.10
+typedef struct { int id; bit [31:0] data; } txn_t;
+
+txn_t pending_q [$:64];  // Bounded queue, max 64 entries
+
+task enqueue(txn_t t);
+  if (pending_q.size() >= 64) begin
+    `uvm_warning("BACKPRESSURE", $sformatf("Queue full, dropping TXN id=%0d", t.id))
+    return;
+  end
+  pending_q.push_back(t);
+endtask
+
+task dequeue(output txn_t t);
+  wait (pending_q.size() > 0);  // Block until something arrives
+  t = pending_q.pop_front();
+endtask
+```
+
+> [!TIP]
+> **Performance insight:** `push_front` and `push_back` are O(1). `insert(index, item)` is O(N) because it shifts all subsequent elements. In hot-path code (e.g., a scoreboard processing millions of TXNs), avoid mid-queue inserts.
+
+### Associative Array — Transaction Tracking
+
+```systemverilog
+// IEEE 1800-2023 §7.8 — associative array with int key
+class scoreboard extends uvm_component;
+  txn_t expected_txns [int];  // Keyed by transaction ID
+
+  function void add_expected(txn_t t);
+    if (expected_txns.exists(t.id))
+      `uvm_error("DUPE", $sformatf("TXN id=%0d already pending", t.id))
+    expected_txns[t.id] = t;
+  endfunction
+
+  function void check_actual(txn_t actual);
+    if (!expected_txns.exists(actual.id)) begin
+      `uvm_error("UNEXPECTED", $sformatf("TXN id=%0d not in expected map", actual.id))
+      return;
+    end
+    // Compare fields...
+    expected_txns.delete(actual.id);  // Clean up after match
+  endfunction
+
+  function void report_phase(uvm_phase phase);
+    if (expected_txns.num() > 0)
+      `uvm_error("LEAK", $sformatf("%0d unmatched TXNs remain", expected_txns.num()))
+  endfunction
+endclass
+```
+
+> [!IMPORTANT]
+> **Memory leak pattern:** If you never `delete()` matched entries, the associative array grows unbounded during long regressions, consuming gigabytes. Always clean up completed transactions.
+
+### Array Manipulation Methods
+
+```systemverilog
+// IEEE 1800-2023 §7.12 — built-in array methods
+int data_q [$] = '{3, 1, 4, 1, 5, 9, 2, 6};
+
+// Reduction
+int total = data_q.sum();        // 31
+int product = data_q.product();  // 6480
+
+// Searching
+int indices [$] = data_q.find_index with (item > 4);  // '{4, 5, 7}
+int first_big = data_q.find_first with (item > 4);     // 5
+
+// Ordering
+data_q.sort();                   // '{1, 1, 2, 3, 4, 5, 6, 9}
+data_q.rsort();                  // '{9, 6, 5, 4, 3, 2, 1, 1}
+data_q.shuffle();                // Random permutation
+data_q.reverse();                // Reverse in place
+
+// Unique
+int uniq [$] = data_q.unique();  // Remove duplicates
+```
+
+## Deeper Understanding
+
+### Performance Characteristics by Structure
+
+| Operation | Dynamic Array | Queue | Associative Array |
+|-----------|:---:|:---:|:---:|
+| Random access `[i]` | O(1) | O(1) | O(log N) or O(1) amortized |
+| `push_back` / `push_front` | N/A (must resize) | O(1) | N/A |
+| `insert(mid)` | N/A | O(N) | N/A |
+| `delete(key)` | N/A | O(N) | O(1) amortized |
+| Resize / `new[N]` | O(N) copy | N/A | N/A |
+| Memory overhead | Minimal | Moderate (linked list) | High (hash table) |
+| `foreach` iteration | O(N) | O(N) | O(N) sorted order |
+
+### Corner Cases Interviewers Love
+
+1. **What happens if you pop from an empty queue?**
+   The simulator returns the default value for the element type and may issue a warning (simulator-dependent behavior, not defined in the LRM). Always check `size() > 0` before popping.
+
+2. **Can a dynamic array hold classes?**
+   Yes. `my_class handles [];` is valid. But be careful — `new[N]` creates N null handles, not N objects. You must `new()` each element individually.
+
+3. **What is the iteration order of an associative array?**
+   When using `foreach` or `first()`/`next()`, iteration follows the key's sort order (ascending for int/string keys). This is guaranteed by IEEE 1800-2023 §7.8.
+
+4. **Can you assign a queue to a dynamic array?**
+   Yes — SystemVerilog allows assignment between compatible array types (IEEE 1800-2023 §7.4). `int da []; int q [$] = '{1,2,3}; da = q;` works and creates a dynamic array with 3 elements.
+
+5. **What is a bounded queue and when should you use one?**
+   Declared as `type q [$:N]`. It limits maximum size. Use it to model hardware FIFOs with fixed depth, or to add backpressure to testbench components. Pushing beyond the bound is implementation-defined — always check size first.
+
 ## Make It Work
 - Pre-size dynamic arrays when you know the target (`new[size]`) to avoid silent copies during hot paths.
 - Guard queues with bounds and logs so overflow becomes an intentional backpressure event, not a mystery performance cliff.
@@ -84,6 +233,64 @@ import ArrayMethodExplorer from '@/components/visuals/ArrayMethodExplorer';
 
 - Drill built-in methods: `find()` for associative arrays, `sum()/sort()` for queues and dynamic arrays, and `insert/delete` when you truly need middle edits.
 
+## Interview Questions
+
+<Card className="mt-8 border-slate-700 bg-slate-900">
+  <CardHeader>
+    <CardTitle>Ready for the Interview?</CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-4">
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        Compare dynamic arrays, queues, and associative arrays. When would you use each in a UVM testbench?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p><strong>Dynamic arrays</strong> (IEEE 1800-2023 §7.5): use when size is known after construction and random access is needed (e.g., pre-built stimulus sequences, coverage bins).</p>
+        <p><strong>Queues</strong> (§7.10): use for FIFO/LIFO ordering with efficient push/pop (e.g., driver stimulus queues, monitor output buffers). Bounded queues model hardware FIFO depth.</p>
+        <p><strong>Associative arrays</strong> (§7.8): use for sparse key-value lookup (e.g., scoreboard tracking outstanding TXNs by ID, config DB implementations). Always delete completed entries to avoid memory leaks.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        What is the performance difference between queue push_back vs. insert in the middle?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p><code>push_back()</code> and <code>push_front()</code> are O(1) — constant time regardless of queue size. <code>insert(index, item)</code> is O(N) because all subsequent elements must shift.</p>
+        <p>In a scoreboard processing millions of transactions, mid-queue inserts can become a simulation bottleneck. If you need ordered insertion, consider an associative array with a sortable key instead.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        Your regression slows down over time and eventually runs out of memory. The scoreboard uses an associative array. What's the likely cause?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>The associative array is never cleaned up — matched or timed-out entries aren't being <code>delete()</code>'d. Over millions of transactions, the hash table grows unbounded, consuming memory and slowing lookups.</p>
+        <p><strong>Fix:</strong> Call <code>expected_txns.delete(id)</code> after every successful comparison. Add a <code>report_phase()</code> check that flags non-zero <code>.num()</code> as an error. For very long tests, consider periodic garbage collection sweeps that timeout old entries.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        How do array manipulation methods like find_index, sort, and sum work? Give a practical verification use case.
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>IEEE 1800-2023 §7.12 defines built-in methods on all unpacked arrays:</p>
+        <ul className="list-disc pl-5 mt-2 space-y-1">
+          <li><code>find_index with (item &gt; threshold)</code> — returns indices matching a predicate. Use in coverage analysis to find which bins are uncovered.</li>
+          <li><code>sort()</code> / <code>rsort()</code> — in-place ordering. Use to normalize transaction queues before comparison in an out-of-order scoreboard.</li>
+          <li><code>sum()</code> — reduction. Use to compute expected checksum from a packet payload array.</li>
+        </ul>
+      </div>
+    </details>
+  </CardContent>
+</Card>
+
 ## References & Next Topics
-- IEEE 1800-2023 §7 (Arrays), §11.4 (Array querying & methods)
+- IEEE 1800-2023 §7.4–§7.12 (Arrays, queues, associative arrays, array methods)
 - Next: [Procedural Code and Flow Control](../F2C_Procedural_Code_and_Flow_Control/)

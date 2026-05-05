@@ -105,6 +105,7 @@ Additional rules:
 - Day-to-day contribution process lives in `CONTRIBUTING.md` (branching, review, Definition of Done).
 - `TASKS.md` tracks active engineering/content work; update status as part of each PR.
 - `prompt_to_resume.txt` captures handoff notes between sessions.
+- `SESSION_HANDOFF.txt` captures session handoff state for multi-session workstreams.
 
 ## 10. Reference Summary
 - **Code:** curriculum content under `content/curriculum`, layouts/components in `src/components` and `src/app`.
