@@ -1,0 +1,172 @@
+---
+title: "Tasks and Functions"
+description: "Encapsulate logic, understand variable lifetimes, and safely pass arguments."
+flashcards: "F2D_Tasks_Functions"
+---
+
+import { InteractiveCode, Card, CardContent, CardHeader, CardTitle, Quiz } from '@/components/ui';
+
+## Quick Take
+- **Functions:** Execute in zero simulation time. They cannot contain delays (`#`), event controls (`@`), or `wait` statements. Best for combinational logic and quick calculations.
+- **Tasks:** Can consume simulation time. They can have delays and synchronization. Best for driving stimulus and complex verification sequences.
+- **Lifetime (`automatic` vs `static`):** By default, tasks and functions in modules have `static` lifetimes, meaning their variables are shared across all calls. Use `automatic` to ensure each call gets its own memory space (re-entrant).
+
+## Build Your Mental Model
+
+### Functions (Zero Time)
+Functions must execute immediately and return a result without blocking.
+
+```systemverilog
+// Function with a return value
+function int add_nums(int a, int b);
+  return a + b;
+endfunction
+
+// Void function (returns nothing)
+function void print_status(string msg);
+  $display("[%0t] Status: %s", $time, msg);
+endfunction
+```
+
+### Tasks (Time Consuming)
+Tasks can take their time. They are the backbone of testbench drivers and monitors.
+
+```systemverilog
+task drive_packet(input logic [31:0] data);
+  @(posedge clk);
+  enable <= 1'b1;
+  bus_data <= data;
+  @(posedge clk);
+  enable <= 1'b0;
+endtask
+```
+
+### The `automatic` Keyword: A Verification Lifesaver
+In SystemVerilog modules, tasks and functions are `static` by default. This means local variables are allocated once and shared across all invocations. If two threads call the same task simultaneously, they will overwrite each other's data!
+
+**Always use `automatic` in verification code to make tasks thread-safe (re-entrant).**
+
+<div className="grid gap-6 md:grid-cols-2 my-6">
+  <Card className="border-red-400/20 bg-red-500/5">
+    <CardHeader>
+      <CardTitle>Static Task (Dangerous)</CardTitle>
+    </CardHeader>
+    <CardContent>
+      <p className="text-sm text-muted-foreground mb-2">
+        If `thread_1` and `thread_2` both call `send()`, they share the `temp_data` variable. One thread will corrupt the other's data.
+      </p>
+      <pre className="text-xs bg-black/20 p-2 rounded">
+{`task send(int data);
+  int temp_data; // Shared!
+  temp_data = data;
+  #10;
+  bus = temp_data;
+endtask`}
+      </pre>
+    </CardContent>
+  </Card>
+
+  <Card className="border-emerald-400/20 bg-emerald-500/5">
+    <CardHeader>
+      <CardTitle>Automatic Task (Safe)</CardTitle>
+    </CardHeader>
+    <CardContent>
+      <p className="text-sm text-muted-foreground mb-2">
+        Each call to `send()` allocates a new, independent `temp_data`. It is thread-safe. (Note: class methods are automatic by default).
+      </p>
+      <pre className="text-xs bg-black/20 p-2 rounded">
+{`task automatic send(int data);
+  int temp_data; // Independent
+  temp_data = data;
+  #10;
+  bus = temp_data;
+endtask`}
+      </pre>
+    </CardContent>
+  </Card>
+</div>
+
+### Argument Passing
+SystemVerilog supports multiple ways to pass arguments.
+
+1. **Pass by Value (Default for inputs):** The task gets a copy of the variable.
+2. **Pass by Reference (`ref`):** The task gets a pointer to the original variable. Changes are visible immediately. Highly efficient for large arrays. You must use `automatic` tasks/functions to use `ref`.
+3. **Constant Reference (`const ref`):** Passes a pointer for efficiency, but makes it read-only.
+
+```systemverilog
+task automatic compute_crc(const ref byte payload[], output int crc);
+  // payload is passed by reference (no copy overhead) but is read-only.
+  // crc is an output.
+endtask
+```
+
+## Interview Questions
+
+<Card className="mt-8 border-slate-700 bg-slate-900">
+  <CardHeader>
+    <CardTitle>Ready for the Interview?</CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-4">
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        What is the difference between a task and a function?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>A function executes in zero simulation time and cannot contain delays or blocking statements. A task can consume simulation time (using delays, events, etc.). Also, functions can return a value directly, while tasks use output arguments.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        Why should testbench tasks be declared as `automatic`?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>In modules/interfaces, tasks have a `static` lifetime by default, meaning local variables are allocated once and shared. If multiple threads (like in a fork-join) call the same task, they will overwrite each other's data (a race condition). Declaring the task `automatic` makes it re-entrant, allocating new memory for variables on each call.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        What is `const ref` and why is it useful?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>`ref` passes an argument by reference, avoiding the memory overhead of copying large arrays or structures. Adding `const` ensures the task/function cannot accidentally modify the referenced variable, enforcing read-only safety while maintaining high performance.</p>
+      </div>
+    </details>
+  </CardContent>
+</Card>
+
+## References
+- IEEE 1800-2023 §13.3 (Tasks)
+- IEEE 1800-2023 §13.4 (Functions)
+- IEEE 1800-2023 §13.5 (Argument passing)
+
+<Quiz
+  questions={[
+    {
+      question: 'Can a function contain a #10 delay?',
+      answers: [
+        { text: 'Yes, if it is declared automatic', correct: false },
+        { text: 'Yes, but only in testbenches', correct: false },
+        { text: 'No, functions must execute in zero time', correct: true },
+        { text: 'No, but tasks cannot either', correct: false }
+      ],
+      explanation:
+        'Functions are required to execute without consuming simulation time. Any blocking statement like a delay or @(posedge clk) is illegal inside a function.'
+    },
+    {
+      question: 'What is the default lifetime of a task declared inside a module?',
+      answers: [
+        { text: 'Automatic', correct: false },
+        { text: 'Static', correct: true },
+        { text: 'Dynamic', correct: false },
+        { text: 'It depends on the simulator', correct: false }
+      ],
+      explanation:
+        'By default, tasks inside modules and interfaces are static. This is a legacy of Verilog. You must explicitly use the automatic keyword to make them thread-safe.'
+    }
+  ]}
+/>

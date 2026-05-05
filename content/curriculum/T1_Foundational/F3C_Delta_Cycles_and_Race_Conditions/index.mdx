@@ -7,16 +7,17 @@ flashcards: "F3C_Delta_Cycles"
 import { InteractiveCode, Quiz, Card, CardContent, CardHeader, CardTitle, Alert } from '@/components/ui';
 
 ## Quick Take
-- **What it is:** Delta cycles are zero-time steps used to resolve event ordering locally. Race conditions occur when order of execution is non-deterministic.
+- **What it is:** Delta cycles are zero-time steps used to resolve event ordering locally. Race conditions occur when the order of execution between parallel blocks is non-deterministic.
 - **Why it matters:** Improper use of blocking vs. non-blocking assignments is the #1 cause of simulation mismatches compared to synthesized hardware.
+- **The Golden Rule:** Always use non-blocking (`<=`) for sequential logic (flip-flops) and blocking (`=`) for combinational logic.
 
-## Delta Cycles Explained
+## Build Your Mental Model
 
-When multiple events trigger simultaneously, the simulator uses delta cycles to process them sequentially. For example, if signal `A` updates, triggering a block that updates `B`, these happen in the same time step but separate delta cycles.
+### Delta Cycles Explained
+When multiple events trigger simultaneously (at the exact same simulation time step), the simulator uses delta cycles to process them sequentially. If signal `A` updates, triggering an `always` block that updates `B`, these happen in the same time step but separate delta cycles.
 
-## Race Condition Example
-
-A race condition happens when two `always` blocks read and write to the same variable at the same time using blocking assignments.
+### The Race Condition Trap
+A race condition happens when two `always` blocks read and write to the same variable at the same time using blocking assignments (`=`).
 
 ```systemverilog
 module race_condition_demo;
@@ -35,9 +36,8 @@ module race_condition_demo;
 endmodule
 ```
 
-## Blocking vs. Non-Blocking Assignments
-
-To solve this, SystemVerilog provides non-blocking assignments (`<=`) for sequential logic.
+### Blocking vs. Non-Blocking Assignments
+To solve this, SystemVerilog provides non-blocking assignments (`<=`) for sequential logic (IEEE 1800-2023 §10.4).
 
 ```systemverilog
 module safe_assignments_demo;
@@ -60,3 +60,74 @@ endmodule
 <Alert variant="destructive">
 **Common Bug:** Using blocking assignments (`=`) in sequential (clocked) `always_ff` blocks creates simulation race conditions that will NOT match the synthesized hardware. Always use `<=`.
 </Alert>
+
+## Make It Work
+- **Strict Separation:** Never mix `=` and `<=` assignments to the same variable. It is illegal in many synthesis tools and causes unpredictable simulation behavior.
+- **Testbench Synchronization:** When driving synchronous DUT signals from a testbench `initial` block, use non-blocking assignments (`<=`) synchronized to the clock edge, or use clocking blocks to completely abstract the race conditions away.
+
+## Push Further
+- Analyze what happens when you write to a variable from two different `always` blocks at the same time (even with non-blocking assignments). This is a multiple-driver conflict.
+- Look into how `force` and `release` statements override values, and how they interact with standard assignments during delta cycles.
+
+## Practice & Reinforce
+- Flashcards – Review definitions of delta cycles and race conditions.
+- Quiz – Test your knowledge below.
+
+## Interview Questions
+
+<Card className="mt-8 border-slate-700 bg-slate-900">
+  <CardHeader>
+    <CardTitle>Ready for the Interview?</CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-4">
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        How do non-blocking assignments prevent race conditions?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>They split the execution into two steps: First, the Right-Hand Side (RHS) of all non-blocking assignments are evaluated in the Active region using the "old" values of the variables. Then, the Left-Hand Side (LHS) variables are updated in the NBA region. This ensures every concurrent block reads the same initial state before any variables change.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        What is a "simulation vs. synthesis mismatch"? Give an example caused by a race condition.
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>A mismatch occurs when the RTL behaves one way in simulation and differently when compiled into physical logic gates. Using blocking assignments (`=`) in a shift register (`always @(posedge clk) begin q1=d; q2=q1; end`) might simulate as a single flop (if the first line executes before the second) or two flops (if execution order is reversed). However, synthesis tools typically infer a single flop or direct wire connection based on dataflow, leading to hardware that behaves differently from the simulation.</p>
+      </div>
+    </details>
+  </CardContent>
+</Card>
+
+## References & Next Topics
+- IEEE 1800-2023 §10.4.1 (Blocking assignments)
+- IEEE 1800-2023 §10.4.2 (Nonblocking assignments)
+- Next: [Modules and Packages](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index)
+
+<Quiz
+  questions={[
+    {
+      question: "Which operator should be used for assignments inside an `always_ff` block?",
+      answers: [
+        { text: "=", correct: false },
+        { text: "<=", correct: true },
+        { text: "==", correct: false },
+        { text: ":=", correct: false }
+      ],
+      explanation: "Sequential logic requires non-blocking assignments (<=) to prevent simulation race conditions and properly model hardware flip-flops."
+    },
+    {
+      question: "What is a delta cycle?",
+      answers: [
+        { text: "The time between two clock edges.", correct: false },
+        { text: "The delay introduced by a physical logic gate.", correct: false },
+        { text: "A zero-time iteration within the simulator to resolve event propagation.", correct: true },
+        { text: "A synthesis optimization step.", correct: false }
+      ],
+      explanation: "Delta cycles allow the simulator to evaluate sequential logic events that occur 'instantaneously' at the same simulation time step."
+    }
+  ]}
+/>

@@ -137,7 +137,8 @@ join_none
 ### Common Pitfalls
 - **Mixing assignments:** Never mix `=` and `<=` on the same signal. It creates unpredictable races.
 - **Implicit Latches:** Using `always @(*)` instead of `always_comb` can hide missing default cases, leading to unwanted latches.
-- **Zombie Threads:** Forgetting to terminate `fork/join` threads leaves them running forever, potentially hanging the simulation.
+- **Zombie Threads:** Forgetting to terminate `fork/join_none` threads leaves them running forever, potentially hanging the simulation.
+- **The \`disable fork\` Trap:** Calling \`disable fork;\` kills *all* active child processes spawned by the current process, which can accidentally kill unrelated threads if not scoped properly. Always wrap targeted forks in a named \`begin...end\` block and disable the block name, or use an isolated process scope.
 
 ## The Forbidden Fruit: `always_latch`
 _When you actually want a latch (which is almost never)._
@@ -253,7 +254,30 @@ endmodule
         <span className="text-slate-400 transition group-open:rotate-180">▼</span>
       </summary>
       <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p>Non-blocking assignments schedule the update for the NBA region, ensuring that all `always_ff` blocks sample the "old" value of their inputs before any outputs change. This mimics the behavior of physical flip-flops and prevents hold-time races in simulation.</p>
+        <p>Non-blocking assignments schedule the update for the NBA region, ensuring that all `always_ff` blocks sample the "old" value of their inputs before any outputs change. This mimics the behavior of physical flip-flops and prevents hold-time races in simulation (IEEE 1800-2023 §10.4.2).</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        Explain the difference between fork-join, fork-join_any, and fork-join_none.
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p><strong>fork-join:</strong> The parent process blocks until ALL child processes finish.</p>
+        <p><strong>fork-join_any:</strong> The parent process blocks until ANY ONE child process finishes. The other children continue running in the background.</p>
+        <p><strong>fork-join_none:</strong> The parent process does not block at all. All child processes run in the background concurrently. (IEEE 1800-2023 §9.3.2)</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        What is the danger of using `disable fork;` and how do you avoid it?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>`disable fork;` terminates all active descendants of the calling process. If your task spawns a background monitor, then later uses `fork-join_any` for a timeout and calls `disable fork;` to clean up the timeout threads, it will unintentionally kill the monitor too.</p>
+        <p><strong>Fix:</strong> Scope the timeout fork inside its own `fork...join` or `begin...end` block, or explicitly disable named blocks (e.g., `disable target_block_name;`).</p>
       </div>
     </details>
   </CardContent>

@@ -1,19 +1,20 @@
 ---
 title: "F3A: Simulation Semantics"
 description: "Understand the SystemVerilog event-driven simulation model, time steps, and the distinction between simulation time and delta time."
+flashcards: "F3A_Simulation_Semantics"
 ---
 
 import { InteractiveCode, Quiz, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
 
 ## Quick Take
 - **What it is:** SystemVerilog simulation is event-driven. Time only advances when events occur.
-- **Why it matters:** Understanding simulation semantics is crucial for avoiding race conditions and predicting hardware behavior accurately.
+- **Why it matters:** Understanding simulation semantics is crucial for avoiding race conditions and predicting hardware behavior accurately. If you don't understand how time flows, your testbenches will be fragile and simulator-dependent.
 - **The Analogy:** Think of simulation time as a clock on the wall, while delta time is a stopwatch used to order immediate events before the wall clock ticks forward.
 
 ## Build Your Mental Model
 
 ### 1. Event-Driven Simulation
-The simulator only evaluates code when an event triggers it. An event is typically a change in a signal's value.
+The simulator only evaluates code when an event triggers it. An event is typically a change in a signal's value. Between events, the simulator does absolutely nothing.
 
 ```systemverilog
 module event_driven_demo;
@@ -33,17 +34,17 @@ module event_driven_demo;
 endmodule
 ```
 
-### 2. Time Steps
-Simulation time advances in discrete increments defined by the timescale. Delay controls (`#`) explicitly advance time.
+### 2. Time Steps and Timescale
+Simulation time advances in discrete increments. Delay controls (`#`) explicitly advance time, but the meaning of `#10` depends on the active `` `timescale ``.
 
 ```systemverilog
-`timescale 1ns/1ps
+`timescale 1ns/1ps // time_unit / time_precision
 
 module time_steps_demo;
   initial begin
     $display("Time is %0t", $time); // 0
-    #5;
-    $display("Time is %0t", $time); // 5000 (ps)
+    #5.5; // Advances time by 5.5ns
+    $display("Time is %0t", $time); // 5500 (ps resolution)
   end
 endmodule
 ```
@@ -56,7 +57,6 @@ module delta_time_demo;
   logic clk = 0;
   logic d, q1, q2;
 
-  // clock generation
   always #5 clk = ~clk;
 
   initial begin
@@ -64,8 +64,82 @@ module delta_time_demo;
     @(posedge clk);
     // At posedge clk, q1 gets d, and q2 gets q1. 
     // This happens in delta cycles within the same simulation time step.
-    q1 <= d; // Delta cycle 1
-    q2 <= q1; // Delta cycle 2
+    q1 <= d;  // Delta cycle 1 (NBA region update)
+    q2 <= q1; // Delta cycle 2 (subsequent evaluation triggered by q1 change)
   end
 endmodule
 ```
+
+## Make It Work
+- Always define a `` `timescale `` at the top of your testbench files, or better yet, use `$timeformat` and pass timescales via compiler directives to avoid compilation order bugs.
+- Recognize that `#0` delays are a legacy hack for forcing delta cycle delays. Do not use them in modern SystemVerilog; use non-blocking assignments (`<=`) or clocking blocks instead.
+
+## Push Further
+- Explore how the simulator engine actually processes events: it maintains an event queue sorted by time. When all events for the current time are exhausted, it advances to the next time in the queue.
+- See how `$strobe` and `$monitor` leverage the Postponed region (end of the current time step) to print values only after all delta cycles have settled.
+
+## Practice & Reinforce
+- Flashcards – Review definitions of event-driven execution, time units, precision, and delta cycles.
+- Quiz – Complete the knowledge check below to ensure you understand time resolution.
+
+## Interview Questions
+
+<Card className="mt-8 border-slate-700 bg-slate-900">
+  <CardHeader>
+    <CardTitle>Ready for the Interview?</CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-4">
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        What is a delta cycle? How is it different from simulation time?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>A delta cycle is a zero-delay iteration within a single simulation time step. Simulation time (the wall clock) only advances when there are no more events to process at the current time. Delta cycles allow the simulator to model the propagation of logic gates that all happen "instantaneously" at the same simulation time.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        What does `` `timescale 1ns/10ps `` mean? If I write `#1.234`, what delay is actually applied?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>The first value (1ns) is the time unit (what `#1` means). The second value (10ps) is the time precision (the smallest time step the simulator can resolve, which dictates rounding).</p>
+        <p>`#1.234` means 1.234ns. However, because the precision is 10ps (0.01ns), the simulator rounds it to 1.23ns (or 1230ps). The '4' is lost.</p>
+      </div>
+    </details>
+  </CardContent>
+</Card>
+
+## References & Next Topics
+- IEEE 1800-2023 §3.14 (Time scale)
+- IEEE 1800-2023 §4 (Scheduling semantics)
+- Next: [Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)
+
+<Quiz
+  questions={[
+    {
+      question: 'In `timescale 10ns/1ns, what does #2.5 represent?',
+      answers: [
+        { text: '2.5 nanoseconds', correct: false },
+        { text: '25 nanoseconds', correct: true },
+        { text: '2 nanoseconds (precision truncated)', correct: false },
+        { text: 'It is a syntax error', correct: false }
+      ],
+      explanation:
+        'The time unit is 10ns. So #2.5 means 2.5 * 10ns = 25ns. The precision is 1ns, so 25ns is perfectly representable.'
+    },
+    {
+      question: 'Which of the following advances simulation time?',
+      answers: [
+        { text: 'A non-blocking assignment (<=)', correct: false },
+        { text: 'A delay control (#10)', correct: true },
+        { text: 'A delta cycle', correct: false },
+        { text: 'An event trigger (-> e)', correct: false }
+      ],
+      explanation:
+        'Only explicit time controls like #delay or waiting for events that happen in the future will advance the global simulation clock. Delta cycles evaluate in zero simulation time.'
+    }
+  ]}
+/>

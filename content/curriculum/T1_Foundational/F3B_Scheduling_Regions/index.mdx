@@ -1,6 +1,6 @@
 ---
 title: "F3B: Scheduling Regions"
-description: "Learn about the SystemVerilog scheduler regions and how statements are ordered for execution."
+description: "Master the SystemVerilog scheduler regions and how statements are ordered for execution to eliminate race conditions."
 flashcards: "F3B_Scheduling_Regions"
 sources:
   - title: "IEEE Standard for SystemVerilog"
@@ -9,14 +9,16 @@ sources:
 ---
 
 import { InteractiveCode, Quiz, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
+import SVSchedulerRegionVisualizer from '@/components/visualizers/SVSchedulerRegionVisualizer';
 
 ## Quick Take
-- **What it is:** The IEEE standard divides each simulation time step into multiple scheduling regions (Active, Inactive, NBA, Observed, Reactive, etc.).
-- **Why it matters:** It prevents race conditions between testbench code and RTL code, and between blocking and non-blocking assignments.
+- **What it is:** The IEEE standard divides each simulation time step into multiple scheduling regions (Preponed, Active, Inactive, NBA, Observed, Reactive, Postponed).
+- **Why it matters:** Without these regions, RTL and Testbench code would step on each other's toes, creating non-deterministic race conditions.
+- **The Analogy:** Think of the time step as a factory assembly line. Parts are inspected (Preponed), assembled (Active), shifted down the line (NBA), QA tested (Observed), logged (Reactive), and shipped (Postponed).
 
-## The SystemVerilog Scheduling Regions
+## Build Your Mental Model
 
-SystemVerilog defines a strict order of execution within a single time step to prevent race conditions. The time step is divided into several regions. Here are the most critical ones you must understand for interviews:
+SystemVerilog defines a strict order of execution within a single time step to prevent race conditions (IEEE 1800-2023 §4). Here are the most critical regions you must understand for interviews:
 
 | Region | Primary Purpose | Examples |
 |---|---|---|
@@ -29,35 +31,91 @@ SystemVerilog defines a strict order of execution within a single time step to p
 | **Postponed** | Execute read-only tasks after all other regions have settled for the current time step. | `$monitor()`, `$strobe()` |
 
 > [!IMPORTANT]
-> **The Active vs. Reactive Split:** The original intent of SV scheduling was to isolate RTL (Active/NBA) from Testbench (Reactive). Testbenches driven from program blocks execute in the Reactive region, interacting with RTL via clocking blocks (sampled in Preponed, driven in Reactive) to guarantee zero race conditions. In modern UVM (which uses modules instead of programs), this is achieved purely via clocking block semantics and phasing.
+> **The Active vs. Reactive Split:** The original intent of SV scheduling was to isolate RTL (Active/NBA) from Testbench (Reactive). Testbenches driven from `program` blocks execute in the Reactive region, interacting with RTL via clocking blocks to guarantee zero race conditions. In modern UVM (which uses `module` and `class` constructs instead of `program`), this isolation is achieved purely via clocking block semantics and phasing.
 
-## Interactive Visualizer
+### Interactive Visualizer
 
 See how events propagate through the regions in real-time.
 
 <SVSchedulerRegionVisualizer />
 
-## Knowledge Check
+## Make It Work
+- **Avoid `#0` delays:** They were used in Verilog-1995 to fix races by pushing assignments to the Inactive region. In SystemVerilog, use non-blocking assignments (`<=`) instead.
+- **Use `$strobe` for debug:** If you need to print a variable's final value at the end of a time step after all NBA updates, use `$strobe` (which executes in the Postponed region) instead of `$display` (which executes in the Active region).
+
+## Push Further
+- Investigate how clocking blocks span multiple regions: inputs are sampled in the Preponed region, and outputs are driven in the Re-NBA region (a subset of the Reactive region).
+- Read the IEEE 1800-2023 LRM Section 4.4, which details the stratified event scheduler loop. Notice that the scheduler can loop back from NBA to Active if new events are triggered.
+
+## Practice & Reinforce
+- Flashcards – Review the 7 primary regions and their specific roles.
+- Quiz – Complete the knowledge check below.
+
+## Interview Questions
+
+<Card className="mt-8 border-slate-700 bg-slate-900">
+  <CardHeader>
+    <CardTitle>Ready for the Interview?</CardTitle>
+  </CardHeader>
+  <CardContent className="space-y-4">
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        In what scheduling region is the RHS of a non-blocking assignment evaluated? In what region is the LHS updated?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>The Right-Hand Side (RHS) of a non-blocking assignment is evaluated in the <strong>Active</strong> region. The update to the Left-Hand Side (LHS) is scheduled and executed in the <strong>NBA (Non-Blocking Assignment)</strong> region.</p>
+      </div>
+    </details>
+
+    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
+      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
+        How do concurrent assertions avoid sampling the "new" value of a signal if they are evaluated in the same time step?
+        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+      </summary>
+      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+        <p>Concurrent assertions sample their variables in the <strong>Preponed</strong> region (before any Active events happen in that time step). They are then evaluated in the <strong>Observed</strong> region (after all Active and NBA events are settled). This guarantees they always see the stable values from the <em>previous</em> time step, exactly like a physical flip-flop.</p>
+      </div>
+    </details>
+  </CardContent>
+</Card>
+
+## References & Next Topics
+- IEEE 1800-2023 §4 (Scheduling semantics)
+- IEEE 1800-2023 §14 (Clocking blocks)
+- Next: [Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)
 
 <Quiz
   questions={[
     {
       question: "Which region evaluates the Right-Hand Side (RHS) of a non-blocking assignment?",
-      options: ["Active", "NBA", "Observed", "Reactive"],
-      answer: "Active",
-      explanation: "The RHS is evaluated in the Active region, while the LHS is updated later in the NBA region."
+      answers: [
+        { text: "Active", correct: true },
+        { text: "NBA", correct: false },
+        { text: "Observed", correct: false },
+        { text: "Reactive", correct: false }
+      ],
+      explanation: "The RHS is evaluated in the Active region alongside blocking assignments, while the LHS update is scheduled for the NBA region."
     },
     {
       question: "Which region is used to update the LHS of a non-blocking assignment?",
-      options: ["Active", "Inactive", "NBA", "Reactive"],
-      answer: "NBA",
-      explanation: "The Non-Blocking Assignment (NBA) region specifically handles the LHS updates to prevent race conditions."
+      answers: [
+        { text: "Active", correct: false },
+        { text: "Inactive", correct: false },
+        { text: "NBA", correct: true },
+        { text: "Reactive", correct: false }
+      ],
+      explanation: "The Non-Blocking Assignment (NBA) region specifically handles LHS updates to prevent race conditions with evaluating logic."
     },
     {
       question: "Where do concurrent assertions (SVA) typically evaluate?",
-      options: ["Active", "NBA", "Observed", "Reactive"],
-      answer: "Observed",
-      explanation: "Assertions are evaluated in the Observed region to ensure they check stable values after all NBA updates are complete."
+      answers: [
+        { text: "Active", correct: false },
+        { text: "NBA", correct: false },
+        { text: "Observed", correct: true },
+        { text: "Reactive", correct: false }
+      ],
+      explanation: "Assertions are evaluated in the Observed region to ensure they check stable values after all NBA updates are complete, using values sampled in the Preponed region."
     }
   ]}
 />

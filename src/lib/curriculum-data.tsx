@@ -109,6 +109,11 @@ export const curriculumData: Module[] = [
             "title": "F2D: Interprocess Communication",
             "slug": "ipc",
             "description": "Coordinate parallel threads safely using Semaphores and Mailboxes."
+          },
+          {
+            "title": "Tasks and Functions",
+            "slug": "tasks-functions",
+            "description": "Encapsulate logic, understand variable lifetimes, and safely pass arguments."
           }
         ]
       },
@@ -130,7 +135,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F3B: Scheduling Regions",
             "slug": "index",
-            "description": "Learn about the SystemVerilog scheduler regions and how statements are ordered for execution."
+            "description": "Master the SystemVerilog scheduler regions and how statements are ordered for execution to eliminate race conditions."
           }
         ]
       },

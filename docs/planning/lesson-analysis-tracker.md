@@ -25,11 +25,11 @@ Dimensions: Content Completeness, Technical Accuracy, Pedagogical Presentation, 
 | 3 | F1C — Why SystemVerilog | ✅ complete | 2026-05-05 | Added Quick Take, LRM clause refs on superpowers, enhanced logic explanation with multi-driver limitation, 1 new interview Q, expanded flashcards 3→4 | Light treatment (intro) |
 | 4 | F2A — Core Data Types | ✅ complete | 2026-05-05 | Added complete type family table, logic/wire/reg decision tree, packed vs unpacked with code, X-propagation trap, signedness trap, X-pessimism/optimism table, $cast rules, 4 corner cases, 5 interview Qs, expanded flashcards 6→10, added 3 Qs to centralized SV interview bank | Heavy treatment |
 | 5 | F2B — Dynamic Structures | ✅ complete | 2026-05-05 | Added decision matrix, 4 production code patterns (resize, backpressure, scoreboard tracking, array methods), performance table, 5 corner cases, 4 interview Qs with LRM citations | Heavy treatment |
-| 6 | F2C — Procedural Code and Flow Control | pending | — | — | — |
-| 7 | F2D — Reusable Code and Parallelism | pending | — | — | — |
-| 8 | F3A — Simulation Semantics | pending | — | — | — |
-| 9 | F3B — Scheduling Regions | pending | — | — | Heavy: top interview topic |
-| 10 | F3C — Delta Cycles and Race Conditions | pending | — | — | Heavy: classic traps |
+| 6 | F2C — Procedural Code and Flow Control | ✅ complete | 2026-05-05 | Added disable fork trap pitfall, expanded 2 interview Qs to index.mdx, created 6-card flashcard deck | Heavy treatment |
+| 7 | F2D — Reusable Code and Parallelism | ✅ complete | 2026-05-05 | Added tasks-functions.mdx, created F2D_IPC and F2D_Tasks_Functions flashcards, updated index.mdx | Heavy treatment |
+| 8 | F3A — Simulation Semantics | ✅ complete | 2026-05-05 | Rewrote to match standard template, added LRM citations, created F3A flashcard deck | Moderate treatment |
+| 9 | F3B — Scheduling Regions | ✅ complete | 2026-05-05 | Rewrote to standard template, added LRM citations, enhanced interview Qs | Heavy treatment |
+| 10 | F3C — Delta Cycles and Race Conditions | ✅ complete | 2026-05-05 | Rewrote to standard template, added LRM citations, enhanced interview Qs, created flashcard deck | Heavy treatment |
 | 11 | F4A — Modules and Packages | pending | — | — | — |
 | 12 | F4B — Interfaces and Modports | pending | — | — | — |
 | 13 | F4C — Clocking Blocks | pending | — | — | — |
