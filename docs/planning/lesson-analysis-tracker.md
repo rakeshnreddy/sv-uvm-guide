@@ -30,9 +30,9 @@ Dimensions: Content Completeness, Technical Accuracy, Pedagogical Presentation, 
 | 8 | F3A — Simulation Semantics | ✅ complete | 2026-05-05 | Rewrote to match standard template, added LRM citations, created F3A flashcard deck | Moderate treatment |
 | 9 | F3B — Scheduling Regions | ✅ complete | 2026-05-05 | Rewrote to standard template, added LRM citations, enhanced interview Qs | Heavy treatment |
 | 10 | F3C — Delta Cycles and Race Conditions | ✅ complete | 2026-05-05 | Rewrote to standard template, added LRM citations, enhanced interview Qs, created flashcard deck | Heavy treatment |
-| 11 | F4A — Modules and Packages | pending | — | — | — |
-| 12 | F4B — Interfaces and Modports | pending | — | — | — |
-| 13 | F4C — Clocking Blocks | pending | — | — | — |
+| 11 | F4A — Modules and Packages | ✅ complete | 2026-05-06 | Standardized template headings, added Push Further, created flashcard deck, added LRM citations | Light treatment |
+| 12 | F4B — Interfaces and Modports | ✅ complete | 2026-05-06 | Standardized template headings, added Push Further, created flashcard deck, added LRM citations | Light treatment |
+| 13 | F4C — Clocking Blocks | ✅ complete | 2026-05-06 | Standardized template headings, added Push Further, added LRM citations | Light treatment |
 
 ## Phase 2: T2 Intermediate — SystemVerilog (13 modules)
 

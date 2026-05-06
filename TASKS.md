@@ -9,7 +9,7 @@ Purpose: Single source of truth for active pending work. Session state lives in 
 
 | Order | ID | Priority | Status | Description | Next Action |
 |---:|---|---|---|---|---|
-| 1 | DEEP-ANALYSIS-SWEEP | P1 | in_progress | Fresh-eyes 7-dimension analysis of all 69 curriculum modules — analyze → implement → validate → close, one module at a time | Continue from F4A; see SESSION_HANDOFF.txt |
+| 1 | DEEP-ANALYSIS-SWEEP | P1 | in_progress | Fresh-eyes 7-dimension analysis of all 69 curriculum modules — analyze → implement → validate → close, one module at a time | Continue from I-SV-1; see SESSION_HANDOFF.txt |
 
 ## Current Site State
 

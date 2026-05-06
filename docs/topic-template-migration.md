@@ -7,3 +7,6 @@
 | T1 | F3A | `content/curriculum/T1_Foundational/F3A_Simulation_Semantics/index.mdx` | ✅ |
 | T1 | F3B | `content/curriculum/T1_Foundational/F3B_Scheduling_Regions/index.mdx` | ✅ |
 | T1 | F3C | `content/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index.mdx` | ✅ |
+| T1 | F4A | `content/curriculum/T1_Foundational/F4A_Modules_and_Packages/index.mdx` | ✅ |
+| T1 | F4B | `content/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index.mdx` | ✅ |
+| T1 | F4C | `content/curriculum/T1_Foundational/F4C_Clocking_Blocks/index.mdx` | ✅ |
