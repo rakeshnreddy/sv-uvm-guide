@@ -1,7 +1,7 @@
 # TASKS.md — Active Backlog and Site State
 
-Last Updated: 2026-05-05
-Purpose: Single source of truth for active pending work. Session state lives in `SESSION_HANDOFF.txt`. Detailed progress for the active workstream is tracked in `docs/planning/lesson-analysis-tracker.md`.
+Last Updated: 2026-05-07
+Purpose: Single source of truth for active pending work. Session state lives in `SESSION_HANDOFF.txt`. Detailed progress for the active workstream is tracked in `docs/planning/lesson-analysis-tracker.md`. The full implementation spec for the T1 upgrade is at `docs/planning/foundational-upgrade-spec.md`.
 
 ---
 
