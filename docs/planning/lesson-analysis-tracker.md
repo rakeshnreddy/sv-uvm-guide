@@ -1,7 +1,7 @@
 # Lesson Analysis Sweep — Persistent Progress Tracker
 
-Last Updated: 2026-05-05
-Status: In Progress — Phase 1 (T1 Foundational)
+Last Updated: 2026-05-07
+Status: In Progress — T1-FOUNDATIONAL-UPGRADE (Phase 1 Revision)
 
 ## Overview
 
@@ -13,6 +13,22 @@ Dimensions: Content Completeness, Technical Accuracy, Pedagogical Presentation, 
 - Enrich both inline interview content AND centralized JSON banks
 - Expand labs to full simulation-ready code for proficiency
 - Add LRM citations (IEEE 1800-2023, IEEE 1800.2-2020, Arm AMBA specs) wherever possible
+
+---
+
+## T1-FOUNDATIONAL-UPGRADE Tracker
+
+This section tracks the implementation of the Foundational Curriculum Implementation Spec across the 13 T1 modules.
+
+| Step | Task | Status | Notes |
+|---|---|---|---|
+| 1 | Create `foundational_systemverilog.json` & migrate F1A/F2A Qs | todo | Ensure schema matches the spec |
+| 2 | Implement `NetResolutionSimulator` + F2A upgrades | todo | Add `trireg` details and katas |
+| 3 | Implement `DeltaQueue3DVisualizer` + F3A/F3B upgrades | todo | Add region ordering katas |
+| 4 | Implement `ClockingBlockSkewVisualizer` + F4C upgrades | todo | Add race-free TB driver kata |
+| 5 | Add kata sections to all T1 modules | todo | Use standard kata template |
+| 6 | Implement remaining visuals (`FabRespinsVisualizer`, etc.) | todo | Also `DynamicMemoryVisualizer`, `RaceConditionDebugger` |
+| 7 | Final pass: LRM citations & Code Style normalization | todo | 2-space indent, `logic` over `reg`, LRM format |
 
 ---
 

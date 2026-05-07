@@ -9,7 +9,8 @@ Purpose: Single source of truth for active pending work. Session state lives in 
 
 | Order | ID | Priority | Status | Description | Next Action |
 |---:|---|---|---|---|---|
-| 1 | DEEP-ANALYSIS-SWEEP | P1 | in_progress | Fresh-eyes 7-dimension analysis of all 69 curriculum modules — analyze → implement → validate → close, one module at a time | Continue from I-SV-1; see SESSION_HANDOFF.txt |
+| 1 | T1-FOUNDATIONAL-UPGRADE | P0 | todo | Execute the Foundational Curriculum Implementation Spec: Add LRM citations, normalize code styles, migrate to foundational_systemverilog.json, add 6 new visualizers, and standard katas for all 13 T1 modules. | See SESSION_HANDOFF.txt for the step-by-step implementation plan. |
+| 2 | DEEP-ANALYSIS-SWEEP | P1 | in_progress | Fresh-eyes 7-dimension analysis of all 69 curriculum modules — analyze → implement → validate → close, one module at a time | Paused for T1-FOUNDATIONAL-UPGRADE |
 
 ## Current Site State
 
