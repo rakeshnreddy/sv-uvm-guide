@@ -52,7 +52,7 @@ const overrides: Record<string, Partial<StatusMetadata>> = {
     lastUpdated: '2025-09-23',
     notes: 'Industry impact data refreshed with 2024/2025 studies; queue SME fact-check.',
   },
-  'T1_Foundational/F2_SystemVerilog_Basics/index': {
+  'T1_Foundational/F2A_Core_Data_Types/index': {
     status: 'in-review',
     lastUpdated: '2025-09-23',
     notes: 'Synth vs. verification reference, datatype drill, and digital logic primer folded in; await SME review.',
