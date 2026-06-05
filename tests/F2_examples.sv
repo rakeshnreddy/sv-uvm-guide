@@ -1,4 +1,4 @@
-// Test file for F2_SystemVerilog_Basics examples
+// Test file for F2A Core Data Types examples
 
 module data_type_example;
   logic my_variable; // A single bit 4-state variable
