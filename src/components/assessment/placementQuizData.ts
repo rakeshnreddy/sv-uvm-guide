@@ -221,7 +221,7 @@ const categoryFocus: Record<PlacementCategory, { title: string; summary: string;
     title: 'SystemVerilog Foundations',
     summary: 'Reinforce scheduling semantics, interfaces, and constraint techniques so RTL corner cases stay controlled.',
     resources: [
-      { label: 'T1 • SystemVerilog Basics', href: '/curriculum/T1_Foundational/F2_SystemVerilog_Basics/index' },
+      { label: 'T1 • Core Data Types', href: '/curriculum/T1_Foundational/F2A_Core_Data_Types/index' },
       { label: 'Interactive • Data Type Explorer', href: '/practice/visualizations/systemverilog-data-types' },
     ],
   },
