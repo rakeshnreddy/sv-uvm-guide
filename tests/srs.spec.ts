@@ -14,20 +14,16 @@ const mPrismaClient = vi.hoisted(() => ({
   },
 }));
 
+const requireSession = vi.hoisted(() => vi.fn().mockResolvedValue({
+  user: { id: 'test-user-id' },
+}));
+
 
 // Mock Prisma Client helper
 vi.mock('@/lib/prisma', () => ({ prisma: mPrismaClient }));
 
-// Mock iron-session
-vi.mock('iron-session', () => ({
-  getIronSession: vi.fn().mockResolvedValue({ userId: 'test-user-id' }),
-}));
-
-vi.mock('next/headers', () => ({
-  cookies: vi.fn(() => ({
-    get: vi.fn(),
-    set: vi.fn(),
-  })),
+vi.mock('@/lib/auth', () => ({
+  requireSession,
 }));
 
 vi.mock('next/cache', () => ({

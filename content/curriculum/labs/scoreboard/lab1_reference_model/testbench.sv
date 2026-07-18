@@ -28,6 +28,7 @@ module alu_dut (
 endmodule
 
 // ------ Transaction ------
+`define ALU_TRANSACTION_DEFINED
 class alu_transaction extends uvm_sequence_item;
   `uvm_object_utils(alu_transaction)
 

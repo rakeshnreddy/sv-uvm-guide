@@ -1,7 +1,7 @@
 // testbench.sv — AXI Deadlock Hunt Lab
 // This testbench simulates a realistic channel-dependency deadlock scenario.
-// A buggy slave creates an illegal AWREADY → WVALID dependency that deadlocks
-// write transactions, and cascading stalls that block read transactions too.
+// An illegal master WVALID → AWREADY dependency combines with a legal but
+// risky slave AWREADY → WVALID policy to deadlock write transactions.
 
 `timescale 1ns/1ps
 
@@ -71,8 +71,9 @@ module top;
   //------------------------------------------------------------------
   // Buggy Slave (contains the deadlock bug)
   //------------------------------------------------------------------
-  // BUG: This slave waits for WVALID before asserting AWREADY.
-  // This violates the AXI spec rule that AWREADY must not depend on WVALID.
+  // This slave waits for WVALID before asserting AWREADY. A destination may
+  // wait for VALID before asserting READY; the policy is legal but risky when
+  // combined with the deliberately illegal master behavior below.
   //
   // Additionally, the slave's internal FSM blocks ARREADY while a write
   // is "in progress" (i.e., waiting for the AW handshake that never completes),
@@ -101,22 +102,21 @@ module top;
   //------------------------------------------------------------------
   // Protocol Checker (your assertions go here)
   //------------------------------------------------------------------
-  axi_deadlock_checker #(.MAX_WAIT(32)) u_checker (
+  axi_deadlock_checker #(.MAX_WAIT(32), .ENABLE_SERVICE_BOUNDS(1'b0)) u_checker (
     .ACLK    (ACLK),
     .ARESETn (ARESETn),
-    .AWVALID (AWVALID), .AWREADY (AWREADY),
-    .WVALID  (WVALID),  .WREADY  (WREADY),
-    .BVALID  (BVALID),  .BREADY  (BREADY),
-    .ARVALID (ARVALID), .ARREADY (ARREADY),
-    .RVALID  (RVALID),  .RREADY  (RREADY)
+    .AWVALID (AWVALID), .AWREADY (AWREADY), .AWID (AWID), .AWADDR (AWADDR), .AWLEN (AWLEN),
+    .WVALID  (WVALID),  .WREADY  (WREADY), .WDATA (WDATA), .WSTRB (WSTRB), .WLAST (WLAST),
+    .BVALID  (BVALID),  .BREADY  (BREADY), .BID (BID), .BRESP (BRESP),
+    .ARVALID (ARVALID), .ARREADY (ARREADY), .ARID (ARID), .ARADDR (ARADDR), .ARLEN (ARLEN),
+    .RVALID  (RVALID),  .RREADY  (RREADY), .RID (RID), .RDATA (RDATA), .RRESP (RRESP), .RLAST (RLAST)
   );
 
   //------------------------------------------------------------------
   // Master Stimulus — drives two writes and one read
   //------------------------------------------------------------------
-  // The master waits for AWREADY before asserting WVALID.
-  // This is LEGAL per the AXI spec (the master CAN do this).
-  // But combined with the buggy slave, it creates the deadlock.
+  // The master waits for AWREADY before asserting WVALID. This is the
+  // deliberate protocol bug: source VALID must not depend on destination READY.
   //------------------------------------------------------------------
   initial begin
     wait (ARESETn === 1);
@@ -137,8 +137,7 @@ module top;
     ARADDR  <= 32'h0000_3000;
     ARLEN   <= 8'd0;
 
-    // Master waits for AWREADY before sending write data
-    // (This is LEGAL — A3.3.1: "WVALID can wait for AWREADY")
+    // Deliberate bug: WVALID is incorrectly made dependent on AWREADY.
     fork
       begin : aw_wait
         wait (AWREADY === 1);
@@ -194,7 +193,7 @@ endmodule
 
 //======================================================================
 // Buggy Slave Module
-// Contains an ILLEGAL channel dependency: AWREADY waits for WVALID
+// Contains a legal destination policy that participates in the wait cycle.
 //======================================================================
 module buggy_slave (
   input  logic        ACLK,

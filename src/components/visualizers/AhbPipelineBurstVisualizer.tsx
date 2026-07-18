@@ -1,8 +1,9 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useEffect, useMemo, useReducer, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Play, Pause, SkipBack, SkipForward, RotateCcw } from "lucide-react";
+import { createPlaybackState, playbackReducer } from "@/lib/playback-machine";
 
 type Transfer = {
   id: string;
@@ -20,7 +21,7 @@ type Scenario = {
   id: string;
   name: string;
   description: string;
-  maxCycles: number;
+  cycleCount: number;
   transfers: Transfer[];
 };
 
@@ -29,7 +30,7 @@ const SCENARIOS: Record<string, Scenario> = {
     id: "single",
     name: "Single Transfer",
     description: "A basic single transfer with no wait states.",
-    maxCycles: 5,
+    cycleCount: 5,
     transfers: [
       {
         id: "t1",
@@ -48,7 +49,7 @@ const SCENARIOS: Record<string, Scenario> = {
     id: "pipeline",
     name: "Pipelined Transfers",
     description: "Two back-to-back transfers showing Address/Data phase overlap.",
-    maxCycles: 6,
+    cycleCount: 6,
     transfers: [
       {
         id: "t1",
@@ -78,7 +79,7 @@ const SCENARIOS: Record<string, Scenario> = {
     id: "wait_state",
     name: "Wait-State Stretching",
     description: "The slave inserts a wait state (HREADYOUT=0), stalling the pipeline.",
-    maxCycles: 7,
+    cycleCount: 7,
     transfers: [
       {
         id: "t1",
@@ -108,7 +109,7 @@ const SCENARIOS: Record<string, Scenario> = {
     id: "burst_incr4",
     name: "INCR4 Burst",
     description: "A 4-beat incrementing burst.",
-    maxCycles: 8,
+    cycleCount: 8,
     transfers: [
       {
         id: "t1",
@@ -160,36 +161,29 @@ const SCENARIOS: Record<string, Scenario> = {
 
 export default function AhbPipelineBurstVisualizer() {
   const [activeScenarioId, setActiveScenarioId] = useState<string>("pipeline");
-  const [currentCycle, setCurrentCycle] = useState<number>(0);
-  const [isPlaying, setIsPlaying] = useState<boolean>(false);
-
   const scenario = SCENARIOS[activeScenarioId];
+  const [playback, dispatch] = useReducer(playbackReducer, scenario.cycleCount, createPlaybackState);
+  const currentCycle = playback.index;
+  const isPlaying = playback.status === "playing";
+  const lastCycle = scenario.cycleCount - 1;
 
   useEffect(() => {
-    let timer: NodeJS.Timeout;
-    if (isPlaying && currentCycle < scenario.maxCycles) {
-      timer = setTimeout(() => {
-        setCurrentCycle((prev) => prev + 1);
-      }, 1200);
-    } else if (currentCycle >= scenario.maxCycles) {
-      setIsPlaying(false);
-    }
+    if (!isPlaying) return;
+    const timer: ReturnType<typeof setTimeout> = setTimeout(() => dispatch({ type: "TICK" }), 1200);
     return () => clearTimeout(timer);
-  }, [isPlaying, currentCycle, scenario.maxCycles]);
+  }, [currentCycle, isPlaying]);
 
   const handleReset = () => {
-    setIsPlaying(false);
-    setCurrentCycle(0);
+    dispatch({ type: "RESET" });
   };
 
   const handleScenarioChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     setActiveScenarioId(e.target.value);
-    setIsPlaying(false);
-    setCurrentCycle(0);
+    dispatch({ type: "SET_LENGTH", itemCount: SCENARIOS[e.target.value].cycleCount });
   };
 
   // Compute what is active in each cycle
-  const cycles = Array.from({ length: scenario.maxCycles }, (_, i) => {
+  const cycles = useMemo(() => Array.from({ length: scenario.cycleCount }, (_, i) => {
     const activeAddrTransfer = scenario.transfers.find(
       (t) => i >= t.addrCycleStart && i <= t.addrCycleEnd
     );
@@ -212,7 +206,7 @@ export default function AhbPipelineBurstVisualizer() {
       activeDataTransfer,
       hready,
     };
-  });
+  }), [scenario]);
 
   const activeAddrPhase = cycles[currentCycle]?.activeAddrTransfer;
   const activeDataPhase = cycles[currentCycle]?.activeDataTransfer;
@@ -251,8 +245,7 @@ export default function AhbPipelineBurstVisualizer() {
           <div className="flex items-center rounded-md border border-slate-300 dark:border-slate-700 overflow-hidden bg-white dark:bg-slate-800">
             <button
               onClick={() => {
-                setIsPlaying(false);
-                setCurrentCycle((prev) => Math.max(0, prev - 1));
+                dispatch({ type: "STEP_BACK" });
               }}
               disabled={currentCycle === 0}
               className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
@@ -262,8 +255,8 @@ export default function AhbPipelineBurstVisualizer() {
               <SkipBack size={18} />
             </button>
             <button
-              onClick={() => setIsPlaying(!isPlaying)}
-              disabled={currentCycle >= scenario.maxCycles}
+              onClick={() => dispatch({ type: isPlaying ? "PAUSE" : "PLAY" })}
+              disabled={currentCycle >= lastCycle}
               className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed border-x border-slate-300 dark:border-slate-700 transition-colors"
               title={isPlaying ? "Pause" : "Play"}
               aria-label={isPlaying ? "Pause simulation" : "Play simulation"}
@@ -272,10 +265,9 @@ export default function AhbPipelineBurstVisualizer() {
             </button>
             <button
               onClick={() => {
-                setIsPlaying(false);
-                setCurrentCycle((prev) => Math.min(scenario.maxCycles - 1, prev + 1));
+                dispatch({ type: "STEP_FORWARD" });
               }}
-              disabled={currentCycle >= scenario.maxCycles - 1}
+              disabled={currentCycle >= lastCycle}
               className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 disabled:opacity-50 disabled:cursor-not-allowed border-r border-slate-300 dark:border-slate-700 transition-colors"
               title="Step Forward"
               aria-label="Step Forward"

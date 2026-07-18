@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useRef, useMemo, useEffect } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
+import React, { useState, useRef, useMemo, useEffect, useLayoutEffect } from "react";
+import { Canvas } from "@react-three/fiber";
 import { OrbitControls, Text, Grid, Html } from "@react-three/drei";
 import * as THREE from "three";
 import { cn } from "@/lib/utils";
@@ -10,6 +10,12 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { WebGLFallbackBoundary } from "@/components/ui/WebGLFallbackBoundary";
 import { useSearchParams, useRouter } from "next/navigation";
+import {
+  buildArrayInstances,
+  createQueueIdAllocator,
+  MAX_VISIBLE_INSTANCES,
+  validateDimensions,
+} from "@/lib/systemverilog-array-model";
 
 // ---- Shared Materials & Helpers ----
 const materials = {
@@ -37,25 +43,13 @@ function AnimatedCube({
   label?: string;
   isHighlighted?: boolean;
 }) {
-  const mesh = useRef<THREE.Mesh>(null);
   const [hovered, setHovered] = useState(false);
-
-  useFrame((state, delta) => {
-    if (!mesh.current) return;
-    mesh.current.position.x = THREE.MathUtils.damp(mesh.current.position.x, targetPos[0], 6, delta);
-    mesh.current.position.y = THREE.MathUtils.damp(mesh.current.position.y, targetPos[1], 6, delta);
-    mesh.current.position.z = THREE.MathUtils.damp(mesh.current.position.z, targetPos[2], 6, delta);
-
-    const s = THREE.MathUtils.damp(mesh.current.scale.x, targetScale, 6, delta);
-    mesh.current.scale.set(s, s, s);
-  });
 
   return (
     <group>
       <mesh
-        ref={mesh}
-        position={[targetPos[0], targetPos[1] - 0.1, targetPos[2]]}
-        scale={[0.01, 0.01, 0.01]} // initial scale
+        position={targetPos}
+        scale={targetScale}
         material={isHighlighted ? materials.highlight : hovered ? materials.hover : material}
         onPointerOver={(e) => {
           e.stopPropagation();
@@ -146,83 +140,42 @@ function FixedArrayView({
   unpacked: number[];
   highlightIndices: { u: number[]; p: number[] } | null;
 }) {
-  const pDims = [packed.length === 1 ? 1 : packed[0] || 1, packed.length === 1 ? packed[0] || 1 : packed[1] || 1, packed.length === 1 ? 1 : packed[2] || 1];
-  const uDims = [unpacked[0] || 1, unpacked[1] || 1, unpacked[2] || 1];
-  const unpackedSpacing = 1.6;
-  const packedSpacing = 0.2;
+  const mesh = useRef<THREE.InstancedMesh>(null);
+  const model = useMemo(
+    () => buildArrayInstances({ packed, unpacked }, MAX_VISIBLE_INSTANCES),
+    [packed, unpacked],
+  );
+  const geometry = useMemo(() => new THREE.BoxGeometry(0.9, 0.9, 0.9), []);
+  const material = useMemo(
+    () => new THREE.MeshStandardMaterial({ roughness: 0.5, vertexColors: true }),
+    [],
+  );
 
-  const cubes = [];
-  const totalPackedBits = packed.reduce((a, b) => a * b, 1);
+  useLayoutEffect(() => {
+    if (!mesh.current || typeof mesh.current.setMatrixAt !== "function") return;
+    const matrix = new THREE.Matrix4();
+    const color = new THREE.Color();
+    model.instances.forEach((instance, index) => {
+      matrix.makeTranslation(...instance.position);
+      mesh.current!.setMatrixAt(index, matrix);
+      const highlighted = highlightIndices && instance.logicalIndex === 0;
+      mesh.current!.setColorAt(index, color.setHex(highlighted ? 0xdb2777 : fixedColors[instance.colorIndex]));
+    });
+    mesh.current.instanceMatrix.needsUpdate = true;
+    if (mesh.current.instanceColor) mesh.current.instanceColor.needsUpdate = true;
+  }, [highlightIndices, model]);
 
-  const maxU0 = Math.min(uDims[0], 10);
-  const maxU1 = Math.min(uDims[1], 10);
-  const maxU2 = Math.min(uDims[2], 10);
-  const maxP0 = Math.min(pDims[0], 16);
-  const maxP1 = Math.min(pDims[1], 16);
-  const maxP2 = Math.min(pDims[2], 16);
+  useEffect(() => () => {
+    geometry.dispose();
+    material.dispose();
+  }, [geometry, material]);
 
-  for (let u0 = 0; u0 < maxU0; u0++) {
-    for (let u1 = 0; u1 < maxU1; u1++) {
-      for (let u2 = 0; u2 < maxU2; u2++) {
-        const colorIndex = (u0 * uDims[1] * uDims[2] + u1 * uDims[2] + u2) % fixedColors.length;
-        const mat = new THREE.MeshStandardMaterial({ color: fixedColors[colorIndex], roughness: 0.5 });
-        
-        const bW = pDims[1] * (1 + packedSpacing);
-        const bH = pDims[0] * (1 + packedSpacing);
-        const bD = pDims[2] * (1 + packedSpacing);
-
-        const groupX = u1 * (bW + unpackedSpacing);
-        const groupY = u0 * (bH + unpackedSpacing);
-        const groupZ = u2 * (bD + unpackedSpacing);
-
-        for (let p0 = 0; p0 < maxP0; p0++) {
-          for (let p1 = 0; p1 < maxP1; p1++) {
-            for (let p2 = 0; p2 < maxP2; p2++) {
-              const uIndices = [u0, u1, u2].slice(0, unpacked.length);
-              const pIndices = packed.length === 1 ? [p1] : [p0, p1, p2].slice(0, packed.length);
-
-              const uStrides = unpacked.map((_, i) => unpacked.slice(i + 1).reduce((a, b) => a * b, 1));
-              const pStrides = packed.map((_, i) => packed.slice(i + 1).reduce((a, b) => a * b, 1));
-              const uOffset = uIndices.reduce((acc, idx, i) => acc + idx * uStrides[i], 0);
-              const pOffset = pIndices.reduce((acc, idx, i) => acc + idx * pStrides[i], 0);
-
-              let isHighlight = false;
-              if (highlightIndices) {
-                const uMatch = uIndices.every((v, k) => v === highlightIndices.u[k]);
-                const pMatch = pIndices.every((v, k) => v === highlightIndices.p[k]);
-                isHighlight = uMatch && pMatch;
-              }
-
-              const tooltipStr = `my_array${uIndices.map(i=>`[${i}]`).join("")}${pIndices.map(i=>`[${i}]`).join("")} (Addr: ${uOffset * totalPackedBits + pOffset})`;
-              const posX = groupX + p1 * (1 + packedSpacing);
-              const posY = groupY + p0 * (1 + packedSpacing);
-              const posZ = groupZ + p2 * (1 + packedSpacing);
-
-              cubes.push(
-                <AnimatedCube
-                  key={`${uIndices.join("-")}-${pIndices.join("-")}`}
-                  targetPos={[posX, posY, posZ]}
-                  material={mat}
-                  isHighlighted={isHighlight}
-                  tooltip={tooltipStr}
-                />
-              );
-            }
-          }
-        }
-      }
-    }
-  }
-
-  return <group position={[-5, 0, -5]}>{cubes}</group>;
+  return <instancedMesh ref={mesh} args={[geometry, material, model.instances.length]} position={[-5, 0, -5]} />;
 }
 
 // ---- Main Component ----
 
 type Mode = "dynamic" | "queue" | "assoc" | "fixed";
-
-// Add specific values from prototype logic
-let queueIdCounter = 0;
 
 export function SystemVerilog3DVisualizer({ className, height = "720px", initialScene }: { className?: string; height?: string | number; initialScene?: string }) {
   const searchParams = useSearchParams();
@@ -253,6 +206,7 @@ export function SystemVerilog3DVisualizer({ className, height = "720px", initial
 
   // Queue
   const [queueItems, setQueueItems] = useState<{ id: number; val: number }[]>([]);
+  const queueIds = useRef(createQueueIdAllocator());
   const [qValInput, setQValInput] = useState(10);
   const [qIdxInput, setQIdxInput] = useState(1);
   const [qInsValInput, setQInsValInput] = useState(99);
@@ -269,6 +223,10 @@ export function SystemVerilog3DVisualizer({ className, height = "720px", initial
   const [highlightP, setHighlightP] = useState<number[]>([0]);
   const [highlightU, setHighlightU] = useState<number[]>([0]);
   const [activeHighlight, setActiveHighlight] = useState<{ u: number[]; p: number[] } | null>(null);
+  const fixedModel = useMemo(
+    () => buildArrayInstances({ packed: packedDims, unpacked: unpackedDims }, MAX_VISIBLE_INSTANCES),
+    [packedDims, unpackedDims],
+  );
 
   const entriesAsc = useMemo(() => Array.from(assocMap.entries()).sort((a,b) => a[0].localeCompare(b[0])), [assocMap]);
   const keysAsc = entriesAsc.map(e => e[0]);
@@ -290,7 +248,11 @@ export function SystemVerilog3DVisualizer({ className, height = "720px", initial
   // Initialize with prototype values
   useEffect(() => {
     setDynArray([1, 2, 3, 4, 5]);
-    setQueueItems([{ id: ++queueIdCounter, val: 10 }, { id: ++queueIdCounter, val: 20 }, { id: ++queueIdCounter, val: 30 }]);
+    setQueueItems([
+      { id: queueIds.current.next(), val: 10 },
+      { id: queueIds.current.next(), val: 20 },
+      { id: queueIds.current.next(), val: 30 },
+    ]);
     const m = new Map();
     m.set('apple', 5);
     m.set('banana', 8);
@@ -299,34 +261,37 @@ export function SystemVerilog3DVisualizer({ className, height = "720px", initial
   }, []);
 
   // Handlers
-  const runDynNew = () => { setDynArray(Array.from({ length: dynSizeInput }, (_, i) => i + 1)); setLastOp(`dyn_array = new[${dynSizeInput}];`); };
+  const runDynNew = () => {
+    const size = Math.max(0, Math.min(128, Number.isFinite(dynSizeInput) ? Math.trunc(dynSizeInput) : 0));
+    setDynSizeInput(size);
+    setDynArray(Array.from({ length: size }, (_, i) => i + 1));
+    setLastOp(`dyn_array = new[${size}];`);
+  };
   const runDynDelete = () => { setDynArray([]); setLastOp(`dyn_array.delete();`); };
 
-  const qPushBack = () => { setQueueItems([...queueItems, { id: ++queueIdCounter, val: qValInput }]); setLastOp(`q.push_back(${qValInput});`); };
-  const qPushFront = () => { setQueueItems([{ id: ++queueIdCounter, val: qValInput }, ...queueItems]); setLastOp(`q.push_front(${qValInput});`); };
-  const qPopBack = () => { if (queueItems.length) { setQueueItems(queueItems.slice(0, -1)); setLastOp(`q.pop_back();`); } };
-  const qPopFront = () => { if (queueItems.length) { setQueueItems(queueItems.slice(1)); setLastOp(`q.pop_front();`); } };
+  const qPushBack = () => { setQueueItems((items) => items.length >= 128 ? items : [...items, { id: queueIds.current.next(), val: qValInput }]); setLastOp(`q.push_back(${qValInput});`); };
+  const qPushFront = () => { setQueueItems((items) => items.length >= 128 ? items : [{ id: queueIds.current.next(), val: qValInput }, ...items]); setLastOp(`q.push_front(${qValInput});`); };
+  const qPopBack = () => { setQueueItems((items) => items.slice(0, -1)); setLastOp(`q.pop_back();`); };
+  const qPopFront = () => { setQueueItems((items) => items.slice(1)); setLastOp(`q.pop_front();`); };
   const qInsert = () => {
-    const copy = [...queueItems];
-    if (qIdxInput >= 0 && qIdxInput <= copy.length) {
-      copy.splice(qIdxInput, 0, { id: ++queueIdCounter, val: qInsValInput });
-      setQueueItems(copy);
-      setLastOp(`q.insert(${qIdxInput}, ${qInsValInput});`);
-    }
+    setQueueItems((items) => {
+      if (items.length >= 128 || qIdxInput < 0 || qIdxInput > items.length) return items;
+      const copy = [...items];
+      copy.splice(qIdxInput, 0, { id: queueIds.current.next(), val: qInsValInput });
+      return copy;
+    });
+    setLastOp(`q.insert(${qIdxInput}, ${qInsValInput});`);
   };
   const qDelete = () => {
-    const copy = [...queueItems];
-    if (qIdxInput >= 0 && qIdxInput < copy.length) {
-      copy.splice(qIdxInput, 1);
-      setQueueItems(copy);
-      setLastOp(`q.delete(${qIdxInput});`);
-    }
+    setQueueItems((items) => items.filter((_, index) => index !== qIdxInput));
+    setLastOp(`q.delete(${qIdxInput});`);
   };
 
   const aaAssign = () => {
     if (!aaKeyInput) return;
     const m = new Map(assocMap);
-    m.set(aaKeyInput, aaValInput);
+    if (!m.has(aaKeyInput) && m.size >= 128) return;
+    m.set(aaKeyInput.slice(0, 64), aaValInput);
     setAssocMap(m);
     setLastOp(`aa["${aaKeyInput}"] = ${aaValInput};`);
   };
@@ -359,7 +324,13 @@ export function SystemVerilog3DVisualizer({ className, height = "720px", initial
     if (idx > 0) { setAaIterKey(keysAsc[idx - 1]); setLastOp(`key = aa.prev(key);`); }
   };
 
-  const runFixedUpdate = () => { setActiveHighlight(null); setLastOp(`Updated Dimensions`); };
+  const runFixedUpdate = () => {
+    const validated = validateDimensions({ packed: packedDims, unpacked: unpackedDims });
+    setPackedDims(validated.packed);
+    setUnpackedDims(validated.unpacked);
+    setActiveHighlight(null);
+    setLastOp(`Updated Dimensions`);
+  };
   const runFixedHighlight = () => {
     setActiveHighlight({ p: [...highlightP], u: [...highlightU] });
     setLastOp(`Highlight active`);
@@ -374,7 +345,7 @@ export function SystemVerilog3DVisualizer({ className, height = "720px", initial
       {/* 3D Canvas */}
       <div className="absolute inset-0 cursor-move">
         <WebGLFallbackBoundary>
-          <Canvas camera={{ position: [10, 8, 10], fov: 75 }}>
+          <Canvas camera={{ position: [10, 8, 10], fov: 75 }} dpr={[1, 1.5]} frameloop="demand">
             <ambientLight intensity={0.7} />
             <directionalLight position={[5, 10, 7.5]} intensity={1} />
             <Grid args={[50, 50]} cellColor="#444" sectionColor="#444" fadeDistance={30} infiniteGrid />
@@ -489,7 +460,7 @@ export function SystemVerilog3DVisualizer({ className, height = "720px", initial
               <p className="text-xs mb-1 text-slate-400">Packed Dims (left to right)</p>
               <div className="flex gap-1 mb-2">
                 {packedDims.map((d, i) => (
-                  <Input key={i} type="number" value={d} onChange={e=> { const nd=[...packedDims]; nd[i]=Number(e.target.value); setPackedDims(nd);}} className="w-12 h-8 p-1 bg-slate-800 border-slate-700" />
+                  <Input key={i} type="number" min={1} max={64} value={d} onChange={e=> { const nd=[...packedDims]; nd[i]=Number(e.target.value); setPackedDims(validateDimensions({ packed: nd, unpacked: unpackedDims }).packed);}} className="w-12 h-8 p-1 bg-slate-800 border-slate-700" />
                 ))}
                 {packedDims.length < 3 && <Button onClick={()=>setPackedDims([...packedDims, 4])} className="h-8 px-2 bg-slate-700 border-slate-600">+</Button>}
                 {packedDims.length > 1 && <Button onClick={()=>setPackedDims(packedDims.slice(0,-1))} className="h-8 px-2 bg-rose-900 border border-slate-700">-</Button>}
@@ -499,13 +470,18 @@ export function SystemVerilog3DVisualizer({ className, height = "720px", initial
               <p className="text-xs mb-1 text-slate-400">Unpacked Dims (left to right)</p>
               <div className="flex gap-1 mb-2">
                 {unpackedDims.map((d, i) => (
-                  <Input key={i} type="number" value={d} onChange={e=> { const nd=[...unpackedDims]; nd[i]=Number(e.target.value); setUnpackedDims(nd);}} className="w-12 h-8 p-1 bg-slate-800 border-slate-700" />
+                  <Input key={i} type="number" min={1} max={64} value={d} onChange={e=> { const nd=[...unpackedDims]; nd[i]=Number(e.target.value); setUnpackedDims(validateDimensions({ packed: packedDims, unpacked: nd }).unpacked);}} className="w-12 h-8 p-1 bg-slate-800 border-slate-700" />
                 ))}
                 {unpackedDims.length < 3 && <Button onClick={()=>setUnpackedDims([...unpackedDims, 2])} className="h-8 px-2 bg-slate-700 border-slate-600">+</Button>}
                 {unpackedDims.length > 1 && <Button onClick={()=>setUnpackedDims(unpackedDims.slice(0,-1))} className="h-8 px-2 bg-rose-900 border border-slate-700">-</Button>}
               </div>
             </div>
             <Button onClick={runFixedUpdate} className="bg-blue-600 hover:bg-blue-500 w-full h-8 text-xs">Update View</Button>
+
+            <p className="text-xs text-slate-400" aria-live="polite">
+              Showing {fixedModel.instances.length.toLocaleString()} of {fixedModel.logicalInstanceCount.toLocaleString()} logical bits
+              {fixedModel.truncated ? " (LOD preview capped for performance)" : ""}.
+            </p>
 
             <div className="bg-slate-800 p-2 rounded text-[10px] space-y-1">
                <code>logic {packedDims.map(d=>`[${Math.max(0,d-1)}:0]`).join("")} my_array {unpackedDims.map(d=>`[${d}]`).join("")};</code>

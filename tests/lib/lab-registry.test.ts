@@ -55,7 +55,7 @@ describe('lab-registry utilities', () => {
       const lab = getLabById('uvm-mini-capstone');
       expect(lab).toBeDefined();
       expect(lab?.status).toBe('available');
-      expect(lab?.graderType).toBe('uvm');
+      expect(lab?.graderId).toBeUndefined();
       expect(lab?.steps).toHaveLength(4);
 
       const assetPath = path.join(repoRoot, lab!.assetLocation);
@@ -100,7 +100,7 @@ describe('lab-registry utilities', () => {
       expect(lab).toBeDefined();
       expect(lab?.status).toBe('available');
       expect(lab?.owningModule).toBe('E-PSS-1');
-      expect(lab?.graderType).toBe('custom');
+      expect(lab?.graderId).toBeUndefined();
       expect(lab?.moduleHref).toBe('/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index');
       expect(lab?.steps).toHaveLength(3);
 

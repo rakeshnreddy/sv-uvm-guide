@@ -1,19 +1,12 @@
 'use server';
 
-import { getIronSession } from 'iron-session';
-import { sessionOptions } from '@/lib/session-options';
 import { revalidatePath } from 'next/cache.js';
-import { cookies } from 'next/headers.js';
 
 import { prisma } from '@/lib/prisma';
-
-import { getSession } from '@/lib/session';
+import { requireSession } from '@/lib/auth';
 
 export async function createFlashcard(topicId: string) {
-  const session = await getSession();
-  if (!session.userId) {
-    throw new Error('You must be logged in to create a flashcard.');
-  }
+  const session = await requireSession();
 
   // In a real application, you would fetch the content for the topicId
   // and use an AI to generate the front and back of the flashcard.
@@ -23,7 +16,7 @@ export async function createFlashcard(topicId: string) {
 
   const flashcard = await prisma.flashcard.create({
     data: {
-      userId: session.userId,
+      userId: session.user.id,
       topicId,
       front,
       back,
@@ -35,16 +28,16 @@ export async function createFlashcard(topicId: string) {
 }
 
 export async function reviewFlashcard(flashcardId: string, quality: number) {
-  const session = await getSession();
-  if (!session.userId) {
-    throw new Error('You must be logged in to review a flashcard.');
+  const session = await requireSession();
+  if (!Number.isInteger(quality) || quality < 0 || quality > 5) {
+    throw new Error('Review quality must be an integer from 0 through 5.');
   }
 
   const flashcard = await prisma.flashcard.findUnique({
     where: { id: flashcardId },
   });
 
-  if (!flashcard || flashcard.userId !== session.userId) {
+  if (!flashcard || flashcard.userId !== session.user.id) {
     throw new Error('Flashcard not found or you do not have permission to review it.');
   }
 
@@ -80,6 +73,7 @@ export async function reviewFlashcard(flashcardId: string, quality: number) {
       repetitions,
       easinessFactor,
       nextReviewAt,
+      lastReviewedAt: new Date(),
     },
   });
 
@@ -88,14 +82,11 @@ export async function reviewFlashcard(flashcardId: string, quality: number) {
 }
 
 export async function getDueFlashcards() {
-  const session = await getSession();
-  if (!session.userId) {
-    return [];
-  }
+  const session = await requireSession();
 
   const dueFlashcards = await prisma.flashcard.findMany({
     where: {
-      userId: session.userId,
+      userId: session.user.id,
       nextReviewAt: {
         lte: new Date(),
       },

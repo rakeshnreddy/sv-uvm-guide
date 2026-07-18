@@ -1,82 +1,96 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { GET, PATCH } from '@/app/api/preferences/route';
-import { DEFAULT_NOTIFICATION_PREFERENCES } from '@/lib/notifications';
-import { cloneNotificationPreferences } from '@/lib/user-preferences';
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const getSession = vi.fn();
+import { DEFAULT_NOTIFICATION_PREFERENCES } from "@/lib/notifications";
+import { cloneNotificationPreferences } from "@/lib/user-preferences";
 
-vi.mock('@/lib/session', () => ({
-  getSession: () => getSession(),
+const mocks = vi.hoisted(() => ({
+  AuthenticationError: class AuthenticationError extends Error {},
+  requireSession: vi.fn(),
+  userFindUnique: vi.fn(),
+  userUpdate: vi.fn(),
 }));
 
-describe('api/preferences route', () => {
+vi.mock("@/lib/auth", () => ({
+  AuthenticationError: mocks.AuthenticationError,
+  requireSession: mocks.requireSession,
+}));
+
+vi.mock("@/lib/prisma", () => ({
+  prisma: {
+    user: {
+      findUnique: mocks.userFindUnique,
+      update: mocks.userUpdate,
+    },
+  },
+}));
+
+import { GET, PATCH } from "@/app/api/me/preferences/route";
+
+describe("/api/me/preferences", () => {
   beforeEach(() => {
-    getSession.mockReset();
+    mocks.requireSession.mockReset();
+    mocks.userFindUnique.mockReset();
+    mocks.userUpdate.mockReset();
+    mocks.requireSession.mockResolvedValue({ user: { id: "user-1" } });
   });
 
-  it('returns normalized preferences on GET', async () => {
-    const customPreferences = {
-      theme: 'light',
-      notifications: {
-        channels: {
-          email: false,
-        },
+  it("returns normalized persisted preferences for the authenticated user", async () => {
+    mocks.userFindUnique.mockResolvedValue({
+      preferences: {
+        theme: "light",
+        notifications: { channels: { email: false } },
       },
-    };
-
-    getSession.mockResolvedValue({
-      userId: 'demo-user',
-      preferences: customPreferences,
-      save: vi.fn(),
     });
 
     const response = await GET();
     const payload = await response.json();
 
-    expect(payload.preferences.theme).toBe('light');
+    expect(response.status).toBe(200);
+    expect(mocks.userFindUnique).toHaveBeenCalledWith({
+      where: { id: "user-1" },
+      select: { preferences: true },
+    });
+    expect(payload.preferences.theme).toBe("light");
     expect(payload.preferences.notifications.channels.email).toBe(false);
     expect(payload.preferences.notifications.channels.inApp).toBe(true);
   });
 
-  it('merges PATCH payload and persists session', async () => {
-    const save = vi.fn();
+  it("merges and persists a validated partial update", async () => {
     const basePreferences = {
-      theme: 'dark',
+      theme: "dark" as const,
       shareTelemetry: true,
       notifications: cloneNotificationPreferences(DEFAULT_NOTIFICATION_PREFERENCES),
+      motivationalProfile: null,
     };
+    mocks.userFindUnique.mockResolvedValue({ preferences: basePreferences });
+    mocks.userUpdate.mockResolvedValue({});
 
-    getSession.mockResolvedValue({
-      userId: 'demo-user',
-      preferences: basePreferences,
-      save,
-    });
-
-    const request = new Request('http://localhost/api/preferences', {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-      },
+    const response = await PATCH(new Request("http://localhost/api/me/preferences", {
+      method: "PATCH",
       body: JSON.stringify({
         preferences: {
-          theme: 'light',
-          notifications: {
-            channels: {
-              email: false,
-            },
-            quietHours: null,
-          },
+          theme: "light",
+          notifications: { channels: { email: false }, quietHours: null },
         },
       }),
-    });
-
-    const response = await PATCH(request);
+    }));
     const payload = await response.json();
 
-    expect(save).toHaveBeenCalledOnce();
-    expect(payload.preferences.theme).toBe('light');
+    expect(response.status).toBe(200);
+    expect(mocks.userUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: "user-1" },
+    }));
+    expect(payload.preferences.theme).toBe("light");
     expect(payload.preferences.notifications.channels.email).toBe(false);
     expect(payload.preferences.notifications.channels.inApp).toBe(true);
     expect(payload.preferences.notifications.quietHours).toBeUndefined();
+  });
+
+  it("rejects unauthenticated requests", async () => {
+    mocks.requireSession.mockRejectedValueOnce(new mocks.AuthenticationError());
+
+    const response = await GET();
+
+    expect(response.status).toBe(401);
   });
 });

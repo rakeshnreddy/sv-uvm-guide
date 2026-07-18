@@ -9,7 +9,7 @@ export interface SimulationStats {
   cpuSystemMs: number;
 }
 
-export type SimulatorBackend = 'wasm' | 'icarus' | 'verilator';
+export type SimulatorBackend = 'icarus' | 'verilator';
 
 export interface SimulationWaveformSignal {
   name: string;

@@ -1,4 +1,5 @@
 `timescale 1ns/1ps
+`include "../work/dut_counter.sv"
 
 module tb_counter_refactored;
   logic clk;

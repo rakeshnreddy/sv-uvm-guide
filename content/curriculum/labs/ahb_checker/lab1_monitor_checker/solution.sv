@@ -1,6 +1,12 @@
 // ============================================================================
 // AHB-Lite Monitor & Checker — SOLUTION
 // ============================================================================
+
+// Pull in the lab-owned interface, transaction, DUT/BFM, and starter module
+// declarations so this reference is a compileable smoke-test translation unit.
+`include "testbench.sv"
+`include "ahb_monitor.sv"
+`include "ahb_checker.sv"
 // This file contains the completed monitor and checker implementations.
 // ============================================================================
 

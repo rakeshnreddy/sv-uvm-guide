@@ -1,512 +1,292 @@
 "use client";
 
-/**
- * @file EngagementEngine.tsx
- * @description This component is the core of the gamification system's engagement features.
- * It tracks user activity, analyzes engagement patterns, provides motivational feedback,
- * and visualizes progress to enhance user retention and learning effectiveness.
- */
+import dynamic from "next/dynamic";
+import Link from "next/link";
+import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { TrendingUp, UserCheck } from "lucide-react";
 
-import React, { useState, useEffect, useMemo } from 'react';
-import dynamic from 'next/dynamic';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Progress } from '@/components/ui/Progress';
-import { Button } from '@/components/ui/Button';
-import { Award, Target, TrendingUp, UserCheck } from 'lucide-react';
-import { cn } from '@/lib/utils';
+import { Button } from "@/components/ui/Button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { Input } from "@/components/ui/Input";
+import { Progress } from "@/components/ui/Progress";
+import type {
+  EngagementGoal,
+  EngagementMotivationalProfile,
+  EngagementResponse,
+} from "@/lib/engagement";
+import { cn } from "@/lib/utils";
 
 const EngagementActivityChart = dynamic(
-  () =>
-    import('./EngagementActivityChart').then((mod) => mod.EngagementActivityChart),
+  () => import("./EngagementActivityChart").then((module) => module.EngagementActivityChart),
   {
     ssr: false,
     loading: () => (
-      <div className="h-52 w-full animate-pulse rounded-lg bg-muted" aria-busy="true" aria-live="polite" />
+      <div className="h-52 w-full animate-pulse rounded-lg bg-muted" aria-busy="true" />
     ),
   },
 );
 
-// --- TYPE DEFINITIONS ---
-// These types define the data structures for engagement tracking.
-// In a real application, these would likely be synchronized with the Prisma schema.
-
-type UserActivityType = 'lesson_completed' | 'challenge_attempted' | 'project_submitted' | 'forum_post' | 'code_review';
-
-interface ActivityLog {
-  id: string;
-  userId: string;
-  type: UserActivityType;
-  timestamp: Date;
-  details: Record<string, any>; // e.g., { lessonId: 'F1_S1_M1' }
-}
-
-interface EngagementMetrics {
-  dailyStreak: number;
-  weeklyActiveDays: number;
-  lessonsCompleted: number;
-  challengesAttempted: number;
-  timeSpentMinutes: number;
-}
-
-interface EngagementPattern {
-  mostActiveDay: string;
-  preferredTopic: string;
-  learningStyle: 'binge-learner' | 'steady-progress' | 'weekend-warrior';
-}
-
-interface PersonalizedStrategy {
+interface Strategy {
   id: string;
   title: string;
   description: string;
-  action: () => void;
+  href: string;
 }
 
-// Personalized gamification profile structures
-type MotivationalStyle = 'competitive' | 'collaborative' | 'curious' | 'goal-oriented';
+const EMPTY_CHART = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"].map(
+  (name) => ({ name, activity: 0 }),
+);
 
-interface MotivationalProfile {
-  style: MotivationalStyle;
-  rewardPreference: 'badges' | 'certificates' | 'career' | 'tools';
-}
-
-interface EngagementGoal {
-  id: string;
-  description: string;
-  target: number;
-  progress: number;
-  unit: string;
-}
-
-// --- FALLBACK DATA ---
-// These constants act as graceful fallbacks when the real API is unavailable.
-
-const EMPTY_METRICS: EngagementMetrics = {
-  dailyStreak: 0,
-  weeklyActiveDays: 0,
-  lessonsCompleted: 0,
-  challengesAttempted: 0,
-  timeSpentMinutes: 0,
-};
-
-const EMPTY_CHART_DATA = [
-  { name: 'Mon', activity: 0 },
-  { name: 'Tue', activity: 0 },
-  { name: 'Wed', activity: 0 },
-  { name: 'Thu', activity: 0 },
-  { name: 'Fri', activity: 0 },
-  { name: 'Sat', activity: 0 },
-  { name: 'Sun', activity: 0 },
-];
-
-const FALLBACK_MENTOR_MESSAGE = 'Welcome back! Ready to keep your verification skills sharp today?';
-
-const FALLBACK_DATA = {
-  metrics: {
-    dailyStreak: 5,
-    weeklyActiveDays: 4,
-    lessonsCompleted: 12,
-    challengesAttempted: 8,
-    timeSpentMinutes: 420,
-  } satisfies EngagementMetrics,
-  activityHistory: [
-    {
-      id: '1',
-      userId: 'user1',
-      type: 'lesson_completed',
-      timestamp: new Date(Date.now() - 86400000 * 1),
-      details: {
-        lesson: 'UVM Basics',
-        lessonSlug: ['T2_Intermediate', 'I-UVM-1A_Components', 'index'],
-      },
-    },
-    {
-      id: '2',
-      userId: 'user1',
-      type: 'challenge_attempted',
-      timestamp: new Date(Date.now() - 86400000 * 2),
-      details: {
-        challenge: 'FIFO Sequencer',
-        lessonSlug: ['T2_Intermediate', 'I-UVM-3B_Advanced_Sequencing_and_Layering', 'sequence-arbitration'],
-      },
-    },
-    {
-      id: '3',
-      userId: 'user1',
-      type: 'lesson_completed',
-      timestamp: new Date(Date.now() - 86400000 * 3),
-      details: {
-        lesson: 'SystemVerilog Assertions',
-        lessonSlug: ['T2_Intermediate', 'I-SV-4A_SVA_Fundamentals', 'index'],
-      },
-    },
-    {
-      id: '4',
-      userId: 'user1',
-      type: 'forum_post',
-      timestamp: new Date(Date.now() - 86400000 * 4),
-      details: {
-        postTitle: 'Question about RAL',
-        lessonSlug: ['T3_Advanced', 'A-UVM-4A_RAL_Fundamentals', 'index'],
-      },
-    },
-  ] as ActivityLog[],
-  motivationalProfile: {
-    style: 'goal-oriented',
-    rewardPreference: 'badges',
-  } satisfies MotivationalProfile,
-  goals: [
-    { id: 'weekly_lessons', description: 'Lessons this week', target: 5, progress: 3, unit: 'lessons' },
-  ] as EngagementGoal[],
-};
-
-type SerializedActivityLog = Omit<ActivityLog, 'timestamp'> & { timestamp: string };
-
-interface EngagementApiResponse {
-  metrics: EngagementMetrics;
-  activityHistory: SerializedActivityLog[];
-  motivationalProfile?: MotivationalProfile | null;
-  goals?: EngagementGoal[];
-  mentorMessage?: string;
-  activityChart?: { name: string; activity: number }[];
-  patterns?: EngagementPattern;
-}
-
-
-// --- COMPONENT PROPS ---
-
-interface EngagementEngineProps {
-  userId: string;
-  useMockData?: boolean;
-}
-
-/**
- * The EngagementEngine component serves as a user-facing dashboard to drive engagement.
- */
-const EngagementEngine: React.FC<EngagementEngineProps> = ({ userId, useMockData }) => {
-  // --- STATE MANAGEMENT ---
-  const [metrics, setMetrics] = useState<EngagementMetrics | null>(null);
-  const [patterns, setPatterns] = useState<EngagementPattern | null>(null);
-  const [strategies, setStrategies] = useState<PersonalizedStrategy[]>([]);
-  const [profile, setProfile] = useState<MotivationalProfile | null>(null);
-  const [goals, setGoals] = useState<EngagementGoal[]>([]);
+export default function EngagementEngine() {
+  const [engagement, setEngagement] = useState<EngagementResponse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [mentorMessage, setMentorMessage] = useState<string>('');
-  const [activityHistory, setActivityHistory] = useState<ActivityLog[]>([]);
-  const [activityChart, setActivityChart] = useState<{ name: string; activity: number }[]>(EMPTY_CHART_DATA);
+  const [error, setError] = useState<string | null>(null);
+  const [showGoalForm, setShowGoalForm] = useState(false);
+  const [goalDescription, setGoalDescription] = useState("");
+  const [goalTarget, setGoalTarget] = useState("5");
+  const [goalUnit, setGoalUnit] = useState("lessons");
+  const [isSaving, setIsSaving] = useState(false);
 
-  const mockEnabled = useMemo(() => {
-    if (typeof useMockData === 'boolean') {
-      return useMockData;
-    }
-    return process.env.NEXT_PUBLIC_USE_MOCK_ENGAGEMENT === 'true';
-  }, [useMockData]);
-
-  const recommendedDifficulty = useMemo(() => {
-    if (!metrics) return 'Medium';
-    if (metrics.dailyStreak >= 7 && metrics.challengesAttempted > 10) return 'Hard';
-    if (metrics.lessonsCompleted < 5) return 'Easy';
-    return 'Medium';
-  }, [metrics]);
-
-  const addGoal = () => {
-    const description = prompt('Goal description?');
-    const targetStr = prompt('Target amount?');
-    const target = targetStr ? parseInt(targetStr, 10) : 0;
-    if (description && target > 0) {
-      setGoals(prev => [...prev, { id: Date.now().toString(), description, target, progress: 0, unit: 'units' }]);
-    }
-  };
-
-  const updateRewardPreference = (pref: MotivationalProfile['rewardPreference']) => {
-    setProfile(prev => prev ? { ...prev, rewardPreference: pref } : null);
-  };
-
-  // --- DATA FETCHING & ANALYSIS ---
   useEffect(() => {
-    const fetchData = async () => {
-      setIsLoading(true);
+    const controller = new AbortController();
+    const load = async () => {
       try {
-        const response = await fetch(`/api/engagement/${userId}`);
-        if (!response.ok) {
-          throw new Error('Failed to load engagement data');
-        }
-        const data: EngagementApiResponse = await response.json();
-
-        setMetrics(data.metrics ?? EMPTY_METRICS);
-
-        const history = (data.activityHistory ?? []).map(log => ({
-          ...log,
-          timestamp: new Date(log.timestamp),
-        }));
-        setActivityHistory(history);
-
-        if (data.patterns) {
-          setPatterns(data.patterns);
-        } else {
-          analyzePatterns(history);
-        }
-
-        setProfile(data.motivationalProfile ?? null);
-        setGoals(data.goals ?? []);
-        setMentorMessage(data.mentorMessage ?? FALLBACK_MENTOR_MESSAGE);
-        setActivityChart(data.activityChart ?? buildActivityChart(history));
-      } catch (error) {
-        if (mockEnabled) {
-          setMetrics(FALLBACK_DATA.metrics);
-          setActivityHistory(FALLBACK_DATA.activityHistory);
-          setActivityChart(buildActivityChart(FALLBACK_DATA.activityHistory));
-          analyzePatterns(FALLBACK_DATA.activityHistory);
-          setProfile(FALLBACK_DATA.motivationalProfile);
-          setGoals(FALLBACK_DATA.goals);
-          setMentorMessage(FALLBACK_MENTOR_MESSAGE);
-        } else {
-          setMetrics(EMPTY_METRICS);
-          setActivityHistory([]);
-          setActivityChart(EMPTY_CHART_DATA);
-          setPatterns(null);
-          setProfile(null);
-          setGoals([]);
-          setMentorMessage('');
-          setStrategies([]);
+        const response = await fetch("/api/me/engagement", { signal: controller.signal });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error ?? "Unable to load engagement data");
+        setEngagement(payload as EngagementResponse);
+      } catch (requestError) {
+        if ((requestError as Error).name !== "AbortError") {
+          setError("Unable to load your engagement dashboard. Please try again.");
         }
       } finally {
-        setIsLoading(false);
+        if (!controller.signal.aborted) setIsLoading(false);
       }
     };
+    void load();
+    return () => controller.abort();
+  }, []);
 
-    fetchData();
-  }, [mockEnabled, userId]);
+  const metrics = engagement?.metrics;
+  const profile = engagement?.motivationalProfile;
+  const goals = engagement?.goals ?? [];
+  const recommendedDifficulty = !metrics
+    ? "Medium"
+    : metrics.dailyStreak >= 7 && metrics.challengesAttempted > 10
+      ? "Hard"
+      : metrics.lessonsCompleted < 5
+        ? "Easy"
+        : "Medium";
 
-  // --- ENGAGEMENT LOGIC ---
+  const strategies = useMemo<Strategy[]>(() => {
+    if (!engagement) return [];
+    const items: Strategy[] = [];
+    if (engagement.metrics.dailyStreak > 3) {
+      items.push({
+        id: "streak-master",
+        title: `You’re on a ${engagement.metrics.dailyStreak}-day streak`,
+        description: "Complete one focused lesson today to keep the streak moving.",
+        href: "/curriculum",
+      });
+    }
+    if (engagement.patterns.learningStyle === "steady-progress") {
+      items.push({
+        id: "steady-learner",
+        title: "Raise the challenge",
+        description: "Your consistency supports a slightly harder practice problem this week.",
+        href: "/practice",
+      });
+    }
+    if (engagement.metrics.timeSpentMinutes < 30) {
+      items.push({
+        id: "quick-boost",
+        title: "Take a quick practice session",
+        description: "A short lab or flashcard review can restart momentum.",
+        href: "/practice",
+      });
+    }
+    return items;
+  }, [engagement]);
 
-  /**
-   * Analyzes user activity history to derive engagement patterns.
-   * In a real system, this logic might live on the backend.
-   */
-  const analyzePatterns = (activity: ActivityLog[]): EngagementPattern => {
-    const dayMap = activity.reduce((acc, log) => {
-      const day = log.timestamp.toLocaleString('en-US', { weekday: 'long' });
-      acc[day] = (acc[day] || 0) + 1;
-      return acc;
-    }, {} as Record<string, number>);
+  const addGoal = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const target = Number(goalTarget);
+    if (!goalDescription.trim() || !Number.isInteger(target) || target <= 0) {
+      setError("Enter a goal description and a positive whole-number target.");
+      return;
+    }
 
-    const dayEntries = Object.entries(dayMap);
-    const mostActiveDay = dayEntries.length
-      ? dayEntries.reduce((max, current) => (current[1] > max[1] ? current : max))[0]
-      : 'N/A';
-
-    const lessonCounts = activity.reduce((acc, log) => {
-      const lesson = typeof log.details.lesson === 'string' ? log.details.lesson : null;
-      if (lesson) {
-        acc.set(lesson, (acc.get(lesson) ?? 0) + 1);
-      }
-      return acc;
-    }, new Map<string, number>());
-
-    const preferredTopic = lessonCounts.size
-      ? [...lessonCounts.entries()].reduce((max, current) => (current[1] > max[1] ? current : max))[0]
-      : 'General Skill Building';
-
-    const learningStyle: EngagementPattern['learningStyle'] = activity.length > 5 ? 'steady-progress' : 'binge-learner';
-
-    const derived = {
-      mostActiveDay,
-      preferredTopic,
-      learningStyle,
-    } satisfies EngagementPattern;
-
-    setPatterns(derived);
-    return derived;
+    setIsSaving(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/me/goals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          description: goalDescription.trim(),
+          target,
+          unit: goalUnit.trim(),
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Unable to save goal");
+      const goal: EngagementGoal = {
+        id: payload.goal.id,
+        description: payload.goal.description,
+        target: payload.goal.target,
+        progress: payload.goal.progress,
+        unit: payload.goal.unit,
+      };
+      setEngagement((current) =>
+        current ? { ...current, goals: [...current.goals, goal] } : current,
+      );
+      setGoalDescription("");
+      setShowGoalForm(false);
+    } catch {
+      setError("Unable to save the goal. Please try again.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const buildActivityChart = (activity: ActivityLog[]) => {
-    if (!activity.length) {
-      return EMPTY_CHART_DATA;
+  const updateRewardPreference = async (
+    rewardPreference: EngagementMotivationalProfile["rewardPreference"],
+  ) => {
+    const nextProfile: EngagementMotivationalProfile = {
+      style: profile?.style ?? "goal-oriented",
+      rewardPreference,
+    };
+    setError(null);
+    try {
+      const response = await fetch("/api/me/preferences", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ motivationalProfile: nextProfile }),
+      });
+      if (!response.ok) throw new Error("Unable to save reward preference");
+      setEngagement((current) =>
+        current ? { ...current, motivationalProfile: nextProfile } : current,
+      );
+    } catch {
+      setError("Unable to save your reward preference. Please try again.");
     }
-    const dayBuckets = new Map<string, number>();
-    activity.forEach(log => {
-      const day = log.timestamp.toLocaleString('en-US', { weekday: 'short' });
-      dayBuckets.set(day, (dayBuckets.get(day) ?? 0) + 1);
-    });
-
-    const orderedDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    return orderedDays.map(name => ({ name, activity: dayBuckets.get(name) ?? 0 }));
   };
-
-  /**
-   * Generates personalized engagement strategies based on user patterns and metrics.
-   */
-  useEffect(() => {
-    if (patterns && metrics) {
-      const newStrategies: PersonalizedStrategy[] = [];
-      if (metrics.dailyStreak > 3) {
-        newStrategies.push({
-          id: 'streak_master',
-          title: `You're on a ${metrics.dailyStreak}-day streak!`,
-          description: "Keep the momentum going! Complete one more lesson today to extend your streak.",
-          action: () => console.log('Navigate to next lesson'),
-        });
-      }
-      if (patterns.learningStyle === 'steady-progress') {
-        newStrategies.push({
-          id: 'steady_learner',
-          title: 'Consistency is Key',
-          description: `You're doing great with steady progress. Try a slightly more challenging problem this week to level up.`,
-          action: () => console.log('Navigate to a harder challenge'),
-        });
-      }
-      if (metrics.timeSpentMinutes < 30) {
-        newStrategies.push({
-          id: 'quick_boost',
-          title: 'Quick Boost',
-          description: `Just 15 minutes can make a difference. Try a quick flashcard session!`,
-          action: () => console.log('Navigate to flashcards'),
-        });
-      }
-      if (profile?.style === 'collaborative') {
-        newStrategies.push({
-          id: 'join_group',
-          title: 'Learn with Peers',
-          description: 'Your collaborative style thrives in study groups. Join one today.',
-          action: () => console.log('Navigate to study groups'),
-        });
-      }
-
-      if (profile?.style === 'competitive') {
-        newStrategies.push({
-          id: 'compete_leaderboard',
-          title: 'Climb the Ranks',
-          description: 'Join the weekly leaderboard challenge to satisfy your competitive spirit.',
-          action: () => console.log('Navigate to leaderboards'),
-        });
-      }
-      if (goals.length === 0) {
-        newStrategies.push({
-          id: 'set_goal',
-          title: 'Set a Learning Goal',
-          description: 'Define a weekly goal to guide your progress.',
-          action: addGoal,
-        });
-      }
-      setStrategies(newStrategies);
-    }
-  }, [patterns, metrics, profile, goals]);
-
-
-  // --- RENDER LOGIC ---
 
   if (isLoading) {
-    return <Card><CardContent><p>Loading Engagement Data...</p></CardContent></Card>;
+    return <Card aria-busy="true"><CardContent><p>Loading engagement data…</p></CardContent></Card>;
   }
 
-  if (!metrics) {
-    return <Card><CardContent><p>Could not load engagement data.</p></CardContent></Card>;
+  if (!engagement || !metrics) {
+    return (
+      <Card>
+        <CardContent>
+          <p role="alert">{error ?? "Engagement data is unavailable."}</p>
+        </CardContent>
+      </Card>
+    );
   }
 
   return (
     <Card className="w-full">
       <CardHeader>
-        <CardTitle className="flex items-center"><TrendingUp className="mr-2" /> Your Engagement Hub</CardTitle>
+        <CardTitle className="flex items-center">
+          <TrendingUp aria-hidden="true" className="mr-2" /> Your Engagement Hub
+        </CardTitle>
       </CardHeader>
       <CardContent className="space-y-6">
+        {error ? <p role="alert" className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">{error}</p> : null}
 
-        {/* 1. Engagement Metrics Dashboard */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
-          <div className="p-4 bg-secondary rounded-lg">
-            <p className="text-2xl font-bold">{metrics.dailyStreak}</p>
-            <p className="text-sm text-muted-foreground">Day Streak</p>
-          </div>
-          <div className="p-4 bg-secondary rounded-lg">
-            <p className="text-2xl font-bold">{metrics.weeklyActiveDays}/7</p>
-            <p className="text-sm text-muted-foreground">Active This Week</p>
-          </div>
-          <div className="p-4 bg-secondary rounded-lg">
-            <p className="text-2xl font-bold">{metrics.lessonsCompleted}</p>
-            <p className="text-sm text-muted-foreground">Lessons Done</p>
-          </div>
-          <div className="p-4 bg-secondary rounded-lg">
-            <p className="text-2xl font-bold">{Math.floor(metrics.timeSpentMinutes / 60)}h {metrics.timeSpentMinutes % 60}m</p>
-            <p className="text-sm text-muted-foreground">Time Spent</p>
-          </div>
+        <div className="grid grid-cols-2 gap-4 text-center md:grid-cols-4">
+          {[
+            [metrics.dailyStreak, "Day streak"],
+            [`${metrics.weeklyActiveDays}/7`, "Active this week"],
+            [metrics.lessonsCompleted, "Lessons done"],
+            [`${Math.floor(metrics.timeSpentMinutes / 60)}h ${metrics.timeSpentMinutes % 60}m`, "Time spent"],
+          ].map(([value, label]) => (
+            <div key={label} className="rounded-lg bg-secondary p-4">
+              <p className="text-2xl font-bold">{value}</p>
+              <p className="text-sm text-muted-foreground">{label}</p>
+            </div>
+          ))}
         </div>
 
-        {/* 2. Progress Visualization */}
-        <div>
-          <h3 className="text-lg font-semibold mb-2">Weekly Activity</h3>
-          <EngagementActivityChart data={activityChart} />
-        </div>
+        <section aria-labelledby="weekly-activity-title">
+          <h3 id="weekly-activity-title" className="mb-2 text-lg font-semibold">Weekly activity</h3>
+          <EngagementActivityChart data={engagement.activityChart ?? EMPTY_CHART} />
+        </section>
 
-        {/* 3. Goal Setting Assistance & Progress Pacing */}
-        <div>
-          <h3 className="text-lg font-semibold mb-2">Your Goals</h3>
+        <section aria-labelledby="goals-title">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h3 id="goals-title" className="text-lg font-semibold">Your goals</h3>
+            <Button size="sm" type="button" onClick={() => setShowGoalForm((open) => !open)} aria-expanded={showGoalForm}>
+              {showGoalForm ? "Cancel" : "Add goal"}
+            </Button>
+          </div>
+          {showGoalForm ? (
+            <form onSubmit={addGoal} className="mb-4 grid gap-3 rounded-lg border p-4 sm:grid-cols-3">
+              <label className="sm:col-span-3">
+                <span className="mb-1 block text-sm font-medium">Goal description</span>
+                <Input value={goalDescription} onChange={(event) => setGoalDescription(event.target.value)} maxLength={200} required />
+              </label>
+              <label>
+                <span className="mb-1 block text-sm font-medium">Target</span>
+                <Input type="number" min={1} step={1} value={goalTarget} onChange={(event) => setGoalTarget(event.target.value)} required />
+              </label>
+              <label>
+                <span className="mb-1 block text-sm font-medium">Unit</span>
+                <Input value={goalUnit} onChange={(event) => setGoalUnit(event.target.value)} maxLength={40} required />
+              </label>
+              <div className="flex items-end"><Button type="submit" disabled={isSaving}>{isSaving ? "Saving…" : "Save goal"}</Button></div>
+            </form>
+          ) : null}
           <div className="space-y-2">
-            {goals.map(goal => (
-              <div key={goal.id} className="p-2 border rounded">
-                <div className="flex justify-between text-sm">
+            {goals.length === 0 ? <p className="text-sm text-muted-foreground">No goals yet.</p> : goals.map((goal) => (
+              <div key={goal.id} className="rounded border p-3">
+                <div className="flex justify-between gap-3 text-sm">
                   <span>{goal.description}</span>
                   <span>{goal.progress}/{goal.target} {goal.unit}</span>
                 </div>
-                <Progress value={(goal.progress / goal.target) * 100} />
+                <Progress value={goal.target > 0 ? (goal.progress / goal.target) * 100 : 0} />
               </div>
             ))}
-            {goals.length === 0 && (
-              <p className="text-sm text-muted-foreground">No goals yet. Set one to guide your learning.</p>
-            )}
-            <Button onClick={addGoal} size="sm" className="mt-2">Add Goal</Button>
           </div>
-        </div>
+        </section>
 
-        {/* 4. Adaptive Difficulty Recommendation */}
-        <div className="p-4 bg-secondary rounded-lg">
-          <p className="text-sm">Recommended next challenge difficulty: <span className="font-bold">{recommendedDifficulty}</span></p>
-          {profile && (
-            <p className="text-xs text-muted-foreground mt-1">Motivational style: {profile.style}, prefers {profile.rewardPreference}</p>
-          )}
-          {profile && (
-            <div className="mt-2 text-xs">
-              <span className="mr-2">Reward preference:</span>
-              {(['badges', 'certificates', 'career', 'tools'] as const).map(p => (
-                <button key={p} onClick={() => updateRewardPreference(p)} className={cn('px-2 py-1 rounded border text-xs', profile.rewardPreference === p ? 'bg-primary text-primary-foreground' : 'bg-transparent')}>{p}</button>
-              ))}
-            </div>
-          )}
+        <section className="rounded-lg bg-secondary p-4" aria-labelledby="difficulty-title">
+          <h3 id="difficulty-title" className="text-sm font-semibold">Recommended next difficulty: {recommendedDifficulty}</h3>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+            <span>Reward preference:</span>
+            {(["badges", "certificates", "career", "tools"] as const).map((preference) => (
+              <button
+                key={preference}
+                type="button"
+                onClick={() => void updateRewardPreference(preference)}
+                aria-pressed={profile?.rewardPreference === preference}
+                className={cn("rounded border px-2 py-1", profile?.rewardPreference === preference ? "bg-primary text-primary-foreground" : "bg-transparent")}
+              >
+                {preference}
+              </button>
+            ))}
+          </div>
+        </section>
 
-        </div>
-
-        {/* 5. Motivational Feedback & Personalized Strategies */}
-        <div>
-          <h3 className="text-lg font-semibold mb-2">Personalized Suggestions</h3>
-          <div className="space-y-4">
-            {strategies.length > 0 ? strategies.map(strategy => (
-              <div key={strategy.id} className="p-4 border rounded-lg flex items-center justify-between">
-                <div>
-                  <h4 className="font-bold">{strategy.title}</h4>
-                  <p className="text-sm text-muted-foreground">{strategy.description}</p>
-                </div>
-                <Button onClick={strategy.action}>Go!</Button>
+        <section aria-labelledby="strategies-title">
+          <h3 id="strategies-title" className="mb-2 text-lg font-semibold">Personalized suggestions</h3>
+          <div className="space-y-3">
+            {strategies.length === 0 ? <p>No suggestions right now. Keep building steady progress.</p> : strategies.map((strategy) => (
+              <div key={strategy.id} className="flex items-center justify-between gap-4 rounded-lg border p-4">
+                <div><h4 className="font-bold">{strategy.title}</h4><p className="text-sm text-muted-foreground">{strategy.description}</p></div>
+                <Button asChild><Link href={strategy.href}>Start</Link></Button>
               </div>
-            )) : <p>No suggestions right now. Keep up the great work!</p>}
+            ))}
           </div>
-        </div>
+        </section>
 
-        {/* 6. Retention Optimization & Personalized Content */}
-        <div className="p-4 bg-accent/50 rounded-lg text-center">
-          <h4 className="font-bold mb-2">Did you know?</h4>
-          {patterns && <p className="text-sm">You're most active on {patterns.mostActiveDay}s. Plan a deep-dive session then!</p>}
-          <p className="text-sm mt-1">Based on your progress, you might enjoy our section on <a href="#" className="underline">Advanced UVM Sequencing</a>.</p>
-        </div>
-
-        {/* 7. Virtual Mentor */}
-        {mentorMessage && (
-          <div className="p-4 bg-primary/10 rounded-lg">
-            <h4 className="font-bold mb-1 flex items-center"><UserCheck className="mr-2" />Your Mentor</h4>
-            <p className="text-sm text-muted-foreground">{mentorMessage}</p>
-          </div>
-        )}
-
+        <section className="rounded-lg bg-primary/10 p-4" aria-labelledby="mentor-title">
+          <h3 id="mentor-title" className="mb-1 flex items-center font-bold"><UserCheck aria-hidden="true" className="mr-2" />Your mentor</h3>
+          <p className="text-sm text-muted-foreground">{engagement.mentorMessage}</p>
+        </section>
       </CardContent>
     </Card>
   );
-};
-
-export default EngagementEngine;
+}

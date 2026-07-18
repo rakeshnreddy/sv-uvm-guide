@@ -1,67 +1,38 @@
-import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
-import { PassThrough } from 'stream';
-import { EventEmitter } from 'events';
+import { describe, expect, it } from "vitest";
 
-// mock child_process before importing the module under test
-vi.mock('child_process', () => {
-  const spawn = vi.fn();
-  return { spawn, default: { spawn } };
-});
+import { simulationRequestSchema } from "@/server/simulation";
 
-import { runSimulation } from '@/server/simulation';
-import { spawn } from 'child_process';
-import type { SimulationWaveform } from '@/server/simulation/types';
-
-function mockSimulator({ stdoutData = '', stderrData = '', exitCode = 0 }) {
-  const stdout = new PassThrough();
-  const stderr = new PassThrough();
-  const stdin = new PassThrough();
-  const events = new EventEmitter();
-  (spawn as unknown as Mock).mockReturnValueOnce(
-    Object.assign(events, { stdout, stderr, stdin }) as unknown,
-  );
-
-  setImmediate(() => {
-    if (stdoutData) stdout.write(stdoutData);
-    stdout.end();
-    if (stderrData) stderr.write(stderrData);
-    stderr.end();
-    events.emit('close', exitCode);
-  });
-}
-
-describe('runSimulation', () => {
-  beforeEach(() => {
-    (spawn as unknown as Mock).mockReset();
+describe("simulationRequestSchema", () => {
+  it("accepts an allowlisted backend and bounded workspace", () => {
+    expect(
+      simulationRequestSchema.parse({
+        backend: "verilator",
+        files: [{ path: "rtl/top.sv", content: "module top; endmodule" }],
+      }),
+    ).toEqual({
+      backend: "verilator",
+      files: [{ path: "rtl/top.sv", content: "module top; endmodule" }],
+    });
   });
 
-  it('captures pass, coverage and waveform information', async () => {
-    mockSimulator({
-      stdoutData:
-        'Simulation PASSED\nCOVERAGE: 75\nWAVEFORM: {"signal":[{"name":"clk","wave":"p"}]}\n',
-      exitCode: 0,
-    });
-
-    const result = await runSimulation('module t; endmodule', 'icarus');
-    expect(result.passed).toBe(true);
-    expect(result.coverage).toBe(75);
-    const waveform = result.waveform as SimulationWaveform | null;
-    expect(waveform).not.toBeNull();
-    expect(waveform).toEqual({
-      signal: [{ name: 'clk', wave: 'p' }],
-    });
-    expect(result.errors).toEqual([]);
+  it.each(["wasm", "bash", "custom"])("rejects backend %s", (backend) => {
+    expect(() =>
+      simulationRequestSchema.parse({
+        backend,
+        files: [{ path: "top.sv", content: "module top; endmodule" }],
+      }),
+    ).toThrow();
   });
 
-  it('records errors on failure', async () => {
-    mockSimulator({
-      stdoutData: 'Simulation FAILED\n',
-      stderrData: 'ERROR: bad signal\n',
-      exitCode: 1,
-    });
-
-    const result = await runSimulation('module t; endmodule', 'icarus');
-    expect(result.passed).toBe(false);
-    expect(result.errors).toContain('ERROR: bad signal');
+  it("rejects traversal and duplicate paths", () => {
+    expect(() =>
+      simulationRequestSchema.parse({
+        backend: "icarus",
+        files: [
+          { path: "../top.sv", content: "module top; endmodule" },
+          { path: "../top.sv", content: "module duplicate; endmodule" },
+        ],
+      }),
+    ).toThrow();
   });
 });

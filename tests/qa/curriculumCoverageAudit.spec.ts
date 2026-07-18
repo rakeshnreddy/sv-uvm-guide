@@ -140,12 +140,20 @@ function collectCustomMdxTags(): Set<string> {
 }
 
 function collectRegisteredMdxComponents(): Set<string> {
-  const rendererPath = path.join(appRoot, 'curriculum', '[...slug]', 'page.tsx');
-  const source = fs.readFileSync(rendererPath, 'utf8');
-  const componentsBlock = source.match(/const components = \{([\s\S]*?)\n};/);
+  const registryPath = path.join(repoRoot, 'src', 'generated', 'mdx-component-registry.tsx');
+  const lazyRegistryPath = path.join(
+    repoRoot,
+    'src',
+    'components',
+    'mdx',
+    'lazy-mdx-interactives.ts',
+  );
+  const source = fs.readFileSync(registryPath, 'utf8');
+  const lazySource = fs.readFileSync(lazyRegistryPath, 'utf8');
+  const componentsBlock = source.match(/export const mdxComponents = \{([\s\S]*?)\n};/);
 
   if (!componentsBlock) {
-    throw new Error('Curriculum topic renderer should define an MDX components map');
+    throw new Error('Generated curriculum registry should define an MDX components map');
   }
 
   const registered = new Set<string>();
@@ -156,6 +164,10 @@ function collectRegisteredMdxComponents(): Set<string> {
       registered.add(match[1]);
     }
   });
+
+  for (const match of lazySource.matchAll(/^\s*"([A-Z][A-Za-z0-9]*)",$/gm)) {
+    registered.add(match[1]);
+  }
 
   return registered;
 }

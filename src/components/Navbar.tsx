@@ -7,7 +7,6 @@ import { motion, AnimatePresence } from "framer-motion";
 import Logo from "@/components/ui/Logo";
 import { ThemeSwitcher } from "@/components/ui/ThemeSwitcher";
 import { useNavigation } from "@/contexts/NavigationContext";
-import { useAuth } from "@/contexts/AuthContext";
 import { formatTimestamp, type NotificationItem, NOTIFICATION_CATEGORY_META } from "@/lib/notifications";
 import { featureFlags } from "@/tools/featureFlags";
 import { cn } from "@/lib/utils";
@@ -75,9 +74,7 @@ const NotificationCenter = () => {
   const [items, setItems] = useState<NotificationItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { user } = useAuth();
   const accountUiEnabled = featureFlags.accountUI;
-  const userId = user?.uid ?? "demo-user";
   const hasUnread = items.some((notification) => notification.unread);
 
   useEffect(() => {
@@ -93,7 +90,7 @@ const NotificationCenter = () => {
       setLoading(true);
       setError(null);
       try {
-        const response = await fetch(`/api/notifications/${encodeURIComponent(userId)}?limit=4`, {
+        const response = await fetch('/api/me/notifications?limit=4', {
           signal: controller.signal,
         });
         if (!response.ok) {
@@ -122,7 +119,7 @@ const NotificationCenter = () => {
       isMounted = false;
       controller.abort();
     };
-  }, [accountUiEnabled, userId]);
+  }, [accountUiEnabled]);
 
   const badgeClass = cn(
     "absolute top-2 right-2 block h-2 w-2 rounded-full bg-[var(--blueprint-accent)] ring-2 ring-[rgba(8,15,35,0.95)]",
@@ -275,6 +272,7 @@ const Navbar = () => {
                 <input
                   type="text"
                   placeholder="Search... (Ctrl+K)"
+                  data-command-target="global-search"
                   className="w-full rounded-2xl border border-white/10 bg-white/5 py-2 pl-11 pr-4 text-sm text-[var(--blueprint-foreground)] placeholder:text-[rgba(230,241,255,0.45)] focus:outline-none focus:ring-2 focus:ring-[var(--blueprint-accent)]"
                   data-testid="main-search-input"
                 />

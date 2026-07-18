@@ -5,7 +5,9 @@ const path = require('path');
 
 const repoRoot = path.resolve(__dirname, '..');
 const baselinePath = path.resolve(repoRoot, process.env.BUNDLE_BASELINE_PATH ?? 'docs/bundle-baseline.json');
-const statsPath = path.resolve(repoRoot, process.env.BUNDLE_ANALYZER_REPORT ?? '.next/analyze/client.json');
+// Next 14's analyzer wrapper fixes the report filename to client.html even in
+// JSON mode; the file contents are still the analyzer's JSON asset array.
+const statsPath = path.resolve(repoRoot, process.env.BUNDLE_ANALYZER_REPORT ?? '.next/analyze/client.html');
 
 const args = process.argv.slice(2);
 const updateBaseline = args.includes('--update');
@@ -28,9 +30,16 @@ const computeTotals = () => {
   return { initialClientGzipBytes };
 };
 
+const normalizeEntrypoint = (entrypoint) => entrypoint.replace(/\/\([^/]+\)/g, '');
+
 const computeEntrypointSize = (entrypoint) =>
   stats
-    .filter((item) => item.isInitialByEntrypoint && item.isInitialByEntrypoint[entrypoint])
+    .filter((item) =>
+      Object.entries(item.isInitialByEntrypoint ?? {}).some(
+        ([candidate, isInitial]) =>
+          isInitial && normalizeEntrypoint(candidate) === normalizeEntrypoint(entrypoint),
+      ),
+    )
     .reduce((sum, item) => sum + item.gzipSize, 0);
 
 if (updateBaseline) {
@@ -134,4 +143,3 @@ console.log(
     2,
   ),
 );
-

@@ -2,7 +2,7 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import SettingsPageClient from '@/app/settings/SettingsPageClient';
+import SettingsPageClient from '@/app/(learning)/settings/SettingsPageClient';
 import { cloneNotificationPreferences, DEFAULT_USER_PREFERENCES } from '@/lib/user-preferences';
 import { DEFAULT_NOTIFICATION_PREFERENCES } from '@/lib/notifications';
 

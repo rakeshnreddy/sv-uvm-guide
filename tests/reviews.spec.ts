@@ -1,34 +1,48 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { POST } from '@/app/api/reviews/route';
-import { getReviews, clearReviews } from '@/server/reviews';
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-function createRequest(body: any) {
-  return new Request('http://localhost/api/reviews', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-}
+const mocks = vi.hoisted(() => ({
+  listByCommit: vi.fn(),
+  requireSession: vi.fn(),
+}));
 
-describe('Reviews API', () => {
+vi.mock("@/lib/auth", () => ({
+  AuthenticationError: class AuthenticationError extends Error {},
+  requireSession: mocks.requireSession,
+}));
+vi.mock("@/server/reviews", () => ({
+  ReviewAuthorizationError: class ReviewAuthorizationError extends Error {},
+  authorizeRepositoryAccess: vi.fn(),
+  reviewRepository: { create: vi.fn(), listByCommit: mocks.listByCommit },
+}));
+
+import { GET } from "@/app/api/reviews/route";
+
+describe("GET /api/reviews", () => {
   beforeEach(() => {
-    clearReviews();
+    mocks.requireSession.mockResolvedValue({ user: { id: "reviewer-1" } });
+    mocks.listByCommit.mockResolvedValue([
+      { id: "review-2", createdAt: new Date("2026-07-18T10:00:00Z") },
+      { id: "review-1", createdAt: new Date("2026-07-18T09:00:00Z") },
+    ]);
   });
 
-  it('stores review successfully', async () => {
-    const req = createRequest({ commitId: 'abc1234', comment: 'Looks good', approved: true });
-    const res = await POST(req);
-    expect(res.status).toBe(201);
-    const data = await res.json();
-    expect(data).toEqual({ message: 'Review recorded' });
-    expect(getReviews()).toContainEqual({ commitId: 'abc1234', comment: 'Looks good', approved: true });
-  });
+  it("uses deterministic cursor pagination within the authenticated user's scope", async () => {
+    const response = await GET(
+      new Request(
+        "http://localhost/api/reviews?repository=local%2Fsv-uvm-guide&commitSha=abcdef1&limit=1",
+      ),
+    );
 
-  it('returns 400 when commitId is missing', async () => {
-    const req = createRequest({ comment: 'Missing commitId' });
-    const res = await POST(req);
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toBeDefined();
+    expect(response.status).toBe(200);
+    expect(mocks.listByCommit).toHaveBeenCalledWith({
+      userId: "reviewer-1",
+      repository: "local/sv-uvm-guide",
+      commitSha: "abcdef1",
+      cursor: undefined,
+      limit: 1,
+    });
+    const payload = await response.json();
+    expect(payload.reviews).toHaveLength(1);
+    expect(payload.nextCursor).toBe("review-2");
   });
 });

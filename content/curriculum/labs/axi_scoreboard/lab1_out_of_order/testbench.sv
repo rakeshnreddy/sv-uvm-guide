@@ -2,20 +2,25 @@
 `include "uvm_macros.svh"
 import uvm_pkg::*;
 
+`ifndef AXI_SCOREBOARD_INTERFACE_DEFINED
+`define AXI_SCOREBOARD_INTERFACE_DEFINED
 interface axi_if(input bit ACLK);
   // AR Channel
   logic        ARVALID;
   logic        ARREADY;
   logic [31:0] ARADDR;
   logic [3:0]  ARID;
+  logic [7:0]  ARLEN;
   
   // R Channel
   logic        RVALID;
   logic        RREADY;
   logic [31:0] RDATA;
   logic [3:0]  RID;
+  logic [1:0]  RRESP;
   logic        RLAST;
 endinterface
+`endif
 
 `include "axi_monitor.sv"
 `include "axi_scoreboard.sv"
@@ -64,31 +69,31 @@ class test extends uvm_test;
     phase.raise_objection(this);
 
     // Give scoreboard expected transactions
-    exp1 = new("exp1"); exp1.id = 1; exp1.addr = 32'h1000; exp1.data = 32'hAAAA_BBBB; exp1.is_write = 0;
-    exp2 = new("exp2"); exp2.id = 2; exp2.addr = 32'h2000; exp2.data = 32'hCCCC_DDDD; exp2.is_write = 0;
+    exp1 = new("exp1"); exp1.id = 1; exp1.addr = 32'h1000; exp1.expected_beats = 1; exp1.data_beats.push_back(32'hAAAA_BBBB); exp1.responses.push_back(2'b00); exp1.is_write = 0;
+    exp2 = new("exp2"); exp2.id = 2; exp2.addr = 32'h2000; exp2.expected_beats = 1; exp2.data_beats.push_back(32'hCCCC_DDDD); exp2.responses.push_back(2'b00); exp2.is_write = 0;
     
     env.scb.write_expected(exp1);
     env.scb.write_expected(exp2);
 
     // Drive AR Channel for ID 1 (Read A)
-    vif.ARVALID <= 1; vif.ARID <= 1; vif.ARADDR <= 32'h1000;
+    vif.ARVALID <= 1; vif.ARID <= 1; vif.ARADDR <= 32'h1000; vif.ARLEN <= 0;
     @(posedge vif.ACLK);
     vif.ARVALID <= 0;
     
     // Drive AR Channel for ID 2 (Read B)
-    vif.ARVALID <= 1; vif.ARID <= 2; vif.ARADDR <= 32'h2000;
+    vif.ARVALID <= 1; vif.ARID <= 2; vif.ARADDR <= 32'h2000; vif.ARLEN <= 0;
     @(posedge vif.ACLK);
     vif.ARVALID <= 0;
 
     // Simulate out-of-order response (ID 2 finishes first)
     repeat(2) @(posedge vif.ACLK);
-    vif.RVALID <= 1; vif.RID <= 2; vif.RDATA <= 32'hCCCC_DDDD; vif.RLAST <= 1;
+    vif.RVALID <= 1; vif.RID <= 2; vif.RDATA <= 32'hCCCC_DDDD; vif.RRESP <= 2'b00; vif.RLAST <= 1;
     @(posedge vif.ACLK);
     vif.RVALID <= 0; vif.RLAST <= 0;
 
     // Simulate ID 1 finishing later
     repeat(3) @(posedge vif.ACLK);
-    vif.RVALID <= 1; vif.RID <= 1; vif.RDATA <= 32'hAAAA_BBBB; vif.RLAST <= 1;
+    vif.RVALID <= 1; vif.RID <= 1; vif.RDATA <= 32'hAAAA_BBBB; vif.RRESP <= 2'b00; vif.RLAST <= 1;
     @(posedge vif.ACLK);
     vif.RVALID <= 0; vif.RLAST <= 0;
 
@@ -107,6 +112,9 @@ module top;
   initial begin
     vif.ARREADY = 1;
     vif.RREADY = 1;
+    vif.ARVALID = 0;
+    vif.RVALID = 0;
+    vif.RLAST = 0;
   end
 
   initial begin

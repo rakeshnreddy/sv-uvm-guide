@@ -15,7 +15,7 @@ describeOrSkip('account preferences', () => {
     const emailToggle = page.getByRole('button', { name: /Email updates about new modules/i });
     const [patch] = await Promise.all([
       page.waitForResponse((response) =>
-        response.url().includes('/api/preferences') && response.request().method() === 'PATCH',
+        response.url().includes('/api/me/preferences') && response.request().method() === 'PATCH',
       ),
       emailToggle.click(),
     ]);

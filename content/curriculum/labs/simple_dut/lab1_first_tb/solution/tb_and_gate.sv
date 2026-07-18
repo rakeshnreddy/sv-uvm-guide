@@ -1,4 +1,8 @@
 // Solution Testbench for the and_gate DUT
+module and_gate(input logic a, input logic b, output logic y);
+  assign y = a & b;
+endmodule
+
 module tb_and_gate;
 
   // Declare signals to connect to the DUT

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Progress } from "@/components/ui/Progress";
@@ -42,6 +42,26 @@ export const PlacementQuiz: React.FC = () => {
     if (stage !== "results") return null;
     return calculatePlacementResults(placementQuestions, answers);
   }, [stage, answers]);
+
+  useEffect(() => {
+    if (!results?.isComplete) return;
+    void fetch("/api/me/assessments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        assessmentId: "placement",
+        assessmentVersion: results.assessmentVersion,
+        scoringVersion: results.scoringVersion,
+        responses: answers.map((answer) => {
+          const question = placementQuestions.find((candidate) => candidate.id === answer.questionId);
+          return {
+            ...answer,
+            isCorrect: Boolean(question?.options.some((option) => option.id === answer.optionId && option.isCorrect)),
+          };
+        }),
+      }),
+    }).catch(() => undefined);
+  }, [answers, results]);
 
   const startQuiz = () => {
     setStage("question");
@@ -134,7 +154,7 @@ export const PlacementQuiz: React.FC = () => {
         <header className="glass-card border border-white/10 bg-[var(--blueprint-glass)] p-8 shadow-xl">
           <h2 className="text-3xl font-semibold text-[var(--blueprint-foreground)]">Placement summary</h2>
           <p className="mt-2 text-sm text-[rgba(230,241,255,0.75)]">
-            We analysed {results.totalQuestions} responses to determine your curriculum starting point. Scores account for
+            We analysed {results.answeredCount} responses to determine your curriculum starting point. Scores account for
             question difficulty, so advanced wins weigh slightly more than introductory items.
           </p>
           <dl className="mt-6 grid gap-6 md:grid-cols-3">

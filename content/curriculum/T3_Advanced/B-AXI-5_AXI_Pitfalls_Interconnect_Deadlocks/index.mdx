@@ -9,14 +9,15 @@ import { LabLink } from '@/components/mdx/LabLink';
 
 # AXI Pitfalls & Interconnect Deadlocks
 
-Because the AXI protocol decouples the address, data, and response channels, it relies on strict rules about how channels interact. If a master or slave violates these rules, the result isn't just data corruption—it is often a **catastrophic system deadlock** that hangs the entire SoC.
+Because AXI decouples address, data, and response channels, implementations must distinguish protocol safety from system-level progress. A source that makes `VALID` depend on `READY` violates the handshake rule; a destination may apply backpressure, but its policy can still participate in a larger wait cycle.
 
 In this module, we will dissect the most common AXI design flaws, why they cause deadlocks, and how to write verification assertions to catch them.
 
 <QuickTake>
-- **Channel Dependencies:** A channel handshake (`VALID`/`READY`) must never wait on another channel's handshake to complete if it creates a circular dependency.
-- **Master Rule:** Must not wait for `AWREADY` before asserting `WVALID`.
-- **Slave Rule:** Must not wait for `WVALID` before asserting `AWREADY`.
+- **Canonical Rule:** A source must assert `VALID` independently of the destination's `READY`.
+- **Master Bug in This Example:** `WVALID` incorrectly depends on `AWREADY`.
+- **Destination Policy:** A slave may wait for `VALID` before asserting `READY`; cross-channel gating is risky but not automatically a protocol violation.
+- **Liveness:** Bounded `READY` latency belongs to an integration or QoS contract, not the base AXI handshake rules.
 - **Cyclic Deadlocks:** Poor interconnect topology can cause traffic jams where multiple masters block each other in a circle.
 - **4KB Boundary Violations:** Crossing a 4KB page boundary in a single burst causes slave addressing errors and data corruption.
 </QuickTake>
@@ -29,20 +30,18 @@ The most common AXI deadlock occurs during a Write transaction when the master a
 
 ### The AXI Dependency Rules
 
-The AXI spec defines strict rules for channel dependencies to prevent deadlocks. An arrow (`→`) means "can wait for":
+Treat each arrow below as “the signal on the left waits for the signal on the right”:
 
-1. **`AWVALID` → `WVALID`**: A master **can** wait for `AWREADY` before asserting `WVALID`. (But it doesn't have to).
-2. **`WVALID` ↛ `AWREADY`**: A slave **MUST NOT** wait for `WVALID` before asserting `AWREADY`.
-3. **`AWVALID` ↛ `WVALID`**: A master **MUST NOT** wait for `AWREADY` before asserting `WVALID` **IF** the slave waits for `AWVALID` before asserting `WREADY` (which is legal).
-
-To simplify this into a golden rule: **Channels should be as independent as possible.**
+1. **`master.WVALID → slave.AWREADY` is illegal.** `WVALID` is a source-owned signal and cannot be conditional on `READY`.
+2. **`slave.AWREADY → master.WVALID` is a legal destination policy.** A destination may observe `VALID` before raising `READY`, although this cross-channel choice can be a poor implementation policy.
+3. The two edges together form a directed cycle. Cycle detection diagnoses the deadlock; rule classification attributes the protocol violation to the master edge.
 
 ### The Classic Deadlock Scenario
 
 Imagine a naive Master and a naive Slave:
 
-- **Naive Master Design:** "I won't put data on the bus until the slave accepts my address." -> Master waits for `AWREADY` before asserting `WVALID`.
-- **Naive Slave Design:** "I won't accept an address until the master actually gives me the data." -> Slave waits for `WVALID` before asserting `AWREADY`.
+- **Buggy Master Design:** “I won't put data on the bus until the slave accepts my address.” The source illegally waits for `AWREADY` before asserting `WVALID`.
+- **Risky Slave Policy:** “I won't accept an address until write data is present.” The destination legally delays `AWREADY` until `WVALID`, but this completes the cycle.
 
 **Result:** The Master is waiting for the Slave, and the Slave is waiting for the Master. Neither asserts their signal. **Deadlock.**
 
@@ -50,16 +49,26 @@ Imagine a naive Master and a naive Slave:
   <AxiDeadlockSimulator />
 </InteractiveWrapper>
 
-### How to Verify Channel Independence
+### Protocol Safety: VALID and Payload Stability
 
-You must write SystemVerilog Assertions (SVA) to ensure the slave does not illegally stall `AWREADY`.
+Pin-level assertions can prove that source-owned `VALID` and payload signals remain stable under backpressure. They cannot always prove the internal cause of a combinational or state dependency.
 
 ```systemverilog
-// SVA: Slave must eventually assert AWREADY if AWVALID is high, 
-// regardless of the state of the W channel.
-property p_no_awready_deadlock;
+property p_awvalid_and_payload_stable;
   @(posedge ACLK) disable iff (!ARESETn)
-    AWVALID |-> s_eventually AWREADY;
+    AWVALID && !AWREADY
+      |=> AWVALID && $stable({AWID, AWADDR, AWLEN, AWSIZE, AWBURST});
+endproperty
+```
+
+### Optional QoS/Liveness Contract
+
+If a product requires bounded response latency, verify it separately and name it as a configured service bound. This is an environment-specific progress requirement, not a generic AXI protocol assertion.
+
+```systemverilog
+property p_aw_service_bound;
+  @(posedge ACLK) disable iff (!ARESETn)
+    AWVALID |-> ##[0:MAX_AW_LATENCY] AWREADY;
 endproperty
 ```
 
@@ -147,15 +156,15 @@ Because the address is `0x1`, the slave expects the data on lanes 1 and 2, but s
 
 <Quiz>
   <QuizQuestion
-    question="According to the AXI specification, which of the following channel dependencies is strictly ILLEGAL?"
+    question="Which dependency is the AXI protocol violation in the deadlock example?"
     options={[
       "Master waiting for AWREADY before asserting WVALID",
-      "Slave waiting for AWVALID before asserting AWREADY",
-      "Slave waiting for WVALID before asserting AWREADY",
+      "Slave delaying AWREADY until it observes AWVALID",
+      "Slave delaying AWREADY until it observes WVALID",
       "Master asserting AWVALID and WVALID in the same cycle"
     ]}
-    correctAnswer="Slave waiting for WVALID before asserting AWREADY"
-    explanation="A slave MUST NOT wait for WVALID before asserting AWREADY. If it does, and the master is waiting for AWREADY before asserting WVALID, the system will instantly deadlock."
+    correctAnswer="Master waiting for AWREADY before asserting WVALID"
+    explanation="WVALID is source-owned and must not depend on READY. The slave's delayed-READY policy can participate in the cycle, but is not itself the source-VALID protocol violation."
   />
   <QuizQuestion
     question="A master issues an INCR burst starting at address 0x0FE0. The burst consists of 8 beats, and each beat is 8 bytes (AxSIZE = 3). Is this transaction legal?"
@@ -185,6 +194,6 @@ Because the address is `0x1`, the slave expects the data on lanes 1 and 2, but s
 
 ## Hands-On Practice
 
-Put your deadlock detection skills to the test with the AXI Deadlock Hunt lab. You'll analyze a buggy slave with an illegal channel dependency, trace the circular wait, and write SVA assertions to catch the deadlock before the system hangs.
+Put your deadlock detection skills to the test with the AXI Deadlock Hunt lab. You'll identify the illegal master dependency, distinguish it from a legal destination policy, and write protocol stability assertions plus separately configured service watchdogs.
 
 <LabLink labId="axi-deadlock-hunt-lab" />

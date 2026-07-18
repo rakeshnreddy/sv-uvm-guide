@@ -14,37 +14,244 @@ datasource db {
 }
 
 model User {
-  id          String   @id @default(cuid())
-  //... other user fields
-  flashcards  Flashcard[]
+  id                 String              @id @default(cuid())
+  email              String?             @unique
+  name               String?
+  timeZone           String              @default("UTC")
+  preferences        Json?
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+  activities         Activity[]
+  assessmentAttempts AssessmentAttempt[]
+  certifications     Certification[]
+  flashcards         Flashcard[]
+  goals              Goal[]
+  labAttempts        LabAttempt[]
+  lessonProgress     LessonProgress[]
+  reviews            Review[]
+  simulationJobs     SimulationJob[]
 }
 
 model Flashcard {
-  id            String   @id @default(cuid())
-  userId        String
-  user          User     @relation(fields: [userId], references: [id])
-  topicId       String   // Corresponds to CurriculumNode.id
-  front         String   // e.g., "What is the role of uvm_driver?"
-  back          String   // The detailed answer
-  interval      Int      @default(1) // in days
-  easinessFactor Float    @default(2.5)
-  repetitions   Int      @default(0)
-  nextReviewAt  DateTime @default(now())
+  id             String    @id @default(cuid())
+  userId         String
+  user           User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  topicId        String // Corresponds to CurriculumNode.id
+  front          String // e.g., "What is the role of uvm_driver?"
+  back           String // The detailed answer
+  interval       Int       @default(1) // in days
+  easinessFactor Float     @default(2.5)
+  repetitions    Int       @default(0)
+  nextReviewAt   DateTime  @default(now())
+  lastReviewedAt DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  @@index([userId])
+  @@unique([userId, topicId, front])
+  @@index([userId, nextReviewAt])
 }
 
 model Lab {
-  id          String   @id @default(cuid())
+  id          String   @id
+  manifestId  String   @unique
+  version     String   @default("1")
   title       String
   description String
-  initialFiles Json
-  testCases   Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }
 
 model Quiz {
-  id          String   @id @default(cuid())
+  id          String   @id
+  manifestId  String   @unique
+  version     String   @default("1")
   title       String
   description String
-  questions   Json
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+enum ActivityType {
+  LESSON_VIEWED
+  LESSON_COMPLETED
+  CHALLENGE_ATTEMPTED
+  PROJECT_SUBMITTED
+  FORUM_POSTED
+  CODE_REVIEWED
+  AI_REQUEST
+}
+
+model Activity {
+  id               String       @id @default(cuid())
+  userId           String
+  type             ActivityType
+  subjectId        String?
+  durationMs       Int          @default(0)
+  metadata         Json?
+  occurredAt       DateTime     @default(now())
+  algorithmVersion String       @default("engagement-v1")
+  user             User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, occurredAt])
+  @@index([userId, type, occurredAt])
+}
+
+model LessonProgress {
+  id          String    @id @default(cuid())
+  userId      String
+  lessonSlug  String
+  completedAt DateTime?
+  lastSeenAt  DateTime  @default(now())
+  timeSpentMs Int       @default(0)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, lessonSlug])
+  @@index([userId, completedAt])
+}
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  ARCHIVED
+}
+
+model Goal {
+  id          String     @id @default(cuid())
+  userId      String
+  description String
+  target      Int
+  progress    Int        @default(0)
+  unit        String
+  status      GoalStatus @default(ACTIVE)
+  dueAt       DateTime?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+  user        User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status, createdAt])
+}
+
+enum AttemptStatus {
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+model AssessmentAttempt {
+  id                String               @id @default(cuid())
+  userId            String
+  assessmentId      String
+  assessmentVersion String
+  scoringVersion    String
+  status            AttemptStatus        @default(IN_PROGRESS)
+  score             Float?
+  startedAt         DateTime             @default(now())
+  completedAt       DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+  user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  responses         AssessmentResponse[]
+
+  @@index([userId, assessmentId, startedAt])
+  @@index([userId, status])
+}
+
+model AssessmentResponse {
+  id         String            @id @default(cuid())
+  attemptId  String
+  questionId String
+  optionId   String?
+  response   Json?
+  isCorrect  Boolean?
+  score      Float?
+  answeredAt DateTime          @default(now())
+  attempt    AssessmentAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+
+  @@unique([attemptId, questionId])
+  @@index([attemptId, answeredAt])
+}
+
+model LabAttempt {
+  id             String        @id @default(cuid())
+  userId         String
+  labId          String
+  labVersion     String
+  currentStepId  String?
+  completedSteps String[]      @default([])
+  workspace      Json?
+  status         AttemptStatus @default(IN_PROGRESS)
+  startedAt      DateTime      @default(now())
+  completedAt    DateTime?
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, labId, startedAt])
+  @@index([userId, status])
+}
+
+model Review {
+  id         String   @id @default(cuid())
+  userId     String
+  repository String
+  commitSha  String
+  comment    String?
+  approved   Boolean?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, repository, commitSha, createdAt])
+  @@index([repository, commitSha, createdAt])
+}
+
+enum SimulatorBackend {
+  ICARUS
+  VERILATOR
+}
+
+enum SimulationJobStatus {
+  QUEUED
+  RUNNING
+  SUCCEEDED
+  FAILED
+  TIMED_OUT
+  CANCELLED
+}
+
+model SimulationJob {
+  id          String              @id @default(cuid())
+  userId      String
+  backend     SimulatorBackend
+  status      SimulationJobStatus @default(QUEUED)
+  files       Json
+  result      Json?
+  logKey      String?
+  errorCode   String?
+  createdAt   DateTime            @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  updatedAt   DateTime            @updatedAt
+  user        User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+model Certification {
+  id                   String    @id @default(cuid())
+  userId               String
+  certificationId      String
+  certificationVersion String
+  issuedAt             DateTime  @default(now())
+  expiresAt            DateTime?
+  evidence             Json?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  user                 User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, certificationId, certificationVersion])
+  @@index([userId, issuedAt])
 }

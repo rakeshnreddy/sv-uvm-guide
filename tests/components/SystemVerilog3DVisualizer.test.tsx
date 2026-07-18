@@ -32,7 +32,7 @@ vi.mock('three', async () => {
   const actual = await vi.importActual<typeof import('three')>('three');
   return {
     ...actual,
-    MeshStandardMaterial: vi.fn().mockImplementation(() => ({})),
+    MeshStandardMaterial: vi.fn().mockImplementation(() => ({ dispose: vi.fn() })),
   };
 });
 

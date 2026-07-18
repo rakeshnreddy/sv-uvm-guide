@@ -3,11 +3,7 @@ class axi_scoreboard extends uvm_scoreboard;
 
   uvm_analysis_imp_expected #(axi_transaction, axi_scoreboard) expected_export;
   uvm_analysis_imp_actual #(axi_transaction, axi_scoreboard) actual_export;
-
-  // One queue per ID for expected reads
-  // This allows out-of-order completion across different IDs, 
-  // but maintains in-order checking for the same ID.
-  axi_transaction expected_reads[int][$];
+  axi_transaction expected_reads[int unsigned][$];
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -15,28 +11,25 @@ class axi_scoreboard extends uvm_scoreboard;
     actual_export = new("actual_export", this);
   endfunction
 
-  // Called when reference model predicts a read
   virtual function void write_expected(axi_transaction txn);
-    if (!txn.is_write) begin
-      `uvm_info("SCB_EXPECT", $sformatf("Expecting: %s", txn.convert2string()), UVM_LOW)
-      expected_reads[txn.id].push_back(txn);
-    end
+    if (!txn.is_write) expected_reads[txn.id].push_back(txn);
   endfunction
 
-  // Called when monitor reconstructs an actual read from the bus
   virtual function void write_actual(axi_transaction txn);
-    if (!txn.is_write) begin
-      `uvm_info("SCB_ACTUAL", $sformatf("Received: %s", txn.convert2string()), UVM_LOW)
-      
-      // TODO: 1. Check if expected_reads[txn.id] exists and has size > 0
-      // TODO: 2. If so, pop the front transaction
-      // TODO: 3. Compare the popped expected transaction against 'txn'
-      // TODO: 4. If mismatch, throw a UVM_ERROR
-      // TODO: 5. If expected_reads[txn.id] doesn't exist or is empty, throw UVM_ERROR "Unexpected read"
-      
-      // --- YOUR CODE HERE ---
-      
-      // ----------------------
+    axi_transaction expected;
+    uvm_comparer comparer = new();
+    if (txn.is_write) return;
+
+    // TODO: reject unknown IDs, pop the oldest expected transaction for this ID,
+    // and compare the complete burst using do_compare()/uvm_comparer.
+    // Delete an empty per-ID queue after matching.
+  endfunction
+
+  virtual function void check_phase(uvm_phase phase);
+    super.check_phase(phase);
+    foreach (expected_reads[id]) begin
+      if (expected_reads[id].size() != 0)
+        `uvm_error("MISSING", $sformatf("ID %0d still has %0d expected read(s)", id, expected_reads[id].size()))
     end
   endfunction
 endclass

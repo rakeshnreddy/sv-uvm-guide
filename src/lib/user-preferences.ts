@@ -4,6 +4,10 @@ export interface UserPreferences {
   theme: 'dark' | 'light';
   shareTelemetry: boolean;
   notifications: NotificationPreferences;
+  motivationalProfile: {
+    style: 'competitive' | 'collaborative' | 'curious' | 'goal-oriented';
+    rewardPreference: 'badges' | 'certificates' | 'career' | 'tools';
+  } | null;
 }
 
 export type PartialNotificationPreferences = Partial<
@@ -72,6 +76,7 @@ export const DEFAULT_USER_PREFERENCES: UserPreferences = {
   theme: 'dark',
   shareTelemetry: false,
   notifications: cloneNotificationPreferences(DEFAULT_NOTIFICATION_PREFERENCES),
+  motivationalProfile: null,
 };
 
 export function mergeUserPreferences(
@@ -84,6 +89,10 @@ export function mergeUserPreferences(
     notifications: updates.notifications
       ? mergeNotificationPreferences(base.notifications, updates.notifications)
       : cloneNotificationPreferences(base.notifications),
+    motivationalProfile:
+      updates.motivationalProfile === undefined
+        ? base.motivationalProfile
+        : updates.motivationalProfile,
   };
 }
 
@@ -95,6 +104,7 @@ export function normalizeUserPreferences(
     theme: DEFAULT_USER_PREFERENCES.theme,
     shareTelemetry: DEFAULT_USER_PREFERENCES.shareTelemetry,
     notifications: cloneNotificationPreferences(baseNotificationPreferences),
+    motivationalProfile: DEFAULT_USER_PREFERENCES.motivationalProfile,
   };
 
   if (!stored) {

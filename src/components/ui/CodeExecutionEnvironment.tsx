@@ -18,13 +18,16 @@ interface CodeExecutionEnvironmentProps {
 export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> = () => {
   const [isRunning, setIsRunning] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
-  const [backend, setBackend] = useState<SimulatorBackend>('wasm');
+  const [backend, setBackend] = useState<SimulatorBackend>('icarus');
   const [output, setOutput] = useState<string>('');
   const [coverage, setCoverage] = useState<number | null>(null);
   const [regressions, setRegressions] = useState<string[]>([]);
   const [waveform, setWaveform] = useState<SimulationWaveform | null>(null);
   const [stats, setStats] = useState<SimulationStats | null>(null);
   const waveRef = useRef<HTMLDivElement>(null);
+  const requestControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => requestControllerRef.current?.abort(), []);
 
   useEffect(() => {
     if (waveform && waveRef.current && typeof WaveDrom?.renderWaveElement === 'function') {
@@ -33,6 +36,9 @@ export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> =
   }, [waveform]);
 
   const handleRunCode = async () => {
+    requestControllerRef.current?.abort();
+    const controller = new AbortController();
+    requestControllerRef.current = controller;
     setIsRunning(true);
     setIsPaused(false);
     setOutput('Compiling and running simulation...');
@@ -41,16 +47,64 @@ export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> =
       const res = await fetch('/api/simulate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: '', backend }),
+        signal: controller.signal,
+        body: JSON.stringify({
+          backend,
+          files: [{ path: 'submission.sv', content: 'module submission; endmodule\n' }],
+        }),
       });
-      const data = await res.json();
-      setOutput(data.output);
-      setWaveform(data.waveform as SimulationWaveform | null);
-      setStats(data.stats);
-      setCoverage(data.coverage);
-      setRegressions(data.regressions || []);
+      const queued = await res.json();
+      if (!res.ok || typeof queued.jobId !== 'string') {
+        throw new Error(queued.error ?? 'Unable to enqueue simulation');
+      }
+
+      setOutput(`Simulation queued (${queued.jobId}).`);
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = window.setTimeout(resolve, 1_000);
+          controller.signal.addEventListener(
+            'abort',
+            () => {
+              window.clearTimeout(timer);
+              reject(new DOMException('Aborted', 'AbortError'));
+            },
+            { once: true },
+          );
+        });
+
+        const statusResponse = await fetch(`/api/simulate/${encodeURIComponent(queued.jobId)}`, {
+          signal: controller.signal,
+        });
+        const job = await statusResponse.json();
+        if (!statusResponse.ok) {
+          throw new Error(job.error ?? 'Unable to load simulation status');
+        }
+        if (job.status === 'queued' || job.status === 'running') {
+          setOutput(`Simulation ${job.status}…`);
+          continue;
+        }
+
+        const result = job.result && typeof job.result === 'object' ? job.result : {};
+        const diagnostics = Array.isArray(result.diagnostics) ? result.diagnostics : [];
+        setOutput(
+          diagnostics.length > 0
+            ? diagnostics.map((item: { message?: string }) => item.message ?? 'Simulation diagnostic').join('\n')
+            : job.status === 'succeeded'
+              ? 'Simulation completed successfully.'
+              : `Simulation ended with status: ${job.status}`,
+        );
+        setCoverage(typeof result.coverage === 'number' ? result.coverage : null);
+        setWaveform(null);
+        setStats(null);
+        setRegressions([]);
+        return;
+      }
+
+      throw new Error('Simulation status timed out');
     } catch (err) {
-      setOutput(String(err));
+      if ((err as Error).name !== 'AbortError') {
+        setOutput(err instanceof Error ? err.message : 'Simulation request failed');
+      }
     } finally {
       setIsRunning(false);
     }
@@ -67,6 +121,7 @@ export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> =
   };
 
   const handleReset = () => {
+    requestControllerRef.current?.abort();
     setOutput('');
     setWaveform(null);
     setStats(null);
@@ -83,7 +138,6 @@ export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> =
           onChange={(e) => setBackend(e.target.value as SimulatorBackend)}
           disabled={isRunning}
         >
-          <option value="wasm">WebAssembly</option>
           <option value="icarus">Icarus</option>
           <option value="verilator">Verilator</option>
         </select>

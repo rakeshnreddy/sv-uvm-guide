@@ -1,101 +1,42 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { auth } from '@/lib/firebase';
-import { User, onAuthStateChanged, signInAnonymously, signOut } from 'firebase/auth';
+import type { ReactNode } from "react";
+import { signOut as signOutSession, useSession } from "next-auth/react";
 
-// Define the shape of the user object provided by the context
 interface AuthUser {
   uid: string;
-  isAnonymous: boolean;
+  isAnonymous: false;
   displayName?: string | null;
-  // Add any other user properties you need from your mock or real Firebase user
 }
 
-// Define the shape of the context value
-interface AuthContextType {
+interface AuthContextValue {
   user: AuthUser | null;
   loading: boolean;
-  signInAnonymously: () => Promise<AuthUser | null>;
   signOut: () => Promise<void>;
 }
 
-// Create the context with a default undefined value to ensure it's used within a provider
-const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-// AuthProvider component
-interface AuthProviderProps {
-  children: ReactNode;
+// Kept as a compatibility boundary for existing call sites. SessionProvider is
+// the only identity provider; this component deliberately owns no auth state.
+export function AuthProvider({ children }: { children: ReactNode }) {
+  return children;
 }
 
-export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
-  const [user, setUser] = useState<AuthUser | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user: User | null) => {
-      if (user) {
-        setUser({
-          uid: user.uid,
-          isAnonymous: user.isAnonymous,
-          displayName: user.displayName,
-        });
-      } else {
-        setUser(null);
+export function useAuth(): AuthContextValue {
+  const { data, status } = useSession();
+  const sessionUser = data?.user;
+  const user = sessionUser?.id
+    ? {
+        uid: sessionUser.id,
+        isAnonymous: false as const,
+        displayName: sessionUser.name,
       }
-      setLoading(false);
-    });
+    : null;
 
-    return () => unsubscribe();
-  }, []);
-
-  const handleSignInAnonymously = async (): Promise<AuthUser | null> => {
-    setLoading(true);
-    try {
-      const { user: firebaseUser } = await signInAnonymously(auth);
-      const authUser = {
-        uid: firebaseUser.uid,
-        isAnonymous: firebaseUser.isAnonymous,
-        displayName: firebaseUser.displayName,
-      };
-      setUser(authUser);
-      setLoading(false);
-      return authUser;
-    } catch (error) {
-      console.error("Anonymous Sign-In Error:", error);
-      setUser(null);
-      setLoading(false);
-      return null;
-    }
-  };
-
-  const handleSignOut = async (): Promise<void> => {
-    setLoading(true);
-    try {
-      await signOut(auth);
-      setUser(null);
-      setLoading(false);
-    } catch (error) {
-      console.error("Sign-Out Error:", error);
-      setLoading(false);
-    }
-  };
-
-  const value = {
+  return {
     user,
-    loading,
-    signInAnonymously: handleSignInAnonymously,
-    signOut: handleSignOut,
+    loading: status === "loading",
+    signOut: async () => {
+      await signOutSession({ redirect: false });
+    },
   };
-
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-};
-
-// Custom hook to use the AuthContext
-export const useAuth = (): AuthContextType => {
-  const context = useContext(AuthContext);
-  if (context === undefined) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
-  return context;
-};
+}

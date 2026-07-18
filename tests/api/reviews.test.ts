@@ -1,30 +1,57 @@
-import { describe, it, expect, beforeEach } from 'vitest';
-import { POST } from '../../src/app/api/reviews/route';
-import { getReviews, clearReviews } from '../../src/server/reviews';
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-function makeRequest(body: any) {
-  return new Request('http://localhost/api/reviews', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-}
+const mocks = vi.hoisted(() => ({
+  create: vi.fn(),
+  requireSession: vi.fn(),
+}));
 
-describe('POST /api/reviews', () => {
+vi.mock("@/lib/auth", () => ({
+  AuthenticationError: class AuthenticationError extends Error {},
+  requireSession: mocks.requireSession,
+}));
+vi.mock("@/server/reviews", () => ({
+  ReviewAuthorizationError: class ReviewAuthorizationError extends Error {},
+  authorizeRepositoryAccess: vi.fn(),
+  reviewRepository: { create: mocks.create, listByCommit: vi.fn() },
+}));
+
+import { POST } from "@/app/api/reviews/route";
+
+describe("POST /api/reviews", () => {
   beforeEach(() => {
-    clearReviews();
+    mocks.requireSession.mockResolvedValue({ user: { id: "reviewer-1" } });
+    mocks.create.mockResolvedValue({ id: "review-1" });
   });
 
-  it('stores reviews and returns 201', async () => {
-    const res = await POST(makeRequest({ commitId: 'abcdef1', comment: 'good' }));
-    expect(res.status).toBe(201);
-    const json = await res.json();
-    expect(json).toEqual({ message: 'Review recorded' });
-    expect(getReviews()).toContainEqual({ commitId: 'abcdef1', comment: 'good' });
+  it("creates an authenticated, repository-scoped review", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/reviews", {
+        method: "POST",
+        body: JSON.stringify({
+          repository: "local/sv-uvm-guide",
+          commitSha: "abcdef1",
+          comment: "good",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(201);
+    expect(mocks.create).toHaveBeenCalledWith({
+      userId: "reviewer-1",
+      repository: "local/sv-uvm-guide",
+      commitSha: "abcdef1",
+      comment: "good",
+      approved: undefined,
+    });
   });
 
-  it('rejects requests without commitId', async () => {
-    const res = await POST(makeRequest({ comment: 'bad' }));
-    expect(res.status).toBe(400);
+  it("rejects requests without repository or commit SHA", async () => {
+    const response = await POST(
+      new Request("http://localhost/api/reviews", {
+        method: "POST",
+        body: JSON.stringify({ comment: "bad" }),
+      }),
+    );
+    expect(response.status).toBe(400);
   });
 });

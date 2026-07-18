@@ -23,6 +23,7 @@ import { useTimedCheck, CheckResult } from "./useTimedCheck";
  * <CodeReviewAssistant />
  */
 export const CodeReviewAssistant = () => {
+  const repository = process.env.NEXT_PUBLIC_REVIEW_REPOSITORY ?? "local/sv-uvm-guide";
   // Automated check results
   const [quality, setQuality] = React.useState<CheckResult>({ status: "pending" });
   const [style, setStyle] = React.useState<CheckResult>({ status: "pending" });
@@ -123,7 +124,7 @@ export const CodeReviewAssistant = () => {
         const res = await fetch("/api/reviews", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ commitId, comment: sanitized }),
+          body: JSON.stringify({ repository, commitSha: commitId, comment: sanitized }),
         });
         if (!res.ok) {
           throw new Error(await res.text());
@@ -146,7 +147,7 @@ export const CodeReviewAssistant = () => {
       const res = await fetch("/api/reviews", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ commitId, approved: newStatus }),
+        body: JSON.stringify({ repository, commitSha: commitId, approved: newStatus }),
       });
       if (!res.ok) {
         throw new Error(await res.text());
@@ -183,6 +184,9 @@ export const CodeReviewAssistant = () => {
 
       <div className="mt-6">
         <h3 className="text-xl font-semibold text-primary mb-2">Peer Review Workflow</h3>
+        <p className="mb-2 text-xs text-foreground/60">
+          Repository: <span className="font-mono">{repository}</span>
+        </p>
         <Input
           placeholder="Commit ID"
           value={commitId}
@@ -234,4 +238,3 @@ export const CodeReviewAssistant = () => {
 };
 
 export default CodeReviewAssistant;
-

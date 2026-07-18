@@ -1,10 +1,27 @@
 'use client';
 import React, { useState, useEffect } from "react";
-import SyntaxHighlighter from "react-syntax-highlighter";
+import SyntaxHighlighter, { registerLanguage } from "react-syntax-highlighter/dist/light";
+import bash from "react-syntax-highlighter/dist/languages/bash";
+import cpp from "react-syntax-highlighter/dist/languages/cpp";
+import javascript from "react-syntax-highlighter/dist/languages/javascript";
+import json from "react-syntax-highlighter/dist/languages/json";
+import python from "react-syntax-highlighter/dist/languages/python";
+import shell from "react-syntax-highlighter/dist/languages/shell";
+import typescript from "react-syntax-highlighter/dist/languages/typescript";
+import verilog from "react-syntax-highlighter/dist/languages/verilog";
 import { useTheme } from "next-themes";
 import { lightTheme, darkTheme } from "@/lib/code-theme";
 import { Copy, Check } from "lucide-react";
 import { Button } from "./Button";
+
+registerLanguage("bash", bash);
+registerLanguage("shell", shell);
+registerLanguage("cpp", cpp);
+registerLanguage("javascript", javascript);
+registerLanguage("json", json);
+registerLanguage("python", python);
+registerLanguage("typescript", typescript);
+registerLanguage("verilog", verilog);
 
 interface CodeBlockProps {
   code: string;
@@ -109,4 +126,3 @@ export const CodeBlock: React.FC<CodeBlockProps> = React.memo(({
 });
 
 CodeBlock.displayName = "CodeBlock";
-

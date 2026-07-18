@@ -6,7 +6,6 @@ import { getAllLabs } from '@/lib/lab-registry';
 
 const repoRoot = process.cwd();
 const curriculumRoot = path.join(repoRoot, 'content', 'curriculum');
-const strictLabsAudit = process.env.QA_STRICT_LABS_AUDIT === '1';
 
 function walkFiles(dir: string, extension: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -79,7 +78,7 @@ describe('W8 labs platform audit', () => {
     expect(invalidLinks, `invalid LabLink usages: ${invalidLinks.join('; ')}`).toEqual([]);
   });
 
-  (strictLabsAudit ? it : it.skip)(
+  it(
     'makes every available lab discoverable from curriculum content through a stable link',
     () => {
       const mdxFiles = walkFiles(curriculumRoot, '.mdx');
@@ -108,7 +107,7 @@ describe('W8 labs platform audit', () => {
     },
   );
 
-  (strictLabsAudit ? it : it.skip)(
+  it(
     'keeps lab owning-module metadata aligned with module ids explicitly referenced in source lab READMEs',
     () => {
       const mismatches = getAllLabs().flatMap((lab) => {

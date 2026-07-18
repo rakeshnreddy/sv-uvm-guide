@@ -1,71 +1,84 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
-import { getServerSession } from 'next-auth/next';
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock('next-auth/next', () => ({
-  getServerSession: vi.fn(),
+const { requireSession, enqueue } = vi.hoisted(() => ({
+  requireSession: vi.fn(),
+  enqueue: vi.fn(),
 }));
 
-vi.mock('@/server/simulation', () => ({
-  runSimulation: vi.fn().mockResolvedValue({ output: 'Simulation successful', passed: true }),
+vi.mock("@/lib/auth", () => ({
+  AuthenticationError: class AuthenticationError extends Error {},
+  requireSession,
 }));
 
-describe('api/simulate route', () => {
-  const loadPost = async () => {
-    vi.resetModules();
-    const mod = await import('@/app/api/simulate/route');
-    return mod.POST;
+vi.mock("@/server/simulation", async () => {
+  const actual = await vi.importActual<typeof import("@/server/simulation")>("@/server/simulation");
+  return {
+    ...actual,
+    simulationJobs: { enqueue },
   };
+});
 
+import { POST } from "@/app/api/simulate/route";
+
+describe("POST /api/simulate", () => {
   beforeEach(() => {
-    vi.stubEnv('SESSION_SECRET', 'test-session-secret-32-bytes-minimum');
-    vi.mocked(getServerSession).mockReset();
+    requireSession.mockReset();
+    enqueue.mockReset();
   });
 
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
+  it("returns 401 when unauthenticated", async () => {
+    const { AuthenticationError } = await import("@/lib/auth");
+    requireSession.mockRejectedValue(new AuthenticationError());
 
-  it('returns 401 Unauthorized if no session is found', async () => {
-    vi.mocked(getServerSession).mockResolvedValue(null);
-    const POST = await loadPost();
-
-    const request = new Request('http://localhost/api/simulate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        code: 'module top; endmodule',
-        backend: 'wasm',
+    const response = await POST(
+      new Request("http://localhost/api/simulate", {
+        method: "POST",
+        body: JSON.stringify({
+          backend: "icarus",
+          files: [{ path: "top.sv", content: "module top; endmodule" }],
+        }),
       }),
-    });
-
-    const response = await POST(request);
-    const payload = await response.json();
+    );
 
     expect(response.status).toBe(401);
-    expect(payload.error).toBe('Unauthorized');
+    await expect(response.json()).resolves.toEqual({ error: "UNAUTHORIZED" });
   });
 
-  it('allows request if session is found', async () => {
-    vi.mocked(getServerSession).mockResolvedValue({ user: { name: 'Test User' } });
-    const POST = await loadPost();
+  it("enqueues a validated job and returns 202", async () => {
+    requireSession.mockResolvedValue({ user: { id: "user-1" } });
+    enqueue.mockResolvedValue({ id: "job-1", status: "queued" });
 
-    const request = new Request('http://localhost/api/simulate', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        code: 'module top; endmodule',
-        backend: 'wasm',
+    const response = await POST(
+      new Request("http://localhost/api/simulate", {
+        method: "POST",
+        body: JSON.stringify({
+          backend: "verilator",
+          files: [{ path: "top.sv", content: "module top; endmodule" }],
+        }),
       }),
+    );
+
+    expect(response.status).toBe(202);
+    expect(enqueue).toHaveBeenCalledWith("user-1", {
+      backend: "verilator",
+      files: [{ path: "top.sv", content: "module top; endmodule" }],
     });
+    await expect(response.json()).resolves.toEqual({ jobId: "job-1", status: "queued" });
+  });
 
-    const response = await POST(request);
-    const payload = await response.json();
+  it("rejects untrusted backend identifiers", async () => {
+    requireSession.mockResolvedValue({ user: { id: "user-1" } });
+    const response = await POST(
+      new Request("http://localhost/api/simulate", {
+        method: "POST",
+        body: JSON.stringify({
+          backend: "bash",
+          files: [{ path: "top.sv", content: "module top; endmodule" }],
+        }),
+      }),
+    );
 
-    expect(response.status).toBe(200);
-    expect(payload.output).toBe('Simulation successful');
+    expect(response.status).toBe(400);
+    expect(enqueue).not.toHaveBeenCalled();
   });
 });
