@@ -37,6 +37,32 @@ export function validateDimensions(dimensions: ArrayDimensions): ArrayDimensions
   };
 }
 
+export function encodeArrayCoordinates(
+  rawDimensions: ArrayDimensions,
+  coordinates: { packed: readonly number[]; unpacked: readonly number[] },
+): number | null {
+  const dimensions = validateDimensions(rawDimensions);
+  if (
+    coordinates.packed.length !== dimensions.packed.length ||
+    coordinates.unpacked.length !== dimensions.unpacked.length
+  ) {
+    return null;
+  }
+
+  const allDimensions = [...dimensions.unpacked, ...dimensions.packed];
+  const allCoordinates = [...coordinates.unpacked, ...coordinates.packed];
+  if (allCoordinates.some((coordinate, index) => (
+    !Number.isInteger(coordinate) || coordinate < 0 || coordinate >= allDimensions[index]
+  ))) {
+    return null;
+  }
+
+  return allCoordinates.reduce(
+    (logicalIndex, coordinate, index) => logicalIndex * allDimensions[index] + coordinate,
+    0,
+  );
+}
+
 function decodeIndex(index: number, dimensions: readonly number[]): number[] {
   const coordinates = Array(dimensions.length).fill(0) as number[];
   let remainder = index;
@@ -50,12 +76,23 @@ function decodeIndex(index: number, dimensions: readonly number[]): number[] {
 export function buildArrayInstances(
   rawDimensions: ArrayDimensions,
   instanceCap = MAX_VISIBLE_INSTANCES,
+  requiredLogicalIndex: number | null = null,
 ): ArrayInstanceModel {
   const dimensions = validateDimensions(rawDimensions);
   const allDimensions = [...dimensions.unpacked, ...dimensions.packed];
   const logicalInstanceCount = allDimensions.reduce((total, value) => total * value, 1);
   const visibleCount = Math.min(logicalInstanceCount, Math.max(0, Math.trunc(instanceCap)));
-  const instances = Array.from({ length: visibleCount }, (_, logicalIndex) => {
+  const logicalIndices = Array.from({ length: visibleCount }, (_, logicalIndex) => logicalIndex);
+  if (
+    visibleCount > 0 &&
+    Number.isInteger(requiredLogicalIndex) &&
+    requiredLogicalIndex !== null &&
+    requiredLogicalIndex >= visibleCount &&
+    requiredLogicalIndex < logicalInstanceCount
+  ) {
+    logicalIndices[visibleCount - 1] = requiredLogicalIndex;
+  }
+  const instances = logicalIndices.map((logicalIndex) => {
     const coordinates = decodeIndex(logicalIndex, allDimensions);
     const unpackedCoordinates = coordinates.slice(0, dimensions.unpacked.length);
     const packedCoordinates = coordinates.slice(dimensions.unpacked.length);

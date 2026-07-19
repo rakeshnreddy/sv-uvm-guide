@@ -34,20 +34,29 @@ ADD COLUMN     "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;
 
 -- AlterTable
 ALTER TABLE "Lab" ADD COLUMN "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ADD COLUMN "legacyContent" JSONB,
 ADD COLUMN "manifestId" TEXT,
 ADD COLUMN "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 ADD COLUMN "version" TEXT NOT NULL DEFAULT '1';
 UPDATE "Lab" SET "manifestId" = "id" WHERE "manifestId" IS NULL;
+UPDATE "Lab"
+SET "legacyContent" = jsonb_build_object(
+  'initialFiles', "initialFiles",
+  'testCases', "testCases"
+);
 ALTER TABLE "Lab" ALTER COLUMN "manifestId" SET NOT NULL,
 DROP COLUMN "initialFiles",
 DROP COLUMN "testCases";
 
 -- AlterTable
 ALTER TABLE "Quiz" ADD COLUMN "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ADD COLUMN "legacyContent" JSONB,
 ADD COLUMN "manifestId" TEXT,
 ADD COLUMN "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 ADD COLUMN "version" TEXT NOT NULL DEFAULT '1';
 UPDATE "Quiz" SET "manifestId" = "id" WHERE "manifestId" IS NULL;
+UPDATE "Quiz"
+SET "legacyContent" = jsonb_build_object('questions', "questions");
 ALTER TABLE "Quiz" ALTER COLUMN "manifestId" SET NOT NULL,
 DROP COLUMN "questions";
 
@@ -134,6 +143,7 @@ CREATE TABLE "LabAttempt" (
     "labVersion" TEXT NOT NULL,
     "currentStepId" TEXT,
     "completedSteps" TEXT[] DEFAULT ARRAY[]::TEXT[],
+    "stepEvidence" JSONB,
     "workspace" JSONB,
     "status" "AttemptStatus" NOT NULL DEFAULT 'IN_PROGRESS',
     "startedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,

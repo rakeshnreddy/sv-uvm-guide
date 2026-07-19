@@ -2,10 +2,12 @@ import { z } from "zod";
 
 import type { SimulationSubmission } from "./index";
 
-const backendImages: Record<SimulationSubmission["backend"], string> = {
-  icarus: "ghcr.io/sv-uvm-guide/iverilog-runner:2026.07",
-  verilator: "ghcr.io/sv-uvm-guide/verilator-runner:2026.07",
-};
+function backendImage(backend: SimulationSubmission["backend"]): string {
+  if (backend === "icarus") {
+    return process.env.SIMULATION_ICARUS_IMAGE ?? "ghcr.io/sv-uvm-guide/iverilog-runner:2026.07";
+  }
+  return process.env.SIMULATION_VERILATOR_IMAGE ?? "ghcr.io/sv-uvm-guide/verilator-runner:2026.07";
+}
 
 const simulatorCommands: Record<SimulationSubmission["backend"], readonly string[]> = {
   icarus: ["/opt/sv-runner/bin/run-iverilog"],
@@ -79,7 +81,7 @@ export async function executeSimulationJob(
   submission: SimulationSubmission,
 ) {
   const result = await sandbox.run({
-    image: backendImages[submission.backend],
+    image: backendImage(submission.backend),
     command: simulatorCommands[submission.backend],
     files: submission.files,
     limits: {

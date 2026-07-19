@@ -13,6 +13,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import {
   buildArrayInstances,
   createQueueIdAllocator,
+  encodeArrayCoordinates,
   MAX_VISIBLE_INSTANCES,
   validateDimensions,
 } from "@/lib/systemverilog-array-model";
@@ -134,16 +135,20 @@ function AssocArrayView({ entries, highlightKey }: { entries: [string, number][]
 function FixedArrayView({
   packed,
   unpacked,
-  highlightIndices,
+  highlightLogicalIndex,
 }: {
   packed: number[];
   unpacked: number[];
-  highlightIndices: { u: number[]; p: number[] } | null;
+  highlightLogicalIndex: number | null;
 }) {
   const mesh = useRef<THREE.InstancedMesh>(null);
   const model = useMemo(
-    () => buildArrayInstances({ packed, unpacked }, MAX_VISIBLE_INSTANCES),
-    [packed, unpacked],
+    () => buildArrayInstances(
+      { packed, unpacked },
+      MAX_VISIBLE_INSTANCES,
+      highlightLogicalIndex,
+    ),
+    [highlightLogicalIndex, packed, unpacked],
   );
   const geometry = useMemo(() => new THREE.BoxGeometry(0.9, 0.9, 0.9), []);
   const material = useMemo(
@@ -158,12 +163,12 @@ function FixedArrayView({
     model.instances.forEach((instance, index) => {
       matrix.makeTranslation(...instance.position);
       mesh.current!.setMatrixAt(index, matrix);
-      const highlighted = highlightIndices && instance.logicalIndex === 0;
+      const highlighted = highlightLogicalIndex === instance.logicalIndex;
       mesh.current!.setColorAt(index, color.setHex(highlighted ? 0xdb2777 : fixedColors[instance.colorIndex]));
     });
     mesh.current.instanceMatrix.needsUpdate = true;
     if (mesh.current.instanceColor) mesh.current.instanceColor.needsUpdate = true;
-  }, [highlightIndices, model]);
+  }, [highlightLogicalIndex, model]);
 
   useEffect(() => () => {
     geometry.dispose();
@@ -222,7 +227,7 @@ export function SystemVerilog3DVisualizer({ className, height = "720px", initial
   const [unpackedDims, setUnpackedDims] = useState<number[]>([2]);
   const [highlightP, setHighlightP] = useState<number[]>([0]);
   const [highlightU, setHighlightU] = useState<number[]>([0]);
-  const [activeHighlight, setActiveHighlight] = useState<{ u: number[]; p: number[] } | null>(null);
+  const [activeHighlight, setActiveHighlight] = useState<number | null>(null);
   const fixedModel = useMemo(
     () => buildArrayInstances({ packed: packedDims, unpacked: unpackedDims }, MAX_VISIBLE_INSTANCES),
     [packedDims, unpackedDims],
@@ -332,8 +337,14 @@ export function SystemVerilog3DVisualizer({ className, height = "720px", initial
     setLastOp(`Updated Dimensions`);
   };
   const runFixedHighlight = () => {
-    setActiveHighlight({ p: [...highlightP], u: [...highlightU] });
-    setLastOp(`Highlight active`);
+    const logicalIndex = encodeArrayCoordinates(
+      { packed: packedDims, unpacked: unpackedDims },
+      { packed: highlightP, unpacked: highlightU },
+    );
+    setActiveHighlight(logicalIndex);
+    setLastOp(logicalIndex === null
+      ? "Index is outside the declared array dimensions"
+      : `Highlighted logical bit ${logicalIndex}`);
   };
 
   // Ensure highlight arrays match dims
@@ -354,7 +365,7 @@ export function SystemVerilog3DVisualizer({ className, height = "720px", initial
             {mode === "dynamic" && <DynamicArrayView items={dynArray} />}
             {mode === "queue" && <QueueView items={queueItems} />}
             {mode === "assoc" && <AssocArrayView entries={entriesAsc} highlightKey={aaIterKey} />}
-            {mode === "fixed" && <FixedArrayView packed={packedDims} unpacked={unpackedDims} highlightIndices={activeHighlight} />}
+            {mode === "fixed" && <FixedArrayView packed={packedDims} unpacked={unpackedDims} highlightLogicalIndex={activeHighlight} />}
           </Canvas>
         </WebGLFallbackBoundary>
       </div>
@@ -491,13 +502,14 @@ export function SystemVerilog3DVisualizer({ className, height = "720px", initial
                <p className="text-xs mb-2 font-semibold text-emerald-400">Highlight Bit by Index</p>
                <div className="grid grid-cols-2 gap-2 text-xs">
                  {highlightU.map((v, i) => (
-                   <div key={`hu${i}`} className="flex items-center justify-between gap-1">u{i+1}: <Input type="number" value={v} onChange={e=>{const n=[...highlightU]; n[i]=Number(e.target.value); setHighlightU(n);}} className="h-6 p-1 bg-slate-800 border-slate-700 w-10"/></div>
+                   <div key={`hu${i}`} className="flex items-center justify-between gap-1">u{i+1}: <Input aria-label={`Unpacked index ${i + 1}`} type="number" value={v} onChange={e=>{const n=[...highlightU]; n[i]=Number(e.target.value); setHighlightU(n);}} className="h-6 p-1 bg-slate-800 border-slate-700 w-10"/></div>
                  ))}
                  {highlightP.map((v, i) => (
-                   <div key={`hp${i}`} className="flex items-center justify-between gap-1">p{i+1}: <Input type="number" value={v} onChange={e=>{const n=[...highlightP]; n[i]=Number(e.target.value); setHighlightP(n);}} className="h-6 p-1 bg-slate-800 border-slate-700 w-10"/></div>
+                   <div key={`hp${i}`} className="flex items-center justify-between gap-1">p{i+1}: <Input aria-label={`Packed index ${i + 1}`} type="number" value={v} onChange={e=>{const n=[...highlightP]; n[i]=Number(e.target.value); setHighlightP(n);}} className="h-6 p-1 bg-slate-800 border-slate-700 w-10"/></div>
                  ))}
                </div>
                <Button onClick={runFixedHighlight} className="bg-emerald-600 hover:bg-emerald-500 w-full mt-2 h-8 text-xs">Find Bit</Button>
+               <p className="mt-2 text-[10px] text-slate-300" aria-live="polite">{lastOp}</p>
             </div>
           </div>
         )}

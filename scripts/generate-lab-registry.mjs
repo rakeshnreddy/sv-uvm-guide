@@ -17,6 +17,7 @@ const assetSchema = z.object({
 const stepSchema = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]+$/),
   version: z.string().min(1),
+  completion: z.enum(["graded", "self_attested"]),
   title: z.string().min(1),
   instructions: z.string().min(1),
   starterCode: z.string(),
@@ -82,6 +83,10 @@ const records = manifestFiles.map((manifestPath) => {
   if (!ownsKnownModule) throw new Error(`${parsed.id}: unknown owning module ${parsed.owningModule}`);
   if (parsed.graderId && !knownGraders.has(parsed.graderId)) {
     throw new Error(`${parsed.id}: unknown grader ${parsed.graderId}`);
+  }
+  const gradedSteps = parsed.steps.filter((step) => step.completion === "graded");
+  if (gradedSteps.length > 0 && !parsed.graderId) {
+    throw new Error(`${parsed.id}: graded steps require a manifest-owned grader`);
   }
 
   return { ...parsed, assetLocation: relativeDirectory };

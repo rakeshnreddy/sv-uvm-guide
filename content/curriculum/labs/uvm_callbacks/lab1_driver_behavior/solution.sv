@@ -38,6 +38,10 @@ endclass
 typedef class packet_driver;
 
 virtual class packet_driver_cb extends uvm_callback;
+  function new(string name = "packet_driver_cb");
+    super.new(name);
+  endfunction
+
   virtual function void pre_drive(packet_driver driver, packet pkt);
   endfunction
 endclass

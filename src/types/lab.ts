@@ -26,3 +26,5 @@ export interface LabProgressDto {
   completedSteps: string[];
   fileBuffers: Record<string, string>;
 }
+
+export type LabWorkspaceDto = Pick<LabProgressDto, "currentStepId" | "fileBuffers">;

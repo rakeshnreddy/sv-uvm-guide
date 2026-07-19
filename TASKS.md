@@ -1,6 +1,6 @@
 # TASKS.md — Active Backlog and Site State
 
-Last Updated: 2026-07-18
+Last Updated: 2026-07-19
 Purpose: Single source of truth for active pending work. Session state lives in `SESSION_HANDOFF.txt`. Detailed progress for the active workstream is tracked in `docs/planning/lesson-analysis-tracker.md`. The full implementation spec for the T1 upgrade is at `docs/planning/foundational-upgrade-spec.md`.
 
 ---
@@ -16,7 +16,8 @@ Purpose: Single source of truth for active pending work. Session state lives in 
 
 | ID | Priority | Status | Description | Validation |
 |---|---|---|---|---|
-| FS-UVM-REFACTOR | P0 | complete | Implement the full-stack and UVM refactoring report: canonical auth and durable user state, route-group/server boundaries, secured AI and simulation jobs, typed curriculum/lab pipelines, protocol-correct interactives, WebGL limits, reference-code standards, and mandatory quality gates. | 114 Vitest files / 777 tests; strict labs; 105 MDX + 29 manifests; production build; bundle guard. Local SV compiler unavailable; CI gate discovers 23 reference files and requires a compiler in CI. |
+| PR391-MERGE-BLOCKERS | P0 | complete | Close the PR #391 trust-boundary and release blockers: server-authoritative lab completion and assessment grading, usable self-attested lab steps, corrected AXI deadlock lab, index-aware Find Bit highlighting, real editor-backed queued simulation with an isolated Docker worker, legacy-content migration preservation, and required release checks. | 120 Vitest files / 795 tests; 12 Playwright learner flows; 23 SystemVerilog references compiled with Verilator; non-empty PostgreSQL 16 migration rehearsal; strict labs; 105 MDX + 29 manifests; production build; bundle guard. |
+| FS-UVM-REFACTOR | P0 | complete | Implement the full-stack and UVM refactoring report: canonical auth and durable user state, route-group/server boundaries, secured AI and simulation jobs, typed curriculum/lab pipelines, protocol-correct interactives, WebGL limits, reference-code standards, and mandatory quality gates. | Superseded by the PR391-MERGE-BLOCKERS validation record above. |
 
 ## Current Site State
 
@@ -25,7 +26,7 @@ Purpose: Single source of truth for active pending work. Session state lives in 
 - **Practice labs:** 29 manifest-backed labs generated into `src/generated/lab-registry.ts`.
 - **Flashcards:** 56 JSON flashcard decks under `content/flashcards/`.
 - **Interview banks:** 6 JSON banks under `content/interview-questions/`.
-- **Quality gates:** Vitest (114 files, 777 tests), Playwright regression gates, strict lab/content audits, SV reference compilation, production build, and bundle budgets.
+- **Quality gates:** Vitest (120 files, 795 tests), 12 focused Playwright release flows, strict lab/content audits, PostgreSQL migration rehearsal, SV reference compilation, production build, bundle budgets, and isolated simulation-runner image construction in CI.
 
 ## Validation Baseline
 
@@ -35,14 +36,13 @@ Run this sweep before a release or after any future curriculum/lab/navigation ch
 npm run generate:curriculum
 npm run type-check
 npm test
-SESSION_SECRET=<release-secret> npm run build
 npm run test:labs:strict
+npm run test:migration-rehearsal
 npm run test:sv-solutions
 npm run validate:content
 ANALYZE=true SESSION_SECRET=<release-secret> npm run build
 npm run bundle:check
-npx playwright test tests/e2e/regression-gates.spec.ts --reporter=line
-npx playwright test tests/e2e/learner-flow.spec.ts --reporter=line
+npm run test:e2e:release
 ```
 
 For lab-specific edits, also run:

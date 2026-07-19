@@ -69,7 +69,7 @@ module top;
   end
 
   //------------------------------------------------------------------
-  // Buggy Slave (contains the deadlock bug)
+  // Dependency-constrained Slave (legal AXI READY policy, risky integration)
   //------------------------------------------------------------------
   // This slave waits for WVALID before asserting AWREADY. A destination may
   // wait for VALID before asserting READY; the policy is legal but risky when
@@ -102,7 +102,9 @@ module top;
   //------------------------------------------------------------------
   // Protocol Checker (your assertions go here)
   //------------------------------------------------------------------
-  axi_deadlock_checker #(.MAX_WAIT(32), .ENABLE_SERVICE_BOUNDS(1'b0)) u_checker (
+  // Service bounds are enabled as this lab's explicit integration policy. They
+  // diagnose the stalled handshakes; they are not base AXI protocol rules.
+  axi_deadlock_checker #(.MAX_WAIT(32), .ENABLE_SERVICE_BOUNDS(1'b1)) u_checker (
     .ACLK    (ACLK),
     .ARESETn (ARESETn),
     .AWVALID (AWVALID), .AWREADY (AWREADY), .AWID (AWID), .AWADDR (AWADDR), .AWLEN (AWLEN),
@@ -172,7 +174,7 @@ module top;
   //------------------------------------------------------------------
   initial begin
     #2000;
-    $display("# Time %4t: TIMEOUT — simulation stopped (deadlock detected by assertions)", $time);
+    $display("# Time %4t: TIMEOUT — integration watchdog stopped unresolved channel waits", $time);
     $finish;
   end
 
@@ -192,7 +194,7 @@ endmodule
 
 
 //======================================================================
-// Buggy Slave Module
+// Integration-constrained Slave Module
 // Contains a legal destination policy that participates in the wait cycle.
 //======================================================================
 module buggy_slave (
@@ -311,13 +313,14 @@ module buggy_slave (
   end
 
   //------------------------------------------------------------------
-  // AWREADY and WREADY Logic — HERE IS THE BUG
+  // AWREADY and WREADY Logic — LEGAL BUT RISKY READY POLICY
   //------------------------------------------------------------------
-  // BUG: AWREADY only goes high when WVALID is also high.
-  // This is ILLEGAL per AXI spec A3.3.1.
-  // A conformant slave must be able to accept the address independently.
+  // AXI permits a destination to wait for VALID before asserting READY. This
+  // cross-channel policy is therefore not the protocol violation. It becomes
+  // part of a deadlock cycle only because the master illegally waits for
+  // AWREADY before asserting its source-owned WVALID.
   //------------------------------------------------------------------
-  assign AWREADY = (state == WRITE_WAIT) && WVALID;  // <-- BUG!
+  assign AWREADY = (state == WRITE_WAIT) && WVALID;  // legal READY policy; risky dependency
 
   // WREADY is fine — slave accepts data when in WRITE_WAIT
   assign WREADY = (state == WRITE_WAIT);

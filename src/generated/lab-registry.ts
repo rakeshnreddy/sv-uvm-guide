@@ -19,6 +19,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Reproduce the Split Bug",
         "instructions": "Run `testbench.sv` and inspect the AXI AW log for the `crossing_4kb_bug` request. The first translated AXI burst crosses the 0x1000 boundary.",
         "starterCode": ""
@@ -26,6 +27,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Complete the Checker",
         "instructions": "Open `bridge_split_checker.sv` and implement the 4KB boundary, first split length, size preservation, and W beat accounting checks.",
         "starterCode": ""
@@ -33,6 +35,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Fix the Split Function",
         "instructions": "Replace the buggy `beats_to_4kb_boundary_buggy()` logic with the corrected boundary calculation from `solution.sv`, then rerun the lab.",
         "starterCode": ""
@@ -84,6 +87,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "monitor",
         "version": "1",
+        "completion": "self_attested",
         "title": "Reconstruct pipelined transfers",
         "instructions": "Complete `ahb_monitor.sv` so address/control and data phases remain correctly paired across wait states.",
         "starterCode": ""
@@ -91,6 +95,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "checker",
         "version": "1",
+        "completion": "self_attested",
         "title": "Add protocol assertions",
         "instructions": "Complete `ahb_checker.sv` with stability and two-cycle ERROR checks; keep the HREADY timeout labeled as an environment watchdog.",
         "starterCode": ""
@@ -98,6 +103,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "triage",
         "version": "1",
+        "completion": "self_attested",
         "title": "Triage the broken scenario",
         "instructions": "Run `testbench.sv` in broken mode and identify each failure without treating bounded slave latency as a protocol rule.",
         "starterCode": ""
@@ -215,6 +221,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Run and Observe",
         "instructions": "Run testbench.sv. The simulation hangs after the master asserts AWVALID. Examine which signals are high/low when the deadlock occurs.",
         "starterCode": ""
@@ -222,6 +229,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Analyze the Dependency",
         "instructions": "Identify what the master waits for (AWREADY) and what the slave waits for (WVALID). Trace the circular dependency and explain why the read also hangs.",
         "starterCode": ""
@@ -229,17 +237,18 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
-        "title": "Step 3: Complete the Assertions",
-        "instructions": "Open axi_deadlock_checker.sv and implement the five SVA assertions: p_aw_no_deadlock, p_w_no_deadlock, p_ar_no_deadlock, p_valid_stability, and p_no_cross_channel_stall.",
+        "completion": "self_attested",
+        "title": "Step 3: Complete Protocol Checks and Service Watchdogs",
+        "instructions": "Edit axi_deadlock_checker.sv. Add separate AW, W, AR, B, and R VALID/payload stability properties, check that BVALID follows completed address and final-data handshakes, then add the explicitly optional AW/W/AR service-bound watchdogs used by this lab.",
         "starterCode": ""
       }
     ],
     "assets": [
       {
         "path": "axi_deadlock_checker.sv",
-        "role": "reference",
+        "role": "starter",
         "language": "systemverilog",
-        "editable": false
+        "editable": true
       },
       {
         "path": "README.md",
@@ -280,6 +289,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "monitor",
         "version": "1",
+        "completion": "self_attested",
         "title": "Reconstruct read bursts",
         "instructions": "Complete `axi_monitor.sv` so it queues requests per ID and captures every accepted response beat through RLAST.",
         "starterCode": ""
@@ -287,6 +297,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "scoreboard",
         "version": "1",
+        "completion": "self_attested",
         "title": "Match responses by ID",
         "instructions": "Complete `axi_scoreboard.sv` so different IDs may finish out of order while each individual ID remains ordered.",
         "starterCode": ""
@@ -294,6 +305,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "simulate",
         "version": "1",
+        "completion": "self_attested",
         "title": "Exercise reordering",
         "instructions": "Run `testbench.sv` and confirm ID 2 may finish before ID 1 without hiding beat-count, response-code, or RLAST failures.",
         "starterCode": ""
@@ -348,6 +360,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "graded",
         "title": "Step 1: Declare a variable",
         "instructions": "Declare a variable named 'myVar' of type 'int'.",
         "starterCode": "// Your code here\n"
@@ -355,6 +368,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "graded",
         "title": "Step 2: Assign a value",
         "instructions": "Assign the value 10 to the variable 'myVar'.",
         "starterCode": "int myVar;\n// Assign here\n"
@@ -445,6 +459,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Check the Source",
         "instructions": "Open `testbench.sv` and inspect the `uvm_config_db::set` string arguments.",
         "starterCode": ""
@@ -452,6 +467,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Check the Target",
         "instructions": "Open `driver.sv` and inspect the `uvm_config_db::get` string arguments.",
         "starterCode": ""
@@ -459,6 +475,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Fix the Typo",
         "instructions": "Realign the strings so they match, then run the simulation and look for `[DRV] Wiggling pins`.",
         "starterCode": ""
@@ -569,6 +586,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Run and Analyze",
         "instructions": "Run the simulation. Notice the coverage score. Open `alu_cov_mon.sv` and see what the bin requirements are for `MAX_VAL`.",
         "starterCode": ""
@@ -576,6 +594,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Add Missing Operations",
         "instructions": "The constraint block in `testbench.sv` explicitly omits `DIV`. Add it back to the `inside` block.",
         "starterCode": ""
@@ -583,6 +602,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Weight Edge Cases",
         "instructions": "The generic `std::randomize()` rarely hits `8'hFF`. Add a `dist` constraint for `a` and `b` to assign weight to `8'hFF` so it occurs frequently.",
         "starterCode": ""
@@ -670,6 +690,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Read the Buggy Harness",
         "instructions": "Open `testbench_buggy.sv`. Identify the three `assume` properties. Notice that `a_never_consecutive_push` is far more restrictive than what a real environment guarantees.",
         "starterCode": ""
@@ -677,6 +698,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Relax the Over-Constraint",
         "instructions": "Comment out `a_never_consecutive_push`. Re-run the formal engine. Observe the counterexample: rapid consecutive pushes overflow the FIFO because the `full` flag updates one cycle late.",
         "starterCode": ""
@@ -684,6 +706,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Fix the Design",
         "instructions": "Open `testbench_solution.sv`. Notice that `full` and `empty` are now combinational (`assign`). Re-run: the assertion passes and the cover property is now reachable.",
         "starterCode": ""
@@ -727,6 +750,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Identify the Hang",
         "instructions": "Run the simulation. Notice the `WATCHDOG` timer fires at 500ns because the test never organically reaches `$finish;`.",
         "starterCode": ""
@@ -734,6 +758,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Trace the Keys",
         "instructions": "Look at `producer_thread()`. It requires a key to start transmission. Trace what happens to that key if `data == 5` occurs.",
         "starterCode": ""
@@ -741,6 +766,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Fix the Leak",
         "instructions": "Ensure `shared_bus.put(1);` is called even when bailing out early. Re-run to see both threads complete all 5 iterations.",
         "starterCode": ""
@@ -778,6 +804,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Complete the Singleton",
         "instructions": "Open `testbench.sv` and complete the `load_fw_phase` singleton `get()` method so UVM can find a single canonical phase instance.",
         "starterCode": ""
@@ -785,6 +812,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Insert Into the Schedule",
         "instructions": "In `base_test::build_phase`, use `uvm_domain::get_common_domain().add()` to insert `load_fw_phase` after `reset_phase`.",
         "starterCode": ""
@@ -792,6 +820,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Implement the Phase Task",
         "instructions": "In `soc_env`, implement `load_fw_phase` as a task that raises an objection, prints a firmware-load banner, waits 20ns, and drops the objection. Run the simulation to verify the phase order.",
         "starterCode": ""
@@ -833,6 +862,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Understand the Bug",
         "instructions": "Analyze the failing test sequence in `buggy_tb.sv` where isolation is released before power is strictly stable.",
         "starterCode": ""
@@ -840,6 +870,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Reorder Sequence",
         "instructions": "Fix the sequence so isolation remains asserted until after power is completely restored and context is reloaded.",
         "starterCode": ""
@@ -885,6 +916,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Complete the Write Action",
         "instructions": "Open `starter/mem_test.pss` and add the 4-byte address alignment constraint plus the `0x0000` through `0xffff` data range constraint.",
         "starterCode": ""
@@ -892,6 +924,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Bind Read-Verify to the Write",
         "instructions": "Add the `write_mem` input handle to `read_verify`, then bind `rd.wr == wr` in the activity graph so the read checks the exact write action.",
         "starterCode": ""
@@ -899,6 +932,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Compare Generated Targets",
         "instructions": "Review `solution/generated_uvm_sequence.sv` and `solution/generated_baremetal_test.c`; identify how the same PSS constraints become UVM randomization and C helper calls.",
         "starterCode": ""
@@ -954,6 +988,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Identify the Frozen Mirror",
         "instructions": "Run the simulation. Every `mirror(UVM_CHECK)` call fails with the stale reset value `0x0000`, even though bus writes to the DUT succeed.",
         "starterCode": ""
@@ -961,6 +996,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Trace the Predictor Pipeline",
         "instructions": "Open `testbench_buggy.sv` and inspect `connect_phase()`. The predictor and adapter are assigned, but is the bus monitor's analysis port connected to `predictor.bus_in`?",
         "starterCode": ""
@@ -968,6 +1004,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Fix the Connect Phase",
         "instructions": "Add `axi_agt.monitor.ap.connect(predictor.bus_in);` to `connect_phase`. Re-run. The mirror should now track writes and `mirror(UVM_CHECK)` should pass.",
         "starterCode": ""
@@ -1009,6 +1046,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Check the Source",
         "instructions": "Open `test.sv` and notice that the generator loop is ignoring the return value of `packet.randomize()`. The packets shown in the log will all look identical (zeros) when randomization fails.",
         "starterCode": ""
@@ -1016,6 +1054,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Triage with constraint_mode",
         "instructions": "The constraint contradiction is between the length rules and the hardware hardware limit rules. Use `pkt.c_hardware_limit.constraint_mode(0)` in your test before the `randomize()` call. Does it succeed?",
         "starterCode": ""
@@ -1023,6 +1062,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Fix the Model",
         "instructions": "In `packet.sv`, notice that the IPV6 length is hardcoded to 40 bytes, but 40 is not a power of two in `c_hardware_limit`! Fix `c_hardware_limit` or `c_proto_len` so an IPV6 packet can be legally generated.",
         "starterCode": ""
@@ -1079,6 +1119,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Implement the Scoreboard",
         "instructions": "Open `testbench.sv` and implement `alu_scoreboard` with a `uvm_tlm_analysis_fifo`, reference model, and compare logic.",
         "starterCode": ""
@@ -1086,6 +1127,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Wire Analysis Traffic",
         "instructions": "Create the scoreboard in `alu_env` and connect `monitor.ap` to the scoreboard FIFO's `analysis_export` in `connect_phase`.",
         "starterCode": ""
@@ -1093,6 +1135,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Verify Self-Checking Behavior",
         "instructions": "Run the lab and confirm each random ALU transaction produces a PASS comparison; then intentionally corrupt the reference model to see `uvm_error` mismatches.",
         "starterCode": ""
@@ -1136,6 +1179,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Declare the FIFO",
         "instructions": "Open `src/dv/env.sv` and declare a `uvm_tlm_analysis_fifo #(my_txn)` named `sb_fifo`.",
         "starterCode": ""
@@ -1143,6 +1187,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Connect the FIFO",
         "instructions": "In `env.sv`, wire the monitor's `ap` to the FIFO's `analysis_export`, and the scoreboard to the `get_export`.",
         "starterCode": ""
@@ -1150,6 +1195,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Refactor the Scoreboard",
         "instructions": "In `scoreboard.sv`, change the `analysis_imp` to a `uvm_blocking_get_port`. Replace `write()` with a `run_phase` loop that calls `get()`.",
         "starterCode": ""
@@ -1244,6 +1290,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Observe the Active Agent Failure",
         "instructions": "Run `testbench.sv` without changes. Observe the `BUS_COLLISION` fatal error caused by the UVM Driver and Firmware driving simultaneously.",
         "starterCode": ""
@@ -1251,6 +1298,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Flip to Passive Mode",
         "instructions": "In `soc_test::build_phase`, use the `uvm_config_db` to set `is_active` to `UVM_PASSIVE` for the `\"env.spi_agt\"` path.",
         "starterCode": ""
@@ -1258,6 +1306,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Verify Monitor Behavior",
         "instructions": "Rerun the simulation. Verify the driver is disabled but the `[SPI_MON]` continues to log firmware traffic.",
         "starterCode": ""
@@ -1302,6 +1351,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Define Strategy Boundaries",
         "instructions": "Open `strategy_template.md` and split responsibilities across block, subsystem, SoC, firmware, and formal owners.",
         "starterCode": ""
@@ -1309,6 +1359,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Build the Coverage and Liveness Plan",
         "instructions": "Fill in measurable system coverage goals plus formal/liveness properties with trigger, obligation, failure meaning, and owner.",
         "starterCode": ""
@@ -1316,6 +1367,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Add Debug, Regression, and Risks",
         "instructions": "Define the failure evidence package, bucketing workflow, smoke/nightly/stress/signoff suites, and risk register.",
         "starterCode": ""
@@ -1323,6 +1375,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "4",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 4: Peer Review Against the Rubric",
         "instructions": "Score the plan with the rubric, then compare against `model_solution.md` to identify missing staff-level reasoning.",
         "starterCode": ""
@@ -1366,6 +1419,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Review the Hook",
         "instructions": "Open `testbench.sv` and locate the `packet_driver_cb` virtual class. Find where `uvm_do_callbacks` is invoked inside the driver's `run_phase`.",
         "starterCode": ""
@@ -1373,6 +1427,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Implement the Callback",
         "instructions": "Create a class `error_inject_cb` extending `packet_driver_cb`. Override `pre_drive` to add a 10ns delay and flip the packet's parity bit.",
         "starterCode": ""
@@ -1380,6 +1435,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Attach in the Test",
         "instructions": "In `my_test`, instantiate your callback and add it to the driver using `uvm_callbacks#(packet_driver, packet_driver_cb)::add()`. Run the simulation to verify the delay and corruption appear in the driver's log.",
         "starterCode": ""
@@ -1424,6 +1480,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Complete the Active Agent",
         "instructions": "Fill in the transaction, sequence helpers, driver, monitor, sequencer, and active-agent construction in `testbench.sv`.",
         "starterCode": ""
@@ -1431,6 +1488,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Wire Checking and Coverage",
         "instructions": "Connect the monitor analysis port to the scoreboard FIFO and coverage subscriber, then implement queue-based compare logic and required coverage bins.",
         "starterCode": ""
@@ -1438,6 +1496,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Exercise the Factory Override",
         "instructions": "Override `fifo_base_seq` with `fifo_capstone_seq`, create the base type through the factory, and confirm the capstone sequence runs.",
         "starterCode": ""
@@ -1445,6 +1504,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "4",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 4: Prove the Bug and Closure",
         "instructions": "Run once with `+define+INJECT_FIFO_BUG` to see a scoreboard mismatch, then run without the define to confirm zero mismatches and coverage closure.",
         "starterCode": ""
@@ -1488,6 +1548,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "1",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 1: Inspect the Event Bus",
         "instructions": "Open `testbench.sv` and locate the `debug_event_bus` plus the watchdog publisher that emits `WATCHDOG_TIMEOUT`.",
         "starterCode": ""
@@ -1495,6 +1556,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "2",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 2: Add the Subscriber",
         "instructions": "Implement `waveform_trigger_sub` as a `uvm_subscriber#(debug_event)` and trigger waveform capture when the timeout tag appears.",
         "starterCode": ""
@@ -1502,6 +1564,7 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "id": "3",
         "version": "1",
+        "completion": "self_attested",
         "title": "Step 3: Wire and Verify",
         "instructions": "Connect the subscriber to the event bus, rerun, and confirm selective waveform capture starts only near the timeout.",
         "starterCode": ""

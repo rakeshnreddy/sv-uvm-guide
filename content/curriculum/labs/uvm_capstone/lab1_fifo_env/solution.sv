@@ -327,7 +327,7 @@ class fifo_scoreboard extends uvm_scoreboard;
 
   uvm_tlm_analysis_fifo #(fifo_txn) observed_fifo;
   bit [7:0] model_q[$];
-  int matches;
+  int match_count;
   int mismatches;
   event idle;
 
@@ -364,18 +364,18 @@ class fifo_scoreboard extends uvm_scoreboard;
                        $sformatf("expected 0x%02h observed 0x%02h txn=%s",
                                  expected, txn.observed_data, txn.convert2string()))
           end else begin
-            matches++;
+            match_count++;
             `uvm_info("SCB_MATCH", $sformatf("matched read data 0x%02h", expected), UVM_LOW)
           end
         end
-        if ((matches + mismatches) == CAPSTONE_READ_COUNT && model_q.size() == 0)
+        if ((match_count + mismatches) == CAPSTONE_READ_COUNT && model_q.size() == 0)
           -> idle;
       end
     end
   endtask
 
   task wait_until_idle();
-    if ((matches + mismatches) < CAPSTONE_READ_COUNT || model_q.size() != 0)
+    if ((match_count + mismatches) < CAPSTONE_READ_COUNT || model_q.size() != 0)
       @idle;
   endtask
 
@@ -383,16 +383,16 @@ class fifo_scoreboard extends uvm_scoreboard;
     super.check_phase(phase);
     if (!observed_fifo.is_empty())
       `uvm_error("PENDING", "Observed transactions remain unprocessed")
-    if ((matches + mismatches) != CAPSTONE_READ_COUNT)
+    if ((match_count + mismatches) != CAPSTONE_READ_COUNT)
       `uvm_error("READ_COUNT", $sformatf("Expected %0d checked reads, observed %0d",
-                                        CAPSTONE_READ_COUNT, matches + mismatches))
+                                        CAPSTONE_READ_COUNT, match_count + mismatches))
   endfunction
 
   function void report_phase(uvm_phase phase);
     super.report_phase(phase);
     `uvm_info("SCB_SUMMARY",
               $sformatf("matches=%0d mismatches=%0d remaining_model_entries=%0d",
-                        matches, mismatches, model_q.size()),
+                        match_count, mismatches, model_q.size()),
               UVM_NONE)
 `ifdef INJECT_FIFO_BUG
     if (mismatches == 0)

@@ -120,7 +120,6 @@ export const AdaptiveTestEngine = () => {
         responses: state.answers.map((answer) => ({
           questionId: String(answer.questionId),
           optionId: String(answer.optionIndex),
-          isCorrect: answer.correct,
         })),
       }),
     }).catch(() => undefined);

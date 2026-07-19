@@ -10,6 +10,10 @@ const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   ssr: false,
   loading: () => <div className="flex h-full items-center justify-center">Loading editor…</div>,
 });
+const CodeExecutionEnvironment = dynamic(
+  () => import("@/components/ui/CodeExecutionEnvironment").then((module) => module.CodeExecutionEnvironment),
+  { ssr: false },
+);
 
 type LabClientPageProps = {
   lab: LearnerLabDto;
@@ -52,15 +56,20 @@ export default function LabClientPage({ lab, assets, initialProgress }: LabClien
   const [isSuccess, setIsSuccess] = useState<boolean | null>(null);
   const [loadingAsset, setLoadingAsset] = useState(false);
   const [isChecking, setIsChecking] = useState(false);
+  const [isCompleting, setIsCompleting] = useState(false);
 
   const selectedAsset = assets.find((asset) => asset.path === selectedAssetPath) ?? null;
   const currentStep = lab.steps[currentStepIndex];
-  const hasAutomatedGrader = Boolean(lab.graderId);
+  const hasAutomatedGrader = currentStep?.completion === "graded" && Boolean(lab.graderId);
   const selectedContent = selectedAsset
     ? (selectedAsset.editable ? fileBuffers[selectedAsset.path] : readOnlyBuffers[selectedAsset.path]) ?? ""
     : stepCode;
   const moduleHref = lab.moduleHref ?? "/curriculum";
   const editableAssets = useMemo(() => assets.filter((asset) => asset.editable), [assets]);
+  const simulatableAssets = useMemo(
+    () => editableAssets.filter((asset) => asset.language === "systemverilog"),
+    [editableAssets],
+  );
 
   useEffect(() => {
     if (!selectedAsset) return;
@@ -103,7 +112,6 @@ export default function LabClientPage({ lab, assets, initialProgress }: LabClien
         body: JSON.stringify({
           labVersion: lab.version,
           currentStepId: currentStep.id,
-          completedSteps,
           fileBuffers,
         }),
         signal: controller.signal,
@@ -119,7 +127,7 @@ export default function LabClientPage({ lab, assets, initialProgress }: LabClien
       window.clearTimeout(timer);
       controller.abort();
     };
-  }, [completedSteps, currentStep, fileBuffers, lab.id, lab.version]);
+  }, [currentStep, fileBuffers, lab.id, lab.version]);
 
   if (!currentStep) {
     return (
@@ -186,11 +194,12 @@ export default function LabClientPage({ lab, assets, initialProgress }: LabClien
         throw new Error("The grader returned a malformed response.");
       }
 
-      const outcome = result as { success: boolean; hint?: string };
+      const outcome = result as { success: boolean; hint?: string; progress?: LabProgressDto };
       setIsSuccess(outcome.success);
       setConsoleOutput(outcome.hint ?? (outcome.success ? "Correct!" : "The workspace needs another pass."));
       if (outcome.success) {
-        setCompletedSteps((steps) => steps.includes(currentStep.id) ? steps : [...steps, currentStep.id]);
+        if (!outcome.progress) throw new Error("The grader did not return canonical progress.");
+        setCompletedSteps(outcome.progress.completedSteps);
         if (currentStepIndex < lab.steps.length - 1) {
           const nextIndex = currentStepIndex + 1;
           setCurrentStepIndex(nextIndex);
@@ -202,6 +211,49 @@ export default function LabClientPage({ lab, assets, initialProgress }: LabClien
       setConsoleOutput(error instanceof Error ? error.message : "The grader could not run.");
     } finally {
       setIsChecking(false);
+    }
+  };
+
+  const completeSelfAttestedStep = async () => {
+    if (currentStep.completion !== "self_attested" || isCompleting) return;
+    setIsCompleting(true);
+    setIsSuccess(null);
+    setConsoleOutput("Recording your completion…");
+    try {
+      const response = await fetch(`/api/me/labs/${encodeURIComponent(lab.id)}/progress`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          labVersion: lab.version,
+          stepId: currentStep.id,
+          stepVersion: currentStep.version,
+          completion: "self_attested",
+        }),
+      });
+      const result: unknown = await response.json().catch(() => null);
+      if (!response.ok) {
+        const code = result && typeof result === "object" && typeof (result as { error?: unknown }).error === "string"
+          ? (result as { error: string }).error
+          : `HTTP_${response.status}`;
+        throw new Error(`Completion could not be recorded: ${code}`);
+      }
+      if (!result || typeof result !== "object" || !Array.isArray((result as LabProgressDto).completedSteps)) {
+        throw new Error("The completion response was malformed.");
+      }
+      const progress = result as LabProgressDto;
+      setCompletedSteps(progress.completedSteps);
+      setConsoleOutput(currentStepIndex === lab.steps.length - 1 ? "Lab completed." : "Step completed. Continue when ready.");
+      setIsSuccess(true);
+      if (currentStepIndex < lab.steps.length - 1) {
+        const nextIndex = currentStepIndex + 1;
+        setCurrentStepIndex(nextIndex);
+        setStepCode(lab.steps[nextIndex].starterCode);
+      }
+    } catch (error) {
+      setIsSuccess(false);
+      setConsoleOutput(error instanceof Error ? error.message : "Completion could not be recorded.");
+    } finally {
+      setIsCompleting(false);
     }
   };
 
@@ -273,10 +325,23 @@ export default function LabClientPage({ lab, assets, initialProgress }: LabClien
             <button type="button" onClick={checkSolution} disabled={isChecking} className="mb-4 rounded bg-primary px-4 py-2 font-bold text-primary-foreground disabled:opacity-60">
               {isChecking ? "Checking…" : "Check solution"}
             </button>
+          ) : currentStep.completion === "self_attested" && !completedSteps.includes(currentStep.id) ? (
+            <button type="button" onClick={completeSelfAttestedStep} disabled={isCompleting} className="mb-4 rounded bg-primary px-4 py-2 font-bold text-primary-foreground disabled:opacity-60">
+              {isCompleting ? "Recording…" : currentStepIndex === lab.steps.length - 1 ? "Mark lab complete" : "Mark step complete & continue"}
+            </button>
           ) : (
-            <p className="text-sm text-muted-foreground">This lab has no automated grader. Progress and workspace edits are still saved.</p>
+            <p className="text-sm text-muted-foreground">This step is complete. Your progress and workspace edits are saved.</p>
           )}
           <pre aria-live="polite" className={isSuccess === true ? "text-success" : isSuccess === false ? "text-destructive" : ""}>{consoleOutput}</pre>
+          {simulatableAssets.length > 0 && (
+            <CodeExecutionEnvironment prepareFiles={async () => {
+              const workspace = await loadMissingEditableFiles();
+              return simulatableAssets.map((asset) => ({
+                path: asset.path,
+                content: workspace[asset.path] ?? "",
+              }));
+            }} />
+          )}
         </div>
       </main>
     </div>

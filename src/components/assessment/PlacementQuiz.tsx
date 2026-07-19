@@ -52,13 +52,7 @@ export const PlacementQuiz: React.FC = () => {
         assessmentId: "placement",
         assessmentVersion: results.assessmentVersion,
         scoringVersion: results.scoringVersion,
-        responses: answers.map((answer) => {
-          const question = placementQuestions.find((candidate) => candidate.id === answer.questionId);
-          return {
-            ...answer,
-            isCorrect: Boolean(question?.options.some((option) => option.id === answer.optionId && option.isCorrect)),
-          };
-        }),
+        responses: answers,
       }),
     }).catch(() => undefined);
   }, [answers, results]);

@@ -1,7 +1,9 @@
 import { expect, test } from '@playwright/test';
+import { authenticateTestLearner } from '../fixtures/auth';
 
 test.describe('Learner navigation flow', () => {
   test.setTimeout(180000);
+  test.beforeEach(async ({ page }) => authenticateTestLearner(page));
 
   test('moves from curriculum to lab, back to module, flashcards, quiz, and next module', async ({ page }) => {
     await page.goto('/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index');
@@ -15,12 +17,23 @@ test.describe('Learner navigation flow', () => {
       await expect(page.getByRole('heading', { name: 'Memory Read/Write Portable Intent' })).toBeVisible();
       await expect(page.locator('.monaco-editor')).toBeVisible({ timeout: 60000 });
       await expect(page.getByRole('button', { name: /starter\/mem_test\.pss/i })).toBeVisible();
-      await page.getByRole('button', { name: /solution\/generated_uvm_sequence\.sv/i }).click();
-      await expect(page.getByText('generated_uvm_sequence.sv', { exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: /solution\/generated_uvm_sequence\.sv/i })).toHaveCount(0);
+
+      await page.getByRole('button', { name: 'Mark step complete & continue' }).click();
+      await expect(page.getByRole('heading', { name: /Step 2:/ })).toBeVisible();
+      await page.getByRole('button', { name: 'Mark step complete & continue' }).click();
+      await expect(page.getByRole('heading', { name: /Step 3:/ })).toBeVisible();
+      await page.getByRole('button', { name: 'Mark lab complete' }).click();
+      await expect(page.getByText('Lab completed.')).toBeVisible();
+
+      await page.reload();
+      const solutionAsset = page.getByRole('button', { name: /solution\/generated_uvm_sequence\.sv/i });
+      await solutionAsset.click();
+      await expect(solutionAsset).toHaveAttribute('aria-pressed', 'true');
     });
 
     await test.step('Return to owning module', async () => {
-      await page.getByRole('link', { name: 'Back to Module' }).click();
+      await page.getByRole('link', { name: 'Back to module' }).click();
       await expect(page).toHaveURL(/E-PSS-1_Portable_Stimulus_Standard/);
       await expect(page.getByRole('heading', { level: 1 })).toContainText('E-PSS-1: Portable Stimulus Standard');
     });

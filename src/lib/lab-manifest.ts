@@ -19,6 +19,7 @@ export const labAssetManifestSchema = z.object({
 export const labStepSchema = z.object({
   id: z.string().regex(/^[a-zA-Z0-9_-]+$/),
   version: z.string().min(1),
+  completion: z.enum(["graded", "self_attested"]),
   title: z.string().min(1),
   instructions: z.string().min(1),
   starterCode: z.string().default(""),

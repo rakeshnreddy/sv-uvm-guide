@@ -107,16 +107,7 @@ async function dispatchToIsolatedWorker(jobId: string): Promise<void> {
   const queueUrl = process.env.SIMULATION_QUEUE_URL;
   const queueToken = process.env.SIMULATION_QUEUE_TOKEN;
 
-  if (!queueUrl) {
-    if (process.env.NODE_ENV === "production") {
-      await prisma.simulationJob.update({
-        where: { id: jobId },
-        data: { status: "FAILED", errorCode: "QUEUE_NOT_CONFIGURED" },
-      });
-      throw new Error("Simulation queue is not configured");
-    }
-    return;
-  }
+  if (!queueUrl) throw new SimulationExecutionUnavailableError();
 
   const response = await fetch(queueUrl, {
     method: "POST",
@@ -137,8 +128,24 @@ async function dispatchToIsolatedWorker(jobId: string): Promise<void> {
   }
 }
 
+export class SimulationExecutionUnavailableError extends Error {
+  readonly code = "SIMULATION_EXECUTION_NOT_CONFIGURED";
+
+  constructor() {
+    super("Configure SIMULATION_QUEUE_URL or explicitly enable SIMULATION_LOCAL_DOCKER");
+    this.name = "SimulationExecutionUnavailableError";
+  }
+}
+
+function localDockerEnabled(): boolean {
+  return process.env.SIMULATION_LOCAL_DOCKER === "true";
+}
+
 export const simulationJobs = {
   async enqueue(userId: string, submission: SimulationSubmission): Promise<SimulationJobDto> {
+    if (!process.env.SIMULATION_QUEUE_URL && !localDockerEnabled()) {
+      throw new SimulationExecutionUnavailableError();
+    }
     const job = await prisma.simulationJob.create({
       data: {
         userId,
@@ -146,6 +153,13 @@ export const simulationJobs = {
         files: submission.files,
       },
     });
+
+    if (localDockerEnabled() && !process.env.SIMULATION_QUEUE_URL) {
+      const { DockerSimulationSandbox } = await import("./docker-sandbox");
+      await processQueuedSimulationJob(job.id, new DockerSimulationSandbox());
+      const completed = await prisma.simulationJob.findUniqueOrThrow({ where: { id: job.id } });
+      return toDto(completed);
+    }
 
     await dispatchToIsolatedWorker(job.id);
     return toDto(job);

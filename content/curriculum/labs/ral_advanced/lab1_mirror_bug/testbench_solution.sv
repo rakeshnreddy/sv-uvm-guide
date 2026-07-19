@@ -241,13 +241,13 @@ class codec_test extends uvm_test;
     uvm_reg_data_t value;
     phase.raise_objection(this);
 
-    env.ral.status.write(status, 32'h55, UVM_FRONTDOOR, env.ral.cfg_map, this);
+    env.ral.status.write(status, 32'h55, UVM_FRONTDOOR, env.ral.cfg_map, null);
     if (status != UVM_IS_OK)
       `uvm_error("WRITE", "Frontdoor register write failed")
-    env.ral.status.read(status, value, UVM_FRONTDOOR, env.ral.cfg_map, this);
+    env.ral.status.read(status, value, UVM_FRONTDOOR, env.ral.cfg_map, null);
     if (status != UVM_IS_OK || value != 32'h55)
       `uvm_error("READ", $sformatf("Expected 0x55, read 0x%0h", value))
-    env.ral.status.mirror(status, UVM_CHECK, UVM_FRONTDOOR, env.ral.cfg_map, this);
+    env.ral.status.mirror(status, UVM_CHECK, UVM_FRONTDOOR, env.ral.cfg_map, null);
     if (status != UVM_IS_OK || env.ral.status.get_mirrored_value() != 32'h55)
       `uvm_error("MIRROR", "Explicit predictor did not update the mirror")
 

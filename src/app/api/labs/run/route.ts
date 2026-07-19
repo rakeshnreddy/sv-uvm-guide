@@ -4,6 +4,7 @@ import { z, ZodError } from "zod";
 import { AuthenticationError, requireSession } from "@/lib/auth";
 import { graderRegistry, type LabSubmission } from "@/lib/lab-graders";
 import { getLabById } from "@/lib/lab-registry";
+import { completeLabStep, LabStepCompletionError } from "@/server/labs";
 
 const submissionSchema = z.object({
   labId: z.string().regex(/^[a-z0-9-]+$/),
@@ -24,7 +25,7 @@ const submissionSchema = z.object({
 
 export async function POST(request: Request) {
   try {
-    await requireSession();
+    const session = await requireSession();
     const submission: LabSubmission = submissionSchema.parse(await request.json());
     const lab = getLabById(submission.labId);
     if (!lab || lab.status !== "available") {
@@ -38,6 +39,9 @@ export async function POST(request: Request) {
     if (!step || step.version !== submission.stepVersion) {
       return NextResponse.json({ error: "LAB_STEP_VERSION_MISMATCH" }, { status: 409 });
     }
+    if (step.completion !== "graded") {
+      return NextResponse.json({ error: "LAB_STEP_IS_SELF_ATTESTED" }, { status: 409 });
+    }
     const editablePaths = new Set(lab.assets.filter((asset) => asset.editable).map((asset) => asset.path));
     if (submission.files.some((file) => !editablePaths.has(file.path))) {
       return NextResponse.json({ error: "INVALID_SUBMISSION_FILE" }, { status: 400 });
@@ -49,13 +53,23 @@ export async function POST(request: Request) {
     if (grader.requiresSandbox) {
       return NextResponse.json({ error: "GRADING_QUEUE_UNAVAILABLE" }, { status: 503 });
     }
-    return NextResponse.json(await grader.grade(submission));
+    const result = await grader.grade(submission);
+    if (!result.success) return NextResponse.json(result);
+    const progress = await completeLabStep(session.user.id, lab, step.id, {
+      kind: "graded",
+      graderId: grader.id,
+      graderVersion: grader.version,
+    });
+    return NextResponse.json({ ...result, progress });
   } catch (error) {
     if (error instanceof AuthenticationError) {
       return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
     }
     if (error instanceof ZodError || error instanceof SyntaxError) {
       return NextResponse.json({ error: "INVALID_LAB_SUBMISSION" }, { status: 400 });
+    }
+    if (error instanceof LabStepCompletionError) {
+      return NextResponse.json({ error: error.code }, { status: 409 });
     }
     console.error("Lab grading failed", error);
     return NextResponse.json({ error: "LAB_GRADING_UNAVAILABLE" }, { status: 503 });

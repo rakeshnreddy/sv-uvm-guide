@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  create: vi.fn(),
   updateMany: vi.fn(),
   findUniqueOrThrow: vi.fn(),
   update: vi.fn(),
@@ -9,6 +10,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     simulationJob: {
+      create: mocks.create,
       updateMany: mocks.updateMany,
       findUniqueOrThrow: mocks.findUniqueOrThrow,
       update: mocks.update,
@@ -18,14 +20,36 @@ vi.mock("@/lib/prisma", () => ({
 
 import {
   processQueuedSimulationJob,
+  simulationJobs,
+  SimulationExecutionUnavailableError,
   type SimulationSandbox,
 } from "@/server/simulation";
 
 describe("processQueuedSimulationJob", () => {
   beforeEach(() => {
     mocks.updateMany.mockReset();
+    mocks.create.mockReset();
     mocks.findUniqueOrThrow.mockReset();
     mocks.update.mockReset();
+  });
+
+  it("fails before creating a zombie job when no dispatcher is configured", async () => {
+    const previousQueueUrl = process.env.SIMULATION_QUEUE_URL;
+    const previousLocalDocker = process.env.SIMULATION_LOCAL_DOCKER;
+    delete process.env.SIMULATION_QUEUE_URL;
+    delete process.env.SIMULATION_LOCAL_DOCKER;
+    try {
+      await expect(simulationJobs.enqueue("user-1", {
+        backend: "icarus",
+        files: [{ path: "top.sv", content: "module top; endmodule" }],
+      })).rejects.toBeInstanceOf(SimulationExecutionUnavailableError);
+      expect(mocks.create).not.toHaveBeenCalled();
+    } finally {
+      if (previousQueueUrl === undefined) delete process.env.SIMULATION_QUEUE_URL;
+      else process.env.SIMULATION_QUEUE_URL = previousQueueUrl;
+      if (previousLocalDocker === undefined) delete process.env.SIMULATION_LOCAL_DOCKER;
+      else process.env.SIMULATION_LOCAL_DOCKER = previousLocalDocker;
+    }
   });
 
   it("claims one queued job and persists the trusted sandbox result", async () => {

@@ -32,7 +32,8 @@ module axi_deadlock_checker #(
   // Required protocol rules:
   // 1. Once a source asserts VALID, VALID and its payload stay stable until handshake.
   // 2. BVALID follows completed AW and final-W handshakes.
-  // TODO: implement AW, W, AR, B, and R stability properties.
+  // TODO: implement separate AW, W, AR, B, and R stability properties and
+  // track the two write-channel handshakes needed to validate BVALID.
   // Example:
   // property p_wvalid_stable;
   //   @(posedge ACLK) disable iff (!ARESETn)
@@ -41,7 +42,7 @@ module axi_deadlock_checker #(
   // assert property (p_wvalid_stable)
   //   else $error("W channel payload changed while stalled");
 
-  // Optional integration/QoS policy. Gate any bounded READY watchdog here.
+  // Optional integration/QoS policy. Gate bounded AW/W/AR READY watchdogs here.
   // This must not be labeled as a base AXI protocol assertion.
   generate
     if (ENABLE_SERVICE_BOUNDS) begin : g_service_bounds
