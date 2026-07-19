@@ -49,9 +49,9 @@ afterEach(() => {
 
 describe('feature-flag gated routes', () => {
   const notFoundRoutes: Array<{ name: string; module: string; flag: FeatureFlagName }> = [
-    { name: 'dashboard', module: '@/app/dashboard/page', flag: 'tracking' },
-    { name: 'community', module: '@/app/community/page', flag: 'community' },
-    { name: 'settings', module: '@/app/settings/page', flag: 'accountUI' },
+    { name: 'dashboard', module: '@/app/(learning)/dashboard/page', flag: 'tracking' },
+    { name: 'community', module: '@/app/(learning)/community/page', flag: 'community' },
+    { name: 'settings', module: '@/app/(learning)/settings/page', flag: 'accountUI' },
   ];
 
   notFoundRoutes.forEach(({ name, module, flag }) => {
@@ -90,7 +90,7 @@ describe('feature-flag gated routes', () => {
 
   it('projects page returns placeholder content when personalization flag is disabled', async () => {
     const pageModule = await loadRoute<{ default: () => Promise<React.ReactElement> }>(
-      '@/app/projects/page',
+      '@/app/(learning)/projects/page',
       {
         defaultValue: false,
       },
@@ -106,7 +106,7 @@ describe('feature-flag gated routes', () => {
 
   it('notifications page shows placeholder when account UI flag is disabled', async () => {
     const pageModule = await loadRoute<{ default: () => Promise<React.ReactElement> }>(
-      '@/app/notifications/page',
+      '@/app/(learning)/notifications/page',
       {
         defaultValue: false,
       },
@@ -121,8 +121,47 @@ describe('feature-flag gated routes', () => {
   });
 
   it('notifications page renders full feed when account UI flag is enabled', async () => {
+    vi.doMock('@/lib/auth', () => ({
+      requireSession: vi.fn().mockResolvedValue({ user: { id: 'user-1' } }),
+    }));
+    vi.doMock('@/lib/prisma', () => ({
+      prisma: {
+        user: {
+          findUnique: vi.fn().mockResolvedValue({ preferences: null, timeZone: 'UTC' }),
+        },
+      },
+    }));
+    vi.doMock('@/lib/engagement', () => ({
+      buildEngagementResponse: vi.fn().mockResolvedValue({
+        algorithmVersion: 'engagement-v1',
+        metrics: {
+          dailyStreak: 1,
+          weeklyActiveDays: 1,
+          lessonsCompleted: 1,
+          challengesAttempted: 0,
+          timeSpentMinutes: 20,
+        },
+        activityHistory: [{
+          id: 'lesson-1',
+          userId: 'user-1',
+          type: 'lesson_completed',
+          timestamp: '2026-07-18T10:00:00.000Z',
+          details: { lesson: 'UVM Basics' },
+        }],
+        motivationalProfile: null,
+        goals: [],
+        mentorMessage: 'Keep going.',
+        activityChart: [],
+        patterns: {
+          mostActiveDay: 'Saturday',
+          preferredTopic: 'UVM Basics',
+          learningStyle: 'steady-progress',
+        },
+      }),
+    }));
+
     const pageModule = await loadRoute<{ default: () => Promise<React.ReactElement> }>(
-      '@/app/notifications/page',
+      '@/app/(learning)/notifications/page',
       {
         defaultValue: false,
         flags: { accountUI: true },

@@ -1,6 +1,6 @@
 import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
+import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import AhbPipelineBurstVisualizer from '../../src/components/visualizers/AhbPipelineBurstVisualizer';
 
 // Mock Lucide icons
@@ -13,6 +13,11 @@ vi.mock('lucide-react', () => ({
 }));
 
 describe('AhbPipelineBurstVisualizer', () => {
+  afterEach(() => {
+    cleanup();
+    vi.useRealTimers();
+  });
+
   it('renders without crashing and shows default scenario', () => {
     render(<AhbPipelineBurstVisualizer />);
     
@@ -105,5 +110,34 @@ describe('AhbPipelineBurstVisualizer', () => {
     expect(screen.getByText('Data sampled (HREADY=1).')).toBeInTheDocument();
     // Addr B should STILL be held because previous cycle had wait state
     expect(screen.getAllByText('0x2000').length).toBeGreaterThan(0);
+  });
+
+  it('stops autoplay at the final valid cycle and clears its timer', async () => {
+    vi.useFakeTimers();
+    render(<AhbPipelineBurstVisualizer />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play simulation' }));
+    for (let cycle = 0; cycle < 8; cycle += 1) {
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_200);
+      });
+    }
+
+    expect(screen.getByText('Cycle 5 Status')).toBeInTheDocument();
+    expect(screen.queryByText('Cycle 6 Status')).not.toBeInTheDocument();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('cancels autoplay when the scenario changes', () => {
+    vi.useFakeTimers();
+    render(<AhbPipelineBurstVisualizer />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Play simulation' }));
+    expect(vi.getTimerCount()).toBe(1);
+
+    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'single' } });
+
+    expect(screen.getByText('Cycle 0 Status')).toBeInTheDocument();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

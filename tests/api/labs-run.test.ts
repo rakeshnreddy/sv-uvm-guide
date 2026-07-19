@@ -1,62 +1,86 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
-describe('api/labs/run route', () => {
-  const loadPost = async () => {
-    vi.resetModules();
-    const mod = await import('@/app/api/labs/run/route');
-    return mod.POST;
+const mocks = vi.hoisted(() => ({
+  AuthenticationError: class AuthenticationError extends Error {},
+  requireSession: vi.fn(),
+  completeLabStep: vi.fn(),
+}));
+
+vi.mock("@/lib/auth", () => ({
+  AuthenticationError: mocks.AuthenticationError,
+  requireSession: mocks.requireSession,
+}));
+
+vi.mock("@/server/labs", () => ({
+  LabStepCompletionError: class LabStepCompletionError extends Error {},
+  completeLabStep: mocks.completeLabStep,
+}));
+
+import { POST } from "@/app/api/labs/run/route";
+
+function submission(content: string) {
+  return {
+    labId: "basics-1",
+    labVersion: "1",
+    stepId: "1",
+    stepVersion: "1",
+    files: [{ path: "work/dut_counter.sv", content }],
   };
+}
 
+function request(body: unknown) {
+  return new Request("http://localhost/api/labs/run", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+describe("POST /api/labs/run", () => {
   beforeEach(() => {
-    vi.stubEnv('SESSION_SECRET', 'test-session-secret-32-bytes-minimum');
-  });
-
-  afterEach(() => {
-    vi.unstubAllEnvs();
-  });
-
-  it('runs deterministic public lab graders without requiring a session', async () => {
-    const POST = await loadPost();
-
-    const request = new Request('http://localhost/api/labs/run', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        code: 'int myVar;',
-        labId: 'basics-1',
-        stepId: '1',
-      }),
+    mocks.requireSession.mockReset();
+    mocks.requireSession.mockResolvedValue({ user: { id: "user-1" } });
+    mocks.completeLabStep.mockReset();
+    mocks.completeLabStep.mockResolvedValue({
+      currentStepId: "2",
+      completedSteps: ["1"],
+      fileBuffers: {},
     });
+  });
 
-    const response = await POST(request);
-    const payload = await response.json();
+  it("runs a versioned manifest-owned grader for an authenticated learner", async () => {
+    const response = await POST(request(submission("int myVar;")));
 
     expect(response.status).toBe(200);
-    expect(payload.success).toBe(true);
+    await expect(response.json()).resolves.toMatchObject({
+      success: true,
+      diagnostics: [],
+      progress: { completedSteps: ["1"] },
+    });
+    expect(mocks.completeLabStep).toHaveBeenCalledWith(
+      "user-1",
+      expect.objectContaining({ id: "basics-1" }),
+      "1",
+      expect.objectContaining({ kind: "graded", graderId: "sv-basics-v1" }),
+    );
   });
 
-  it('returns a grader hint for incorrect code', async () => {
-    const POST = await loadPost();
-
-    const request = new Request('http://localhost/api/labs/run', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        code: '// missing declaration',
-        labId: 'basics-1',
-        stepId: '1',
-      }),
-    });
-
-    const response = await POST(request);
+  it("does not accept expected syntax hidden in comments", async () => {
+    const response = await POST(request(submission("// int myVar;")));
     const payload = await response.json();
 
     expect(response.status).toBe(200);
     expect(payload.success).toBe(false);
-    expect(payload.hint).toContain("declare a variable named 'myVar'");
+    expect(payload.hint).toContain("Declare myVar as an int");
+    expect(mocks.completeLabStep).not.toHaveBeenCalled();
+  });
+
+  it("requires authentication before grading", async () => {
+    mocks.requireSession.mockRejectedValueOnce(new mocks.AuthenticationError());
+
+    const response = await POST(request(submission("int myVar;")));
+
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: "UNAUTHORIZED" });
   });
 });

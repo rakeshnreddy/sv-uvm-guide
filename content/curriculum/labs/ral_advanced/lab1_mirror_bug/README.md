@@ -1,6 +1,16 @@
 # RAL Mirror Bug Lab
 
-You have a UVM environment with a simple codec IP. The RAL model, adapter, and predictor are all instantiated, but **frontdoor writes are not updating the mirror**. The `mirror()` check fails because the mirrored value stays at the reset value even after successful writes.
+You have a UVM environment with a simple codec IP. The RAL model, adapter, and predictor are all instantiated, but **frontdoor writes are not updating the mirror**. The completed environment uses this runnable path:
+
+```text
+RAL write()
+  -> adapter.reg2bus()
+  -> bus sequencer/driver
+  -> DUT
+  -> monitor analysis_port
+  -> uvm_reg_predictor.bus_in
+  -> register mirror update
+```
 
 ## Scenario
 
@@ -20,7 +30,11 @@ UVM_ERROR: reg status: mirror value 0x0000 does not match read value 0x0055
    ```systemverilog
    axi_agt.monitor.ap.connect(predictor.bus_in);
    ```
-   Re-run the simulation. The mirror should now track writes correctly and `mirror(UVM_CHECK)` should pass.
+   Re-run the simulation. The expected milestones are a successful frontdoor write, a read of `0x55`, and a passing `mirror(UVM_CHECK)`. Disconnect the analysis port intentionally to reproduce the frozen-mirror failure.
+
+## Select One Prediction Strategy
+
+This lab demonstrates **explicit prediction**, so `cfg_map.set_auto_predict(0)` is required. The monitor publishes completed bus operations to `uvm_reg_predictor`, which updates the mirror. Auto prediction is a separate valid strategy for simpler environments, but it updates the mirror from the RAL transaction path. Do not enable auto prediction while also explicitly predicting the same operation; the mirror should have one owner per transaction.
 
 ## Debugging Heuristic
 
@@ -29,4 +43,4 @@ When the RAL mirror does not update:
 2. Is `predictor.map` assigned? → Must point to the register map.
 3. Is `predictor.adapter` assigned? → Must point to your bus adapter.
 4. Is the monitor's AP connected to `predictor.bus_in`? → **This is the most commonly missed step.**
-5. Is `set_auto_predict(1)` enabled? → If so, the predictor pipeline is bypassed entirely.
+5. Is `set_auto_predict(0)` selected for this explicit-predictor lab? → Explicit and auto prediction should not both update the same transaction.

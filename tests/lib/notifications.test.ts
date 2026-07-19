@@ -6,6 +6,7 @@ const BASE_TIME = new Date('2024-05-01T12:00:00.000Z');
 
 function createEngagementFixture(): EngagementResponse {
   return {
+    algorithmVersion: 'engagement-v1',
     metrics: {
       dailyStreak: 6,
       weeklyActiveDays: 4,
@@ -77,7 +78,8 @@ function createEngagementFixture(): EngagementResponse {
 describe('deriveNotificationsFromEngagement', () => {
   it('emits notifications for activity history and derived insights', () => {
     const engagement = createEngagementFixture();
-    const preferences = resolveNotificationPreferences('demo-user');
+    const preferences = resolveNotificationPreferences();
+    preferences.categories.community = true;
 
     const notifications = deriveNotificationsFromEngagement(engagement, preferences);
 
@@ -91,7 +93,7 @@ describe('deriveNotificationsFromEngagement', () => {
 
   it('filters notifications when a category preference is disabled', () => {
     const engagement = createEngagementFixture();
-    const basePreferences = resolveNotificationPreferences('demo-user');
+    const basePreferences = resolveNotificationPreferences();
     const preferences = {
       ...basePreferences,
       categories: {
@@ -108,7 +110,7 @@ describe('deriveNotificationsFromEngagement', () => {
 
   it('respects the limit option when provided', () => {
     const engagement = createEngagementFixture();
-    const preferences = resolveNotificationPreferences('demo-user');
+    const preferences = resolveNotificationPreferences();
 
     const notifications = deriveNotificationsFromEngagement(engagement, preferences, { limit: 2 });
 

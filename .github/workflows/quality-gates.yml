@@ -1,0 +1,85 @@
+name: Required quality gates
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: migration_rehearsal
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CI: true
+      DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/migration_rehearsal
+      NEXTAUTH_URL: http://127.0.0.1:3100
+      SESSION_SECRET: ci-session-secret-at-least-32-characters
+      AUTH_TEST_MODE: "true"
+      AUTH_TEST_TOKEN: ci-browser-test-token-at-least-32-characters
+      PLAYWRIGHT_SKIP_INSTALL_DEPS: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies and native gates
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+          npm ci
+          npx playwright install --with-deps chromium
+
+      - name: Install the IEEE 1800.2 UVM reference library
+        run: git clone --depth 1 --branch 2020.3.1 https://github.com/accellera-official/uvm-core.git "$RUNNER_TEMP/uvm-core"
+
+      - name: Pull the pinned SystemVerilog compiler image
+        run: docker pull verilator/verilator:v5.050
+
+      - name: Build the isolated simulation runner image
+        run: docker build -t sv-uvm-simulation-runner:test simulation-runner
+
+      - name: Rehearse the destructive-schema migration on legacy fixtures
+        run: npm run test:migration-rehearsal
+
+      - name: Run type, lint, unit, content, SV, build, and bundle gates
+        env:
+          SV_COMPILER: ${{ github.workspace }}/scripts/verilator-docker.sh
+          VERILATOR_DOCKER_IMAGE: verilator/verilator:v5.050
+          UVM_HOME: ${{ runner.temp }}/uvm-core
+        run: npm run test:ci
+
+      - name: Run Playwright learner flows
+        run: npm run test:e2e:release
+
+      - name: Upload Playwright and audit artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: test-results/
+          if-no-files-found: ignore

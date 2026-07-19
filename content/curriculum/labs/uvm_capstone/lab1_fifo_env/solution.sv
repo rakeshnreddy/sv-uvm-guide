@@ -11,6 +11,7 @@
 import uvm_pkg::*;
 
 localparam int FIFO_DEPTH = 4;
+localparam int CAPSTONE_READ_COUNT = 7;
 
 typedef enum bit [1:0] {
   FIFO_WRITE,
@@ -87,6 +88,20 @@ interface fifo_if(input logic clk, input logic rst_n);
   logic full;
   logic empty;
   logic [$clog2(FIFO_DEPTH+1)-1:0] level;
+
+  clocking driver_cb @(posedge clk);
+    default input #1step output #0;
+    input rst_n, full, empty;
+    output push, pop, din;
+  endclocking
+
+  clocking monitor_cb @(posedge clk);
+    default input #0;
+    input rst_n, push, pop, din, dout, full, empty, level;
+  endclocking
+
+  modport driver_mp(clocking driver_cb);
+  modport monitor_mp(clocking monitor_cb);
 endinterface
 
 class fifo_txn extends uvm_sequence_item;
@@ -179,7 +194,7 @@ endclass
 class fifo_driver extends uvm_driver #(fifo_txn);
   `uvm_component_utils(fifo_driver)
 
-  virtual fifo_if vif;
+  virtual fifo_if.driver_mp vif;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -187,17 +202,17 @@ class fifo_driver extends uvm_driver #(fifo_txn);
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    if (!uvm_config_db#(virtual fifo_if)::get(this, "", "vif", vif))
+    if (!uvm_config_db#(virtual fifo_if.driver_mp)::get(this, "", "vif", vif))
       `uvm_fatal("NO_VIF", "fifo_if not configured for driver")
   endfunction
 
   task run_phase(uvm_phase phase);
     fifo_txn txn;
 
-    vif.push <= 1'b0;
-    vif.pop  <= 1'b0;
-    vif.din  <= '0;
-    wait (vif.rst_n);
+    vif.driver_cb.push <= 1'b0;
+    vif.driver_cb.pop  <= 1'b0;
+    vif.driver_cb.din  <= '0;
+    do @(vif.driver_cb); while (!vif.driver_cb.rst_n);
 
     forever begin
       seq_item_port.get_next_item(txn);
@@ -209,19 +224,19 @@ class fifo_driver extends uvm_driver #(fifo_txn);
   task drive_one(fifo_txn txn);
     case (txn.op)
       FIFO_WRITE: begin
-        do @(negedge vif.clk); while (vif.full);
-        vif.din  <= txn.data;
-        vif.push <= 1'b1;
-        vif.pop  <= 1'b0;
-        @(negedge vif.clk);
-        vif.push <= 1'b0;
+        do @(vif.driver_cb); while (vif.driver_cb.full);
+        vif.driver_cb.din  <= txn.data;
+        vif.driver_cb.push <= 1'b1;
+        vif.driver_cb.pop  <= 1'b0;
+        @(vif.driver_cb);
+        vif.driver_cb.push <= 1'b0;
       end
       FIFO_READ: begin
-        do @(negedge vif.clk); while (vif.empty);
-        vif.push <= 1'b0;
-        vif.pop  <= 1'b1;
-        @(negedge vif.clk);
-        vif.pop <= 1'b0;
+        do @(vif.driver_cb); while (vif.driver_cb.empty);
+        vif.driver_cb.push <= 1'b0;
+        vif.driver_cb.pop  <= 1'b1;
+        @(vif.driver_cb);
+        vif.driver_cb.pop <= 1'b0;
       end
     endcase
   endtask
@@ -230,7 +245,7 @@ endclass
 class fifo_monitor extends uvm_monitor;
   `uvm_component_utils(fifo_monitor)
 
-  virtual fifo_if vif;
+  virtual fifo_if.monitor_mp vif;
   uvm_analysis_port #(fifo_txn) ap;
 
   function new(string name, uvm_component parent);
@@ -240,7 +255,7 @@ class fifo_monitor extends uvm_monitor;
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
     ap = new("ap", this);
-    if (!uvm_config_db#(virtual fifo_if)::get(this, "", "vif", vif))
+    if (!uvm_config_db#(virtual fifo_if.monitor_mp)::get(this, "", "vif", vif))
       `uvm_fatal("NO_VIF", "fifo_if not configured for monitor")
   endfunction
 
@@ -254,24 +269,22 @@ class fifo_monitor extends uvm_monitor;
     int unsigned depth_before;
 
     forever begin
-      @(posedge vif.clk);
-      if (!vif.rst_n)
+      @(vif.monitor_cb);
+      if (!vif.monitor_cb.rst_n)
         continue;
 
-      push_req = vif.push;
-      pop_req = vif.pop;
-      full_before = vif.full;
-      empty_before = vif.empty;
-      din_before = vif.din;
-      depth_before = vif.level;
-
-      #1;
+      push_req = vif.monitor_cb.push;
+      pop_req = vif.monitor_cb.pop;
+      full_before = vif.monitor_cb.full;
+      empty_before = vif.monitor_cb.empty;
+      din_before = vif.monitor_cb.din;
+      depth_before = vif.monitor_cb.level;
 
       if (push_req || pop_req) begin
         txn = fifo_txn::type_id::create("observed_txn", this);
         txn.op = push_req ? FIFO_WRITE : FIFO_READ;
         txn.data = din_before;
-        txn.observed_data = vif.dout;
+        txn.observed_data = vif.monitor_cb.dout;
         txn.push_accepted = push_req && !full_before;
         txn.pop_accepted = pop_req && !empty_before;
         txn.depth_before = depth_before;
@@ -314,8 +327,9 @@ class fifo_scoreboard extends uvm_scoreboard;
 
   uvm_tlm_analysis_fifo #(fifo_txn) observed_fifo;
   bit [7:0] model_q[$];
-  int matches;
+  int match_count;
   int mismatches;
+  event idle;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -350,19 +364,35 @@ class fifo_scoreboard extends uvm_scoreboard;
                        $sformatf("expected 0x%02h observed 0x%02h txn=%s",
                                  expected, txn.observed_data, txn.convert2string()))
           end else begin
-            matches++;
+            match_count++;
             `uvm_info("SCB_MATCH", $sformatf("matched read data 0x%02h", expected), UVM_LOW)
           end
         end
+        if ((match_count + mismatches) == CAPSTONE_READ_COUNT && model_q.size() == 0)
+          -> idle;
       end
     end
   endtask
+
+  task wait_until_idle();
+    if ((match_count + mismatches) < CAPSTONE_READ_COUNT || model_q.size() != 0)
+      @idle;
+  endtask
+
+  function void check_phase(uvm_phase phase);
+    super.check_phase(phase);
+    if (!observed_fifo.is_empty())
+      `uvm_error("PENDING", "Observed transactions remain unprocessed")
+    if ((match_count + mismatches) != CAPSTONE_READ_COUNT)
+      `uvm_error("READ_COUNT", $sformatf("Expected %0d checked reads, observed %0d",
+                                        CAPSTONE_READ_COUNT, match_count + mismatches))
+  endfunction
 
   function void report_phase(uvm_phase phase);
     super.report_phase(phase);
     `uvm_info("SCB_SUMMARY",
               $sformatf("matches=%0d mismatches=%0d remaining_model_entries=%0d",
-                        matches, mismatches, model_q.size()),
+                        match_count, mismatches, model_q.size()),
               UVM_NONE)
 `ifdef INJECT_FIFO_BUG
     if (mismatches == 0)
@@ -474,7 +504,7 @@ class fifo_capstone_test extends uvm_test;
     seq = fifo_base_seq::type_id::create("seq");
     `uvm_info("TEST", $sformatf("Created sequence type: %s", seq.get_type_name()), UVM_MEDIUM)
     seq.start(env.agent.sequencer);
-    #40;
+    env.scoreboard.wait_until_idle();
     phase.drop_objection(this);
   endtask
 endclass
@@ -512,7 +542,13 @@ module tb_top;
   end
 
   initial begin
-    uvm_config_db#(virtual fifo_if)::set(null, "*", "vif", fifo_vif);
+    uvm_config_db#(virtual fifo_if.driver_mp)::set(null, "*", "vif", fifo_vif);
+    uvm_config_db#(virtual fifo_if.monitor_mp)::set(null, "*", "vif", fifo_vif);
     run_test("fifo_capstone_test");
+  end
+
+  initial begin
+    #100us;
+    `uvm_fatal("TIMEOUT", "FIFO capstone did not drain before the configured timeout")
   end
 endmodule

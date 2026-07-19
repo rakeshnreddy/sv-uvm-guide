@@ -1,151 +1,162 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from 'react';
-import { Button } from './Button';
-import { Play, Pause, RotateCcw, StepForward } from 'lucide-react';
-import * as WaveDrom from 'wavedrom';
-import type {
-  SimulationStats,
-  SimulatorBackend,
-  SimulationWaveform,
-} from '@/server/simulation/types';
+import { Play, RotateCcw, Square } from "lucide-react";
+import React, { useEffect, useRef, useState } from "react";
 
-interface CodeExecutionEnvironmentProps {
-  // In the future, this might take the code as a prop, e.g.
-  // code: string;
+import type { SimulatorBackend } from "@/server/simulation/types";
+
+import { Button } from "./Button";
+
+export interface SimulationSourceFile {
+  path: string;
+  content: string;
 }
 
-export const CodeExecutionEnvironment: React.FC<CodeExecutionEnvironmentProps> = () => {
-  const [isRunning, setIsRunning] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const [backend, setBackend] = useState<SimulatorBackend>('wasm');
-  const [output, setOutput] = useState<string>('');
-  const [coverage, setCoverage] = useState<number | null>(null);
-  const [regressions, setRegressions] = useState<string[]>([]);
-  const [waveform, setWaveform] = useState<SimulationWaveform | null>(null);
-  const [stats, setStats] = useState<SimulationStats | null>(null);
-  const waveRef = useRef<HTMLDivElement>(null);
+interface CodeExecutionEnvironmentProps {
+  prepareFiles: () => Promise<SimulationSourceFile[]>;
+}
 
-  useEffect(() => {
-    if (waveform && waveRef.current && typeof WaveDrom?.renderWaveElement === 'function') {
-      WaveDrom.renderWaveElement(waveRef.current, waveform);
-    }
-  }, [waveform]);
+export function CodeExecutionEnvironment({ prepareFiles }: CodeExecutionEnvironmentProps) {
+  const [isRunning, setIsRunning] = useState(false);
+  const [backend, setBackend] = useState<SimulatorBackend>("icarus");
+  const [output, setOutput] = useState("");
+  const [coverage, setCoverage] = useState<number | null>(null);
+  const requestControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => requestControllerRef.current?.abort(), []);
 
   const handleRunCode = async () => {
+    requestControllerRef.current?.abort();
+    const controller = new AbortController();
+    requestControllerRef.current = controller;
     setIsRunning(true);
-    setIsPaused(false);
-    setOutput('Compiling and running simulation...');
+    setCoverage(null);
+    setOutput("Preparing learner workspace…");
 
     try {
-      const res = await fetch('/api/simulate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code: '', backend }),
+      const files = await prepareFiles();
+      if (files.length === 0) throw new Error("No editable SystemVerilog files are available to simulate.");
+      setOutput("Submitting workspace to the isolated simulator…");
+      const response = await fetch("/api/simulate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: controller.signal,
+        body: JSON.stringify({ backend, files }),
       });
-      const data = await res.json();
-      setOutput(data.output);
-      setWaveform(data.waveform as SimulationWaveform | null);
-      setStats(data.stats);
-      setCoverage(data.coverage);
-      setRegressions(data.regressions || []);
-    } catch (err) {
-      setOutput(String(err));
+      const queued: unknown = await response.json().catch(() => null);
+      const queuedJob = queued && typeof queued === "object" ? queued as { jobId?: unknown; error?: unknown } : {};
+      if (!response.ok || typeof queuedJob.jobId !== "string") {
+        throw new Error(typeof queuedJob.error === "string" ? queuedJob.error : "Unable to start simulation");
+      }
+
+      setOutput(`Simulation accepted (${queuedJob.jobId}).`);
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        await new Promise<void>((resolve, reject) => {
+          const timer = window.setTimeout(resolve, 1_000);
+          controller.signal.addEventListener("abort", () => {
+            window.clearTimeout(timer);
+            reject(new DOMException("Aborted", "AbortError"));
+          }, { once: true });
+        });
+
+        const statusResponse = await fetch(`/api/simulate/${encodeURIComponent(queuedJob.jobId)}`, {
+          signal: controller.signal,
+        });
+        const statusPayload: unknown = await statusResponse.json().catch(() => null);
+        if (!statusResponse.ok || !statusPayload || typeof statusPayload !== "object") {
+          const message = statusPayload && typeof (statusPayload as { error?: unknown }).error === "string"
+            ? (statusPayload as { error: string }).error
+            : "Unable to load simulation status";
+          throw new Error(message);
+        }
+        const job = statusPayload as {
+          status?: unknown;
+          result?: unknown;
+          errorCode?: unknown;
+        };
+        if (job.status === "queued" || job.status === "running") {
+          setOutput(`Simulation ${job.status}…`);
+          continue;
+        }
+
+        const result = job.result && typeof job.result === "object"
+          ? job.result as { diagnostics?: unknown; coverage?: unknown; passed?: unknown }
+          : {};
+        const diagnostics = Array.isArray(result.diagnostics)
+          ? result.diagnostics.filter((item): item is { message: string } => (
+              Boolean(item) && typeof item === "object" && typeof (item as { message?: unknown }).message === "string"
+            ))
+          : [];
+        setOutput(
+          diagnostics.length > 0
+            ? diagnostics.map((item) => item.message).join("\n")
+            : result.passed === true
+              ? "Simulation completed successfully."
+              : typeof job.errorCode === "string"
+                ? `Simulation failed: ${job.errorCode}`
+                : `Simulation ended with status: ${String(job.status)}`,
+        );
+        setCoverage(typeof result.coverage === "number" ? result.coverage : null);
+        return;
+      }
+
+      throw new Error("Simulation status timed out");
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setOutput("Stopped waiting for simulation status. The isolated job may continue server-side.");
+      } else {
+        setOutput(error instanceof Error ? error.message : "Simulation request failed");
+      }
     } finally {
       setIsRunning(false);
     }
   };
 
-  const handlePause = () => {
-    setIsPaused((p) => !p);
-    // In a real implementation, this would signal the simulator
-    // to pause or resume execution.
-  };
-
-  const handleStep = () => {
-    // Placeholder for stepping through simulation cycles.
-  };
-
+  const handleStopWaiting = () => requestControllerRef.current?.abort();
   const handleReset = () => {
-    setOutput('');
-    setWaveform(null);
-    setStats(null);
+    requestControllerRef.current?.abort();
+    setOutput("");
     setCoverage(null);
-    setRegressions([]);
   };
 
   return (
-    <div className="code-execution-environment my-6 p-4 border border-white/20 rounded-lg shadow-md bg-white/10 backdrop-blur-lg">
-      <div className="controls mb-4 flex gap-2 items-center">
+    <section className="code-execution-environment mt-4 rounded-lg border border-border bg-background/60 p-4 shadow-sm">
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        <label className="text-sm font-medium" htmlFor="simulation-backend">Simulator</label>
         <select
-          className="border rounded-md p-1 bg-background text-foreground"
+          id="simulation-backend"
+          className="rounded-md border bg-background p-2 text-foreground"
           value={backend}
-          onChange={(e) => setBackend(e.target.value as SimulatorBackend)}
+          onChange={(event) => setBackend(event.target.value as SimulatorBackend)}
           disabled={isRunning}
         >
-          <option value="wasm">WebAssembly</option>
           <option value="icarus">Icarus</option>
           <option value="verilator">Verilator</option>
         </select>
         <Button onClick={handleRunCode} disabled={isRunning}>
-          <Play className="w-4 h-4 mr-2" />
-          {isRunning ? 'Running...' : 'Run Simulation'}
+          <Play className="mr-2 h-4 w-4" />
+          {isRunning ? "Running…" : "Run workspace"}
         </Button>
-        <Button onClick={handlePause} disabled={!isRunning} variant="secondary">
-          <Pause className="w-4 h-4 mr-2" />
-          {isPaused ? 'Resume' : 'Pause'}
-        </Button>
-        <Button onClick={handleStep} disabled={!isRunning} variant="secondary">
-          <StepForward className="w-4 h-4 mr-2" />Step
-        </Button>
-        <Button onClick={handleReset} variant="secondary">
-          <RotateCcw className="w-4 h-4 mr-2" />Reset
+        {isRunning && (
+          <Button onClick={handleStopWaiting} variant="secondary">
+            <Square className="mr-2 h-4 w-4" />Stop waiting
+          </Button>
+        )}
+        <Button onClick={handleReset} variant="secondary" disabled={isRunning}>
+          <RotateCcw className="mr-2 h-4 w-4" />Reset output
         </Button>
       </div>
-      <div className="output-section mb-4">
-        <h3 className="text-lg font-semibold mb-2 text-foreground/90">Simulation Output</h3>
-        <pre
-          className="bg-black text-white p-4 rounded-md text-sm whitespace-pre-wrap font-mono h-64 overflow-y-auto"
-          data-testid="simulation-output"
-        >
-          {output || 'Click "Run Simulation" to see the output.'}
-        </pre>
-      </div>
-      {waveform && (
-        <div className="waveform-section mb-4">
-          <h3 className="text-lg font-semibold mb-2 text-foreground/90">Waveform</h3>
-          <div ref={waveRef} />
-        </div>
-      )}
-      {stats && (
-        <div className="profiling-section mb-4 text-sm">
-          <h3 className="text-lg font-semibold mb-2 text-foreground/90">Performance</h3>
-          <p>Runtime: {stats.runtimeMs.toFixed(2)} ms</p>
-          <p>Memory: {Math.round(stats.memoryBytes / 1024)} kB</p>
-          <p>
-            CPU: user {stats.cpuUserMs.toFixed(2)} ms / system{' '}
-            {stats.cpuSystemMs.toFixed(2)} ms
-          </p>
-        </div>
-      )}
-      {coverage !== null && (
-        <div className="coverage-section mb-4 text-sm">
-          <h3 className="text-lg font-semibold mb-2 text-foreground/90">Coverage</h3>
-          <p>{coverage}%</p>
-        </div>
-      )}
-      {regressions.length > 0 && (
-        <div className="regression-section text-sm">
-          <h3 className="text-lg font-semibold mb-2 text-foreground/90">Regression Results</h3>
-          <ul className="list-disc pl-5">
-            {regressions.map((r, idx) => (
-              <li key={idx}>{r}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
+      <h3 className="mb-2 text-sm font-semibold">Simulation output</h3>
+      <pre
+        aria-live="polite"
+        className="h-48 overflow-y-auto whitespace-pre-wrap rounded-md bg-black p-4 font-mono text-sm text-white"
+        data-testid="simulation-output"
+      >
+        {output || "Run the current editable workspace in an isolated simulator."}
+      </pre>
+      {coverage !== null && <p className="mt-2 text-sm">Reported coverage: {coverage}%</p>}
+    </section>
   );
-};
+}
 
 export default CodeExecutionEnvironment;

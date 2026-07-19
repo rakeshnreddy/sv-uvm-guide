@@ -78,32 +78,15 @@ export const DEFAULT_NOTIFICATION_PREFERENCES: NotificationPreferences = {
   },
 };
 
-type PreferenceLookup = Record<string, NotificationPreferences>;
-
-const USER_NOTIFICATION_PREFERENCES: PreferenceLookup = {
-  'demo-user': {
+export function resolveNotificationPreferences(): NotificationPreferences {
+  return {
     ...DEFAULT_NOTIFICATION_PREFERENCES,
-    categories: {
-      ...DEFAULT_NOTIFICATION_PREFERENCES.categories,
-      community: true,
-    },
-    digest: 'daily',
-  },
-  'uvm-team-lead': {
-    ...DEFAULT_NOTIFICATION_PREFERENCES,
-    categories: {
-      ...DEFAULT_NOTIFICATION_PREFERENCES.categories,
-      review: true,
-      mentor: false,
-    },
-  },
-};
-
-export function resolveNotificationPreferences(userId?: string | null): NotificationPreferences {
-  if (!userId) {
-    return DEFAULT_NOTIFICATION_PREFERENCES;
-  }
-  return USER_NOTIFICATION_PREFERENCES[userId] ?? DEFAULT_NOTIFICATION_PREFERENCES;
+    categories: { ...DEFAULT_NOTIFICATION_PREFERENCES.categories },
+    channels: { ...DEFAULT_NOTIFICATION_PREFERENCES.channels },
+    quietHours: DEFAULT_NOTIFICATION_PREFERENCES.quietHours
+      ? { ...DEFAULT_NOTIFICATION_PREFERENCES.quietHours }
+      : undefined,
+  };
 }
 
 interface BuildActivityNotificationOptions {

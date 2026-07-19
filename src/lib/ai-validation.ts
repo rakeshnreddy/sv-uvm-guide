@@ -1,22 +1,13 @@
 /**
- * Validates and sanitizes user input for AI prompts to prevent injection.
- * Enforces a maximum length and escapes potentially dangerous characters.
- *
- * @param input The raw user input string.
- * @param maxLength The maximum allowed length (default: 2000).
- * @returns The sanitized and truncated input string.
+ * Normalizes text before it is placed inside a provider request. This is not a
+ * prompt-injection boundary; authorization and server-owned instructions are.
  */
-export function validateAIInput(input: string, maxLength: number = 2000): string {
-  if (!input) return "";
+export function normalizeAIText(input: string): string {
+  if (typeof input !== "string") return "";
 
-  // Truncate to maximum length
-  let sanitized = input.slice(0, maxLength);
-
-  // Escape backslashes first, then double quotes to avoid double escaping
-  // This helps prevent breaking out of string delimiters in prompts
-  sanitized = sanitized
-    .replace(/\\/g, "\\\\")
-    .replace(/"/g, "\\\"");
-
-  return sanitized;
+  return input
+    .replace(/\u0000/g, "")
+    .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .replace(/\r\n?/g, "\n")
+    .trim();
 }

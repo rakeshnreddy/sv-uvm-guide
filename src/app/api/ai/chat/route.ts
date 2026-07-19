@@ -1,72 +1,56 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { validateAIInput } from '@/lib/ai-validation';
-// The actual Gemini API endpoint or SDK import would go here.
-// For example, if using Google's Generative AI SDK:
-// import { GoogleGenerativeAI } from "@google/generative-ai";
+import { NextResponse } from "next/server";
+import { z, ZodError } from "zod";
 
-export async function POST(req: NextRequest) {
+import { AuthenticationError, requireSession } from "@/lib/auth";
+import { aiTutor, AiConfigurationError } from "@/server/ai";
+import { AiRateLimitError, enforceAiRateLimit } from "@/server/ai/rate-limit";
+
+const requestSchema = z.object({
+  userQuestion: z.string().trim().min(1).max(2_000),
+  pageContext: z
+    .object({
+      title: z.string().max(200),
+      route: z.string().max(500),
+      selectedText: z.string().max(2_000),
+    })
+    .strict()
+    .optional(),
+}).strict();
+
+export async function POST(request: Request) {
   try {
-    const geminiApiKey = process.env.GEMINI_API_KEY;
-    const body = await req.json();
-    const { systemPrompt, pageContext, userQuestion } = body;
+    const session = await requireSession();
+    const input = requestSchema.parse(await request.json());
+    await enforceAiRateLimit(session.user.id);
 
-    if (!userQuestion) {
-      return NextResponse.json(
-        { error: "User question is missing." },
-        { status: 400 }
-      );
-    }
-
-    if (!geminiApiKey) {
-      console.error("Gemini API key is not configured.");
-      return NextResponse.json(
-        { error: "AI service is not configured." },
-        { status: 500 }
-      );
-    }
-
-    // Validate and sanitize user inputs
-    const sanitizedUserQuestion = validateAIInput(userQuestion);
-    const sanitizedPageContext = pageContext ? validateAIInput(pageContext) : "";
-
-    const { GoogleGenerativeAI } = await import("@google/generative-ai");
-    const genAI = new GoogleGenerativeAI(geminiApiKey);
-
-    // Use systemInstruction to properly isolate the system prompt from user input
-    const model = genAI.getGenerativeModel({
-      model: "gemini-pro",
-      systemInstruction: systemPrompt || "You are a helpful assistant for SystemVerilog and UVM verification engineers."
+    const reply = await aiTutor.answer(input, {
+      signal: AbortSignal.timeout(20_000),
     });
-
-    // Use structured content parts instead of simple string interpolation
-    const promptParts = [];
-    if (sanitizedPageContext) {
-      promptParts.push(`CONTEXT:\n${sanitizedPageContext}\n\n`);
-    }
-    promptParts.push(`USER QUESTION:\n${sanitizedUserQuestion}`);
-
-    const result = await model.generateContent(promptParts);
-    const response = await result.response;
-    const text = response.text();
-
-    return NextResponse.json({
-      reply: text,
-    });
-
+    return NextResponse.json({ reply });
   } catch (error) {
-    console.error('Error processing AI chat request:', error);
-    let errorMessage = "An unexpected error occurred.";
-    if (error instanceof Error) {
-        errorMessage = error.message;
+    if (error instanceof AuthenticationError) {
+      return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
     }
-    return NextResponse.json(
-      { error: "Failed to get AI response.", details: errorMessage },
-      { status: 500 }
-    );
-  }
-}
+    if (error instanceof ZodError || error instanceof SyntaxError) {
+      return NextResponse.json({ error: "INVALID_AI_REQUEST" }, { status: 400 });
+    }
+    if (error instanceof AiRateLimitError) {
+      return NextResponse.json(
+        { error: "AI_RATE_LIMITED" },
+        {
+          status: 429,
+          headers: { "Retry-After": String(error.retryAfterSeconds) },
+        },
+      );
+    }
+    if (error instanceof AiConfigurationError) {
+      return NextResponse.json({ error: "AI_NOT_CONFIGURED" }, { status: 503 });
+    }
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      return NextResponse.json({ error: "AI_TIMEOUT" }, { status: 504 });
+    }
 
-// Optional: GET handler for testing or other purposes
-export async function GET() {
-  return NextResponse.json({ message: "AI Chat API is active. Use POST to send messages." });
+    console.error("AI chat request failed", error);
+    return NextResponse.json({ error: "AI_UNAVAILABLE" }, { status: 503 });
+  }
 }

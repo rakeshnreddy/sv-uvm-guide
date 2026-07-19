@@ -5,8 +5,19 @@ declare global {
   var prisma: PrismaClient | undefined;
 }
 
-export const prisma = globalThis.prisma ?? new PrismaClient();
+export function getPrisma(): PrismaClient {
+  if (!globalThis.prisma) {
+    globalThis.prisma = new PrismaClient();
+  }
 
-if (process.env.NODE_ENV !== 'production') {
-  globalThis.prisma = prisma;
+  return globalThis.prisma;
 }
+
+// Keep the existing import surface while delaying client construction until a
+// query is actually made. Next.js may evaluate this module during static builds.
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_target, property) {
+    const client = getPrisma();
+    return Reflect.get(client, property, client);
+  },
+});

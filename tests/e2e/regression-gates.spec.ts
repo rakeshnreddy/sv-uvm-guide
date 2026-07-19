@@ -1,7 +1,9 @@
 import { test, expect } from '@playwright/test';
+import { authenticateTestLearner } from '../fixtures/auth';
 
 test.describe('Curriculum Interaction Gates', () => {
   test.setTimeout(180000);
+  test.beforeEach(async ({ page }) => authenticateTestLearner(page));
 
   test('Interactive Elements: Flashcards and Quiz', async ({ page }) => {
     await page.goto('/curriculum/T3_Advanced/B-AXI-4_AXI_Expert_Features_Cache_Atomics');

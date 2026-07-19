@@ -45,7 +45,7 @@ describe('CodeReviewAssistant component', () => {
       '/api/reviews',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ commitId: 'abcdef1', comment: 'first comment' }),
+        body: JSON.stringify({ repository: 'local/sv-uvm-guide', commitSha: 'abcdef1', comment: 'first comment' }),
       }),
     );
 
@@ -56,7 +56,7 @@ describe('CodeReviewAssistant component', () => {
       '/api/reviews',
       expect.objectContaining({
         method: 'POST',
-        body: JSON.stringify({ commitId: 'abcdef1', approved: true }),
+        body: JSON.stringify({ repository: 'local/sv-uvm-guide', commitSha: 'abcdef1', approved: true }),
       }),
     );
     expect(approveButton).toHaveTextContent('Approved');
@@ -116,4 +116,3 @@ describe('CodeReviewAssistant component', () => {
     expect(within(list).getAllByRole('listitem')).toHaveLength(1);
   });
 });
-

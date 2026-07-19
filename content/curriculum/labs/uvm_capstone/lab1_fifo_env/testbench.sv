@@ -230,7 +230,7 @@ class fifo_scoreboard extends uvm_scoreboard;
 
   uvm_tlm_analysis_fifo #(fifo_txn) observed_fifo;
   bit [7:0] model_q[$];
-  int matches;
+  int match_count;
   int mismatches;
 
   function new(string name, uvm_component parent);
@@ -353,4 +353,3 @@ module tb_top;
     run_test("fifo_capstone_test");
   end
 endmodule
-

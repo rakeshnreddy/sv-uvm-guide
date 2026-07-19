@@ -53,7 +53,7 @@ vi.mock('@/lib/curriculum-status', () => ({
   buildCurriculumStatus: () => curriculumStatusMock,
 }));
 
-import DashboardPage from '@/app/dashboard/DashboardPageClient';
+import DashboardPage from '@/app/(learning)/dashboard/DashboardPageClient';
 
 describe('DashboardPageClient', () => {
   it('summarizes curriculum coverage and module progress', () => {

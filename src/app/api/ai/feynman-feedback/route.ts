@@ -1,40 +1,45 @@
-import { NextResponse } from 'next/server';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { validateAIInput } from '@/lib/ai-validation';
+import { NextResponse } from "next/server";
+import { z, ZodError } from "zod";
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+import { AuthenticationError, requireSession } from "@/lib/auth";
+import { aiTutor, AiConfigurationError } from "@/server/ai";
+import { AiRateLimitError, enforceAiRateLimit } from "@/server/ai/rate-limit";
+
+const requestSchema = z.object({
+  content: z.string().trim().min(20).max(8_000),
+}).strict();
 
 export async function POST(request: Request) {
-  const { content } = await request.json();
-
-  if (!process.env.GEMINI_API_KEY) {
-    return NextResponse.json({ error: 'Gemini API key not configured' }, { status: 500 });
-  }
-
   try {
-    const sanitizedContent = validateAIInput(content);
+    const session = await requireSession();
+    const { content } = requestSchema.parse(await request.json());
+    await enforceAiRateLimit(session.user.id);
 
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-pro',
-      systemInstruction: 'Provide feedback on the following explanation using the Feynman technique. Score it out of 100 and provide constructive feedback on how to improve it. Always return in the format: "Score: XX\n\nFeedback: ..."'
+    const result = await aiTutor.evaluateFeynmanExplanation(content, {
+      signal: AbortSignal.timeout(20_000),
     });
-
-    const promptParts = [`Explanation: "${sanitizedContent}"`];
-
-    const result = await model.generateContent(promptParts);
-    const response = await result.response;
-    const text = response.text();
-
-    // Assuming the AI returns a response in the format "Score: XX\n\nFeedback: ..."
-    const scoreMatch = text.match(/Score: (\d+)/);
-    const feedbackMatch = text.match(/Feedback: ([\s\S]*)/);
-
-    const score = scoreMatch ? parseInt(scoreMatch[1], 10) : 0;
-    const feedback = feedbackMatch ? feedbackMatch[1].trim() : "Could not parse feedback.";
-
-    return NextResponse.json({ score, feedback });
+    return NextResponse.json(result);
   } catch (error) {
-    console.error('Error calling Gemini API:', error);
-    return NextResponse.json({ error: 'Failed to get feedback from AI' }, { status: 500 });
+    if (error instanceof AuthenticationError) {
+      return NextResponse.json({ error: "UNAUTHORIZED" }, { status: 401 });
+    }
+    if (error instanceof ZodError || error instanceof SyntaxError) {
+      return NextResponse.json({ error: "INVALID_FEYNMAN_REQUEST" }, { status: 400 });
+    }
+    if (error instanceof AiRateLimitError) {
+      return NextResponse.json(
+        { error: "AI_RATE_LIMITED" },
+        { status: 429, headers: { "Retry-After": String(error.retryAfterSeconds) } },
+      );
+    }
+    if (error instanceof AiConfigurationError) {
+      return NextResponse.json({ error: "AI_NOT_CONFIGURED" }, { status: 503 });
+    }
+    if (error instanceof DOMException && error.name === "TimeoutError") {
+      return NextResponse.json({ error: "AI_TIMEOUT" }, { status: 504 });
+    }
+
+    console.error("Feynman evaluation failed", error);
+    return NextResponse.json({ error: "AI_UNAVAILABLE" }, { status: 503 });
   }
 }

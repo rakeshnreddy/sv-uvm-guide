@@ -32,7 +32,11 @@ describe('AIAssistantWidget page context', () => {
     const openButton = screen.getByRole('button', { name: /open ai assistant/i });
     await userEvent.click(openButton);
 
-    const textarea = await screen.findByPlaceholderText(/ask about systemverilog, uvm/i);
+    const textarea = await screen.findByRole(
+      'textbox',
+      { name: /message to ai tutor/i },
+      { timeout: 5_000 },
+    );
     await userEvent.type(textarea, 'Hello there');
 
     const sendButton = screen.getByRole('button', { name: /send message/i });
@@ -41,8 +45,8 @@ describe('AIAssistantWidget page context', () => {
     const fetchMock = fetch as unknown as Mock;
     expect(fetchMock).toHaveBeenCalled();
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
-    expect(body.context).toEqual({
-      pageTitle: 'Test Title',
+    expect(body.pageContext).toEqual({
+      title: 'Test Title',
       route: '/test-route',
       selectedText: 'selected text',
     });

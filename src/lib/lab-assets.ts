@@ -1,99 +1,68 @@
-import fs from 'node:fs';
-import path from 'node:path';
+import { promises as fs } from "node:fs";
+import path from "node:path";
 
-import { LabAsset, LabAssetRole, LabMetadata } from '@/types/lab';
+import type { LabManifest } from "@/lib/lab-manifest";
+import type { LabAsset, LabAssetSummary } from "@/types/lab";
 
-const labsRoot = path.join(process.cwd(), 'content', 'curriculum', 'labs');
+export interface LabAccess {
+  canRevealSolution: boolean;
+  userId: string;
+}
+
+const labsRoot = path.join(process.cwd(), "content", "curriculum", "labs");
 const maxAssetBytes = 256 * 1024;
+const maxLearnerWorkspaceBytes = 1024 * 1024;
 
-const extensionLanguage: Record<string, string> = {
-  '.c': 'c',
-  '.h': 'c',
-  '.json': 'json',
-  '.md': 'markdown',
-  '.mdx': 'markdown',
-  '.pss': 'pss',
-  '.sv': 'systemverilog',
-  '.svh': 'systemverilog',
-};
-
-const supportedExtensions = new Set([
-  '.c',
-  '.h',
-  '.json',
-  '.md',
-  '.mdx',
-  '.pss',
-  '.sv',
-  '.svh',
-]);
-
-function walkFiles(dir: string): string[] {
-  return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const nextPath = path.join(dir, entry.name);
-    if (entry.isDirectory()) {
-      return walkFiles(nextPath);
-    }
-    return entry.isFile() ? [nextPath] : [];
-  });
-}
-
-function classifyRole(relativePath: string): LabAssetRole {
-  const normalized = relativePath.split(path.sep).join('/');
-  const fileName = path.basename(normalized);
-
-  if (fileName === 'README.md') {
-    return 'guide';
-  }
-  if (fileName === 'lab.json') {
-    return 'metadata';
-  }
-  if (normalized.startsWith('starter/') || /(^|[._-])starter([._-]|$)/i.test(fileName)) {
-    return 'starter';
-  }
-  if (normalized.startsWith('solution/') || /(^|[._-])solution([._-]|$)/i.test(fileName)) {
-    return 'solution';
-  }
-  return 'reference';
-}
-
-function sortByLearnerFlow(a: LabAsset, b: LabAsset): number {
-  const roleOrder: Record<LabAssetRole, number> = {
-    guide: 0,
-    starter: 1,
-    reference: 2,
-    solution: 3,
-    metadata: 4,
-  };
-
-  return roleOrder[a.role] - roleOrder[b.role] || a.path.localeCompare(b.path);
-}
-
-export function getLabAssets(lab: LabMetadata): LabAsset[] {
+function resolveDeclaredAsset(lab: LabManifest, assetPath: string): string {
   const assetRoot = path.resolve(process.cwd(), lab.assetLocation);
   const relativeToLabsRoot = path.relative(labsRoot, assetRoot);
-
-  if (relativeToLabsRoot.startsWith('..') || path.isAbsolute(relativeToLabsRoot) || !fs.existsSync(assetRoot)) {
-    return [];
+  if (relativeToLabsRoot.startsWith("..") || path.isAbsolute(relativeToLabsRoot)) {
+    throw new Error("LAB_ASSET_ROOT_INVALID");
   }
 
-  return walkFiles(assetRoot)
-    .filter((filePath) => {
-      const extension = path.extname(filePath);
-      return supportedExtensions.has(extension) && fs.statSync(filePath).size <= maxAssetBytes;
-    })
-    .map((filePath) => {
-      const relativePath = path.relative(assetRoot, filePath);
-      const role = classifyRole(relativePath);
+  const resolved = path.resolve(assetRoot, assetPath);
+  if (!resolved.startsWith(`${assetRoot}${path.sep}`)) throw new Error("LAB_ASSET_PATH_INVALID");
+  return resolved;
+}
 
-      return {
-        path: relativePath.split(path.sep).join('/'),
-        fileName: path.basename(filePath),
-        role,
-        language: extensionLanguage[path.extname(filePath)] ?? 'plaintext',
-        content: fs.readFileSync(filePath, 'utf8'),
-        editable: role === 'starter',
-      };
-    })
-    .sort(sortByLearnerFlow);
+function canAccessRole(role: LabManifest["assets"][number]["role"], access: LabAccess): boolean {
+  return role !== "solution" || access.canRevealSolution;
+}
+
+export async function getLearnerLabAssets(
+  lab: LabManifest,
+  access: LabAccess,
+): Promise<LabAssetSummary[]> {
+  const visibleAssets = lab.assets.filter((asset) => canAccessRole(asset.role, access));
+  const sizes = await Promise.all(
+    visibleAssets.map(async (asset) => (await fs.stat(resolveDeclaredAsset(lab, asset.path))).size),
+  );
+  const totalBytes = sizes.reduce((total, size) => total + size, 0);
+  if (sizes.some((size) => size > maxAssetBytes) || totalBytes > maxLearnerWorkspaceBytes) {
+    throw new Error("LAB_ASSET_PAYLOAD_TOO_LARGE");
+  }
+
+  return visibleAssets.map((asset) => ({
+    ...asset,
+    fileName: path.basename(asset.path),
+  }));
+}
+
+export async function readLabAsset(
+  lab: LabManifest,
+  requestedPath: string,
+  access: LabAccess,
+): Promise<LabAsset | null> {
+  const asset = lab.assets.find((candidate) => candidate.path === requestedPath);
+  if (!asset || !canAccessRole(asset.role, access)) return null;
+
+  const resolved = resolveDeclaredAsset(lab, asset.path);
+  const stat = await fs.stat(resolved);
+  if (!stat.isFile() || stat.size > maxAssetBytes) throw new Error("LAB_ASSET_TOO_LARGE");
+
+  return {
+    ...asset,
+    fileName: path.basename(asset.path),
+    content: await fs.readFile(resolved, "utf8"),
+  };
 }

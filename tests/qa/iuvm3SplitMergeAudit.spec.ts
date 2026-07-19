@@ -33,7 +33,13 @@ const iuvm3aDir = path.join(
 
 const virtualSequencerLessonPath = path.join(iuvm3bDir, 'uvm-virtual-sequencer.mdx');
 
-const rendererPath = path.join(repoRoot, 'src', 'app', 'curriculum', '[...slug]', 'page.tsx');
+const componentRegistryPath = path.join(
+  repoRoot,
+  'src',
+  'components',
+  'mdx',
+  'lazy-mdx-interactives.ts',
+);
 
 function walkMdxFiles(dir: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
@@ -62,7 +68,7 @@ describe('I-UVM-3 split/merge audit', () => {
 
   it('wires VirtualSequencerExplorer in lesson content and renderer components map', () => {
     const lessonSource = fs.readFileSync(virtualSequencerLessonPath, 'utf8');
-    const rendererSource = fs.readFileSync(rendererPath, 'utf8');
+    const rendererSource = fs.readFileSync(componentRegistryPath, 'utf8');
 
     expect(lessonSource).toContain('<VirtualSequencerExplorer />');
     expect(rendererSource).toContain('VirtualSequencerExplorer');

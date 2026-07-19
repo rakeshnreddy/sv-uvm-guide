@@ -28,12 +28,20 @@ export interface CategoryScore {
 }
 
 export interface PlacementResults {
+  assessmentVersion: string;
+  scoringVersion: string;
+  answeredCount: number;
+  invalidResponseCount: number;
+  isComplete: boolean;
   totalQuestions: number;
   totalCorrect: number;
   categoryScores: Record<PlacementCategory, CategoryScore>;
   overallPercent: number;
   recommendedTier: PlacementTierRecommendation;
 }
+
+export const PLACEMENT_ASSESSMENT_VERSION = 'placement-v2';
+export const PLACEMENT_SCORING_VERSION = 'placement-scoring-v2';
 
 export interface PlacementTierRecommendation {
   tier: number;
@@ -156,15 +164,15 @@ export const placementQuestions: PlacementQuestion[] = [
   {
     id: 'debug-objections',
     prompt:
-      'The scoreboard raises an objection in `run_phase` but never drops it, leaving the test hanging. What is the correct lifecycle for objections in long-running components?',
+      'A passive scoreboard still has pending comparisons when the stimulus sequence finishes. Which ownership model keeps phase completion predictable?',
     category: 'debug',
     difficulty: 'intermediate',
-    rationale: 'Pair every `raise_objection` with a matching `drop_objection` once work completes, ideally in a `finally` block.',
+    rationale: 'The test or virtual sequence owns the objection. The scoreboard exposes pending work and coordinates through phase_ready_to_end, a completion event, or an agreed drain policy.',
     options: [
-      { id: 'paired', label: 'Wrap work in raise/drop objection pairs so completion always drops', isCorrect: true },
-      { id: 'global', label: 'Escalate to the global phase controller to clear objections', isCorrect: false },
-      { id: 'kill', label: 'Use `phase.kill()` on timeout', isCorrect: false },
-      { id: 'none', label: 'Avoid objections in scoreboards altogether', isCorrect: false },
+      { id: 'test_owned', label: 'Let the test or virtual sequence own the objection and wait on scoreboard completion state', isCorrect: true },
+      { id: 'scoreboard_owned', label: 'Give the passive scoreboard a permanent run-phase objection', isCorrect: false },
+      { id: 'global', label: 'Force-clear all objections when stimulus ends', isCorrect: false },
+      { id: 'fixed_delay', label: 'Add a fixed delay before dropping the test objection', isCorrect: false },
     ],
   },
   {
@@ -255,8 +263,25 @@ export const calculatePlacementResults = (
 
   let weightedCorrect = 0;
   let weightedTotal = 0;
+  let invalidResponseCount = 0;
+  const questionMap = new Map(questions.map((question) => [question.id, question]));
+  const answerMap = new Map<string, string>();
+  const duplicateQuestionIds = new Set<string>();
 
-  const answerMap = new Map(answers.map((answer) => [answer.questionId, answer.optionId]));
+  for (const answer of answers) {
+    const question = questionMap.get(answer.questionId);
+    if (!question || !question.options.some((option) => option.id === answer.optionId)) {
+      invalidResponseCount += 1;
+      continue;
+    }
+    if (answerMap.has(answer.questionId) || duplicateQuestionIds.has(answer.questionId)) {
+      invalidResponseCount += 1;
+      answerMap.delete(answer.questionId);
+      duplicateQuestionIds.add(answer.questionId);
+      continue;
+    }
+    answerMap.set(answer.questionId, answer.optionId);
+  }
 
   questions.forEach((question) => {
     const response = answerMap.get(question.id);
@@ -272,34 +297,41 @@ export const calculatePlacementResults = (
   });
 
   const overallPercent = weightedTotal > 0 ? weightedCorrect / weightedTotal : 0;
-
-  const recommendedTier = tierThresholds.find((tier) => overallPercent >= tierCutoff(tier.tier)) ?? tierThresholds[tierThresholds.length - 1];
+  const answeredCount = answerMap.size;
+  const categoryPercents = Object.fromEntries(
+    Object.entries(categoryScores).map(([category, score]) => [
+      category,
+      score.total > 0 ? score.correct / score.total : 0,
+    ]),
+  ) as Record<PlacementCategory, number>;
+  const tier4Eligible =
+    overallPercent >= 0.85 &&
+    categoryPercents.foundations >= 0.75 &&
+    categoryPercents.methodology >= 0.75 &&
+    categoryPercents.debug >= 0.75 &&
+    answeredCount >= 9;
+  const tier3Eligible =
+    overallPercent >= 0.65 &&
+    Object.values(categoryPercents).every((percent) => percent >= 0.5) &&
+    answeredCount >= 7;
+  const recommendedTierNumber = tier4Eligible ? 4 : tier3Eligible ? 3 : overallPercent >= 0.4 ? 2 : 1;
+  const recommendedTier = tierThresholds.find((tier) => tier.tier === recommendedTierNumber) ?? tierThresholds[tierThresholds.length - 1];
 
   return {
+    assessmentVersion: PLACEMENT_ASSESSMENT_VERSION,
+    scoringVersion: PLACEMENT_SCORING_VERSION,
+    answeredCount,
+    invalidResponseCount,
+    isComplete: answeredCount === questions.length && invalidResponseCount === 0,
     totalQuestions: questions.length,
-    totalCorrect: answers.reduce((acc, answer) => {
-      const question = questions.find((q) => q.id === answer.questionId);
-      if (!question) return acc;
-      const option = question.options.find((opt) => opt.id === answer.optionId);
-      return option?.isCorrect ? acc + 1 : acc;
+    totalCorrect: [...answerMap].reduce((total, [questionId, optionId]) => {
+      const question = questionMap.get(questionId);
+      return total + (question?.options.some((option) => option.id === optionId && option.isCorrect) ? 1 : 0);
     }, 0),
     categoryScores,
     overallPercent,
     recommendedTier,
   };
-};
-
-const tierCutoff = (tier: number) => {
-  switch (tier) {
-    case 4:
-      return 0.85;
-    case 3:
-      return 0.65;
-    case 2:
-      return 0.4;
-    default:
-      return 0;
-  }
 };
 
 export const placementCategoryFocus = categoryFocus;

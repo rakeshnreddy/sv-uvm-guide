@@ -1,168 +1,122 @@
-// solution.sv — Complete AXI Deadlock Checker Implementation
-// All 5 assertions are implemented and will fire when the buggy slave
-// creates an AWREADY → WVALID channel-dependency deadlock.
-
+// Complete protocol-correct AXI channel checker.
+// READY service bounds are optional environment policy, not base AXI rules.
 module axi_deadlock_checker #(
-  parameter int MAX_WAIT = 32
+  parameter int MAX_WAIT = 32,
+  parameter bit ENABLE_SERVICE_BOUNDS = 1'b0
 )(
   input logic ACLK,
   input logic ARESETn,
-
-  // AW Channel
-  input logic AWVALID,
-  input logic AWREADY,
-
-  // W Channel
-  input logic WVALID,
-  input logic WREADY,
-
-  // B Channel
-  input logic BVALID,
-  input logic BREADY,
-
-  // AR Channel
-  input logic ARVALID,
-  input logic ARREADY,
-
-  // R Channel
-  input logic RVALID,
-  input logic RREADY
+  input logic AWVALID, AWREADY,
+  input logic [3:0] AWID,
+  input logic [31:0] AWADDR,
+  input logic [7:0] AWLEN,
+  input logic WVALID, WREADY,
+  input logic [31:0] WDATA,
+  input logic [3:0] WSTRB,
+  input logic WLAST,
+  input logic BVALID, BREADY,
+  input logic [3:0] BID,
+  input logic [1:0] BRESP,
+  input logic ARVALID, ARREADY,
+  input logic [3:0] ARID,
+  input logic [31:0] ARADDR,
+  input logic [7:0] ARLEN,
+  input logic RVALID, RREADY,
+  input logic [3:0] RID,
+  input logic [31:0] RDATA,
+  input logic [1:0] RRESP,
+  input logic RLAST
 );
 
-  //==================================================================
-  // Assertion 1: No AW Channel Deadlock
-  //==================================================================
-  // When AWVALID is asserted, AWREADY must be asserted within MAX_WAIT
-  // cycles. If it never arrives, the slave has an illegal dependency.
-  //==================================================================
-  property p_aw_no_deadlock;
+  logic aw_complete;
+  logic final_w_complete;
+
+  always_ff @(posedge ACLK or negedge ARESETn) begin
+    if (!ARESETn) begin
+      aw_complete      <= 1'b0;
+      final_w_complete <= 1'b0;
+    end else begin
+      if (AWVALID && AWREADY) aw_complete <= 1'b1;
+      if (WVALID && WREADY && WLAST) final_w_complete <= 1'b1;
+      if (BVALID && BREADY) begin
+        aw_complete      <= 1'b0;
+        final_w_complete <= 1'b0;
+      end
+    end
+  end
+
+  property p_awvalid_stable;
     @(posedge ACLK) disable iff (!ARESETn)
-      AWVALID |-> ##[1:MAX_WAIT] AWREADY;
+      AWVALID && !AWREADY |=> AWVALID && $stable({AWID, AWADDR, AWLEN});
   endproperty
+  assert property (p_awvalid_stable)
+    else $error("AW VALID or payload changed while stalled");
 
-  assert property (p_aw_no_deadlock)
-    else $error("SVA FAIL: p_aw_no_deadlock — AWVALID has been high for %0d cycles without AWREADY", MAX_WAIT);
-
-
-  //==================================================================
-  // Assertion 2: No W Channel Deadlock
-  //==================================================================
-  // When WVALID is asserted, WREADY must be asserted within MAX_WAIT
-  // cycles. This catches stalls on the write data channel.
-  //==================================================================
-  property p_w_no_deadlock;
+  property p_wvalid_stable;
     @(posedge ACLK) disable iff (!ARESETn)
-      WVALID |-> ##[1:MAX_WAIT] WREADY;
+      WVALID && !WREADY |=> WVALID && $stable({WDATA, WSTRB, WLAST});
   endproperty
+  assert property (p_wvalid_stable)
+    else $error("W channel payload changed while stalled");
 
-  assert property (p_w_no_deadlock)
-    else $error("SVA FAIL: p_w_no_deadlock — WVALID has been high for %0d cycles without WREADY", MAX_WAIT);
-
-
-  //==================================================================
-  // Assertion 3: No AR Channel Deadlock
-  //==================================================================
-  // When ARVALID is asserted, ARREADY must be asserted within MAX_WAIT
-  // cycles. Catches the cascading stall where a stuck write FSM
-  // prevents the slave from accepting read addresses.
-  //==================================================================
-  property p_ar_no_deadlock;
+  property p_arvalid_stable;
     @(posedge ACLK) disable iff (!ARESETn)
-      ARVALID |-> ##[1:MAX_WAIT] ARREADY;
+      ARVALID && !ARREADY |=> ARVALID && $stable({ARID, ARADDR, ARLEN});
   endproperty
+  assert property (p_arvalid_stable)
+    else $error("AR VALID or payload changed while stalled");
 
-  assert property (p_ar_no_deadlock)
-    else $error("SVA FAIL: p_ar_no_deadlock — ARVALID has been high for %0d cycles without ARREADY", MAX_WAIT);
-
-
-  //==================================================================
-  // Assertion 4: VALID Stability
-  //==================================================================
-  // Once AWVALID is asserted, it must NOT be deasserted until AWREADY
-  // is also asserted. Dropping VALID without a handshake is illegal.
-  //==================================================================
-  property p_valid_stability;
+  property p_bvalid_stable;
     @(posedge ACLK) disable iff (!ARESETn)
-      (AWVALID && !AWREADY) |=> AWVALID;
+      BVALID && !BREADY |=> BVALID && $stable({BID, BRESP});
   endproperty
+  assert property (p_bvalid_stable)
+    else $error("B VALID or payload changed while stalled");
 
-  assert property (p_valid_stability)
-    else $error("SVA FAIL: p_valid_stability — AWVALID dropped without AWREADY handshake");
-
-
-  //==================================================================
-  // Assertion 5: No Cross-Channel Stall
-  //==================================================================
-  // AWREADY must not be conditioned on WVALID. This assertion checks
-  // that the slave can accept an address even without write data.
-  //==================================================================
-  property p_no_cross_channel_stall;
+  property p_rvalid_stable;
     @(posedge ACLK) disable iff (!ARESETn)
-      (AWVALID && !WVALID) |-> ##[1:MAX_WAIT] AWREADY;
+      RVALID && !RREADY |=> RVALID && $stable({RID, RDATA, RRESP, RLAST});
   endproperty
+  assert property (p_rvalid_stable)
+    else $error("R VALID or payload changed while stalled");
 
-  assert property (p_no_cross_channel_stall)
-    else $error("SVA FAIL: p_no_cross_channel_stall — AWREADY appears to depend on WVALID (illegal dependency)");
-
-
-  //==================================================================
-  // Additional Stability Assertions (bonus — for a robust VIP)
-  //==================================================================
-
-  // ARVALID stability
-  property p_arvalid_stability;
+  property p_bvalid_after_write_completion;
     @(posedge ACLK) disable iff (!ARESETn)
-      (ARVALID && !ARREADY) |=> ARVALID;
+      BVALID |-> aw_complete && final_w_complete;
   endproperty
-  assert property (p_arvalid_stability)
-    else $error("SVA FAIL: ARVALID dropped without ARREADY handshake");
+  assert property (p_bvalid_after_write_completion)
+    else $error("BVALID asserted before AW and final-W handshakes completed");
 
-  // WVALID stability
-  property p_wvalid_stability;
-    @(posedge ACLK) disable iff (!ARESETn)
-      (WVALID && !WREADY) |=> WVALID;
-  endproperty
-  assert property (p_wvalid_stability)
-    else $error("SVA FAIL: WVALID dropped without WREADY handshake");
+  // These bounded checks are an optional integration/QoS contract. AXI itself
+  // permits unbounded backpressure and does not require READY within MAX_WAIT.
+  generate
+    if (ENABLE_SERVICE_BOUNDS) begin : g_service_bounds
+      property p_aw_service_bound;
+        @(posedge ACLK) disable iff (!ARESETn)
+          AWVALID |-> ##[0:MAX_WAIT] AWREADY;
+      endproperty
+      assert property (p_aw_service_bound)
+        else $error("AW channel exceeded configured service bound");
 
-  // BVALID stability
-  property p_bvalid_stability;
-    @(posedge ACLK) disable iff (!ARESETn)
-      (BVALID && !BREADY) |=> BVALID;
-  endproperty
-  assert property (p_bvalid_stability)
-    else $error("SVA FAIL: BVALID dropped without BREADY handshake");
+      property p_w_service_bound;
+        @(posedge ACLK) disable iff (!ARESETn)
+          WVALID |-> ##[0:MAX_WAIT] WREADY;
+      endproperty
+      assert property (p_w_service_bound)
+        else $error("W channel exceeded configured service bound");
 
-  // RVALID stability
-  property p_rvalid_stability;
-    @(posedge ACLK) disable iff (!ARESETn)
-      (RVALID && !RREADY) |=> RVALID;
-  endproperty
-  assert property (p_rvalid_stability)
-    else $error("SVA FAIL: RVALID dropped without RREADY handshake");
+      property p_ar_service_bound;
+        @(posedge ACLK) disable iff (!ARESETn)
+          ARVALID |-> ##[0:MAX_WAIT] ARREADY;
+      endproperty
+      assert property (p_ar_service_bound)
+        else $error("AR channel exceeded configured service bound");
+    end
+  endgenerate
 
-
-  //==================================================================
-  // Cover Properties — verify positive scenarios
-  //==================================================================
-  cover property (@(posedge ACLK) disable iff (!ARESETn)
-    AWVALID && AWREADY)
-    $info("COVER: Successful AW handshake observed");
-
-  cover property (@(posedge ACLK) disable iff (!ARESETn)
-    ARVALID && ARREADY)
-    $info("COVER: Successful AR handshake observed");
-
-  cover property (@(posedge ACLK) disable iff (!ARESETn)
-    WVALID && WREADY && WLAST)
-    $info("COVER: Successful W last-beat handshake observed");
-
-  cover property (@(posedge ACLK) disable iff (!ARESETn)
-    BVALID && BREADY)
-    $info("COVER: Successful B response handshake observed");
-
-  cover property (@(posedge ACLK) disable iff (!ARESETn)
-    RVALID && RREADY && RLAST)
-    $info("COVER: Successful R last-beat handshake observed");
-
+  cover property (@(posedge ACLK) disable iff (!ARESETn) AWVALID && AWREADY);
+  cover property (@(posedge ACLK) disable iff (!ARESETn) WVALID && WREADY && WLAST);
+  cover property (@(posedge ACLK) disable iff (!ARESETn) BVALID && BREADY);
+  cover property (@(posedge ACLK) disable iff (!ARESETn) ARVALID && ARREADY);
+  cover property (@(posedge ACLK) disable iff (!ARESETn) RVALID && RREADY && RLAST);
 endmodule
