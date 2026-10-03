@@ -165,19 +165,19 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
                 <dl className="mt-4 space-y-3 text-sm text-muted-foreground">
                   {tierEntry?.title && (
                     <div className="flex items-center justify-between gap-3">
-                      <dt className="text-foreground/70">Tier</dt>
+                      <dt className="text-muted-foreground">Tier</dt>
                       <dd className="font-medium text-foreground">{tierEntry.title}</dd>
                     </div>
                   )}
                   {sectionEntry?.title && (
                     <div className="flex items-center justify-between gap-3">
-                      <dt className="text-foreground/70">Module</dt>
+                      <dt className="text-muted-foreground">Module</dt>
                       <dd className="font-medium text-foreground">{sectionEntry.title}</dd>
                     </div>
                   )}
                   {readingMinutes > 0 && (
                     <div className="flex items-center justify-between gap-3">
-                      <dt className="flex items-center gap-2 text-foreground/70">
+                      <dt className="flex items-center gap-2 text-muted-foreground">
                         <Clock className="h-4 w-4" /> Read time
                       </dt>
                       <dd className="font-medium text-foreground">{readingMinutes} min</dd>
@@ -185,7 +185,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
                   )}
                   {lessonPosition && siblingTopics.length > 0 && (
                     <div className="flex items-center justify-between gap-3">
-                      <dt className="flex items-center gap-2 text-foreground/70">
+                      <dt className="flex items-center gap-2 text-muted-foreground">
                         <BookOpen className="h-4 w-4" /> Lesson
                       </dt>
                       <dd className="font-medium text-foreground">

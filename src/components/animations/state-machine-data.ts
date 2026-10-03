@@ -8,6 +8,8 @@ export interface State {
 export interface Transition {
   source: string;
   target: string;
+  /** Input bit that enables this edge (`in == 0` or `in == 1`). Omitted: unconditional. */
+  input?: 0 | 1;
 }
 
 export interface StateMachineExample {
@@ -44,6 +46,9 @@ export const stateMachineData: StateMachineExample[] = [
     ],
   },
   {
+    // Moore detector for the serial pattern 1-0-1, overlapping: each state
+    // records the longest suffix of the input seen so far that is a prefix of
+    // "101". FOUND (output 1) means the last three bits were 1, 0, 1.
     name: 'Sequence Detector',
     states: [
       { id: 'q0', name: 'IDLE', x: 100, y: 100 },
@@ -52,10 +57,14 @@ export const stateMachineData: StateMachineExample[] = [
       { id: 'q3', name: 'FOUND', x: 100, y: 300 },
     ],
     transitions: [
-      { source: 'q0', target: 'q1' },
-      { source: 'q1', target: 'q2' },
-      { source: 'q2', target: 'q3' },
-      { source: 'q3', target: 'q0' },
+      { source: 'q0', target: 'q1', input: 1 }, // "1"
+      { source: 'q0', target: 'q0', input: 0 }, // no prefix
+      { source: 'q1', target: 'q2', input: 0 }, // "10"
+      { source: 'q1', target: 'q1', input: 1 }, // "11": the last 1 may start a match
+      { source: 'q2', target: 'q3', input: 1 }, // "101": detected
+      { source: 'q2', target: 'q0', input: 0 }, // "100": no prefix left
+      { source: 'q3', target: 'q2', input: 0 }, // "1010": overlapping, "10" again
+      { source: 'q3', target: 'q1', input: 1 }, // "1011": the last 1 starts a match
     ],
   },
 ];

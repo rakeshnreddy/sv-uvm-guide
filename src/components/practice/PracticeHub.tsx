@@ -30,7 +30,7 @@ const practiceItems: PracticeItem[] = [
   {
     href: '/exercises/scoreboard-connector',
     title: 'Scoreboard Connector',
-    description: 'Visually connect monitor analysis ports to scoreboards.',
+    description: 'Wire a monitor, predictor, scoreboard FIFOs and coverage in an env\'s connect_phase, graded by uvm-core\'s connection rules.',
     status: 'completed',
     type: 'Exercise',
   },
@@ -125,7 +125,7 @@ const practiceItems: PracticeItem[] = [
   {
     href: '/practice/waveform-studio',
     title: 'Waveform Studio',
-    description: 'A tool for viewing and analyzing waveform diagrams.',
+    description: 'Edit AXI and AHB timing diagrams and get AXI handshake violations, with spec clauses, as you type. Includes two debug samples.',
     status: 'completed',
     type: 'Tool',
   }

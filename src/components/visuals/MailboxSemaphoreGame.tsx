@@ -60,7 +60,7 @@ function Transcript({ entries, empty }: { entries: TranscriptEntry[]; empty: str
       <div className="max-h-64 overflow-y-auto rounded-lg border border-border/70 bg-slate-950/90 p-3 font-mono text-xs [font-variant-ligatures:none]">
         <p className="mb-1 font-sans text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">SystemVerilog call log</p>
         {entries.length === 0 ? (
-          <p className="text-slate-500">{empty}</p>
+          <p className="text-slate-400">{empty}</p>
         ) : (
           <ol className="space-y-1">
             {entries.map((e) => (

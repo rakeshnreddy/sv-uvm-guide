@@ -116,7 +116,7 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
             data-testid="uvm-node-detail"
           >
             <div>
-              <span className="text-xs font-semibold uppercase tracking-wide text-primary/70">
+              <span className="text-xs font-semibold uppercase tracking-wide text-primary">
                 {activeNode.stage ?? 'Layer'}
               </span>
               <h3 className="mt-1 text-2xl font-semibold text-foreground">

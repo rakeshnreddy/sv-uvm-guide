@@ -13,6 +13,38 @@
 - reduced motion;
 - no overflow at 390 px.
 
+## Status (2026-10-03, end of wave 3)
+
+Waves 0–3 are implemented and committed on `visual-curriculum-rebuild`. Wave 4 (leftovers, full sweep, trackers) is in progress.
+
+| Measure | Result |
+|---|---|
+| Pure models in `src/lib/*-model.ts` | 44, each with a semantic test file (about 1,070 model tests citing IEEE 1800-2023, IEEE 1800.2-2020 / uvm-core 2020.3.1, Arm IHI0022E or IHI0033B.b) |
+| Lesson components backed by a model | 71 of the 86 registered components embedded in lessons (the rest are illustrations, code explainers, quizzes or navigation) |
+| Components with a prediction gate | 65 |
+| Components with a hinted debug challenge (`HintLadder`) | 17, plus debug presets in the AXI, AHB, power and formal visuals |
+| Removed from the registry and deleted | 22 orphan or decorative components (6 decorative 3D views, 5 UVM placeholders, superseded simulators), plus their dead data files |
+
+**Workstreams.**
+- **A (SV foundations):** done. F1A/F1B/F1C, F2A–F2D, F3C, F4B/F4C visuals rebuilt on models: four-state, expressions, enum/string, arrays, processes, clocking and interfaces.
+- **B (T2 SV):** done. OOP handles and dispatch, constraints (exact enumeration), coverage, SVA trace evaluator, elaboration/bind, DPI.
+- **C (UVM core):** done. Factory, config_db, phasing, sequencer/driver handshake, arbitration, TLM/analysis, agents, policies, containers, recording, reporting and hang debug.
+- **D (advanced UVM):** done.
+  - RAL: map and predictor.
+  - Callbacks, scoreboards, multi-agent coordination and VIP reuse.
+- **E (AMBA):** done. AXI burst math, channel handshakes, ID ordering, exclusive access and bridge translation; AHB pipeline. B-AXI-1 waveforms are generated from the channel model.
+- **F (expert):** done. Formal vs simulation, power sequencing, PSS and the FSM designer.
+
+**Wave 4 (in progress):**
+- F3B scheduler region visual, EventRegionGame, InterfaceSignalFlow, DataTypeComparisonChart, HallOfShameCarousel;
+- AMBA family/analogy explorers and the deadlock wrapper;
+- AMBA and expert content and lab corrections;
+- the full Playwright sweep.
+
+**Known limits** (not fixed in this pass):
+- No simulator runs in CI, so lab SystemVerilog is still reviewed by reading it, not compiled (see the improvement plan, LAB-M1).
+- Models are teaching models: each states its assumptions in its `VisualFrame`. They are not cycle-accurate simulators.
+
 ## Decision rules
 
 1. **Fix in place** when the component's interaction idea is sound but its rules are wrong. The file path and export stay the same, so lessons keep working.

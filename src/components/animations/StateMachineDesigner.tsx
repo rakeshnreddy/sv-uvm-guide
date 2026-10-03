@@ -121,7 +121,7 @@ const StateMachineDesigner = () => {
   const stateCounter = useRef(states.length + 1);
 
   // Coverage restarts whenever the graph changes (not when a state is merely dragged).
-  const structureKey = `${states.map((s) => s.id).join(',')}|${transitions.map((t) => `${t.source}>${t.target}`).join(',')}|${seed}`;
+  const structureKey = `${states.map((s) => s.id).join(',')}|${transitions.map((t) => `${t.source}>${t.target}:${t.input ?? '*'}`).join(',')}|${seed}`;
   const [walkKey, setWalkKey] = useState(structureKey);
   if (walkKey !== structureKey) {
     setWalkKey(structureKey);
@@ -132,6 +132,8 @@ const StateMachineDesigner = () => {
   const width = encodingWidth(states.length, encoding);
   const nameOf = (id: string) => states.find((s) => s.id === id)?.name ?? id;
   const stateById = (id: string) => states.find((s) => s.id === id);
+  const conditionOf = (t: Transition) => (t.input === undefined ? '' : `in=${t.input}`);
+  const hasConditions = transitions.some((t) => t.input !== undefined);
 
   useEffect(() => {
     verificationHooks.forEach((h) => h(states, transitions, walk.current));
@@ -207,9 +209,19 @@ const StateMachineDesigner = () => {
     if (!a || !b) return null;
     const visited = walk.visitedTransitions.includes(i);
     const cls = visited ? 'stroke-cyan-500' : 'stroke-primary';
+    const label = conditionOf(t);
     if (t.source === t.target) {
       const d = `M${a.x + 30},${a.y} C${a.x + 18},${a.y - 42} ${a.x + 78},${a.y - 42} ${a.x + 66},${a.y}`;
-      return <path key={i} d={d} fill="none" className={cls} strokeWidth={2} markerEnd={`url(#${markerId})`} />;
+      return (
+        <g key={i}>
+          <path d={d} fill="none" className={cls} strokeWidth={2} markerEnd={`url(#${markerId})`} />
+          {label ? (
+            <text x={a.x + 48} y={a.y - 36} textAnchor="middle" className="fill-foreground font-mono text-[10px] [font-variant-ligatures:none]">
+              {label}
+            </text>
+          ) : null}
+        </g>
+      );
     }
     const e = edgeBetween(a, b, BOX);
     // Offset a pair of opposite transitions so both arrows stay readable.
@@ -218,7 +230,20 @@ const StateMachineDesigner = () => {
     const ox = reverse ? (-(e.y2 - e.y1) / len) * 6 : 0;
     const oy = reverse ? ((e.x2 - e.x1) / len) * 6 : 0;
     return (
-      <line key={i} x1={e.x1 + ox} y1={e.y1 + oy} x2={e.x2 + ox} y2={e.y2 + oy} className={cls} strokeWidth={visited ? 3 : 2} markerEnd={`url(#${markerId})`} />
+      <g key={i}>
+        <line x1={e.x1 + ox} y1={e.y1 + oy} x2={e.x2 + ox} y2={e.y2 + oy} className={cls} strokeWidth={visited ? 3 : 2} markerEnd={`url(#${markerId})`} />
+        {label ? (
+          <text
+            x={(e.x1 + e.x2) / 2 + ox * 2.5}
+            y={(e.y1 + e.y2) / 2 + oy * 2.5}
+            textAnchor="middle"
+            dominantBaseline="middle"
+            className="fill-foreground font-mono text-[10px] [font-variant-ligatures:none]"
+          >
+            {label}
+          </text>
+        ) : null}
+      </g>
     );
   });
 
@@ -343,6 +368,7 @@ const StateMachineDesigner = () => {
                     <li key={`${t.source}-${t.target}`} className="flex items-center gap-2 text-sm">
                       <span>
                         {nameOf(t.source)} → {nameOf(t.target)}
+                        {t.input !== undefined ? ` when in=${t.input}` : ''}
                         {walk.visitedTransitions.includes(i) ? ' (taken)' : ''}
                       </span>
                       <Button variant="destructive" size="sm" onClick={() => removeTransition(i)} aria-label={`Remove transition ${nameOf(t.source)} to ${nameOf(t.target)}`}>
@@ -364,8 +390,15 @@ const StateMachineDesigner = () => {
               <p>
                 Transitions: {walk.visitedTransitions.length}/{transitions.length}
               </p>
+              {hasConditions ? (
+                <p data-testid="fsm-input">
+                  {walk.lastInput === undefined ? 'Input: none applied yet.' : `Input on the last clock: in=${walk.lastInput}.`}
+                </p>
+              ) : null}
               <p className="text-muted-foreground">
-                Transitions here have no input conditions, so when a state has several, a seeded generator picks one; the same seed replays the same walk.
+                {hasConditions
+                  ? 'Each clock applies a seeded random input bit and takes the edge labelled with it; the same seed replays the same input stream.'
+                  : 'These transitions have no input conditions, so when a state has several, a seeded generator picks one; the same seed replays the same walk.'}
               </p>
             </div>
 
@@ -393,7 +426,7 @@ const StateMachineDesigner = () => {
                 <svg
                   className="absolute left-0 top-0 h-full w-full"
                   role="img"
-                  aria-label={`State transitions: ${transitions.map((t) => `${nameOf(t.source)} to ${nameOf(t.target)}`).join(', ') || 'none'}`}
+                  aria-label={`State transitions: ${transitions.map((t) => `${nameOf(t.source)} to ${nameOf(t.target)}${t.input !== undefined ? ` when in=${t.input}` : ''}`).join(', ') || 'none'}`}
                 >
                   <defs>
                     <marker id={markerId} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">

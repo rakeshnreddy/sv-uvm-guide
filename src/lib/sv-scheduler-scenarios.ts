@@ -165,3 +165,163 @@ export function getScenarioPreset(id: SchedulerScenarioId): ScenarioPreset {
   if (!preset) throw new Error(`Unknown scheduler scenario: ${id}`);
   return preset;
 }
+
+// ---------------------------------------------------------------------------
+// Region-map scenarios (F3B "where does each event land?"). Appended; the
+// presets above are unchanged. Each scenario isolates one rule of the region
+// loop in IEEE 1800-2023 §4.4–§4.5.
+// ---------------------------------------------------------------------------
+
+export type RegionMapScenarioId = "comb-after-nba" | "zero-delay-prints" | "program-reactive";
+
+/**
+ * A flop feeds a continuous assignment, which feeds an always_comb.
+ * The NBA update of q wakes `assign y = q` (§4.9.1: an active update event),
+ * so the scheduler returns from NBA to Active in the same time slot (§4.5).
+ */
+export const combAfterNbaScenario = (): SvScenario => ({
+  id: "comb-after-nba",
+  title: "A flop feeds a continuous assignment and an always_comb",
+  clock: "clk",
+  initial: { clk: 0, d: 1, q: 0, y: 0, z: 0 },
+  watch: ["clk", "d", "q", "y", "z"],
+  processes: [
+    {
+      id: "FF",
+      label: "always_ff",
+      owner: "design",
+      context: "module",
+      header: "always_ff @(posedge clk)",
+      trigger: { kind: "posedge", signal: "clk" },
+      body: [{ kind: "assign", id: "ff1", op: "nba", target: "q", expr: { kind: "var", name: "d" } }],
+    },
+    {
+      id: "CA",
+      label: "assign y",
+      owner: "design",
+      context: "module",
+      header: "assign",
+      trigger: { kind: "change", signals: ["q"] },
+      body: [{ kind: "assign", id: "ca1", op: "blocking", target: "y", expr: { kind: "var", name: "q" } }],
+    },
+    {
+      id: "COMB",
+      label: "always_comb",
+      owner: "design",
+      context: "module",
+      header: "always_comb",
+      trigger: { kind: "change", signals: ["y"] },
+      body: [{ kind: "assign", id: "cb1", op: "blocking", target: "z", expr: { kind: "var", name: "y" } }],
+    },
+  ],
+});
+
+/**
+ * One process prints q three ways after scheduling `q <= d`:
+ * $display before #0 (Active), $display after #0 (Inactive, which still
+ * precedes NBA, §4.4.2.3–§4.4.2.4) and $strobe (Postponed, §4.4.2.9, §21.2.2).
+ */
+export const zeroDelayPrintsScenario = (): SvScenario => ({
+  id: "zero-delay-prints",
+  title: "$display, #0 and $strobe after a nonblocking assignment",
+  clock: "clk",
+  initial: { clk: 0, d: 5, q: 0 },
+  watch: ["clk", "d", "q"],
+  processes: [
+    {
+      id: "P",
+      label: "Flop + prints",
+      owner: "design",
+      context: "module",
+      header: "always @(posedge clk)",
+      trigger: { kind: "posedge", signal: "clk" },
+      body: [
+        { kind: "assign", id: "zp1", op: "nba", target: "q", expr: { kind: "var", name: "d" } },
+        { kind: "display", id: "zp2", signals: ["q"] },
+        { kind: "delay0", id: "zp3" },
+        { kind: "display", id: "zp4", signals: ["q"] },
+        { kind: "strobe", id: "zp5", signals: ["q"] },
+      ],
+    },
+  ],
+});
+
+/**
+ * A design flop, a design continuous assignment, and a program-block process
+ * woken by the same edge. Program code runs in Reactive (§24.3.1), after the
+ * design's NBA updates; its `<=` lands in Re-NBA (§4.4.2.8, §24.3.1); the
+ * resulting design event sends the scheduler back to Active (§4.5).
+ */
+export const programReactiveScenario = (): SvScenario => ({
+  id: "program-reactive",
+  title: "A program block reacts to the same clock edge",
+  clock: "clk",
+  initial: { clk: 0, d: 1, q: 0, seen: "X", cmd: 0, led: 0 },
+  watch: ["clk", "q", "seen", "cmd", "led"],
+  processes: [
+    {
+      id: "FF",
+      label: "DUT flop",
+      owner: "design",
+      context: "module",
+      header: "always_ff @(posedge clk)",
+      trigger: { kind: "posedge", signal: "clk" },
+      body: [{ kind: "assign", id: "pr1", op: "nba", target: "q", expr: { kind: "var", name: "d" } }],
+    },
+    {
+      id: "LED",
+      label: "assign led",
+      owner: "design",
+      context: "module",
+      header: "assign",
+      trigger: { kind: "change", signals: ["cmd"] },
+      body: [{ kind: "assign", id: "pr2", op: "blocking", target: "led", expr: { kind: "var", name: "cmd" } }],
+    },
+    {
+      id: "TB",
+      label: "program thread",
+      owner: "testbench",
+      context: "program",
+      header: "initial forever @(posedge clk)",
+      trigger: { kind: "posedge", signal: "clk" },
+      body: [
+        { kind: "assign", id: "pr3", op: "blocking", target: "seen", expr: { kind: "var", name: "q" } },
+        { kind: "assign", id: "pr4", op: "nba", target: "cmd", expr: { kind: "const", value: 1 } },
+      ],
+    },
+  ],
+});
+
+export interface RegionMapPreset {
+  id: RegionMapScenarioId;
+  label: string;
+  summary: string;
+  build: () => SvScenario;
+}
+
+export const regionMapScenarioPresets: RegionMapPreset[] = [
+  {
+    id: "comb-after-nba",
+    label: "NBA → combinational",
+    summary: "q changes in NBA, and the logic that reads q runs again in Active: a second pass of the same time slot.",
+    build: combAfterNbaScenario,
+  },
+  {
+    id: "zero-delay-prints",
+    label: "$display · #0 · $strobe",
+    summary: "Three prints of q after q <= d: before #0, after #0, and with $strobe.",
+    build: zeroDelayPrintsScenario,
+  },
+  {
+    id: "program-reactive",
+    label: "program block",
+    summary: "A program thread wakes on the same edge as the design flop, reads q, and drives cmd.",
+    build: programReactiveScenario,
+  },
+];
+
+export function getRegionMapPreset(id: RegionMapScenarioId): RegionMapPreset {
+  const preset = regionMapScenarioPresets.find((p) => p.id === id);
+  if (!preset) throw new Error(`Unknown region-map scenario: ${id}`);
+  return preset;
+}

@@ -334,7 +334,8 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   const effectiveTheme = mounted ? ((theme === 'system' ? resolvedTheme : theme) ?? 'dark') : 'dark';
-  const isDarkMode = effectiveTheme === 'dark';
+  // Site themes are named like "default-dark"; "system" resolves to "dark"/"light".
+  const isDarkMode = effectiveTheme === 'dark' || effectiveTheme.endsWith('-dark');
   const editorRef = useRef<MonacoEditorInstance | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const decorationsRef = useRef<string[]>([]);
@@ -557,7 +558,7 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
               broadcastEdit(socketRef.current, edit);
             }
           }}
-          theme={theme === 'dark' ? 'vs-dark' : 'light'}
+          theme={isDarkMode ? 'vs-dark' : 'light'}
           options={{
             readOnly: !isEditable,
             domReadOnly: !isEditable,
@@ -567,6 +568,8 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
             wordWrap: 'on',
             automaticLayout: true,
             glyphMargin: true,
+            // Bracket-pair colours mis-pair begin/end/task keywords and fail contrast.
+            bracketPairColorization: { enabled: false },
           }}
         />
       </div>

@@ -87,8 +87,21 @@ Bridge Internal → AXI Master Interface
   7. Bridge waits for BVALID on the B channel
 
 Bridge → AHB Master
-  8. Bridge maps BRESP to HRESP and returns to the AHB master
+  8. Non-posted: the bridge has held HREADYOUT low on the last AHB data phase;
+     it now completes that phase with OKAY, or with the two-cycle ERROR if
+     BRESP is SLVERR or DECERR.
+     Posted: the AHB beats all completed with OKAY in steps 2-4, so a BRESP
+     error must be reported another way (interrupt, error register).
 ```
+
+AHB completes each data phase as soon as the bridge takes the data, but AXI returns one write response for the whole burst after the last W transfer (IHI0022E A3.4.4). Step 8 is therefore a design choice, not a protocol rule:
+
+| Write policy | When the AHB master sees the last beat complete | What happens to a SLVERR/DECERR in BRESP |
+|---|---|---|
+| **Non-posted** | Only after BRESP: the bridge holds `HREADYOUT` low on the last data phase for the whole AXI round trip | Reported on that last beat as a two-cycle ERROR (IHI0033B.b 5.1.3). The earlier beats already completed with OKAY. |
+| **Posted** | As soon as the bridge buffers the data | Cannot be reported on the bus. The bridge must log it (interrupt, error status register) or the error is lost. |
+
+Posting gives lower latency and frees the AHB bus sooner; non-posting keeps errors visible to the master that caused them. Many bridges post only writes marked Bufferable (`HPROT[2]`, IHI0033B.b 3.7), which maps to `AWCACHE[0]`, and keep the rest non-posted: for AXI Device Non-bufferable memory the write response must come from the final destination (IHI0022E A4.4.1). Whichever policy a bridge uses, document it, and make the scoreboard check that policy, because both are legal.
 
 ---
 
@@ -154,33 +167,38 @@ Width conversion is where WRAP gets hard. Downsizing an AHB WRAP16 of doubleword
 | AXI Response | AHB Response | Bridge Action |
 |-------------|-------------|---------------|
 | `OKAY (2'b00)` | `OKAY` | Pass through |
-| `EXOKAY (2'b01)` | `OKAY` | Map to OKAY (AHB has no exclusive) |
-| `SLVERR (2'b10)` | `ERROR` | Terminate remaining beats with ERROR |
-| `DECERR (2'b11)` | `ERROR` | Terminate remaining beats with ERROR |
+| `EXOKAY (2'b01)` | `OKAY` | AHB-Lite has no exclusive response. An AHB5 bridge with the Exclusive_Transfers property reports it on `HEXOKAY` (IHI0033B.b chapter 8). |
+| `SLVERR (2'b10)` | `ERROR` | Two-cycle ERROR on the AHB data phase it belongs to: the failing read beat, or the last beat of a non-posted write |
+| `DECERR (2'b11)` | `ERROR` | Same as SLVERR |
 
 ### The Error Termination Problem
 
-When an AXI slave returns `SLVERR` on beat 3 of an 8-beat burst, the bridge must:
+AXI reads and writes report errors differently (IHI0022E A3.4.4):
 
-1. Continue accepting the remaining 5 AXI data beats (AXI requires all beats to complete).
-2. Return `HRESP = ERROR` for beat 3 to the AHB master.
-3. Decide whether to return ERROR for beats 4-8 as well, or attempt to continue.
+- **Reads** carry a response on every R beat, so `SLVERR` on beat 3 of an 8-beat read is possible. The AXI slave still sends all 8 beats; the burst is not cut short.
+- **Writes** get a single `BRESP` for the whole burst, after the last W transfer. There is no "error on beat 3" of an AXI write. When the AHB master sees the error depends on the posted or non-posted policy above.
 
-Most bridges follow the **conservative approach**: once an error is received, all remaining beats for that burst return ERROR to the AHB master.
+For the read case, the bridge must:
+
+1. Accept all 8 R beats from AXI, whatever the AHB side does.
+2. Give the AHB data phase of beat 3 a **two-cycle** ERROR: `HRESP` high with `HREADYOUT` low, then both high (IHI0033B.b 5.1.3). A one-cycle ERROR is a protocol violation, and the master would see it too late to cancel the next transfer.
+3. Then follow the AHB master: it may cancel the rest of the burst by driving IDLE, or continue (IHI0033B.b 3.5.2). If it continues, the bridge returns each later beat with that beat's own RRESP. If it cancels, the bridge discards the R beats nobody asked for.
 
 ```systemverilog
-// Bridge response handling
-always_ff @(posedge ACLK) begin
-  if (axi_rresp == 2'b10 || axi_rresp == 2'b11) begin
-    error_flag <= 1;  // Latch the error
-  end
-  
-  // Map to AHB response
-  if (error_flag)
-    ahb_hresp <= 1'b1;  // ERROR
-  else
-    ahb_hresp <= 1'b0;  // OKAY
-end
+// Read path of an AHB-to-AXI bridge (sketch).
+//   data_phase : an accepted AHB read is in its data phase
+//   rd_avail   : the R beat for that data phase is in the read buffer
+//   rd_err     : its RRESP is SLVERR or DECERR (RRESP[1] == 1)
+// The buffer pops the beat at the edge where HREADY is high.
+logic err2;  // high in the second ERROR cycle
+always_ff @(posedge HCLK or negedge HRESETn)
+  if (!HRESETn) err2 <= 1'b0;
+  else          err2 <= !err2 && data_phase && rd_avail && rd_err;
+
+// ERROR: first cycle HRESP=1 with HREADYOUT=0, second cycle both high.
+assign HRESP     = err2 || (data_phase && rd_avail && rd_err);
+// HREADYOUT is low while the beat is not there yet (with OKAY) and in the first ERROR cycle.
+assign HREADYOUT = !data_phase || err2 || (rd_avail && !rd_err);
 ```
 
 ---
@@ -195,15 +213,17 @@ If both the AHB and AXI domains share the same clock, the bridge is purely combi
 
 When the AHB domain runs at a different clock frequency than the AXI domain, the bridge must include **Clock Domain Crossing (CDC)** structures:
 
-1. **Async FIFOs** — For buffering address and data across clock domains.
-2. **Gray-code pointers** — For safe pointer transfer across the CDC boundary.
-3. **Synchronizers** — Two-flop synchronizers on control signals (VALID/READY handshakes).
+1. **Async FIFOs** — For carrying address, data and responses across clock domains. The payload is written into the FIFO memory in one domain and read in the other.
+2. **Gray-code pointers** — Only the FIFO pointers cross the boundary, through two-flop synchronizers. Gray code changes one bit per step, so a pointer sampled mid-change is either the old or the new value.
+3. **Handshake synchronizers** — For low-rate control, a req/ack (four-phase or toggle) handshake: only the req and ack levels are synchronized, and the payload register stays stable from req until ack returns.
 4. **Reset synchronization** — Both domains may have independent resets that must be properly sequenced.
+
+Do **not** pass `VALID`, `READY`, or the payload bits through separate two-flop synchronizers. Each bit resolves independently and may land a cycle apart, so the other domain can see `VALID` with half-updated data. A one-cycle `VALID` pulse from a faster clock can also be missed completely, and a synchronized `READY` arrives late, so the sender may treat one transfer as two. Carry the whole transfer as one unit, through an async FIFO or a full handshake synchronizer.
 
 ### CDC Verification
 
 CDC bugs are the most insidious bridge failures. They manifest as:
-- **Data corruption** — A metastable flop resolves to the wrong value.
+- **Data corruption** — Bits of a multi-bit value are sampled while they change, so the receiving domain sees a mix of old and new bits.
 - **Lost transactions** — A VALID pulse is too short and missed by the receiving domain.
 - **Deadlocks** — A READY signal from the other domain is never sampled.
 
@@ -358,14 +378,14 @@ A comprehensive bridge verification plan must cover:
     explanation="A bridge must handle every combination of burst type (INCR, WRAP, SINGLE), size (1-128 bytes), length (1-256 beats), and starting address (with 4KB boundary implications). This combinatorial explosion makes exhaustive directed testing impractical, but formal verification explores all states automatically."
   />
   <QuizQuestion
-    question="When an AXI slave returns SLVERR on beat 3 of an 8-beat write burst that was translated from AHB, what must the bridge do?"
+    question="An AHB master's INCR8 write goes through a non-posted AHB-to-AXI bridge, and the AXI slave answers with BRESP = SLVERR. What does the AHB master see?"
     options={[
-      "Immediately terminate the AXI burst and return ERROR on beat 3 to AHB.",
-      "Continue the AXI burst to completion (all 8 beats), then return ERROR to AHB.",
-      "Retry the entire burst from beat 1.",
-      "Convert the remaining beats to a new AXI burst with a different ID."
+      "ERROR on beat 3, the beat where the slave hit the problem.",
+      "OKAY on beats 1 to 7. The bridge holds HREADYOUT low on beat 8 until BRESP arrives, then gives a two-cycle ERROR.",
+      "OKAY on all 8 beats, then a one-cycle ERROR as soon as BRESP arrives.",
+      "Nothing: AXI write errors cannot be reported to AHB."
     ]}
-    correctAnswer="Continue the AXI burst to completion (all 8 beats), then return ERROR to AHB."
-    explanation="The AXI protocol requires that all beats of a burst must be completed — you cannot terminate a burst mid-stream. The bridge must continue driving WVALID for all remaining beats, accept the error response on the B channel, and then return HRESP=ERROR to the AHB master."
+    correctAnswer="OKAY on beats 1 to 7. The bridge holds HREADYOUT low on beat 8 until BRESP arrives, then gives a two-cycle ERROR."
+    explanation="An AXI write gets one response for the whole burst, after the last W transfer (IHI0022E A3.4.4), so there is no per-beat write error to map onto beat 3. The AHB data phases complete one at a time as the bridge buffers the data, so a non-posted bridge can only hold the last one: it keeps HREADYOUT low until BRESP arrives, then signals ERROR in two cycles (IHI0033B.b 5.1.3). A one-cycle ERROR is never legal. A posted bridge would already have completed beat 8 with OKAY, so it must report the error some other way, for example an interrupt."
   />
 </Quiz>

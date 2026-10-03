@@ -1,108 +1,159 @@
 `include "uvm_macros.svh"
 import uvm_pkg::*;
 
-// 1. Transaction
+interface packet_if(input logic clk);
+  logic valid;
+  logic [7:0] payload;
+  logic parity;
+
+  clocking driver_cb @(posedge clk);
+    output valid, payload, parity;
+  endclocking
+
+  modport driver_mp(clocking driver_cb);
+
+  // Checker: every valid beat must carry even parity (parity == ^payload).
+  property p_parity_ok;
+    @(posedge clk) valid |-> (parity == ^payload);
+  endproperty
+  a_parity_ok: assert property (p_parity_ok)
+    else `uvm_error("PARITY_ERR", $sformatf("payload=%02h parity=%0b",
+                                            $sampled(payload), $sampled(parity)))
+endinterface
+
 class packet extends uvm_sequence_item;
   rand logic [7:0] payload;
   logic parity;
+  bit inject_parity_error;
+  int unsigned extra_delay_cycles;
 
-  `uvm_object_utils(packet)
-  
-  function new(string name="packet");
+  `uvm_object_utils_begin(packet)
+    `uvm_field_int(payload, UVM_ALL_ON)
+    `uvm_field_int(parity, UVM_ALL_ON)
+    `uvm_field_int(inject_parity_error, UVM_ALL_ON)
+    `uvm_field_int(extra_delay_cycles, UVM_ALL_ON)
+  `uvm_object_utils_end
+
+  function new(string name = "packet");
     super.new(name);
   endfunction
-  
+
   function void post_randomize();
-    parity = ^payload; // Even parity
+    parity = ^payload;
   endfunction
 endclass
 
-// 2. Callback Virtual Class
-// The hook provided by the component developer
+// The callback class refers to the driver, which is declared below it.
+typedef class packet_driver;
+
 virtual class packet_driver_cb extends uvm_callback;
-  virtual task pre_drive(packet_driver driver, ref packet pkt);
-  endtask
+  function new(string name = "packet_driver_cb");
+    super.new(name);
+  endfunction
+
+  // Hook: runs just before the driver drives pkt. It may change the
+  // packet's control fields; it returns to the driver when done.
+  virtual function void pre_drive(packet_driver driver, packet pkt);
+  endfunction
 endclass
 
-// 3. Driver
-class packet_driver extends uvm_driver#(packet);
+class packet_driver extends uvm_driver #(packet);
   `uvm_component_utils(packet_driver)
-  
-  // Register the callback type
   `uvm_register_cb(packet_driver, packet_driver_cb)
+
+  virtual packet_if.driver_mp vif;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
   endfunction
 
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if (!uvm_config_db#(virtual packet_if.driver_mp)::get(this, "", "vif", vif))
+      `uvm_fatal("NO_VIF", "packet_if.driver_mp is not configured")
+  endfunction
+
   task run_phase(uvm_phase phase);
     packet pkt;
+    vif.driver_cb.valid <= 1'b0;
     forever begin
       seq_item_port.get_next_item(pkt);
-      
-      `uvm_info("DRV", $sformatf("Prepared pkt Payload: %h, Parity: %b at time %0t", pkt.payload, pkt.parity, $time), UVM_LOW)
-      
-      // Execute the callback hook BEFORE driving
       `uvm_do_callbacks(packet_driver, packet_driver_cb, pre_drive(this, pkt))
-      
-      // Simulate driving
-      #5ns; 
-      
-      `uvm_info("DRV", $sformatf("Driven pkt Payload: %h, Parity: %b at time %0t", pkt.payload, pkt.parity, $time), UVM_LOW)
-      
+
+      repeat (pkt.extra_delay_cycles)
+        @(vif.driver_cb);
+
+      @(vif.driver_cb);
+      vif.driver_cb.valid <= 1'b1;
+      vif.driver_cb.payload <= pkt.payload;
+      vif.driver_cb.parity <= pkt.parity ^ pkt.inject_parity_error;
+      @(vif.driver_cb);
+      vif.driver_cb.valid <= 1'b0;
+
+      `uvm_info("DRV", $sformatf(
+        "Drove payload=%02h parity=%0b error=%0b delay_cycles=%0d",
+        pkt.payload, pkt.parity ^ pkt.inject_parity_error,
+        pkt.inject_parity_error, pkt.extra_delay_cycles), UVM_LOW)
       seq_item_port.item_done();
     end
   endtask
 endclass
 
-// 4. Sequence
-class my_seq extends uvm_sequence#(packet);
+class my_seq extends uvm_sequence #(packet);
   `uvm_object_utils(my_seq)
-  function new(string name="my_seq"); super.new(name); endfunction
+
+  function new(string name = "my_seq");
+    super.new(name);
+  endfunction
+
   task body();
-    packet pkt = packet::type_id::create("pkt");
-    start_item(pkt);
-    pkt.randomize() with { payload == 8'hAA; };
-    finish_item(pkt);
+    repeat (3) begin
+      packet pkt = packet::type_id::create("pkt");
+      start_item(pkt);
+      if (!pkt.randomize())
+        `uvm_fatal("RANDFAIL", "Packet randomization failed")
+      finish_item(pkt);
+    end
   endtask
 endclass
 
-// 5. Environment
 class my_env extends uvm_env;
   `uvm_component_utils(my_env)
   packet_driver drv;
-  uvm_sequencer#(packet) sqr;
-  
+  uvm_sequencer #(packet) sqr;
+
   function new(string name, uvm_component parent);
     super.new(name, parent);
   endfunction
-  
+
   function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
     drv = packet_driver::type_id::create("drv", this);
     sqr = uvm_sequencer#(packet)::type_id::create("sqr", this);
   endfunction
-  
+
   function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
     drv.seq_item_port.connect(sqr.seq_item_export);
   endfunction
 endclass
 
-
 // --- LAB EXERCISE STARTS HERE ---
 
-// TODO: Create a callback class 'error_inject_cb' extending from 'packet_driver_cb'.
-// Override 'pre_drive' to add a 10ns delay (#10ns) and invert the packet's parity bit.
-
+// TODO 1: Create a callback class 'error_inject_cb' extending 'packet_driver_cb'.
+// Register it with `uvm_object_utils and give it a constructor.
+// Override the function
+//   virtual function void pre_drive(packet_driver driver, packet pkt);
+// so that it sets pkt.inject_parity_error = 1 and pkt.extra_delay_cycles = 2,
+// and prints `uvm_info("CB", "Configured parity error and two cycle delay", UVM_LOW).
 
 // --- LAB EXERCISE ENDS HERE ---
 
-// 6. Test
 class my_test extends uvm_test;
   `uvm_component_utils(my_test)
   my_env env;
-  
-  // TODO: Declare a handle for your callback class here
-  
+  // TODO 2: Declare a handle for your callback class here.
+
   function new(string name, uvm_component parent);
     super.new(name, parent);
   endfunction
@@ -110,11 +161,15 @@ class my_test extends uvm_test;
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
     env = my_env::type_id::create("env", this);
-    
-    // TODO: Instantiate your callback here
-    // TODO: Add your callback to the driver using uvm_callbacks API
-    
+    // Do NOT add the callback here: env.drv is created later, in
+    // my_env::build_phase (UVM builds top-down), so it is still null.
+    // add(null, cb) would register the callback type-wide, for every
+    // packet_driver in the testbench.
   endfunction
+
+  // TODO 3: In connect_phase, create the callback and attach it to THIS driver:
+  //   uvm_callbacks#(packet_driver, packet_driver_cb)::add(env.drv, my_cb);
+  // Why not in build_phase? env.drv does not exist yet there (see above).
 
   task run_phase(uvm_phase phase);
     my_seq seq = my_seq::type_id::create("seq");
@@ -122,11 +177,20 @@ class my_test extends uvm_test;
     seq.start(env.sqr);
     phase.drop_objection(this);
   endtask
+
+  // TODO 4 (optional): in final_phase, delete the callback from the same
+  // instance you added it to: delete(env.drv, my_cb).
 endclass
 
-// 7. Top Module
 module tb_top;
+  logic clk = 1'b0;
+  always #5ns clk = ~clk;
+  packet_if vif(clk);
+
   initial begin
+    uvm_config_db#(virtual packet_if.driver_mp)::set(
+      null, "uvm_test_top.env.drv", "vif", vif
+    );
     run_test("my_test");
   end
 endmodule

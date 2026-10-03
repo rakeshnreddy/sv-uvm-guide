@@ -5,12 +5,15 @@ class alu_cov_mon;
   op_t op;
 
   covergroup cg_alu;
-    // We want to see every operation
-    cp_op: coverpoint op {
-      ignore_bins unused = { 7 }; // 3-bit enum, 7 is unused
-    }
-    
-    // We want to see edge cases on inputs
+    option.per_instance = 1;
+
+    // Every operation. An enum coverpoint gets one automatic bin per named
+    // value (IEEE 1800-2023 19.5.3), so the unused code 7 has no bin.
+    cp_op: coverpoint op;
+
+    // Edge cases on the inputs. The 'others' default bin catches every other
+    // value; default bins do not count toward coverage and are excluded from
+    // crosses (IEEE 1800-2023 19.5). So cp_a and cp_b have 2 bins each.
     cp_a: coverpoint a {
       bins zero = {0};
       bins max  = {8'hFF};
@@ -21,9 +24,9 @@ class alu_cov_mon;
       bins max  = {8'hFF};
       bins others = default;
     }
-    
-    // Cross to ensure we do a MAX calculation
-    cross_max_op: cross cp_op, cp_a;
+
+    // Every operation with a == 0 and with a == 8'hFF: 7 x 2 = 14 cross bins.
+    cross_edge_op: cross cp_op, cp_a;
   endgroup
 
   function new();
@@ -37,6 +40,7 @@ class alu_cov_mon;
     cg_alu.sample();
   endfunction
 
+  // Average of the four items (cp_op, cp_a, cp_b, cross_edge_op), weight 1 each.
   function real get_score();
     return cg_alu.get_inst_coverage();
   endfunction

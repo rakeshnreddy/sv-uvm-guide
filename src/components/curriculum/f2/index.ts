@@ -5,5 +5,3 @@ export { default as DynamicStructureVisualizer } from "./DynamicStructureVisuali
 export { default as PacketSorterGame } from "./PacketSorterGame";
 export { default as SystemVerilog3DVisualizer } from "./SystemVerilog3DVisualizer";
 export { default as QueueOperationLab } from "./QueueOperationLab";
-export { default as PackedUnpackedPlayground } from "./PackedUnpackedPlayground";
-export { default as OperatorDrill } from "./OperatorDrill";

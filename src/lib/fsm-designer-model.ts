@@ -14,6 +14,8 @@ export interface FsmState {
 export interface FsmTransition {
   source: string;
   target: string;
+  /** Input bit that enables this edge (`in == 0` or `in == 1`). Omitted: the edge is unconditional. */
+  input?: 0 | 1;
 }
 
 /** Flip-flops needed: one per state for one-hot, ceil(log2 N) (minimum 1) otherwise. */
@@ -80,6 +82,32 @@ export interface WalkState {
   /** Indexes into the transition list. */
   visitedTransitions: number[];
   step: number;
+  /** Input bit applied on the last clock, when the current state had conditioned edges. */
+  lastInput?: 0 | 1;
+}
+
+/** Integer hash with good bit mixing (lowbias32), so consecutive steps give independent-looking bits. */
+function mix32(n: number): number {
+  let h = n >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x7feb352d);
+  h = Math.imul(h ^ (h >>> 15), 0x846ca68b);
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/** The 1-bit input applied on clock `step` for a given seed; the same seed replays the same input stream. */
+export function inputBit(seed: number, step: number): 0 | 1 {
+  return (mix32(Math.imul(seed, 7919) + step + 1) & 1) as 0 | 1;
+}
+
+/**
+ * Index of the edge an input-driven FSM takes from `current` when the input is `input`:
+ * the edge labelled with that input value, else an unconditional edge, else null (the FSM holds).
+ */
+export function edgeForInput(transitions: FsmTransition[], current: string, input: 0 | 1): number | null {
+  const matching = transitions.findIndex((t) => t.source === current && t.input === input);
+  if (matching >= 0) return matching;
+  const unconditional = transitions.findIndex((t) => t.source === current && t.input === undefined);
+  return unconditional >= 0 ? unconditional : null;
 }
 
 /** Reset puts the FSM in the reset state, which already counts as visited. */
@@ -89,22 +117,35 @@ export function resetWalk(states: FsmState[]): WalkState {
 }
 
 /**
- * One clock: take one outgoing transition of the current state. Transitions
- * carry no input conditions in this designer, so the choice among several is
- * made by a generator seeded with (seed, step): the same seed replays the
- * same walk.
+ * One clock: take one outgoing transition of the current state.
+ * - If any outgoing edge is labelled with an input value, a seeded 1-bit input
+ *   is applied and the matching edge is taken (`edgeForInput`); with no
+ *   match the FSM holds its state.
+ * - Otherwise the edges are unconditional, and the choice among several is
+ *   made by a generator seeded with (seed, step).
+ * Either way, the same seed replays the same walk.
  */
 export function stepWalk(walk: WalkState, transitions: FsmTransition[], seed: number): WalkState {
   if (!walk.current) return walk;
   const options = transitions.map((t, i) => ({ ...t, i })).filter((t) => t.source === walk.current);
-  if (options.length === 0) return { ...walk, step: walk.step + 1 };
-  const rand = createLcg(seed * 7919 + walk.step + 1);
-  const choice = options[rand() % options.length];
+  if (options.length === 0) return { ...walk, step: walk.step + 1, lastInput: undefined };
+  let choice: FsmTransition & { i: number };
+  let lastInput: 0 | 1 | undefined;
+  if (options.some((t) => t.input !== undefined)) {
+    lastInput = inputBit(seed, walk.step);
+    const index = edgeForInput(transitions, walk.current, lastInput);
+    if (index === null) return { ...walk, step: walk.step + 1, lastInput };
+    choice = { ...transitions[index], i: index };
+  } else {
+    const rand = createLcg(seed * 7919 + walk.step + 1);
+    choice = options[rand() % options.length];
+  }
   return {
     current: choice.target,
     visitedStates: walk.visitedStates.includes(choice.target) ? walk.visitedStates : [...walk.visitedStates, choice.target],
     visitedTransitions: walk.visitedTransitions.includes(choice.i) ? walk.visitedTransitions : [...walk.visitedTransitions, choice.i],
     step: walk.step + 1,
+    lastInput,
   };
 }
 

@@ -25,7 +25,7 @@ const exercises: ExerciseLink[] = [
   {
     href: '/exercises/scoreboard-connector',
     title: 'Scoreboard Connector',
-    description: 'Visually connect monitor analysis ports to scoreboard and coverage collector import ports.',
+    description: 'Wire a monitor, predictor, scoreboard FIFOs and coverage in an env\'s connect_phase, graded by uvm-core\'s connection rules.',
     status: 'completed',
   },
   {

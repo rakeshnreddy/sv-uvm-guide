@@ -351,7 +351,7 @@ function BinsTab({ initialPreset }: { initialPreset: BuilderPresetId }) {
         <p className="text-xs text-muted-foreground">{preset.summary}</p>
       </div>
 
-      <fieldset className="space-y-2 rounded-xl border border-border/70 p-3">
+      <fieldset className="min-w-0 space-y-2 rounded-xl border border-border/70 p-3">
         <legend className="px-1 text-xs font-semibold text-foreground">
           Bins of <code className="font-mono [font-variant-ligatures:none]">cp_data: coverpoint data</code> (bit [3:0])
         </legend>

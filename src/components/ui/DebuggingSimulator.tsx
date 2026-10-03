@@ -173,7 +173,7 @@ export const DebuggingSimulator = ({ scenario = "hang" }: DebuggingSimulatorProp
               aria-expanded={probes.includes(p)}
               onClick={() => toggleProbe(p)}
               className={cn(
-                "min-h-10 rounded-lg border px-3 py-1.5 text-left font-mono text-xs [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                "min-h-10 min-w-0 max-w-full rounded-lg border px-3 py-1.5 text-left font-mono text-xs [font-variant-ligatures:none] [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                 probes.includes(p) ? "border-cyan-500 bg-cyan-500/10" : "border-border/70 hover:bg-muted",
               )}
             >

@@ -56,12 +56,12 @@ export function CodeTrace({ lines, activeKey, contextKeys = [], renderLineContro
                     : "border-transparent",
               )}
             >
-              <span className="w-7 shrink-0 select-none pt-px text-right text-[11px] text-slate-500" aria-hidden>
+              <span className="w-7 shrink-0 select-none pt-px text-right text-[11px] text-slate-400" aria-hidden>
                 {i + 1}
               </span>
               <span className="w-8 shrink-0" aria-hidden>
                 {owner && line.text ? (
-                  <span className={cn("inline-block border px-1 text-[9px] font-bold leading-4", owner.className)}>{owner.tag}</span>
+                  <span className={cn("inline-block border px-1 text-[9px] font-bold leading-4", owner.panelClassName)}>{owner.tag}</span>
                 ) : null}
               </span>
               <code className="min-w-0 flex-1 whitespace-pre-wrap break-words">

@@ -5,9 +5,9 @@ flashcards: "E-PSS-1_PSS"
 ---
 
 ## Quick Take
-- **What it is:** The Portable Test and Stimulus Standard (PSS) is an Accellera standard (version 2.1 was approved in October 2023). It is a declarative language for expressing *test intent* — the abstract scenario logic — independently of any particular execution platform.
+- **What it is:** The Portable Test and Stimulus Standard (PSS) is an Accellera standard (version 2.1 was approved in October 2023 and version 3.0 in August 2024). It is a declarative language for expressing *test intent* — the abstract scenario logic — independently of any particular execution platform.
 - **Why it matters:** Modern verification teams must run the same test scenarios on RTL simulation, FPGA prototypes, emulation platforms, and post-silicon validation. Without PSS, each target requires hand-porting of test logic, a quadratic maintenance burden that fragments coverage metrics and introduces target-specific bugs.
-- **Industry context:** As of 2025–2026, Cadence (Perspec PSS Compiler), Synopsys (VC PSS), and Siemens (Questa PSS) all ship commercial PSS compilers. Google and several RISC-V consortia have open-source PSS parsers for academic and pre-production use.
+- **Industry context:** Several EDA vendors ship commercial PSS tools, and open-source front ends exist (for example the ANTLR-based `pssparser` from the PSSTools project). Tools differ in which PSS version and which targets they support, so check before you rely on a feature.
 
 ## The Portability Problem PSS Solves
 
@@ -22,7 +22,7 @@ Consider a memory subsystem verification scenario that must check read-after-wri
 
 That is **four separate implementations** of the same logical test, each with independent bugs and maintenance costs. PSS replaces all four with a single declarative specification that a compiler translates to each target.
 
-## PSS 2.0 Language Fundamentals
+## PSS Language Fundamentals
 
 ### Actions, Components, and Activity Graphs
 
@@ -36,8 +36,8 @@ PSS programs are built from four core concepts:
 ```pss
 // Accellera PSS: two actions linked by a buffer flow object
 buffer mem_buf_s {
-  rand bit[31:0] addr;
-  rand bit[31:0] data;
+  rand bit[32] addr;
+  rand bit[32] data;
   constraint { addr in [0x1000..0x1FFC]; addr % 4 == 0; } // aligned, one 4 KB region
 }
 
@@ -47,12 +47,24 @@ component mem_subsys_c {
 
   action write_a {
     output mem_buf_s out_buf;
-    exec body C = """ mem_write32({{out_buf.addr}}, {{out_buf.data}}); """;
+    exec body C  = """ mem_write32({{out_buf.addr}}, {{out_buf.data}}); """;
+    exec body SV = """
+      wr = mem_wr_seq::type_id::create("wr");
+      wr.addr = {{out_buf.addr}}; wr.data = {{out_buf.data}};
+      wr.start(m_sequencer);
+    """;
   }
 
   action read_check_a {
     input mem_buf_s in_buf;
-    exec body C = """ if (mem_read32({{in_buf.addr}}) != {{in_buf.data}}) test_fail(); """;
+    // Bare metal has no scoreboard, so the C template checks the data itself.
+    exec body C  = """ if (mem_read32({{in_buf.addr}}) != {{in_buf.data}}) test_fail(); """;
+    // In UVM the scoreboard checks every monitored read, so the SV template only reads.
+    exec body SV = """
+      rd = mem_rd_seq::type_id::create("rd");
+      rd.addr = {{in_buf.addr}};
+      rd.start(m_sequencer);
+    """;
   }
 }
 ```
@@ -84,40 +96,44 @@ Pick a scenario, read its PSS source, and predict what a PSS tool does with the 
 
 ## Data Constraints in PSS
 
-PSS constraints look syntactically similar to SystemVerilog constraints but operate in a purely declarative context:
+PSS constraints look like SystemVerilog constraints, but weighting and defaults work differently. Notice where each kind of bias lives:
 
 ```pss
-action stress_test {
-  rand int unsigned num_iterations;
-  rand bit use_burst;
-
-  constraint iterations_range {
-    num_iterations >= 100;
-    num_iterations <= 10000;
+component mem_c {
+  action burst_write {
+    rand bit[8] len;
+    constraint len in [1..16];
+    // dist is a separate directive (PSS 2.1 and later), not an operator inside an expression
+    constraint len_bias { dist len in [1 := 10, 4 := 30, 8..16 :/ 60]; }
   }
+  action single_write { }
+  action read_verify  { }
 
-  constraint burst_weighting {
-    // Soft constraint: prefer burst mode 70% of the time
-    soft use_burst == 1; dist { 0 := 30, 1 := 70 };
-  }
+  action stress_test {
+    rand int num_iterations;
+    constraint num_iterations in [100..10000];
+    // default: holds unless a containing or derived context overrides it
+    // (constraint default s.num_iterations == 5000;) or removes it (default disable)
+    constraint default num_iterations == 1000;
 
-  activity {
-    repeat (num_iterations) {
-      if (use_burst) {
-        do burst_write;
-      } else {
-        do single_write;
+    activity {
+      repeat (num_iterations) {
+        select {                  // a weighted choice, made again on every iteration
+          [70]: do burst_write;
+          [30]: do single_write;
+        }
+        do read_verify;
       }
-      do read_verify;
     }
   }
 }
 ```
 
 Key differences from SV constraints:
-- PSS constraints are always **declarative** — no procedural constraint manipulation.
-- PSS supports `soft` constraints and `dist` for distribution control.
-- Constraints can reference cross-action data flows, enabling the solver to globally optimize the test.
+- In SystemVerilog, `x dist {...}` is itself a constraint: a set-membership test plus weights (IEEE 1800-2023 §18.5.3). In PSS, `dist x in [...];` is a directive that biases the solver. When a constraint disagrees, the constraint wins and the solve does not fail.
+- There is no `soft` keyword in the PSS 3.0 grammar. A `default` value constraint (`constraint default x == 1000;`) fixes a value until an enclosing or derived context overrides it with its own `default`, or removes it with `default disable x;`. A plain constraint that disagrees with an active default is a contradiction, not an override.
+- Weighted choices between *actions* belong in the activity: `select` branches with a `[weight]`, re-drawn on every pass of the `repeat`. A `dist` on a field of `stress_test` would be solved once for the whole test.
+- Constraints can relate fields of different actions, flow objects and resources, so the tool solves the whole scenario at once.
 
 ## Compiling PSS to SystemVerilog UVM Sequences
 
@@ -131,7 +147,7 @@ The exact mapping (a sequence per action, a virtual sequence per scenario, or ca
 ### Side-by-Side: PSS vs Generated UVM
 
 ```pss
-// ── PSS Source ──
+// ── PSS Source (inside component pss_top, as above) ──
 action raw_coherency_test {
   activity {
     do mem_subsys_c::write_a;
@@ -173,99 +189,93 @@ endclass
 
 ## Compiling PSS to C for Bare-Metal Firmware Tests
 
-When targeting post-silicon or embedded processors, the PSS compiler generates C code:
+When targeting post-silicon or an embedded processor, the tool expands each action's `exec body C` template instead:
 
 ```c
-// ── Generated C Bare-Metal Test ──
-#include "mem_subsystem_api.h"
+// ── Generated C Bare-Metal Test (simplified) ──
+#include "mem_subsystem_api.h"   // mem_write32(), mem_read32(), test_fail()
 
 void raw_coherency_test(void) {
-    uint32_t addr = rand_aligned_addr(MEM_BASE, MEM_SIZE, 4);
-    uint32_t data = rand_data();
+    // write_a: its exec body C, with the solved buffer values filled in
+    mem_write32(0x00001A3C, 0x5E2D19A7);
 
-    // Step 1: Write
-    mem_write(addr, data);
-
-    // Step 2: Read
-    uint32_t readback = mem_read(addr);
-
-    // Step 3: Verify
-    if (readback != data) {
-        test_fail("RAW coherency mismatch at 0x%08x: "
-                  "wrote 0x%08x, read 0x%08x",
-                  addr, data, readback);
-    }
+    // read_check_a: it reads the same buffer, so the same address and data
+    if (mem_read32(0x00001A3C) != 0x5E2D19A7) test_fail();
 }
 ```
 
-The **same PSS spec** produced both the 45-line UVM sequence and the 15-line C test. This is the portability guarantee.
+Both outputs come from the same PSS model: the UVM version starts sequences from the `exec body SV` templates, the C version calls the functions in the `exec body C` templates. Change a constraint once and both targets change. Here the values were solved when the test was generated; some tools instead emit code that solves on the target at run time.
 
-## Tool Ecosystem (2025–2026)
+## Tool Ecosystem
 
-| Tool | Vendor | Key Features |
-|---|---|---|
-| **Perspec PSS Compiler** | Cadence | Full PSS 2.0, integrates with Xcelium simulation and Palladium emulation |
-| **VC PSS** | Synopsys | PSS 2.0 with VCS simulation backend, Verdi debug integration |
-| **Questa PSS** | Siemens EDA | PSS compilation to Questa simulation and Veloce emulation |
-| **pss-parser** | Open Source | Community PSS parser for syntax validation and academic research |
-| **PSS Reference Compiler** | Accellera | Reference implementation for PSS 2.0 language conformance testing |
+Commercial PSS tools come from several EDA vendors, and open-source parsers exist for syntax checking and research. Rather than trusting a feature list, ask each tool:
 
-**Industry adoption status:** Intel, Arm, Qualcomm, MediaTek, and Samsung have published papers or presentations on PSS adoption for SoC-level verification. The consensus is that PSS pays off starting at the point where a design requires verification across 3+ execution targets.
+| Question | Why it matters |
+|---|---|
+| Which PSS version does it accept (2.1, 3.0)? | Features such as the `dist` directive or 3.0 behavioral coverage may be missing |
+| Which targets can it generate (SV/UVM, C, others)? | Portability only pays off for the targets you actually run |
+| Does it solve values at generation time or on the target? | Pre-solved tests are reproducible; run-time solving needs a solver on the target |
+| How much does it infer? | Inferred actions and bindings are where PSS saves the most work, and where tools differ most |
+
+PSS pays off when the same scenario has to run on more than one execution target. How many targets justify the cost depends on your team and tools; there is no standard threshold.
 
 ## Hands-On Example: Memory Test with Portability Comparison
 
-Here is a complete PSS specification for a memory stress test, followed by excerpts from both generated targets:
+Here is a complete PSS model for a memory stress test. Before reading it, predict: which actions may run at the same time on the same memory region?
 
 ```pss
 component mem_test_suite {
-  resource mem_region r;
+  // Two 4 KB regions. A resource is claimed with lock or share; it is never an input.
+  resource mem_region_r { }
+  pool [2] mem_region_r region_p;        // instance_id 0 and 1
+  bind region_p *;
+
+  // What the writer hands to the reader: a buffer flow object.
+  buffer burst_s {
+    rand int     region_id;
+    rand bit[32] start_addr;
+    rand bit[32] burst_len;
+    constraint start_addr % 4 == 0;
+    constraint burst_len in [1..16];
+  }
+  pool burst_s burst_p;
+  bind burst_p *;
 
   action write_burst {
-    input mem_region region;
-    rand addr_t start_addr;
-    rand int unsigned burst_len;
-
+    lock   mem_region_r region;          // exclusive while it writes
+    output burst_s      burst;
     constraint {
-      start_addr >= region.base_addr;
-      start_addr + (burst_len * 4) <= region.base_addr + region.size;
-      start_addr % 4 == 0;
-      burst_len inside [1..16];
+      burst.region_id == region.instance_id;
+      burst.start_addr >= 0x1000 * (region.instance_id + 1);
+      burst.start_addr + burst.burst_len * 4 <= 0x1000 * (region.instance_id + 2);
     }
   }
 
   action read_verify_burst {
-    input mem_region region;
-    rand addr_t start_addr;
-    rand int unsigned burst_len;
-
-    constraint {
-      start_addr >= region.base_addr;
-      start_addr + (burst_len * 4) <= region.base_addr + region.size;
-      start_addr % 4 == 0;
-      burst_len inside [1..16];
-    }
+    share  mem_region_r region;          // readers may overlap; a writer may not
+    input  burst_s      burst;           // the burst some write_burst produced
+    constraint region.instance_id == burst.region_id;
   }
 
   action mem_stress {
     activity {
       repeat (100) {
-        do write_burst as wb;
-        do read_verify_burst as rvb with {
-          rvb.start_addr == wb.start_addr;
-          rvb.burst_len  == wb.burst_len;
-        };
+        wb:  do write_burst;
+        rvb: do read_verify_burst;
+        bind wb.burst rvb.burst;         // read back exactly this iteration's burst
       }
     }
   }
 }
 ```
 
-This single specification can generate:
-- A **UVM virtual sequence** for RTL simulation (~300 lines)
-- A **C firmware test** for post-silicon validation (~100 lines)
-- An **emulation TLA sequence** for hardware-accelerated verification (~200 lines)
+What each piece guarantees:
+- **`lock` / `share`:** a `write_burst` holds its region exclusively, so nothing else that claims that region runs alongside it. Two `read_verify_burst` actions may share one region. With a pool of two regions, two writers can still run in parallel on different instances.
+- **The buffer:** `burst_s` carries the address, length and region from the writer to the reader. The explicit `bind` pins each read to the write of the same iteration; without it, the tool may pick any earlier `write_burst` output.
+- **`in`, not `inside`:** PSS writes set membership as `burst_len in [1..16]`.
+- **Labels, not `as`:** `wb: do write_burst;` names a traversal so later statements can refer to `wb`.
 
-Each generated test maintains semantic equivalence to the PSS source while targeting the specific APIs and protocols of its execution platform.
+A tool can lower this one model to a UVM virtual sequence for RTL simulation, a C test for an embedded core or post-silicon, or both. How much code that becomes, and whether values are solved before the run or on the target, depends on the tool.
 
 ## Hands-On Lab
 
@@ -306,26 +316,27 @@ Each generated test maintains semantic equivalence to the PSS source while targe
         "A uvm_component class registered with the factory"
       ],
       correctAnswer: 1,
-      explanation: "Each PSS action maps to a UVM sequence class. The activity graph's ordering constraints become the sequence's body() task logic, with start() calls reflecting the declared action ordering."
+      explanation: "The exact mapping is tool-dependent. A common pattern is that each action's exec body SV template starts a UVM sequence, and the scenario becomes a (virtual) sequence whose body() runs the actions in the order the tool solved. Some tools emit one sequence per scenario or call a runtime library instead. Tools do not generate drivers, monitors or other components from actions: those come from your UVM environment."
     },
     {
-      question: "At what scale of verification targets does PSS adoption typically become cost-effective?",
+      question: "In the Hands-On model, write_burst claims its region with lock and read_verify_burst claims it with share. Which pair may a PSS tool schedule at the same time on the same region instance?",
       options: [
-        "Any project with more than 1 testbench",
-        "Projects requiring verification across 3 or more execution targets",
-        "Only for designs with more than 10 million gates",
-        "Only for companies with dedicated PSS compiler licenses"
+        "Two read_verify_burst actions",
+        "A write_burst and a read_verify_burst",
+        "Two write_burst actions",
+        "No pair: claiming a resource forbids all concurrency"
       ],
-      correctAnswer: 1,
-      explanation: "Industry consensus is that PSS pays off starting at 3+ execution targets (e.g., RTL sim + emulation + post-silicon), where the cost of maintaining separate test implementations exceeds the cost of PSS adoption."
+      correctAnswer: 0,
+      explanation: "share is non-exclusive, so several sharers can use one resource instance together. lock is exclusive: while a write_burst holds a region, no other action that claims that same region, by lock or by share, can run. Concurrency is still possible on the other region in the pool of two."
     }
   ]}
 />
 
 ## References & Next Topics
 
-- **Accellera Portable Test and Stimulus Standard (PSS) 2.1** (approved October 2023) — the language specification, published by Accellera.
-- **Accellera PSS Working Group** — [accellera.org/activities/working-groups/portable-stimulus](https://accellera.org/activities/working-groups/portable-stimulus) for the latest specification and reference implementations.
+- **Accellera Portable Test and Stimulus Standard (PSS) 2.1** (approved October 2023) and **3.0** (approved August 2024) — the language specification, published by Accellera.
+- **Accellera PSS Working Group** — [accellera.org/activities/working-groups/portable-stimulus](https://accellera.org/activities/working-groups/portable-stimulus) for the latest specification.
+- **PSSTools `pssparser`** — [github.com/PSSTools/pssparser](https://github.com/PSSTools/pssparser), an open-source parser useful for checking PSS syntax.
 - **Prerequisite:** [I-UVM-3A: Sequence Fundamentals](/curriculum/t2-intermediate/i-uvm-3a-fundamentals) — understand UVM sequences before seeing how PSS generates them.
 - **Prerequisite:** [A-UVM-8: Multi-Agent Topologies](/curriculum/t3-advanced/a-uvm-8-multi-agent-topologies) — virtual sequencers are the primary PSS compilation target for multi-agent environments.
 - **Next:** [E-PYUVM-1: Python-Based Verification](/curriculum/t4-expert/e-pyuvm-1-python-based-verification) — Python co-verification with cocotb and pyUVM complements PSS for ML-driven hardware teams.

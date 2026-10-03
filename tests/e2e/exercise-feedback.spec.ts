@@ -16,14 +16,26 @@ test.describe('Exercise Feedback Flow', () => {
 
   test('Scoreboard Connector passes when connections are correct and can retry', async ({ page }) => {
     await page.goto('/exercises/scoreboard-connector');
-    await page.getByLabel('Port trans_ap on UVM Monitor').click();
-    await page.getByLabel('Port actual_trans_imp on Scoreboard').click();
-    await page.getByLabel('Port trans_ap on UVM Monitor').click();
-    await page.getByLabel('Port observed_trans_imp on Coverage Collector').click();
-    await page.getByRole('button', { name: 'Check Connections' }).click();
+    // Endpoint buttons are named "<reference in bus_env> (<role>, <type>)".
+    const endpoint = (ref: string) =>
+      page.getByRole('button', { name: new RegExp(`^${ref.replace(/\./g, '\\.')} \\(`) });
+    const connect = async (from: string, to: string) => {
+      await endpoint(from).click();
+      await endpoint(to).click();
+    };
+
+    // A wrong-direction attempt is rejected with a why and is not recorded.
+    await connect('scb.actual_fifo.analysis_export', 'agt.mon.ap');
+    await expect(page.getByTestId('connect-verdict')).toContainText("Cannot call an imp port's connect method");
+
+    await connect('agt.mon.ap', 'prd.analysis_export');
+    await connect('agt.mon.ap', 'scb.actual_fifo.analysis_export');
+    await connect('agt.mon.ap', 'cov.analysis_export');
+    await connect('prd.ap', 'scb.expected_fifo.analysis_export');
+    await page.getByRole('button', { name: 'Check wiring' }).click();
     const feedback = page.getByTestId('exercise-feedback');
     await expect(feedback).toContainText('Score: 100%');
-    await expect(feedback).toContainText(/scoreboard and coverage collector both receive the monitor stream/i);
+    await expect(feedback).toContainText(/monitor stream, and only predictions reach the expected FIFO/i);
     await page.getByRole('button', { name: /reset board/i }).click();
     await expect(feedback).toHaveCount(0);
   });

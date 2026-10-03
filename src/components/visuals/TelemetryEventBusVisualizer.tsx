@@ -246,7 +246,7 @@ export default function TelemetryEventBusVisualizer() {
           <ol className="overflow-x-auto py-2 font-mono text-[12px] leading-6 [font-variant-ligatures:none]">
             {crcInjectMessages.map((m, i) => (
               <li key={i} className="flex gap-3 px-3">
-                <span className="w-10 shrink-0 text-right text-slate-500">{m.time}</span>
+                <span className="w-10 shrink-0 text-right text-slate-400">{m.time}</span>
                 <span className="w-24 shrink-0 truncate text-slate-400">{m.origin === "sv" ? "bus_if" : shortSource(m.source) || "test"}</span>
                 <code className="whitespace-pre">{messageSource(m)}</code>
               </li>

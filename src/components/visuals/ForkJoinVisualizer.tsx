@@ -284,16 +284,16 @@ export function ProcessLog({ step, label = "Simulation output" }: { step: TraceS
     <div className="rounded-lg border border-border/70 bg-slate-950/90 p-3 font-mono text-xs text-slate-100 [font-variant-ligatures:none]">
       <p className="mb-1 font-sans text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</p>
       {step.log.length === 0 ? (
-        <span className="text-slate-500">(no output yet)</span>
+        <span className="text-slate-400">(no output yet)</span>
       ) : (
         <ol className="space-y-0.5">
           {step.log.map((l, i) => (
             <li key={i} className={cn("flex gap-3", i === newest && "text-cyan-200")}>
-              <span className="w-14 shrink-0 text-right text-slate-500">{l.time} ns</span>
+              <span className="w-14 shrink-0 text-right text-slate-400">{l.time} ns</span>
               <span className="w-20 shrink-0 truncate text-slate-400">{l.label}</span>
               <span>
                 {l.text}
-                {l.region === "postponed" ? <span className="text-slate-500"> ($strobe)</span> : l.region === "final" ? <span className="text-slate-500"> (final)</span> : null}
+                {l.region === "postponed" ? <span className="text-slate-400"> ($strobe)</span> : l.region === "final" ? <span className="text-slate-400"> (final)</span> : null}
               </span>
             </li>
           ))}

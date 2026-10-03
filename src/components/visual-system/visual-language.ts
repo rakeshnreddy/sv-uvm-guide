@@ -42,21 +42,28 @@ export const valueStyles: Record<FourStateKind, { className: string; cue: string
 
 export type OwnerKind = "design" | "testbench" | "clock";
 
-/** Design code is drawn square with a DUT tag; testbench code is rounded with a TB tag. */
-export const ownerStyles: Record<OwnerKind, { tag: string; className: string; dot: string }> = {
+/**
+ * Design code is drawn square with a DUT tag; testbench code is rounded with a TB tag.
+ * `panelClassName` is for always-dark code panels (CodeTrace), where the light-theme
+ * text colours would fail contrast.
+ */
+export const ownerStyles: Record<OwnerKind, { tag: string; className: string; panelClassName: string; dot: string }> = {
   design: {
     tag: "DUT",
     className: "rounded-sm border-violet-500/60 bg-violet-500/10 text-violet-800 dark:text-violet-100",
+    panelClassName: "rounded-sm border-violet-400/70 bg-violet-500/25 text-violet-100",
     dot: "bg-violet-500",
   },
   testbench: {
     tag: "TB",
     className: "rounded-full border-amber-500/60 bg-amber-500/10 text-amber-900 dark:text-amber-100",
+    panelClassName: "rounded-full border-amber-400/70 bg-amber-500/25 text-amber-100",
     dot: "bg-amber-500",
   },
   clock: {
     tag: "CLK",
     className: "rounded-sm border-slate-400/60 bg-slate-500/10 text-slate-700 dark:text-slate-200",
+    panelClassName: "rounded-sm border-slate-400/60 bg-slate-500/25 text-slate-100",
     dot: "bg-slate-400",
   },
 };

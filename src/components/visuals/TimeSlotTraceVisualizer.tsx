@@ -161,7 +161,7 @@ export default function TimeSlotTraceVisualizer({ scenario: initial = "shift-blo
 
       {run.log.length > 0 ? (
         <div className="rounded-lg border border-border/70 bg-slate-950/90 p-3 font-mono text-xs text-slate-100 [font-variant-ligatures:none]" aria-label="Simulation log">
-          {step.log.length === 0 ? <span className="text-slate-500">(no output yet)</span> : step.log.map((l, i) => <div key={i}>{l}</div>)}
+          {step.log.length === 0 ? <span className="text-slate-400">(no output yet)</span> : step.log.map((l, i) => <div key={i}>{l}</div>)}
         </div>
       ) : null}
 
