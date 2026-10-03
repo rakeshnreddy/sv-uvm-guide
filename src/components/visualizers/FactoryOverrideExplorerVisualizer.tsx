@@ -266,8 +266,9 @@ export function FactoryTree({
                   <span className={cn("rounded border px-1.5 text-[10px] font-semibold", badge.className)}>{badge.text}</span>
                 </>
               ) : (
-                <span className="text-muted-foreground" aria-label="hidden until you predict">
-                  → ?
+                <span className="text-muted-foreground">
+                  <span aria-hidden>→ ?</span>
+                  <span className="sr-only">built type hidden until you predict</span>
                 </span>
               )}
             </>
@@ -281,7 +282,7 @@ export function FactoryTree({
                   aria-label={`${node.path}, requested ${node.requested}${revealed ? `, built ${outcomeLabel(outcome)}` : ""}${selected ? ", prediction target" : ""}`}
                   onClick={() => onSelect(node.path)}
                   className={cn(
-                    "ml-1 flex min-h-9 flex-wrap items-center gap-x-2 gap-y-1 rounded-md border px-2 py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+                    "ml-1 flex min-h-10 flex-wrap items-center gap-x-2 gap-y-1 rounded-md border px-2 py-1 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
                     selected ? "border-amber-500 bg-amber-500/10" : "border-transparent hover:bg-muted",
                   )}
                 >
@@ -321,7 +322,7 @@ export function factoryOptions(program: FactoryProgram, run: FactoryRun, target:
 const selectClass =
   "h-9 min-w-0 rounded-md border border-border bg-background px-2 font-mono text-xs text-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const smallButton =
-  "inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-border/70 px-2 text-xs text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40";
+  "inline-flex h-10 min-w-10 items-center justify-center rounded-md border border-border/70 px-2 text-xs text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40";
 
 function AddOverrideForm({ onAdd, disabled }: { onAdd: (o: OvInput) => void; disabled: boolean }) {
   const id = useId();
@@ -379,13 +380,13 @@ function AddOverrideForm({ onAdd, disabled }: { onAdd: (o: OvInput) => void; dis
               inst_path (glob: * any characters, ? one character)
               <input id={`${id}-path`} className={cn(selectClass, "w-full")} value={pathArg} onChange={(e) => setPathArg(e.target.value)} spellCheck={false} />
             </label>
-            <label className="flex min-h-9 items-center gap-2 text-foreground">
+            <label className="flex min-h-10 items-center gap-2 text-foreground">
               <input type="checkbox" checked={withThis} onChange={(e) => setWithThis(e.target.checked)} />
               pass <code className="font-mono">this</code> as parent
             </label>
           </div>
         ) : (
-          <label className="flex min-h-9 items-center gap-2 text-foreground">
+          <label className="flex min-h-10 items-center gap-2 text-foreground">
             <input type="checkbox" checked={replace} onChange={(e) => setReplace(e.target.checked)} />
             replace = {replace ? "1 (default)" : "0"}
           </label>
@@ -446,7 +447,7 @@ function OverrideList({
               <label htmlFor={`${id}-p${i}`} className="sr-only">
                 Where override #{i + 1} is registered
               </label>
-              <select id={`${id}-p${i}`} className={cn(selectClass, "h-8 max-w-full flex-1 font-sans")} value={o.placement} onChange={(e) => onPlacement(i, e.target.value as Placement)}>
+              <select id={`${id}-p${i}`} className={cn(selectClass, "h-10 max-w-full flex-1 font-sans")} value={o.placement} onChange={(e) => onPlacement(i, e.target.value as Placement)}>
                 {(Object.keys(PLACEMENT_LABELS) as Placement[]).map((p) => (
                   <option key={p} value={p}>
                     {PLACEMENT_LABELS[p]}
@@ -521,16 +522,20 @@ export function FactoryOverrideExplorerVisualizer() {
         {preset.debug ? (
           <div className="flex flex-wrap items-start justify-between gap-3 rounded-lg border border-rose-500/40 bg-rose-500/[0.05] p-3">
             <HintLadder hints={preset.debug.hints} resetKey={preset.id} className="min-w-0 flex-1" />
-            <button
-              type="button"
-              onClick={() => {
-                setOverrides(withIds(preset.debug?.fix ?? []));
-                if (preset.debug?.fixConstruct) setConstruct(preset.debug.fixConstruct);
-              }}
-              className="inline-flex min-h-9 items-center rounded-lg border border-emerald-600/60 px-3 text-xs font-semibold text-emerald-800 hover:bg-emerald-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-emerald-200"
-            >
-              Apply the fix: {preset.debug.fixLabel}
-            </button>
+            {revealed ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setOverrides(withIds(preset.debug?.fix ?? []));
+                  if (preset.debug?.fixConstruct) setConstruct(preset.debug.fixConstruct);
+                }}
+                className="inline-flex min-h-10 items-center rounded-lg border border-emerald-600/60 px-3 text-xs font-semibold text-emerald-800 hover:bg-emerald-500/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring dark:text-emerald-200"
+              >
+                Apply the fix: {preset.debug.fixLabel}
+              </button>
+            ) : (
+              <p className="text-xs text-muted-foreground">Predict and reveal first; then you can apply the fix and predict again.</p>
+            )}
           </div>
         ) : null}
       </div>
@@ -553,7 +558,7 @@ export function FactoryOverrideExplorerVisualizer() {
             onToggleReplace={(i) => update((list) => list.map((o, k) => (k === i && o.kind === "type" ? { ...o, replace: !o.replace } : o)))}
           />
           <AddOverrideForm disabled={overrides.length >= 6} onAdd={(o) => update((list) => [...list, ...withIds([o])])} />
-          <label className="flex min-h-9 items-center gap-2 text-sm text-foreground">
+          <label className="flex min-h-10 items-center gap-2 text-sm text-foreground">
             <input type="checkbox" checked={construct === "new"} onChange={(e) => setConstruct(e.target.checked ? "new" : "create")} />
             my_agent builds <code className="font-mono">drv</code> with <code className="font-mono">new()</code>
           </label>

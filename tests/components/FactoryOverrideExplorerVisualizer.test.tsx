@@ -11,14 +11,14 @@ const hierarchy = () => screen.getByRole("list", { name: "Component hierarchy" }
 describe("FactoryOverrideExplorerVisualizer", () => {
   it("hides built types and the create() log until a prediction is locked in", () => {
     render(<FactoryOverrideExplorerVisualizer />);
-    expect(within(hierarchy()).getAllByLabelText("hidden until you predict").length).toBeGreaterThan(0);
+    expect(within(hierarchy()).getAllByText("built type hidden until you predict").length).toBeGreaterThan(0);
     expect(screen.queryByLabelText(/create\(\) log for/)).not.toBeInTheDocument();
 
     choose("mock_driver");
     lockIn();
     expect(screen.getByText(/^Correct\./)).toBeInTheDocument();
     expect(screen.getByLabelText("create() log for uvm_test_top.env.agt0.drv")).toHaveTextContent(/type override #1: base_driver → mock_driver/);
-    expect(within(hierarchy()).queryAllByLabelText("hidden until you predict")).toHaveLength(0);
+    expect(within(hierarchy()).queryAllByText("built type hidden until you predict")).toHaveLength(0);
     expect(within(hierarchy()).getAllByText("▣ TYPE #1")).toHaveLength(2);
   });
 

@@ -1,560 +1,738 @@
 "use client";
 
-import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { CheckCircle, Eye, RotateCcw, AlertTriangle, Zap, X } from 'lucide-react';
+import React, { useMemo, useState } from "react";
 
-// ── Data Model ──────────────────────────────────────────────────
+import {
+  BlockDiagram,
+  type DiagramEdge,
+  type DiagramNode,
+  type DiagramNodeKind,
+  type DiagramPort,
+  type PortKind,
+} from "@/components/visual-system/BlockDiagram";
+import { CodeTrace, type CodeTraceLine } from "@/components/visual-system/CodeTrace";
+import { HintLadder } from "@/components/visual-system/HintLadder";
+import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  TLM_BUILDER_SCENARIOS,
+  TLM_MASK,
+  UNBOUNDED,
+  ancestry,
+  checkConnect,
+  connectStatement,
+  declarationSource,
+  elaborate,
+  endpointFullName,
+  goalStatus,
+  type BuilderScenarioId,
+  type ConnectResult,
+  type TlmConnection,
+  type TlmEndpoint,
+  type TlmTopology,
+} from "@/lib/uvm-tlm-model";
+import { cn } from "@/lib/utils";
 
-type PortKind = 'port' | 'export' | 'analysis_port' | 'analysis_export';
+// ── View geometry (the model owns semantics; this file owns pixels) ─────────
 
-interface PortDef {
-  id: string;
-  label: string;
-  kind: PortKind;
-  /** side of the node the port is on */
-  side: 'left' | 'right' | 'bottom';
+interface Box {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  container?: boolean;
+  sublabel?: string;
+}
+interface PortPlace {
+  side: DiagramPort["side"];
+  offset: number;
+}
+interface Layout {
+  width: number;
+  height: number;
+  boxes: Record<string, Box>;
+  ports: Record<string, PortPlace>;
 }
 
-interface ComponentNode {
-  id: string;
-  label: string;
-  subtitle: string;
-  ports: PortDef[];
-  /** Grid position [col, row] */
-  pos: [number, number];
+const LAYOUTS: Record<BuilderScenarioId, Layout> = {
+  agent: {
+    width: 640,
+    height: 300,
+    boxes: {
+      env: { x: 10, y: 10, w: 620, h: 280, container: true },
+      agt: { x: 24, y: 34, w: 410, h: 236, container: true },
+      sqr: { x: 44, y: 70, w: 130, h: 56 },
+      drv: { x: 290, y: 70, w: 130, h: 56 },
+      mon: { x: 44, y: 190, w: 130, h: 56 },
+      scb: { x: 474, y: 190, w: 140, h: 56 },
+    },
+    ports: {
+      "sqr.seq_item_export": { side: "right", offset: 0.5 },
+      "drv.seq_item_port": { side: "left", offset: 0.5 },
+      "mon.ap": { side: "right", offset: 0.5 },
+      "agt.ap": { side: "right", offset: (218 - 34) / 236 },
+      "scb.item_imp": { side: "left", offset: 0.5 },
+    },
+  },
+  fifo: {
+    width: 640,
+    height: 290,
+    boxes: {
+      env: { x: 10, y: 10, w: 620, h: 270, container: true },
+      agt: { x: 30, y: 120, w: 130, h: 60 },
+      fifo: { x: 250, y: 40, w: 170, h: 110, sublabel: "uvm_tlm_analysis_fifo" },
+      scb: { x: 480, y: 65, w: 130, h: 60 },
+      cov: { x: 250, y: 200, w: 170, h: 60 },
+    },
+    ports: {
+      "agt.ap": { side: "right", offset: 0.5 },
+      "fifo.analysis_export": { side: "left", offset: 0.3 },
+      "fifo.put_export": { side: "left", offset: 0.75 },
+      "fifo.get_export": { side: "right", offset: 0.5 },
+      "scb.get_port": { side: "left", offset: 0.5 },
+      "cov.analysis_export": { side: "left", offset: 0.5 },
+    },
+  },
+  promotion: {
+    width: 640,
+    height: 220,
+    boxes: {
+      env: { x: 10, y: 10, w: 620, h: 200, container: true },
+      agt: { x: 24, y: 40, w: 260, h: 150, container: true },
+      mon: { x: 44, y: 80, w: 130, h: 60 },
+      chk_env: { x: 340, y: 40, w: 276, h: 150, container: true },
+      scb: { x: 460, y: 80, w: 140, h: 60 },
+    },
+    ports: {
+      "mon.ap": { side: "right", offset: 0.5 },
+      "agt.ap": { side: "right", offset: 70 / 150 },
+      "chk_env.analysis_export": { side: "left", offset: 70 / 150 },
+      "scb.item_imp": { side: "left", offset: 0.5 },
+    },
+  },
+  imp_decl: {
+    width: 640,
+    height: 280,
+    boxes: {
+      env: { x: 10, y: 10, w: 620, h: 260, container: true },
+      in_agt: { x: 30, y: 50, w: 140, h: 60 },
+      out_agt: { x: 30, y: 170, w: 140, h: 60 },
+      scb: { x: 420, y: 60, w: 190, h: 160 },
+    },
+    ports: {
+      "in_agt.ap": { side: "right", offset: 0.5 },
+      "out_agt.ap": { side: "right", offset: 0.5 },
+      "scb.exp_imp": { side: "left", offset: 0.2 },
+      "scb.act_imp": { side: "left", offset: 0.8 },
+    },
+  },
+};
+
+const NODE_KIND: Record<string, DiagramNodeKind> = {
+  test: "test",
+  env: "env",
+  agent: "agent",
+  sequencer: "sequencer",
+  driver: "driver",
+  monitor: "monitor",
+  scoreboard: "scoreboard",
+  subscriber: "subscriber",
+  fifo: "fifo",
+  generic: "generic",
+};
+
+export function portKindOf(ep: TlmEndpoint): PortKind {
+  if (ep.role === "port") return ep.typeName === "uvm_analysis_port" ? "analysis_port" : "port";
+  if (ep.role === "export") return "export";
+  return ep.mask === TLM_MASK.ANALYSIS ? "analysis_imp" : "imp";
 }
 
-interface ExpectedConnection {
-  from: string; // portId
-  to: string;   // portId
+const GLYPH: Record<PortKind, string> = { port: "■", export: "○", imp: "●", analysis_port: "◆", analysis_imp: "●" };
+
+function methodLabel(ep: TlmEndpoint): string {
+  if (ep.family === "sqr") return "get_next_item()";
+  if (ep.mask === TLM_MASK.ANALYSIS) return "write()";
+  if (ep.mask & TLM_MASK.BLOCKING_GET) return "get()";
+  return "call";
 }
 
-interface Scenario {
-  name: string;
-  description: string;
-  nodes: ComponentNode[];
-  expected: ExpectedConnection[];
-}
+const range = (min: number, max: number) => `${min}..${max === UNBOUNDED ? "∞" : max}`;
 
-// ── Compatibility Rules ────────────────────────────────────────
-
-function arePortsCompatible(a: PortKind, b: PortKind): boolean {
-  // port → export, analysis_port → analysis_export
-  if (a === 'port' && b === 'export') return true;
-  if (a === 'export' && b === 'port') return true;
-  if (a === 'analysis_port' && b === 'analysis_export') return true;
-  if (a === 'analysis_export' && b === 'analysis_port') return true;
-  return false;
-}
-
-function getPortColor(kind: PortKind): string {
-  switch (kind) {
-    case 'port': return '#3b82f6';           // blue
-    case 'export': return '#22c55e';         // green
-    case 'analysis_port': return '#f97316';  // orange
-    case 'analysis_export': return '#a855f7'; // purple
+/** connect_phase code grouped by the class that contains each call (deepest class first). */
+function connectCodeLines(topo: TlmTopology, connections: TlmConnection[]): CodeTraceLine[] {
+  const groups = new Map<string, TlmConnection[]>();
+  for (const c of connections) {
+    const { writer } = connectStatement(topo, c.from, c.to);
+    groups.set(writer, [...(groups.get(writer) ?? []), c]);
   }
-}
-
-function getPortColorClass(kind: PortKind): string {
-  switch (kind) {
-    case 'port': return 'bg-blue-500';
-    case 'export': return 'bg-green-500';
-    case 'analysis_port': return 'bg-orange-500';
-    case 'analysis_export': return 'bg-purple-500';
+  const writers = [...groups.keys()].sort((a, b) => ancestry(topo, b).length - ancestry(topo, a).length);
+  const lines: CodeTraceLine[] = [];
+  for (const w of writers) {
+    const cls = topo.components.find((c) => c.id === w)?.cls ?? w;
+    lines.push({ text: `// ${cls}::connect_phase`, owner: "testbench" });
+    for (const c of groups.get(w) ?? []) {
+      lines.push({ text: connectStatement(topo, c.from, c.to).code, key: `${c.from}->${c.to}`, owner: "testbench" });
+    }
   }
+  return lines;
 }
 
-// ── Scenarios ──────────────────────────────────────────────────
+// ── Debug presets: one prediction per scenario ─────────────────────────────
 
-const SCENARIOS: Scenario[] = [
-  {
-    name: 'Basic Agent',
-    description: 'Connect sequencer, driver, and monitor within a basic UVM agent.',
-    nodes: [
+const DEBUG_QUESTIONS: Record<BuilderScenarioId, { question: string; options: PredictionOption[] }> = {
+  agent: {
+    question: "This connect_phase compiles. What does the run print before run_phase?",
+    options: [
       {
-        id: 'sequencer', label: 'Sequencer', subtitle: 'uvm_sequencer',
-        ports: [
-          { id: 'sqr_export', label: 'seq_item_export', kind: 'export', side: 'right' },
-        ],
-        pos: [0, 0],
+        id: "either",
+        label: "Nothing. connect() binds the two ends whichever one calls it.",
+        correct: false,
+        feedback: "connect() is directional: requirer.connect(provider). uvm_port_base::connect() rejects a call made on an imp.",
       },
       {
-        id: 'driver', label: 'Driver', subtitle: 'uvm_driver',
-        ports: [
-          { id: 'drv_port', label: 'seq_item_port', kind: 'port', side: 'left' },
-        ],
-        pos: [2, 0],
+        id: "imp",
+        label: "UVM_ERROR [Connection Error] \"Cannot call an imp port's connect method…\", then UVM_FATAL [BUILDERR].",
+        correct: true,
+        feedback: "seq_item_export is a uvm_seq_item_pull_imp, and an imp cannot call connect(). The error is counted, and uvm_root stops the run when end_of_elaboration starts.",
       },
       {
-        id: 'monitor', label: 'Monitor', subtitle: 'uvm_monitor',
-        ports: [
-          { id: 'mon_ap', label: 'analysis_port', kind: 'analysis_port', side: 'right' },
-        ],
-        pos: [0, 1],
+        id: "compile",
+        label: "A compile error: the two ends have different types.",
+        correct: false,
+        feedback: "Both are uvm_port_base #(uvm_sqr_if_base #(bus_item, bus_item)), so the call type-checks. The check happens at run time, inside connect().",
       },
       {
-        id: 'scoreboard', label: 'Scoreboard', subtitle: 'uvm_scoreboard',
-        ports: [
-          { id: 'sb_imp', label: 'analysis_imp', kind: 'analysis_export', side: 'left' },
-        ],
-        pos: [2, 1],
+        id: "hang",
+        label: "The run starts and the driver blocks forever in get_next_item().",
+        correct: false,
+        feedback: "The binding is never recorded, but the run never reaches run_phase: the connect() error triggers BUILDERR first.",
       },
-    ],
-    expected: [
-      { from: 'drv_port', to: 'sqr_export' },
-      { from: 'mon_ap', to: 'sb_imp' },
     ],
   },
-  {
-    name: 'Scoreboard Checker',
-    description: 'Wire monitor analysis ports through a FIFO to a scoreboard.',
-    nodes: [
+  fifo: {
+    question: "The scoreboard's run_phase loops on get_port.get(t), but nobody connected get_port. What happens?",
+    options: [
       {
-        id: 'monitor', label: 'Monitor', subtitle: 'uvm_monitor',
-        ports: [
-          { id: 'mon_ap', label: 'analysis_port', kind: 'analysis_port', side: 'right' },
-        ],
-        pos: [0, 0],
+        id: "hang",
+        label: "The scoreboard waits forever in get(); the test hangs.",
+        correct: false,
+        feedback: "That needs the run to start. uvm_blocking_get_port is built with min_size 1, so the missing connection is caught before run_phase.",
       },
       {
-        id: 'fifo', label: 'Analysis FIFO', subtitle: 'uvm_tlm_analysis_fifo',
-        ports: [
-          { id: 'fifo_ae', label: 'analysis_export', kind: 'analysis_export', side: 'left' },
-          { id: 'fifo_get', label: 'get_export', kind: 'export', side: 'right' },
-        ],
-        pos: [1, 0],
+        id: "min",
+        label: "UVM_ERROR on env.scb.get_port: \"connection count of 0 does not meet required minimum of 1\", then BUILDERR.",
+        correct: true,
+        feedback: "resolve_bindings() runs when end_of_elaboration starts. get_port reaches 0 imps but needs at least 1, so UVM reports it and uvm_root stops the run.",
       },
       {
-        id: 'scoreboard', label: 'Scoreboard', subtitle: 'uvm_scoreboard',
-        ports: [
-          { id: 'sb_get_port', label: 'get_port', kind: 'port', side: 'left' },
-        ],
-        pos: [2, 0],
+        id: "push",
+        label: "Nothing: the FIFO pushes items into the scoreboard automatically.",
+        correct: false,
+        feedback: "A FIFO never pushes. Its get_export is an imp the scoreboard must pull from with get().",
       },
-    ],
-    expected: [
-      { from: 'mon_ap', to: 'fifo_ae' },
-      { from: 'sb_get_port', to: 'fifo_get' },
+      {
+        id: "null",
+        label: "A null-object fatal at the first get().",
+        correct: false,
+        feedback: "That is what an unconnected seq_item_port does, because its min_size is 0. A get port's min_size is 1, so UVM reports it at end_of_elaboration.",
+      },
     ],
   },
-  {
-    name: 'Coverage Collector',
-    description: 'Fan out a monitor\'s analysis port to both a scoreboard and a coverage collector.',
-    nodes: [
+  promotion: {
+    question: "Every connect() call succeeds. What happens when end_of_elaboration starts?",
+    options: [
       {
-        id: 'monitor', label: 'Monitor', subtitle: 'uvm_monitor',
-        ports: [
-          { id: 'mon_ap', label: 'analysis_port', kind: 'analysis_port', side: 'right' },
-        ],
-        pos: [0, 0],
+        id: "zero",
+        label: "Nothing: analysis connections may have zero subscribers.",
+        correct: false,
+        feedback: "True for an analysis port (min_size 0). chk_env.analysis_export is a uvm_analysis_export, built with min_size 1: it must reach at least one imp.",
       },
       {
-        id: 'scoreboard', label: 'Scoreboard', subtitle: 'uvm_scoreboard',
-        ports: [
-          { id: 'sb_imp', label: 'analysis_imp', kind: 'analysis_export', side: 'left' },
-        ],
-        pos: [2, 0],
+        id: "min",
+        label: "UVM_ERROR on env.chk_env.analysis_export: \"connection count of 0 does not meet required minimum of 1\", then BUILDERR.",
+        correct: true,
+        feedback: "The export is a pass-through. Nothing connects it down to scb.item_imp, so it reaches no imp, and so neither do agt.ap and mon.ap.",
       },
       {
-        id: 'coverage', label: 'Coverage', subtitle: 'uvm_subscriber',
-        ports: [
-          { id: 'cov_imp', label: 'analysis_imp', kind: 'analysis_export', side: 'left' },
-        ],
-        pos: [2, 1],
+        id: "ntconn",
+        label: "The monitor's first write() fatals with NTCONN.",
+        correct: false,
+        feedback: "write() never runs: the build error stops the test before run_phase. NTCONN fires only if get_if() returns null for an index below size().",
       },
-    ],
-    expected: [
-      { from: 'mon_ap', to: 'sb_imp' },
-      { from: 'mon_ap', to: 'cov_imp' },
+      {
+        id: "compile",
+        label: "A compile error in check_env.",
+        correct: false,
+        feedback: "Leaving an export unconnected is legal SystemVerilog; only resolve_bindings() notices.",
+      },
     ],
   },
+  imp_decl: {
+    question: "The env connects in_agt.ap to scb.act_imp and out_agt.ap to scb.exp_imp. What happens?",
+    options: [
+      {
+        id: "mismatch",
+        label: "It compiles and runs; every comparison mismatches.",
+        correct: false,
+        feedback: "That is what happens when both streams carry the same type. Here in_agt publishes bus_item and act_imp takes pkt_item.",
+      },
+      {
+        id: "compile",
+        label: "A compile error: the port's and the imp's transaction types differ.",
+        correct: true,
+        feedback: "connect() takes a uvm_port_base of the same specialization. uvm_analysis_port #(bus_item) and uvm_analysis_imp_act #(pkt_item, …) are different types, so the compiler rejects both lines.",
+      },
+      {
+        id: "mask",
+        label: "UVM_ERROR \"does not provide the complete interface\".",
+        correct: false,
+        feedback: "Both ends are analysis interfaces, so the mask check would pass. The type parameters differ, and that is checked first, at compile time.",
+      },
+      {
+        id: "route",
+        label: "It works: `uvm_analysis_imp_decl routes each item to the right input by its suffix.",
+        correct: false,
+        feedback: "The suffix only chooses which write_<suffix>() method the imp calls on the scoreboard. Your connect() calls decide which stream reaches which imp.",
+      },
+    ],
+  },
+};
+
+const HINTS = [
+  "Pick the caller first: the end that needs the interface (a port, or an export passing calls down).",
+  "Imps are always the argument of connect(), never the caller. An export never calls connect() on a port.",
+  "Promote one level at a time: child port → parent port going up, parent export → child export or imp going down.",
 ];
 
-// ── Geometry helpers ───────────────────────────────────────────
+export const TLM_BUILDER_ASSUMPTIONS = [
+  "Checks follow uvm-core 2020.3.1 uvm_port_base::connect() and resolve_bindings(); UVM messages use that source's text.",
+  "Mismatched transaction or interface types are compile errors. Real compilers word them differently.",
+  "Hierarchy (relationship) checks only warn when check_connection_relationships is set, and analysis ports skip them.",
+  "Log lines omit file and line numbers and are all at time 0.",
+];
 
-const NODE_W = 180;
-const NODE_H = 80;
-const COL_GAP = 60;
-const ROW_GAP = 40;
-const PORT_R = 8;
+// ── Component ───────────────────────────────────────────────────────────────
 
-function nodeTopLeft(col: number, row: number): { x: number; y: number } {
-  return {
-    x: col * (NODE_W + COL_GAP) + 20,
-    y: row * (NODE_H + ROW_GAP) + 20,
-  };
-}
-
-function portPos(node: ComponentNode, port: PortDef, portIndex: number, totalOnSide: number): { x: number; y: number } {
-  const { x, y } = nodeTopLeft(node.pos[0], node.pos[1]);
-  const portsOnSide = node.ports.filter(p => p.side === port.side);
-  const idx = portsOnSide.indexOf(port);
-  const count = portsOnSide.length;
-
-  switch (port.side) {
-    case 'left':
-      return { x: x - PORT_R, y: y + (NODE_H / (count + 1)) * (idx + 1) };
-    case 'right':
-      return { x: x + NODE_W + PORT_R, y: y + (NODE_H / (count + 1)) * (idx + 1) };
-    case 'bottom':
-      return { x: x + (NODE_W / (count + 1)) * (idx + 1), y: y + NODE_H + PORT_R };
-  }
-}
-
-// ── Connection type ────────────────────────────────────────────
-
-interface Connection {
-  from: string;
-  to: string;
-}
-
-// ── Component ──────────────────────────────────────────────────
+type Mode = "build" | "debug";
 
 export function TlmConnectionBuilderVisualizer() {
-  const [scenarioIndex, setScenarioIndex] = useState(0);
-  const [connections, setConnections] = useState<Connection[]>([]);
-  const [selectedPort, setSelectedPort] = useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [missingPorts, setMissingPorts] = useState<Set<string>>(new Set());
-  const [showSolution, setShowSolution] = useState(false);
-  const [validationResult, setValidationResult] = useState<'pass' | 'fail' | null>(null);
-  const [errorFlashPort, setErrorFlashPort] = useState<string | null>(null);
-  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [scenarioId, setScenarioId] = useState<BuilderScenarioId>("agent");
+  const [mode, setMode] = useState<Mode>("build");
+  const [connections, setConnections] = useState<TlmConnection[]>([]);
+  const [selected, setSelected] = useState<string | null>(null);
+  const [last, setLast] = useState<ConnectResult | null>(null);
+  const [ran, setRan] = useState(false);
+  const [checkRelationships, setCheckRelationships] = useState(false);
 
-  const scenario = SCENARIOS[scenarioIndex];
+  const scenario = TLM_BUILDER_SCENARIOS.find((s) => s.id === scenarioId) ?? TLM_BUILDER_SCENARIOS[0];
+  const { topo } = scenario;
+  const layout = LAYOUTS[scenario.id];
 
-  // Build a lookup from portId → { node, port }
-  const portLookup = React.useMemo(() => {
-    const map = new Map<string, { node: ComponentNode; port: PortDef }>();
-    for (const node of scenario.nodes) {
-      for (const port of node.ports) {
-        map.set(port.id, { node, port });
-      }
-    }
-    return map;
-  }, [scenario]);
+  const resetBoard = (next: TlmConnection[] = []) => {
+    setConnections(next);
+    setSelected(null);
+    setLast(null);
+    setRan(false);
+  };
 
-  // Reset state when scenario changes
-  const resetState = useCallback(() => {
-    setConnections([]);
-    setSelectedPort(null);
-    setErrorMsg(null);
-    setMissingPorts(new Set());
-    setShowSolution(false);
-    setValidationResult(null);
-    setErrorFlashPort(null);
-  }, []);
+  const shownConnections = mode === "debug" ? scenario.broken : connections;
+  const elaboration = useMemo(
+    () => elaborate(topo, shownConnections, { checkRelationships }),
+    [topo, shownConnections, checkRelationships],
+  );
+  const goals = useMemo(() => goalStatus(topo, elaboration.connections, scenario.goals), [topo, elaboration, scenario.goals]);
 
-  useEffect(() => {
-    resetState();
-  }, [scenarioIndex, resetState]);
-
-  // Calculate SVG canvas size
-  const maxCol = Math.max(...scenario.nodes.map(n => n.pos[0]));
-  const maxRow = Math.max(...scenario.nodes.map(n => n.pos[1]));
-  const svgW = (maxCol + 1) * (NODE_W + COL_GAP) + 40;
-  const svgH = (maxRow + 1) * (NODE_H + ROW_GAP) + 60;
-
-  const handlePortClick = useCallback((portId: string) => {
-    if (showSolution) return;
-
-    const clicked = portLookup.get(portId);
-    if (!clicked) return;
-
-    if (!selectedPort) {
-      // First click — select the port
-      setSelectedPort(portId);
-      setErrorMsg(null);
+  const pick = (id: string) => {
+    if (mode !== "build") return;
+    if (!selected) {
+      setSelected(id);
+      setLast(null);
       return;
     }
-
-    if (selectedPort === portId) {
-      // Deselect
-      setSelectedPort(null);
+    if (selected === id) {
+      setSelected(null);
       return;
     }
+    const result = checkConnect(topo, connections, selected, id, { checkRelationships });
+    setLast(result);
+    setSelected(null);
+    setRan(false);
+    if (result.accepted) setConnections((cs) => [...cs, { from: selected, to: id }]);
+  };
 
-    // Second click — attempt connection
-    const source = portLookup.get(selectedPort);
-    if (!source) {
-      setSelectedPort(null);
-      return;
-    }
+  const removeConnection = (key: string) => {
+    setConnections((cs) => cs.filter((c) => `${c.from}->${c.to}` !== key));
+    setRan(false);
+    setLast(null);
+  };
 
-    if (arePortsCompatible(source.port.kind, clicked.port.kind)) {
-      // Check if connection already exists
-      const duplicate = connections.some(
-        c => (c.from === selectedPort && c.to === portId) || (c.from === portId && c.to === selectedPort)
-      );
-      if (!duplicate) {
-        setConnections(prev => [...prev, { from: selectedPort!, to: portId }]);
-        setValidationResult(null);
-        setMissingPorts(new Set());
-      }
-      setSelectedPort(null);
-      setErrorMsg(null);
-    } else {
-      // Incompatible — flash error
-      setErrorMsg(`Cannot connect ${source.port.kind.replace('_', ' ')} to ${clicked.port.kind.replace('_', ' ')}`);
-      setErrorFlashPort(portId);
-      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-      errorTimerRef.current = setTimeout(() => {
-        setErrorFlashPort(null);
-        setErrorMsg(null);
-      }, 1500);
-      setSelectedPort(null);
-    }
-  }, [selectedPort, portLookup, connections, showSolution]);
+  // Diagram
+  const errorEnds = last && !last.accepted ? [last.from, last.to] : [];
+  const nodes: DiagramNode[] = topo.components
+    .filter((c) => layout.boxes[c.id])
+    .map((c) => {
+      const box = layout.boxes[c.id];
+      return {
+        id: c.id,
+        label: c.name,
+        sublabel: box.container ? undefined : (box.sublabel ?? c.cls),
+        kind: NODE_KIND[c.kind] ?? "generic",
+        x: box.x,
+        y: box.y,
+        w: box.w,
+        h: box.h,
+        container: box.container,
+      };
+    });
+  const ports: DiagramPort[] = topo.endpoints.map((ep) => ({
+    id: ep.id,
+    nodeId: ep.owner,
+    side: layout.ports[ep.id]?.side ?? "left",
+    offset: layout.ports[ep.id]?.offset ?? 0.5,
+    kind: portKindOf(ep),
+    label: ep.handle,
+    state: selected === ep.id ? "active" : errorEnds.includes(ep.id) ? "error" : "normal",
+  }));
+  const edges: DiagramEdge[] = elaboration.connections.map((c) => ({
+    id: `${c.from}->${c.to}`,
+    from: c.from,
+    to: c.to,
+    style: "causal",
+    label: methodLabel(topo.endpoints.find((e) => e.id === c.from) as TlmEndpoint),
+  }));
+  const diagramTitle = `${scenario.title}: ${elaboration.connections.length} connection${elaboration.connections.length === 1 ? "" : "s"}. ${
+    elaboration.connections.map((c) => connectStatement(topo, c.from, c.to).code).join(" ") || "No connections yet."
+  }`;
 
-  const handleCheck = useCallback(() => {
-    const missing = new Set<string>();
-    let allFound = true;
+  const codeLines = connectCodeLines(topo, mode === "debug" ? scenario.broken : connections);
+  const declarations = declarationSource(topo);
+  const debug = DEBUG_QUESTIONS[scenario.id];
 
-    for (const exp of scenario.expected) {
-      const found = connections.some(
-        c => (c.from === exp.from && c.to === exp.to) || (c.from === exp.to && c.to === exp.from)
-      );
-      if (!found) {
-        allFound = false;
-        missing.add(exp.from);
-        missing.add(exp.to);
-      }
-    }
+  const resolutionRows = topo.endpoints.map((ep) => ({ ep, res: elaboration.resolutions.get(ep.id) }));
 
-    setMissingPorts(missing);
-    setValidationResult(allFound ? 'pass' : 'fail');
-  }, [connections, scenario.expected]);
-
-  const handleShowSolution = useCallback(() => {
-    setConnections(scenario.expected.map(e => ({ from: e.from, to: e.to })));
-    setShowSolution(true);
-    setMissingPorts(new Set());
-    setValidationResult('pass');
-    setSelectedPort(null);
-  }, [scenario.expected]);
-
-  const handleScenarioChange = useCallback((e: React.ChangeEvent<HTMLSelectElement>) => {
-    setScenarioIndex(Number(e.target.value));
-  }, []);
+  const elaborationPanel = (
+    <div className="space-y-3" aria-live="polite">
+      <div>
+        <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          {elaboration.compiles ? "Log up to start of run_phase" : "Compiler output"}
+        </p>
+        <pre
+          aria-label="Simulation log"
+          className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]"
+        >
+          {elaboration.log.length > 0
+            ? elaboration.log.join("\n")
+            : "UVM_INFO @ 0: reporter [RNTST] Running test bus_test...\n(no connection errors: end_of_elaboration passes and run_phase starts)"}
+        </pre>
+      </div>
+      <p className={cn("text-sm font-medium", elaboration.runStarts ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>
+        {elaboration.runStarts
+          ? "✓ end_of_elaboration passes: every port and export reaches an allowed number of imps."
+          : elaboration.compiles
+            ? `✕ ${elaboration.errorCount} UVM_ERROR${elaboration.errorCount === 1 ? "" : "s"} before run_phase, so uvm_root issues UVM_FATAL [BUILDERR]. run_phase never starts.`
+            : "✕ The code does not compile, so simulation never starts."}
+      </p>
+      {elaboration.compiles ? (
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[300px] text-left text-xs">
+            <caption className="sr-only">Connection counts after resolve_bindings()</caption>
+            <thead className="text-muted-foreground">
+              <tr>
+                <th className="py-1 pr-2 font-semibold">Endpoint</th>
+                <th className="py-1 pr-2 font-semibold">Imps reached</th>
+                <th className="py-1 pr-2 font-semibold">Allowed</th>
+                <th className="py-1 font-semibold">Check</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono [font-variant-ligatures:none]">
+              {resolutionRows.map(({ ep, res }) => (
+                <tr key={ep.id} className="border-t border-border/50">
+                  <td className="py-1 pr-2">
+                    {GLYPH[portKindOf(ep)]} {ep.id}
+                  </td>
+                  <td className="py-1 pr-2">{res?.size ?? 0}</td>
+                  <td className="py-1 pr-2">{range(ep.minSize, ep.maxSize)}</td>
+                  <td className={cn("py-1", res?.status === "ok" ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>
+                    {res?.status === "ok" ? "✓ ok" : res?.status === "below-min" ? "✕ below min" : "✕ above max"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+    </div>
+  );
 
   return (
-    <Card className="my-8 overflow-hidden border-slate-200 dark:border-slate-800 shadow-sm" data-testid="tlm-builder">
-      <CardHeader className="bg-slate-50 dark:bg-slate-900/50 pb-4">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
-          <div>
-            <CardTitle>TLM Connection Builder</CardTitle>
-            <p className="text-sm text-slate-500 mt-1">Click a source port, then click a matching destination to connect them</p>
-          </div>
-          <div className="flex items-center gap-2 flex-wrap">
-            <select
-              value={scenarioIndex}
-              onChange={handleScenarioChange}
-              className="rounded-md border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm px-3 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-400"
-              data-testid="scenario-select"
-            >
-              {SCENARIOS.map((s, i) => (
-                <option key={s.name} value={i}>{s.name}</option>
+    <VisualFrame
+      label="TLM connection builder"
+      eyebrow="Build it"
+      title="TLM connection builder"
+      summary="Pick the caller, then the provider. Each attempt runs uvm_port_base::connect()'s checks; run to end_of_elaboration to see resolve_bindings() count what each port reaches."
+      fidelity="model"
+      assumptions={TLM_BUILDER_ASSUMPTIONS}
+    >
+      <div className="flex flex-wrap items-center gap-3">
+        <SegmentedControl
+          label="Scenario"
+          value={scenario.id}
+          onChange={(id) => {
+            setScenarioId(id);
+            resetBoard();
+          }}
+          options={TLM_BUILDER_SCENARIOS.map((s) => ({ value: s.id, label: s.title }))}
+        />
+        <SegmentedControl
+          label="Mode"
+          value={mode}
+          onChange={(m) => {
+            setMode(m);
+            resetBoard();
+          }}
+          options={[
+            { value: "build", label: "Build" },
+            { value: "debug", label: "Spot the bug" },
+          ]}
+        />
+      </div>
+
+      <p className="text-sm text-foreground">
+        <span className="font-semibold">Goal: </span>
+        {scenario.goal}
+      </p>
+
+      <BlockDiagram
+        title={diagramTitle}
+        width={layout.width}
+        height={layout.height}
+        nodes={nodes}
+        ports={ports}
+        edges={edges}
+        minWidth={320}
+        showLegend
+      />
+      <p className="text-xs text-muted-foreground">
+        Dashed arrows point from caller to provider (the direction of the method call), labelled with the call. In a get connection the item then travels back against the arrow.
+      </p>
+
+      {mode === "build" ? (
+        <>
+          <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,200px),1fr))]" role="group" aria-label="Ports, exports and imps">
+            {topo.components
+              .filter((c) => topo.endpoints.some((e) => e.owner === c.id))
+              .map((c) => (
+                <fieldset key={c.id} className="min-w-0 rounded-lg border border-border/60 p-2">
+                  <legend className="px-1 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">
+                    {c.name} · {c.cls}
+                  </legend>
+                  <div className="flex flex-col gap-1">
+                    {topo.endpoints
+                      .filter((e) => e.owner === c.id)
+                      .map((ep) => {
+                        const kind = portKindOf(ep);
+                        const isSel = selected === ep.id;
+                        return (
+                          <button
+                            key={ep.id}
+                            type="button"
+                            aria-pressed={isSel}
+                            aria-label={`${ep.id} (${ep.role}, ${ep.typeName})`}
+                            onClick={() => pick(ep.id)}
+                            className={cn(
+                              "flex min-h-10 items-center gap-2 rounded-md border px-2 py-1 text-left font-mono text-xs [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                              isSel ? "border-cyan-500 bg-cyan-500/15" : "border-border/70 hover:bg-muted",
+                            )}
+                          >
+                            <span aria-hidden className="w-3 text-center">
+                              {GLYPH[kind]}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate">{ep.handle}</span>
+                              <span className="block truncate text-[10px] text-muted-foreground">
+                                {ep.role} · {ep.typeName}
+                              </span>
+                            </span>
+                          </button>
+                        );
+                      })}
+                  </div>
+                </fieldset>
               ))}
-            </select>
           </div>
-        </div>
-      </CardHeader>
 
-      <CardContent className="p-4 sm:p-6">
-        {/* ── Scenario Description ── */}
-        <p className="text-sm text-slate-600 dark:text-slate-400 mb-4" data-testid="scenario-description">
-          {scenario.description}
+          <div aria-live="polite" className="min-h-6 text-sm">
+            {selected ? (
+              <p>
+                Caller: <code className="font-mono [font-variant-ligatures:none]">{selected}</code>. Now pick the provider, the argument of{" "}
+                <code className="font-mono">connect()</code>.
+              </p>
+            ) : last ? (
+              <ConnectVerdict result={last} topo={topo} />
+            ) : (
+              <p className="text-muted-foreground">Pick the endpoint that calls connect().</p>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={() => setRan(true)} className={buttonClass("primary")}>
+              Run to end_of_elaboration
+            </button>
+            <button type="button" onClick={() => resetBoard(scenario.solution)} className={buttonClass()}>
+              Show a solution
+            </button>
+            <button type="button" onClick={() => resetBoard()} className={buttonClass()}>
+              Reset
+            </button>
+            <label className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+              <input
+                type="checkbox"
+                checked={checkRelationships}
+                onChange={(e) => {
+                  setCheckRelationships(e.target.checked);
+                  setRan(false);
+                }}
+                className="h-4 w-4 accent-cyan-500"
+              />
+              check_connection_relationships = 1
+            </label>
+          </div>
+          <HintLadder hints={HINTS} resetKey={scenario.id} />
+
+          {ran ? (
+            <div className="space-y-3 rounded-xl border border-border/70 bg-background/40 p-3">
+              {elaborationPanel}
+              <ul className="space-y-1 text-sm" aria-label="Goals">
+                {goals.map((g) => (
+                  <li key={`${g.from}-${g.reaches}`} className={g.met ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}>
+                    {g.met ? "✓" : "✕"} <code className="font-mono [font-variant-ligatures:none]">{g.from}</code> reaches{" "}
+                    <code className="font-mono [font-variant-ligatures:none]">{g.reaches}</code>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </>
+      ) : (
+        <PredictionPrompt resetKey={scenario.id} question={debug.question} options={debug.options}>
+          <div className="space-y-3">
+            {elaborationPanel}
+            <button
+              type="button"
+              onClick={() => {
+                setMode("build");
+                resetBoard(elaboration.connections);
+              }}
+              className={buttonClass("primary")}
+            >
+              Fix it in the builder
+            </button>
+          </div>
+        </PredictionPrompt>
+      )}
+
+      <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
+        <CodeTrace
+          label={mode === "debug" ? "connect_phase under test" : "Generated connect_phase code"}
+          lines={codeLines.length ? codeLines : [{ text: "// no connect() calls yet" }]}
+          activeKey={last?.accepted ? `${last.from}->${last.to}` : undefined}
+          renderLineControl={
+            mode === "build"
+              ? (line) =>
+                  line.key ? (
+                    <button
+                      type="button"
+                      onClick={() => removeConnection(line.key as string)}
+                      aria-label={`Remove ${line.text}`}
+                      className="rounded-md border border-slate-500 px-2 py-0.5 text-[11px] text-slate-300 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300"
+                    >
+                      remove
+                    </button>
+                  ) : null
+              : undefined
+          }
+        />
+        <details className="rounded-xl border border-border/70 bg-background/40 p-3 text-sm">
+          <summary className="cursor-pointer font-medium text-foreground">Declarations behind these symbols</summary>
+          <div className="mt-2 space-y-3">
+            {declarations.map((d) => (
+              <div key={d.owner}>
+                <p className="font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">class {d.cls}</p>
+                <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-2 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+                  {d.lines.join("\n")}
+                </pre>
+              </div>
+            ))}
+            {scenario.id === "fifo" ? (
+              <p className="text-xs text-muted-foreground">
+                In uvm_tlm_analysis_fifo, analysis_export is a uvm_analysis_imp and get_export is another handle to the uvm_get_peek_imp named
+                get_peek_export. Names that end in &quot;export&quot; are often imps.
+              </p>
+            ) : null}
+          </div>
+        </details>
+      </div>
+    </VisualFrame>
+  );
+}
+
+function ConnectVerdict({ result, topo }: { result: ConnectResult; topo: TlmTopology }) {
+  const from = topo.endpoints.find((e) => e.id === result.from);
+  const tone =
+    result.kind === "ok" || result.kind === "duplicate"
+      ? "text-emerald-700 dark:text-emerald-300"
+      : result.kind === "uvm_warning"
+        ? "text-amber-700 dark:text-amber-300"
+        : "text-rose-700 dark:text-rose-300";
+  const heading =
+    result.kind === "ok"
+      ? "✓ Connected."
+      : result.kind === "duplicate"
+        ? "= Already connected."
+        : result.kind === "uvm_warning"
+          ? "! Connected, with a warning."
+          : result.kind === "compile_error"
+            ? "✕ Compile error. Not connected."
+            : "✕ UVM_ERROR. Not connected.";
+  return (
+    <div className="space-y-1" data-testid="connect-verdict">
+      <p className={cn("font-semibold", tone)}>
+        {heading} <code className="font-mono font-normal [font-variant-ligatures:none]">{result.statement.code}</code>
+      </p>
+      {result.log ? (
+        <pre className="overflow-x-auto whitespace-pre-wrap rounded-md bg-slate-950/90 p-2 font-mono text-[12px] text-slate-100 [font-variant-ligatures:none]">{result.log}</pre>
+      ) : result.kind === "compile_error" ? (
+        <p className="font-mono text-xs [font-variant-ligatures:none]">{result.message}</p>
+      ) : null}
+      <p className="text-muted-foreground">
+        <strong className="text-foreground">Why: </strong>
+        {result.why}
+      </p>
+      {result.accepted && !result.relationship.checked && result.statement.reachesInside.length > 0 ? (
+        <p className="text-amber-700 dark:text-amber-300">
+          ! UVM accepts this silently (analysis ports skip the hierarchy check), but the call reaches inside {result.statement.reachesInside.join(" and ")}. Promote
+          through that component&apos;s own port or export so it stays reusable.
         </p>
+      ) : null}
+      {result.accepted && result.relationship.checked && !result.relationship.ok && result.kind === "ok" ? (
+        <p className="text-amber-700 dark:text-amber-300">
+          ! This skips a hierarchy level. UVM stays silent by default; with check_connection_relationships set it would warn: {result.relationship.message}
+        </p>
+      ) : null}
+      {from && result.kind === "ok" ? (
+        <p className="sr-only">
+          {endpointFullName(topo, from)} now calls through to {result.to}.
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
-        {/* ── SVG Canvas ── */}
-        <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/30 mb-4">
-          <svg
-            width={svgW}
-            height={svgH}
-            viewBox={`0 0 ${svgW} ${svgH}`}
-            className="min-w-[500px]"
-            data-testid="tlm-canvas"
-          >
-            {/* ── Connection Lines ── */}
-            {connections.map((conn, idx) => {
-              const fromEntry = portLookup.get(conn.from);
-              const toEntry = portLookup.get(conn.to);
-              if (!fromEntry || !toEntry) return null;
-              const p1 = portPos(fromEntry.node, fromEntry.port, 0, 1);
-              const p2 = portPos(toEntry.node, toEntry.port, 0, 1);
-              const midX = (p1.x + p2.x) / 2;
-              return (
-                <g key={`conn-${idx}`} data-testid={`connection-${conn.from}-${conn.to}`}>
-                  <motion.path
-                    d={`M ${p1.x} ${p1.y} C ${midX} ${p1.y}, ${midX} ${p2.y}, ${p2.x} ${p2.y}`}
-                    fill="none"
-                    stroke={showSolution ? '#22c55e' : '#6366f1'}
-                    strokeWidth={2.5}
-                    strokeLinecap="round"
-                    initial={{ pathLength: 0, opacity: 0 }}
-                    animate={{ pathLength: 1, opacity: 1 }}
-                    transition={{ duration: 0.4 }}
-                  />
-                  {/* Arrowhead */}
-                  <circle cx={p2.x} cy={p2.y} r={4} fill={showSolution ? '#22c55e' : '#6366f1'} />
-                </g>
-              );
-            })}
-
-            {/* ── Component Nodes ── */}
-            {scenario.nodes.map(node => {
-              const { x, y } = nodeTopLeft(node.pos[0], node.pos[1]);
-              return (
-                <g key={node.id} data-testid={`node-${node.id}`}>
-                  {/* Node box */}
-                  <rect
-                    x={x}
-                    y={y}
-                    width={NODE_W}
-                    height={NODE_H}
-                    rx={12}
-                    ry={12}
-                    fill="white"
-                    stroke="#cbd5e1"
-                    strokeWidth={1.5}
-                    className="dark:fill-slate-800 dark:stroke-slate-600"
-                  />
-                  {/* Label */}
-                  <text
-                    x={x + NODE_W / 2}
-                    y={y + 30}
-                    textAnchor="middle"
-                    className="fill-slate-800 dark:fill-slate-200 text-sm font-semibold"
-                    style={{ fontSize: 13, fontWeight: 600 }}
-                  >
-                    {node.label}
-                  </text>
-                  {/* Subtitle */}
-                  <text
-                    x={x + NODE_W / 2}
-                    y={y + 48}
-                    textAnchor="middle"
-                    className="fill-slate-400 dark:fill-slate-500"
-                    style={{ fontSize: 10, fontFamily: 'monospace' }}
-                  >
-                    {node.subtitle}
-                  </text>
-
-                  {/* ── Ports ── */}
-                  {node.ports.map((port, pi) => {
-                    const pp = portPos(node, port, pi, node.ports.length);
-                    const isSelected = selectedPort === port.id;
-                    const isMissing = missingPorts.has(port.id);
-                    const isErrorFlash = errorFlashPort === port.id;
-
-                    return (
-                      <g key={port.id}>
-                        {/* Port circle */}
-                        <circle
-                          cx={pp.x}
-                          cy={pp.y}
-                          r={isSelected ? PORT_R + 3 : PORT_R}
-                          fill={isErrorFlash ? '#ef4444' : getPortColor(port.kind)}
-                          stroke={isSelected ? '#facc15' : isMissing ? '#eab308' : 'white'}
-                          strokeWidth={isSelected ? 3 : isMissing ? 3 : 2}
-                          className="cursor-pointer transition-all duration-150"
-                          onClick={() => handlePortClick(port.id)}
-                          data-testid={`port-${port.id}`}
-                        >
-                          <title>{`${port.label} (${port.kind.replace('_', ' ')})`}</title>
-                        </circle>
-                        {/* Port label */}
-                        <text
-                          x={port.side === 'left' ? pp.x - PORT_R - 4 : port.side === 'right' ? pp.x + PORT_R + 4 : pp.x}
-                          y={port.side === 'bottom' ? pp.y + PORT_R + 12 : pp.y + 3}
-                          textAnchor={port.side === 'left' ? 'end' : port.side === 'right' ? 'start' : 'middle'}
-                          className="fill-slate-500 dark:fill-slate-400"
-                          style={{ fontSize: 9, fontFamily: 'monospace' }}
-                        >
-                          {port.label}
-                        </text>
-                      </g>
-                    );
-                  })}
-                </g>
-              );
-            })}
-          </svg>
-        </div>
-
-        {/* ── Error Message ── */}
-        <AnimatePresence>
-          {errorMsg && (
-            <motion.div
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2 mb-4"
-              data-testid="error-message"
-            >
-              <X className="w-4 h-4 shrink-0" />
-              {errorMsg}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* ── Validation Result ── */}
-        <AnimatePresence>
-          {validationResult && (
-            <motion.div
-              initial={{ opacity: 0, y: -8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -8 }}
-              className={`flex items-center gap-2 text-sm rounded-lg px-3 py-2 mb-4 border ${
-                validationResult === 'pass'
-                  ? 'text-green-700 dark:text-green-300 bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800'
-                  : 'text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'
-              }`}
-              data-testid="validation-result"
-            >
-              {validationResult === 'pass' ? (
-                <><CheckCircle className="w-4 h-4 shrink-0" /> All connections are correct!</>
-              ) : (
-                <><AlertTriangle className="w-4 h-4 shrink-0" /> Missing connections highlighted in yellow. Try again!</>
-              )}
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* ── Controls ── */}
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={handleCheck} data-testid="btn-check">
-            <Zap className="w-4 h-4 mr-1" /> Check Connections
-          </Button>
-          <Button variant="outline" size="sm" onClick={handleShowSolution} data-testid="btn-solution">
-            <Eye className="w-4 h-4 mr-1" /> Show Solution
-          </Button>
-          <Button variant="outline" size="sm" onClick={resetState} data-testid="btn-reset">
-            <RotateCcw className="w-4 h-4 mr-1" /> Reset
-          </Button>
-        </div>
-
-        {/* ── Legend ── */}
-        <div className="mt-6 pt-4 border-t border-slate-100 dark:border-slate-800/50 flex flex-wrap gap-4 text-xs text-slate-500">
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-blue-500" /> TLM Port (initiator)
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-green-500" /> TLM Export (responder)
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-orange-500" /> Analysis Port
-          </div>
-          <div className="flex items-center gap-1.5">
-            <span className="w-2.5 h-2.5 rounded-full bg-purple-500" /> Analysis Export/Imp
-          </div>
-        </div>
-      </CardContent>
-    </Card>
+function buttonClass(variant: "primary" | "plain" = "plain") {
+  return cn(
+    "inline-flex h-10 items-center rounded-lg px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+    variant === "primary" ? "bg-cyan-600 text-white hover:bg-cyan-700" : "border border-border/70 bg-background/60 text-foreground hover:bg-muted",
   );
 }
 

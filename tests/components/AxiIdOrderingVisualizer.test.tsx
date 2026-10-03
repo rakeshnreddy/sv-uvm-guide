@@ -1,74 +1,80 @@
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
-import AxiIdOrderingVisualizer from '../../src/components/visualizers/AxiIdOrderingVisualizer';
+import React from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-vi.mock('lucide-react', () => ({
-  Play: () => <div data-testid="icon-play" />,
-  Pause: () => <div data-testid="icon-pause" />,
-  SkipBack: () => <div data-testid="icon-skip-back" />,
-  SkipForward: () => <div data-testid="icon-skip-forward" />,
-  RotateCcw: () => <div data-testid="icon-rotate-ccw" />
-}));
+import AxiIdOrderingVisualizer, { ORDERING_PRESETS } from "@/components/visualizers/AxiIdOrderingVisualizer";
+import { isLegalOrdering } from "@/lib/axi-channel-model";
 
-describe('AxiIdOrderingVisualizer', () => {
-  it('renders without crashing', () => {
-    render(<AxiIdOrderingVisualizer />);
-    expect(screen.getByText('AXI ID Ordering Visualizer')).toBeInTheDocument();
+const lockIn = (label: string) => {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+};
+const situation = (name: string) => fireEvent.click(within(screen.getByRole("radiogroup", { name: "Ordering situation" })).getByRole("radio", { name }));
+
+describe("AxiIdOrderingVisualizer", () => {
+  it("every preset offers exactly one order that the model accepts", () => {
+    for (const p of ORDERING_PRESETS) {
+      expect(p.options.filter((seq) => isLegalOrdering(p.kind, p.requests, seq)), p.id).toHaveLength(1);
+    }
   });
 
-  it('shows default scenario selected', () => {
+  it("hides the waveform and the play controls until the learner commits", () => {
     render(<AxiIdOrderingVisualizer />);
-    const select = screen.getByRole('combobox');
-    expect(select).toHaveValue('same_id_order');
+    expect(screen.getByTestId("axi-id-ordering-visualizer")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Send A" })).not.toBeInTheDocument();
+    lockIn("A0, A1, B0, B1");
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Send A" })).toBeInTheDocument();
   });
 
-  it('displays outstanding transactions', () => {
+  it("explains why same-ID read data may not be reordered (A5.3.1)", () => {
     render(<AxiIdOrderingVisualizer />);
-    expect(screen.getByText('Read A')).toBeInTheDocument();
-    expect(screen.getByText('Read B')).toBeInTheDocument();
+    lockIn("B0, B1, A0, A1");
+    expect(screen.getByText(/Not quite/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Same-ID read data must return in address order/).length).toBeGreaterThan(0);
   });
 
-  it('steps forward to show events', () => {
+  it("lets different IDs interleave and keeps same-ID order", () => {
     render(<AxiIdOrderingVisualizer />);
-    const stepForward = screen.getByTitle('Step Forward');
-    fireEvent.click(stepForward);
-    expect(screen.getByText(/Issue Read A/)).toBeInTheDocument();
+    situation("Reads, different IDs");
+    lockIn("B0, A0, B1, A1, C");
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
   });
 
-  it('changes scenario when dropdown is used', () => {
+  it("play mode records an illegal same-ID transfer with the reason", () => {
     render(<AxiIdOrderingVisualizer />);
-    const select = screen.getByRole('combobox');
-    fireEvent.change(select, { target: { value: 'diff_id_reorder' } });
-    expect(screen.getByText(/different IDs/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Clear" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send B" }));
+    expect(screen.getAllByText(/B has ARID 3, like A/).length).toBeGreaterThan(0);
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    fireEvent.click(screen.getByRole("button", { name: "Send A" }));
+    expect(screen.getAllByText(/no earlier read with ARID 3/).length).toBeGreaterThan(0);
   });
 
-  it('shows reordering in different-ID scenario', () => {
+  it("AXI4 write data cannot interleave even with different AWIDs (A5.4)", () => {
     render(<AxiIdOrderingVisualizer />);
-    const select = screen.getByRole('combobox');
-    fireEvent.change(select, { target: { value: 'diff_id_reorder' } });
-
-    const stepForward = screen.getByTitle('Step Forward');
-    // Step through all events
-    for (let i = 0; i < 4; i++) fireEvent.click(stepForward);
-    expect(screen.getByText(/reordered/)).toBeInTheDocument();
+    situation("Write data (AXI4)");
+    lockIn("X0, Y, X1");
+    expect(screen.getAllByText(/consecutive transfers/).length).toBeGreaterThan(0);
   });
 
-  it('resets to cycle 0', () => {
+  it("shows the interconnect ID arithmetic: 2'b10 from M0 is 3'b010 (2), from M1 is 3'b110 (6)", () => {
     render(<AxiIdOrderingVisualizer />);
-    const stepForward = screen.getByTitle('Step Forward');
-    const resetBtn = screen.getByTitle('Reset');
-    fireEvent.click(stepForward);
-    fireEvent.click(stepForward);
-    fireEvent.click(resetBtn);
-    expect(screen.getByText(/Press Play/)).toBeInTheDocument();
+    situation("Two masters");
+    const table = screen.getByRole("table");
+    expect(within(table).getByText("3'b010")).toBeInTheDocument();
+    expect(within(table).getByText("3'b110")).toBeInTheDocument();
+    expect(within(table).getByText("6")).toBeInTheDocument();
+    lockIn("M1:B, M0:A, M0:C");
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
   });
 
-  it('shows interconnect ID prepend scenario', () => {
+  it("supports keyboard navigation between situations", () => {
     render(<AxiIdOrderingVisualizer />);
-    const select = screen.getByRole('combobox');
-    fireEvent.change(select, { target: { value: 'id_prepend' } });
-    expect(screen.getByText('M0: Read')).toBeInTheDocument();
-    expect(screen.getByText('M1: Read')).toBeInTheDocument();
+    const first = within(screen.getByRole("radiogroup", { name: "Ordering situation" })).getByRole("radio", { name: "Reads, same ID" });
+    first.focus();
+    fireEvent.keyDown(first, { key: "End" });
+    expect(within(screen.getByRole("radiogroup", { name: "Ordering situation" })).getByRole("radio", { name: "Two masters" })).toHaveAttribute("aria-checked", "true");
   });
 });

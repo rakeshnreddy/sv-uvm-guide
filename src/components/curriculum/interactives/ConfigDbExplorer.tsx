@@ -56,9 +56,9 @@ const debugHints: Record<string, string[]> = {
 };
 
 const inputClass =
-  "h-8 min-w-0 rounded-md border border-border bg-background px-2 font-mono text-[11.5px] text-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
+  "h-9 min-w-0 rounded-md border border-border bg-background px-2 font-mono text-[11.5px] text-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 const smallButton =
-  "inline-flex h-8 min-w-8 items-center justify-center rounded-md border border-border/70 px-2 text-xs text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40";
+  "inline-flex h-10 min-w-10 items-center justify-center rounded-md border border-border/70 px-2 text-xs text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40";
 
 function RevealSignal({ id, onReveal }: { id: string; onReveal: (id: string) => void }) {
   useEffect(() => {
@@ -388,7 +388,7 @@ export default function ConfigDbExplorer() {
               />
             ))}
           </ol>
-          <button type="button" className={cn(smallButton, "h-9")} disabled={setCalls.length >= 5} onClick={addSet}>
+          <button type="button" className={smallButton} disabled={setCalls.length >= 5} onClick={addSet}>
             + Add set(){setCalls.length >= 5 ? " (limit 5)" : ""}
           </button>
           <GetRow op={getOp} onChange={(next) => replaceOp(getId, next)} />

@@ -34,7 +34,7 @@ SystemVerilog Assertions (SVA) become the common artefact: `assert` in simulatio
   endproperty
   assert property (p_full_is_correct);
 
-  // Formal constraint
+  // Assumption: constrains formal, checked in simulation
   property p_legal_transactions;
     @(posedge clk) disable iff (!rst_n)
       !(push && full) && !(pop && empty);
@@ -49,25 +49,25 @@ SystemVerilog Assertions (SVA) become the common artefact: `assert` in simulatio
   cover property (p_cover_fill_and_drain);
 endmodule
 
-// Simulation bind
-bind fifo dut_props (.clk(clk), .rst_n(rst_n), .push(push), .pop(pop),
+// One bind for both flows: module name, parameters, instance name, ports
+bind fifo fifo_properties #(.DEPTH(8)) u_fifo_props (.clk(clk), .rst_n(rst_n), .push(push), .pop(pop),
                      .count(count), .full(full), .empty(empty));
 
-// Formal script
-do_proof -assert p_full_is_correct -assume p_legal_transactions
-run_cover -property p_cover_fill_and_drain`}
+// Illustrative formal-tool commands (real syntax differs per tool)
+prove -property p_full_is_correct
+cover -property p_cover_fill_and_drain`}
   explanationSteps={[
-    { target: "6-15", title: "Shared safety assertion", explanation: "`assert` in simulation, `prove` in formal—same code base enforces FIFO correctness." },
-    { target: "17-22", title: "Formal-only constraints", explanation: "Assumptions focus formal engines on legal stimulus analogous to UVM constraints." },
-    { target: "24-32", title: "Coverage handshake", explanation: "`cover` drives both reachability proofs and UVM coverage goals." },
-    { target: "34-36", title: "Bind once", explanation: "Attach properties in simulation via `bind` so the DUT sees identical checkers in both worlds." },
-    { target: "38-39", title: "Tool directives", explanation: "Scripts instruct the formal tool which properties to prove or cover using familiar names." }
+    { target: "6-11", title: "Shared safety assertion", explanation: "`assert` in simulation, `prove` in formal—same code base enforces FIFO correctness." },
+    { target: "13-18", title: "Assumptions: constraints in formal, checks in simulation", explanation: "Formal only explores inputs that satisfy the `assume`. Simulation checks the same `assume` like an assertion (IEEE 1800-2023 §16.14.2), so a testbench that breaks the contract is flagged." },
+    { target: "20-25", title: "Coverage handshake", explanation: "`cover` drives both reachability proofs and UVM coverage goals." },
+    { target: "28-30", title: "Bind once", explanation: "Attach properties in simulation via `bind` so the DUT sees identical checkers in both worlds." },
+    { target: "32-34", title: "Tool directives (illustrative)", explanation: "Every formal tool has its own command syntax; what carries over is that you name the properties to prove or cover, and the bound `assume` properties constrain every proof." }
   ]}
 />
 
 ### Interactive: Formal vs Simulation comparison
 
-Toggle assumptions in the formal panel to see how removing constraints exposes real bugs, then replay counterexamples as directed simulation seeds.
+Toggle the assumptions and switch to the buggy RTL. Predict what formal reports before each run, then replay each counterexample in UVM and decide whether it is a real RTL bug or a hole in your assumptions.
 
 <FormalVsSimulationVisualizer />
 
@@ -143,7 +143,7 @@ assume property (a_legal_pop);`}
 
 ## Counterexample Replay
 
-When a formal engine finds a counterexample trace, that trace is a guaranteed bug witness. Converting it into a directed UVM test closes the formal→simulation feedback loop.
+When a formal engine finds a counterexample trace, that trace is a witness **relative to your assumptions**: a real bug if every input in it is legal, or a missing assumption if it is not. Replaying it in UVM, where the same `assume` properties are checked like assertions (IEEE 1800-2023 §16.14.2), tells you which. Converting a genuine one into a directed UVM test closes the formal→simulation feedback loop.
 
 ### The replay workflow
 

@@ -1,125 +1,94 @@
-import React from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
-import { UvmPhaseTimelineVisualizer } from '@/components/visualizers/UvmPhaseTimelineVisualizer';
+import React from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-describe('UvmPhaseTimelineVisualizer', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
+import { UvmPhaseTimelineVisualizer } from "@/components/visualizers/UvmPhaseTimelineVisualizer";
 
-  afterEach(() => {
-    vi.runOnlyPendingTimers();
-    vi.useRealTimers();
-  });
+const lockIn = (label: string | RegExp) => {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+};
 
-  it('renders without crashing and displays the timeline', () => {
+describe("UvmPhaseTimelineVisualizer", () => {
+  it("shows the 12 runtime phases as the standard uvm schedule beside run_phase, not as optional extras", () => {
     render(<UvmPhaseTimelineVisualizer />);
-    expect(screen.getByTestId('phase-timeline')).toBeInTheDocument();
-    expect(screen.getByText('UVM Phase Timeline')).toBeInTheDocument();
+    const map = screen.getByRole("group", { name: "UVM phase map" });
+    expect(within(map).getByText(/uvm domain, schedule "uvm_sched" ∥ run_phase/)).toBeInTheDocument();
+    for (const name of ["pre_reset_phase", "main_phase", "post_shutdown_phase"]) {
+      expect(within(map).getByRole("button", { name: new RegExp(`^${name}: task`) })).toBeInTheDocument();
+    }
+    expect(screen.queryByText(/optional|custom phases/i)).not.toBeInTheDocument();
   });
 
-  it('renders all 8 standard phases by default (custom hidden)', () => {
+  it("labels each common phase with its traversal direction (final is top-down, report bottom-up)", () => {
     render(<UvmPhaseTimelineVisualizer />);
-    // Standard phases should be visible
-    expect(screen.getByTestId('row-build_phase')).toBeInTheDocument();
-    expect(screen.getByTestId('row-connect_phase')).toBeInTheDocument();
-    expect(screen.getByTestId('row-run_phase')).toBeInTheDocument();
-    expect(screen.getByTestId('row-extract_phase')).toBeInTheDocument();
-    expect(screen.getByTestId('row-check_phase')).toBeInTheDocument();
-    expect(screen.getByTestId('row-report_phase')).toBeInTheDocument();
-    expect(screen.getByTestId('row-final_phase')).toBeInTheDocument();
-
-    // Custom phases should NOT be visible
-    expect(screen.queryByTestId('row-reset_phase')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('row-main_phase')).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^build_phase: function, top-down/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^connect_phase: function, bottom-up/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^report_phase: function, bottom-up/ })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^final_phase: function, top-down/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /^final_phase:/ }));
+    expect(screen.getByText(/uvm_final_phase extends uvm_topdown_phase/)).toBeInTheDocument();
   });
 
-  it('shows custom phases when toggle is clicked', () => {
+  it("hides the call order until a prediction is locked in, then confirms the bottom-up first call", () => {
     render(<UvmPhaseTimelineVisualizer />);
-
-    const toggleBtn = screen.getByTestId('btn-custom-toggle');
-    fireEvent.click(toggleBtn);
-
-    // Custom phases should now be visible
-    expect(screen.getByTestId('row-reset_phase')).toBeInTheDocument();
-    expect(screen.getByTestId('row-main_phase')).toBeInTheDocument();
-    expect(screen.getByTestId('row-shutdown_phase')).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Call log" })).not.toBeInTheDocument();
+    lockIn("uvm_test_top.env.agt.drv");
+    expect(screen.getByText(/^Correct\./)).toBeInTheDocument();
+    const log = screen.getByRole("list", { name: "Call log" });
+    expect(within(log).getByText("1. uvm_test_top.env.agt.drv.connect_phase()")).toBeInTheDocument();
   });
 
-  it('opens detail panel when a cell is clicked', () => {
+  it("diagnoses the creation-order misconception", () => {
     render(<UvmPhaseTimelineVisualizer />);
-
-    // Click the uvm_test × build_phase cell
-    const cell = screen.getByTestId('cell-uvm_test-build_phase');
-    fireEvent.click(cell);
-
-    // Detail panel should appear
-    expect(screen.getByTestId('detail-panel')).toBeInTheDocument();
-    expect(screen.getByTestId('detail-phase')).toHaveTextContent('build_phase');
-    expect(screen.getByTestId('detail-operations')).toHaveTextContent(/Instantiate the top-level env/);
+    lockIn(/env\.scb \(env creates it first\)/);
+    expect(screen.getByText(/Creation order does not matter/)).toBeInTheDocument();
   });
 
-  it('closes detail panel when close button is clicked', () => {
+  it("asks a top-down question for build_phase (picked with the keyboard) and steps through the order", () => {
     render(<UvmPhaseTimelineVisualizer />);
-
-    // Open panel
-    fireEvent.click(screen.getByTestId('cell-uvm_test-build_phase'));
-    expect(screen.getByTestId('detail-panel')).toBeInTheDocument();
-
-    // Close panel
-    fireEvent.click(screen.getByTestId('btn-close-panel'));
-    // AnimatePresence will handle exit — panel should start leaving
-    // After animation, it should be gone
+    const picker = screen.getByRole("radiogroup", { name: "Function phase" });
+    const connect = within(picker).getByRole("radio", { name: "connect_phase" });
+    fireEvent.keyDown(connect, { key: "ArrowLeft" });
+    expect(within(picker).getByRole("radio", { name: "build_phase" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText(/Whose build_phase is called third\?/)).toBeInTheDocument();
+    lockIn("uvm_test_top.env.agt");
+    expect(screen.getByText(/^Correct\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Next call" }));
+    fireEvent.click(screen.getByRole("button", { name: "Next call" }));
+    const log = screen.getByRole("list", { name: "Call log" });
+    expect(within(log).getByText("3. uvm_test_top.env.agt.build_phase()")).toBeInTheDocument();
   });
 
-  it('advances animation state when Run Animation is clicked', () => {
+  it("runtime lanes: components leave reset_phase together when the last objection drops", () => {
     render(<UvmPhaseTimelineVisualizer />);
-
-    const animateBtn = screen.getByTestId('btn-animate');
-    fireEvent.click(animateBtn);
-
-    // After 600ms, animation should advance to next row
-    act(() => {
-      vi.advanceTimersByTime(600);
-    });
-
-    // After another 600ms
-    act(() => {
-      vi.advanceTimersByTime(600);
-    });
-
-    // The button text should change to "Pause" while animating
-    expect(animateBtn).toHaveTextContent('Pause');
+    fireEvent.click(screen.getByRole("radio", { name: "run_phase ∥ uvm schedule" }));
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    lockIn(/At 30 ns, right after its own reset work/);
+    expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
+    expect(screen.getByText(/synchronized across the domain/)).toBeInTheDocument();
+    const row = within(screen.getByRole("table")).getByText("configure_phase").closest("tr") as HTMLElement;
+    expect(within(row).getAllByText("100 ns")[0]).toBeInTheDocument();
   });
 
-  it('resets state when Reset button is clicked', () => {
+  it("runtime lanes: run_phase with no objection still waits for the uvm schedule", () => {
     render(<UvmPhaseTimelineVisualizer />);
-
-    // Open a detail panel first
-    fireEvent.click(screen.getByTestId('cell-uvm_env-connect_phase'));
-    expect(screen.getByTestId('detail-panel')).toBeInTheDocument();
-
-    // Click Reset
-    fireEvent.click(screen.getByTestId('btn-reset'));
-    // Panel should close (detail-panel may be exiting via animation)
+    fireEvent.click(screen.getByRole("radio", { name: "run_phase ∥ uvm schedule" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Runtime phases only" }));
+    lockIn(/When post_shutdown ends \(470 ns\)/);
+    expect(screen.getByText(/^Correct\./)).toBeInTheDocument();
+    const row = within(screen.getByRole("table")).getByText("run_phase").closest("tr") as HTMLElement;
+    expect(within(row).getByText("470 ns")).toBeInTheDocument();
+    expect(within(row).getByText(/waited for the uvm schedule/)).toBeInTheDocument();
   });
 
-  it('displays correct detail for different cells', () => {
+  it("runtime lanes: main_phase without its own objection ends at 0 ns while run_phase continues", () => {
     render(<UvmPhaseTimelineVisualizer />);
-
-    // Click driver × run_phase
-    fireEvent.click(screen.getByTestId('cell-uvm_driver-run_phase'));
-    expect(screen.getByTestId('detail-phase')).toHaveTextContent('run_phase');
-    expect(screen.getByTestId('detail-operations')).toHaveTextContent(/get next sequence item/);
-  });
-
-  it('shows new detail when clicking a different cell after reset', () => {
-    render(<UvmPhaseTimelineVisualizer />);
-
-    // Click monitor × build_phase directly
-    fireEvent.click(screen.getByTestId('cell-uvm_monitor-build_phase'));
-    expect(screen.getByTestId('detail-phase')).toHaveTextContent('build_phase');
-    expect(screen.getByTestId('detail-operations')).toHaveTextContent(/analysis port/);
+    fireEvent.click(screen.getByRole("radio", { name: "run_phase ∥ uvm schedule" }));
+    fireEvent.click(screen.getByRole("radio", { name: "Objection only in run_phase" }));
+    lockIn(/At 500 ns, together with run_phase/);
+    expect(screen.getByText(/keeps run_phase alive, not main_phase/)).toBeInTheDocument();
+    const main = within(screen.getByRole("table")).getByText("main_phase").closest("tr") as HTMLElement;
+    expect(within(main).getByText(/no objection: ended at once/)).toBeInTheDocument();
   });
 });

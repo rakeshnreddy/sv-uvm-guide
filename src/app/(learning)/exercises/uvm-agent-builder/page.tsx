@@ -10,10 +10,10 @@ const UvmAgentBuilderPage: React.FC = () => {
       <section className="mb-6">
         <h2 className="text-2xl font-semibold text-primary mb-2">Build a UVM Agent</h2>
         <p className="text-muted-foreground mb-1">
-          Drag and drop the essential components (Sequencer, Driver, Monitor) from the &quot;Available Components&quot; pool into the &quot;UVM Agent&quot; area.
+          Choose whether the agent is active or passive, then place the components it should build. Use the buttons or drag and drop; order inside the agent does not matter.
         </p>
         <p className="text-muted-foreground">
-          Correctly assembling these core pieces is fundamental to creating any UVM verification environment.
+          An active agent builds a sequencer, driver and monitor; a passive agent builds only the monitor, which is how block-level agents are reused at subsystem level.
         </p>
       </section>
 
@@ -25,8 +25,8 @@ const UvmAgentBuilderPage: React.FC = () => {
         <h3 className="text-xl font-semibold text-primary mb-2">Learning Objectives:</h3>
         <ul className="list-disc list-inside text-muted-foreground space-y-1">
           <li>Identify the core components of a UVM agent.</li>
-          <li>Understand the typical internal structure of an agent.</li>
-          <li>Practice visual assembly of a key UVM architectural pattern.</li>
+          <li>Explain what changes between active and passive agents, and why.</li>
+          <li>Connect the choice to the get_is_active() check inside build_phase.</li>
         </ul>
         <p className="text-muted-foreground mt-4">Check your build and use Retry to start over.</p>
       </section>

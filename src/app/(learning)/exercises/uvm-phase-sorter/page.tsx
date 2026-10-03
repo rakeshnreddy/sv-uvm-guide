@@ -25,7 +25,7 @@ const UvmPhaseSorterPage: React.FC = () => {
         <h3 className="text-xl font-semibold text-primary mb-2">Learning Objectives:</h3>
         <ul className="list-disc list-inside text-muted-foreground space-y-1">
           <li>Recall the standard UVM runtime phases.</li>
-          <li>Understand the sequential nature of UVM phasing.</li>
+          <li>See that run_phase runs alongside the twelve runtime phases, while function phases run top-down or bottom-up.</li>
           <li>Practice organizing a key aspect of UVM testbench flow.</li>
         </ul>
         <p className="text-muted-foreground mt-4">Use the Check button to evaluate your order and Retry to try again.</p>

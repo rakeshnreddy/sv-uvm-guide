@@ -7,8 +7,9 @@ flashcards: "E-DBG-1_Advanced_Debug"
 import TelemetryEventBusVisualizer from "@/components/visuals/TelemetryEventBusVisualizer";
 
 ## Quick Take
-- **What it is:** A debugging playbook—structured logging, centralized event routing, selective waveform capture, and trace metadata—to tame large UVM environments.
+- **What it is:** A debugging playbook — report control (verbosity, actions, report catchers), tracing switches, transaction recording, selective waveforms and reproducible seeds — to tame large UVM environments.
 - **Why it matters:** Scale brings opaque failures. Long SoC simulations or massive block-level regressions require rich, automated debug hooks to keep the signal-to-noise ratio high under tight schedules.
+- **The rule that bites:** a test's pass/fail verdict is only as honest as its report configuration. A catcher that swallows every error, or `UVM_NO_ACTION` on errors, turns a failing run into a passing one — and `$error` from an assertion never reaches the UVM report server at all.
 - **The Analogy:** Think of an airliner flight recorder: every test run should leave breadcrumbs that explain what the bench did and why, *before* you ever open a waveform viewer.
 
 > **Signal:** When triage meetings begin with “rerun with more logs,” your methodology needs stronger built-in instrumentation.
@@ -17,42 +18,176 @@ import TelemetryEventBusVisualizer from "@/components/visuals/TelemetryEventBusV
 
 ### 1. Structured Logging
 Standard `uvm_info` is often treated as a dumping ground. Professional environments treat logs as machine-readable telemetry.
-- **Standardize Categories:** Use consistent IDs (`ENV`, `DRV`, `SEQ`, `DBG`, `CFG`).
+- **Standardize IDs:** Use consistent IDs (`ENV`, `DRV`, `SEQ`, `SCB`, `CFG`). Actions, verbosity and catchers all select messages by ID.
 - **Correlation IDs:** Stamp sequence IDs, transaction handles, and timestamps into every message so logs join up clearly with coverage holes and scoreboard discrepancies.
-- **Runtime Filtering:** Use `uvm_report_object::set_report_id_action_hier()` to promote or demote categories from the command line without recompiling.
+- **Two separate knobs:** **verbosity** decides whether a `UVM_INFO` is issued at all (warnings, errors and fatals are never filtered by verbosity); the **action** decides what an issued message does — display, log to a file, count toward the quit limit, exit.
+- **Change them without recompiling:** `+UVM_VERBOSITY=UVM_HIGH` sets every component; `+uvm_set_verbosity=<comp>,<id>,<verbosity>,<phase>` targets one; `+uvm_set_action=<comp>,<id>,<severity>,<action>` and `+uvm_set_severity=<comp>,<id>,<old>,<new>` change actions and severities. The procedural equivalents (`set_report_id_action_hier()`, `set_report_severity_override()`, …) need a code change in the test.
 
-### 2. The Centralized Debug Event Bus
-Instead of hardcoding trigger logic deep inside individual monitors or scoreboards, advanced environments broadcast significant events to a centralized bus.
+### 2. The Report Pipeline
+Every `` `uvm_error `` travels the same path: the component's verbosity filter (`UVM_INFO` only), its report handler (severity overrides, then the action lookup: severity+ID beats ID beats severity), the **report catchers**, and finally the report server, which counts every message it executes, prints it, and exits on `UVM_EXIT` or when `+UVM_MAX_QUIT_COUNT` is reached.
+
+Predict the error count for each configuration below, then follow each message through the pipeline. Watch what happens to the real scoreboard bug at 180 ns.
 
 <TelemetryEventBusVisualizer />
 
-**Why add an event bus?**
-- It centralizes debug events, allowing multiple subscribers (log formatters, telemetry exporters, trigger logic) to react without rewiring drivers or monitors.
-- A scoreboard can simply broadcast `("SCB", "DATA_MISMATCH")`. A separate, specialized debug component listens for that tag and decides whether to dump waveforms, increment an error counter, or halt the simulation.
+<VisualRecap
+  title="Demote what you expect, count what you don't"
+  rule="Catchers run after the handler chose severity and action; CAUGHT or UVM_NO_ACTION removes a message from the counts, a demoted message is counted at its new severity, and removing UVM_COUNT only stops it feeding the quit limit."
+  code={`if (get_id() == "CRC" && uvm_is_match("*bad CRC*", get_message())) begin
+  set_severity(UVM_INFO);   // demote, keep it visible
+  return THROW;
+end
+return THROW;`}
+  mistake="A catcher that returns CAUGHT for every UVM_ERROR, or +uvm_set_action=...,UVM_ERROR,UVM_NO_ACTION: the regression goes green and the DUT bug escapes."
+  inTestbench="Error-injection tests register a narrow catcher in build_phase (uvm_report_cb::add(null, catcher)) and check in report_phase that the expected number of errors was demoted."
+>
+  <ol style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.85rem", lineHeight: 1.6 }}>
+    <li>Verbosity filter (UVM_INFO only)</li>
+    <li>Handler: severity override, action lookup</li>
+    <li>Report catchers, in registration order</li>
+    <li>Server: drop CAUGHT / NO_ACTION, count, display, quit, exit</li>
+  </ol>
+</VisualRecap>
 
-### 3. Selective Waveform Capture
+### 3. Beyond Reports: a Debug Event Bus
+Some teams also broadcast significant events (`reset_done`, `scb_mismatch`, `watchdog`) on an analysis port or `uvm_event_pool` channel that a dedicated debug component subscribes to. That component can start a waveform dump, add trace metadata, or stop the run, without rewiring drivers or monitors. It complements, not replaces, the report pipeline: errors still go through `` `uvm_error `` so they are counted.
+
+### 4. Selective Waveform Capture
 Indiscriminately dumping waveforms for a 20-hour SoC regression is impossible. You must gate waveform dumping behind triggers.
-- **Trigger-Driven Dumps:** Use the event bus to listen for errors or watchdog timeouts, and *then* fire vendor-specific waveform APIs (e.g., `$fsdbDumpvarsByFile`).
-- **Ring Buffers:** Keep the last $N$ microseconds of history in memory and flush to disk only when a trigger fires, capturing the lead-up to the failure without the terabytes of idle traffic.
+- **Trigger-Driven Dumps:** Use a report catcher (it sees every message) or the debug component to react to errors or watchdog timeouts, and *then* fire vendor-specific waveform APIs (e.g., `$fsdbDumpvarsByFile`).
+- **Ring Buffers:** Keep the last N microseconds of history in memory and flush to disk only when a trigger fires, capturing the lead-up to the failure without the terabytes of idle traffic.
+- **Transaction recording:** enable recording on the agents you care about (see [I-UVM-6](/curriculum/T2_Intermediate/I-UVM-6_UVM_Recording_Classes)) so the viewer shows transactions next to the signals.
 
-### 4. Trace Metadata Pipeline
+### 5. Trace Metadata Pipeline
 - Emit JSON or NDJSON trace files mapping the test name to key lifecycle events (e.g., reset done, handshake stalled, scoreboard mismatch).
 - Post-process these traces into dashboards so regression reports show high-level failure breadcrumbs before anyone opens a log file.
+
+## Make It Work
+
+### Write a narrow report catcher
+
+```systemverilog
+class crc_demoter extends uvm_report_catcher;
+  `uvm_object_utils(crc_demoter)
+  int unsigned demoted;
+
+  function new(string name = "crc_demoter");
+    super.new(name);
+  endfunction
+
+  virtual function action_e catch();
+    if (get_severity() == UVM_ERROR && get_id() == "CRC" &&
+        uvm_is_match("*bad CRC*", get_message())) begin
+      set_severity(UVM_INFO);   // INFO's default action: display, no count
+      demoted++;
+    end
+    return THROW;               // CAUGHT would hide the message entirely
+  endfunction
+endclass
+
+class crc_inject_test extends base_test;
+  `uvm_component_utils(crc_inject_test)
+  crc_demoter demoter;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    demoter = crc_demoter::type_id::create("demoter");
+    uvm_report_cb::add(null, demoter);   // null: attach to every report object
+  endfunction
+
+  function void report_phase(uvm_phase phase);
+    if (demoter.demoted != 2)
+      `uvm_error("TEST", $sformatf("expected 2 injected CRC errors, saw %0d", demoter.demoted))
+  endfunction
+endclass
+```
+
+The last check matters: if the injection stops working, a catcher alone would quietly pass the test.
+
+### Debug switches to know by heart
+
+| Switch | What it does |
+| --- | --- |
+| `+UVM_TESTNAME=<test>` | Selects the test run by `run_test()` |
+| `+UVM_VERBOSITY=<level>` | Sets the verbosity of every component |
+| `+uvm_set_verbosity=<comp>,<id>,<level>,<phase>` | Verbosity for matching components and IDs (`_ALL_` for every ID) |
+| `+uvm_set_action=<comp>,<id>,<severity>,<action>` | Action for matching messages, e.g. `UVM_DISPLAY\|UVM_LOG` |
+| `+uvm_set_severity=<comp>,<id>,<old>,<new>` | Severity override for matching messages |
+| `+UVM_MAX_QUIT_COUNT=<n>,<YES\|NO>` | Exit after `n` counted errors (default 0: never) |
+| `+UVM_TIMEOUT=<time>,<YES\|NO>` | Run-phase timeout; expiry is the `PH_TIMEOUT` fatal |
+| `+UVM_OBJECTION_TRACE` | Logs every raise and drop (`OBJTN_TRC`) |
+| `+UVM_PHASE_TRACE` | Logs phase transitions |
+| `+UVM_CONFIG_DB_TRACE` | Logs every `config_db` set and get |
+
+From code: `uvm_top.print_topology()` prints the component tree, `uvm_factory::get().print()` lists overrides, and `check_config_usage()` reports configuration that was set but never read.
+
+### Reproduce with the same seed
+
+1. Every regression run gets an explicit seed on the simulator command line (the option is tool-specific, for example `+ntb_random_seed=<n>`, `-sv_seed <n>` or `-svseed <n>`), and the regression script prints that seed in the log header.
+2. A failure is reproduced by rerunning **the same test, seed and code**. Prefer command-line visibility (`+uvm_set_verbosity`, traces, dumps) over code edits.
+3. Random stability (IEEE 1800-2023 §18.14) keeps each thread's and object's random sequence independent of the others, but it is not magic: a new thread or a new object created with `new` takes the next value from its parent thread's generator (§18.14.1). Adding or reordering threads, objects or `randomize()` calls — even extra report messages, which UVM builds as objects — can change what a seed produces. After adding visibility, confirm the failure still reproduces.
 
 ## Push Further: Triage Playbook
 
 When an overnight regression turns red, follow this playbook rather than randomly adding displays:
 
-1. **Check the Watchdog / Heartbeat:** Did a physical timeout occur, or did a `uvm_objection` hang? (See the Hang Lab for [objection](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing) tracing).
-2. **Review the Event Bus Trace:** Look for the final major events before the failure. Did the configuration phase complete? Did the scoreboard receive any items?
-3. **Triggered Waveforms Only:** Open the specific selective-dump file created by the event bus trigger, rather than the full-run database.
-4. **Reproduce Fast:** Divide and conquer. Reduce randomization seeds, trim the test duration, or bypass unrelated subsystems until the bug reproduces in under 60 seconds.
+1. **Classify the ending:** a `UVM_ERROR`/`UVM_FATAL` count, a `PH_TIMEOUT` fatal (a hang — see the [Hang Lab](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab)), or a suspiciously short run (no objection raised).
+2. **Bucket by signature:** group failures by the first error's ID and message pattern, not by test name, so one root cause is debugged once.
+3. **Reproduce exactly:** rerun one failure with the same test and seed, then add verbosity for the IDs involved with `+uvm_set_verbosity`, and `+UVM_OBJECTION_TRACE` for hangs.
+4. **Open targeted waveforms:** use the triggered dump or transaction recording for the window around the first error, rather than the full-run database.
+5. **Shrink:** once it reproduces, trim the test duration or bypass unrelated subsystems until it fails in under a minute.
 
 ## Practice & Reinforce
+
+<Quiz questions={[
+  {
+    "question": "An error-injection test must ignore the expected CRC errors but still fail on any other error. Which approach is right?",
+    "answers": [
+      {"text": "A report catcher that demotes only UVM_ERROR with ID CRC and the expected message, returns THROW, and a report_phase check of how many it demoted.", "correct": true},
+      {"text": "+uvm_set_action=uvm_test_top.*,_ALL_,UVM_ERROR,UVM_NO_ACTION", "correct": false},
+      {"text": "A catcher that returns CAUGHT for every UVM_ERROR.", "correct": false},
+      {"text": "+UVM_VERBOSITY=UVM_NONE", "correct": false}
+    ],
+    "explanation": "UVM_NO_ACTION and a catch-all catcher remove every error from the count, including real bugs. Verbosity never filters errors."
+  },
+  {
+    "question": "You set the UVM_ERROR action to UVM_DISPLAY (no UVM_COUNT). What happens to the error count in the report summary?",
+    "answers": [
+      {"text": "Errors are still counted; only the quit count (+UVM_MAX_QUIT_COUNT) ignores them.", "correct": true},
+      {"text": "Errors disappear from the summary.", "correct": false},
+      {"text": "The simulation exits on the first error.", "correct": false}
+    ],
+    "explanation": "The report server counts every message it executes. UVM_COUNT only feeds the quit counter; UVM_NO_ACTION is what drops a message before counting."
+  },
+  {
+    "question": "An SVA in the interface fails with $error, and the UVM report summary shows UVM_ERROR : 0. Why?",
+    "answers": [
+      {"text": "$error is a SystemVerilog severity task printed by the simulator; it never goes through the UVM report server.", "correct": true},
+      {"text": "The default verbosity filters assertion messages.", "correct": false},
+      {"text": "A default report catcher demotes assertion failures.", "correct": false}
+    ],
+    "explanation": "Either have the regression script also scan for simulator errors, or report assertion failures with `uvm_error in the assertion's action block."
+  },
+  {
+    "question": "Which command-line switch changes what a message DOES (not whether a UVM_INFO is issued)?",
+    "answers": [
+      {"text": "+uvm_set_action", "correct": true},
+      {"text": "+UVM_VERBOSITY", "correct": false},
+      {"text": "+uvm_set_verbosity", "correct": false}
+    ],
+    "explanation": "Verbosity filters UVM_INFO messages before they are created. Actions decide what an issued message does: display, log, count, exit."
+  }
+]} />
 
 <LabLink labId="debug-waveform-trigger" />
 
 ## References & Next Topics
-- UVM User Guide Appendix (debug and messaging).
-- EDA vendor docs on FSDB/VCD selective dumping APIs.
-- Next: Move on to SoC-level verification strategies, where these debug principles are tested at scale.
+- IEEE 1800.2-2020 Clause 6 — reporting: §6.3 `uvm_report_object`, §6.4 `uvm_report_handler`, §6.5 `uvm_report_server`, §6.6 `uvm_report_catcher`.
+- IEEE 1800.2-2020 §10.5 — `uvm_objection` (tracing and `display_objections`).
+- IEEE 1800-2023 §18.14 — random stability; §20.10 — severity system tasks (`$error`).
+- EDA vendor docs on FSDB/VCD selective dumping APIs and seed options.
+- Next: practise hang triage in the [Hang Lab](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab), then move on to SoC-level verification strategies, where these debug principles are tested at scale.

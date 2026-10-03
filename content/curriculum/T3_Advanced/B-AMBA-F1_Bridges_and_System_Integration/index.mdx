@@ -1,6 +1,6 @@
 ---
 title: "AHB↔AXI Bridges & System Integration"
-description: "Master the design and verification of protocol bridge IPs, including AHB-to-AXI burst translation, 4KB boundary splitting, reset domain crossings, and formal verification strategies for bridge correctness."
+description: "Master the design and verification of protocol bridge IPs, including AHB-to-AXI burst translation, AXI-to-AHB 1KB burst splitting, width conversion, reset domain crossings, and formal verification strategies for bridge correctness."
 order: 12
 flashcards: "B-AMBA-F1_Bridges_and_System_Integration"
 ---
@@ -13,8 +13,9 @@ These bridges are deceptively complex — they must handle burst splitting, resp
 
 <QuickTake>
 - **Protocol Bridges** translate transactions between AHB and AXI, handling the fundamental asymmetry between a pipelined single-channel protocol and a decoupled five-channel protocol.
-- **Burst Translation** is the hardest part: an AXI INCR burst of 16 beats must be split into multiple AHB bursts (max 16 beats, but with different boundary rules).
-- **4KB Boundary Splitting** is required because AXI enforces a 4KB boundary rule that AHB does not — the bridge must split AHB bursts that would cross a 4KB AXI boundary.
+- **Burst Translation** is the hardest part, because the two protocols have different boundary rules: AHB incrementing bursts must not cross **1KB** (IHI0033B.b 3.5), AXI bursts must not cross **4KB** (IHI0022E A3.4.1).
+- **AHB → AXI:** every 4KB boundary is also a 1KB boundary, so a legal AHB burst can never cross 4KB. The bridge splits only for the AXI 256-transfer limit (long undefined-length INCR) and for width conversion.
+- **AXI → AHB:** a legal AXI burst may still cross 1KB, so the bridge **must split at 1KB**.
 - **Formal Verification** is the gold standard for bridge correctness because the combinatorial space of burst types, sizes, and boundary conditions is too large for directed testing.
 </QuickTake>
 
@@ -46,8 +47,8 @@ The fundamental problem is **protocol asymmetry**:
 | Channels | 1 (shared address/data) | 5 (AW, W, B, AR, R) |
 | Pipelining | Address phase overlaps with previous data phase | Fully decoupled — address and data are independent |
 | Outstanding Transactions | 1 (inherently in-order) | Multiple per ID (out-of-order across IDs) |
-| Burst Length | Up to 16 beats (INCR), 4/8/16 (WRAP) | Up to 256 beats (INCR) |
-| 4KB Boundary | No enforcement | Strictly enforced — burst must not cross |
+| Burst Length | INCR4/8/16, WRAP4/8/16, or undefined-length INCR | INCR up to 256 transfers; FIXED up to 16; WRAP 2/4/8/16 |
+| Boundary rule | Incrementing bursts must not cross 1KB (IHI0033B.b 3.5) | No burst may cross 4KB (IHI0022E A3.4.1) |
 | Response Timing | Immediate (same cycle as data) | Decoupled (B channel fires after all W beats) |
 
 Every row in this table is a potential source of bridge bugs.
@@ -56,16 +57,16 @@ Every row in this table is a potential source of bridge bugs.
 
 ## 2. AHB-to-AXI Bridge Architecture
 
-<InteractiveWrapper>
-  <BridgeTranslationExplorer />
-</InteractiveWrapper>
+Before reading the block diagram, test your intuition. For each scenario, predict how many bursts come out of the bridge; the debug scenario is the old "AHB burst across 4KB" example, so check the input first. Edit the fields to find the boundaries yourself.
+
+<BridgeTranslationExplorer />
 
 ### Block Diagram
 
 An AHB-to-AXI bridge contains these key blocks:
 
 1. **AHB Slave Interface** — Accepts AHB transactions from the AHB master.
-2. **Address Decoder & Splitter** — Determines if the AXI burst needs to be split (4KB boundary, maximum burst length).
+2. **Address Decoder & Splitter** — Determines if the burst needs to be split (AXI 256-transfer limit, width conversion; 1KB in the AXI-to-AHB direction).
 3. **Write Buffer** — Stores AHB write data beats until a complete AXI write burst can be issued.
 4. **Read Buffer** — Stores AXI read response data until it can be returned to AHB.
 5. **AXI Master Interface** — Issues AXI transactions downstream.
@@ -100,60 +101,49 @@ AXI4 supports bursts up to 256 beats (`AWLEN = 255`). AHB-Lite supports:
 - **INCR4/INCR8/INCR16**: Fixed length bursts of 4, 8, or 16 beats
 - **WRAP4/WRAP8/WRAP16**: Wrapping bursts of 4, 8, or 16 beats
 
-When an AHB master issues an INCR burst that would translate to more than 256 AXI beats, the bridge must split it into multiple AXI transactions.
+When an AHB master issues an INCR burst that would translate to more than 256 AXI transfers, the bridge must split it into multiple AXI transactions. Only an undefined-length INCR can do this, for example 1024 byte-wide transfers that fill one 1KB region.
 
-### 4KB Boundary Splitting
+### Boundary Rules in Each Direction
 
-The most critical translation rule: **AXI bursts must not cross a 4KB (0x1000) address boundary.** AHB has no such restriction.
-
-When an AHB master issues a burst starting at address `0x0FE0` with 8 beats of 8 bytes each:
-- Total transfer: 64 bytes
-- End address: `0x0FE0 + 64 - 1 = 0x101F`
-- This crosses the `0x1000` boundary!
-
-The bridge must split this into two AXI bursts:
-1. **Burst 1:** `0x0FE0` → `0x0FFF` (4 beats)
-2. **Burst 2:** `0x1000` → `0x101F` (4 beats)
+**AHB → AXI: no 4KB split is ever needed.** "Masters must not attempt to start an incrementing burst that crosses a 1KB address boundary" (IHI0033B.b 3.5). Every 4KB boundary is also a 1KB boundary, so a legal AHB incrementing burst stays inside one 4KB page, and so does the AXI burst made from it. An AHB burst that crosses 1KB is **illegal stimulus**: the bridge may assume it never arrives, and an AHB-side checker must flag it:
 
 ```systemverilog
-// Bridge 4KB boundary split logic
-function automatic int calc_beats_to_boundary(
-  input logic [31:0] start_addr,
-  input int          beat_size_bytes
-);
-  // Distance to next 4KB boundary
-  logic [31:0] boundary = (start_addr & 32'hFFFF_F000) + 32'h1000;
-  int bytes_to_boundary = boundary - start_addr;
-  return bytes_to_boundary / beat_size_bytes;
+// [Protocol IHI0033B.b 3.5] per-transfer check, so it also covers undefined-length INCR
+logic [31:0] burst_start;
+always_ff @(posedge HCLK) if (HREADY && HTRANS == 2'b10) burst_start <= HADDR; // NONSEQ
+a_ahb_no_1kb_cross: assert property (@(posedge HCLK) disable iff (!HRESETn)
+  HREADY && HTRANS == 2'b11 && !(HBURST inside {3'b010, 3'b100, 3'b110})     // SEQ, not WRAP
+  |-> HADDR[31:10] == burst_start[31:10]);
+```
+
+**AXI → AHB: split at 1KB.** An AXI burst only has to stay inside 4KB. An AXI INCR16 of words at `0x03F0` is legal (it ends at `0x042F`), but it crosses `0x0400`. The bridge issues an AHB INCR4 from `0x03F0`, then the remaining 12 transfers from `0x0400` (as an undefined-length INCR, or INCR8 plus INCR4):
+
+```systemverilog
+// AXI-to-AHB bridge: split an AXI INCR burst at each 1KB boundary.
+// Start from the aligned address: only the first AXI transfer may be unaligned,
+// and AHB needs aligned transfers, so an unaligned first transfer goes out separately.
+function automatic int unsigned beats_to_1kb(input logic [31:0] addr, input int unsigned nbytes);
+  logic [31:0] next_1kb = (addr & ~32'h3FF) + 32'h400;
+  return (next_1kb - addr) / nbytes;
 endfunction
 
-// Example usage in bridge FSM
-int total_beats = ahb_burst_len;
-int remaining = total_beats;
-logic [31:0] current_addr = ahb_start_addr;
-
+int unsigned remaining, n;
+logic [31:0] cur;
+remaining = beats_left;     // AXI transfers still to send
+cur       = aligned_addr;   // address of the next aligned transfer
 while (remaining > 0) begin
-  int to_boundary = calc_beats_to_boundary(current_addr, beat_size);
-  int this_burst = (remaining < to_boundary) ? remaining : to_boundary;
-  
-  // Clamp to AXI max burst length (256)
-  if (this_burst > 256) this_burst = 256;
-  
-  issue_axi_burst(current_addr, this_burst - 1); // AWLEN = beats - 1
-  
-  current_addr += this_burst * beat_size;
-  remaining    -= this_burst;
+  n = (remaining < beats_to_1kb(cur, nbytes)) ? remaining : beats_to_1kb(cur, nbytes);
+  issue_ahb_burst(cur, n);   // INCR4/8/16 when n is 4, 8 or 16; otherwise undefined-length INCR
+  cur       += n * nbytes;
+  remaining -= n;
 end
 ```
 
 ### WRAP Burst Translation
 
-AHB WRAP bursts have a different wrapping boundary than AXI WRAP bursts, and the wrap address calculation must account for the transfer size:
+Both protocols wrap at the same boundary, the burst's total size (beats x transfer size), and AHB WRAP4/8/16 are all legal AXI WRAP lengths. A same-width bridge maps them directly.
 
-- AHB WRAP boundary: `start_addr aligned to (beats × size)`
-- AXI WRAP boundary: Same formula, but AXI enforces that WRAP lengths must be 2, 4, 8, or 16
-
-If the AHB WRAP parameters don't match AXI's supported WRAP lengths, the bridge must convert the WRAP burst into one or more INCR bursts.
+Width conversion is where WRAP gets hard. Downsizing an AHB WRAP16 of doublewords onto a 32-bit AXI bus would need a 32-transfer AXI WRAP, but AXI WRAP bursts stop at 16 (IHI0022E A3.4.1). The bridge sends the same bytes in the same order as two INCR bursts: from the start address up to the wrap boundary, then from the lower wrap address. Downsizing below the transfer size always forces such a modification (IHI0022E A4.3.1). In the other direction, an AXI WRAP2 has no AHB equivalent.
 
 ---
 
@@ -241,12 +231,13 @@ property p_bridge_liveness;
     (ahb_htrans == NONSEQ) |-> s_eventually (ahb_hready == 1);
 endproperty
 
-// Property: 4KB boundary is never violated on the AXI side
+// Property: 4KB boundary is never violated on the AXI side.
+// Only INCR can cross; start from the aligned address (IHI0022E A3.4.1).
 property p_no_4kb_violation;
+  logic [31:0] aligned;
   @(posedge ACLK) disable iff (!ARESETn)
-    (AWVALID && AWREADY) |->
-      ((AWADDR & 32'hFFFFF000) == 
-       ((AWADDR + ((AWLEN + 1) << AWSIZE) - 1) & 32'hFFFFF000));
+    (AWVALID && AWBURST == 2'b01, aligned = (AWADDR >> AWSIZE) << AWSIZE) |->
+      (aligned[11:0] + ((AWLEN + 1) << AWSIZE)) <= 32'h1000;
 endproperty
 
 // Property: Total data bytes in == total data bytes out
@@ -267,6 +258,12 @@ You must constrain the formal environment to only present legal inputs:
 assume property (@(posedge ACLK) disable iff (!ARESETn)
   (HTRANS == NONSEQ) |-> (HSIZE <= 3'b010));  // Max 4-byte transfers
 
+// Assume the AHB master obeys IHI0033B.b 3.5: incrementing bursts stay inside 1KB
+// (burst_start as in the AHB-side checker above)
+assume property (@(posedge HCLK) disable iff (!HRESETn)
+  HREADY && HTRANS == 2'b11 && !(HBURST inside {3'b010, 3'b100, 3'b110}) |->
+    HADDR[31:10] == burst_start[31:10]);
+
 // Assume AXI slave eventually responds
 assume property (@(posedge ACLK) disable iff (!ARESETn)
   AWVALID |-> s_eventually AWREADY);
@@ -278,7 +275,7 @@ assume property (@(posedge ACLK) disable iff (!ARESETn)
 
 ### Bug 1: Off-by-One in Burst Splitting
 
-The bridge calculates 3 beats to the 4KB boundary but issues 4, causing the AXI burst to cross. **Root cause:** Using `>=` instead of `>` in the boundary comparison.
+In the AXI-to-AHB direction, the bridge calculates 3 transfers to the 1KB boundary but issues 4, so the AHB burst crosses 1KB. **Root cause:** using `>=` instead of `>` in the boundary comparison, or computing the distance from the unaligned start address instead of the aligned one.
 
 ### Bug 2: Write Data Misalignment
 
@@ -290,7 +287,7 @@ If an AHB burst is split into two AXI bursts, the bridge receives two B-channel 
 
 ### Bug 4: WRAP-to-INCR Conversion Error
 
-Converting an AHB WRAP8 burst to AXI when the wrap boundary doesn't align with AXI's supported wrap lengths. The bridge must correctly compute the linear address sequence that the WRAP would have produced and issue it as INCR.
+When downsizing turns a WRAP16 into more than 16 AXI transfers, the bridge must issue two INCR bursts. A common bug starts the second burst at the wrong address (it must be the lower wrap boundary) or gives it the wrong length (the bytes between the wrap boundary and the start address).
 
 ### Bug 5: Outstanding Transaction Overflow
 
@@ -306,8 +303,10 @@ A comprehensive bridge verification plan must cover:
 - Single-beat read/write (all sizes: byte, halfword, word)
 - INCR bursts (all legal lengths)
 - WRAP4, WRAP8, WRAP16 bursts
-- Bursts that exactly hit a 4KB boundary
-- Bursts that must be split across a 4KB boundary
+- AXI bursts that end exactly at a 1KB boundary, and ones that cross it (AXI-to-AHB split)
+- Undefined-length AHB INCR bursts longer than 256 transfers
+- WRAP bursts through a downsizing bridge
+- Negative test: an AHB master that starts an incrementing burst across 1KB must trip the AHB-side checker
 - Back-to-back bursts with no idle cycles
 - Interleaved read and write traffic
 
@@ -325,7 +324,7 @@ A comprehensive bridge verification plan must cover:
 
 ### Formal Properties
 - Liveness: every accepted transaction eventually completes
-- Safety: no 4KB boundary violations on AXI side
+- Safety: no 4KB boundary violations on the AXI side, no 1KB crossings on the AHB side
 - Data integrity: bytes in == bytes out
 - No deadlock: bridge always makes forward progress
 
@@ -337,15 +336,15 @@ A comprehensive bridge verification plan must cover:
 
 <Quiz>
   <QuizQuestion
-    question="An AHB master issues an INCR burst starting at address 0x0FE0 with 8 beats of 4 bytes each. How does the AHB-to-AXI bridge handle this?"
+    question="A CPU issues a legal AXI INCR burst of 16 words (4 bytes each) starting at 0x03F0 through an AXI-to-AHB bridge. What must the bridge do?"
     options={[
-      "Issues a single AXI INCR burst of 8 beats starting at 0x0FE0.",
-      "Splits into two AXI bursts: 8 beats at 0x0FE0 and 0 beats at 0x1000.",
-      "Splits into two AXI bursts: first from 0x0FE0 to 0x0FFF, then from 0x1000.",
-      "Rejects the transaction because AHB does not support 4KB boundaries."
+      "Issue one AHB INCR16 starting at 0x03F0.",
+      "Split at 0x0400: an INCR4 from 0x03F0, then the remaining 12 transfers from 0x0400.",
+      "Reject it, because the AXI burst crosses a 4KB boundary.",
+      "Split at 0x1000, the next 4KB boundary."
     ]}
-    correctAnswer="Splits into two AXI bursts: first from 0x0FE0 to 0x0FFF, then from 0x1000."
-    explanation="The burst spans from 0x0FE0 through 0x100F, crossing the 4KB boundary at 0x1000. The bridge must split it into two AXI bursts at the boundary: 4 beats before the boundary and 4 beats after it."
+    correctAnswer="Split at 0x0400: an INCR4 from 0x03F0, then the remaining 12 transfers from 0x0400."
+    explanation="The AXI burst covers 0x03F0 to 0x042F, inside one 4KB page, so it is legal AXI (IHI0022E A3.4.1). But an AHB master must not start an incrementing burst that crosses a 1KB boundary (IHI0033B.b 3.5), so the bridge splits at 0x0400. The 12-transfer remainder goes out as an undefined-length INCR, or as INCR8 plus INCR4."
   />
   <QuizQuestion
     question="Why is formal verification particularly effective for protocol bridge verification?"

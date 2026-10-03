@@ -23,14 +23,15 @@ Getting ID ordering wrong causes **data corruption** that is nearly impossible t
 - **Transaction IDs:** `AWID`/`ARID` tag each request; `BID`/`RID` tag each response.
 - **Same-ID ordering:** Responses with the **same ID** must arrive in the **same order** as the requests.
 - **Different-ID freedom:** Responses with **different IDs** may arrive in **any order**.
-- **Interconnect reordering:** The interconnect may merge, split, or reorder transactions across different IDs.
+- **Interleaving:** read data beats of different IDs may be interleaved; AXI4 write data is never interleaved.
+- **Reads vs writes:** there is no ordering between reads and writes, even with the same ID.
 </QuickTake>
 
 ---
 
 ## 1. Outstanding Transactions
 
-In AHB, a master must wait for the current transfer to complete before starting the next.
+In AHB, the next address overlaps the current data phase, but only one transfer is in its data phase at a time and transfers complete in order.
 In AXI, a master can issue **multiple requests** on the address channel without waiting for responses.
 
 ```
@@ -67,14 +68,14 @@ IDs serve two purposes:
 
 The ID width is a system-level parameter:
 - Masters typically use 4–8 bit IDs
-- The interconnect **prepends** master-source bits, widening the ID at the slave port
+- The interconnect adds master-port bits, widening the ID at the slave port (IHI0022E A5.3.5 says it "appends" them; which bit positions they take is up to the interconnect)
 - A slave sees wider IDs than the master originally issued
 
 ```
 Master 0 issues ARID = 4'b0010
 Master 1 issues ARID = 4'b0010
 
-Interconnect prepends source bits:
+Interconnect adds a master-port bit (shown here above the master's bits):
   Slave sees ARID = 5'b0_0010 (from Master 0)
   Slave sees ARID = 5'b1_0010 (from Master 1)
 ```
@@ -88,7 +89,7 @@ The AXI specification guarantees:
 > **Transactions with the same ID from the same master must be completed in order.**
 
 This means:
-- If a master issues Read A (ID=3) then Read B (ID=3), the slave must return Read A's data before Read B's data.
+- If a master issues Read A (ID=3) then Read B (ID=3), the slave must return all of Read A's data before any of Read B's data. Their beats cannot be mixed.
 - If a master issues Write A (ID=5) then Write B (ID=5), the slave must acknowledge Write A before Write B.
 
 ```
@@ -100,10 +101,11 @@ R channel:   [Data B, RID=3]  [Data A, RID=3]   ✗ ILLEGAL (out of order)
 ### Why Same-ID Ordering?
 
 Same-ID ordering gives masters a simple programming model: if you need sequential consistency for a sequence of accesses, use the same ID.
-This is critical for:
-- **Register polling:** Read the status register until a bit is set
-- **Dependent reads:** Read a pointer, then read the data it points to
-- **Write-then-read verification:** Write a value, then read it back to verify
+This is useful for:
+- **Peripheral streams:** several outstanding reads from a FIFO-mapped register must come back in order.
+- **Simple masters:** a master that uses one ID gets an in-order bus for free.
+
+It does **not** order a read after a write, even when `ARID` equals `AWID` (IHI0022E A5.3.4). See section 5.
 
 ---
 
@@ -120,6 +122,8 @@ This is the mechanism that enables **out-of-order completion**:
 - A slave receives reads for IDs 1 and 2
 - ID 2 hits the cache; ID 1 misses and goes to DRAM
 - The slave returns ID 2's data first because it's ready first
+
+Read data of different IDs may also be **interleaved** beat by beat (A5.3.1): `B0, A0, B1, A1` is legal when A and B have different IDs. A monitor must therefore collect R beats per `RID`, not assume a burst arrives in one piece. AXI4 write data is different: there is no `WID`, so the W beats of each write are consecutive and follow the order of the write addresses, whatever the AWIDs (A5.4).
 
 ### Performance Implications
 
@@ -147,21 +151,14 @@ AR channel:  [Read  addr=0x100, ARID=1]
 Even though both use ID=1, the spec does not guarantee the read will see the written value.
 The write and read travel on **independent channels** and may arrive at the slave in any order.
 
-### Solutions
+### What the Spec Requires
 
-1. **Wait for the write response:** Before issuing the read, the master waits for `BVALID/BREADY` on the B channel.
-2. **Use a barrier/fence:** Some interconnects support ordering barriers.
-3. **Software synchronization:** Use a memory barrier instruction in the processor.
+IHI0022E A5.3.4: "AXI has no ordering restrictions between read and write transactions. They can complete in any order, even if the ARID value of a read transaction is the same as the AWID value of a write transaction." A master that needs one to see the other must wait for the earlier one to **complete** before it issues the later one:
 
-```systemverilog
-// Verification assertion: if same-ID write then read to same address,
-// ensure write response arrives before read data
-property p_war_ordering;
-  @(posedge ACLK) disable iff (!ARESETn)
-    (write_issued && read_issued_same_addr_same_id) |->
-      b_response_seen before r_data_seen;
-endproperty
-```
+- a write is complete when its **write response** (B) arrives; sending all the write data does not count;
+- a read is complete when its **last read data beat** arrives.
+
+This is an obligation on the master, so there is nothing to assert at the slave's pins. In a scoreboard, a read that overlaps an outstanding write to the same address may legally return either the old or the new data; decide that policy explicitly instead of flagging it as an error.
 
 ---
 
@@ -171,7 +168,7 @@ The AXI interconnect sits between masters and slaves and manages ID routing:
 
 ### ID Prepending
 
-The interconnect prepends source-master bits to the ID, ensuring that IDs from different masters are unique at the slave port:
+The interconnect adds master-port bits to the ID (A5.3.5), so IDs from different masters are unique at the slave port. Where the extra bits go is the interconnect's choice; this example puts them on top:
 
 | Component | ID Width | Example |
 |---|---|---|
@@ -183,23 +180,26 @@ The slave returns the full ID on the response channel. The interconnect strips t
 
 ### Interconnect Reordering Rules
 
-The interconnect **may** reorder transactions from different masters to different slaves, but it **must** preserve same-ID ordering from each master.
+The obligation is on the **responses the master receives**. A5.3.1: "The interconnect must ensure that the read data from a sequence of transactions with the same ARID value targeting different slaves is received by the master in the order in which it issued the addresses." Same-AWID write responses must likewise complete in issue order (A5.3).
 
 ```
-Master 0: [Write A, ID=1] → Slave 0
-Master 0: [Write B, ID=1] → Slave 1
-Interconnect MUST deliver A before B to preserve same-ID ordering.
+Master 0: [Read A, ARID=1] -> Slave 0
+Master 0: [Read B, ARID=1] -> Slave 1
+Master 0 must receive all of A's data before B's. The interconnect can
+stall B until A completes, or buffer B's data until A's has gone back.
 
-Master 0: [Write A, ID=1] → Slave 0
-Master 0: [Write B, ID=2] → Slave 0
-Interconnect MAY deliver B before A (different IDs, no ordering required).
+Master 0: [Read A, ARID=1] -> Slave 0
+Master 0: [Read B, ARID=2] -> Slave 0
+B's data may arrive first, or interleaved with A's (different IDs).
 ```
+
+For write data, an interconnect that merges writes from several masters into one slave "must ensure that it forwards the write data in address order" (A5.3.2).
 
 ---
 
-<InteractiveWrapper>
-  <AxiIdOrderingVisualizer />
-</InteractiveWrapper>
+Now apply the rules. For each situation, predict which order is legal, then play the slave (or the master, for write data) and watch the checker mark each transfer. The last situation shows the interconnect ID arithmetic.
+
+<AxiIdOrderingVisualizer />
 
 ---
 
@@ -207,52 +207,77 @@ Interconnect MAY deliver B before A (different IDs, no ordering required).
 
 ### Scoreboard Design for ID-Based Ordering
 
-```systemverilog
-class axi_ordering_scoreboard extends uvm_scoreboard;
-  // Per-ID queues for outstanding transactions
-  ahb_transaction pending_writes[int][$];  // indexed by ID
-  ahb_transaction pending_reads[int][$];   // indexed by ID
+The scoreboard keeps one queue of expected transactions per ID, collects read beats per `RID` (other IDs may interleave), and pops the **oldest** same-ID entry when a burst completes. A write response carries no address, so for writes the order itself is the check.
 
-  function void check_write_response(axi_bresp_txn b_txn);
-    int id = b_txn.bid;
-    if (pending_writes[id].size() == 0)
-      `uvm_error("ORD", $sformatf("B response for ID=%0d with no outstanding write", id))
-    else begin
-      axi_txn expected = pending_writes[id].pop_front(); // FIFO order
-      if (expected.addr !== b_txn.matched_addr)
-        `uvm_error("ORD", $sformatf("B response ID=%0d out of order", id))
+```systemverilog
+typedef bit [63:0] data_t;
+
+class axi_txn extends uvm_object;
+  `uvm_object_utils(axi_txn)
+  int unsigned id, len;   // AxID, AxLEN
+  bit [31:0]   addr;
+  data_t       data[];    // expected read data, filled by the reference model
+  function new(string name = "axi_txn"); super.new(name); endfunction
+endclass
+
+class axi_order_scoreboard extends uvm_scoreboard;
+  `uvm_component_utils(axi_order_scoreboard)
+
+  axi_txn reads_by_id[int][$];   // in AR order, per ID (A5.3.1)
+  axi_txn writes_by_id[int][$];  // in AW order, per ID (A5.3)
+  data_t  rbeats_by_id[int][$];  // R beats collected until RLAST
+
+  function new(string name, uvm_component parent); super.new(name, parent); endfunction
+
+  function void on_ar(axi_txn t); reads_by_id[t.id].push_back(t);  endfunction
+  function void on_aw(axi_txn t); writes_by_id[t.id].push_back(t); endfunction
+
+  function void on_r_beat(int rid, data_t data, bit last);
+    axi_txn exp;
+    if (!reads_by_id.exists(rid) || reads_by_id[rid].size() == 0) begin
+      `uvm_error("ORD", $sformatf("RID=%0d with no outstanding read", rid))
+      return;
     end
+    rbeats_by_id[rid].push_back(data);
+    if (!last) return;
+    exp = reads_by_id[rid].pop_front();          // oldest read with this ID
+    if (rbeats_by_id[rid].size() != exp.len + 1)
+      `uvm_error("ORD", $sformatf("RID=%0d: %0d beats, expected %0d", rid, rbeats_by_id[rid].size(), exp.len + 1))
+    foreach (exp.data[i])
+      if (i < rbeats_by_id[rid].size() && rbeats_by_id[rid][i] !== exp.data[i])
+        `uvm_error("DATA", $sformatf("RID=%0d beat %0d: got %h, expected %h", rid, i, rbeats_by_id[rid][i], exp.data[i]))
+    rbeats_by_id[rid].delete();
   endfunction
 
-  function void check_read_data(axi_rdata_txn r_txn);
-    int id = r_txn.rid;
-    if (r_txn.rlast) begin
-      if (pending_reads[id].size() == 0)
-        `uvm_error("ORD", $sformatf("R data for ID=%0d with no outstanding read", id))
-      else begin
-        axi_txn expected = pending_reads[id].pop_front();
-        // Compare data against reference model
-      end
-    end
+  function void on_b(int bid);
+    if (!writes_by_id.exists(bid) || writes_by_id[bid].size() == 0)
+      `uvm_error("ORD", $sformatf("BID=%0d with no outstanding write", bid))
+    else
+      void'(writes_by_id[bid].pop_front());    // completes the oldest write with this ID
+  endfunction
+
+  function void check_phase(uvm_phase phase);
+    foreach (reads_by_id[id])
+      if (reads_by_id[id].size()) `uvm_error("EOT", $sformatf("%0d reads with ID %0d never completed", reads_by_id[id].size(), id))
+    foreach (writes_by_id[id])
+      if (writes_by_id[id].size()) `uvm_error("EOT", $sformatf("%0d writes with ID %0d never completed", writes_by_id[id].size(), id))
   endfunction
 endclass
 ```
 
+If the data of a returned read matches the *second* outstanding read with that ID instead of the first, the beat-by-beat compare fails: that is how a same-ID reordering bug shows up.
+
 ### Key Assertions
 
-```systemverilog
-// Same-ID write responses must be in order
-property p_write_order(id);
-  @(posedge ACLK) disable iff (!ARESETn)
-    (BVALID && BREADY && BID == id) |->
-      (write_sequence_number[id] == expected_sequence[id]);
-endproperty
+At the pins, a checker can verify that every response ID belongs to an outstanding request. Same-ID order needs the expected data or address, so it lives in the scoreboard above.
 
-// Response ID must match a previously issued request ID
-property p_response_id_valid;
-  @(posedge ACLK) disable iff (!ARESETn)
-    (BVALID) |-> outstanding_write_ids[BID];
-endproperty
+```systemverilog
+// outstanding_wr[id] / outstanding_rd[id]: AW (AR) handshakes minus B (RLAST)
+// handshakes for each ID, maintained by the monitor.
+a_bid_known: assert property (@(posedge ACLK) disable iff (!ARESETn)
+  BVALID |-> outstanding_wr[BID] > 0);
+a_rid_known: assert property (@(posedge ACLK) disable iff (!ARESETn)
+  RVALID |-> outstanding_rd[RID] > 0);
 ```
 
 ### Coverage Plan
@@ -286,7 +311,9 @@ endgroup
 |---|---|---|
 | Same-ID ordering | Per master, per ID | Responses arrive in request order |
 | Different-ID freedom | Per master, across IDs | No ordering — may reorder freely |
-| Read/Write independence | Same ID, different channels | No guarantee without explicit synchronization |
+| Read data interleaving | Different RIDs | Allowed; same-RID data is never mixed |
+| Write data (AXI4) | All writes | Consecutive beats, in AW order, no WID |
+| Read/Write independence | Same ID, different channels | No guarantee; wait for B (or the last R) first |
 | Interconnect routing | Cross-master | IDs widened with source bits; per-ID ordering preserved |
 
 In the next module, we will explore AXI expert features: AxCACHE, AxPROT, AxQOS, and Exclusive Access (LDREX/STREX).

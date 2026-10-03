@@ -19,7 +19,7 @@ const exercises: ExerciseLink[] = [
   {
     href: '/exercises/uvm-phase-sorter',
     title: 'UVM Phase Sorter',
-    description: 'Correctly order the UVM runtime phases in a dynamic, sortable list.',
+    description: 'Place each phase in the right lane (run_phase beside the runtime schedule) and mark function phases top-down or bottom-up.',
     status: 'completed',
   },
   {

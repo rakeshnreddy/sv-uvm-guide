@@ -104,6 +104,7 @@ test.describe('AMBA curriculum coverage', () => {
 
     await expectLesson(page, bridgeRoute!);
     await page.getByTestId('scenario-btn-0').click();
+    await page.getByRole('button', { name: /reveal without predicting/i }).first().click();
     await expect(page.getByTestId('axi-bursts-container')).toContainText('AXI Burst 1');
     await expect(page.getByTestId('axi-bursts-container')).not.toContainText('AXI Burst 2');
 

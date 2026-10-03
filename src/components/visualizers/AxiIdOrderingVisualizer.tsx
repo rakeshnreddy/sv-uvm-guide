@@ -1,252 +1,312 @@
-'use client';
+"use client";
 
-import React, { useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Play, Pause, SkipForward, SkipBack, RotateCcw } from 'lucide-react';
+import React, { useMemo, useState } from "react";
 
-// ── Types ──
+import { CycleWaveform, type CycleMarker, type CycleSignal } from "@/components/visual-system/CycleWaveform";
+import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  extendId,
+  idBits,
+  replayOrdering,
+  type OrderedRequest,
+  type OrderingKind,
+} from "@/lib/axi-channel-model";
+import { cn } from "@/lib/utils";
 
-interface Transaction {
-  id: number;
-  type: 'read' | 'write';
-  addr: string;
-  label: string;
-}
+export const AXI_ORDERING_ASSUMPTIONS = [
+  "Every address handshake has already happened, in the order listed; only the response or data order is chosen.",
+  "Rules: same-ID read data in address order, different IDs in any order and interleaved (IHI0022E A5.3.1); same-AWID write responses in order (A5.3); AXI4 write data in address order, never interleaved (A5.3.2, A5.4).",
+  "Interconnect IDs: A5.3.5 says the interconnect appends master-port bits; putting them above the master's ID bits is this model's choice.",
+  "One beat per column; READY is always 1, so each column is one transfer.",
+];
 
-interface CycleEvent {
-  channel: 'AR' | 'AW' | 'R' | 'B';
-  txn: Transaction;
-  action: string;
-}
-
-interface Scenario {
+interface OrderingPreset {
   id: string;
-  name: string;
-  description: string;
-  outstanding: Transaction[];
-  events: CycleEvent[][];
+  label: string;
+  kind: OrderingKind;
+  summary: string;
+  question: string;
+  requests: OrderedRequest[];
+  /** Candidate sequences of request keys; exactly one is legal (checked by the model in tests). */
+  options: string[][];
+  /** Two-master interconnect view. */
+  masterIdBits?: number;
 }
 
-// ── Scenario Data ──
-
-const scenarios: Scenario[] = [
+export const ORDERING_PRESETS: OrderingPreset[] = [
   {
-    id: 'same_id_order',
-    name: 'Same-ID Ordering',
-    description: 'Two reads with the same ID — responses MUST arrive in order.',
-    outstanding: [
-      { id: 3, type: 'read', addr: '0x1000', label: 'Read A' },
-      { id: 3, type: 'read', addr: '0x2000', label: 'Read B' },
+    id: "same-id",
+    label: "Reads, same ID",
+    kind: "read-data",
+    summary: "The master issued read A, then read B, both with ARID 3. Each returns 2 beats.",
+    question: "Which R channel order is legal?",
+    requests: [
+      { key: "A", id: 3, beats: 2, label: "A" },
+      { key: "B", id: 3, beats: 2, label: "B" },
     ],
-    events: [
-      [],
-      [{ channel: 'AR', txn: { id: 3, type: 'read', addr: '0x1000', label: 'Read A' }, action: 'Issue Read A (ID=3)' }],
-      [{ channel: 'AR', txn: { id: 3, type: 'read', addr: '0x2000', label: 'Read B' }, action: 'Issue Read B (ID=3)' }],
-      [{ channel: 'R', txn: { id: 3, type: 'read', addr: '0x1000', label: 'Read A' }, action: 'Data A returns (RID=3) — must come first!' }],
-      [{ channel: 'R', txn: { id: 3, type: 'read', addr: '0x2000', label: 'Read B' }, action: 'Data B returns (RID=3) — in order ✓' }],
+    options: [
+      ["B", "B", "A", "A"],
+      ["A", "B", "A", "B"],
+      ["A", "A", "B", "B"],
     ],
   },
   {
-    id: 'diff_id_reorder',
-    name: 'Different-ID Reorder',
-    description: 'Two reads with different IDs — responses may arrive in ANY order.',
-    outstanding: [
-      { id: 1, type: 'read', addr: '0x1000', label: 'Read A' },
-      { id: 2, type: 'read', addr: '0x2000', label: 'Read B' },
+    id: "diff-id",
+    label: "Reads, different IDs",
+    kind: "read-data",
+    summary: "Reads A (ARID 1, 2 beats), B (ARID 2, 2 beats) and C (ARID 1, 1 beat) were issued in that order.",
+    question: "Which R channel order is legal?",
+    requests: [
+      { key: "A", id: 1, beats: 2, label: "A" },
+      { key: "B", id: 2, beats: 2, label: "B" },
+      { key: "C", id: 1, beats: 1, label: "C" },
     ],
-    events: [
-      [],
-      [{ channel: 'AR', txn: { id: 1, type: 'read', addr: '0x1000', label: 'Read A' }, action: 'Issue Read A (ID=1) — cache miss, slow' }],
-      [{ channel: 'AR', txn: { id: 2, type: 'read', addr: '0x2000', label: 'Read B' }, action: 'Issue Read B (ID=2) — cache hit, fast' }],
-      [{ channel: 'R', txn: { id: 2, type: 'read', addr: '0x2000', label: 'Read B' }, action: 'Data B returns FIRST (RID=2) — legal!' }],
-      [{ channel: 'R', txn: { id: 1, type: 'read', addr: '0x1000', label: 'Read A' }, action: 'Data A returns later (RID=1) — reordered ✓' }],
-    ],
-  },
-  {
-    id: 'mixed_outstanding',
-    name: 'Mixed Outstanding',
-    description: 'Multiple outstanding writes and reads with different IDs interleaving.',
-    outstanding: [
-      { id: 1, type: 'write', addr: '0x1000', label: 'Write A' },
-      { id: 2, type: 'read', addr: '0x2000', label: 'Read B' },
-      { id: 1, type: 'write', addr: '0x3000', label: 'Write C' },
-      { id: 3, type: 'read', addr: '0x4000', label: 'Read D' },
-    ],
-    events: [
-      [],
-      [{ channel: 'AW', txn: { id: 1, type: 'write', addr: '0x1000', label: 'Write A' }, action: 'Issue Write A (ID=1)' }],
-      [
-        { channel: 'AR', txn: { id: 2, type: 'read', addr: '0x2000', label: 'Read B' }, action: 'Issue Read B (ID=2)' },
-        { channel: 'AW', txn: { id: 1, type: 'write', addr: '0x3000', label: 'Write C' }, action: 'Issue Write C (ID=1)' },
-      ],
-      [{ channel: 'AR', txn: { id: 3, type: 'read', addr: '0x4000', label: 'Read D' }, action: 'Issue Read D (ID=3)' }],
-      [{ channel: 'R', txn: { id: 3, type: 'read', addr: '0x4000', label: 'Read D' }, action: 'Read D returns (RID=3) — fast slave' }],
-      [{ channel: 'B', txn: { id: 1, type: 'write', addr: '0x1000', label: 'Write A' }, action: 'Write A ack (BID=1) — must come before Write C ack' }],
-      [{ channel: 'R', txn: { id: 2, type: 'read', addr: '0x2000', label: 'Read B' }, action: 'Read B returns (RID=2)' }],
-      [{ channel: 'B', txn: { id: 1, type: 'write', addr: '0x3000', label: 'Write C' }, action: 'Write C ack (BID=1) — after Write A ✓' }],
+    options: [
+      ["A", "C", "A", "B", "B"],
+      ["B", "A", "B", "A", "C"],
+      ["C", "B", "B", "A", "A"],
     ],
   },
   {
-    id: 'id_prepend',
-    name: 'Interconnect ID Prepend',
-    description: 'Two masters use the same ID — the interconnect prepends source bits to keep them unique.',
-    outstanding: [
-      { id: 2, type: 'read', addr: '0x1000', label: 'M0: Read' },
-      { id: 2, type: 'read', addr: '0x2000', label: 'M1: Read' },
+    id: "b-order",
+    label: "Write responses",
+    kind: "write-response",
+    summary: "Writes W1 (AWID 2), W2 (AWID 3) and W3 (AWID 2) were issued in that order; all their data has arrived.",
+    question: "Which B channel order is legal?",
+    requests: [
+      { key: "W1", id: 2, beats: 1, label: "W1" },
+      { key: "W2", id: 3, beats: 1, label: "W2" },
+      { key: "W3", id: 2, beats: 1, label: "W3" },
     ],
-    events: [
-      [],
-      [{ channel: 'AR', txn: { id: 2, type: 'read', addr: '0x1000', label: 'M0: Read' }, action: 'M0 issues ARID=2 → Interconnect makes ID=0_10 (4)' }],
-      [{ channel: 'AR', txn: { id: 2, type: 'read', addr: '0x2000', label: 'M1: Read' }, action: 'M1 issues ARID=2 → Interconnect makes ID=1_10 (6)' }],
-      [{ channel: 'R', txn: { id: 2, type: 'read', addr: '0x2000', label: 'M1: Read' }, action: 'Slave returns RID=6 → routed to M1 (stripped to ID=2)' }],
-      [{ channel: 'R', txn: { id: 2, type: 'read', addr: '0x1000', label: 'M0: Read' }, action: 'Slave returns RID=4 → routed to M0 (stripped to ID=2)' }],
+    options: [
+      ["W3", "W2", "W1"],
+      ["W2", "W1", "W3"],
+      ["W3", "W1", "W2"],
+    ],
+  },
+  {
+    id: "w-order",
+    label: "Write data (AXI4)",
+    kind: "write-data",
+    summary: "The master issued write X (AWID 0, 2 beats), then write Y (AWID 1, 1 beat). The W channel has no ID in AXI4.",
+    question: "Which W channel order is legal?",
+    requests: [
+      { key: "X", id: 0, beats: 2, label: "X" },
+      { key: "Y", id: 1, beats: 1, label: "Y" },
+    ],
+    options: [
+      ["Y", "X", "X"],
+      ["X", "Y", "X"],
+      ["X", "X", "Y"],
+    ],
+  },
+  {
+    id: "interconnect",
+    label: "Two masters",
+    kind: "read-data",
+    summary: "M0 issues A then C, M1 issues B, all with ARID 2'b10. The interconnect appends a 1-bit master number, so the slave sees ID 3'b010 for A and C and 3'b110 for B.",
+    question: "Which R order may the slave return?",
+    masterIdBits: 2,
+    requests: [
+      { key: "A", id: extendId(0, 0b10, 2), beats: 1, label: "M0:A", master: 0 },
+      { key: "B", id: extendId(1, 0b10, 2), beats: 1, label: "M1:B", master: 1 },
+      { key: "C", id: extendId(0, 0b10, 2), beats: 1, label: "M0:C", master: 0 },
+    ],
+    options: [
+      ["C", "B", "A"],
+      ["B", "A", "C"],
+      ["C", "A", "B"],
     ],
   },
 ];
 
-const idColors: Record<number, string> = {
-  1: 'bg-blue-500',
-  2: 'bg-purple-500',
-  3: 'bg-amber-500',
+const KIND_NAMES: Record<OrderingKind, { ch: string; valid: string; id: string | null; data: string; last: string | null }> = {
+  "read-data": { ch: "R", valid: "RVALID", id: "RID", data: "RDATA", last: "RLAST" },
+  "write-response": { ch: "B", valid: "BVALID", id: "BID", data: "BRESP", last: null },
+  "write-data": { ch: "W", valid: "WVALID", id: null, data: "WDATA", last: "WLAST" },
 };
 
-const channelColors: Record<string, string> = {
-  AR: 'text-amber-400 border-amber-500/30 bg-amber-500/10',
-  AW: 'text-blue-400 border-blue-500/30 bg-blue-500/10',
-  R: 'text-rose-400 border-rose-500/30 bg-rose-500/10',
-  B: 'text-emerald-400 border-emerald-500/30 bg-emerald-500/10',
-};
+function seqLabel(p: OrderingPreset, seq: string[]) {
+  const counts = new Map<string, number>();
+  return seq
+    .map((k) => {
+      const n = counts.get(k) ?? 0;
+      counts.set(k, n + 1);
+      const label = p.requests.find((r) => r.key === k)?.label ?? k;
+      return p.kind === "write-response" || (p.requests.find((r) => r.key === k)?.beats ?? 1) === 1 ? label : `${label}${n}`;
+    })
+    .join(", ");
+}
 
-// ── Component ──
+function OrderWave({ preset, sequence }: { preset: OrderingPreset; sequence: string[] }) {
+  const names = KIND_NAMES[preset.kind];
+  const replay = replayOrdering(preset.kind, preset.requests, sequence);
+  const edges = Math.max(6, replay.length + 1);
+  const pad = <T,>(arr: T[], fill: T) => [...arr, ...Array.from({ length: edges - arr.length }, () => fill)];
+  const idWidth = preset.masterIdBits ? preset.masterIdBits + 1 : 2;
+  const signals: CycleSignal[] = [
+    { name: "ACLK", kind: "clock" },
+    { name: names.valid, kind: "bit", values: pad([0, ...replay.map(() => 1)], 0) },
+  ];
+  if (names.id) {
+    signals.push({ name: names.id, kind: "bus", values: pad([undefined, ...replay.map((b) => (preset.masterIdBits ? idBits(b.id, idWidth) : String(b.id)))], undefined) });
+  }
+  signals.push({
+    name: names.data,
+    kind: "bus",
+    values: pad([undefined, ...replay.map((b) => (preset.kind === "write-response" ? `OKAY ${b.key}` : `${preset.requests.find((r) => r.key === b.key)?.label ?? b.key}${b.beat - 1}`))], undefined),
+  });
+  if (names.last) signals.push({ name: names.last, kind: "bit", values: pad([undefined, ...replay.map((b) => (b.last ? 1 : 0))], undefined) });
+  const markers: CycleMarker[] = replay.map((b, i) => ({
+    edge: i + 1,
+    tone: b.check.legal ? "pass" : "fail",
+    label: `${names.ch} transfer ${i + 1} (${b.key}): ${b.check.reason}`,
+  }));
+  return (
+    <CycleWaveform
+      title={`${names.ch} channel order`}
+      signals={signals}
+      edges={edges}
+      markers={markers}
+      caption={`x-axis: ACLK edges; one ${names.ch} transfer per edge (${names.ch}READY held at 1). ✓ legal at that point, ✕ breaks an ordering rule.`}
+    />
+  );
+}
 
 export default function AxiIdOrderingVisualizer() {
-  const [scenarioId, setScenarioId] = useState(scenarios[0].id);
-  const [cycle, setCycle] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
+  const [presetId, setPresetId] = useState(ORDERING_PRESETS[0].id);
+  const [sequence, setSequence] = useState<string[] | null>(null);
+  const preset = ORDERING_PRESETS.find((p) => p.id === presetId) ?? ORDERING_PRESETS[0];
+  const names = KIND_NAMES[preset.kind];
 
-  const scenario = scenarios.find(s => s.id === scenarioId) ?? scenarios[0];
-  const maxCycle = scenario.events.length - 1;
-  const currentEvents = scenario.events[cycle] ?? [];
+  const options: PredictionOption[] = useMemo(
+    () =>
+      preset.options.map((seq, i) => {
+        const replay = replayOrdering(preset.kind, preset.requests, seq);
+        const bad = replay.find((b) => !b.check.legal);
+        return {
+          id: String(i),
+          label: <span className="font-mono">{seqLabel(preset, seq)}</span>,
+          correct: !bad,
+          feedback: bad ? `${bad.check.reason} (${bad.check.clause})` : `Every transfer is legal when it happens. ${replay[replay.length - 1].check.reason}`,
+        };
+      }),
+    [preset],
+  );
+  const legalSeq = preset.options.find((seq) => replayOrdering(preset.kind, preset.requests, seq).every((b) => b.check.legal)) ?? [];
+  const seq = sequence ?? legalSeq;
+  const replay = replayOrdering(preset.kind, preset.requests, seq);
+  const last = replay.length > 0 ? replay[replay.length - 1] : null;
 
-  // Collect all events up to current cycle for the log
-  const eventLog = scenario.events.slice(0, cycle + 1).flat();
-
-  const stepForward = useCallback(() => {
-    setCycle(c => Math.min(c + 1, maxCycle));
-  }, [maxCycle]);
-
-  const stepBackward = useCallback(() => {
-    setCycle(c => Math.max(c - 1, 0));
-  }, []);
-
-  const reset = useCallback(() => {
-    setCycle(0);
-    setIsPlaying(false);
-  }, []);
-
-  React.useEffect(() => {
-    if (!isPlaying) return;
-    if (cycle >= maxCycle) { setIsPlaying(false); return; }
-    const timer = setTimeout(stepForward, 1400);
-    return () => clearTimeout(timer);
-  }, [isPlaying, cycle, maxCycle, stepForward]);
+  const choose = (id: string) => {
+    setPresetId(id);
+    setSequence(null);
+  };
 
   return (
-    <div className="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden" data-testid="axi-id-ordering-visualizer">
-      {/* Header */}
-      <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700 flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-base font-semibold text-white">AXI ID Ordering Visualizer</h3>
-        <select
-          value={scenarioId}
-          onChange={(e) => { setScenarioId(e.target.value); setCycle(0); setIsPlaying(false); }}
-          className="bg-slate-700 text-slate-200 text-sm rounded px-3 py-1.5 border border-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-        >
-          {scenarios.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
-      </div>
+    <div data-testid="axi-id-ordering-visualizer">
+      <VisualFrame
+        label="AXI ID ordering explorer"
+        eyebrow="Predict, then play the slave"
+        title="Which response orders does the ID allow?"
+        summary="Pick a situation, predict which order is legal, then send transfers yourself. The model checks every transfer against the ordering rules."
+        fidelity="model"
+        assumptions={AXI_ORDERING_ASSUMPTIONS}
+      >
+        <SegmentedControl label="Ordering situation" options={ORDERING_PRESETS.map((p) => ({ value: p.id, label: p.label }))} value={preset.id} onChange={choose} />
+        <p className="text-sm text-foreground">{preset.summary}</p>
 
-      {/* Description */}
-      <div className="px-4 py-2 text-sm text-slate-400 bg-slate-800/30 border-b border-slate-700/50">
-        {scenario.description}
-      </div>
-
-      {/* Outstanding transactions */}
-      <div className="px-4 py-3 border-b border-slate-700/50">
-        <div className="text-xs uppercase tracking-wider text-slate-500 mb-2 font-semibold">Outstanding Transactions</div>
-        <div className="flex flex-wrap gap-2">
-          {scenario.outstanding.map((txn, i) => (
-            <div key={i} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-700 bg-slate-800/50">
-              <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white ${idColors[txn.id] ?? 'bg-slate-500'}`}>
-                {txn.id}
-              </div>
-              <span className="text-sm text-slate-300">{txn.label}</span>
-              <span className="text-xs text-slate-500 font-mono">{txn.addr}</span>
-            </div>
+        <ul className="flex flex-wrap gap-2" aria-label="Outstanding transactions in issue order">
+          {preset.requests.map((r, i) => (
+            <li key={r.key} className="rounded-lg border border-border/70 bg-background/50 px-3 py-1.5 text-sm">
+              <span className="text-xs text-muted-foreground">#{i + 1} </span>
+              <span className="font-semibold">{r.label}</span>{" "}
+              <span className="font-mono text-xs [font-variant-ligatures:none]">
+                {preset.kind === "read-data" ? "ARID" : "AWID"}={preset.masterIdBits ? `3'b${idBits(r.id, preset.masterIdBits + 1)}` : r.id}
+              </span>
+              {preset.kind !== "write-response" ? <span className="text-xs text-muted-foreground"> · {r.beats} beat{r.beats > 1 ? "s" : ""}</span> : null}
+            </li>
           ))}
-        </div>
-      </div>
+        </ul>
 
-      {/* Event log */}
-      <div className="px-4 py-3 min-h-[200px]">
-        <div className="text-xs uppercase tracking-wider text-slate-500 mb-2 font-semibold">Event Log (Cycle {cycle})</div>
-        <div className="space-y-1.5">
-          <AnimatePresence>
-            {eventLog.map((evt, i) => {
-              const isCurrent = i >= eventLog.length - currentEvents.length;
-              return (
-                <motion.div
-                  key={`${evt.channel}-${evt.txn.label}-${i}`}
-                  initial={{ opacity: 0, y: -5 }}
-                  animate={{ opacity: isCurrent ? 1 : 0.5, y: 0 }}
-                  className={`flex items-center gap-2 px-3 py-2 rounded-lg border text-sm ${
-                    isCurrent ? channelColors[evt.channel] : 'border-slate-800 bg-slate-800/20 text-slate-500'
-                  }`}
-                >
-                  <span className="font-mono font-bold text-xs w-8 flex-shrink-0">{evt.channel}</span>
-                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0 ${idColors[evt.txn.id] ?? 'bg-slate-500'}`}>
-                    {evt.txn.id}
-                  </div>
-                  <span className="flex-1">{evt.action}</span>
-                </motion.div>
-              );
-            })}
-          </AnimatePresence>
-          {eventLog.length === 0 && (
-            <div className="text-slate-600 text-sm italic py-4 text-center">Press Play or Step Forward to begin</div>
-          )}
-        </div>
-      </div>
-
-      {/* Progress bar */}
-      <div className="px-4 py-2 bg-slate-800/30 border-t border-slate-700">
-        <div className="flex items-center gap-2">
-          <span className="text-xs font-mono text-slate-500">T{cycle}</span>
-          <div className="flex-1 h-1 bg-slate-700 rounded-full overflow-hidden">
-            <motion.div
-              className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"
-              animate={{ width: `${maxCycle > 0 ? (cycle / maxCycle) * 100 : 0}%` }}
-              transition={{ duration: 0.3 }}
-            />
+        {preset.masterIdBits ? (
+          <div className="overflow-x-auto">
+            <table className="min-w-[300px] text-left text-sm">
+              <caption className="mb-1 text-left text-xs text-muted-foreground">Interconnect ID extension (A5.3.5): slave ID = {"{"}master port, master ARID{"}"}</caption>
+              <thead className="text-xs text-muted-foreground">
+                <tr>
+                  <th scope="col" className="pr-4">Master</th>
+                  <th scope="col" className="pr-4">ARID at master</th>
+                  <th scope="col" className="pr-4">ARID at slave</th>
+                  <th scope="col">Decimal</th>
+                </tr>
+              </thead>
+              <tbody className="font-mono">
+                {[0, 1].map((m) => (
+                  <tr key={m}>
+                    <td className="pr-4">M{m}</td>
+                    <td className="pr-4">2&apos;b10</td>
+                    <td className="pr-4">3&apos;b{idBits(extendId(m, 0b10, 2), 3)}</td>
+                    <td>{extendId(m, 0b10, 2)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
-          <span className="text-xs font-mono text-slate-500">T{maxCycle}</span>
-        </div>
-      </div>
+        ) : null}
 
-      {/* Controls */}
-      <div className="px-4 py-3 bg-slate-800/50 border-t border-slate-700 flex items-center justify-center gap-2">
-        <button onClick={reset} title="Reset" aria-label="Reset simulation" className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors">
-          <RotateCcw size={16} />
-        </button>
-        <button onClick={stepBackward} title="Step Backward" aria-label="Step Backward" disabled={cycle <= 0} className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
-          <SkipBack size={16} />
-        </button>
-        <button onClick={() => setIsPlaying(!isPlaying)} title={isPlaying ? 'Pause' : 'Play'} aria-label={isPlaying ? 'Pause simulation' : 'Play simulation'} className="p-2.5 rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition-colors">
-          {isPlaying ? <Pause size={18} /> : <Play size={18} />}
-        </button>
-        <button onClick={stepForward} title="Step Forward" aria-label="Step Forward" disabled={cycle >= maxCycle} className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
-          <SkipForward size={16} />
-        </button>
-      </div>
+        <PredictionPrompt question={preset.question} options={options} resetKey={preset.id}>
+          <div className="space-y-3">
+            <OrderWave preset={preset} sequence={seq} />
+            {last ? (
+              <p aria-live="polite" className={cn("text-sm", last.check.legal ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>
+                {last.check.legal ? "✓ " : "✕ "}Last transfer ({last.key}): {last.check.reason} ({last.check.clause})
+              </p>
+            ) : null}
+            <div className="rounded-xl border border-border/60 p-3">
+              <p className="mb-2 text-sm font-semibold text-foreground">Play the {preset.kind === "write-data" ? "master" : "slave"}: send the next {names.ch} transfer</p>
+              <div className="flex flex-wrap gap-2" role="group" aria-label={`Send the next ${names.ch} transfer`}>
+                {preset.requests.map((r) => (
+                  <button
+                    key={r.key}
+                    type="button"
+                    onClick={() => setSequence([...seq, r.key])}
+                    className="inline-flex h-10 items-center gap-1 rounded-lg border border-border/70 px-3 text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    Send {r.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setSequence(seq.slice(0, -1))}
+                  disabled={seq.length === 0}
+                  className="inline-flex h-10 items-center rounded-lg border border-border/70 px-3 text-sm disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Undo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSequence([])}
+                  className="inline-flex h-10 items-center rounded-lg border border-border/70 px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Clear
+                </button>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">Illegal transfers are recorded with ✕ so you can see what a checker would catch.</p>
+              <ol className="mt-2 space-y-1 text-sm" aria-label="Transfers sent so far">
+                {replay.map((b, i) => (
+                  <li key={i} className={b.check.legal ? "text-foreground" : "text-rose-700 dark:text-rose-300"}>
+                    <span aria-hidden>{b.check.legal ? "✓" : "✕"}</span> <span className="font-mono">{i + 1}. {b.key}</span>
+                    {preset.kind !== "write-response" && b.last ? <span className="font-mono text-xs"> ({names.last ?? "last"})</span> : null}: {b.check.legal ? "" : "Illegal. "}{b.check.reason}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          </div>
+        </PredictionPrompt>
+      </VisualFrame>
     </div>
   );
 }

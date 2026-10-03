@@ -7,7 +7,7 @@ flashcards: "A-UVM-6_Scoreboards"
 ## Quick Take
 - **What it is:** A scoreboard is a passive verification component that collects transactions from monitors, predicts expected results through a reference model, and automatically compares DUT output against those predictions — transforming a testbench from "run and hope" into a self-checking machine.
 - **Why it matters:** Without a scoreboard, catching a bug requires a human staring at waveforms comparing inputs to outputs. Scoreboards automate this comparison across millions of transactions, making bugs surface as `uvm_error` messages instead of invisible waveform anomalies.
-- **The Standard:** IEEE 1800.2-2020 does not prescribe a single `uvm_scoreboard` base class. Instead, the pattern is constructed from `uvm_component`, `uvm_analysis_imp`, and `uvm_tlm_analysis_fifo` — all standard TLM building blocks defined in Clause 12.
+- **The Standard:** IEEE 1800.2-2020 defines `uvm_scoreboard` (§13.6.1), a virtual class that extends `uvm_component` and adds no behavior. Extend it so tools and readers recognize the role; the matching, draining and end-of-test accounting are your code, built from `uvm_analysis_imp` and `uvm_tlm_analysis_fifo` (Clause 12).
 
 ## Build Your Mental Model
 
@@ -35,7 +35,7 @@ The design separates three concerns:
 The recommended connection pattern uses `uvm_tlm_analysis_fifo` as a buffering adapter between the monitor's analysis port and the scoreboard's blocking get port:
 
 ```systemverilog
-class my_scoreboard extends uvm_component;
+class my_scoreboard extends uvm_scoreboard;
   `uvm_component_utils(my_scoreboard)
 
   // Analysis FIFOs buffer transactions from monitors
@@ -66,7 +66,7 @@ function void connect_phase(uvm_phase phase);
 endfunction
 ```
 
-> **Why use a FIFO?** A `uvm_analysis_imp` write callback is non-blocking and executes synchronously inside the monitor's `run_phase` context. If the scoreboard needs to do time-consuming comparison or wait for a corresponding output transaction, a FIFO decouples the timing — the scoreboard's `run_phase` can `get()` at its own pace.
+> **Why use a FIFO?** A `uvm_analysis_imp` write callback is non-blocking and executes synchronously inside the monitor's `run_phase` context. If the scoreboard needs to do time-consuming comparison or wait for a corresponding output transaction, a FIFO decouples the timing — the scoreboard's `run_phase` can `get()` at its own pace. `uvm_tlm_analysis_fifo` is unbounded, so `write()` never blocks and never drops, but it stores the **handle** it is given, not a copy. A monitor that reuses one transaction object must publish a `clone()`, or every queued entry ends up showing the last transaction.
 
 ## Building a Transaction-Level Reference Model
 
@@ -100,7 +100,7 @@ endclass
 Combining the analysis FIFO pattern with the reference model, here is a complete self-checking scoreboard:
 
 ```systemverilog
-class alu_scoreboard extends uvm_component;
+class alu_scoreboard extends uvm_scoreboard;
   `uvm_component_utils(alu_scoreboard)
 
   uvm_tlm_analysis_fifo #(my_transaction) input_fifo;
@@ -125,15 +125,17 @@ class alu_scoreboard extends uvm_component;
     my_transaction input_txn, output_txn, expected;
 
     forever begin
-      // Block until both input and output transactions arrive
-      input_fifo.get(input_txn);
+      // Wait for an input but leave it in the FIFO until its result arrives,
+      // so check_phase can see an input whose output never came.
+      input_fifo.peek(input_txn);
       output_fifo.get(output_txn);
+      void'(input_fifo.try_get(input_txn));
 
       // Predict expected output
       expected = alu_reference_model::predict(input_txn);
 
-      // Compare
-      if (!output_txn.compare(expected)) begin
+      // Compare the field the output monitor fills (!== also flags X)
+      if (output_txn.result !== expected.result) begin
         mismatch_count++;
         `uvm_error("SCOREBOARD",
           $sformatf("MISMATCH on txn #%0d: op=%s a=0x%0h b=0x%0h expected=0x%0h got=0x%0h",
@@ -154,6 +156,17 @@ class alu_scoreboard extends uvm_component;
     end
   endtask
 
+  // End-of-test accounting: anything left in a FIFO was never compared.
+  function void check_phase(uvm_phase phase);
+    super.check_phase(phase);
+    if (!input_fifo.is_empty())
+      `uvm_error("SCOREBOARD", $sformatf("%0d input(s) never produced an output", input_fifo.used()))
+    if (!output_fifo.is_empty())
+      `uvm_error("SCOREBOARD", $sformatf("%0d output(s) arrived with no input", output_fifo.used()))
+    if (match_count + mismatch_count == 0)
+      `uvm_error("SCOREBOARD", "No transactions compared: check monitor connections")
+  endfunction
+
   function void report_phase(uvm_phase phase);
     `uvm_info("SCOREBOARD",
       $sformatf("\n========== Scoreboard Summary ==========\n  Matches:    %0d\n  Mismatches: %0d\n  Total:      %0d\n=========================================",
@@ -167,21 +180,27 @@ class alu_scoreboard extends uvm_component;
 endclass
 ```
 
-> **Design note:** The `report_phase` summary is not optional. Without it, a scoreboard that received zero transactions (due to a broken connection) would silently report success. Always assert that `match_count + mismatch_count > 0`.
+> **Design note:** `check_phase` is not optional. If the DUT drops the last output, `run_phase` simply waits in `output_fifo.get()` until the phase ends, and no compare ever fails. Only the leftover input in `input_fifo` shows the bug. The same check catches a scoreboard that received zero transactions because of a broken connection.
 
 ## Handling Out-of-Order Transactions
 
-In-order comparison assumes DUT output arrives in the same order as input. For pipelined or arbitrating designs, transactions may complete out of order. The solution is an **associative array predictor**:
+In-order comparison assumes DUT output arrives in the same order as input. Pipelined or arbitrating designs may complete transactions out of order. AXI is the usual case: responses with **different** IDs may return in any order, but responses with the **same** ID must return in request order. That rule is a protocol requirement; how a particular DUT reorders across IDs is its design policy.
+
+So the matching structure is **one ordered queue per ID**: an associative array of queues. The oldest prediction for an ID is the only legal partner for the next response with that ID.
+
+A map with one slot per ID (`expected[id] = item`) is not enough. Two outstanding requests with the same ID are normal, and the second prediction overwrites the first.
 
 ```systemverilog
-class ooo_scoreboard extends uvm_component;
+class ooo_scoreboard extends uvm_scoreboard;
   `uvm_component_utils(ooo_scoreboard)
 
   uvm_tlm_analysis_fifo #(my_transaction) input_fifo;
   uvm_tlm_analysis_fifo #(my_transaction) output_fifo;
 
-  // Associative array keyed by transaction ID
-  my_transaction expected_queue[int unsigned];
+  // One ordered queue per ID, oldest prediction first
+  my_transaction expected_q[int unsigned][$];
+  // Outputs that arrived before their prediction (the two threads race)
+  my_transaction held_q[$];
 
   int unsigned match_count;
   int unsigned mismatch_count;
@@ -204,11 +223,11 @@ class ooo_scoreboard extends uvm_component;
   endtask
 
   task collect_inputs();
-    my_transaction txn, expected;
+    my_transaction txn;
     forever begin
       input_fifo.get(txn);
-      expected = alu_reference_model::predict(txn);
-      expected_queue[txn.id] = expected;
+      expected_q[txn.id].push_back(alu_reference_model::predict(txn));
+      retry_held(txn.id);
     end
   endtask
 
@@ -216,34 +235,56 @@ class ooo_scoreboard extends uvm_component;
     my_transaction actual;
     forever begin
       output_fifo.get(actual);
-
-      if (!expected_queue.exists(actual.id)) begin
-        `uvm_error("OOO_SCB", $sformatf("Unexpected output with id=%0d", actual.id))
-        continue;
-      end
-
-      if (!actual.compare(expected_queue[actual.id])) begin
-        mismatch_count++;
-        `uvm_error("OOO_SCB", $sformatf("MISMATCH id=%0d", actual.id))
-      end else begin
-        match_count++;
-      end
-
-      expected_queue.delete(actual.id); // Remove matched entry
+      if (expected_q.exists(actual.id) && expected_q[actual.id].size() > 0)
+        compare_pair(expected_q[actual.id].pop_front(), actual);
+      else
+        held_q.push_back(actual);  // maybe early; check_phase reports it if never matched
     end
   endtask
 
-  function void check_phase(uvm_phase phase);
-    if (expected_queue.size() > 0) begin
-      `uvm_error("OOO_SCB",
-        $sformatf("%0d expected transactions never received from DUT",
-          expected_queue.size()))
+  // A prediction just arrived: an output with this ID may already be waiting.
+  function void retry_held(int unsigned id);
+    foreach (held_q[i]) begin
+      if (held_q[i].id == id) begin
+        compare_pair(expected_q[id].pop_front(), held_q[i]);
+        held_q.delete(i);
+        return;
+      end
     end
+  endfunction
+
+  function void compare_pair(my_transaction exp, my_transaction act);
+    if (act.result !== exp.result) begin
+      mismatch_count++;
+      `uvm_error("OOO_SCB", $sformatf("MISMATCH id=%0d: expected 0x%0h, got 0x%0h", act.id, exp.result, act.result))
+    end else begin
+      match_count++;
+    end
+  endfunction
+
+  function void check_phase(uvm_phase phase);
+    super.check_phase(phase);
+    foreach (expected_q[id])
+      if (expected_q[id].size() > 0)
+        `uvm_error("OOO_SCB", $sformatf("id %0d: %0d expected transaction(s) never received", id, expected_q[id].size()))
+    if (held_q.size() > 0)
+      `uvm_error("OOO_SCB", $sformatf("%0d output(s) matched no prediction", held_q.size()))
   endfunction
 endclass
 ```
 
-**Key insight:** The `check_phase` handler catches dropped transactions — inputs the DUT consumed but never produced outputs for. This is one of the most common silicon bugs that scoreboards catch.
+**Key insights:**
+- **The race.** `collect_inputs` and `compare_outputs` are separate threads. When an input and its output land in the same time step, the output thread can run first and find no prediction. Reporting "unexpected" at that moment would be a false error. Holding the output and retrying when the prediction arrives removes the race; `check_phase` reports anything still held.
+- **Where the ID comes from.** Match on a field the DUT carries end to end (the AXI ID). A testbench-only sequence number works only if the DUT returns it.
+- **End-of-test accounting.** `check_phase` catches dropped transactions (predictions never consumed) and extra ones (outputs never matched). Without it, both pass silently.
+
+Choose a matching policy, a DUT and a DUT bug, then predict what the test reports. Try the one-slot map with the correct cross-ID DUT, and the search-any policy with a same-ID reorder.
+
+<ScoreboardMatchingVisualizer />
+
+The B-AXI-6 lab builds the full per-ID scoreboard for AXI write and read channels: [B-AXI-6: AXI Verification and Performance](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance).
+
+<LabLink labId="axi-scoreboard-lab" />
 
 ## Common Pitfalls
 
@@ -257,7 +298,7 @@ if (actual_txn == expected_txn) ...
 if (actual_txn.compare(expected_txn)) ...
 ```
 
-Every transaction class must implement `do_compare()` (or use the `` `uvm_field_* `` macros) for `compare()` to work correctly. If you rely on autopacked field macros, verify they cover all fields — a missing registration silently skips that field in comparisons.
+Every transaction class must implement `do_compare()` (or use the `` `uvm_field_* `` macros) for `compare()` to work correctly. If you rely on autopacked field macros, verify they cover all fields — a missing registration silently skips that field in comparisons. The opposite trap: `compare()` checks *every* registered field, so if the output monitor does not fill the operands, every compare fails. Compare the fields the output side really carries, or use a result-only item.
 
 ### 2. Scoreboard Receives Zero Transactions
 
@@ -270,21 +311,34 @@ if (match_count + mismatch_count == 0)
   `uvm_error("SCOREBOARD", "No transactions received — check monitor connections!")
 ```
 
-### 3. Phase Ordering: Drain Time
+### 3. Phase Ordering: Draining Until Idle
 
-The `run_phase` task ends when all objections are dropped. If the monitor publishes a final transaction right before objection drop, the scoreboard may not have time to process it. Use a **drain time** to allow in-flight transactions to reach the scoreboard:
+The `run_phase` ends when all objections are dropped. The test usually drops its objection when its sequence finishes, while responses are still inside the DUT. Writes that arrive after the phase ends never reach the scoreboard, so `check_phase` reports them as missing even though the DUT was right.
+
+A fixed timer is a guess. An unconditional `#100ns` inside `phase_ready_to_end` is worse than it looks: UVM calls `phase_ready_to_end` again after every re-raise and drop, up to `max_ready_to_end_iterations` (20 by default in uvm-core `uvm_phase.svh`), so it adds about 2 µs to every test and still never checks that anything is pending.
+
+Raise an objection only while work is outstanding, wait for it with a watchdog, and do it once:
 
 ```systemverilog
+int unsigned outstanding;  // ++ when a prediction is stored, -- when it is matched
+bit          drained;
+
 function void phase_ready_to_end(uvm_phase phase);
-  if (phase.get_name() == "run") begin
-    phase.raise_objection(this, "Scoreboard draining");
-    fork begin
-      #100ns; // Allow final transactions to arrive
-      phase.drop_objection(this, "Scoreboard drain complete");
-    end join_none
-  end
+  if (phase.get_name() != "run" || outstanding == 0 || drained) return;
+  drained = 1;  // ready_to_end is called again after our drop
+  phase.raise_objection(this, "scoreboard: responses outstanding");
+  fork begin
+    fork
+      wait (outstanding == 0);  // a variable, so wait() has something to be sensitive to
+      #(drain_timeout);         // watchdog: a dropped response must not hang the test
+    join_any
+    disable fork;
+    phase.drop_objection(this, "scoreboard: idle or timed out");
+  end join_none
 endfunction
 ```
+
+If the latency is bounded and known, `phase.get_objection().set_drain_time(this, 30ns)` in the test is a simpler alternative: after the last drop the phase waits that long, and a new raise cancels the end (`uvm_objection.svh`). The experiment above shows both rules and what each one misses.
 
 ### 4. Forgetting the `copy()` Before Mutation
 
@@ -300,6 +354,12 @@ expected = new();
 expected.copy(input_txn);
 expected.result = input_txn.a + input_txn.b;
 ```
+
+### 5. A Single Slot per ID
+
+The original out-of-order scoreboard in this lesson kept `expected[id] = item`. It passed simple tests and failed a correct AXI DUT as soon as two requests with the same ID were outstanding. Find the line in the challenge below, then choose a fix; the model regrades it against a correct DUT and four buggy ones.
+
+<ScoreboardMatchingVisualizer mode="debug" />
 
 ## Knowledge Check
 
@@ -328,15 +388,15 @@ expected.result = input_txn.a + input_txn.b;
       explanation: "In SystemVerilog, == between class handles checks whether they point to the same object in memory. For field-by-field comparison, you must use the uvm_object::compare() method which internally calls do_compare()."
     },
     {
-      question: "What technique handles out-of-order DUT output in a scoreboard?",
+      question: "An AXI DUT may return different IDs in any order but keeps each ID in request order. Which expected-item structure matches it?",
       options: [
-        "Using a FIFO to re-order transactions",
-        "Using an associative array keyed by transaction ID",
-        "Using multiple analysis ports, one per output order",
-        "Forcing the DUT to output in order via constraints"
+        "One queue for every ID, compared in arrival order",
+        "An associative array of queues keyed by ID, popping the oldest entry for that ID",
+        "An associative array with one slot per ID",
+        "An unordered list, claiming any pending item that compares equal"
       ],
       correctAnswer: 1,
-      explanation: "An associative array indexed by a unique transaction identifier (such as an ID field) allows the scoreboard to match outputs to inputs regardless of arrival order. The check_phase then catches any entries that were never matched."
+      explanation: "Per-ID queues accept legal reordering across IDs and still check same-ID order. One queue raises false mismatches when IDs interleave, one slot per ID overwrites a second outstanding request with the same ID, and an unordered search lets a same-ID reorder through. check_phase then reports predictions never consumed and outputs never matched."
     },
     {
       question: "A scoreboard reports 0 matches and 0 mismatches at the end of simulation. What is the most likely root cause?",
@@ -355,6 +415,8 @@ expected.result = input_txn.a + input_txn.b;
 ## Hands-On Lab
 
 <LabLink labId="scoreboard-reference-model" />
+
+For the out-of-order version, with per-ID queues on real AXI channels, continue with the B-AXI-6 lab linked in the out-of-order section above.
 
 ## Capstone Lab
 

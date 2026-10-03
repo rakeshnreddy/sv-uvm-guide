@@ -12,12 +12,15 @@ export const metadata = {
 
   ## Elevator Pitch
 
-  Prediction keeps the RAL mirror aligned with the DUT. Explicit prediction pulls the model from scoreboards/tests; implicit prediction wires the bus monitor into the reg predictor. Knowing when to use each is key to accurate checking and performance.
+  Prediction keeps the RAL mirror aligned with the DUT. Implicit prediction lets the register map predict the accesses the register model itself starts. Explicit prediction puts a `uvm_reg_predictor` on the bus monitor so every transfer on the bus is predicted, whoever started it. Knowing which one you have, and never running both, is key to accurate checking.
 
   ## Definitions
 
-  - **Implicit prediction:** `uvm_reg_predictor` listens to bus transactions and updates the model automatically.
-  - **Explicit prediction:** Tests/sequences call `mirror`, `peek`, or `predict` manually (e.g., after a backdoor write).
+  - **Implicit (auto) prediction:** `map.set_auto_predict(1)`. When a frontdoor `read()` or `write()` completes, the register calls `do_predict()` with the value it wrote, or with the read data the adapter handed back. Accesses from firmware, DMA or other masters are never seen.
+  - **Explicit prediction:** a `uvm_reg_predictor` whose `bus_in` is connected to the bus monitor's analysis port. It converts each observed item with `adapter.bus2reg()`, finds the register with `map.get_reg_by_offset()`, and calls `do_predict()`, applying the field access policies.
+  - **Passive:** an explicit predictor on a bus that the register model never drives, for example one that only a CPU model uses.
+  - **The default is neither:** `uvm_reg_map` starts with auto-predict at 0, and no predictor exists until you build one.
+  - **Not prediction modes:** `poke()` and `peek()` update the mirror themselves after the backdoor access, and `predict()` sets it directly. You use `predict()` for changes the bus never shows, such as a hardware event.
 
   ## Connection Example
 
@@ -25,66 +28,98 @@ export const metadata = {
   class soc_env extends uvm_env;
     `uvm_component_utils(soc_env)
 
-    axi_agent      axi_agt;
-    codec_block    ral;
-    uvm_reg_predictor#(axi_item) predictor;
-    codec_adapter  adapter;
+    apb_agent                     agent;
+    codec_block                   ral;
+    apb_reg_adapter               adapter;
+    uvm_reg_predictor #(apb_item) predictor;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
 
     function void build_phase(uvm_phase phase);
       super.build_phase(phase);
-      axi_agt    = axi_agent::type_id::create("axi_agt", this);
-      ral        = codec_block::type_id::create("ral", this);
-      predictor  = uvm_reg_predictor#(axi_item)::type_id::create("predictor", this);
-      adapter    = codec_adapter::type_id::create("adapter");
+      agent     = apb_agent::type_id::create("agent", this);
+      ral       = codec_block::type_id::create("ral");
+      ral.build();                      // codec_block::build() ends with lock_model()
+      ral.reset();
+      adapter   = apb_reg_adapter::type_id::create("adapter");
+      predictor = uvm_reg_predictor #(apb_item)::type_id::create("predictor", this);
     endfunction
 
     function void connect_phase(uvm_phase phase);
+      ral.default_map.set_sequencer(agent.sqr, adapter);
+      ral.default_map.set_auto_predict(0);      // the default; prediction is explicit
       predictor.map     = ral.default_map;
       predictor.adapter = adapter;
-      axi_agt.monitor.ap.connect(predictor.bus_in);
+      agent.mon.ap.connect(predictor.bus_in);
     endfunction
   endclass
   ```
 
   **Hooking it up**
-  - Lines 2-12 instantiate the environment, RAL block, predictor, and adapter.
-  - Lines 14-17 wire the monitor’s [analysis port](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections) into the predictor so frontdoor traffic updates the mirror automatically.
+  - `build_phase` creates the agent, builds and resets the register model, and creates the adapter and the predictor component.
+  - `set_sequencer()` tells the map where frontdoor items run. Without it, `write()` cannot reach the bus.
+  - The predictor needs `map` (to decode addresses) and `adapter` (to call `bus2reg()`). A null adapter stops the run with `UVM_FATAL REG/WRITE/NULL` at the first observed transfer.
+  - `connect()` is the line that makes prediction explicit. If it is missing, nothing reports an error: the mirror just never changes.
 
   ## When to Use Which
 
-  - **Implicit suits:** Normal frontdoor traffic where monitors see every transaction.
-  - **Explicit suits:** Backdoor pokes, scoreboards forcing mirror updates, or special events (DMA triggered changes) where the monitor doesn’t observe the write.
-  - **Combine:** Run implicit prediction for bus writes, call `predict()` manually for backdoor or sideband updates.
+  - **Explicit suits:** any bus where something other than the register model can write registers (firmware, DMA, another agent), and every production environment where the monitor exists.
+  - **Implicit suits:** bring-up before a monitor exists, or an environment where the register model is the only master on that bus and the adapter round trip is trusted.
+  - **Never both on one map:** each RAL access would be predicted twice. Idempotent policies (RW, W1C) hide it; a W1T toggle field ends up back where it started.
+  - **Hardware events:** neither mode can see a change made by the DUT's own logic. Call `predict()` when your testbench knows the new value, or configure the field as volatile and read it when you need it.
 
   ```systemverilog
-  task update_shadow(codec_block blk, uvm_reg_data_t new_val);
-    uvm_status_e s;
-    blk.status.poke(s, new_val);
-    blk.status.predict(new_val, -1, UVM_BACKDOOR);
+  // In the env: the interrupt line tells the testbench that hardware set status.error.
+  task sync_error_bit();
+    @(posedge vif.irq);
+    void'(ral.status.error.predict(1));   // UVM_PREDICT_DIRECT: mirror = desired = 1, no bus access
   endtask
   ```
 
-  **Why manual predict?**
-  - After backdoor writes or scoreboard adjustments, call `predict` so the mirror reflects the new value without extra bus operations.
+  **Why `predict()` here, and not after a poke?**
+  - `predict()` exists for changes no access path reports. After `poke()` the mirror is already updated, because `poke()` calls `do_predict()` itself.
 
   ## Checklist
 
-  - [ ] Predictors are wired for every bus that touches the RAL model.
-  - [ ] Backdoor or external updates call `predict()`/`mirror()` explicitly.
-  - [ ] Scoreboards know which prediction path updated the mirror (for debug logging).
+  - [ ] Every bus that touches the register model has a predictor bound to that bus's map, or auto-predict is on and the RAL is the only master.
+  - [ ] Auto-predict and a connected predictor are never active on the same map.
+  - [ ] Hardware-side changes are handled with `predict()` or volatile fields, not by hoping a mirror() fixes them.
 
   ## Quiz Yourself
 
-  **Implicit prediction requires…**
-  - Connecting the bus monitor to a reg predictor *(correct)*
-  - Calling `mirror()` after each write
-  - Disabling adapters
-  - Backdoor access
-
-  **After a backdoor `poke`, how do you keep the mirror accurate?**
-  - Do nothing; it updates automatically
-  - Call `predict()` or `mirror()` explicitly *(correct)*
-  - Run bit-bash sequence
-  - Switch to frontdoor
+  <Quiz
+    questions={[
+      {
+        question: "Implicit prediction requires…",
+        answers: [
+          { text: "Connecting the bus monitor to a uvm_reg_predictor", correct: false },
+          { text: "Calling set_auto_predict(1) on the map", correct: true },
+          { text: "Calling mirror() after each write", correct: false },
+          { text: "Backdoor access", correct: false }
+        ],
+        explanation: "Implicit (auto) prediction is map.set_auto_predict(1). The predictor-on-the-monitor set-up is explicit prediction."
+      },
+      {
+        question: "After a backdoor poke(), how do you keep the mirror accurate?",
+        answers: [
+          { text: "Nothing: poke() updates the mirror itself", correct: true },
+          { text: "Call predict() with the same value", correct: false },
+          { text: "Run a bit-bash sequence", correct: false },
+          { text: "Switch to frontdoor", correct: false }
+        ],
+        explanation: "uvm_reg::poke() calls do_predict(UVM_PREDICT_WRITE) with the UVM_BACKDOOR door after the deposit. A monitor-fed predictor never sees it, but the mirror is already right."
+      },
+      {
+        question: "Firmware writes a register; auto-predict is on and no predictor exists. Does the mirror change?",
+        answers: [
+          { text: "Yes", correct: false },
+          { text: "No", correct: true }
+        ],
+        explanation: "Auto-predict only runs inside the register model's own read()/write() calls."
+      }
+    ]}
+  />
 
 </InfoPage>

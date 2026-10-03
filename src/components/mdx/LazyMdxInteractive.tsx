@@ -129,6 +129,7 @@ const loaders = {
   ScoreboardMatchingVisualizer: () => import("@/components/visuals/ScoreboardMatchingVisualizer").then(module => asMdxModule(module.default)),
   CallbackTimingVisualizer: () => import("@/components/visuals/CallbackTimingVisualizer").then(module => asMdxModule(module.default)),
   MultiAgentCoordinationVisualizer: () => import("@/components/visuals/MultiAgentCoordinationVisualizer").then(module => asMdxModule(module.default)),
+  SequencerArbitrationSandbox: () => import("@/components/exercises/SequencerArbitrationSandbox").then(module => asMdxModule(module.default)),
 } satisfies Record<LazyMdxInteractiveName, MdxInteractiveLoader>;
 
 const componentCache = new Map<

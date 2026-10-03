@@ -2,7 +2,7 @@ import { InfoPage } from "@/components/templates/InfoPage";
 
 export const metadata = {
   title: "Sequence Libraries & Arbitration Control | Advanced UVM Sequencing",
-  description: "Package reusable stimulus into sequence libraries, weight them, and know when to grab/ungrab for critical sections.",
+  description: "Package reusable stimulus into a uvm_sequence_library, choose its selection mode, and know what it can and cannot control.",
 };
 
 <InfoPage
@@ -10,80 +10,110 @@ export const metadata = {
   uvm_concept_tags={["sequence library", "grab", "uvm_sequence_library"]}
 >
 
+  *Page 6 of 8 in I-UVM-3B. Read [Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences) first.*
+
   ## Elevator Pitch
 
-  Sequence libraries turn curated stimulus into data. Register atomic/scenario sequences once, randomize which one runs via weights, and reserve `grab()` for emergency overrides when policy isn't enough.
+  A `uvm_sequence_library` is itself a sequence. It holds a list of sequence types and, when started, runs a number of them, chosen by its selection mode. Register your scenario sequences once and a test can run a random mix of them with one `start()` call.
 
   ## Building a Library
 
   ```systemverilog
-  `uvm_sequence_library_utils_begin(mem_vip_library)
-    `uvm_sequence_library_utils_add(mem_atomic_write)
-    `uvm_sequence_library_utils_add(mem_burst_program)
-    `uvm_sequence_library_utils_add(mem_backdoor_check)
-  `uvm_sequence_library_utils_end
+  // The library: a uvm_sequence_library parameterized by the item type
+  class mem_seq_lib extends uvm_sequence_library #(mem_item);
+    `uvm_object_utils(mem_seq_lib)
+    `uvm_sequence_library_utils(mem_seq_lib)
 
-  class mem_vip_library extends uvm_sequence_library#(mem_item);
-    `uvm_object_utils(mem_vip_library)
-
-    function new(string name = "mem_vip_library");
+    function new(string name = "mem_seq_lib");
       super.new(name);
-      init_sequence_library();
+      init_sequence_library();        // copies the registered types into this instance
     endfunction
   endclass
 
-  class mem_sequence_player extends uvm_sequence#(mem_item);
-    `uvm_object_utils(mem_sequence_player)
-    `uvm_declare_p_sequencer(mem_sequencer)
+  // Each member registers itself with the library type
+  class mem_atomic_write extends uvm_sequence #(mem_item);
+    `uvm_object_utils(mem_atomic_write)
+    `uvm_add_to_seq_lib(mem_atomic_write, mem_seq_lib)
 
-    mem_vip_library lib;
-
-    virtual task body();
-      lib = mem_vip_library::type_id::create("lib");
-      lib.randomize() with {
-        select_next_seq == mem_atomic_write::get_type();
-        mem_atomic_write::type_id::set_priority(5);
-        mem_burst_program::type_id::set_priority(2);
-        mem_backdoor_check::type_id::set_priority(1);
-      };
-
-      repeat (num_loops) begin
-        `uvm_info(get_type_name(), $sformatf("Running %s", lib.next_sequence_name()), UVM_LOW)
-        lib.pick_sequence(p_sequencer);
-      end
-    endtask
+    function new(string name = "mem_atomic_write");
+      super.new(name);
+    endfunction
+    // body() as on the Layered Sequences page
   endclass
+
+  // In the test: configure the selection, then start the library like any sequence
+  task run_phase(uvm_phase phase);
+    mem_seq_lib lib = mem_seq_lib::type_id::create("lib");
+    lib.selection_mode   = UVM_SEQ_LIB_RANDC;   // every member once before any repeats
+    lib.min_random_count = 5;
+    lib.max_random_count = 10;
+    if (!lib.randomize())                        // picks sequence_count in [5:10]
+      `uvm_error("RAND", "library randomization failed")
+    phase.raise_objection(this);
+    lib.start(env.agt.sqr);
+    phase.drop_objection(this);
+  endtask
   ```
 
   **Walkthrough pointers**
-  - Lines 1-7 register every reusable sequence so the library can manufacture them at runtime via macros.
-  - Lines 9-19 define the library container that initializes itself when constructed.
-  - Lines 21-38 show a wrapper sequence that weights the library choices, logs each selection, and launches whichever sequence the library chooses.
+  - `` `uvm_sequence_library_utils(mem_seq_lib) `` gives the library type its own static list of member types. `` `uvm_add_to_seq_lib(seq, lib) `` adds a sequence type to that list. `init_sequence_library()` in the constructor copies the list into the instance; forget it and the library reports `SEQLIB/NOSEQS` "Sequence library does not contain any sequences".
+  - Members can also be added in code: `mem_seq_lib::add_typewide_sequence(mem_burst_program::get_type())` for every instance, or `lib.add_sequence(...)` for one instance.
+  - `lib.start(sqr)` runs `sequence_count` member sequences on that sequencer. `randomize()` picks `sequence_count` between `min_random_count` and `max_random_count` (both 10 by default).
 
-  ## Weights, Constraints, and Coverage
+  ## Selection Modes
 
-  - Call `type_id::set_priority(weight)` before `pick_sequence()`; weights drive `SEQ_ARB_WEIGHTED` fairness.
-  - Use `sequence_library_mode = UVM_SEQ_LIB_RANDC` to cycle through every sequence before repeating.
-  - Store metadata (scenario name, error injection flags) in the library to feed regression dashboards.
+  | `selection_mode` | What the library runs |
+  | --- | --- |
+  | `UVM_SEQ_LIB_RAND` | a random member each time (repeats possible) |
+  | `UVM_SEQ_LIB_RANDC` | random order, every member once before any repeats |
+  | `UVM_SEQ_LIB_ITEM` | no member sequences: just `sequence_count` random items of the request type |
+  | `UVM_SEQ_LIB_USER` | your `select_sequence(max)` override returns the index of the next member |
 
-  ## grab()/ungrab()—Use Sparingly
+  There is no built-in per-sequence weight. To bias the mix, use `UVM_SEQ_LIB_USER` and override `select_sequence()`, or register a sequence type more than once. Library selection is also unrelated to sequencer arbitration: the library runs its members one after another on one sequencer, so `UVM_SEQ_ARB_WEIGHTED` and `set_priority()` only matter when other sequences compete with it.
 
-  - `grab()` gives a sequence exclusive access to the sequencer, bypassing priorities. Reserve it for debug or safety-critical overrides.
-  - Always place `grab()`/`ungrab()` in `try/finally` style constructs (using fork/join or `uvm_resource_db`) so exceptions cannot leak control.
-  - Prefer `lock()` or weighting before reaching for `grab()`; they keep arbitration fair.
+  ## grab()/ungrab(): Use Sparingly
+
+  - `grab()` puts a lock request at the front of the arbitration queue. When granted, every other sequence is blocked until `ungrab()`. It cannot take the sequencer away from a sequence that already holds a lock; it only waits at the front of the line.
+  - Keep `grab()` … `ungrab()` short and in one task, with nothing in between that can block forever. SystemVerilog has no exceptions or `finally` block, so a killed process or a `disable` skips the `ungrab()`.
+  - Prefer `lock()` or priorities when you do not need to jump the queue.
 
   ## Quiz Yourself
 
-  **What does `pick_sequence()` do?**
-  - Randomizes a new sequence and starts it on the given sequencer *(correct)*
-  - Locks the sequencer
-  - Calls `grab()` internally
-  - Returns the library pointer
+  <Quiz
+    questions={[
+      {
+        question: "A test starts mem_seq_lib and sees 'Sequence library does not contain any sequences'. The members use `uvm_add_to_seq_lib. What is the most likely cause?",
+        answers: [
+          { text: "The library constructor does not call init_sequence_library()", correct: true },
+          { text: "selection_mode was left at UVM_SEQ_LIB_RAND", correct: false },
+          { text: "The sequencer is not using UVM_SEQ_ARB_WEIGHTED", correct: false },
+          { text: "The library must be started with grab()", correct: false },
+        ],
+        explanation: "The macros register types on the library class; init_sequence_library() copies them into the instance.",
+      },
+      {
+        question: "You want each registered sequence to run once, in random order, before any repeats. Which setting?",
+        answers: [
+          { text: "selection_mode = UVM_SEQ_LIB_RAND", correct: false },
+          { text: "selection_mode = UVM_SEQ_LIB_RANDC", correct: true },
+          { text: "set_arbitration(UVM_SEQ_ARB_RANDOM)", correct: false },
+          { text: "selection_mode = UVM_SEQ_LIB_ITEM", correct: false },
+        ],
+        explanation: "RANDC uses a randc index, which cycles through every value before repeating.",
+      },
+      {
+        question: "When is grab() appropriate?",
+        answers: [
+          { text: "Whenever you want more bandwidth", correct: false },
+          { text: "For short, urgent stimulus that must be served before any waiting lock or request", correct: true },
+          { text: "For routine register programming", correct: false },
+          { text: "To take the sequencer away from a sequence that holds a lock", correct: false },
+        ],
+        explanation: "grab() only jumps to the front of the queue; an existing lock still has to be released first.",
+      },
+    ]}
+  />
 
-  **When is `grab()` appropriate?**
-  - Whenever you want more bandwidth
-  - For short, critical overrides when other sequences must be blocked immediately *(correct)*
-  - For routine register programming
-  - Never—it's illegal
+  Next: [Interrupt Handling](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling).
 
 </InfoPage>

@@ -4,33 +4,39 @@ description: "Swap component and object implementations dynamically using UVM's 
 flashcards: "I-UVM-1B_The_UVM_Factory"
 ---
 
-import { InteractiveCode, Quiz } from '@/components/ui';
-import FactoryOverrideVisualizer from '@/components/curriculum/interactives/FactoryOverrideVisualizer';
-
 ## Quick Take
 - **What it is:** The UVM factory is a centralized registry where types are recorded so tests can substitute concrete implementations (overrides) at runtime.
 - **Why it matters:** Overrides enable A/B testing, negative fault injection, and mock instrumentation without editing the environment that instantiates the components.
 - **The Analogy:** Think of the factory as a casting director—register every actor, then swap who plays the role on the day of the shoot without rewriting the script.
 
-> **Retention Hook:** Repeat “register → create → override” every time you implement a new testbench class.
+> **Retention Hook:** “Register, override, then create.” Every class registers; the test registers its overrides; only `create()` calls made after that see them.
 
 ## Build Your Mental Model
-### Registration & Creation Rules (Clause 8)
-Every class you want to override must register with the factory and be constructed through `type_id::create()`.
+### Registration & Creation Rules (IEEE 1800.2-2020 Clause 8)
+Every class you want to override, and every class you override it with, must register with the factory. Every object you want the factory to be able to swap must be constructed through `type_id::create()`.
 
 <InteractiveCode>
 ```systemverilog
 class base_driver extends uvm_driver#(seq_item);
   `uvm_component_utils(base_driver) // 1. Register
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
 endclass
 
 class mock_driver extends base_driver;
   `uvm_component_utils(mock_driver) // 1. Register the alternative
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
 endclass
 
 class my_env extends uvm_env;
   `uvm_component_utils(my_env)
   base_driver drv;
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
@@ -41,27 +47,35 @@ endclass
 ```
 </InteractiveCode>
 
-If you skip the registration macro (`uvm_component_utils` / `uvm_object_utils`) or call `new()` directly, the factory loses visibility—no overrides can be applied.
+Two ways to lose the factory:
+- **Calling `new()` directly.** The factory is never asked, so no override can apply to that object.
+- **Skipping the registration macro** (`uvm_component_utils` / `uvm_object_utils`). The class has no proxy of its own. `get_type()` is a static member, so it resolves to the nearest registered parent's proxy, and an override *to* that class quietly becomes "parent → parent". A class with no registered ancestor has no `get_type()` at all and does not compile.
 
 ### Type vs. Instance Overrides
-- **Type overrides** replace *every* creation of a specified class with another class globally.
-- **Instance overrides** target a specific hierarchical path (with wildcards if needed), replacing only that specific instantiation.
+- **Type overrides** replace *every* creation of a specified class with another class, unless an instance override applies.
+- **Instance overrides** target creations whose full path matches a pattern. The path the factory compares is `{parent's full name}.{name}` from the `create()` call.
+- With `this` as the third argument, `set_inst_override` prefixes your string with the caller's full name: `"env.drv"` from the test becomes `uvm_test_top.env.drv`. Without it, the string is used as an absolute path.
+- In the path, `*` matches any run of characters (dots included) and `?` matches one character. A path with neither must match exactly.
 
 <InteractiveCode>
 ```systemverilog
 class my_test extends uvm_test;
   `uvm_component_utils(my_test)
   my_env env;
-  
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    
+
     // 3. Global swap: every base_driver becomes a mock_driver
     base_driver::type_id::set_type_override(mock_driver::get_type());
-    
-    // OR Instance swap: only env.drv (and matching wildcards) is swapped
-    // base_driver::type_id::set_inst_override(mock_driver::get_type(), "*.env.drv");
-    
+
+    // OR Instance swap: only uvm_test_top.env.drv is swapped
+    // base_driver::type_id::set_inst_override(mock_driver::get_type(), "env.drv", this);
+
+    // Register overrides before the components they affect are created.
     env = my_env::type_id::create("env", this);
   endfunction
 endclass
@@ -71,22 +85,58 @@ endclass
 ## Make It Work
 1. **Centralize overrides:** Collect factory policy in base tests or configuration modules.
 2. **Prefer handles over strings:** Use `<type>::get_type()` (e.g. `mock_driver::get_type()`) for compile-time safety instead of `set_type_override_by_name`.
-3. **Instrument debugging:** Call `factory.print()` or `uvm_top.print_topology()` during `end_of_elaboration_phase` to audit active overrides.
+3. **Instrument debugging:** Call `uvm_factory::get().print()` and `uvm_root::get().print_topology()` in `end_of_elaboration_phase`. The first lists every registered override; the second shows the class each component actually became.
+4. **Register before you create:** `create()` asks the factory at the moment it runs. An override registered later changes only later `create()` calls.
+
+### Predict the factory
+
+Each puzzle below shows the test code and asks which class one `create()` builds. Commit to an answer before you read the factory's lookup, then change one thing and predict again.
 
 <FactoryOverrideVisualizer />
 
 ### Interactive: Factory Override Explorer
 
-Experiment with the full factory override system below. Apply type or instance overrides, observe how they propagate through the component hierarchy, and click **simulate** on any leaf node to watch the factory lookup algorithm step by step.
+Now drive the factory yourself. Add, reorder and move overrides, pick any component as the target, and predict before you reveal. The debug scenarios reproduce the four classic "my override did nothing" bugs: too late, `new()`, a path typo, and an incompatible type.
 
 <FactoryOverrideExplorerVisualizer />
 
+<VisualRecap
+  title="What create() asks the factory"
+  rule="At the moment create() runs, the factory checks instance overrides in registration order and takes the first match; only if none matches does it use the type override for that class. If the result is a different class, it repeats the lookup for that class. type_id::create then $casts the result."
+  code={`// my_test::build_phase, before env builds its children
+base_driver::type_id::set_type_override(mock_driver::get_type());
+base_driver::type_id::set_inst_override(err_driver::get_type(), "env.agt0.drv", this);
+
+// my_agent::build_phase
+drv = base_driver::type_id::create("drv", this);
+// agt0.drv: err_driver (instance override first)
+// agt1.drv: mock_driver (type override)`}
+  mistake="Registering a broad instance override such as uvm_test_top.env.* before a specific one and expecting the specific one to win. The factory takes the first registered match, so register specific overrides first."
+  inTestbench="A base test's build_phase sets the factory policy before creating the env; uvm_factory::get().print() in end_of_elaboration_phase confirms it."
+>
+  <svg viewBox="0 0 320 168" role="img" aria-label="create() asks: first matching instance override in registration order; otherwise the type override; repeat for a new class; then $cast or FCTTYP." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="8" y="8" width="304" height="26" rx="13" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="18" y="25" fontSize="11" fill="currentColor">create() at path uvm_test_top.env.agt0.drv</text>
+    <rect x="8" y="44" width="304" height="40" rx="6" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
+    <text x="18" y="60" fontSize="11" fill="currentColor">1. Instance overrides, in registration order</text>
+    <text x="18" y="76" fontSize="10" fill="currentColor" opacity="0.8">first match wins; later matches are never reached</text>
+    <rect x="8" y="92" width="304" height="26" rx="6" fill="rgba(99,102,241,0.10)" stroke="rgb(99,102,241)" />
+    <text x="18" y="109" fontSize="11" fill="currentColor">2. None matched? The type override for this class</text>
+    <rect x="8" y="126" width="304" height="34" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.45" strokeDasharray="4 3" />
+    <text x="18" y="141" fontSize="11" fill="currentColor">3. A new class? Repeat 1 and 2 for it.</text>
+    <text x="18" y="155" fontSize="10" fill="currentColor" opacity="0.8">Then $cast to the requested class, or FCTTYP fatal</text>
+  </svg>
+</VisualRecap>
+
 ## Advanced Factory Dynamics
 ### Override Precedence
-When multiple overrides compete for the same type/instance creation:
-1. **Instance overrides beat Type overrides.**
-2. Among instance overrides, **the highest component in the hierarchy wins** (e.g., `uvm_test` beats `uvm_env`).
-3. If multiple type overrides exist for the same exact target, the **last one executed wins**.
+The rules below are those of `uvm_default_factory::find_override_by_type` (IEEE 1800.2-2020 §8.3.1.7.1). They were checked against the uvm-core 2020.3.1 source.
+1. **Instance overrides are checked before type overrides.** This holds even when the type override was registered first.
+2. **Among instance overrides, the first registered match wins.** Neither the most specific path nor the component that registered it matters. Register specific overrides before general ones.
+3. **There is one type override per original type.** A new `set_type_override` replaces it (`replace` defaults to 1). With `replace = 0`, the existing override stays and the new call is ignored.
+4. **Overrides chain.** If `base_driver → mock_driver` and `mock_driver → err_driver` are both registered, a request for `base_driver` builds `err_driver`. The factory repeats the lookup, instance overrides first, for each new type.
+5. **Timing matters.** Overrides affect only `create()` calls made after they are registered. Build runs top-down, so an override set in the test's `build_phase` after `env` is created still reaches the drivers, but not `env` itself.
+6. **`type_id::create` checks the result.** It `$cast`s the object to the requested class. An override class that does not extend the original gives `UVM_FATAL [FCTTYP]`.
 
 ### uvm_root and uvm_report_server Interplay
 Advanced environments often override the core UVM reporting mechanism. Because `uvm_report_server` is a global object, you can't use standard component overrides. Instead, you register your custom server globally with `uvm_report_server::set_server(...)` to control testbench-wide logging formats. `uvm_root` (`uvm_top`) implicitly oversees this global state and hierarchy.
@@ -96,7 +146,11 @@ Advanced environments often override the core UVM reporting mechanism. Because `
 Interviewers will often ask you to debug a testbench where an override isn't taking effect. Always look for the `new()` keyword. If a component is instantiated via `new("name", this);`, the factory is completely bypassed!
 
 **The Base Class Fallback:**
-If you set a type override, but the type you're overriding to isn't registered with the factory (missing `uvm_component_utils`), what happens? A runtime UVM fatal error typically occurs when the factory tries to fetch the proxy object.
+You override `base_driver` with `mock_driver`, but `mock_driver` is missing `uvm_component_utils`. What happens?
+- There is no fatal error. `mock_driver::get_type()` is inherited, so it returns `base_driver`'s proxy. The call becomes `base_driver → base_driver`.
+- The factory prints a `TYPDUP` warning ("Original and override type arguments are identical") and keeps building `base_driver`.
+- If the class has no registered ancestor at all, `get_type()` does not exist and the code does not compile.
+- With `set_type_override_by_name` and a misspelled or unregistered override name, `create()` reports `UVM_ERROR [TYPNTF]` ("Cannot resolve override ... not registered with the factory") and gets no class back from the factory.
 
 ## Practice & Reinforce
 
@@ -120,13 +174,22 @@ If you set a type override, but the type you're overriding to isn't registered w
     explanation: 'Registration macros insert the static hooks the factory uses to map the type and create it via proxy.'
   },
   {
-    question: 'If `uvm_test` sets an instance override for a driver, and `uvm_env` sets a different instance override for the exact same driver, which one wins?',
+    question: 'The test registers an instance override for "uvm_test_top.env.*" (→ mock_driver), then one for "uvm_test_top.env.agt0.drv" (→ err_driver). What does env.agt0.drv become?',
     answers: [
-      { text: 'uvm_env, because it is closer to the driver.', correct: false },
-      { text: 'uvm_test, because higher-level component overrides take precedence.', correct: true },
-      { text: 'Neither, it produces a UVM fatal error.', correct: false }
+      { text: 'err_driver, because the more specific path wins.', correct: false },
+      { text: 'mock_driver, because the first registered matching instance override wins.', correct: true },
+      { text: 'base_driver, because two matching overrides cancel out.', correct: false }
     ],
-    explanation: 'In UVM, higher up the component tree wins in the case of conflicting instance overrides.'
+    explanation: 'The factory walks instance overrides in registration order and stops at the first match. Path specificity is not part of the rule, so register specific overrides first.'
+  },
+  {
+    question: 'A test sets base_driver::type_id::set_type_override(mock_driver::get_type()) in its connect_phase. What do the drivers become?',
+    answers: [
+      { text: 'mock_driver, because type overrides are global.', correct: false },
+      { text: 'base_driver, because every driver was created during build_phase, before the override existed.', correct: true },
+      { text: 'A UVM fatal error, because overrides are locked after build.', correct: false }
+    ],
+    explanation: 'create() asks the factory when it runs. Overrides registered afterwards only affect later create() calls; nothing is rebuilt.'
   }
 ]} />
 
@@ -170,6 +233,9 @@ endclass
 class error_test extends uvm_test;
   `uvm_component_utils(error_test)
   my_env env;
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
@@ -188,5 +254,6 @@ endclass
 <LabLink labId="uvm-mini-capstone" />
 
 ## References & Next Topics
-- IEEE 1800.2-2020 UVM LRM: Clause 8 (Factory Classes).
+- IEEE 1800.2-2020 UVM LRM: Clause 8 (Factory Classes): §8.3.1.4 (set_inst_override / set_type_override), §8.3.1.7.1 (find_override_by_type), §8.2.3.2.4 (`type_id::create`).
+- Accellera uvm-core 2020.3.1 reference implementation: `src/base/uvm_factory.svh`, `src/base/uvm_registry.svh`.
 - Next: [/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing](../I-UVM-1C_UVM_Phasing/index).

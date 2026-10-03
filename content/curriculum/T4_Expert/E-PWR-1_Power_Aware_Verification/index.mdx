@@ -50,8 +50,6 @@ The PMU is basically a massive state machine. You must extract its definition an
 PMUs rely on handshakes. For example, the PMU asserts `cpu_pwr_req` to the external voltage regulator, and waits for `cpu_pwr_ack`.
 - **Delay randomization:** Your UVM PMU VIP should randomize the delay between `req` and `ack` across a massive range (from 0 cycles to thousands of cycles) to expose race conditions in the RTL.
 
-<PowerDomainVisualizer />
-
 ---
 
 ## 3. Shutdown and Wake-up UVM Sequences
@@ -64,10 +62,16 @@ A robust power-cycle sequence pattern:
 3. **Assert Isolation:** Program the PMU to clamp the domain's outputs.
 4. **Power Down (`OFF`):** Program the PMU to drop the supply net.
 5. **Hold:** Wait a randomized duration.
-6. **Power Up (`ON`):** Restore the supply net.
-7. **Release Isolation:** Remove the boundary clamps.
-8. **Restore Context:** Load the saved state back into the active registers.
+6. **Power Up (`ON`):** Restore the supply net. The domain's registers are still `X`: power returning restores nothing.
+7. **Restore Context:** Load the saved state back into the active registers.
+8. **Release Isolation:** Remove the boundary clamps only now, when the outputs are driven by valid state again.
 9. **Resume Traffic:** Send functional stimulus and use the scoreboard to verify the domain retained its state and handles new traffic correctly.
+
+Steps 2 and 3 may swap: both must happen while the domain is powered, before step 4. Steps 7 and 8 may not: releasing isolation before the restore hands `X` to the always-on logic.
+
+Step through the sequence below. Predict whether `X` ever reaches the always-on domain, then try the presets that break the order, or build your own:
+
+<PowerDomainVisualizer />
 
 ---
 
@@ -76,7 +80,7 @@ A robust power-cycle sequence pattern:
 SystemVerilog Assertions (SVA) are highly effective for catching low-power sequencing violations that are invisible to the UVM scoreboard.
 
 **Isolation before Power Down:**
-Isolation must be active *before* the supply net drops, and remain active until *after* the supply net returns.
+Isolation must be active *before* the supply net drops, and remain active until the domain's outputs are valid again: after the supply returns *and* the context is restored.
 ```systemverilog
 property p_iso_before_pwr_down;
   @(posedge pmu_clk)
@@ -134,7 +138,7 @@ Never drop a power supply while an essential `run_phase` [objection](/curriculum
 ## 7. Debug and Triage Playbook
 
 When a power-aware test fails, start here:
-1. **Did `X` leak?** If a failure is caused by an `X` value on a bus, check the isolation control signals. The PMU likely dropped the supply voltage before asserting the isolation clamps.
+1. **Did `X` leak?** If a failure is caused by an `X` value on a bus, check the isolation control signals. The PMU likely dropped the supply voltage before asserting the isolation clamps, or released them before the restore.
 2. **Did a register lose its value?** If a retention register initializes to `0` instead of its pre-sleep value upon wake-up, verify the `save_en` and `restore_en` toggles occurred exactly per the UPF constraints.
 3. **Did the testbench hang?** If the simulation runs forever, verify that your UVM driver isn't waiting for a blocked `req/ack` handshake from a domain that is currently `OFF`.
 

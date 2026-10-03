@@ -537,7 +537,7 @@ export const curriculumData: Module[] = [
           {
             "title": "Sequence Libraries & Arbitration Control | Advanced UVM Sequencing",
             "slug": "sequence-libraries",
-            "description": "Package reusable stimulus into sequence libraries, weight them, and know when to grab/ungrab for critical sections."
+            "description": "Package reusable stimulus into a uvm_sequence_library, choose its selection mode, and know what it can and cannot control."
           },
           {
             "title": "The Sequencer-Driver Handshake | Advanced UVM Sequencing",
@@ -739,7 +739,7 @@ export const curriculumData: Module[] = [
           {
             "title": "AHB↔AXI Bridges & System Integration",
             "slug": "index",
-            "description": "Master the design and verification of protocol bridge IPs, including AHB-to-AXI burst translation, 4KB boundary splitting, reset domain crossings, and formal verification strategies for bridge correctness."
+            "description": "Master the design and verification of protocol bridge IPs, including AHB-to-AXI burst translation, AXI-to-AHB 1KB burst splitting, width conversion, reset domain crossings, and formal verification strategies for bridge correctness."
           }
         ]
       },

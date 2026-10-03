@@ -6,93 +6,102 @@ description: "Learn how to use virtual sequences and sequencers to coordinate an
 import { Quiz, InteractiveCode } from '@/components/ui';
 import UvmVirtualSequencerDiagram from '@/components/diagrams/UvmVirtualSequencerDiagram';
 
+*Page 2 of 8 in I-UVM-3B. Read [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake) first.*
+
 ## The "Why" of Virtual Sequences
 
-In a complex DUT, you often have multiple interfaces that need to work together. For example, you might need to write a configuration register over a slow I2C bus and then immediately send a high-speed data packet over an Ethernet bus. How do you coordinate these two separate agents? The answer is a **virtual sequence**.
+In a complex DUT, several interfaces must work together. For example, you might need to write a configuration register over a slow I2C bus and then send a high-speed packet over Ethernet. Each interface has its own agent with its own sequencer. A **virtual sequence** is one sequence that starts and orders the sequences on all of them.
 
 ## Level 1: The Orchestra Conductor Analogy
 
-- **Agent Sequencers:** Think of these as the individual musicians in an orchestra (the violinist, the cellist, etc.). Each one can play their own instrument.
-- **Virtual Sequencer:** This is the orchestra's conductor. It doesn't play an instrument itself, but it has a podium and sheet music, and it directs all the musicians.
-- **Virtual Sequence:** This is the sheet music for the entire orchestra. It tells the conductor when each musician should play their part to create a synchronized, harmonious piece.
+- **Agent sequencers** are the musicians. Each plays its own instrument (drives its own interface).
+- **The virtual sequencer** is the conductor's podium: it plays nothing, but it knows where every musician sits.
+- **The virtual sequence** is the score: it says who plays when.
 
 ## Level 2: Core Mechanics
 
-### The Virtual Sequencer
+### The virtual sequencer
 
-A virtual sequencer is just a standard `uvm_sequencer` that is not connected to a driver. Its only job is to act as a placeholder for running a virtual sequence. It contains handles to the "real" sequencers in the various agents.
+A virtual sequencer is a plain `uvm_sequencer` with no driver. It gives the virtual sequence a place to run and holds handles to the real agent sequencers. Those handles are ordinary class references, assigned in the env's `connect_phase`. There is no TLM connection between the virtual sequencer and the agents.
 
-### The Virtual Sequence
+### The virtual sequence
 
-A virtual sequence runs on the virtual sequencer. Its `body()` task contains the logic to start and coordinate other sequences on the agent-specific sequencers.
+A virtual sequence runs on the virtual sequencer, sends no items itself, and starts child sequences on the agent sequencers. A child runs on the sequencer passed to its `start()`.
 
-<div className="flex justify-center items-center my-8 p-4 border rounded-lg shadow-sm bg-white">
-  <UvmVirtualSequencerDiagram />
-</div>
+Select each block in the map to see its role and code, and switch to **Handles in the sequence** to compare the design that needs no virtual sequencer:
+
+<UvmVirtualSequencerDiagram />
 
 <InteractiveCode
   language="systemverilog"
   fileName="virtual_sequence_example.sv"
-  code={`
-// The virtual sequencer contains handles to the agent sequencers
+  code={`// 1. The virtual sequencer holds handles to the agent sequencers
 class virtual_sequencer extends uvm_sequencer;
-  \\\`uvm_component_utils(virtual_sequencer)
+  \`uvm_component_utils(virtual_sequencer)
 
-  pci_sequencer  m_pci_sequencer;
-  eth_sequencer  m_eth_sequencer;
+  pci_sequencer m_pci_sequencer;
+  eth_sequencer m_eth_sequencer;
 
-  function new(string name="virtual_sequencer", uvm_component parent=null);
+  function new(string name = "virtual_sequencer", uvm_component parent = null);
     super.new(name, parent);
   endfunction
 endclass
 
-// The virtual sequence coordinates the agent-specific sequences
+// 2. The virtual sequence starts agent sequences through p_sequencer
 class virtual_sequence extends uvm_sequence;
-  \\\`uvm_object_utils(virtual_sequence)
+  \`uvm_object_utils(virtual_sequence)
+  \`uvm_declare_p_sequencer(virtual_sequencer)
 
-  // Typed handle to the virtual sequencer
-  protected virtual_sequencer p_sequencer;
-
-  function new(string name="virtual_sequence", uvm_object parent=null);
-    super.new(name, parent);
+  function new(string name = "virtual_sequence");
+    super.new(name);
   endfunction
 
   virtual task body();
-    // Get the virtual sequencer handle
-    if (!$cast(p_sequencer, m_sequencer)) begin
-      \\\`uvm_fatal("VSEQ", "Failed to get virtual sequencer handle")
-    end
+    pci_sequence pci_seq;
+    eth_sequence eth_seq;
+    pci_seq = pci_sequence::type_id::create("pci_seq");
+    eth_seq = eth_sequence::type_id::create("eth_seq");
 
-    // Create the agent-specific sequences
-    pci_sequence  pci_seq = pci_sequence::type_id::create("pci_seq");
-    eth_sequence  eth_seq = eth_sequence::type_id::create("eth_seq");
-
-    // Start the sequences concurrently on their respective sequencers
+    // Concurrent: both agents get traffic at the same time
     fork
       pci_seq.start(p_sequencer.m_pci_sequencer);
       eth_seq.start(p_sequencer.m_eth_sequencer);
     join
   endtask
 endclass
-`}
+
+// 3. In my_env: assign the handles
+function void connect_phase(uvm_phase phase);
+  vsqr.m_pci_sequencer = pci_agt.sqr;
+  vsqr.m_eth_sequencer = eth_agt.sqr;
+endfunction
+
+// 4. In my_test: start the virtual sequence inside an objection
+task run_phase(uvm_phase phase);
+  virtual_sequence vseq = virtual_sequence::type_id::create("vseq");
+  phase.raise_objection(this);
+  vseq.start(env.vsqr);
+  phase.drop_objection(this);
+endtask`}
   explanationSteps={[
-    { target: "2-10", title: "Virtual Sequencer Class", explanation: "The `virtual_sequencer` is a standard `uvm_sequencer`. It doesn't have a type parameter because it doesn't handle a specific transaction type." },
-    { target: "5-6", title: "Sequencer Handles", explanation: "It contains handles to the real sequencers in the testbench, in this case, `m_pci_sequencer` and `m_eth_sequencer`. These handles are typically assigned directly in the environment's connect phase." },
-    { target: "13-35", title: "Virtual Sequence Class", explanation: "The `virtual_sequence` runs on the `virtual_sequencer`. Its purpose is to start and coordinate other sequences on the agent-specific sequencers." },
-    { target: "17", title: "Sequencer Pointer", explanation: "It's good practice to have a typed pointer `p_sequencer` to the virtual sequencer for easier access to its members." },
-    { target: "23-25", title: "Getting the Sequencer Handle", explanation: "In the `body` task, we get the typed pointer to the virtual sequencer using `$cast`. The `m_sequencer` handle is a generic `uvm_sequencer` handle available in all sequences." },
-    { target: "28-29", title: "Creating Agent Sequences", explanation: "The virtual sequence creates the sequences that will run on the individual agents." },
-    { target: "32-35", title: "Starting Agent Sequences", explanation: "The `fork...join` block starts the `pci_seq` and `eth_seq` concurrently on their respective sequencers, which are accessed through the `p_sequencer` handle. This is the core of the coordination mechanism." }
+    { target: "2-11", title: "Virtual sequencer class", explanation: "A uvm_sequencer with no driver. The default item type is fine because no item ever goes through it." },
+    { target: "5-6", title: "Sequencer handles", explanation: "Plain handles to the agent sequencers. They stay null until the env assigns them in connect_phase (step 3)." },
+    { target: "14-16", title: "Virtual sequence and p_sequencer", explanation: "A uvm_sequence with no item type. `uvm_declare_p_sequencer declares a p_sequencer handle of type virtual_sequencer and casts m_sequencer to it when the sequence starts. Starting it on any other sequencer type is a UVM_FATAL [DCLPSQ]." },
+    { target: "18-20", title: "Constructor", explanation: "A sequence is an object, not a component: its constructor takes only a name." },
+    { target: "23-26", title: "Declarations first", explanation: "SystemVerilog requires variable declarations at the start of a block, before any statement. Create the child sequences after declaring them." },
+    { target: "29-32", title: "Starting agent sequences", explanation: "Each child runs on the sequencer passed to start(). fork...join starts both at the same time and waits for both. For ordering, call them one after another instead (page 3 compares the options)." },
+    { target: "37-40", title: "Wiring the handles", explanation: "connect_phase runs after every component is built, so the agent sequencers exist. A forgotten line leaves a null handle, and the child's start_item() fails with UVM_FATAL [SEQ]." },
+    { target: "43-48", title: "Starting from the test", explanation: "vseq.start() blocks until body() returns, so the objection keeps run_phase alive for the whole scenario." }
   ]}
 />
 
 ## Level 3: Expert Insights
 
-**Configuration is Key:** The handles in the virtual sequencer (`m_pci_sequencer`, `m_eth_sequencer`) must be connected to the actual sequencer instances in the testbench environment. This is typically done directly in the environment's `connect_phase` by pointing the virtual sequencer's handles to the specific agent sequencers.
+**Without a virtual sequencer.** Because a virtual sequence sends no items, it does not need a sequencer at all. Give the sequence its own handle fields, have the test assign them, and call `vseq.start(null)`. Do not use `p_sequencer` in that style: it only exists when the sequence runs on a typed sequencer.
 
-**Synchronization:** The `fork...join` is used for concurrent execution. You can also use `join_none` or `join_any` for more complex synchronization. For sequential operations, simply start the sequences one after another without a `fork`.
+**Ordering is your job.** `fork…join` runs children concurrently; sequential `start()` calls order them; `fork…join_none` returns immediately, so `body()` (and the test's `vseq.start()`) can finish before any item is driven. [UVM Virtual Sequencer: Dispatch Order](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer) lets you predict and compare all three on a timeline.
 
-**Memory & Retention Tip:** Remember: **Virtual Sequencer = Conductor**. **Virtual Sequence = Sheet Music**. **Agent Sequencers = Musicians**.
+**Retention tip:** Virtual sequencer = podium (holds handles). Virtual sequence = score (decides who plays when). Agent sequencers = musicians (each arbitrates its own items).
 
 ## Check Your Understanding
 
@@ -101,11 +110,11 @@ endclass
       "question": "What is the primary role of a virtual sequencer?",
       "answers": [
         {"text": "To drive transactions to the DUT.", "correct": false},
-        {"text": "To act as a central point for coordinating sequences on multiple, different agent sequencers.", "correct": true},
+        {"text": "To give a virtual sequence a place to run and hold handles to the agent sequencers.", "correct": true},
         {"text": "To check the results from a monitor.", "correct": false},
-        {"text": "To generate virtual transactions.", "correct": false}
+        {"text": "To forward items to the agent sequencers through TLM ports.", "correct": false}
       ],
-      "explanation": "A virtual sequencer does not connect to a driver. Its sole purpose is to provide a place for a virtual sequence to run and to hold handles to the real agent sequencers."
+      "explanation": "A virtual sequencer has no driver and no TLM connection to the agents. It only holds handles, assigned in the env's connect_phase."
     },
     {
       "question": "In a virtual sequence, how do you start a sequence on a specific agent's sequencer?",
@@ -113,8 +122,19 @@ endclass
         {"text": "`p_sequencer.start(agent_seq)`", "correct": false},
         {"text": "`agent_seq.start(p_sequencer.m_agent_sequencer)`", "correct": true},
         {"text": "`m_agent_sequencer.start(agent_seq)`", "correct": false},
-        {"text": "`uvm_do(agent_seq)`", "correct": false}
+        {"text": "Start it on the virtual sequencer; it forwards the items", "correct": false}
       ],
-      "explanation": "You must call the `start()` method of the agent-specific sequence and pass it a handle to the corresponding agent sequencer, which you access via the virtual sequencer handle (e.g., `p_sequencer.m_agent_sequencer`)."
+      "explanation": "Call start() on the child sequence and pass the agent sequencer. The child's items are then arbitrated on that agent's sequencer."
+    },
+    {
+      "question": "The env forgot `vsqr.m_eth_sequencer = eth_agt.sqr;`. What happens when the virtual sequence runs?",
+      "answers": [
+        {"text": "eth_seq runs on the virtual sequencer instead.", "correct": false},
+        {"text": "eth_seq starts with a null sequencer and its first start_item() is a UVM_FATAL.", "correct": true},
+        {"text": "Nothing: the factory finds the Ethernet sequencer automatically.", "correct": false}
+      ],
+      "explanation": "start(null) succeeds, but start_item() finds no sequencer: UVM_FATAL [SEQ] 'neither the item's sequencer nor dedicated sequencer has been supplied'."
     }
   ]} />
+
+Next: [UVM Virtual Sequencer: Dispatch Order](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer).

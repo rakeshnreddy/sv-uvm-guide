@@ -33,7 +33,7 @@ export function ProtocolWaveform({
   const outputRef = useRef<HTMLDivElement>(null);
   const waveformIndexRef = useRef<number | null>(null);
 
-  if (waveformIndexRef.current === undefined) {
+  if (waveformIndexRef.current === null) {
     waveformIndexRef.current = createWaveDromIndex();
   }
 

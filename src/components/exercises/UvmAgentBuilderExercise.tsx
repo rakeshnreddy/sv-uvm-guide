@@ -1,387 +1,248 @@
 "use client";
 
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useState } from "react";
+
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { Button } from "@/components/ui/Button";
+import { useExerciseProgress } from "@/hooks/useExerciseProgress";
 import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  DragEndEvent,
-  DragStartEvent,
-  DraggableSyntheticListeners,
-  DraggableAttributes,
-  DragOverlay,
-} from '@dnd-kit/core';
-import {
-  arrayMove,
-  SortableContext,
-  sortableKeyboardCoordinates,
-  useSortable,
-  verticalListSortingStrategy,
-} from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import { Button } from '@/components/ui/Button';
-import { useExerciseProgress } from '@/hooks/useExerciseProgress';
+  AGENT_PALETTE,
+  agentClassSource,
+  gradeAgentMembership,
+  type ActiveMode,
+  type AgentGrade,
+  type AgentPaletteId,
+} from "@/lib/uvm-agent-model";
+import { cn } from "@/lib/utils";
 
 export interface Item {
   id: string;
   name: string;
 }
 
-// Minimal required components for a basic UVM agent
-export const REQUIRED_COMPONENTS: Item[] = [
-  { id: 'sequencer', name: 'Sequencer' },
-  { id: 'driver', name: 'Driver' },
-  { id: 'monitor', name: 'Monitor' },
-];
+/** Components every ACTIVE agent needs. A passive agent needs only the monitor. */
+export const REQUIRED_COMPONENTS: Item[] = AGENT_PALETTE.filter((p) => ["sequencer", "driver", "monitor"].includes(p.id)).map(({ id, name }) => ({ id, name }));
 
-const instructionId = 'uvm-agent-builder-instructions';
-
-// Helper used by the validate button and unit tests
-export function checkAgentComponents(agentComponents: Item[]) {
-  const missing = REQUIRED_COMPONENTS.filter(
-    (req) => !agentComponents.find((item) => item.id === req.id),
+/**
+ * Grades membership against the active/passive rule (uvm-agent-model). The order of the
+ * items is ignored: UVM imposes no order on an agent's children.
+ */
+export function checkAgentComponents(agentComponents: Item[], mode: ActiveMode = "UVM_ACTIVE") {
+  const grade = gradeAgentMembership(
+    agentComponents.map((c) => c.id),
+    mode,
   );
-
-  const orderCorrect = REQUIRED_COMPONENTS.every(
-    (req, index) => agentComponents[index]?.id === req.id,
-  );
-
-  const correctCount = REQUIRED_COMPONENTS.reduce(
-    (count, req, index) =>
-      agentComponents[index]?.id === req.id ? count + 1 : count,
-    0,
-  );
-
-  const score = Math.round(
-    (correctCount / REQUIRED_COMPONENTS.length) * 100,
-  );
-
   const warnings: string[] = [];
-  if (missing.length > 0) {
-    warnings.push(
-      `Missing components: ${missing.map((m) => m.name).join(', ')}`,
-    );
-  }
-  if (!orderCorrect) {
-    warnings.push('Components are not in the correct order.');
-  }
-
-  return { warnings, score };
+  if (grade.missing.length > 0) warnings.push(`Missing components: ${grade.missing.join(", ")}`);
+  if (grade.misplaced.length > 0) warnings.push(`Does not belong in this agent: ${grade.misplaced.join(", ")}`);
+  return { warnings, score: grade.score, grade };
 }
 
-interface DraggableItemProps {
-  item: Item;
-  isOverlay?: boolean; // To style the drag overlay differently if needed
-}
+const instructionId = "uvm-agent-builder-instructions";
+const DRAG_TYPE = "text/x-uvm-agent-item";
 
 interface FeedbackState {
   score: number;
   passed: boolean;
   warnings: string[];
-  message: string;
+  grade: AgentGrade;
 }
 
-// Simple Draggable Item Component
-const DraggableItem: React.FC<
-  DraggableItemProps & {
-    attributes?: DraggableAttributes;
-    listeners?: DraggableSyntheticListeners;
-    style?: React.CSSProperties;
-  }
-> = ({ item, attributes, listeners, style, isOverlay }) => {
-  return (
-    <div
-      {...(attributes ?? {})}
-      {...(listeners ?? {})}
-      style={style ?? {}}
-      className={`p-3 mb-2 rounded-md shadow ${isOverlay ? 'bg-blue-400 text-white ring-2 ring-blue-600 cursor-grabbing' : 'bg-blue-100 text-blue-700 hover:bg-blue-200 cursor-grab'}`}
-    >
-      {item.name}
-    </div>
-  );
-};
-
-
-// Sortable wrapper for DraggableItem
-const SortableItem: React.FC<{ item: Item }> = ({ item }) => {
-    const {
-      attributes,
-      listeners,
-      setNodeRef,
-      transform,
-      transition,
-      isDragging,
-    } = useSortable({ id: item.id });
-
-    const style = {
-      transform: CSS.Transform.toString(transform),
-      transition,
-      opacity: isDragging ? 0.5 : 1,
-      zIndex: isDragging ? 100 : 'auto',
-    };
-
-    return (
-      <div
-        ref={setNodeRef}
-        style={style}
-        role="listitem"
-        aria-roledescription="sortable item"
-      >
-        <DraggableItem item={item} attributes={attributes} listeners={listeners} isOverlay={isDragging} />
-      </div>
-    );
-};
-
-
 const UvmAgentBuilderExercise: React.FC = () => {
-  const initialComponents = useMemo<Item[]>(
-    () => [
-      ...REQUIRED_COMPONENTS,
-      { id: 'config_obj', name: 'Config Object' },
-      { id: 'virtual_sequencer', name: 'Virtual Sequencer' },
-    ],
-    [],
-  );
-
-  const [availableComponents, setAvailableComponents] = useState<Item[]>(() => [...initialComponents]);
-  const [agentComponents, setAgentComponents] = useState<Item[]>([]);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const initialComponents = useMemo<Item[]>(() => AGENT_PALETTE.map(({ id, name }) => ({ id, name })), []);
+  const [mode, setMode] = useState<ActiveMode>("UVM_ACTIVE");
+  const [agentIds, setAgentIds] = useState<string[]>([]);
   const [feedback, setFeedback] = useState<FeedbackState | null>(null);
-  const {
-    progress: savedProgress,
-    recordAttempt,
-    resetProgress,
-    logInteraction,
-    analytics,
-  } = useExerciseProgress('uvm-agent-builder');
+  const { progress: savedProgress, recordAttempt, resetProgress, logInteraction, analytics } = useExerciseProgress("uvm-agent-builder");
 
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  );
-
-  const findContainer = (id: string) => {
-    if (agentComponents.find(item => item.id === id)) return 'agent';
-    if (availableComponents.find(item => item.id === id)) return 'available';
-    return null;
-  }
-
-  const getActiveItem = () => {
-    if (!activeId) return null;
-    return availableComponents.find(i => i.id === activeId) || agentComponents.find(i => i.id === activeId);
-  }
+  const agentComponents = initialComponents.filter((c) => agentIds.includes(c.id));
+  const availableComponents = initialComponents.filter((c) => !agentIds.includes(c.id));
 
   useEffect(() => {
-    // Expose deterministic controls for Playwright so the suite can stage
-    // required components without relying on flaky drag-and-drop gestures.
-    if (typeof window === 'undefined') {
-      return;
-    }
-
+    // Deterministic hooks for Playwright so suites do not depend on drag gestures.
+    if (typeof window === "undefined") return;
     const testApi = {
       setAgentComponents: (ids: string[]) => {
-        const desired = initialComponents.filter((item) => ids.includes(item.id));
-        setAgentComponents(desired);
-        setAvailableComponents(initialComponents.filter((item) => !ids.includes(item.id)));
+        setAgentIds(initialComponents.filter((item) => ids.includes(item.id)).map((i) => i.id));
         setFeedback(null);
       },
       reset: () => {
-        setAvailableComponents([...initialComponents]);
-        setAgentComponents([]);
+        setAgentIds([]);
         setFeedback(null);
       },
     };
-
-    (window as typeof window & {
-      __uvmAgentBuilderTest?: typeof testApi;
-    }).__uvmAgentBuilderTest = testApi;
-
+    const win = window as typeof window & { __uvmAgentBuilderTest?: typeof testApi };
+    win.__uvmAgentBuilderTest = testApi;
     return () => {
-      const win = window as typeof window & {
-        __uvmAgentBuilderTest?: typeof testApi;
-      };
-
-      if (win.__uvmAgentBuilderTest === testApi) {
-        delete win.__uvmAgentBuilderTest;
-      }
+      if (win.__uvmAgentBuilderTest === testApi) delete win.__uvmAgentBuilderTest;
     };
   }, [initialComponents]);
 
-  function handleDragStart(event: DragStartEvent) {
-    const { active } = event;
-    setActiveId(active.id as string);
+  const place = (id: string, inAgent: boolean) => {
     logInteraction();
-  }
-
-
-  function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    setActiveId(null);
-
-    if (!over) return; // Dropped outside any droppable
-
-    logInteraction();
-
-    const activeContainer = findContainer(active.id as string);
-    const overContainerId = over.id as string; // 'available-droppable' or 'agent-droppable'
-
-    const activeItem = availableComponents.find(i => i.id === active.id) || agentComponents.find(i => i.id === active.id);
-    if (!activeItem) return;
-
-    if (activeContainer === 'available' && overContainerId === 'agent-droppable') {
-        // Moving from Available to Agent
-        setAvailableComponents(prev => prev.filter(item => item.id !== active.id));
-        setAgentComponents(prev => [...prev, activeItem]);
-    } else if (activeContainer === 'agent' && overContainerId === 'available-droppable') {
-        // Moving from Agent to Available
-        setAgentComponents(prev => prev.filter(item => item.id !== active.id));
-        setAvailableComponents(prev => [...prev, activeItem]);
-    } else if (activeContainer === 'agent' && overContainerId === 'agent-droppable') {
-        // Reordering within Agent container
-        const oldIndex = agentComponents.findIndex(item => item.id === active.id);
-        const newIndex = agentComponents.findIndex(item => item.id === over.id) !== -1
-                         ? agentComponents.findIndex(item => item.id === over.id)
-                         : agentComponents.length -1; // if over a non-item part of droppable
-        if (oldIndex !== newIndex) {
-            setAgentComponents(items => arrayMove(items, oldIndex, newIndex));
-        }
-    } else if (activeContainer === 'available' && overContainerId === 'available-droppable') {
-        // Reordering within Available container
-        const oldIndex = availableComponents.findIndex(item => item.id === active.id);
-        const newIndex = availableComponents.findIndex(item => item.id === over.id) !== -1
-                         ? availableComponents.findIndex(item => item.id === over.id)
-                         : availableComponents.length -1;
-        if (oldIndex !== newIndex) {
-            setAvailableComponents(items => arrayMove(items, oldIndex, newIndex));
-        }
-    }
-  }
-
-  const activeItem = getActiveItem();
+    setFeedback(null);
+    setAgentIds((ids) => (inAgent ? (ids.includes(id) ? ids : [...ids, id]) : ids.filter((x) => x !== id)));
+  };
 
   const checkAgent = () => {
     logInteraction();
-    const { warnings, score } = checkAgentComponents(agentComponents);
-    const passed = score === 100;
-    const message = passed
-      ? 'Sequencer, driver, and monitor are assembled in the right order. Nice work!'
-      : warnings.length > 0
-        ? `Keep iterating—${warnings.join(' ')}`
-        : 'Components are present but the order needs a quick check.';
-
+    const { warnings, score, grade } = checkAgentComponents(agentComponents, mode);
     recordAttempt(score);
-    setFeedback({ score, passed, warnings, message });
+    setFeedback({ score, passed: grade.passed, warnings, grade });
   };
 
   const handleRetry = () => {
-    setAvailableComponents([...initialComponents]);
-    setAgentComponents([]);
+    setAgentIds([]);
     setFeedback(null);
     logInteraction();
   };
 
+  const dropZone = (inAgent: boolean) => ({
+    onDragOver: (e: React.DragEvent) => {
+      if (e.dataTransfer.types.includes(DRAG_TYPE)) e.preventDefault();
+    },
+    onDrop: (e: React.DragEvent) => {
+      const id = e.dataTransfer.getData(DRAG_TYPE);
+      if (id) {
+        e.preventDefault();
+        place(id, inAgent);
+      }
+    },
+  });
+
+  const renderItem = (item: Item, inAgent: boolean) => {
+    const palette = AGENT_PALETTE.find((p) => p.id === (item.id as AgentPaletteId));
+    return (
+      <div
+        key={item.id}
+        role="listitem"
+        draggable
+        onDragStart={(e) => e.dataTransfer.setData(DRAG_TYPE, item.id)}
+        className="flex min-h-11 items-center gap-2 rounded-lg border border-border/70 bg-card px-3 py-2 text-sm"
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block font-medium text-foreground">{item.name}</span>
+          <span className="block truncate font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">{palette?.cls}</span>
+        </span>
+        <button
+          type="button"
+          onClick={() => place(item.id, !inAgent)}
+          aria-label={inAgent ? `Remove ${item.name} from the agent` : `Add ${item.name} to the agent`}
+          className="inline-flex h-9 shrink-0 items-center rounded-md border border-border/70 px-2 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {inAgent ? "← Remove" : "Add →"}
+        </button>
+      </div>
+    );
+  };
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-white/5 p-4 text-sm text-[rgba(230,241,255,0.75)] md:flex-row md:items-center md:justify-between">
+      <div className="flex flex-wrap items-start justify-between gap-2 rounded-lg border border-border/70 bg-card/40 p-4 text-sm text-muted-foreground">
         <div>
-          <p className="font-semibold text-primary">Best score: {savedProgress.bestScore}%</p>
+          <p className="font-semibold text-foreground">Best score: {savedProgress.bestScore}%</p>
           <p>
             Attempts: {savedProgress.attempts}
-            {savedProgress.lastPlayedLabel ? ` • Last played ${savedProgress.lastPlayedLabel}` : ''}
+            {savedProgress.lastPlayedLabel ? ` • Last played ${savedProgress.lastPlayedLabel}` : ""}
           </p>
           {savedProgress.attempts > 0 && (
-            <p className="text-xs text-[rgba(230,241,255,0.65)]">
+            <p className="text-xs">
               Average score: {Math.round(analytics.competency)}% • Interactions: {analytics.engagement}
             </p>
           )}
         </div>
         {savedProgress.attempts > 0 && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={resetProgress}
-            className="self-start text-xs text-[rgba(230,241,255,0.8)] hover:bg-white/10"
-          >
+          <Button variant="ghost" size="sm" onClick={resetProgress} className="text-xs">
             Clear saved progress
           </Button>
         )}
       </div>
 
-      <DndContext
-        sensors={sensors}
-        collisionDetection={closestCenter}
-        onDragStart={handleDragStart}
-        onDragEnd={handleDragEnd}
-      >
-        <div className="flex flex-col items-start gap-6 p-4 md:flex-row">
-          <p id={instructionId} className="mb-4 text-sm text-muted-foreground md:w-full">
-            Drag each component or use keyboard controls (space to lift, arrow keys to move) to assemble the agent. Drop sequencer, driver, and monitor into the UVM Agent zone.
-          </p>
-          <div
-            className="w-full rounded-lg border border-white/20 bg-white/10 p-4 shadow-lg backdrop-blur-lg md:w-1/3"
-            data-testid="agent-palette"
-          >
-            <h3 className="mb-3 text-lg font-semibold text-primary">Available UVM Components</h3>
-            <SortableContext items={availableComponents.map(i => i.id)} strategy={verticalListSortingStrategy} id="available-droppable">
-              <div
-                id="available-droppable"
-                className="min-h-[220px] rounded border-2 border-dashed border-white/20 p-2"
-                role="list"
-                aria-describedby={instructionId}
-              >
-                {availableComponents.map(item => <SortableItem key={item.id} item={item} />)}
-                {availableComponents.length === 0 && <p className="py-4 text-center text-muted-foreground">All components used.</p>}
-              </div>
-            </SortableContext>
-          </div>
+      <div className="space-y-2">
+        <p id={instructionId} className="text-sm text-muted-foreground">
+          Choose the agent you are building, then put exactly the components that belong inside it into the agent. Use the Add and Remove buttons, or drag items between the
+          lists. Order does not matter: UVM imposes no order on an agent&apos;s children.
+        </p>
+        <SegmentedControl
+          label="Target agent mode"
+          mono
+          value={mode}
+          onChange={(m) => {
+            setMode(m);
+            setFeedback(null);
+          }}
+          options={[
+            { value: "UVM_ACTIVE", label: "UVM_ACTIVE agent" },
+            { value: "UVM_PASSIVE", label: "UVM_PASSIVE agent" },
+          ]}
+        />
+      </div>
 
-          <div className="w-full rounded-lg border-2 border-accent bg-white/10 p-4 shadow-lg backdrop-blur-lg md:w-2/3">
-            <h3 className="mb-3 text-lg font-semibold text-accent">UVM Agent (Drop Zone)</h3>
-            <SortableContext items={agentComponents.map(i => i.id)} strategy={verticalListSortingStrategy} id="agent-droppable">
-              <div
-                id="agent-droppable"
-                className="min-h-[220px] rounded border border-dashed border-accent bg-white/10 p-2"
-                role="list"
-                aria-describedby={instructionId}
-              >
-                {agentComponents.map(item => <SortableItem key={item.id} item={item} />)}
-                {agentComponents.length === 0 && <p className="py-4 text-center text-muted-foreground">Drag components here</p>}
-              </div>
-            </SortableContext>
+      <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
+        <section aria-label="Available UVM components" className="rounded-lg border border-border/70 bg-card/40 p-4" data-testid="agent-palette">
+          <h3 className="mb-3 text-base font-semibold text-foreground">Available components</h3>
+          <div id="available-droppable" role="list" aria-describedby={instructionId} className="min-h-[120px] space-y-2 rounded-md border-2 border-dashed border-border/60 p-2" {...dropZone(false)}>
+            {availableComponents.map((item) => renderItem(item, false))}
+            {availableComponents.length === 0 && <p className="py-4 text-center text-muted-foreground">All components used.</p>}
           </div>
-        </div>
+        </section>
 
-        <DragOverlay>
-          {activeItem ? <DraggableItem item={activeItem} isOverlay /> : null}
-        </DragOverlay>
-      </DndContext>
+        <section aria-label={`UVM agent (${mode})`} className="rounded-lg border-2 border-cyan-500/50 bg-cyan-500/[0.04] p-4">
+          <h3 className="mb-3 text-base font-semibold text-foreground">
+            bus_agent <span className="font-mono text-xs text-muted-foreground">is_active = {mode}</span>
+          </h3>
+          <div id="agent-droppable" role="list" aria-describedby={instructionId} className="min-h-[120px] space-y-2 rounded-md border border-dashed border-cyan-500/50 p-2" {...dropZone(true)}>
+            {agentComponents.map((item) => renderItem(item, true))}
+            {agentComponents.length === 0 && <p className="py-4 text-center text-muted-foreground">Nothing inside the agent yet.</p>}
+          </div>
+        </section>
+      </div>
 
       <div className="flex justify-center gap-2">
         <Button onClick={checkAgent}>Check Agent</Button>
-        <Button variant="outline" onClick={handleRetry}>Retry</Button>
+        <Button variant="outline" onClick={handleRetry}>
+          Retry
+        </Button>
       </div>
 
       {feedback && (
         <div
-          className={`rounded-lg border p-4 text-sm ${feedback.passed ? 'border-emerald-400/50 bg-emerald-400/10 text-emerald-100' : 'border-amber-400/50 bg-amber-500/10 text-amber-100'}`}
+          className={cn(
+            "space-y-3 rounded-lg border p-4 text-sm",
+            feedback.passed ? "border-emerald-500/50 bg-emerald-500/5" : "border-amber-500/50 bg-amber-500/5",
+          )}
           role="status"
           aria-live="polite"
           data-testid="exercise-feedback"
         >
-          <p className="text-lg font-semibold">Score: {feedback.score}%</p>
-          <p className="mt-1">{feedback.message}</p>
-          {feedback.warnings.length > 0 && (
-            <ul className="mt-3 list-disc list-inside text-xs">
-              {feedback.warnings.map(warning => (
-                <li key={warning}>{warning}</li>
-              ))}
-            </ul>
-          )}
+          <p className={cn("text-lg font-semibold", feedback.passed ? "text-emerald-700 dark:text-emerald-300" : "text-amber-800 dark:text-amber-200")}>
+            Score: {feedback.score}%
+          </p>
+          <p className="text-foreground">
+            {feedback.passed
+              ? mode === "UVM_ACTIVE"
+                ? "Correct: an active agent builds a sequencer, a driver and a monitor; everything else is optional or belongs in the env."
+                : "Correct: a passive agent builds only its monitor (plus optional helpers). Nothing in it can drive the bus."
+              : `Keep iterating. ${feedback.warnings.join(". ")}.`}
+          </p>
+          <ul className="space-y-1" aria-label="Per-component feedback">
+            {feedback.grade.verdicts.map((v) => (
+              <li key={v.id} className={v.correct ? "text-muted-foreground" : "text-rose-700 dark:text-rose-300"}>
+                <span aria-hidden>{v.correct ? "✓" : "✕"} </span>
+                <strong className="text-foreground">{v.name}</strong> ({v.placedInAgent ? "in agent" : "left out"}, {v.expectation}): {v.reason}
+              </li>
+            ))}
+          </ul>
+          {feedback.passed ? (
+            <details className="rounded-lg border border-border/70 bg-background/50 p-2">
+              <summary className="cursor-pointer font-medium text-foreground">How bus_agent builds this with get_is_active()</summary>
+              <pre className="mt-2 overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+                {agentClassSource({ name: "agt", configured: mode, callsSuperBuild: true, guardsConnect: true })
+                  .map((l) => l.text)
+                  .join("\n")}
+              </pre>
+            </details>
+          ) : null}
         </div>
       )}
     </div>

@@ -1,309 +1,263 @@
 "use client";
 
-import React from 'react';
+import React, { useMemo, useState } from "react";
 
-interface DebugScenario {
-  id: string;
-  title: string;
-  description: string;
-  bugPattern: string;
-  logs: string[];
-  waveform: string;
-  strategy: string;
-  automationSteps: string[];
-}
+import { CodeTrace } from "@/components/visual-system/CodeTrace";
+import { HintLadder } from "@/components/visual-system/HintLadder";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  ALL_SCENARIOS,
+  HANG_SCENARIOS,
+  hangScenarios,
+  runHang,
+  type HangRun,
+  type HangScenarioId,
+  type LogLine,
+} from "@/lib/uvm-hang-model";
+import { cn } from "@/lib/utils";
 
-const scenarios: DebugScenario[] = [
-  {
-    id: "null-pointer",
-    title: "Null Pointer Dereference",
-    description: "Simulation stops when a null pointer is accessed.",
-    bugPattern: "Attempted to read from an uninitialized handle.",
-    logs: [
-      "[ERROR] Attempted read of null pointer at address 0x00",
-      "[WARN] Slow response: latency=200ns",
-      "[INFO] Stack trace: main -> init -> configure",
-    ],
-    waveform: "clk: 0 1 0 1 0\nptr: x x 0 1 x",
-    strategy: "Ensure all pointers are initialized before use.",
-    automationSteps: ["Run initialization checks", "Enable null pointer warnings"],
-  },
-  {
-    id: "race-condition",
-    title: "Race Condition",
-    description: "Concurrent writes cause timing issues on a shared register.",
-    bugPattern: "Concurrent writes lead to unpredictable state.",
-    logs: [
-      "[WARN] Timing violation detected at t=100ns",
-      "[INFO] Process A wrote value 1 at t=95ns",
-      "[INFO] Process B wrote value 0 at t=100ns",
-      "[WARN] High latency observed",
-    ],
-    waveform: "clk: 0 1 0 1 0\nreg: 0 1 0 1 0",
-    strategy: "Use proper synchronization mechanisms.",
-    automationSteps: ["Check mutual exclusion", "Insert arbitration logic"],
-  },
-  {
-    id: "memory-leak",
-    title: "Memory Leak",
-    description: "Memory usage increases over time during simulation.",
-    bugPattern: "Allocated objects are not freed.",
-    logs: [
-      "[INFO] Heap usage at start: 10MB",
-      "[INFO] Heap usage after run: 120MB",
-      "[ERROR] Potential memory leak detected",
-      "[WARN] Operation timeout at 500ms",
-    ],
-    waveform: "clk: 0 1 0 1 0\nmem: 10 20 40 80 160",
-    strategy: "Track allocations and ensure proper deallocation.",
-    automationSteps: ["Run memory profiler", "Verify allocation paths"],
-  },
+export const HANG_MODEL_ASSUMPTIONS = [
+  "A small deterministic scheduler runs the test, sequences, sequencer arbitration (FIFO), driver and scoreboard; every item takes 10 ns to drive.",
+  "Sequencer rules follow uvm-core 2020.3.1: a second get_next_item() without item_done() reports an error and returns the same item; while a sequence holds grab()/lock(), only it is granted.",
+  "The run phase ends when all objections are dropped (drain time 0, no phase_ready_to_end); a phase with no objection ends at once. The test sets a 1000 ns timeout, which raises PH_TIMEOUT.",
+  "+UVM_OBJECTION_TRACE lines use the uvm_objection format; only the source line is shown, not the propagation to each parent.",
+  "Log lines are abridged; identical consecutive messages are folded with a repeat count.",
 ];
 
-const detectPerformanceIssues = (logs: string[]) =>
-  logs.filter((log) => /latency|slow|timeout|performance/i.test(log));
+type Probe = "processes" | "objections" | "sequencer";
 
-const detectMemoryLeaks = (logs: string[]) =>
-  logs.filter((log) => /memory leak|out of memory|heap/i.test(log));
-
-const detectTimingViolations = (logs: string[]) =>
-  logs.filter((log) => /timing violation|setup|hold/i.test(log));
-
-// Determine how each log line should be highlighted
-const classifyLog = (log: string) => {
-  if (/memory leak|out of memory|heap/i.test(log)) return 'memory';
-  if (/timing violation|setup|hold/i.test(log)) return 'timing';
-  if (/latency|slow|timeout|performance/i.test(log)) return 'performance';
-  return null;
+const probeLabels: Record<Probe, string> = {
+  processes: "Where is each process?",
+  objections: "phase.get_objection().display_objections()",
+  sequencer: "sqr.is_grabbed() / current_grabber()",
 };
 
-interface WaveformLine {
-  signal: string;
-  values: string[];
+function LogView({ lines, label }: { lines: LogLine[]; label: string }) {
+  return (
+    <figure className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100">
+      <figcaption className="border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</figcaption>
+      <ol className="max-h-72 overflow-auto py-2 font-mono text-[11.5px] leading-5 [font-variant-ligatures:none]" aria-label={label}>
+        {lines.map((l, i) => (
+          <li
+            key={i}
+            className={cn(
+              "whitespace-pre px-3",
+              l.kind === "error" && "text-rose-300",
+              l.kind === "fatal" && "font-semibold text-rose-200",
+              l.kind === "trace" && "text-sky-300",
+            )}
+          >
+            {l.text}
+            {l.repeat ? <span className="text-amber-300">{`   ×${l.repeat} (repeats until t = ${l.lastTime})`}</span> : null}
+          </li>
+        ))}
+      </ol>
+    </figure>
+  );
 }
 
-// Simple parser to convert waveform strings into signal/value arrays
-const parseWaveform = (waveform: string): WaveformLine[] =>
-  waveform.split('\n').map((line) => {
-    const [name, rest] = line.split(':');
-    return {
-      signal: name.trim(),
-      values: rest.trim().split(/\s+/),
-    };
-  });
-
-const Section = ({ title, items }: { title: string; items: string[] }) =>
-  items.length ? (
-    <div className="mb-2">
-      <h4 className="text-foreground/80">{title}</h4>
-      <ul className="list-disc list-inside text-foreground/70">
-        {items.map((item, idx) => (
-          <li key={idx}>{item}</li>
-        ))}
-      </ul>
-    </div>
-  ) : (
-    <p className="text-foreground/60 mb-2">{title}: None detected</p>
+function ProbeResult({ probe, run }: { probe: Probe; run: HangRun }) {
+  if (probe === "processes") {
+    return (
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[300px] text-left text-xs">
+          <caption className="sr-only">Process states at t = {run.endTime}</caption>
+          <thead className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            <tr>
+              <th scope="col" className="py-1 pr-2">Process</th>
+              <th scope="col" className="py-1 pr-2">State at t = {run.endTime}</th>
+              <th scope="col" className="py-1">Since</th>
+            </tr>
+          </thead>
+          <tbody>
+            {run.processes.map((p) => (
+              <tr key={p.name} className="border-t border-border/50 align-top">
+                <td className="py-1 pr-2 font-mono [font-variant-ligatures:none]">{p.name}</td>
+                <td className="py-1 pr-2">
+                  <span aria-hidden>{p.blocked ? "⏸ " : p.status === "finished" ? "✓ " : "▶ "}</span>
+                  {p.blocked ? "blocked in " : ""}
+                  <span className="font-mono [font-variant-ligatures:none]">{p.status}</span>
+                </td>
+                <td className="py-1 font-mono tabular-nums">{p.since} ns</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    );
+  }
+  if (probe === "objections") {
+    return <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[11.5px] leading-5 text-slate-100 [font-variant-ligatures:none]">{run.objectionTable.join("\n")}</pre>;
+  }
+  return (
+    <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[11.5px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+      {[
+        `sqr.is_grabbed()      = ${run.sequencer.grabbedBy ? 1 : 0}`,
+        `sqr.current_grabber() = ${run.sequencer.grabbedBy ? `uvm_test_top.env.agt.sqr.${run.sequencer.grabbedBy}` : "null"}`,
+        `item given to driver, awaiting item_done: ${run.sequencer.outstandingItem ?? "none"}`,
+        `sequences waiting in start_item: ${run.sequencer.waitingRequests.length ? run.sequencer.waitingRequests.join(", ") : "none"}`,
+      ].join("\n")}
+    </pre>
   );
+}
 
-export const DebuggingSimulator = () => {
-  const [scenarioId, setScenarioId] = React.useState<string>(scenarios[0]?.id);
-  const selectedScenario = React.useMemo(
-    () => scenarios.find((s) => s.id === scenarioId),
-    [scenarioId]
-  );
+function runSummary(run: HangRun): string {
+  if (run.ended === "timeout") return `Hang: PH_TIMEOUT fatal at t = ${run.endTime} ns after ${run.itemsCompleted} of ${run.itemsPlanned} items.`;
+  if (run.itemsCompleted < run.itemsPlanned) return `Ends at t = ${run.endTime} ns with ${run.itemsCompleted} of ${run.itemsPlanned} items driven — it only looks clean.`;
+  return `Ends cleanly at t = ${run.endTime} ns: ${run.itemsCompleted} of ${run.itemsPlanned} items, ${run.errors} UVM_ERROR${run.errors === 1 ? "" : "s"}.`;
+}
 
-  const [analysis, setAnalysis] = React.useState<{
-    performance: string[];
-    memoryLeaks: string[];
-    timing: string[];
-  } | null>(null);
+interface DebuggingSimulatorProps {
+  /** "hang" (default): the three classic hangs. "all": also the zero-time "passing" test. */
+  scenario?: "hang" | "all";
+}
 
-  // waveform/log step tracking
-  const [step, setStep] = React.useState(0);
+/** Hang triage lab: read the evidence, name the component that owns the hang, then choose a fix the model reruns. */
+export const DebuggingSimulator = ({ scenario = "hang" }: DebuggingSimulatorProps) => {
+  const ids = scenario === "all" ? ALL_SCENARIOS : HANG_SCENARIOS;
+  const [id, setId] = useState<HangScenarioId>(ids[0]);
+  const [trace, setTrace] = useState(false);
+  const [probes, setProbes] = useState<Probe[]>([]);
+  const [suspect, setSuspect] = useState<string | null>(null);
+  const [fixId, setFixId] = useState<string | null>(null);
+  const s = hangScenarios[id];
+  const run = useMemo(() => runHang({ scenario: id, variant: "bug", objectionTrace: trace }), [id, trace]);
+  const chosen = s.suspects.find((x) => x.id === suspect);
+  const found = Boolean(chosen?.correct);
+  const fix = s.fixes.find((f) => f.id === fixId);
+  const fixRun = useMemo(() => (fix ? runHang({ scenario: id, variant: fix.variant, objectionTrace: trace }) : null), [fix, id, trace]);
 
-  // workflow automation progress
-  const [workflowIndex, setWorkflowIndex] = React.useState(0);
-  const [completed, setCompleted] = React.useState<string[]>([]);
-
-  // Reset state when scenario changes
-  React.useEffect(() => {
-    setAnalysis(null);
-    setStep(0);
-    setWorkflowIndex(0);
-    setCompleted([]);
-  }, [scenarioId]);
-
-  const analyzeScenario = () => {
-    if (!selectedScenario) return;
-    const performance = detectPerformanceIssues(selectedScenario.logs);
-    const memoryLeaks = detectMemoryLeaks(selectedScenario.logs);
-    const timing = detectTimingViolations(selectedScenario.logs);
-    setAnalysis({ performance, memoryLeaks, timing });
+  const choose = (next: HangScenarioId) => {
+    setId(next);
+    setProbes([]);
+    setSuspect(null);
+    setFixId(null);
   };
-
-  const waveformData = React.useMemo(
-    () => (selectedScenario ? parseWaveform(selectedScenario.waveform) : []),
-    [selectedScenario]
-  );
-  const maxSteps = React.useMemo(() => {
-    const wfSteps = waveformData[0]?.values.length || 0;
-    const logSteps = selectedScenario?.logs.length || 0;
-    return Math.max(wfSteps, logSteps);
-  }, [waveformData, selectedScenario]);
-
-  const nextStep = () => setStep((s) => Math.min(s + 1, maxSteps - 1));
-  const prevStep = () => setStep((s) => Math.max(s - 1, 0));
-
-  const completeCurrentStep = () => {
-    if (!selectedScenario) return;
-    const stepDesc = selectedScenario.automationSteps[workflowIndex];
-    if (stepDesc) {
-      setCompleted([...completed, stepDesc]);
-      setWorkflowIndex((i) => i + 1);
-    }
-  };
+  const toggleProbe = (p: Probe) => setProbes((cur) => (cur.includes(p) ? cur.filter((x) => x !== p) : [...cur, p]));
 
   return (
-    <div className="p-4 border border-dashed border-white/30 rounded-lg my-6 bg-white/5">
-      <h2 className="text-2xl font-bold text-primary mb-2">Debugging Simulator</h2>
-      <div className="mb-4">
-        <label htmlFor="scenario" className="text-foreground/80 mr-2">
-          Scenario:
-        </label>
-        <select
-          id="scenario"
-          value={scenarioId}
-          onChange={(e) => setScenarioId(e.target.value)}
-          className="bg-background border border-foreground/20 rounded px-2 py-1"
-        >
-          {scenarios.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.title}
-            </option>
+    <VisualFrame
+      label="UVM hang triage lab"
+      eyebrow="Debug it"
+      title="Hang triage: who is holding the run open?"
+      summary="Each run ends badly. Read the log, probe the testbench, name the component that owns the problem, then pick a fix — the model reruns it."
+      fidelity="model"
+      assumptions={HANG_MODEL_ASSUMPTIONS}
+    >
+      <SegmentedControl
+        label="Hang scenario"
+        options={ids.map((x) => ({ value: x, label: hangScenarios[x].title }))}
+        value={id}
+        onChange={choose}
+      />
+      <p className="text-sm text-foreground">
+        <strong>Symptom: </strong>
+        {s.symptom}
+      </p>
+
+      <label className="flex w-fit cursor-pointer items-center gap-2 text-sm">
+        <input type="checkbox" checked={trace} onChange={(e) => setTrace(e.target.checked)} className="h-4 w-4 accent-cyan-500" />
+        Rerun with <span className="font-mono [font-variant-ligatures:none]">+UVM_OBJECTION_TRACE</span>
+      </label>
+
+      <LogView lines={run.log} label={`Simulation log${trace ? " (+UVM_OBJECTION_TRACE)" : ""}`} />
+
+      <div>
+        <p className="mb-2 text-sm font-semibold text-foreground">Step 1 — probe the testbench at the end of the run</p>
+        <div className="flex flex-wrap gap-2">
+          {(Object.keys(probeLabels) as Probe[]).map((p) => (
+            <button
+              key={p}
+              type="button"
+              aria-expanded={probes.includes(p)}
+              onClick={() => toggleProbe(p)}
+              className={cn(
+                "min-h-10 rounded-lg border px-3 py-1.5 text-left font-mono text-xs [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                probes.includes(p) ? "border-cyan-500 bg-cyan-500/10" : "border-border/70 hover:bg-muted",
+              )}
+            >
+              {probes.includes(p) ? "▾ " : "▸ "}
+              {probeLabels[p]}
+            </button>
           ))}
-        </select>
-      </div>
-      {selectedScenario ? (
-        <div>
-          <p className="text-foreground/80 mb-2">{selectedScenario.description}</p>
-          <h3 className="font-semibold text-primary">Bug Pattern</h3>
-          <p className="text-foreground/70 mb-2">{selectedScenario.bugPattern}</p>
-
-          {/* Log Viewer */}
-          <h3 className="font-semibold text-primary">Logs</h3>
-          <pre className="bg-black/20 p-2 rounded mb-2 overflow-x-auto text-xs">
-            {selectedScenario.logs.map((log, idx) => {
-              const type = classifyLog(log);
-              let cls = '';
-              if (type === 'memory') cls = 'text-purple-400';
-              else if (type === 'timing') cls = 'text-red-400';
-              else if (type === 'performance') cls = 'text-yellow-400';
-              if (idx === step) cls += ' font-bold';
-              if (idx > step) cls += ' opacity-50';
-              return (
-                <span key={idx} className={cls}>
-                  {log}
-                  {'\n'}
-                </span>
-              );
-            })}
-          </pre>
-
-          {/* Waveform Viewer */}
-          <h3 className="font-semibold text-primary">Waveform</h3>
-          <div className="bg-black/20 p-2 rounded mb-2 overflow-x-auto text-xs">
-            <table>
-              <tbody>
-                {waveformData.map((line) => (
-                  <tr key={line.signal}>
-                    <td className="pr-2 text-primary">{line.signal}</td>
-                    {line.values.map((v, i) => {
-                      let cellCls = 'px-1';
-                      if (i === step) cellCls += ' bg-primary/50';
-                      if (/x/i.test(v)) cellCls += ' text-red-400';
-                      return (
-                        <td key={i} className={cellCls}>
-                          {v}
-                        </td>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Step controls */}
-          <div className="flex items-center gap-2 mb-4">
-            <button
-              onClick={prevStep}
-              disabled={step === 0}
-              className="px-2 py-1 bg-primary text-primary-foreground rounded disabled:opacity-50"
-            >
-              Prev
-            </button>
-            <span className="text-foreground/70">
-              Step {Math.min(step + 1, maxSteps)}/{maxSteps}
-            </span>
-            <button
-              onClick={nextStep}
-              disabled={step >= maxSteps - 1}
-              className="px-2 py-1 bg-primary text-primary-foreground rounded disabled:opacity-50"
-            >
-              Next
-            </button>
-          </div>
-
-          <button
-            onClick={analyzeScenario}
-            className="mt-2 px-3 py-1 bg-primary text-primary-foreground rounded"
-          >
-            Analyze
-          </button>
-          {analysis && (
-            <div className="mt-4">
-              <h3 className="font-semibold text-primary">Analysis</h3>
-              <Section title="Performance Issues" items={analysis.performance} />
-              <Section title="Memory Leaks" items={analysis.memoryLeaks} />
-              <Section title="Timing Violations" items={analysis.timing} />
-              <h3 className="font-semibold text-primary mt-4">Recommended Strategy</h3>
-              <p className="text-foreground/70">{selectedScenario.strategy}</p>
-              <h3 className="font-semibold text-primary mt-4">Automated Workflow</h3>
-              {workflowIndex < selectedScenario.automationSteps.length ? (
-                <div className="mb-2">
-                  <p className="text-foreground/70">
-                    Current Step: {selectedScenario.automationSteps[workflowIndex]}
-                  </p>
-                  <button
-                    onClick={completeCurrentStep}
-                    className="mt-1 px-2 py-1 bg-primary text-primary-foreground rounded"
-                  >
-                    Mark Step Complete
-                  </button>
-                </div>
-              ) : (
-                <p className="text-foreground/70 mb-2">All steps completed.</p>
-              )}
-              {completed.length > 0 && (
-                <div>
-                  <h4 className="text-foreground/80">Progress Log</h4>
-                  <ul className="list-disc list-inside text-foreground/70">
-                    {completed.map((c) => (
-                      <li key={c}>{c}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-            </div>
-          )}
         </div>
-      ) : (
-        <p className="text-foreground/80">No scenario selected.</p>
-      )}
-    </div>
+        <div className="mt-2 space-y-2">
+          {probes.map((p) => (
+            <section key={p} aria-label={probeLabels[p]} className="rounded-xl border border-border/70 bg-background/40 p-3">
+              <ProbeResult probe={p} run={run} />
+            </section>
+          ))}
+        </div>
+      </div>
+
+      <fieldset>
+        <legend className="mb-2 text-sm font-semibold text-foreground">Step 2 — which component owns the problem?</legend>
+        <div className="flex flex-wrap gap-2">
+          {s.suspects.map((x) => (
+            <button
+              key={x.id}
+              type="button"
+              aria-pressed={suspect === x.id}
+              onClick={() => setSuspect(x.id)}
+              className={cn(
+                "min-h-10 rounded-lg border px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                suspect === x.id ? (x.correct ? "border-emerald-500 bg-emerald-500/10" : "border-rose-500 bg-rose-500/10") : "border-border/70 hover:bg-muted",
+              )}
+            >
+              {x.label}
+            </button>
+          ))}
+        </div>
+        {chosen ? (
+          <p aria-live="polite" className={cn("mt-2 text-sm", chosen.correct ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>
+            <strong>{chosen.correct ? "✓ Found it. " : "✕ Not the owner. "}</strong>
+            {chosen.feedback}
+          </p>
+        ) : null}
+        {!found ? <HintLadder hints={s.hints} resetKey={id} className="mt-2" /> : null}
+      </fieldset>
+
+      {found ? (
+        <div className="space-y-3">
+          <CodeTrace label="The owner's code" lines={s.code.map((text, i) => ({ text, key: `l${i}`, owner: "testbench" }))} activeKey={`l${s.faultLine}`} />
+          <fieldset>
+            <legend className="mb-2 text-sm font-semibold text-foreground">Step 3 — choose a fix; the model reruns the test</legend>
+            <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
+              {s.fixes.map((f) => (
+                <label key={f.id} className={cn("flex cursor-pointer items-start gap-2 rounded-lg border p-3 text-sm", fixId === f.id ? "border-cyan-500 bg-cyan-500/10" : "border-border/70")}>
+                  <input type="radio" name={`hang-fix-${id}`} checked={fixId === f.id} onChange={() => setFixId(f.id)} className="mt-1 accent-cyan-500" />
+                  <span>{f.label}</span>
+                </label>
+              ))}
+            </div>
+          </fieldset>
+          {fix && fixRun ? (
+            <div aria-live="polite" className={cn("space-y-2 rounded-xl border p-3 text-sm", fix.correct ? "border-emerald-500/50 bg-emerald-500/10" : "border-amber-500/50 bg-amber-500/10")}>
+              <p className="font-medium text-foreground">
+                <span aria-hidden>{fix.correct ? "✓ " : "✕ "}</span>
+                Model: {runSummary(fixRun)}
+              </p>
+              <p className="text-foreground/90">{fixRun.narration}</p>
+              <p>
+                <strong>Review: </strong>
+                {fix.review}
+              </p>
+              {fix.correct ? (
+                <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]">{s.fixedCode.join("\n")}</pre>
+              ) : null}
+              <details className="text-xs">
+                <summary className="cursor-pointer text-muted-foreground">Log of the rerun</summary>
+                <div className="mt-2">
+                  <LogView lines={fixRun.log} label="Rerun log" />
+                </div>
+              </details>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </VisualFrame>
   );
 };
 
 export default DebuggingSimulator;
-

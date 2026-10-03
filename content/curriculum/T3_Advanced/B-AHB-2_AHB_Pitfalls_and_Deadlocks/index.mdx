@@ -4,10 +4,10 @@ description: "Learn the most common AHB protocol violations—HREADY mishandling
 order: 4
 flashcards: "B-AHB-2_AHB_Pitfalls_and_Deadlocks"
 sources:
-  - title: "Arm AMBA 3 AHB-Lite Protocol Specification"
+  - title: "Arm AMBA 5 AHB Protocol Specification (AHB5 and AHB-Lite)"
     type: "standard"
-    identifier: "IHI0033B"
-    version: "B"
+    identifier: "IHI0033B.b"
+    version: "B.b"
 ---
 
 # AHB Pitfalls & Real-World Failures
@@ -21,8 +21,8 @@ Understanding these failure modes is what separates a competent verification eng
 <QuickTake>
 - **HREADY mishandling** is the #1 source of AHB bugs — both in RTL design and in VIP construction.
 - **Two-cycle ERROR protocol** trips up nearly every first-time AHB slave designer.
-- **Arbitration deadlocks** occur when grant policies interact badly with locked transfers.
-- **1 KB boundary violations** silently corrupt burst transfers in multi-slave systems.
+- **Locked sequences** block other masters for their whole length, wait states included; grant policy is design policy.
+- **1 KB boundary violations** by incrementing bursts silently corrupt transfers in multi-slave systems.
 </QuickTake>
 
 ---
@@ -31,12 +31,14 @@ Understanding these failure modes is what separates a competent verification eng
 
 `HREADY` controls the entire AHB pipeline.  Get it wrong and the bus either deadlocks, drops data, or silently corrupts transactions.
 
+Every check in this module carries a tag: **[Protocol §x]** for a rule in Arm IHI0033B.b, or **[Integration policy]** for a budget your system chooses.
+
 ### Pitfall 1A: Slave Holds HREADYOUT Low Forever
 
 If a slave pulls `HREADYOUT` low and *never* reasserts it, the global `HREADY` signal stays low and the entire bus freezes — no other master can make progress.
 
 ```systemverilog
-// BUG: Missing timeout — slave hangs the bus
+// BUG: no bound on the wait — the slave can hang the bus
 always_ff @(posedge HCLK or negedge HRESETn) begin
   if (!HRESETn)
     hready_out <= 1'b1;
@@ -46,208 +48,246 @@ end
 ```
 
 > [!CAUTION]
-> **The AMBA spec recommends** that every slave include a configurable timeout counter.
-> After *N* cycles of HREADY=0, the slave should either complete the transfer or respond with ERROR.
-> A common production value is 16 or 32 cycles.
+> **What the spec actually says:** every slave must have a predetermined maximum number of wait states, and slaves are *recommended* to insert no more than 16 (IHI0033B.b §5.1.2). Devices such as a serial boot ROM may exceed that.
+> A timeout counter that forces the slave to complete or to answer ERROR is a **design policy** for your system, not a protocol rule.
 
-**Verification strategy:** Write an SVA assertion that fires if `HREADY` is low for more than `MAX_WAIT` consecutive cycles:
+**Verification strategy:** Check the wait-state budget your system chose. Report it as a warning, not as a protocol error:
 
 ```systemverilog
-property p_hready_timeout;
+// [Integration policy] MAX_WAIT comes from your latency budget.
+// The spec only recommends at most 16 wait states (§5.1.2).
+property p_wait_budget;
   @(posedge HCLK) disable iff (!HRESETn)
     $fell(HREADY) |-> ##[1:MAX_WAIT] HREADY;
 endproperty
 
-a_hready_timeout: assert property (p_hready_timeout)
-  else $error("HREADY held low for > %0d cycles — bus is stalled", MAX_WAIT);
+a_wait_budget: assert property (p_wait_budget)
+  else $warning("HREADY held low for > %0d cycles", MAX_WAIT);
 ```
 
-### Pitfall 1B: Sampling Data on the Wrong HREADY Edge
+### Pitfall 1B: Acting on HWDATA on the Wrong Edge
 
-A common RTL mistake is to sample `HWDATA` on *every* rising clock edge instead of only when `HREADY` is high.
-During a wait state, the data lines may be changing — sampling at the wrong time captures garbage.
+A common RTL mistake is to act on `HWDATA` on *every* rising clock edge of the data phase instead of only at the edge where `HREADY` is high.
+During a wait state the master holds `HWDATA` stable (§6.1.1), so a plain memory just writes the same value twice. A FIFO push, a counter, or a write-to-clear register acts once per wait state instead of once per transfer.
 
 ```systemverilog
-// BUG: Samples data regardless of HREADY
-always_ff @(posedge HCLK) begin
-  if (write_sel)
-    mem[addr_reg] <= HWDATA;  // ← captured even during wait states
+// Address phase: register the transfer only when HREADY is high (§4.2)
+always_ff @(posedge HCLK or negedge HRESETn) begin
+  if (!HRESETn)
+    write_sel <= 1'b0;
+  else if (HREADY) begin
+    write_sel <= HSEL && HTRANS[1] && HWRITE;   // NONSEQ or SEQ write
+    addr_reg  <= HADDR;
+  end
 end
 
-// CORRECT: Gate on HREADY
+// BUG: acts on every cycle of the data phase
 always_ff @(posedge HCLK) begin
-  if (write_sel && HREADY)
-    mem[addr_reg] <= HWDATA;  // ← only captured on final beat
+  if (write_sel) begin
+    fifo[wr_ptr] <= HWDATA;   // ← pushes once per wait state
+    wr_ptr       <= wr_ptr + 1;
+  end
+end
+
+// CORRECT: act only at the edge that completes the data phase
+always_ff @(posedge HCLK) begin
+  if (write_sel && HREADY) begin
+    fifo[wr_ptr] <= HWDATA;   // ← exactly once per transfer
+    wr_ptr       <= wr_ptr + 1;
+  end
 end
 ```
+
+The address-phase register matters too: a slave must sample `HSELx`, address and control only when `HREADY` is high (§4.2). Without that gate it reacts to an address that has not been handed over yet.
 
 ### Pitfall 1C: Master Changes Address While HREADY Is Low
 
-During a wait state the master **must** hold `HADDR`, `HTRANS`, and all control signals stable.
-A master that updates the address early will confuse the bus decoder, routing the transfer to the wrong slave.
+While a NONSEQ or SEQ transfer is waited, the master must hold `HTRANS`, `HADDR` and the control signals.
+`HSELx` is a combinational decode of the address (§4.2), so a master that changes a waited address replaces a transfer the slave may already be decoding.
 
-**Verification strategy:** Assert stability of address/control during wait states:
+The rule has exceptions (§3.6.1, §3.6.2):
+- IDLE may change to NONSEQ, and the address of an IDLE may change;
+- in a fixed-length burst, BUSY may change to SEQ;
+- in an undefined-length INCR, BUSY may change to any type;
+- after an ERROR response, the master may switch to IDLE and change the address to cancel (section 2).
+
+**Verification strategy:** Assert the hold rule *with* its exceptions:
 
 ```systemverilog
-property p_addr_stable_during_wait;
+// [Protocol §3.6.1, §3.6.2, §3.5.2] a waited NONSEQ/SEQ holds,
+// unless the master cancels after an ERROR first cycle
+property p_hold_in_wait;
   @(posedge HCLK) disable iff (!HRESETn)
-    (!HREADY && HTRANS != IDLE) |=> $stable(HADDR);
+    (!HREADY && HTRANS inside {NONSEQ, SEQ}) |=>
+        ($stable(HTRANS) && $stable(HADDR) && $stable({HWRITE, HSIZE, HBURST}))
+     || ($past(HRESP) && HTRANS == IDLE);
 endproperty
 
-a_addr_stable: assert property (p_addr_stable_during_wait);
+a_hold_in_wait: assert property (p_hold_in_wait);
 ```
+
+A shorter check such as `(!HREADY && HTRANS != IDLE) |=> $stable(HTRANS) && $stable(HADDR)` is wrong: it fires on a legal BUSY→SEQ change and on a legal cancel after ERROR. The AHB pipeline lab in B-AHB-1 runs both checks on the same trace (scenarios **BUSY in a burst** with waits on A0, and **Two-cycle ERROR**).
 
 ---
 
 ## 2. The Two-Cycle ERROR Response
 
 One of the most misunderstood aspects of AHB is the slave ERROR response protocol.
-Unlike a simple pass/fail flag, AHB requires that an ERROR response span **exactly two clock cycles**.
+Unlike a simple pass/fail flag, an AHB ERROR response always takes **two clock cycles** (§5.1.3). The slave may insert OKAY wait states before it starts.
 
 ### Why Two Cycles?
 
 Because of the pipeline, when the slave detects an error during the data phase of Transfer A, the master has *already* broadcast the address for Transfer B.
-The two-cycle protocol gives the master time to:
+The two-cycle protocol gives the master time to react (§5.1.3, Table 5-2):
 
-1. **Cycle 1:** See `HRESP=ERROR` with `HREADY=LOW`.  The master now knows an error is coming and can cancel Transfer B.
-2. **Cycle 2:** See `HRESP=ERROR` with `HREADY=HIGH`.  The data phase completes and the master can either retry or abort.
+1. **Cycle 1:** The slave drives `HRESP=ERROR` with `HREADY` low. Nothing completes at the end of this cycle, so B is not accepted. The master samples the ERROR at that edge.
+2. **Cycle 2:** The slave drives `HRESP=ERROR` with `HREADY` high, and A completes with ERROR. A master that cancels drives `HTRANS = IDLE` in this cycle, so B is never accepted (§3.5.2). A master may instead continue the burst; both are allowed.
+
+In this diagram, watch `HTRANS` in the second ERROR cycle. It is generated from the same AHB model as the lab in B-AHB-1.
 
 <ProtocolWaveform
   title="Two-Cycle ERROR Response"
   spec={{
     signal: [
-      { name: "HCLK", wave: "p......" },
-      { name: "HADDR", wave: "x=.x...", data: ["A"] },
-      { name: "HTRANS", wave: "x=.x...", data: ["NONSEQ"] },
-      { name: "HWDATA", wave: "xx.=x..", data: ["Data A"] },
-      { name: "HREADY", wave: "1.01..." },
-      { name: "HRESP",  wave: "0.==0..", data: ["ERR", "ERR"] }
+      { name: "HCLK", wave: "p....." },
+      { name: "HTRANS", wave: "===.=.", data: ["IDLE", "NONSEQ", "NONSEQ", "IDLE"] },
+      { name: "HADDR", wave: "x==.x.", data: ["A", "B"] },
+      { name: "HWDATA", wave: "x.=..x", data: ["Data A"] },
+      { name: "HREADY", wave: "1.0.1." },
+      { name: "HRESP", wave: "=..===", data: ["OKAY", "ERROR", "ERROR", "OKAY"] }
     ]
   }}
-  caption="The slave drives HRESP=ERROR for two consecutive cycles: first with HREADY=0, then with HREADY=1."
+  caption="As in spec Figure 5-1: A waits one cycle with OKAY, then ERROR with HREADY low, then ERROR with HREADY high. The master saw the first ERROR cycle at the edge that ends it, so it drives IDLE in the second: B is cancelled and never accepted."
 />
 
 ### Pitfall 2A: Single-Cycle ERROR
 
-A slave that asserts `HRESP=ERROR` for only one cycle violates the protocol.
-The master may not detect the error at all, or worse, it may interpret the following cycle's data as valid.
+A slave that asserts `HRESP=ERROR` for only one cycle, with `HREADY` high, violates §5.1.3.
+The master learns about the error at the same edge that accepts its next transfer, so it can no longer cancel it: a transfer cannot be cancelled once it has started (§5.1).
 
 ```systemverilog
-// BUG: Single-cycle ERROR response
-always_ff @(posedge HCLK) begin
-  if (access_violation)
-    hresp <= ERROR;   // asserted for one cycle only
+// BUG: one-cycle ERROR — HREADYOUT stays high, so there is no first ERROR cycle
+always_ff @(posedge HCLK or negedge HRESETn) begin
+  if (!HRESETn)
+    hresp <= OKAY;
+  else if (HSEL && HREADY && HTRANS[1] && access_violation)
+    hresp <= ERROR;
   else
     hresp <= OKAY;
 end
 
-// CORRECT: Two-cycle ERROR state machine
-typedef enum logic [1:0] { S_IDLE, S_ERR_PHASE1, S_ERR_PHASE2 } err_state_t;
-err_state_t err_state;
+// CORRECT: first cycle HREADYOUT low, second cycle HREADYOUT high (§5.1.3)
+logic err_second;
 
 always_ff @(posedge HCLK or negedge HRESETn) begin
   if (!HRESETn) begin
-    err_state <= S_IDLE;
-    hresp     <= OKAY;
-    hready    <= 1'b1;
-  end else case (err_state)
-    S_IDLE: begin
-      if (access_violation) begin
-        err_state <= S_ERR_PHASE1;
-        hresp     <= ERROR;
-        hready    <= 1'b0;     // Phase 1: ERROR + HREADY low
-      end
-    end
-    S_ERR_PHASE1: begin
-      err_state <= S_ERR_PHASE2;
-      hresp     <= ERROR;
-      hready    <= 1'b1;       // Phase 2: ERROR + HREADY high
-    end
-    S_ERR_PHASE2: begin
-      err_state <= S_IDLE;
-      hresp     <= OKAY;
-      hready    <= 1'b1;
-    end
-  endcase
+    err_second <= 1'b0;
+    hresp      <= OKAY;
+    hreadyout  <= 1'b1;                    // HREADYOUT high during reset (§7.1.2)
+  end else if (err_second) begin           // second ERROR cycle
+    err_second <= 1'b0;
+    hresp      <= ERROR;
+    hreadyout  <= 1'b1;
+  end else if (HSEL && HREADY && HTRANS[1] && access_violation) begin
+    err_second <= 1'b1;                    // first ERROR cycle
+    hresp      <= ERROR;
+    hreadyout  <= 1'b0;
+  end else begin
+    hresp      <= OKAY;
+    hreadyout  <= 1'b1;
+  end
 end
 ```
 
-**Verification assertion:**
+The corrected slave returns straight to normal decoding after the second cycle, so a transfer accepted at the end of the ERROR is handled like any other.
+
+**Verification assertions:** you need *both* directions.
 
 ```systemverilog
-// ERROR must always last exactly two cycles: LOW then HIGH on HREADY
-property p_error_two_cycle;
+// [Protocol §5.1.3, Table 5-2] first ERROR cycle -> second ERROR cycle
+property p_error_first_then_second;
   @(posedge HCLK) disable iff (!HRESETn)
-    (HRESP == ERROR && !HREADY) |=> (HRESP == ERROR && HREADY);
+    (HRESP && !HREADY) |=> (HRESP && HREADY);
 endproperty
 
-a_error_two_cycle: assert property (p_error_two_cycle);
+// [Protocol §5.1.3, Table 5-2] an ERROR completion needs a first cycle
+property p_error_second_needs_first;
+  @(posedge HCLK) disable iff (!HRESETn)
+    (HRESP && HREADY) |-> $past(HRESP && !HREADY);
+endproperty
+
+a_error_first_then_second:  assert property (p_error_first_then_second);
+a_error_second_needs_first: assert property (p_error_second_needs_first);
 ```
+
+The first property alone **cannot** catch Pitfall 2A. A one-cycle ERROR never has `HREADY` low, so its antecedent never matches and it passes vacuously.
+The second property starts on every ERROR completion and looks one edge back. Both are gated by `disable iff (!HRESETn)`. At the first edge after reset, `$past` sees the reset-time values (OKAY), so a one-cycle ERROR straight after reset still fails.
+Try the **Debug: one-cycle ERROR** scenario in the B-AHB-1 lab to see both on the waveform.
 
 ---
 
 ## 3. Arbitration Deadlocks
 
-In multi-master AHB systems, the **arbiter** decides which master gets bus access.
-Deadlocks arise when the arbitration policy interacts badly with locked transfers or priority inversions.
+The AHB5 / AHB-Lite specification defines master and slave interfaces but no request or grant signals. A multi-master system needs an interconnect that provides arbitration, and the spec leaves its design open (§4.1).
+The `HBUSREQ`/`HGRANT` arbiter of older AMBA 2 AHB systems, and the arbiters inside a multi-layer interconnect, are therefore **design policy**. The protocol rule in this section is about locked sequences.
 
 ### Pitfall 3A: Locked Transfer Starvation
 
-AHB supports `HMASTLOCK` to indicate that a master needs exclusive, uninterruptible access to the bus for a sequence of transfers (e.g., a read-modify-write atomic operation).
+A master asserts `HMASTLOCK` to indicate that the current transfer sequence is indivisible and must be processed before any other transfers (§3.3), for example a read-modify-write.
+All transfers in a locked sequence must go to the same slave region, and the spec recommends an IDLE after a locked transfer (§3.3).
 
-The problem: if a high-priority master holds a lock and the slave inserts many wait states, **all other masters are starved** indefinitely.
+The problem: while the lock is held, other masters' transfers to that slave wait for the whole sequence, **wait states included**. A long lock to a slow slave starves everyone else, whatever their priority.
 
 > [!WARNING]
-> **Production rule:** Locked sequences should be limited to a small, bounded number of transfers (typically ≤ 4).
-> The arbiter should enforce a lock-duration limit and forcibly revoke the grant after a timeout.
+> **Design policy, not protocol:** keep locked sequences short and give them a cycle budget.
+> Report a budget violation from a checker. Do not make the arbiter "revoke" a lock: breaking a locked sequence breaks the atomicity it exists to provide.
 
 ```systemverilog
-// Arbiter lock-duration watchdog
-logic [$clog2(MAX_LOCK_CYCLES)-1:0] lock_counter;
+// [Integration policy] lock budget, counted in CYCLES so wait states count too
+int unsigned lock_cycles;
 
 always_ff @(posedge HCLK or negedge HRESETn) begin
   if (!HRESETn)
-    lock_counter <= '0;
-  else if (HMASTLOCK && HREADY)
-    lock_counter <= lock_counter + 1;
+    lock_cycles <= 0;
+  else if (HMASTLOCK)
+    lock_cycles <= lock_cycles + 1;
   else
-    lock_counter <= '0;
+    lock_cycles <= 0;
 end
 
-// Force-revoke after MAX_LOCK_CYCLES
-assign lock_timeout = (lock_counter >= MAX_LOCK_CYCLES);
+a_lock_budget: assert property (@(posedge HCLK) disable iff (!HRESETn)
+                                lock_cycles <= MAX_LOCK_CYCLES)
+  else $warning("Locked sequence has lasted %0d cycles", lock_cycles);
 ```
 
-### Pitfall 3B: Priority Inversion Deadlock
+### Pitfall 3B: Fixed Priority Plus Locks
 
-Consider three masters: M0 (low priority), M1 (medium), M2 (high).
+Consider three masters behind one arbiter with fixed priority: M2 (high) > M1 (medium) > M0 (low).
 
-1. M0 acquires the bus and starts a locked burst.
-2. M2 requests the bus — but it's blocked because M0 holds the lock.
-3. M1 also requests the bus.  The arbiter keeps granting M1 whenever M0 finishes because M1 has higher priority than M0.
-4. M0 never gets re-granted to complete its multi-part locked sequence.
-5. **M2 is stuck forever**, even though it has the highest priority.
+1. M0 starts a locked read-modify-write to a slow slave.
+2. M2 requests the same slave. The locked sequence is indivisible (§3.3), so M2 waits for all of it, including every wait state the slave inserts.
+3. When M0's lock ends, fixed priority serves M2 before M1, so M1 waits behind both.
 
-This is a classic **priority inversion** scenario, identical to the Mars Pathfinder bug.
+This is not a deadlock: M2's worst-case wait is bounded by the longest locked sequence. The real failure is an *unbounded* wait, from a lock that never ends or a slave with no wait-state limit. That is why every slave needs a predetermined maximum number of wait states (§5.1.2).
+(The Mars Pathfinder failure is sometimes quoted here. It was a priority inversion on an RTOS mutex, not a bus arbitration bug.)
 
-**Verification strategy:** In a multi-master testbench, inject a scenario where a low-priority master holds a lock while higher-priority masters continuously request.
-Assert that all masters eventually complete their transfers within a bounded time window.
+**Verification strategy:** In a multi-master testbench, run a long locked sequence to a slow slave while higher-priority masters keep requesting.
+Measure each master's worst-case wait and compare it with your latency budget. This is a performance check [Integration policy], not a protocol assertion.
 
-### Pitfall 3C: Default Master Livelock
+### Pitfall 3C: IDLE That Is Not Free
 
-AHB requires a **default master** that drives IDLE transfers when no other master needs the bus.
-If the arbiter is misconfigured and the default master's IDLE transfers are themselves generating wait states (e.g., targeting a misconfigured address decoder), the bus enters a livelock: the arbiter sees the bus as busy and never grants a real master.
-
-**Verification assertion:**
+In a single-layer multi-master system the arbiter usually parks the bus on a default master, which drives IDLE when nobody needs the bus (design policy; the spec does not define the arbiter, §4.1).
+The protocol guarantees that IDLE costs nothing: every slave, including the default slave that answers unmapped addresses, must give IDLE and BUSY a zero-wait OKAY (§3.2 Table 3-1, §4.2.1).
+If a slave inserts wait states for an IDLE, the bus stalls although nobody is transferring. The bug is in the slave, and this property catches it:
 
 ```systemverilog
-// Default master must always drive HTRANS = IDLE
-property p_default_master_idle;
+// [Protocol §3.2 Table 3-1, §4.2.1] IDLE and BUSY get a zero-wait OKAY
+property p_idle_busy_zero_wait_okay;
   @(posedge HCLK) disable iff (!HRESETn)
-    (current_master == DEFAULT_MASTER) |-> (HTRANS == IDLE);
+    (HREADY && HTRANS inside {IDLE, BUSY}) |=> (HREADY && !HRESP);
 endproperty
 
-a_default_idle: assert property (p_default_master_idle);
+a_idle_busy_okay: assert property (p_idle_busy_zero_wait_okay);
 ```
 
 ---
@@ -256,49 +296,58 @@ a_default_idle: assert property (p_default_master_idle);
 
 ### Pitfall 4A: Bursts Crossing the 1 KB Boundary
 
-The AHB specification mandates that **no burst may cross a 1 KB address boundary**.
-This rule exists because AHB address decoders split the address space into regions at 1 KB-aligned boundaries.
-A burst that crosses this boundary would need to be serviced by *two different slaves*, which the bus architecture cannot handle.
+Masters must not start an **incrementing** burst that crosses a 1 KB address boundary (§3.5).
+The smallest address region a slave can own is 1 KB, aligned on a 1 KB boundary (§4.2), so the rule guarantees that a burst never crosses an address decode boundary.
+Wrapping bursts are exempt: a WRAP burst stays inside its own *beats × size* block.
 
 > [!IMPORTANT]
 > A master requesting a 4-beat, 32-bit incrementing burst (`INCR4`) starting at address `0x3F0` will generate addresses:
 > `0x3F0`, `0x3F4`, `0x3F8`, `0x3FC` — this is fine, it stays within the 1 KB boundary at `0x400`.
 >
 > But starting at `0x3F4` would produce: `0x3F4`, `0x3F8`, `0x3FC`, **`0x400`** — this crosses the 1 KB boundary and is **illegal**.
+>
+> A `WRAP4` from `0x3F4` visits `0x3F4`, `0x3F8`, `0x3FC`, `0x3F0` and is **legal**.
+
+Check every beat rather than the burst start. That also covers undefined-length `INCR`, whose length is unknown at the NONSEQ:
 
 ```systemverilog
-// Assertion: No burst may cross a 1 KB boundary
-property p_no_1kb_crossing;
+// [Protocol §3.5, §4.2] incrementing bursts never cross 1KB.
+// Per beat, so undefined-length INCR is covered; WRAP bursts are exempt.
+property p_incr_no_1kb_cross;
   @(posedge HCLK) disable iff (!HRESETn)
-    (HTRANS == NONSEQ && HBURST != SINGLE) |->
-      (HADDR[9:0] + burst_total_bytes(HBURST, HSIZE)) <= 11'h400;
+    (HREADY && HTRANS == SEQ && !(HBURST inside {WRAP4, WRAP8, WRAP16})) |->
+      HADDR[31:10] == $past(HADDR[31:10], 1, HREADY && HTRANS inside {NONSEQ, SEQ});
 endproperty
 
-a_no_1kb_cross: assert property (p_no_1kb_crossing);
+a_incr_no_1kb_cross: assert property (p_incr_no_1kb_cross);
 ```
 
-**Real-world consequence:** A burst that crosses the 1 KB boundary is typically decoded to the *first* slave for all beats.  The slave writes all data, but the addresses that should have gone to the second slave are silently aliased — causing **data corruption** with no error response.
+`$past(expr, 1, gate)` returns the value at the most recent earlier clock tick where `gate` was true (IEEE 1800-2023 §16.9.3): here, the previous accepted beat.
+A check of the form `HADDR[9:0] + burst_bytes <= 0x400` at the NONSEQ is wrong twice: it fires on a legal WRAP burst near the boundary, and it cannot size an undefined-length INCR. Compare both in the **WRAP vs INCR** scenario of the B-AHB-1 lab.
 
-### Pitfall 4B: Unaligned Burst Start Address
+**Real-world consequence:** The decoder decodes every address phase (`HSELx` is a combinational decode of the high address bits, §4.2).
+The beats after the boundary go to a different slave, which sees a burst that starts with SEQ and has no NONSEQ. Neither slave sees the whole burst, so data lands in the wrong place or the second slave misbehaves, usually with no error response.
 
-AHB requires burst start addresses to be aligned to the transfer size.
-A 32-bit (`HSIZE=010`) transfer must start at a 4-byte-aligned address.
-An unaligned start causes the address to increment incorrectly, producing overlapping or skipped byte lanes.
+### Pitfall 4B: Unaligned Transfer Address
+
+Every transfer in a burst must be aligned to its size, not just the first one (§3.5).
+A 32-bit (`HSIZE=010`) transfer needs `HADDR[1:0] = 2'b00`; a halfword needs `HADDR[0] = 0`.
+An unaligned address makes the byte lanes ambiguous, producing overlapping or skipped bytes.
 
 ```systemverilog
-// Assertion: Start address must be aligned to transfer size
-property p_burst_alignment;
+// [Protocol §3.5] every NONSEQ/SEQ transfer is aligned to HSIZE
+property p_aligned;
   @(posedge HCLK) disable iff (!HRESETn)
-    (HTRANS == NONSEQ) |-> (HADDR[size_mask(HSIZE)-1:0] == '0);
+    (HTRANS inside {NONSEQ, SEQ}) |-> ((HADDR & ((32'd1 << HSIZE) - 32'd1)) == 32'd0);
 endproperty
 
-a_alignment: assert property (p_burst_alignment);
+a_aligned: assert property (p_aligned);
 ```
 
 ### Pitfall 4C: Wrapping Burst Miscalculation
 
-Wrapping bursts (WRAP4, WRAP8, WRAP16) wrap at a boundary equal to the *number of beats × transfer size*.
-A WRAP4 burst of 32-bit words wraps at a 16-byte boundary.  Getting this boundary wrong means the slave writes data to the wrong cache line, causing cache coherency failures.
+Wrapping bursts (WRAP4, WRAP8, WRAP16) wrap at a boundary equal to the *number of beats × transfer size* (§3.5).
+A WRAP4 burst of 32-bit words wraps at a 16-byte boundary, so a burst from `0x34` visits `0x34`, `0x38`, `0x3C`, `0x30`. Getting this boundary wrong means the slave reads or writes the wrong words of the cache line.
 
 ---
 
@@ -306,25 +355,24 @@ A WRAP4 burst of 32-bit words wraps at a 16-byte boundary.  Getting this boundar
 
 ### Pitfall 5A: Not Driving HTRANS = IDLE During Reset
 
-During and immediately after reset, all masters must drive `HTRANS = IDLE`.
-A master that drives `NONSEQ` before the arbiter has finished initializing can corrupt the bus decoder state.
+During reset, every master must drive `HTRANS = IDLE` with address and control at valid levels, and every slave must drive `HREADYOUT` high (§7.1.2).
+A master that comes out of reset already driving NONSEQ, or a slave that holds `HREADYOUT` low in reset, starts the system in the middle of an undefined transfer.
 
 ```systemverilog
-// Assertion: Masters must be IDLE during and after reset
-property p_idle_after_reset;
+// [Protocol §7.1.2] checked DURING reset, so there is no disable iff
+property p_reset_values;
   @(posedge HCLK)
-    $rose(HRESETn) |-> ##[0:2] (HTRANS == IDLE);
+    !HRESETn |-> (HTRANS == IDLE && HREADY);
 endproperty
 
-a_reset_idle: assert property (p_idle_after_reset);
+a_reset_values: assert property (p_reset_values);
 ```
 
 ### Pitfall 5B: Arbiter Grant During Reset
 
-If the arbiter issues a grant while the slaves are still in reset, the selected slave's `HREADYOUT` output may be in an undefined state.
-This can cause the arbiter's handshake logic to lock up.
-
-**Production rule:** The arbiter must not issue any grants until it has seen `HREADY` high from the default slave multiplexor for at least one cycle after reset de-assertion.
+If every slave follows §7.1.2, `HREADY` is already high during reset, so there is nothing to wait for.
+Many designs still hold the arbiter on its default grant until reset has been released for at least one cycle. That is a **design policy**.
+A slave whose `HREADYOUT` is undefined in reset violates §7.1.2, and `p_reset_values` above catches it.
 
 ---
 
@@ -332,22 +380,23 @@ This can cause the arbiter's handshake logic to lock up.
 
 | Pitfall | Root Cause | Detection |
 |---|---|---|
-| HREADY stuck low | Missing timeout in slave | SVA timeout assertion |
-| Wrong HWDATA sampling | Not gating on HREADY | Data integrity check |
-| Address instability | Master changes addr during wait | `$stable()` assertion |
-| Single-cycle ERROR | Missing FSM state | Two-cycle protocol assertion |
-| Lock starvation | Unbounded HMASTLOCK | Lock-duration watchdog |
-| Priority inversion | Fixed-priority + locks | Multi-master stress scenario |
-| 1 KB boundary cross | Unvalidated burst start | Boundary math assertion |
-| Unaligned burst | Size/address mismatch | Alignment assertion |
-| NONSEQ during reset | Missing reset guard | Post-reset IDLE assertion |
+| HREADY stuck low | No wait-state limit in the slave | Wait-budget check [Integration policy] |
+| Repeated HWDATA action | Not gating on HREADY | Scoreboard or side-effect check |
+| Address instability | Master changes a waited NONSEQ/SEQ | `p_hold_in_wait` [Protocol §3.6] |
+| Single-cycle ERROR | Missing first ERROR cycle | `p_error_second_needs_first` [Protocol §5.1.3] |
+| Lock starvation | Long locked sequences to slow slaves | Lock-cycle budget [Integration policy] |
+| Fixed priority plus locks | High-priority master waits for a whole lock | Latency measurement [Integration policy] |
+| Slow IDLE | Slave inserts waits on IDLE or BUSY | `p_idle_busy_zero_wait_okay` [Protocol §3.2] |
+| 1 KB boundary cross | Incrementing burst over 1 KB | `p_incr_no_1kb_cross` [Protocol §3.5] |
+| Unaligned transfer | Address not aligned to HSIZE | `p_aligned` [Protocol §3.5] |
+| NONSEQ during reset | Missing reset guard | `p_reset_values` [Protocol §7.1.2] |
 
-Every one of these pitfalls has a corresponding **SVA assertion** that a verification engineer should add to their AHB checker.
+Most pitfalls map to a protocol assertion. The ones marked [Integration policy] check budgets your system chooses; keep them separate so a slow-but-legal slave is never reported as a protocol violation.
 In the next module, we will build a complete AHB verification environment, assembling these assertions into a systematic monitor and checker.
 
 <Quiz>
   <QuizQuestion
-    question="Why does the AHB ERROR response require exactly two clock cycles?"
+    question="Why does the AHB ERROR response require two clock cycles?"
     options={[
       "To give the slave time to prepare error data",
       "Because the pipeline means the master has already issued the next address — it needs one cycle to cancel it",
@@ -355,10 +404,10 @@ In the next module, we will build a complete AHB verification environment, assem
       "Because ERROR and RETRY share the same encoding"
     ]}
     correctAnswer="Because the pipeline means the master has already issued the next address — it needs one cycle to cancel it"
-    explanation="Due to pipelining, when the slave detects an error during the data phase of Transfer A, the master has already broadcast the address for Transfer B. The two-cycle response (HREADY=0 then HREADY=1) gives the master time to cancel the pipelined transfer."
+    explanation="Due to pipelining, when the slave detects an error during the data phase of Transfer A, the master has already broadcast the address for Transfer B. The first ERROR cycle has HREADY low, so B is not accepted; the master can drive IDLE in the second cycle to cancel it (§5.1.3)."
   />
   <QuizQuestion
-    question="What is the maximum address boundary that an AHB burst must not cross?"
+    question="Which address boundary must an incrementing AHB burst never cross?"
     options={[
       "4 KB (as in AXI)",
       "256 bytes",
@@ -366,17 +415,17 @@ In the next module, we will build a complete AHB verification environment, assem
       "Page boundary (4 KB or 64 KB depending on MMU)"
     ]}
     correctAnswer="1 KB"
-    explanation="The AHB specification mandates that no burst may cross a 1 KB address boundary. This rule exists because address decoders partition the address space into regions at 1 KB-aligned boundaries."
+    explanation="Masters must not start an incrementing burst that crosses a 1 KB boundary (§3.5). The smallest region a slave can own is 1 KB, so the rule keeps every burst inside one slave (§4.2). Wrapping bursts stay inside their own beats × size block."
   />
   <QuizQuestion
-    question="In a three-master system with fixed priorities, what causes priority inversion deadlock?"
+    question="M0 (low priority) is in the middle of a locked sequence to a slow slave when M2 (high priority) requests the same slave. What happens?"
     options={[
-      "The highest-priority master issues too many bursts",
-      "A low-priority master holds a lock, blocking a high-priority master, while a medium-priority master prevents the low-priority master from completing",
-      "All three masters request simultaneously",
-      "The default master is not configured"
+      "M2 waits until M0's locked sequence ends, including every wait state, because a locked sequence is indivisible",
+      "The arbiter immediately pre-empts M0 because M2 has higher priority",
+      "The bus deadlocks permanently",
+      "M1 (medium priority) is granted next and starves M0 forever"
     ]}
-    correctAnswer="A low-priority master holds a lock, blocking a high-priority master, while a medium-priority master prevents the low-priority master from completing"
-    explanation="This is the classic priority inversion: M0 (low) holds a lock that blocks M2 (high), but M1 (medium) keeps getting granted over M0, preventing M0 from finishing its locked sequence and releasing M2."
+    correctAnswer="M2 waits until M0's locked sequence ends, including every wait state, because a locked sequence is indivisible"
+    explanation="A locked sequence is indivisible and must be processed before any other transfers (§3.3). M2's wait is bounded by the length of the lock, so keep locks short and bound wait states (§5.1.2). Pre-empting the lock would break the atomicity it exists to provide."
   />
 </Quiz>

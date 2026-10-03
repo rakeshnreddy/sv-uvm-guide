@@ -1,62 +1,85 @@
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
-import AxiMemoryMathVisualizer from '../../src/components/visualizers/AxiMemoryMathVisualizer';
+import React from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-vi.mock('lucide-react', () => ({
-  RotateCcw: () => <div data-testid="icon-rotate-ccw" />
-}));
+import AxiMemoryMathVisualizer from "@/components/visualizers/AxiMemoryMathVisualizer";
 
-describe('AxiMemoryMathVisualizer', () => {
-  it('renders without crashing', () => {
+const lockIn = (label: RegExp | string) => {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+};
+const preset = (name: string) => fireEvent.click(within(screen.getByRole("radiogroup", { name: "Burst presets" })).getByRole("radio", { name }));
+
+describe("AxiMemoryMathVisualizer", () => {
+  it("hides the transfer table until the learner predicts the last address", () => {
     render(<AxiMemoryMathVisualizer />);
-    expect(screen.getByText('AXI Burst Memory Math')).toBeInTheDocument();
+    expect(screen.getByTestId("axi-memory-math-visualizer")).toBeInTheDocument();
+    expect(screen.getByText(/What is the address of the last transfer \(N = 4\)/)).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    lockIn("0x100C");
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    const table = screen.getByRole("table");
+    const addresses = within(table)
+      .getAllByRole("row")
+      .slice(1)
+      .map((r) => within(r).getAllByRole("cell")[1].textContent);
+    // IHI0022E A3.4.1: only the first transfer is unaligned.
+    expect(addresses).toEqual(["0x1003", "0x1004", "0x1008", "0x100C"]);
   });
 
-  it('shows default preset selected', () => {
+  it("diagnoses the 'start + N x size' misconception for unaligned INCR", () => {
     render(<AxiMemoryMathVisualizer />);
-    expect(screen.getByText('Basic INCR4 (32-bit)')).toBeInTheDocument();
+    lockIn("0x100F");
+    expect(screen.getByText(/Not quite/)).toBeInTheDocument();
+    expect(screen.getByText(/carries the start offset into every transfer/)).toBeInTheDocument();
   });
 
-  it('displays beat table with correct number of rows', () => {
+  it("asks about legality for a burst that crosses 4KB and reports the A3.4.1 violation", () => {
     render(<AxiMemoryMathVisualizer />);
-    // Default is INCR4: 4 beats
-    const rows = screen.getAllByText(/0x/);
-    expect(rows.length).toBeGreaterThanOrEqual(4);
+    preset("Crosses 4KB");
+    expect(screen.getByText("Is this burst legal?")).toBeInTheDocument();
+    lockIn("Illegal: crosses a 4KB boundary");
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/straddle 0x1000/).length).toBeGreaterThan(0);
   });
 
-  it('shows 4KB OK badge for legal bursts', () => {
+  it("treats a burst whose last byte is 0x0FFF as legal", () => {
     render(<AxiMemoryMathVisualizer />);
-    expect(screen.getByText('✓ 4KB OK')).toBeInTheDocument();
+    preset("Ends at 0x0FFF");
+    lockIn("0x0FFC");
+    expect(screen.getByText(/✓ Legal burst/)).toBeInTheDocument();
   });
 
-  it('shows 4KB VIOLATION badge for boundary-crossing preset', () => {
+  it("flags a WSTRB lane outside the active lanes but accepts a sparse strobe", () => {
     render(<AxiMemoryMathVisualizer />);
-    const crossingPreset = screen.getByText('4KB Boundary Crossing!');
-    fireEvent.click(crossingPreset);
-    expect(screen.getByText('✗ 4KB VIOLATION')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
+    // Transfer 1 of the 0x1003 burst only uses lane 3.
+    fireEvent.click(screen.getByRole("button", { name: /WSTRB\[2\] 0, inactive lane/ }));
+    expect(screen.getByText(/✕ Illegal: lane 2 carries no valid data/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /WSTRB\[2\] 1/ }));
+    fireEvent.click(screen.getByRole("button", { name: /WSTRB\[3\] 1, active lane/ }));
+    expect(screen.getByText(/✓ Legal sparse write/)).toBeInTheDocument();
   });
 
-  it('shows unaligned badge for unaligned preset', () => {
+  it("supports keyboard selection of AxBURST and re-arms the prediction", () => {
     render(<AxiMemoryMathVisualizer />);
-    const unalignedPreset = screen.getByText('Unaligned Start');
-    fireEvent.click(unalignedPreset);
-    expect(screen.getByText('⚠ Unaligned')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
+    expect(screen.getByRole("table")).toBeInTheDocument();
+    const incr = within(screen.getByRole("radiogroup", { name: "AxBURST" })).getByRole("radio", { name: "INCR" });
+    incr.focus();
+    fireEvent.keyDown(incr, { key: "ArrowRight" });
+    expect(within(screen.getByRole("radiogroup", { name: "AxBURST" })).getByRole("radio", { name: "WRAP" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    // An unaligned WRAP is illegal.
+    lockIn("Illegal: unaligned WRAP start");
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
   });
 
-  it('changes burst type when buttons are clicked', () => {
+  it("generates the driver assignment from the current burst", () => {
     render(<AxiMemoryMathVisualizer />);
-    const fixedBtn = screen.getByText('FIXED');
-    fireEvent.click(fixedBtn);
-    // In FIXED mode all addresses should be the same — check total bytes badge
-    expect(screen.getByText(/Total:/)).toBeInTheDocument();
-  });
-
-  it('switches bus width', () => {
-    render(<AxiMemoryMathVisualizer />);
-    const btn64 = screen.getByText('64-bit');
-    fireEvent.click(btn64);
-    // WSTRB should now show 8 cells per beat instead of 4
-    expect(screen.getByText('64-bit')).toBeInTheDocument();
+    preset("WRAP4 at 0x1008");
+    fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
+    expect(screen.getByText(/AWBURST = 2'b10; \/\/ WRAP/)).toBeInTheDocument();
+    expect(screen.getAllByText(/↺ wrapped/)).toHaveLength(1);
   });
 });

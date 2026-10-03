@@ -8,7 +8,7 @@ interface PracticeItem {
   title: string;
   description: string;
   status: 'completed' | 'wip' | 'planned';
-  type: 'Exercise' | 'Animation' | 'Diagram' | 'Chart' | 'Tool';
+  type: 'Exercise' | 'Interactive model' | 'Diagram' | 'Chart' | 'Tool';
 }
 
 const practiceItems: PracticeItem[] = [
@@ -23,7 +23,7 @@ const practiceItems: PracticeItem[] = [
   {
     href: '/exercises/uvm-phase-sorter',
     title: 'UVM Phase Sorter',
-    description: 'Correctly order the UVM runtime phases.',
+    description: 'Two lanes: run_phase beside the 12 runtime phases, plus top-down vs bottom-up function phases.',
     status: 'completed',
     type: 'Exercise',
   },
@@ -38,58 +38,58 @@ const practiceItems: PracticeItem[] = [
   {
     href: '/practice/visualizations/systemverilog-data-types',
     title: 'SystemVerilog Data Types',
-    description: 'Visualize the difference between 2-state and 4-state data types.',
+    description: 'Compare 2-state and 4-state types and see what new[N] really does to a dynamic array.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   {
     href: '/practice/visualizations/procedural-blocks',
-    title: 'Procedural Blocks Simulator',
-    description: 'See how initial, always, and final blocks execute.',
+    title: 'Procedural Blocks',
+    description: 'Predict when initial, always and final blocks run, and where <= updates land, on a tested process model.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   {
     href: '/practice/visualizations/concurrency',
-    title: 'Concurrency Visualizer',
-    description: 'Understand how concurrent processes execute in simulation.',
+    title: 'Fork/Join Lab',
+    description: 'One lane per process for join, join_any, join_none, disable fork and wait fork. Predict when the parent resumes.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   {
     href: '/practice/visualizations/state-machine-designer',
     title: 'State Machine Designer',
     description: 'Design and simulate a simple finite state machine.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   {
     href: '/practice/visualizations/randomization-explorer',
-    title: 'Randomization Explorer',
-    description: 'Explore the effects of constraints on randomization.',
+    title: 'Constraint Solution Space',
+    description: 'Exact probabilities for dist, soft and solve…before, plus the minimal conflicting set when randomize() fails.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   {
     href: '/practice/visualizations/assertion-builder',
-    title: 'SVA Assertion Builder',
-    description: 'Build SystemVerilog Assertions (SVA) with a guided interface.',
+    title: 'SVA Trace Lab',
+    description: 'Edit a trace, predict each attempt (pass, fail, vacuous), then evaluate with Preponed sampling.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   {
     href: '/practice/visualizations/coverage-analyzer',
-    title: 'Coverage Analyzer',
-    description: 'See how functional coverage is collected and reported.',
+    title: 'Coverage Closure Lab',
+    description: 'Build bins and crosses with ignore and illegal bins, predict samples to closure, and hunt the holes.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   {
     href: '/practice/visualizations/interface-signal-flow',
     title: 'Interface Signal Flow',
     description: 'Visualize how signals flow through an interface with modports.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   // Diagrams
   {

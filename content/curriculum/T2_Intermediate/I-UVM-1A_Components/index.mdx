@@ -18,11 +18,13 @@ import UVMTreeExplorer from '@/components/curriculum/interactives/UVMTreeExplore
 ### Objects Travel, Components Stay Anchored
 `uvm_object` derivatives (sequence items, configs) travel between components. `uvm_component` derivatives (agents, drivers, envs) stay anchored in the hierarchy and join UVM phasing.
 
+In the explorer, first compare the numbers on the tree for `build_phase` and `connect_phase`, then switch to the second view and predict what an agent builds when it forgets `super.build_phase`.
+
 <UVMTreeExplorer />
 
-- **Phase Participation:** A `uvm_component` participates in build, connect, and run phases. If you forget to call `super.build_phase`, child components never instantiate.
-- **Instantiation Context:** A `uvm_component` must have a name and a parent. A `uvm_object` just has a name.
-- **Copying Semantics:** `uvm_object` copies should go through `clone()` to preserve factory type information. Components are never copied mid-simulation.
+- **Phase Participation:** A `uvm_component` takes part in every phase (build, connect, run, and the rest). Children exist only because a parent's `build_phase` calls `type_id::create("name", this)`. `super.build_phase(phase)` creates nothing: it applies automatic configuration (`apply_config_settings` for `uvm_field_*` members) and, in `uvm_agent`, reads `is_active`. Forget it and those settings are silently ignored, while the children are still built.
+- **Instantiation Context:** A `uvm_component` takes a name and a parent; a `null` parent attaches it under `uvm_root`. Its full name (`get_full_name()`) is the parent's path plus its own name, for example `uvm_test_top.env.agt`. A `uvm_object` just has a name.
+- **Copying Semantics:** `uvm_object` copies should go through `clone()` to preserve factory type information. Components are never copied: calling `clone()` on a component reports an `ILLCLN` error.
 
 ### Syntax Breakdown
 
@@ -63,11 +65,14 @@ endclass
 3. **Use the appropriate registration macro:** `uvm_object_utils` for objects, `uvm_component_utils` for components.
 
 ## Interview Pitfalls
-**The `uvm_component` without a Phase Trap:**
-Interviewers will often present code where a component doesn't implement a `build_phase` or forgets to call `super.build_phase`. They will ask why child components aren't showing up in the hierarchy. The answer is always: "Because the base class `build_phase` propagates the tree construction via the factory. If you override it without calling `super`, construction stops."
+**The Missing Children Trap:**
+Interviewers often show a component whose children don't appear in the hierarchy and ask why. The base class `build_phase` creates nothing, so the answer is in your own `build_phase`: a missing or misnamed `type_id::create(..., this)` call, a parent that is not `this`, or an agent whose `is_active` is `UVM_PASSIVE`. The phasing engine then calls `build_phase` on every child that exists, top-down.
+
+**The Forgotten `super.build_phase` Trap:**
+Leaving out `super.build_phase(phase)` compiles and runs without a message. What it breaks is configuration: `uvm_field_*` members are not auto-configured from `uvm_config_db`, and a `uvm_agent` never reads `is_active`, so an agent the test made passive still builds a driver and sequencer.
 
 **The Copied Component Trap:**
-If someone asks "How do you `clone()` a `uvm_component`?", the answer is "You don't." Components are built during the elaboration phase and cannot be deep-copied or cloned dynamically during runtime like objects.
+If someone asks "How do you `clone()` a `uvm_component`?", the answer is "You don't." Components are created in `build_phase`, before simulation time starts, and live for the whole run. Creating one after `build_phase` has ended is a fatal (`ILLCRT`), and `clone()` on a component reports an error and returns `null`.
 
 ## Practice & Reinforce
 
@@ -83,13 +88,23 @@ If someone asks "How do you `clone()` a `uvm_component`?", the answer is "You do
       "explanation": "`uvm_sequence_item` extends `uvm_object` and is designed to represent transient data like transactions."
     },
     {
-      "question": "What happens if you omit the `uvm_component parent` argument from a component constructor?",
+      "question": "An agent's `build_phase` forgets `super.build_phase(phase)`. The test set its `is_active` to `UVM_PASSIVE` through `uvm_config_db`. What does the agent build?",
       "answers": [
-        {"text": "The compilation fails.", "correct": true},
-        {"text": "It attaches to uvm_top automatically.", "correct": false},
-        {"text": "It acts as a uvm_object.", "correct": false}
+        {"text": "Nothing: without super.build_phase no children are created.", "correct": false},
+        {"text": "Only the monitor, as configured.", "correct": false},
+        {"text": "The monitor, driver and sequencer: is_active keeps its default UVM_ACTIVE.", "correct": true},
+        {"text": "Compilation fails.", "correct": false}
       ],
-      "explanation": "A component constructor strictly requires a string name and a `uvm_component parent` handle. A mismatch will cause a SV compilation error."
+      "explanation": "Children are created by the agent's own `type_id::create` calls. `uvm_agent::build_phase` is what reads `is_active` from the configuration database, so skipping `super.build_phase` leaves it at `UVM_ACTIVE` without any message."
+    },
+    {
+      "question": "A component is constructed with `new(\"mon\", null)`. Where does it sit in the hierarchy?",
+      "answers": [
+        {"text": "Directly under uvm_root (uvm_top).", "correct": true},
+        {"text": "Nowhere: it acts as a uvm_object.", "correct": false},
+        {"text": "Under uvm_test_top.", "correct": false}
+      ],
+      "explanation": "`uvm_component::new` replaces a `null` parent with `uvm_root`. That is legal, but a component meant to belong to your environment should always get `this` as its parent."
     }
 ]} />
 

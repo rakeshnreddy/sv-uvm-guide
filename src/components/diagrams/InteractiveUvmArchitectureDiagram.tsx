@@ -1,7 +1,9 @@
 "use client";
 
 import React, { useMemo, useState } from 'react';
+import Image from 'next/image';
 import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 import { ArrowRight, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import SimplifiedUvmDiagram from './SimplifiedUvmDiagram';
@@ -17,10 +19,14 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
     return new Map(flow.map(node => [node.id, node]));
   }, [flow]);
 
-  const quickSummaryLink = useMemo(
-    () => verificationStackLinks.find(link => link.id === 'interactive'),
+  // The full-page view is a link, not a flow layer: selecting it must navigate,
+  // never become the active node (which used to fall back silently to node 0).
+  const fullViewLink = useMemo(
+    () => verificationStackLinks.find(link => link.id === 'interactive' && !link.componentId),
     [],
   );
+  const pathname = usePathname();
+  const showFullViewLink = Boolean(fullViewLink) && pathname !== fullViewLink?.href;
 
   const [activeId, setActiveId] = useState<string | null>(flow[0]?.id ?? null);
 
@@ -47,15 +53,15 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
       <section className="rounded-3xl border border-border/60 bg-card/80 p-6 shadow-lg shadow-primary/10">
         <header className="mb-6">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary/80">Explore the verification stack</p>
-          <h2 className="mt-2 text-2xl font-semibold text-foreground sm:text-3xl">
+          <h3 className="mt-2 text-2xl font-semibold text-foreground sm:text-3xl">
             See how each UVM layer hands work to the next
-          </h2>
+          </h3>
           <p className="mt-2 max-w-2xl text-sm text-muted-foreground">
-            Select a layer to review its responsibilities, downstream dependencies, and the lesson that dives deeper. The panel updates instantly without the heavy D3 canvas that previously froze the page.
+            Select a layer to review its responsibilities, what it feeds, and the lesson that goes deeper. This is a navigation map, not a simulation.
           </p>
         </header>
 
-        <div className="grid gap-6 lg:grid-cols-[minmax(260px,320px)_1fr]">
+        <div className="grid gap-6 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]">
           <ol className="flex flex-col gap-4" data-testid="uvm-flow-list">
             {flow.map((node, index) => {
               const isActive = node.id === activeNode.id;
@@ -64,7 +70,7 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
                 <li key={node.id} className="flex items-stretch gap-4">
                   <div className="flex flex-col items-center pt-1">
                     <span
-                      className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold transition-colors ${
+                      className={`flex h-8 w-8 items-center justify-center rounded-full border text-xs font-semibold transition-colors motion-reduce:transition-none ${
                         isActive
                           ? 'border-primary bg-primary text-primary-foreground'
                           : 'border-border/60 bg-background/70 text-muted-foreground'
@@ -80,7 +86,7 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
                     type="button"
                     data-node-id={node.id}
                     onClick={() => setActiveId(node.id)}
-                    className={`flex-1 rounded-2xl border px-4 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
+                    className={`flex-1 rounded-2xl border px-4 py-3 text-left transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 ${
                       isActive
                         ? 'border-primary/70 bg-primary/10 text-foreground shadow-inner'
                         : 'border-border/60 bg-background/70 text-muted-foreground hover:border-primary/50 hover:text-foreground'
@@ -94,7 +100,7 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
                     <div className="mt-1 flex items-center justify-between gap-2">
                       <span className="text-base font-semibold">{node.title}</span>
                       <ArrowRight
-                        className={`h-4 w-4 transition-transform ${isActive ? 'translate-x-1 text-primary' : 'text-muted-foreground'}`}
+                        className={`h-4 w-4 transition-transform motion-reduce:transition-none ${isActive ? 'translate-x-1 text-primary' : 'text-muted-foreground'}`}
                         aria-hidden="true"
                       />
                     </div>
@@ -123,7 +129,7 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
               {activeNode.focusAreas && activeNode.focusAreas.length > 0 && (
                 <div className="mt-5">
                   <h4 className="text-sm font-semibold text-foreground">Focus areas</h4>
-                  <ul className="mt-2 grid gap-2 sm:grid-cols-2">
+                  <ul className="mt-2 grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,200px),1fr))]">
                     {activeNode.focusAreas.map(area => (
                       <li
                         key={area}
@@ -173,23 +179,60 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
         </div>
       </section>
 
-      {quickSummaryLink && (
-        <div className="space-y-3" data-testid="uvm-quick-summary">
-          <div>
-            <h3 className="text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-              Need a quick summary?
-            </h3>
-            <p className="text-sm text-muted-foreground">
-              Prefer the lightweight overview? Use the quick links below or open the curriculum card directly.
-            </p>
-          </div>
-          <SimplifiedUvmDiagram
-            variant="selectable"
-            activeId={activeNode.id}
-            onNodeSelect={id => setActiveId(id)}
+      <div className="space-y-3" data-testid="uvm-quick-summary">
+        <div>
+          <h4 className="text-sm font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+            Need a quick summary?
+          </h4>
+          <p className="text-sm text-muted-foreground">
+            The overview picture, plus one card per layer. Selecting a card updates the panel above.
+          </p>
+        </div>
+        <div className="overflow-hidden rounded-3xl border border-border/60 bg-card/80">
+          <Image
+            src="/visuals/uvm-architecture.svg"
+            alt="Simplified UVM architecture overview: test, environment, agents, scoreboard and coverage"
+            width={960}
+            height={480}
+            className="w-full"
           />
         </div>
-      )}
+        <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))]">
+          {flow.map(node => {
+            const isActive = node.id === activeNode.id;
+            return (
+              <button
+                key={node.id}
+                type="button"
+                data-node-id={node.id}
+                onClick={() => setActiveId(node.id)}
+                aria-pressed={isActive}
+                className={`flex flex-col rounded-2xl border p-4 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50 motion-reduce:transition-none ${
+                  isActive
+                    ? 'border-primary/70 bg-primary/10 text-foreground'
+                    : 'border-border/60 bg-background/70 hover:border-primary/40 hover:bg-background/80'
+                }`}
+              >
+                <span className="flex items-center justify-between text-sm font-semibold text-primary">
+                  {node.title}
+                  <ArrowRight className={`h-4 w-4 ${isActive ? 'opacity-100' : 'opacity-60'}`} aria-hidden="true" />
+                </span>
+                <span className="mt-2 text-sm text-muted-foreground">{node.description}</span>
+              </button>
+            );
+          })}
+        </div>
+        {showFullViewLink && fullViewLink ? (
+          <Link
+            href={fullViewLink.href}
+            data-testid="uvm-full-view-link"
+            className="inline-flex items-center gap-2 text-sm font-medium text-primary underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          >
+            {fullViewLink.title} (full page)
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
+          </Link>
+        ) : null}
+      </div>
     </div>
   );
 };

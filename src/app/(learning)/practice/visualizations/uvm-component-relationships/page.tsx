@@ -1,17 +1,13 @@
-import dynamic from 'next/dynamic';
+import AnimatedUvmTestbenchDiagram from '@/components/diagrams/AnimatedUvmTestbenchDiagram';
 import { InfoPage } from '@/components/templates/InfoPage';
-
-const UvmComponentRelationshipVisualizer = dynamic(
-  () => import('@/components/diagrams/UvmComponentRelationshipVisualizer'),
-  {
-    ssr: false,
-    loading: () => <div className="flex h-64 items-center justify-center">Loading visualization...</div>,
-  },
-);
 
 const UvmComponentRelationshipVisualizerPage = () => {
   return (
-    <InfoPage title="UVM Component Relationships" diagrams={[<UvmComponentRelationshipVisualizer key="uvm-comp-rel" />]} />
+    <InfoPage
+      title="UVM Component Relationships"
+      description="Predict what an agent builds in active and passive mode, then inject the two classic agent bugs and watch the build log."
+      diagrams={[<AnimatedUvmTestbenchDiagram key="uvm-agent-topology" />]}
+    />
   );
 };
 

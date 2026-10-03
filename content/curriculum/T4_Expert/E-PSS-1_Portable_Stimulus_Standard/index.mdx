@@ -5,7 +5,7 @@ flashcards: "E-PSS-1_PSS"
 ---
 
 ## Quick Take
-- **What it is:** The Portable Stimulus Standard (PSS), ratified as IEEE 2401-2024, is a declarative language for expressing *test intent* — the abstract scenario logic — independently of any particular execution platform.
+- **What it is:** The Portable Test and Stimulus Standard (PSS) is an Accellera standard (version 2.1 was approved in October 2023). It is a declarative language for expressing *test intent* — the abstract scenario logic — independently of any particular execution platform.
 - **Why it matters:** Modern verification teams must run the same test scenarios on RTL simulation, FPGA prototypes, emulation platforms, and post-silicon validation. Without PSS, each target requires hand-porting of test logic, a quadratic maintenance burden that fragments coverage metrics and introduces target-specific bugs.
 - **Industry context:** As of 2025–2026, Cadence (Perspec PSS Compiler), Synopsys (VC PSS), and Siemens (Questa PSS) all ship commercial PSS compilers. Google and several RISC-V consortia have open-source PSS parsers for academic and pre-production use.
 
@@ -26,48 +26,33 @@ That is **four separate implementations** of the same logical test, each with in
 
 ### Actions, Components, and Activity Graphs
 
-PSS programs are built from three core concepts:
+PSS programs are built from four core concepts:
 
-1. **Components** — reusable building blocks that model system resources (memory controllers, DMA engines, processors).
-2. **Actions** — atomic test operations with input/output data flows (read, write, configure, verify).
-3. **Activity graphs** — declarative ordering of actions within a test scenario. Activity graphs express parallelism, sequencing, and repetition without imperative control flow.
+1. **Components** — reusable containers for actions, pools and resources (memory subsystems, DMA engines, processors).
+2. **Actions** — test operations. Their inputs and outputs are *flow objects*: a `buffer` (the producer completes before the consumer starts), a `stream` (producer and consumer run in parallel) or a `state`. Actions claim *resources* with `lock` (exclusive) or `share`.
+3. **Activities** — the scenario: which actions run, in sequence or in `parallel`. The tool completes whatever the activity leaves out.
+4. **Exec blocks** — `exec body C = """..."""` and `exec body SV = """..."""` templates that say how an action is realised on each target.
 
 ```pss
-// PSS 2.0: A memory read-after-write coherency test
-component mem_subsystem {
-  // Model a 4 KB memory region
-  resource mem_region {
-    addr_t base_addr;
-    int unsigned size = 4096;
+// Accellera PSS: two actions linked by a buffer flow object
+buffer mem_buf_s {
+  rand bit[31:0] addr;
+  rand bit[31:0] data;
+  constraint { addr in [0x1000..0x1FFC]; addr % 4 == 0; } // aligned, one 4 KB region
+}
+
+component mem_subsys_c {
+  pool mem_buf_s buf_p;   // where mem_buf_s objects are exchanged
+  bind buf_p *;
+
+  action write_a {
+    output mem_buf_s out_buf;
+    exec body C = """ mem_write32({{out_buf.addr}}, {{out_buf.data}}); """;
   }
 
-  action write_mem {
-    input  mem_region region;
-    rand   addr_t addr;
-    rand   data_t data;
-
-    constraint addr_range {
-      addr >= region.base_addr;
-      addr <  region.base_addr + region.size;
-      addr % 4 == 0; // 4-byte alignment
-    }
-  }
-
-  action read_mem {
-    input  mem_region region;
-    rand   addr_t addr;
-    output data_t data;
-
-    constraint addr_range {
-      addr >= region.base_addr;
-      addr <  region.base_addr + region.size;
-      addr % 4 == 0;
-    }
-  }
-
-  action verify_data {
-    input data_t expected;
-    input data_t actual;
+  action read_check_a {
+    input mem_buf_s in_buf;
+    exec body C = """ if (mem_read32({{in_buf.addr}}) != {{in_buf.data}}) test_fail(); """;
   }
 }
 ```
@@ -77,26 +62,23 @@ component mem_subsystem {
 The activity block defines the test scenario's execution order:
 
 ```pss
-action raw_coherency_test {
-  activity {
-    // Sequential: write then read then verify
-    do write_mem as wr;
-    do read_mem as rd with {
-      rd.addr == wr.addr; // Same address
-    };
-    do verify_data as vfy with {
-      vfy.expected == wr.data;
-      vfy.actual   == rd.data;
-    };
+component pss_top {
+  mem_subsys_c mem;
+
+  action raw_coherency_test {
+    activity {
+      do mem_subsys_c::write_a;      // produces a mem_buf_s
+      do mem_subsys_c::read_check_a; // its input binds to that buffer
+    }
   }
 }
 ```
 
-This is the fundamental power of PSS: the test intent is expressed with **what** and **when**, not **how**. The compiler determines the **how** for each target.
+No constraint links the two addresses: the read's input buffer *is* the write's output buffer, so address and data flow through the binding. The activity says **what** must happen and **in which order**; the `exec` blocks say **how** each action runs on each target; the tool picks the schedule, the bindings and the values.
 
 ### Interactive: Explore PSS Portability
 
-Use the visualizer below to see how the same abstract action graph is compiled to different target representations — UVM sequences, C functions, or emulation transactor calls:
+Pick a scenario, read its PSS source, and predict what a PSS tool does with the activity. Notice which actions the tool adds on its own, when it refuses to generate anything, and what changes between the C and UVM output:
 
 <PssIntentMapVisualizer />
 
@@ -139,10 +121,12 @@ Key differences from SV constraints:
 
 ## Compiling PSS to SystemVerilog UVM Sequences
 
-When targeting RTL simulation, the PSS compiler generates a UVM virtual sequence that:
-1. Maps each PSS `action` to a UVM sequence class.
-2. Maps each PSS `component` to a UVM `uvm_component` with analysis ports.
-3. Translates the `activity` graph into `start()` calls with proper ordering.
+When targeting RTL simulation, a PSS tool typically generates a UVM sequence (or virtual sequence) whose body:
+1. Runs the actions in the schedule the tool solved, including any it inferred.
+2. Expands each action's `exec body SV` template (usually starting a UVM sequence on the right sequencer) with the solved values filled in.
+3. Leaves checking to the UVM environment: the scoreboard already compares monitored traffic against its reference model.
+
+The exact mapping (a sequence per action, a virtual sequence per scenario, or calls into a runtime library) is tool-dependent.
 
 ### Side-by-Side: PSS vs Generated UVM
 
@@ -150,44 +134,39 @@ When targeting RTL simulation, the PSS compiler generates a UVM virtual sequence
 // ── PSS Source ──
 action raw_coherency_test {
   activity {
-    do write_mem as wr;
-    do read_mem as rd with {
-      rd.addr == wr.addr;
-    };
-    do verify_data;
+    do mem_subsys_c::write_a;
+    do mem_subsys_c::read_check_a;
   }
 }
 ```
 
-The generated UVM equivalent (simplified):
+The generated UVM equivalent (simplified; the values are the ones the tool solved):
 
 ```systemverilog
 // ── Generated UVM Sequence ──
 class raw_coherency_test_seq extends uvm_sequence #(uvm_sequence_item);
   `uvm_object_utils(raw_coherency_test_seq)
 
-  write_mem_seq wr;
-  read_mem_seq  rd;
+  mem_wr_seq wr;
+  mem_rd_seq rd;
 
   function new(string name = "raw_coherency_test_seq");
     super.new(name);
   endfunction
 
   task body();
-    // Step 1: Write
-    wr = write_mem_seq::type_id::create("wr");
+    // Step 1: write_a (its exec body SV, solved values filled in)
+    wr = mem_wr_seq::type_id::create("wr");
+    wr.addr = 32'h0000_1A3C; wr.data = 32'h5E2D_19A7;
     wr.start(m_sequencer);
 
-    // Step 2: Read (same address as write)
-    rd = read_mem_seq::type_id::create("rd");
-    rd.addr = wr.addr; // Cross-action constraint resolved
+    // Step 2: read_check_a reads the same buffer, so the same address
+    rd = mem_rd_seq::type_id::create("rd");
+    rd.addr = 32'h0000_1A3C;
     rd.start(m_sequencer);
 
-    // Step 3: Verify
-    if (rd.data !== wr.data)
-      `uvm_error("RAW_COH", $sformatf(
-        "Mismatch at addr=0x%0h: wrote=0x%0h read=0x%0h",
-        wr.addr, wr.data, rd.data))
+    // No compare here: the scoreboard checks every monitored read
+    // against its reference memory, whoever started it.
   endtask
 endclass
 ```
@@ -345,7 +324,7 @@ Each generated test maintains semantic equivalence to the PSS source while targe
 
 ## References & Next Topics
 
-- **IEEE 2401-2024** — The Portable Stimulus Standard, defining the PSS 2.0 language specification.
+- **Accellera Portable Test and Stimulus Standard (PSS) 2.1** (approved October 2023) — the language specification, published by Accellera.
 - **Accellera PSS Working Group** — [accellera.org/activities/working-groups/portable-stimulus](https://accellera.org/activities/working-groups/portable-stimulus) for the latest specification and reference implementations.
 - **Prerequisite:** [I-UVM-3A: Sequence Fundamentals](/curriculum/t2-intermediate/i-uvm-3a-fundamentals) — understand UVM sequences before seeing how PSS generates them.
 - **Prerequisite:** [A-UVM-8: Multi-Agent Topologies](/curriculum/t3-advanced/a-uvm-8-multi-agent-topologies) — virtual sequencers are the primary PSS compilation target for multi-agent environments.

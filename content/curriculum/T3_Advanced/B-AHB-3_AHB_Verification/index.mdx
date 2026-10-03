@@ -136,12 +136,12 @@ This is because during a wait state, the address phase of the next transfer hasn
 ## 3. Checker: Protocol Compliance
 
 The checker runs alongside the monitor and validates every cycle against the AHB specification rules.
-A production AHB checker typically contains 20–40 SVA properties.  Here are the essential ones:
+A production AHB checker typically contains 20–40 SVA properties. Each one below is tagged **[Protocol §x]** (a rule in Arm IHI0033B.b) or **[Integration policy]** (a budget your system chooses). Keep the two apart: a slow but legal slave must never be reported as a protocol violation.
 
 ### 3A. Core Protocol Assertions
 
 ```systemverilog
-module ahb_protocol_checker (
+module ahb_protocol_checker #(parameter int MAX_WAIT = 16) (
   input logic        HCLK,
   input logic        HRESETn,
   input logic [31:0] HADDR,
@@ -152,97 +152,150 @@ module ahb_protocol_checker (
   input logic        HREADY,
   input logic        HRESP
 );
+  localparam logic [1:0] IDLE = 2'b00, BUSY = 2'b01, NONSEQ = 2'b10, SEQ = 2'b11;
+  localparam logic [2:0] SINGLE = 3'b000, INCR = 3'b001,
+                         WRAP4 = 3'b010, WRAP8 = 3'b100, WRAP16 = 3'b110;
+
+  // A beat's address phase ends (is accepted) at this edge
+  wire beat_accepted = HREADY && (HTRANS inside {NONSEQ, SEQ});
 
   // ═══════════════════════════════════════════════
-  // 1. Address stability during wait states
+  // 1. Wait states: hold, with the spec's exceptions
   // ═══════════════════════════════════════════════
-  property p_addr_stable;
+  // [Protocol §3.6.1, §3.6.2, §3.5.2] a waited NONSEQ/SEQ holds,
+  // unless the master cancels after an ERROR first cycle
+  property p_hold_in_wait;
     @(posedge HCLK) disable iff (!HRESETn)
-      (!HREADY && HTRANS != 2'b00) |=> $stable(HADDR);
+      (!HREADY && HTRANS inside {NONSEQ, SEQ}) |=>
+          ($stable(HTRANS) && $stable(HADDR) && $stable({HWRITE, HSIZE, HBURST}))
+       || ($past(HRESP) && HTRANS == IDLE);
   endproperty
-  assert property (p_addr_stable)
-    else $error("[AHB-CHK] HADDR changed during wait state");
+  assert property (p_hold_in_wait)
+    else $error("[AHB-CHK] Waited NONSEQ/SEQ changed without an ERROR to cancel it");
 
-  // ═══════════════════════════════════════════════
-  // 2. Control signal stability during wait states
-  // ═══════════════════════════════════════════════
-  property p_ctrl_stable;
+  // [Protocol §3.6.1, §3.5.2] what a waited BUSY may change into
+  property p_busy_in_wait;
     @(posedge HCLK) disable iff (!HRESETn)
-      (!HREADY && HTRANS != 2'b00) |=>
-        $stable(HTRANS) && $stable(HWRITE) && $stable(HSIZE) && $stable(HBURST);
+      (!HREADY && HTRANS == BUSY) |=>
+          (HTRANS inside {BUSY, SEQ} && $stable(HADDR))
+       || ($past(HBURST) == INCR && HTRANS inside {IDLE, NONSEQ})
+       || ($past(HRESP) && HTRANS == IDLE);
   endproperty
-  assert property (p_ctrl_stable)
-    else $error("[AHB-CHK] Control signals changed during wait state");
+  assert property (p_busy_in_wait)
+    else $error("[AHB-CHK] Illegal change of a waited BUSY");
 
   // ═══════════════════════════════════════════════
-  // 3. Two-cycle ERROR response protocol
+  // 2. Two-cycle ERROR response, both directions
   // ═══════════════════════════════════════════════
-  property p_error_phase1;
+  // [Protocol §5.1.3, Table 5-2] first ERROR cycle -> second ERROR cycle
+  property p_error_first_then_second;
     @(posedge HCLK) disable iff (!HRESETn)
       (HRESP && !HREADY) |=> (HRESP && HREADY);
   endproperty
-  assert property (p_error_phase1)
-    else $error("[AHB-CHK] ERROR response did not complete two-cycle protocol");
+  assert property (p_error_first_then_second)
+    else $error("[AHB-CHK] ERROR first cycle not followed by the second");
+
+  // [Protocol §5.1.3, Table 5-2] an ERROR completion needs a first cycle.
+  // This is the property that catches a one-cycle ERROR.
+  property p_error_second_needs_first;
+    @(posedge HCLK) disable iff (!HRESETn)
+      (HRESP && HREADY) |-> $past(HRESP && !HREADY);
+  endproperty
+  assert property (p_error_second_needs_first)
+    else $error("[AHB-CHK] One-cycle ERROR: no first cycle with HREADY low");
 
   // ═══════════════════════════════════════════════
-  // 4. HREADY timeout (configurable)
+  // 3. IDLE and BUSY get a zero-wait OKAY
   // ═══════════════════════════════════════════════
-  parameter MAX_WAIT = 16;
-  property p_hready_timeout;
+  // [Protocol §3.2 Table 3-1]
+  property p_idle_busy_zero_wait_okay;
+    @(posedge HCLK) disable iff (!HRESETn)
+      (HREADY && HTRANS inside {IDLE, BUSY}) |=> (HREADY && !HRESP);
+  endproperty
+  assert property (p_idle_busy_zero_wait_okay)
+    else $error("[AHB-CHK] IDLE/BUSY did not get a zero-wait OKAY");
+
+  // ═══════════════════════════════════════════════
+  // 4. Burst rules
+  // ═══════════════════════════════════════════════
+  // [Protocol §3.2 Table 3-1] a SEQ beat has the same control as the previous beat
+  property p_seq_ctrl_matches;
+    @(posedge HCLK) disable iff (!HRESETn)
+      (HREADY && HTRANS == SEQ) |->
+        {HWRITE, HSIZE, HBURST} == $past({HWRITE, HSIZE, HBURST}, 1, beat_accepted);
+  endproperty
+  assert property (p_seq_ctrl_matches)
+    else $error("[AHB-CHK] Control changed inside a burst");
+
+  // [Protocol §3.2 Table 3-1] incrementing SEQ address = previous address + size
+  property p_seq_addr_increments;
+    @(posedge HCLK) disable iff (!HRESETn)
+      (HREADY && HTRANS == SEQ && !(HBURST inside {WRAP4, WRAP8, WRAP16})) |->
+        HADDR == $past(HADDR, 1, beat_accepted) + (32'd1 << HSIZE);
+  endproperty
+  assert property (p_seq_addr_increments)
+    else $error("[AHB-CHK] SEQ address is not the previous address + size");
+
+  // [Protocol §3.5, §4.2] incrementing bursts never cross 1KB.
+  // Per beat, so undefined-length INCR is covered; WRAP bursts are exempt.
+  property p_incr_no_1kb_cross;
+    @(posedge HCLK) disable iff (!HRESETn)
+      (HREADY && HTRANS == SEQ && !(HBURST inside {WRAP4, WRAP8, WRAP16})) |->
+        HADDR[31:10] == $past(HADDR[31:10], 1, beat_accepted);
+  endproperty
+  assert property (p_incr_no_1kb_cross)
+    else $error("[AHB-CHK] Incrementing burst crossed a 1KB boundary at 0x%08h", HADDR);
+
+  // [Protocol §3.5] every transfer in a burst is aligned, not just the first
+  property p_aligned;
+    @(posedge HCLK) disable iff (!HRESETn)
+      (HTRANS inside {NONSEQ, SEQ}) |-> ((HADDR & ((32'd1 << HSIZE) - 32'd1)) == 32'd0);
+  endproperty
+  assert property (p_aligned)
+    else $error("[AHB-CHK] Unaligned transfer: addr=0x%08h size=%0d", HADDR, HSIZE);
+
+  // [Protocol §3.5.1] a SINGLE is followed by IDLE or NONSEQ, never BUSY or SEQ
+  property p_no_busy_after_single;
+    @(posedge HCLK) disable iff (!HRESETn)
+      (HREADY && HTRANS == NONSEQ && HBURST == SINGLE) |=> HTRANS inside {IDLE, NONSEQ};
+  endproperty
+  assert property (p_no_busy_after_single)
+    else $error("[AHB-CHK] BUSY or SEQ after a SINGLE");
+
+  // ═══════════════════════════════════════════════
+  // 5. Reset values
+  // ═══════════════════════════════════════════════
+  // [Protocol §7.1.2] checked DURING reset, so there is no disable iff
+  property p_reset_values;
+    @(posedge HCLK)
+      !HRESETn |-> (HTRANS == IDLE && HREADY);
+  endproperty
+  assert property (p_reset_values)
+    else $error("[AHB-CHK] Not IDLE, or HREADY low, during reset");
+
+  // ═══════════════════════════════════════════════
+  // Integration policy (not protocol)
+  // ═══════════════════════════════════════════════
+  // The spec only recommends at most 16 wait states (§5.1.2), so this is a warning.
+  property p_wait_budget;
     @(posedge HCLK) disable iff (!HRESETn)
       $fell(HREADY) |-> ##[1:MAX_WAIT] HREADY;
   endproperty
-  assert property (p_hready_timeout)
-    else $error("[AHB-CHK] HREADY low for > %0d cycles", MAX_WAIT);
-
-  // ═══════════════════════════════════════════════
-  // 5. No burst crosses 1 KB boundary
-  // ═══════════════════════════════════════════════
-  property p_1kb_boundary;
-    @(posedge HCLK) disable iff (!HRESETn)
-      (HTRANS == 2'b10 && HBURST != 3'b000) |->
-        (HADDR[9:0] + (1 << HSIZE) * burst_length(HBURST)) <= 11'h400;
-  endproperty
-  assert property (p_1kb_boundary)
-    else $error("[AHB-CHK] Burst crosses 1 KB boundary at 0x%08h", HADDR);
-
-  // ═══════════════════════════════════════════════
-  // 6. Burst address alignment
-  // ═══════════════════════════════════════════════
-  property p_alignment;
-    @(posedge HCLK) disable iff (!HRESETn)
-      (HTRANS == 2'b10) |-> ((HADDR & ((1 << HSIZE) - 1)) == '0);
-  endproperty
-  assert property (p_alignment)
-    else $error("[AHB-CHK] Unaligned transfer: addr=0x%08h size=%0d", HADDR, HSIZE);
-
-  // ═══════════════════════════════════════════════
-  // 7. IDLE after reset
-  // ═══════════════════════════════════════════════
-  property p_idle_after_reset;
-    @(posedge HCLK)
-      $rose(HRESETn) |-> (HTRANS == 2'b00);
-  endproperty
-  assert property (p_idle_after_reset)
-    else $error("[AHB-CHK] Non-IDLE transfer immediately after reset");
-
-  // Helper function for burst length
-  function automatic int burst_length(input logic [2:0] hburst);
-    case (hburst)
-      3'b000: return 1;   // SINGLE
-      3'b001: return 0;   // INCR (undefined length — skip check)
-      3'b010: return 4;   // WRAP4
-      3'b011: return 4;   // INCR4
-      3'b100: return 8;   // WRAP8
-      3'b101: return 8;   // INCR8
-      3'b110: return 16;  // WRAP16
-      3'b111: return 16;  // INCR16
-      default: return 1;
-    endcase
-  endfunction
+  assert property (p_wait_budget)
+    else $warning("[AHB-CHK] HREADY low for > %0d cycles (policy budget)", MAX_WAIT);
 
 endmodule
 ```
+
+`$past(expr, 1, beat_accepted)` returns the value at the most recent earlier edge where a beat was accepted (IEEE 1800-2023 §16.9.3), which is the previous beat even if BUSY cycles or wait states came in between.
+
+Why these forms and not simpler ones:
+
+- **`p_error_second_needs_first`** is the one that catches a slave driving ERROR for a single cycle with `HREADY` high. `p_error_first_then_second` alone never even starts on that bug, because its antecedent needs `HREADY` low.
+- **`p_hold_in_wait`** replaces a plain `$stable(HTRANS)` check, which fires on legal behaviour: BUSY→SEQ during a wait (§3.6.1) and IDLE after an ERROR (§3.5.2). `p_busy_in_wait` covers the BUSY cases.
+- **`p_incr_no_1kb_cross`** checks each beat. A start-address formula fires on legal WRAP bursts and cannot size an undefined-length INCR.
+
+Still missing from this list, and worth adding next: the beat count of fixed-length bursts (INCR4 must deliver four beats unless an ERROR cancels it, §3.5.2), and no fixed-length burst ending in BUSY (§3.5.1). Both need a small burst-tracking state machine beside the properties.
 
 ### 3B. Assertion Severity Strategy
 
@@ -259,80 +312,83 @@ endmodule
 Protocol assertions prove the design *doesn't violate rules*.
 Functional coverage proves you *exercised enough scenarios* to trust the assertions.
 
-### 4A. Transfer-Level Coverage
+### 4A. Pin-Level Transfer Coverage
 
 ```systemverilog
-covergroup ahb_transfer_cg @(posedge HCLK iff HREADY && HTRANS inside {2'b10, 2'b11});
-  // Transfer type
+// Every HTRANS value with and without a wait state, plus the transitions
+// the spec singles out (BUSY inside bursts, burst end or cancel after ERROR).
+covergroup ahb_htrans_cg @(posedge HCLK iff HRESETn);
   cp_trans: coverpoint HTRANS {
+    bins idle   = {2'b00};
+    bins busy   = {2'b01};
     bins nonseq = {2'b10};
     bins seq    = {2'b11};
   }
+  cp_waited: coverpoint HREADY {
+    bins waited = {1'b0};
+    bins ready  = {1'b1};
+  }
+  // e.g. IDLE->NONSEQ or BUSY->SEQ while the slave waits (§3.6.1)
+  cx_trans_waited: cross cp_trans, cp_waited;
 
-  // Transfer direction
-  cp_write: coverpoint HWRITE {
+  cp_trans_seq: coverpoint HTRANS {
+    bins nonseq_busy = (2'b10 => 2'b01);
+    bins busy_seq    = (2'b01 => 2'b11);
+    bins seq_busy    = (2'b11 => 2'b01);
+    bins seq_idle    = (2'b11 => 2'b00);   // burst end, or cancel after ERROR
+  }
+
+  // First ERROR cycle while the next SEQ beat waits on the address bus
+  cp_error_mid_burst: coverpoint (HRESP && !HREADY && HTRANS == 2'b11) {
+    bins hit = {1'b1};
+  }
+endgroup
+```
+
+### 4B. Transaction Coverage: Bursts, Waits and Errors
+
+The monitor samples this once per completed transfer. Declare it in your coverage package and call `cg.sample(txn)` from the subscriber's `write()`.
+
+```systemverilog
+covergroup ahb_txn_cg with function sample(ahb_transaction t);
+  cp_write: coverpoint t.write {
     bins read  = {1'b0};
     bins write = {1'b1};
   }
-
-  // Transfer size
-  cp_size: coverpoint HSIZE {
+  cp_size: coverpoint t.size {
     bins byte_txn = {3'b000};
     bins half_txn = {3'b001};
     bins word_txn = {3'b010};
   }
-
-  // Burst type
-  cp_burst: coverpoint HBURST {
-    bins single = {3'b000};
-    bins incr   = {3'b001};
-    bins wrap4  = {3'b010};
-    bins incr4  = {3'b011};
-    bins wrap8  = {3'b100};
-    bins incr8  = {3'b101};
+  cp_burst: coverpoint t.burst {
+    bins single = {3'b000};  bins incr   = {3'b001};
+    bins wrap4  = {3'b010};  bins incr4  = {3'b011};
+    bins wrap8  = {3'b100};  bins incr8  = {3'b101};
+    bins wrap16 = {3'b110};  bins incr16 = {3'b111};
+  }
+  cp_beat: coverpoint t.trans {
+    bins first_beat = {2'b10};   // NONSEQ
+    bins later_beat = {2'b11};   // SEQ
+  }
+  // The monitor counts every HREADY-low cycle, including the first ERROR cycle.
+  cp_wait_cycles: coverpoint t.wait_cycles {
+    bins zero_wait  = {0};
+    bins one_wait   = {1};
+    bins few_waits  = {[2:4]};
+    bins many_waits = {[5:16]};
+    bins over_16    = {[17:$]};  // legal, but above the spec's recommendation (§5.1.2)
+  }
+  cp_resp: coverpoint t.resp {
+    bins okay  = {1'b0};
+    bins error = {1'b1};
   }
 
-  // Direction × Burst cross
   cx_write_burst: cross cp_write, cp_burst;
-
-  // Direction × Size cross
-  cx_write_size: cross cp_write, cp_size;
-endgroup
-```
-
-### 4B. Wait-State Coverage
-
-This is often overlooked but critical for performance validation:
-
-```systemverilog
-covergroup ahb_wait_state_cg @(transaction_complete);
-  cp_wait_cycles: coverpoint txn.wait_cycles {
-    bins zero_wait    = {0};
-    bins one_wait     = {1};
-    bins few_waits    = {[2:4]};
-    bins many_waits   = {[5:15]};
-    bins extreme_wait = {[16:$]};
-  }
-
-  // Wait states per burst type
-  cx_wait_burst: cross cp_wait_cycles, cp_burst;
-endgroup
-```
-
-### 4C. Error Response Coverage
-
-```systemverilog
-covergroup ahb_error_cg @(transaction_complete);
-  cp_resp: coverpoint txn.resp {
-    bins okay  = {0};
-    bins error = {1};
-  }
-
-  // Errors on reads vs writes
-  cx_resp_dir: cross cp_resp, cp_write;
-
-  // Errors during bursts
-  cx_resp_burst: cross cp_resp, cp_burst;
+  cx_write_size:  cross cp_write, cp_size;
+  cx_wait_burst:  cross cp_wait_cycles, cp_burst;
+  cx_resp_dir:    cross cp_resp, cp_write;
+  cx_resp_burst:  cross cp_resp, cp_burst;
+  cx_resp_beat:   cross cp_resp, cp_beat;   // ERROR on a first beat vs mid-burst
 endgroup
 ```
 
@@ -344,7 +400,8 @@ endgroup
 
 ## 5. Scoreboard Strategy
 
-For an AHB slave verification environment, the scoreboard compares expected vs. actual memory contents:
+For an AHB slave verification environment, the scoreboard compares expected vs. actual memory contents.
+AHB has no write strobes: the active byte lanes come from `HADDR` and `HSIZE` (little-endian lane = address modulo bus bytes, §6.2.1). So the reference model stores **bytes**, and a byte write at `0x1001` is visible to a later word read at `0x1000`.
 
 ```systemverilog
 class ahb_scoreboard extends uvm_scoreboard;
@@ -352,8 +409,8 @@ class ahb_scoreboard extends uvm_scoreboard;
 
   uvm_analysis_imp #(ahb_transaction, ahb_scoreboard) ap;
 
-  // Reference model: shadow memory
-  bit [31:0] shadow_mem [bit [31:0]];
+  // Reference model: one entry per BYTE address (32-bit, little-endian bus)
+  bit [7:0] shadow_mem [bit [31:0]];
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -361,32 +418,31 @@ class ahb_scoreboard extends uvm_scoreboard;
   endfunction
 
   function void write(ahb_transaction txn);
-    if (txn.resp == 1) begin
-      // ERROR response — skip checking but log it
-      `uvm_info("SCB", $sformatf("ERROR response for %s", txn.convert2string()), UVM_MEDIUM)
-      return;
-    end
-
-    if (txn.write) begin
-      // Write: update shadow memory
-      shadow_mem[txn.addr] = apply_strobe(txn.data, txn.size, txn.addr);
-      `uvm_info("SCB", $sformatf("WRITE shadow[0x%08h] = 0x%08h", txn.addr, shadow_mem[txn.addr]), UVM_HIGH)
-    end else begin
-      // Read: compare against shadow memory
-      if (shadow_mem.exists(txn.addr)) begin
-        if (shadow_mem[txn.addr] !== txn.data) begin
-          `uvm_error("SCB", $sformatf("MISMATCH at 0x%08h: expected=0x%08h actual=0x%08h",
-            txn.addr, shadow_mem[txn.addr], txn.data))
-        end else begin
-          `uvm_info("SCB", $sformatf("MATCH at 0x%08h", txn.addr), UVM_HIGH)
-        end
-      end else begin
-        `uvm_warning("SCB", $sformatf("Read from unwritten address 0x%08h — cannot verify", txn.addr))
+    int unsigned nbytes = 1 << txn.size;
+    for (int unsigned i = 0; i < nbytes; i++) begin
+      bit [31:0]   a    = txn.addr + i;
+      int unsigned lane = a % 4;                    // byte lane on a 32-bit bus
+      if (txn.resp == 1) begin
+        // Policy choice: a failed write leaves the byte unknown.
+        // A failed read carries no valid data (§6.1.2).
+        if (txn.write) shadow_mem.delete(a);
+        continue;
+      end
+      if (txn.write) begin
+        shadow_mem[a] = txn.data[8*lane +: 8];
+      end else if (!shadow_mem.exists(a)) begin
+        `uvm_warning("SCB", $sformatf("Read of unwritten byte 0x%08h: cannot check", a))
+      end else if (shadow_mem[a] !== txn.data[8*lane +: 8]) begin
+        `uvm_error("SCB", $sformatf("MISMATCH at byte 0x%08h: expected 0x%02h, read 0x%02h",
+                                    a, shadow_mem[a], txn.data[8*lane +: 8]))
       end
     end
   endfunction
 endclass
 ```
+
+> [!NOTE]
+> What a slave does with a write that gets an ERROR response is not fixed by the protocol. This scoreboard forgets those bytes. If your slave guarantees "no write on ERROR", check that instead.
 
 ---
 
@@ -397,7 +453,7 @@ When a test fails, the waveform can be overwhelming.  These patterns let you tri
 ### Pattern 1: The "HREADY Trace"
 
 **Always start by finding `HREADY` transitions.**  If `HREADY` drops, find *which slave* pulled it low and *why*.
-In a multi-slave system, each slave's `HREADY` output feeds into a multiplexor — the arbiter's `HSEL` signal tells you which slave is active.
+In a multi-slave system, each slave's `HREADYOUT` feeds the multiplexor that drives `HREADY` (§4.3). The decoder's `HSELx` (§4.2), registered at the last edge where `HREADY` was high, tells you which slave owns the current data phase.
 
 ### Pattern 2: The "Transaction Boundary Finder"
 
@@ -407,7 +463,7 @@ Count `SEQ` beats after each `NONSEQ` to reconstruct the burst structure.
 ### Pattern 3: The "ERROR Forensics"
 
 When you see `HRESP = ERROR`:
-1. Go back two cycles to find the address that caused the error.
+1. Find the address phase that was accepted at the last edge with `HREADY` high before the ERROR started. With OKAY wait states before the ERROR, that is more than two cycles back.
 2. Check whether the address falls within the slave's address range.
 3. Check whether the access type (read/write) and size are legal for that register.
 4. Check whether a protection violation (`HPROT`) occurred.
@@ -428,22 +484,21 @@ These are real questions asked in verification engineer interviews at semiconduc
 
 > The monitor buffers address-phase information (HADDR, HTRANS, HWRITE, HSIZE, HBURST) and pairs it with the data-phase signals (HWDATA/HRDATA, HRESP) that arrive one or more cycles later. The monitor only captures the address phase when HREADY is high, because during a wait state the pending address hasn't been accepted yet.
 
-**Q2: Why is the 1 KB boundary rule specific to AHB and not AXI?**
+**Q2: Why does AHB use a 1 KB burst boundary while AXI uses 4 KB?**
 
-> AHB uses a shared bus with centralized address decoding. The address decoder maps slaves to 1 KB-aligned regions. A burst crossing this boundary would target two different slaves, which the single-bus architecture cannot handle. AXI uses a point-to-point interconnect and has a larger 4 KB boundary rule because AXI address decoders typically work at page granularity.
+> Both rules keep a burst inside one slave. In AHB, the smallest address region a slave can own is 1 KB, and masters never perform incrementing transfers over a 1 KB boundary, so a burst never crosses an address decode boundary (IHI0033B.b §4.2, §3.5). WRAP bursts are exempt because they stay inside their own beats × size block. AXI forbids any burst from crossing a 4 KB boundary; the spec says this prevents a burst from crossing a boundary between two slaves and limits the number of address increments a slave must support (IHI0022E A3.4.1). Every 4 KB boundary is also a 1 KB boundary, so a legal AHB burst never crosses 4 KB either.
 
-**Q3: How would you verify that an AHB arbiter correctly prevents priority inversion?**
+**Q3: How would you verify that locked transfers cannot starve a high-priority master forever?**
 
-> Create a multi-master test scenario where:
-> (1) A low-priority master holds a locked transfer,
-> (2) A high-priority master requests the bus,
-> (3) A medium-priority master continuously requests.
-> Assert that all masters complete their transactions within a bounded time window.
-> The arbiter should implement priority inheritance or aging to prevent the medium-priority master from starving the low-priority locked master.
+> A locked sequence is indivisible and must be processed before any other transfers (§3.3), so a high-priority master that wants the same slave legitimately waits for the whole sequence, wait states included. The test is therefore about *bounds*, not about pre-emption:
+> (1) a low-priority master runs the longest locked sequence your software uses, to the slowest slave;
+> (2) higher-priority masters request continuously;
+> (3) measure every master's worst-case wait and compare it with the latency budget.
+> That budget is integration policy. The arbiter is not defined by the AHB5 spec (§4.1), and it must never break a lock to meet a budget.
 
 **Q4: What is the minimum set of protocol assertions for an AHB VIP?**
 
-> At minimum: (1) address/control stability during wait states, (2) two-cycle ERROR response protocol, (3) HREADY timeout, (4) 1 KB boundary check, (5) burst alignment, (6) IDLE after reset. A production VIP typically adds 15-20 more covering burst sequencing, HBURST consistency, and HMASTLOCK rules.
+> Protocol: (1) hold during wait states *with* the §3.6 exceptions, (2) the two-cycle ERROR in both directions, (3) zero-wait OKAY for IDLE and BUSY, (4) SEQ control and address consistency, (5) the per-beat 1 KB check for incrementing bursts, (6) alignment of every transfer, (7) IDLE and HREADY high during reset. Integration policy, reported separately: the wait-state budget and lock-duration budget. A production VIP adds burst beat counting, early-termination handling and `HMASTLOCK` rules.
 
 ---
 
@@ -458,7 +513,7 @@ A complete AHB verification environment has four layers:
 | **Correctness** | Scoreboard | Compare DUT behavior against a reference model |
 | **Completeness** | Coverage | Prove you exercised enough scenarios to trust the results |
 
-In the next module, you will build an AHB-Lite monitor and checker from scratch in a hands-on lab.
+In the hands-on lab below, you will build an AHB-Lite monitor and checker from scratch.
 
 <Quiz>
   <QuizQuestion
@@ -473,15 +528,15 @@ In the next module, you will build an AHB-Lite monitor and checker from scratch 
     explanation="During a wait state, the master holds the address stable but the transfer has not progressed. If the monitor captures the address on every cycle, it will produce duplicate transactions in the analysis stream, corrupting the scoreboard."
   />
   <QuizQuestion
-    question="What is the minimum number of SVA assertions considered essential for a production AHB protocol checker?"
+    question="Which of these checks is an integration policy rather than an AHB protocol rule?"
     options={[
-      "2-3 assertions",
-      "6-7 core assertions covering address stability, ERROR protocol, timeout, boundary, alignment, and reset",
-      "Only 1: the HREADY timeout",
-      "50+ assertions for full compliance"
+      "An ERROR completion must be preceded by an ERROR cycle with HREADY low",
+      "HREADY must not stay low for more than 16 cycles",
+      "An incrementing burst must not cross a 1 KB boundary",
+      "A SEQ beat of an incrementing burst uses the previous address plus the transfer size"
     ]}
-    correctAnswer="6-7 core assertions covering address stability, ERROR protocol, timeout, boundary, alignment, and reset"
-    explanation="The essential set includes: address/control stability during wait states, two-cycle ERROR response, HREADY timeout, 1 KB boundary check, burst alignment, and IDLE after reset. Production VIPs add more, but these are the minimum for meaningful protocol checking."
+    correctAnswer="HREADY must not stay low for more than 16 cycles"
+    explanation="The spec only recommends that slaves insert no more than 16 wait states, and allows exceptions such as a serial boot ROM (§5.1.2). A wait-state budget is a system choice and belongs in a separate, warning-level check. The other three are protocol rules (§5.1.3, §3.5, §3.2)."
   />
   <QuizQuestion
     question="In a functional coverage plan, why is wait-state coverage important even though it is not a protocol requirement?"

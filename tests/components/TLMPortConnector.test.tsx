@@ -1,81 +1,47 @@
-import React from 'react';
-import '@testing-library/jest-dom';
-import { act, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import TLMPortConnector from '@/components/curriculum/interactives/TLMPortConnector';
+import React from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-describe('TLMPortConnector', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
+import TLMPortConnector from "@/components/curriculum/interactives/TLMPortConnector";
 
-  afterEach(() => {
-    vi.runOnlyPendingTimers();
-    vi.useRealTimers();
-  });
+const lockIn = (answer: RegExp) => {
+  fireEvent.click(screen.getByRole("radio", { name: answer }));
+  fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+};
+const choose = (line: string) => fireEvent.click(within(screen.getByRole("radiogroup", { name: "connect_phase line" })).getByRole("radio", { name: line }));
 
-  it('shows a recoverable error when traffic is driven before the port is connected', async () => {
+describe("TLMPortConnector (pull model)", () => {
+  it("hides the flow until a prediction is locked in", () => {
     render(<TLMPortConnector />);
-    const [connectButton] = screen.getAllByRole('button');
-    const driveButton = screen.getByRole('button', { name: /drive traffic/i });
-    const resetButton = screen.getByRole('button', { name: /reset/i });
-
-    fireEvent.click(
-      driveButton,
-    );
-
-    expect(
-      screen.getByText(/Cannot drive traffic! Sequence item port is unbound/i),
-    ).toBeInTheDocument();
-
-    act(() => {
-      vi.advanceTimersByTime(3000);
-    });
-
-    expect(connectButton).toBeEnabled();
-    expect(driveButton).toBeEnabled();
-    expect(resetButton).toBeDisabled();
+    expect(screen.queryByRole("group", { name: /Step playback controls/ })).not.toBeInTheDocument();
+    lockIn(/^Sequencer → driver/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: /Step playback controls/ })).toBeInTheDocument();
   });
 
-  it('connects the handshake and animates traffic once the link is established', () => {
+  it("steps through the handshake with the keyboard; the item returns sequencer → driver", () => {
     render(<TLMPortConnector />);
-
-    const [connectButton] = screen.getAllByRole('button');
-    const driveButton = screen.getByRole('button', { name: /drive traffic/i });
-    const resetButton = screen.getByRole('button', { name: /reset/i });
-
-    expect(resetButton).toBeDisabled();
-
-    fireEvent.click(connectButton);
-    expect(driveButton).toBeDisabled();
-
-    act(() => {
-      vi.advanceTimersByTime(1000);
-    });
-
-    expect(driveButton).toBeEnabled();
-    expect(resetButton).toBeEnabled();
-
-    fireEvent.click(driveButton);
-    expect(screen.getByText(/txn packet/i)).toBeInTheDocument();
-    expect(
-      screen.queryByText(/Cannot drive traffic! Sequence item port is unbound/i),
-    ).not.toBeInTheDocument();
-
-    act(() => {
-      vi.advanceTimersByTime(2000);
-    });
-
-    expect(driveButton).toBeEnabled();
-    expect(resetButton).toBeEnabled();
+    lockIn(/^Driver → sequencer/);
+    expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
+    const controls = screen.getByRole("group", { name: /Step playback controls/ });
+    const next = within(controls).getByRole("button", { name: "Next step" });
+    for (let i = 0; i < 5; i += 1) fireEvent.keyDown(next, { key: "ArrowRight" });
+    expect(screen.getByText(/req travels sequencer → driver/)).toBeInTheDocument();
   });
 
-  const strictA11yAudit = process.env.QA_STRICT_A11Y_AUDIT === '1';
-  (strictA11yAudit ? it : it.skip)('exposes an accessible name for the connect control', () => {
+  it("reversed connect: BUILDERR before run_phase", () => {
     render(<TLMPortConnector />);
+    choose("sqr.seq_item_export.connect(drv.seq_item_port);");
+    lockIn(/^UVM_ERROR \[Connection Error\] during connect_phase/);
+    expect(screen.getByLabelText("Simulation log")).toHaveTextContent("[BUILDERR] stopping due to build errors");
+  });
 
-    expect(
-      screen.getByRole('button', { name: /connect/i }),
-    ).toBeInTheDocument();
+  it("missing connect: no elaboration error, null object access at the first get_next_item", () => {
+    render(<TLMPortConnector />);
+    choose("// connect line deleted");
+    lockIn(/^At end_of_elaboration/);
+    expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/min_size 0/).length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText("Simulation log")).not.toBeInTheDocument();
   });
 });
