@@ -23,4 +23,19 @@ describe('Quiz component', () => {
     fireEvent.click(screen.getByText('3'));
     screen.getByText('Incorrect.');
   });
+
+  it.each([
+    ['correctAnswer', { correctAnswer: 1 }],
+    ['correctIndex', { correctIndex: 1 }],
+  ])('treats a numeric %s as a 0-based option index', (_label, answer) => {
+    render(
+      <Quiz
+        questions={[
+          { question: 'Which TLM element buffers analysis writes?', options: ['uvm_analysis_imp', 'uvm_tlm_analysis_fifo'], explanation: 'FIFO.', ...answer } as never,
+        ]}
+      />,
+    );
+    fireEvent.click(screen.getByText('uvm_tlm_analysis_fifo'));
+    screen.getByText('Correct!');
+  });
 });

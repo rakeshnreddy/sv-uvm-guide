@@ -1,6 +1,6 @@
 # Lesson Analysis Sweep — Persistent Progress Tracker
 
-Last Updated: 2026-05-07
+Last Updated: 2026-10-03
 Status: In Progress — T1-FOUNDATIONAL-UPGRADE (Phase 1 Revision)
 
 ## Overview
@@ -26,8 +26,8 @@ This section tracks the implementation of the Foundational Curriculum Implementa
 | 2 | Implement `NetResolutionSimulator` + F2A upgrades | todo | Add `trireg` details and katas |
 | 3 | Implement `DeltaQueue3DVisualizer` + F3A/F3B upgrades | todo | Add region ordering katas |
 | 4 | Implement `ClockingBlockSkewVisualizer` + F4C upgrades | todo | Add race-free TB driver kata |
-| 5 | Add kata sections to all T1 modules | todo | Use standard kata template |
-| 6 | Implement remaining visuals (`FabRespinsVisualizer`, etc.) | todo | Also `DynamicMemoryVisualizer`, `RaceConditionDebugger` |
+| 5 | Add kata sections to all T1 modules | in_progress | 2026-10-03: F3C has a guided and an independent kata (visual-first template). 12 modules remain. |
+| 6 | Implement remaining visuals (`FabRespinsVisualizer`, etc.) | in_progress | 2026-10-03: `RaceConditionDebugger` delivered (+ TimeSlotRegionMap, TimeSlotTraceVisualizer, TestbenchDriveComparison, RaceDebugChallenge) on the tested `sv-scheduler-model`. Remaining: FabRespins, NetResolution, DynamicMemory, DeltaQueue (superseded by TimeSlotTraceVisualizer for F3A/F3B), ClockingBlockSkew. |
 | 7 | Final pass: LRM citations & Code Style normalization | todo | 2-space indent, `logic` over `reg`, LRM format |
 
 ---
@@ -132,6 +132,10 @@ This section tracks the implementation of the Foundational Curriculum Implementa
 | 69 | E-UVM-ML-1 — Multi-Language Verification | pending | — | — | — |
 
 ---
+
+## 2026-10-03 note
+
+The learning-outcome audit ([docs/audit/2026-10-03-learning-outcomes/](../audit/2026-10-03-learning-outcomes/README.md)) re-rated T1 modules (appendix A). Phase 1 "complete" above refers to the May enhancement pass, not mastery-level quality. Spec clause numbers and its region model need correcting before steps 2–4 and 7 (appendix A §6). Scheduling-content corrections landed in F2C, F3A, F3B, F3C and F4C.
 
 ## Cross-Module Follow-Up Items
 

@@ -36,8 +36,8 @@
       "level": "mid",
       "category": "concept",
       "prompt": "Walk through the SV scheduling regions in a single time step. Where do assertions evaluate?",
-      "rubric": "Must list Active, NBA, Observed, Reactive, Postponed. Assertions sample in Observed after NBA. Program blocks run in Reactive.",
-      "model_answer": "Regions in order: Active (blocking, continuous assigns) \u2192 Inactive (#0) \u2192 NBA (non-blocking updates) \u2192 Observed (assertion sampling, clocking-block input) \u2192 Reactive (program blocks, assertion actions) \u2192 Postponed ($monitor). Assertions evaluate in Observed, seeing post-NBA settled values.",
+      "rubric": "Must list Preponed, Active, Inactive, NBA, Observed, Reactive, Re-NBA, Postponed in order. Must separate sampling (Preponed) from evaluation (Observed) for concurrent assertions; claiming that assertions read this edge's post-NBA values is incorrect. Program code runs in Reactive; clocking drives land in Re-NBA.",
+      "model_answer": "Regions in order: Preponed (read-only; values sampled for concurrent assertions and clocking-block inputs) \u2192 Active (process wake-ups, blocking and continuous assignments, right side of nonblocking assignments) \u2192 Inactive (#0 resumes) \u2192 NBA (nonblocking updates) \u2192 Observed (concurrent assertions evaluated; @(cb) clocking events) \u2192 Reactive (program code, assertion action blocks) \u2192 Re-Inactive \u2192 Re-NBA (clocking-block drives, program nonblocking updates) \u2192 Postponed ($strobe/$monitor, read-only). Concurrent assertions are evaluated in Observed but on values sampled in Preponed \u2014 the values from before this edge's NBA updates (IEEE 1800-2023 \u00a74.4.2, \u00a716.5.1).",
       "sources": [
         "IEEE 1800-2023 \u00a74.4",
         "IEEE 1800-2023 \u00a74.7"
@@ -49,8 +49,8 @@
       "level": "senior",
       "category": "trick",
       "prompt": "A testbench uses @(posedge clk) to both drive and sample DUT signals. Why can this cause races?",
-      "rubric": "Both TB and RTL execute in Active region creating read/write races. Clocking blocks separate sampling (Observed) from driving (Re-Active).",
-      "model_answer": "@(posedge clk) triggers in Active alongside RTL, causing potential read-before-NBA-update races. Clocking blocks fix this: inputs sample in Observed (post-NBA, stable values), outputs drive in Re-Active (after assertions). This clean separation eliminates races.",
+      "rubric": "Identifies the TB drive (blocking assignment at the edge) as the primary race and explains same-region nondeterminism. Clocking blocks: inputs sampled in Preponed (#1step), drives in Re-NBA, @(cb) in Observed. Answers that sample clocking inputs after the NBA updates, or that name a nonexistent reactive drive region, are incorrect.",
+      "model_answer": "@(posedge clk) wakes testbench processes in the Active region alongside the RTL processes triggered by the same edge, and IEEE 1800 lets the simulator run them in any order (\u00a74.7). Driving DUT inputs with blocking assignments at that edge races the DUT flops that read them. Reading DUT outputs is deterministic only while every path to them uses nonblocking assignments. Clocking blocks remove both risks: inputs are sampled in Preponed with the default #1step skew (\u00a714.13), outputs are driven in Re-NBA with #0 output skew (\u00a714.16), and the @(cb) event triggers in Observed (\u00a714.10), after the design's NBA updates.",
       "sources": [
         "IEEE 1800-2023 \u00a714",
         "IEEE 1800-2023 \u00a74.4.1"

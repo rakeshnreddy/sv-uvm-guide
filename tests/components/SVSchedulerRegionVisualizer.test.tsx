@@ -17,8 +17,10 @@ describe('SVSchedulerRegionVisualizer', () => {
     render(<SVSchedulerRegionVisualizer />);
     expect(screen.getByTestId('scheduler-visualizer')).toBeInTheDocument();
     
-    // Default scenario is Normal Flip-Flop
-    expect(screen.getByText(/Sample inputs before clock edge/i)).toBeInTheDocument();
+    // Default scenario is Normal Flip-Flop. Preponed photographs values for
+    // assertions/clocking blocks; procedural code does not sample there.
+    expect(screen.getByText(/photographed for assertions and clocking-block inputs/i)).toBeInTheDocument();
+    expect(screen.getByText(/reads d later, in Active/i)).toBeInTheDocument();
   });
 
   it('navigates forward using next button', () => {

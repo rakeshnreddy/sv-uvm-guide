@@ -10,13 +10,14 @@ describe('EventRegionGame', () => {
     expect(screen.getByText('Event Region Scheduler')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /start challenge/i }));
 
-    expect(screen.getByText('Snippet 1/6')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /Active Execute Now/i }));
+    expect(screen.getByText('Snippet 1/8')).toBeInTheDocument();
+    expect(screen.getByText('Where is a written?')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^Active = writes, wake-ups/i }));
 
     expect(screen.getByText('Correct!')).toBeInTheDocument();
-    expect(screen.getByText(/blocking assignments execute immediately/i)).toBeInTheDocument();
+    expect(screen.getByText(/blocking assignments evaluate and write immediately/i)).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: /next/i }));
-    expect(screen.getByText('Snippet 2/6')).toBeInTheDocument();
+    expect(screen.getByText('Snippet 2/8')).toBeInTheDocument();
   });
 });

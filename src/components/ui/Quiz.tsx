@@ -37,14 +37,20 @@ const toFormatted = (qs: (FormattedQuestion | LegacyFormattedQuestion | MdxQuest
     const anyQ = q as any;
 
     if (Array.isArray(anyQ.options)) {
-      const correct =
-        typeof anyQ.correctAnswer === 'string'
+      // Several lessons store the answer as a 0-based option index.
+      const index = [anyQ.correctAnswer, anyQ.correctIndex, anyQ.answer].find(
+        (value): value is number => typeof value === 'number' && Number.isInteger(value),
+      );
+      const indexed =
+        index !== undefined && index >= 0 && index < anyQ.options.length ? String(anyQ.options[index]) : undefined;
+      const correct = indexed ??
+        (typeof anyQ.correctAnswer === 'string'
           ? anyQ.correctAnswer
           : typeof anyQ.answer === 'string'
             ? anyQ.answer
             : typeof anyQ.correct === 'string'
               ? anyQ.correct
-              : undefined;
+              : undefined);
       const options = anyQ.options.map((opt: unknown) => String(opt));
 
       return {

@@ -6,59 +6,87 @@ import { CheckCircle2, XCircle, ArrowRight, Play } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import { Button } from '@/components/ui/Button';
 
-type Region = 'Active' | 'Inactive' | 'NBA' | 'Postponed';
+// Regions follow IEEE 1800-2023 §4.4.2. `final` blocks are deliberately absent:
+// they run once at the end of simulation (§9.2.3), not in a time-slot region.
+export type Region = 'Preponed' | 'Active' | 'Inactive' | 'NBA' | 'Observed' | 'Reactive' | 'Re-NBA' | 'Postponed';
 
-interface Question {
+export interface Question {
     id: number;
     code: string;
+    /** What the learner must locate, e.g. "the write to q". */
+    prompt: string;
     region: Region;
     explanation: string;
 }
 
-const QUESTIONS: Question[] = [
+export const QUESTIONS: Question[] = [
     {
         id: 1,
         code: 'a = b + c;',
+        prompt: 'Where is a written?',
         region: 'Active',
-        explanation: 'Blocking assignments execute immediately in the Active region.'
+        explanation: 'Blocking assignments evaluate and write immediately in the Active region (§10.4.1).'
     },
     {
         id: 2,
         code: 'q <= d;',
+        prompt: 'Where is q written?',
         region: 'NBA',
-        explanation: 'Non-blocking assignments schedule updates for the NBA region to avoid races.'
+        explanation: 'The right side is read in Active, but the update to q is scheduled in the NBA region (§10.4.2).'
     },
     {
         id: 3,
         code: '#0 a = 1;',
+        prompt: 'Where does this statement resume?',
         region: 'Inactive',
-        explanation: 'Explicit zero-delay (#0) moves execution to the Inactive region.'
+        explanation: 'An explicit #0 suspends the process into the Inactive region; it resumes only after Active is empty (§4.4.2.3).'
     },
     {
         id: 4,
-        code: '$display("Value=%0d", val);',
-        region: 'Active',
-        explanation: 'System tasks like $display execute immediately when encountered in the Active region.'
+        code: '$strobe("q=%0d", q);',
+        prompt: 'Where is the line printed?',
+        region: 'Postponed',
+        explanation: '$strobe prints at the end of the time slot, in the read-only Postponed region, so it shows settled values (§21.2.2).'
     },
     {
         id: 5,
-        code: 'program test; ... final begin ... end',
-        region: 'Postponed',
-        explanation: 'The final block executes in the Postponed region, after all other activity.'
+        code: 'assert property (@(posedge clk) req |-> ##1 gnt);',
+        prompt: 'Where is the property evaluated?',
+        region: 'Observed',
+        explanation: 'Concurrent assertions are evaluated in the Observed region using values sampled in Preponed (§16.5.1). They are not checked in Postponed.'
     },
     {
         id: 6,
-        code: 'assert property (@(posedge clk) ...);',
-        region: 'Postponed',
-        explanation: 'Assertions are sampled in the Preponed region but reported/checked effectively at the end of the tick.'
+        code: '@(posedge clk) assert property (...)  // req, gnt',
+        prompt: 'Where are req and gnt sampled?',
+        region: 'Preponed',
+        explanation: 'Sampled values come from the Preponed region: the values before anything changed in this time slot (§16.5.1, §4.4.2.1).'
+    },
+    {
+        id: 7,
+        code: 'vif.cb.din <= 8\'h07;  // clocking block, #0 output skew',
+        prompt: 'Where does din change?',
+        region: 'Re-NBA',
+        explanation: 'Synchronous drives through a clocking block are scheduled in the Re-NBA region, after the design NBA updates (§14.16).'
+    },
+    {
+        id: 8,
+        code: 'program tb; initial @(posedge clk) a = 1; endprogram',
+        prompt: 'Where does the program code execute?',
+        region: 'Reactive',
+        explanation: 'Blocking assignments in program blocks are scheduled in the Reactive region (§4.4.2.6).'
     }
 ];
 
 const REGIONS: { id: Region; color: string; desc: string }[] = [
-    { id: 'Active', color: 'bg-blue-500', desc: 'Execute Now' },
-    { id: 'Inactive', color: 'bg-gray-500', desc: '#0 Delays' },
-    { id: 'NBA', color: 'bg-emerald-500', desc: 'Update Later (<=)' },
-    { id: 'Postponed', color: 'bg-purple-500', desc: 'Read-Only / Final' },
+    { id: 'Preponed', color: 'bg-slate-500', desc: 'Sample (read-only)' },
+    { id: 'Active', color: 'bg-blue-500', desc: '= writes, wake-ups' },
+    { id: 'Inactive', color: 'bg-gray-500', desc: '#0 resumes' },
+    { id: 'NBA', color: 'bg-emerald-500', desc: '<= updates' },
+    { id: 'Observed', color: 'bg-sky-500', desc: 'Assertions evaluate' },
+    { id: 'Reactive', color: 'bg-violet-500', desc: 'Program code' },
+    { id: 'Re-NBA', color: 'bg-fuchsia-500', desc: 'Clocking drives' },
+    { id: 'Postponed', color: 'bg-purple-500', desc: '$strobe (read-only)' },
 ];
 
 export default function EventRegionGame() {
@@ -142,12 +170,13 @@ export default function EventRegionGame() {
 
             <CardContent className="space-y-8">
                 {/* Code Snippet Area */}
-                <div className="bg-black/40 p-6 rounded-xl border border-slate-800 font-mono text-lg text-center text-slate-200 shadow-inner min-h-[100px] flex items-center justify-center">
-                    <code>{currentQuestion.code}</code>
+                <div className="bg-black/40 p-6 rounded-xl border border-slate-800 font-mono text-lg text-center text-slate-200 shadow-inner min-h-[100px] flex flex-col items-center justify-center gap-3">
+                    <code className="break-all [font-variant-ligatures:none]">{currentQuestion.code}</code>
+                    <p className="font-sans text-sm font-semibold text-amber-300">{currentQuestion.prompt}</p>
                 </div>
 
                 {/* Region Buttons */}
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                     {REGIONS.map((region) => {
                         const isSelected = selectedRegion === region.id;
                         const isTarget = currentQuestion.region === region.id;

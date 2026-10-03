@@ -31,12 +31,12 @@ const SCENARIOS: Record<ScenarioMode, { title: string; code: string; timeline: R
     title: 'Normal Flip-Flop (Non-Blocking)',
     code: `always_ff @(posedge clk) begin\n  q <= d; // NBA update scheduled\nend`,
     timeline: [
-      { region: 'Preponed', description: 'Sample inputs before clock edge.', tokenPosition: 0, highlightCode: '', values: { clk: '0', d: '1', q: '0' } },
+      { region: 'Preponed', description: 'Values are photographed for assertions and clocking-block inputs. The always_ff has not run yet: it reads d later, in Active.', tokenPosition: 0, highlightCode: '', values: { clk: '0', d: '1', q: '0' } },
       { region: 'Active', description: 'clk posedge detected. Evaluate RHS of q <= d (d is 1). Schedule NBA update.', tokenPosition: 1, highlightCode: 'q <= d', values: { clk: '1', d: '1', q: '0' } },
       { region: 'Inactive', description: 'Process #0 delays. (None in this example, skipping).', tokenPosition: 2, highlightCode: '', values: { clk: '1', d: '1', q: '0' } },
       { region: 'NBA', description: 'Execute scheduled non-blocking updates. q becomes 1.', tokenPosition: 3, highlightCode: 'q <= d', values: { clk: '1', d: '1', q: '1' } },
       { region: 'Observed', description: 'Evaluate concurrent assertions with stable values.', tokenPosition: 4, highlightCode: '', values: { clk: '1', d: '1', q: '1' } },
-      { region: 'Reactive', description: 'Program blocks (testbench) execute using observed values.', tokenPosition: 5, highlightCode: '', values: { clk: '1', d: '1', q: '1' } },
+      { region: 'Reactive', description: 'Program-block code and assertion action blocks run here. (UVM class code runs in the active set, not here.)', tokenPosition: 5, highlightCode: '', values: { clk: '1', d: '1', q: '1' } },
       { region: 'Postponed', description: 'Final cleanup before advancing simulation time.', tokenPosition: 6, highlightCode: '', values: { clk: '1', d: '1', q: '1' } }
     ]
   },
@@ -50,7 +50,7 @@ const SCENARIOS: Record<ScenarioMode, { title: string; code: string; timeline: R
       { region: 'Inactive', description: 'Skip Inactive region.', tokenPosition: 2, highlightCode: '', values: { clk: '1', d: '1', q1: '1', q2: '1' } },
       { region: 'NBA', description: 'No non-blocking assignments scheduled.', tokenPosition: 3, highlightCode: '', values: { clk: '1', d: '1', q1: '1', q2: '1' } },
       { region: 'Observed', description: 'Assertions evaluated. Race condition may cause failures depending on execution order.', tokenPosition: 4, highlightCode: '', values: { clk: '1', d: '1', q1: '1', q2: '1' } },
-      { region: 'Reactive', description: 'Testbench reacts to whatever unpredictable values resulted.', tokenPosition: 5, highlightCode: '', values: { clk: '1', d: '1', q1: '1', q2: '1' } }
+      { region: 'Reactive', description: 'Program-block code would now see whatever value the race produced. Step through the F3C race debugger to try the other order.', tokenPosition: 5, highlightCode: '', values: { clk: '1', d: '1', q1: '1', q2: '1' } }
     ]
   }
 };
@@ -170,7 +170,7 @@ export const SVSchedulerRegionVisualizer = () => {
 
         {/* Mobile View Active Region */}
         <div className="md:hidden text-center mb-6 py-3 bg-indigo-50 dark:bg-indigo-900/20 rounded-lg">
-          <span className="text-xs font-semibold uppercase tracking-wider text-indigo-500">Active Region</span>
+          <span className="text-xs font-semibold uppercase tracking-wider text-indigo-500">Current region</span>
           <div className="text-lg font-bold text-indigo-700 dark:text-indigo-300 mt-1">
             {REGIONS[currentStepData.tokenPosition]}
           </div>

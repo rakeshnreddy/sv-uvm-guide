@@ -93,6 +93,11 @@ export const lazyMdxInteractiveNames = [
   "ExclusiveAccessVisualizer",
   "AxiDeadlockSimulator",
   "BridgeTranslationExplorer",
+  "TimeSlotRegionMap",
+  "TimeSlotTraceVisualizer",
+  "RaceConditionDebugger",
+  "TestbenchDriveComparison",
+  "RaceDebugChallenge",
 ] as const;
 
 export type LazyMdxInteractiveName = (typeof lazyMdxInteractiveNames)[number];

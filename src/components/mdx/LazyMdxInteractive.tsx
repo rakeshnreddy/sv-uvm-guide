@@ -114,6 +114,11 @@ const loaders = {
   ExclusiveAccessVisualizer: () => import("@/components/visualizers/ExclusiveAccessVisualizer").then(module => asMdxModule(module.default)),
   AxiDeadlockSimulator: () => import("@/components/visualizers/AxiDeadlockSimulator").then(module => asMdxModule(module.default)),
   BridgeTranslationExplorer: () => import("@/components/visualizers/BridgeTranslationExplorer").then(module => asMdxModule(module.default)),
+  TimeSlotRegionMap: () => import("@/components/visuals/TimeSlotRegionMap").then(module => asMdxModule(module.default)),
+  TimeSlotTraceVisualizer: () => import("@/components/visuals/TimeSlotTraceVisualizer").then(module => asMdxModule(module.default)),
+  RaceConditionDebugger: () => import("@/components/visuals/RaceConditionDebugger").then(module => asMdxModule(module.default)),
+  TestbenchDriveComparison: () => import("@/components/visuals/TestbenchDriveComparison").then(module => asMdxModule(module.default)),
+  RaceDebugChallenge: () => import("@/components/visuals/RaceDebugChallenge").then(module => asMdxModule(module.default)),
 } satisfies Record<LazyMdxInteractiveName, MdxInteractiveLoader>;
 
 const componentCache = new Map<

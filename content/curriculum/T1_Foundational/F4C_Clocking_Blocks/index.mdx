@@ -19,23 +19,25 @@ import { InteractiveCode, Quiz } from '@/components/ui';
 
 ### The Race Condition Problem
 
-In a standard Verilog simulation, if a `DUT` updates a signal at the rising edge of `clk`, and the `Testbench` reads it at the same rising edge using a blocking assignment, the order of execution in the **Active** region is undefined. You might read the *old* value or the *new* value.
+The testbench and the DUT wake on the same clock edge, and IEEE 1800 lets the simulator run them in any order (§4.7). The dangerous case is the testbench **driving** a DUT input with a blocking assignment at that edge: if the testbench happens to run first, the DUT's flop captures the *new* value instead of the pre-edge value.
 
 **Race-Prone Testbench (Avoid this):**
 ```systemverilog
-// RTL (executes in Active -> NBA)
-always_ff @(posedge clk) q <= d;
+// RTL: reads din in Active, writes q in NBA
+always_ff @(posedge clk) q <= din;
 
-// Testbench (executes in Active)
+// Testbench: also runs in Active on the same edge
 always @(posedge clk) begin
-  // RACE! Does this execute before or after q <= d?
-  if (q == expected) $display("Pass!"); 
+  din = next_value; // RACE: the flop may or may not see this value
 end
 ```
 
+Reading `q` with a plain `@(posedge clk)` is deterministic *only* while the DUT writes `q` with `<=`: the read happens in Active, before the NBA update. If any design logic on that path uses blocking assignments, the read races too. A clocking block removes both risks. See F3C's Race Condition Debugger to try every legal order.
+
 **Clocking blocks solve this by:**
 1.  **Sampling** inputs just *before* the clock edge in the **Preponed** region. The testbench is guaranteed to read the stable, old value.
-2.  **Driving** outputs synchronized to the clock edge, scheduling updates in the **NBA** or **Re-NBA** region (depending on whether the drive originated from an Active or Reactive region block).
+2.  **Driving** outputs synchronized to the clock edge. With the default `#0` output skew the update is scheduled in the **Re-NBA** region of that time step, whichever code issued the drive (§14.16), so it lands after every design NBA update.
+3.  **Signalling** the clocking event `@(cb)` in the **Observed** region (§14.10), after the design's NBA updates. Code that waits on `@(vif.cb)` therefore never competes with the flops for the same edge.
 
 ### Interactive Example: The Clocking Block Solution
 <InteractiveCode
@@ -87,16 +89,16 @@ endmodule
 ### Clocking Blocks (LRM Clause 14)
 - **Input Skew:** When to sample inputs relative to the clock (default: `#1step`).
 - **Output Skew:** When to drive outputs relative to the clock (default: `#0`).
-- **Cycle Delay:** `##N` waits for N clocking block events.
+- **Cycle Delay:** `##N` waits for N clocking events of the **default clocking** block. It needs a `default clocking cb;` declaration in scope (§14.11); otherwise the compiler reports an error. Inside class-based drivers, use `repeat (N) @(vif.cb);` instead.
 
 ### Program Blocks (LRM Clause 24)
 - **Purpose:** Originally designed to separate testbench execution (Reactive region) from DUT execution (Active region).
-- **Modern Usage:** largely deprecated in UVM. UVM uses phases and clocking blocks to achieve the same isolation without the limitations of program blocks.
+- **Modern Usage:** rarely used with UVM (the standard has not deprecated them). UVM class code runs in the active region set, so UVM benches rely on clocking blocks — not phases, which order whole phases rather than events within one time slot — for same-edge race avoidance.
 - **Recommendation:** Avoid `program` blocks for new UVM testbenches. Use `module` for the top-level testbench and `clocking` blocks for timing.
 
 ## Make It Work
 1.  **Define Clocking:** Add a `clocking` block to your interface for each agent (Driver, Monitor).
-2.  **Set Skews:** Use `default input #1step output #1ns;` to be safe.
+2.  **Set Skews:** Start from the defaults, `default input #1step output #0;`. A nonzero output skew (for example `#1ns`) makes waveforms easier to read but moves drives to a later time step; choose it deliberately.
 3.  **Drive/Sample:** In your testbench/UVM driver, *always* access signals through the clocking block handle (e.g., `vif.cb.req`).
 4.  **Wait for Events:** Use `@(vif.cb)` to wait for the clock edge.
 
@@ -105,7 +107,7 @@ endmodule
 - Investigate the difference between synchronous drive (`vif.cb.sig <= val`) and asynchronous drive (`vif.sig = val`).
 
 ## Practice & Reinforce
-- **Lab:** "The Race Condition Lab" - Fix a racy testbench using clocking blocks.
+- **Practice:** F3C's Race Debugging Challenge and Kata 1 (fix a racy testbench with a clocking block). A simulator-graded race lab is planned; see `docs/audit/2026-10-03-learning-outcomes/improvement-plan.md`.
 - **Quiz:** Check your understanding of timing regions.
 
 ## Interview Questions
@@ -131,7 +133,7 @@ endmodule
         <span className="text-slate-400 transition group-open:rotate-180">▼</span>
       </summary>
       <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p>It depends on where the drive originated. If driven from a standard module (Active region), the update is scheduled in the <strong>NBA</strong> region. If driven from a program block (Reactive region), the update is scheduled in the <strong>Re-NBA</strong> region. In both cases, this strict scheduling guarantees it will not race with the RTL's Active region blocking assignments.</p>
+        <p>In the <strong>Re-NBA</strong> region of the clocking-event time step, regardless of whether the drive came from module, class, or program code (IEEE 1800-2023 §14.16). Older material that splits this into NBA vs Re-NBA by origin describes pre-2009 behavior. Because Re-NBA runs after the design's NBA updates, the DUT's flops have already captured the previous value; the drive is visible to design logic that re-evaluates afterward in the same time step.</p>
       </div>
     </details>
 

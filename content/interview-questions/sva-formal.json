@@ -11,7 +11,7 @@
       "category": "concept",
       "prompt": "What is the difference between a concurrent and an immediate assertion?",
       "rubric": "Immediate assertions execute procedurally at a point in time like an if-statement. Concurrent assertions are temporal, evaluated over clock cycles, and use sequence/property syntax with |->, |=>.",
-      "model_answer": "Immediate assertions (assert()) execute once at the point of evaluation, like an if-check. They fire in the Active region. Concurrent assertions (assert property()) are clock-based, evaluate over multiple cycles using temporal operators, and sample in the Observed region. Concurrent assertions can span unbounded time (s_eventually) while immediate cannot.",
+      "model_answer": "Immediate assertions (assert()) execute procedurally at the point they are reached, like an if-check, using current values. Concurrent assertions (assert property()) are clocked and temporal: at each clocking event they are evaluated in the Observed region on values sampled in the Preponed region (IEEE 1800-2023 §16.5.1), and an attempt can span many cycles using sequence and property operators. Concurrent assertions can express unbounded behavior (e.g. s_eventually); immediate assertions cannot.",
       "sources": ["IEEE 1800-2023 §16 (assertions)"]
     },
     {
@@ -30,8 +30,8 @@
       "level": "senior",
       "category": "trick",
       "prompt": "You write `assert property (@(posedge clk) req |-> ack)`. The DUT asserts req and ack on the same clock edge. Does it pass?",
-      "rubric": "Yes — overlapping implication checks ack on the same cycle. But there's a subtlety: assertions sample in Observed (post-NBA), so they see the settled value of ack. If ack is driven by NBA in the same cycle, it will be visible. If ack is combinational from req, it also passes. The trap is asking whether this catches ack being one cycle late.",
-      "model_answer": "Yes, it passes. With |-> (overlapping), the consequent is checked on the same cycle as the antecedent. Since assertions sample in Observed (after NBA), they see ack's settled value. If you want ack one cycle after req, use |=> or |-> ##1 ack. The trap: engineers sometimes write |-> when they mean |=>, accidentally making the assertion weaker.",
+      "rubric": "Correct: assertions sample pre-edge (Preponed) values; the attempt on the changing edge is vacuous and the check passes on the following edge. Explains |-> vs |=>. Claiming the assertion sees the settled post-NBA value of the same edge is incorrect.",
+      "model_answer": "It passes, but not on the edge you might think. Concurrent assertions use values sampled in Preponed (§16.5.1). On the edge where the DUT's nonblocking assignments raise req and ack, the assertion sees the old values (req=0), so that attempt is vacuous. On the next edge it samples req=1 and ack=1, and the overlapping implication |-> passes there. The trap is believing assertions see the same-edge NBA results — they never do. If ack should follow req by a cycle, write |=> or |-> ##1 ack.",
       "sources": ["IEEE 1800-2023 §16.12.6"]
     },
     {

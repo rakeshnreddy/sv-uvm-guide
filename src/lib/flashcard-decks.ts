@@ -5,6 +5,7 @@ import F2_Data_Types from '../../content/flashcards/F2_Data_Types.json';
 import F2C_Operators from '../../content/flashcards/F2C_Operators.json';
 import F3A_Procedural_Blocks_and_Flow_Control from '../../content/flashcards/F3A_Procedural_Blocks_and_Flow_Control.json';
 import F3B_Scheduling_Regions from '../../content/flashcards/F3B_Scheduling_Regions.json';
+import F3C_Delta_Cycles from '../../content/flashcards/F3C_Delta_Cycles.json';
 import F4_RTL_and_Testbench_Constructs from '../../content/flashcards/F4_RTL_and_Testbench_Constructs.json';
 import F4C_Clocking_Blocks from '../../content/flashcards/F4C_Clocking_Blocks.json';
 import F2_HDL_Primer from '../../content/flashcards/F2_HDL_Primer.json';
@@ -70,6 +71,7 @@ export const flashcardDecks: Record<string, any[]> = {
   F2C_Operators,
   F3A_Procedural_Blocks_and_Flow_Control,
   F3B_Scheduling_Regions,
+  F3C_Delta_Cycles,
   F4_RTL_and_Testbench_Constructs,
   F4C_Clocking_Blocks,
   F2_HDL_Primer,

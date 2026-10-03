@@ -42,9 +42,10 @@ Simulation time advances in discrete increments. Delay controls (`#`) explicitly
 
 module time_steps_demo;
   initial begin
-    $display("Time is %0t", $time); // 0
-    #5.5; // Advances time by 5.5ns
-    $display("Time is %0t", $time); // 5500 (ps resolution)
+    $display("Time is %0t", $time);     // 0
+    #5.5; // Advances time by 5.5ns (representable: precision is 1ps)
+    $display("Time is %0t", $time);     // 6000: $time rounds to the 1ns unit (6), %t prints in ps
+    $display("Time is %0t", $realtime); // 5500: $realtime keeps the fraction
   end
 endmodule
 ```
@@ -55,23 +56,24 @@ Multiple events can occur at the exact same simulation time. The simulator proce
 ```systemverilog
 module delta_time_demo;
   logic clk = 0;
-  logic d, q1, q2;
+  logic d = 1, q = 0;
+  logic q_n;
 
   always #5 clk = ~clk;
 
+  always_ff @(posedge clk) q <= d; // Active: reads d. NBA: writes q.
+  assign q_n = ~q;                 // re-evaluated when q changes: one more delta
+
   initial begin
-    d = 1;
-    @(posedge clk);
-    // At posedge clk, q1 gets d, and q2 gets q1. 
-    // This happens in delta cycles within the same simulation time step.
-    q1 <= d;  // Delta cycle 1 (NBA region update)
-    q2 <= q1; // Delta cycle 2 (subsequent evaluation triggered by q1 change)
+    @(posedge clk);                                       // all of this is t = 5
+    $display("display q=%0d q_n=%0d", q, q_n);            // Active: q=0 q_n=1 (old values)
+    $strobe ("strobe  q=%0d q_n=%0d", q, q_n);            // Postponed: q=1 q_n=0
   end
 endmodule
 ```
 
 ## Make It Work
-- Always define a `` `timescale `` at the top of your testbench files, or better yet, use `$timeformat` and pass timescales via compiler directives to avoid compilation order bugs.
+- Give every file an explicit time unit. Prefer `timeunit 1ns; timeprecision 1ps;` inside each module or package (IEEE 1800-2023 §3.14.2.2): unlike `` `timescale ``, it cannot leak between files through compilation order. `$timeformat` only changes how `%t` prints.
 - Recognize that `#0` delays are a legacy hack for forcing delta cycle delays. Do not use them in modern SystemVerilog; use non-blocking assignments (`<=`) or clocking blocks instead.
 
 ## Push Further

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { MDXRemote } from "next-mdx-remote/rsc";
+import remarkGfm from "remark-gfm";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ArrowRight, BookOpen, Clock } from "lucide-react";
 
@@ -15,7 +16,9 @@ import {
   generateLessonMetadata,
   loadCurriculumLesson,
 } from "@/lib/curriculum/lesson-loader";
+import { remarkCallouts } from "@/lib/curriculum/remark-callouts";
 import { remarkConceptLinks } from "@/lib/curriculum/remark-concept-links";
+import { remarkJsxParagraphs } from "@/lib/curriculum/remark-jsx-paragraphs";
 import { getFullKnowledgeGraph } from "@/lib/knowledge-graph-engine";
 import { cn } from "@/lib/utils";
 
@@ -55,8 +58,8 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
       <LessonVisitTracker moduleId={sectionSlug} lessonSlug={topicSlug} />
       <Breadcrumbs slug={normalizedSlug} />
       <div className="mx-auto max-w-6xl px-4 pt-8 lg:px-8">
-        <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.35fr)]">
-          <main className="flex flex-col gap-8">
+        <div className="grid grid-cols-[minmax(0,1fr)] gap-10 lg:grid-cols-[minmax(0,1fr)_minmax(260px,0.35fr)]">
+          <main className="flex min-w-0 flex-col gap-8">
             <header className="rounded-3xl border border-border/60 bg-card/80 p-6 shadow-sm">
               <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                 {tierEntry?.title && <span>{tierEntry.title}</span>}
@@ -87,16 +90,16 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
               </div>
             </header>
 
-            <section className="rounded-3xl border border-border/60 bg-card/70 p-6 shadow-sm">
-              <article className="prose prose-base max-w-none dark:prose-invert">
+            <section className="rounded-3xl border border-border/60 bg-card/70 p-4 shadow-sm sm:p-6">
+              <article className="prose prose-base max-w-none break-words dark:prose-invert prose-code:before:content-none prose-code:after:content-none">
                 <MDXRemote
                   source={mdxContent}
                   components={getMdxComponents(frontmatter.components)}
                   options={{
                     mdxOptions: {
                       remarkPlugins: concepts.length > 0
-                        ? [[remarkConceptLinks, { concepts }]]
-                        : [],
+                        ? [remarkGfm, remarkCallouts, remarkJsxParagraphs, [remarkConceptLinks, { concepts }]]
+                        : [remarkGfm, remarkCallouts, remarkJsxParagraphs],
                     },
                   }}
                 />
@@ -155,7 +158,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
             </nav>
           </main>
 
-          <aside className="lg:pl-2">
+          <aside className="min-w-0 lg:pl-2">
             <div className="sticky top-28 flex flex-col gap-6">
               <div className="rounded-3xl border border-border/60 bg-card/80 p-6 shadow-sm">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Module quick facts</h2>

@@ -10,3 +10,9 @@
 | T1 | F4A | `content/curriculum/T1_Foundational/F4A_Modules_and_Packages/index.mdx` | ✅ |
 | T1 | F4B | `content/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index.mdx` | ✅ |
 | T1 | F4C | `content/curriculum/T1_Foundational/F4C_Clocking_Blocks/index.mdx` | ✅ |
+
+## Visual-first template (2026-10-03)
+
+F3C (`content/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index.mdx`) is the reference lesson for the visual-first section sequence inside the standard H2 order: picture → synchronized animation → experiment → comparison → `VisualRecap` → debugging challenge → retrieval quiz → guided and independent katas. The recipe and conventions are in [`docs/visual-learning/visual-language.md`](visual-learning/visual-language.md) §8; per-concept rollout status is in [`docs/visual-learning/concept-visual-map.md`](visual-learning/concept-visual-map.md).
+
+Related corrections in the same session (template unchanged): F2C region table, F3A delta and `$time` examples, F3B race and region-set wording, and F4C clocking-block timing.

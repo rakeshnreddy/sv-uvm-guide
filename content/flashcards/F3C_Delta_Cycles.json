@@ -2,7 +2,7 @@
   {
     "id": "f3c-1",
     "question": "What is a delta cycle?",
-    "answer": "A delta cycle is a zero-delay iteration within a single simulation time step. The simulator uses delta cycles to process immediate events and resolve their ripple effects without advancing the global simulation clock."
+    "answer": "A delta cycle is one more pass of the scheduler at the same simulation time: when a later region (for example NBA) produces events, they move back to Active and execution continues without advancing time."
   },
   {
     "id": "f3c-2",
@@ -17,6 +17,36 @@
   {
     "id": "f3c-4",
     "question": "What happens if you accidentally use a blocking assignment (=) in an always_ff block?",
-    "answer": "It can create a simulation race condition where another block triggered by the same clock might read the new value instead of the old value. This can cause the simulation to behave differently from the synthesized hardware."
+    "answer": "If another process triggered by the same edge reads that variable, the result depends on which process the simulator runs first (IEEE 1800-2023 §4.7) — a race. Real flops all sample before any of them update, which only <= reproduces."
+  },
+  {
+    "id": "f3c-5",
+    "question": "Picture the time-slot ladder. Where does q <= d read d, and where does it write q?",
+    "answer": "It reads d (evaluates the right side) in Active and writes q in the NBA region, after every process woken in Active has run (§10.4.2)."
+  },
+  {
+    "id": "f3c-6",
+    "question": "A testbench drives vif.din = 7 right after @(posedge clk) and the DUT flop does q <= din. Why is this a race even though the DUT is correct?",
+    "answer": "The testbench write and the flop's read of din both happen in Active on the same edge, and their order is unspecified. If the testbench runs first, the flop captures 7 instead of the pre-edge value."
+  },
+  {
+    "id": "f3c-7",
+    "question": "Where does a zero-skew clocking-block drive (vif.cb.din <= v) land, and why does that prevent the race?",
+    "answer": "In the Re-NBA region of the same time step (§14.16) — after Active reads and design NBA updates — so design flops have already captured the old value."
+  },
+  {
+    "id": "f3c-8",
+    "question": "What value does a clocking-block input with the default #1step skew return?",
+    "answer": "The value sampled in the Preponed region, i.e. before anything in the current time slot changed (§14.13). #1step is not a 1 ns delay."
+  },
+  {
+    "id": "f3c-9",
+    "question": "Why is adding #0 not a real fix for a race?",
+    "answer": "#0 only moves the process to the Inactive region. A second #0 process races it again there; the ordering assumption is hidden, not removed."
+  },
+  {
+    "id": "f3c-10",
+    "question": "Inside one block: q <= d; $display(q); $strobe(q); — which prints the new value?",
+    "answer": "Only $strobe. $display runs in Active before the NBA update; $strobe prints in Postponed after the slot settles (§21.2.2)."
   }
 ]

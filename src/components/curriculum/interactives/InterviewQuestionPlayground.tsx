@@ -11,17 +11,40 @@ export interface PlaygroundOption {
   explanation: React.ReactNode;
 }
 
+/** Authoring shape used by curriculum MDX: `{ text, isCorrect, feedback }`. */
+export interface AuthoredPlaygroundOption {
+  id?: string;
+  label?: string | React.ReactNode;
+  text?: string | React.ReactNode;
+  isCorrect?: boolean;
+  correct?: boolean;
+  explanation?: React.ReactNode;
+  feedback?: React.ReactNode;
+}
+
 export interface InterviewQuestionPlaygroundProps {
   title?: string;
   question: React.ReactNode;
-  options: PlaygroundOption[];
+  options: (PlaygroundOption | AuthoredPlaygroundOption)[];
 }
+
+export const normalizePlaygroundOptions = (options: (PlaygroundOption | AuthoredPlaygroundOption)[] = []): PlaygroundOption[] =>
+  options.map((raw, index) => {
+    const option = raw as AuthoredPlaygroundOption;
+    return {
+      id: option.id ?? `option-${index}`,
+      label: option.label ?? option.text ?? "",
+      isCorrect: Boolean(option.isCorrect ?? option.correct),
+      explanation: option.explanation ?? option.feedback ?? null,
+    };
+  });
 
 export default function InterviewQuestionPlayground({
   title = "Interview Pitfall",
   question,
-  options,
+  options: authoredOptions,
 }: InterviewQuestionPlaygroundProps) {
+  const options = React.useMemo(() => normalizePlaygroundOptions(authoredOptions), [authoredOptions]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hasSubmitted, setHasSubmitted] = useState(false);
   const [shake, setShake] = useState(false);
