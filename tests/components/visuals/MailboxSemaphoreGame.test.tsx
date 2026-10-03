@@ -41,16 +41,16 @@ describe("MailboxSemaphoreGame", () => {
     const sandbox = screen.getByRole("region", { name: "Mailbox sandbox" });
     fireEvent.click(within(sandbox).getByRole("button", { name: "consumer 1: mbx.get(v)" }));
     expect(status("mbx-status-consumer-1")).toHaveTextContent("blocked in mbx.get(v) — empty");
-    fireEvent.click(within(sandbox).getByRole("button", { name: "put(1)" }));
+    fireEvent.click(within(sandbox).getByRole("button", { name: "producer: mbx.put(1)" }));
     expect(status("mbx-status-consumer-1")).toHaveTextContent("v = 1");
 
-    fireEvent.click(within(sandbox).getByRole("button", { name: "put(2)" }));
-    fireEvent.click(within(sandbox).getByRole("button", { name: "put(3)" }));
-    fireEvent.click(within(sandbox).getByRole("button", { name: "try_put(4)" }));
+    fireEvent.click(within(sandbox).getByRole("button", { name: "producer: mbx.put(2)" }));
+    fireEvent.click(within(sandbox).getByRole("button", { name: "producer: mbx.put(3)" }));
+    fireEvent.click(within(sandbox).getByRole("button", { name: "producer: ok = mbx.try_put(4)" }));
     expect(within(sandbox).getAllByText(/full and stays unchanged/).length).toBeGreaterThan(0);
     expect(within(sandbox).getByText(/mbx.num\(\) = 2/)).toBeInTheDocument();
 
-    fireEvent.click(within(sandbox).getByRole("button", { name: "put(4)" }));
+    fireEvent.click(within(sandbox).getByRole("button", { name: "producer: mbx.put(4)" }));
     expect(status("mbx-status-producer")).toHaveTextContent("blocked in mbx.put(4) — full");
     fireEvent.click(within(sandbox).getByRole("button", { name: "consumer 2: mbx.get(v)" }));
     expect(status("mbx-status-consumer-2")).toHaveTextContent("v = 2");
@@ -72,6 +72,15 @@ describe("MailboxSemaphoreGame", () => {
     fireEvent.keyDown(within(labs).getByRole("radio", { name: "Semaphore" }), { key: "ArrowRight" });
     expect(within(labs).getByRole("radio", { name: "Mailbox" })).toHaveAttribute("aria-checked", "true");
     expect(screen.getByRole("region", { name: "Mailbox sandbox" })).toBeInTheDocument();
+  });
+
+  it("starts the mailbox prediction on a mailbox program after switching from semaphores", () => {
+    render(<MailboxSemaphoreGame />);
+    const labs = screen.getByRole("radiogroup", { name: "Lab" });
+    fireEvent.click(within(labs).getByRole("radio", { name: "Mailbox" }));
+    const programs = screen.getByRole("radiogroup", { name: "Mailbox program" });
+    expect(within(programs).getAllByRole("radio").filter((r) => r.getAttribute("aria-checked") === "true")).toHaveLength(1);
+    expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
   });
 
   it("debug: the early return leaks the key; only returning it on every path passes all checks", () => {

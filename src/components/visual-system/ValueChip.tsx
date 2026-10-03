@@ -27,7 +27,7 @@ export function ValueChip({ name, value, changed = false, className }: ValueChip
       )}
       aria-label={`${name ? `${name} = ` : ""}${shown}${kind === "unknown" || kind === "highz" ? `, ${style.cue}` : ""}${changed ? ", just changed" : ""}`}
     >
-      {name ? <span className="text-xs opacity-75">{name}</span> : null}
+      {name ? <span className="text-xs opacity-90">{name}</span> : null}
       <span className="font-semibold">{shown}</span>
       {changed ? (
         <span aria-hidden className="text-[10px] text-cyan-600 dark:text-cyan-300">

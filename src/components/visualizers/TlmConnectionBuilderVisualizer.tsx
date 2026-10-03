@@ -732,7 +732,7 @@ function ConnectVerdict({ result, topo }: { result: ConnectResult; topo: TlmTopo
 function buttonClass(variant: "primary" | "plain" = "plain") {
   return cn(
     "inline-flex h-10 items-center rounded-lg px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
-    variant === "primary" ? "bg-cyan-600 text-white hover:bg-cyan-700" : "border border-border/70 bg-background/60 text-foreground hover:bg-muted",
+    variant === "primary" ? "bg-cyan-700 text-white hover:bg-cyan-800" : "border border-border/70 bg-background/60 text-foreground hover:bg-muted",
   );
 }
 

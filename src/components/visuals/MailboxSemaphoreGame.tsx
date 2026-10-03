@@ -379,10 +379,10 @@ function MailboxSandbox() {
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {who === "producer" ? (
                   <>
-                    <button type="button" className={actionButton} disabled={blocked} aria-describedby={statusId} onClick={() => put(true)}>
+                    <button type="button" className={actionButton} disabled={blocked} aria-label={`producer: mbx.put(${state.next})`} aria-describedby={statusId} onClick={() => put(true)}>
                       put({state.next})
                     </button>
-                    <button type="button" className={actionButton} disabled={blocked} aria-describedby={statusId} onClick={() => put(false)}>
+                    <button type="button" className={actionButton} disabled={blocked} aria-label={`producer: ok = mbx.try_put(${state.next})`} aria-describedby={statusId} onClick={() => put(false)}>
                       try_put({state.next})
                     </button>
                   </>
@@ -731,6 +731,7 @@ export default function MailboxSemaphoreGame({ mode: initialMode = "semaphore" }
         {mode === "semaphore" ? (
           <div className="space-y-6">
             <ScriptedPredict
+              key="Semaphore"
               idPrefix="Semaphore"
               variants={[
                 { value: "fifo", label: "FIFO wake-up" },
@@ -749,6 +750,7 @@ export default function MailboxSemaphoreGame({ mode: initialMode = "semaphore" }
         ) : mode === "mailbox" ? (
           <div className="space-y-6">
             <ScriptedPredict
+              key="Mailbox"
               idPrefix="Mailbox"
               variants={[
                 { value: "2", label: "new(2)" },

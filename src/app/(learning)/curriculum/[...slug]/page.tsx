@@ -211,7 +211,7 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
                             className={cn(
                               'flex items-center justify-between gap-3 rounded-xl border border-transparent px-3 py-2 text-sm transition',
                               isCurrent
-                                ? 'border-primary/40 bg-primary/10 text-primary'
+                                ? 'border-primary/60 bg-primary/10 font-medium text-foreground'
                                 : 'hover:border-border/60 hover:bg-muted/40'
                             )}
                           >

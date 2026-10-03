@@ -212,7 +212,7 @@ export const PacketSorterGame: React.FC = () => {
             data-testid="packet-next"
             disabled={!chosen}
             onClick={() => (current < total - 1 ? setCurrent((c) => c + 1) : setFinished(true))}
-            className="min-h-10 rounded-lg bg-cyan-600 px-4 text-sm font-semibold text-white hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+            className="min-h-10 rounded-lg bg-cyan-700 px-4 text-sm font-semibold text-white hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
           >
             {current === total - 1 ? "See results" : "Next scenario"}
           </button>

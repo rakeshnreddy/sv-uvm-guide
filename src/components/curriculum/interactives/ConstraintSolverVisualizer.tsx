@@ -304,7 +304,7 @@ export default function ConstraintSolverVisualizer() {
                 type="button"
                 onClick={() => setStep(Math.min(lastStep, step + 1))}
                 disabled={step === lastStep}
-                className="min-h-10 flex-[2] rounded-md bg-cyan-600 text-sm font-medium text-white hover:bg-cyan-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+                className="min-h-10 flex-[2] rounded-md bg-cyan-700 text-sm font-medium text-white hover:bg-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
               >
                 {step === lastStep ? "Finished" : "Next step →"}
               </button>

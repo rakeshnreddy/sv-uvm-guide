@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import type { LabAssetSummary, LabProgressDto, LearnerLabDto } from "@/types/lab";
+import { SITE_MONACO_THEME, defineSiteMonacoThemes } from '@/lib/monaco-themes';
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   ssr: false,
@@ -316,7 +317,8 @@ export default function LabClientPage({ lab, assets, initialProgress }: LabClien
             language={selectedAsset?.language ?? "systemverilog"}
             value={selectedContent}
             onChange={(value) => updateCode(value ?? "")}
-            theme="vs-dark"
+            beforeMount={defineSiteMonacoThemes}
+            theme={SITE_MONACO_THEME.dark}
             options={{ minimap: { enabled: false }, readOnly: selectedAsset ? !selectedAsset.editable : false, wordWrap: "on" }}
           />
         </div>

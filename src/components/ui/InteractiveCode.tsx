@@ -9,6 +9,7 @@ import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { EditorProps, OnMount } from '@monaco-editor/react';
 import type * as monacoEditor from 'monaco-editor';
+import { SITE_MONACO_THEME, defineSiteMonacoThemes } from '@/lib/monaco-themes';
 import { select } from 'd3-selection';
 import { scaleBand, scaleLinear } from 'd3-scale';
 import { max } from 'd3-array';
@@ -558,7 +559,8 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
               broadcastEdit(socketRef.current, edit);
             }
           }}
-          theme={isDarkMode ? 'vs-dark' : 'light'}
+          beforeMount={defineSiteMonacoThemes}
+          theme={isDarkMode ? SITE_MONACO_THEME.dark : SITE_MONACO_THEME.light}
           options={{
             readOnly: !isEditable,
             domReadOnly: !isEditable,

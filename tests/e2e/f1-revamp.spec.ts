@@ -11,8 +11,12 @@ test.describe('F1 Revamp', () => {
         // Check Design Gap Chart
         await expect(page.getByText('Design vs. Verification')).toBeVisible();
 
-        // Check Carousel
-        await expect(page.getByText('Intel Pentium FDIV Bug (1994)')).toBeVisible();
+        // Check Carousel: sourced incidents, keyboard/Next navigation, no auto-advance
+        const carousel = page.getByRole('region', { name: /Hall of Shame/ });
+        await expect(carousel).toBeVisible();
+        await expect(carousel.getByRole('heading', { name: /Intel Pentium FDIV bug \(1994\)/i })).toBeVisible();
+        await carousel.getByRole('button', { name: 'Next incident' }).click();
+        await expect(carousel.getByRole('heading', { name: /Ariane 5 Flight 501/ })).toBeVisible();
     });
 
     test('F1B: The Verification Mindset loads and renders visuals', async ({ page }) => {

@@ -530,7 +530,7 @@ export function DynamicStructureVisualizer({ initialKind = "dynamic" }: { initia
               <button
                 type="button"
                 onClick={applyPending}
-                className="inline-flex h-10 items-center rounded-lg bg-cyan-600 px-4 text-sm font-semibold text-white hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                className="inline-flex h-10 items-center rounded-lg bg-cyan-700 px-4 text-sm font-semibold text-white hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 Apply and continue ▸
               </button>

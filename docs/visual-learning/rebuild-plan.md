@@ -13,15 +13,15 @@
 - reduced motion;
 - no overflow at 390 px.
 
-## Status (2026-10-03, end of wave 3)
+## Status (2026-10-03, all waves complete)
 
-Waves 0–3 are implemented and committed on `visual-curriculum-rebuild`. Wave 4 (leftovers, full sweep, trackers) is in progress.
+Waves 0–4 are implemented, validated and pushed on `visual-curriculum-rebuild`.
 
 | Measure | Result |
 |---|---|
-| Pure models in `src/lib/*-model.ts` | 44, each with a semantic test file (about 1,070 model tests citing IEEE 1800-2023, IEEE 1800.2-2020 / uvm-core 2020.3.1, Arm IHI0022E or IHI0033B.b) |
-| Lesson components backed by a model | 71 of the 86 registered components embedded in lessons (the rest are illustrations, code explainers, quizzes or navigation) |
-| Components with a prediction gate | 65 |
+| Pure models in `src/lib/*-model.ts` | 50, each with a semantic test file (about 1,150 model tests citing IEEE 1800-2023, IEEE 1800.2-2020 / uvm-core 2020.3.1, Arm IHI0022E or IHI0033B.b) |
+| Lesson components backed by a model | 75 of the 86 registered components embedded in lessons (the rest are illustrations, code explainers, quizzes or navigation) |
+| Components with a prediction gate | 69 |
 | Components with a hinted debug challenge (`HintLadder`) | 17, plus debug presets in the AXI, AHB, power and formal visuals |
 | Removed from the registry and deleted | 22 orphan or decorative components (6 decorative 3D views, 5 UVM placeholders, superseded simulators), plus their dead data files |
 
@@ -35,11 +35,12 @@ Waves 0–3 are implemented and committed on `visual-curriculum-rebuild`. Wave 4
 - **E (AMBA):** done. AXI burst math, channel handshakes, ID ordering, exclusive access and bridge translation; AHB pipeline. B-AXI-1 waveforms are generated from the channel model.
 - **F (expert):** done. Formal vs simulation, power sequencing, PSS and the FSM designer.
 
-**Wave 4 (in progress):**
-- F3B scheduler region visual, EventRegionGame, InterfaceSignalFlow, DataTypeComparisonChart, HallOfShameCarousel;
-- AMBA family/analogy explorers and the deadlock wrapper;
-- AMBA and expert content and lab corrections;
-- the full Playwright sweep.
+**Wave 4 (done):**
+- F3B region map, EventRegionGame (questions generated from the scheduler model), InterfaceSignalFlow, DataTypeComparisonChart, SV data-types animation, HallOfShameCarousel (sourced).
+- AMBA family and analogy explorers, deadlock simulator; Waveform Studio; Scoreboard Connector exercise.
+- AMBA, expert and lab content corrections; e2e specs aligned with the rebuilt visuals.
+- Accessibility sweep (axe-core, WCAG AA colour contrast, all 105 lessons + 4 practice routes, light and dark): 2,613 → 8 light-mode and 560 → 0 dark-mode violations, fixed at the token and primitive level; the last 8 were fixed after the measurement.
+- 390 px sweep: 0 lessons with horizontal overflow (was 12 at the F3C slice).
 
 **Known limits** (not fixed in this pass):
 - No simulator runs in CI, so lab SystemVerilog is still reviewed by reading it, not compiled (see the improvement plan, LAB-M1).

@@ -37,34 +37,53 @@ test.describe('Phase 9 Visualizations', () => {
     test('ArrayMethodExplorer in F2B renders and interacts', async ({ page }) => {
         await page.goto('/curriculum/T1_Foundational/F2B_Dynamic_Structures/index');
 
-        // Check Visualizer presence
-        const visualizer = page.getByTestId('array-method-explorer');
-        await expect(visualizer).toBeVisible();
+        const explorer = page.getByRole('region', { name: 'Array method explorer' });
+        await expect(explorer).toBeVisible();
 
-        // Interact: Click sort()
-        // Interact: Click sort()
-        await visualizer.locator('button').filter({ hasText: 'sort()' }).first().click({ force: true });
+        // Pick an ordering method: sort() is a void method that reorders data in place (§7.12.2).
+        await explorer.getByRole('radiogroup', { name: 'Method family' }).getByRole('radio', { name: 'Reorder (void, in place)' }).click();
+        const sortMethod = explorer.getByRole('radiogroup', { name: 'Method', exact: true }).getByRole('radio', { name: 'sort()', exact: true });
+        await expect(sortMethod).toHaveAttribute('aria-checked', 'true');
 
-        // Check result text
-        await expect(visualizer).toContainText('Array sorted in ascending order');
+        // Predict first, then the model reveals the result.
+        await explorer.getByRole('radio', { name: "data = '{4, 8, 8, 15, 15, 23, 99, 200}", exact: true }).check();
+        await explorer.getByRole('button', { name: 'Lock in prediction' }).click();
+        await expect(explorer).toContainText('Correct. Array sorted in ascending order');
+        await expect(explorer.getByTestId('array-method-result')).toHaveText("data = '{4, 8, 8, 15, 15, 23, 99, 200}");
+        await expect(
+            explorer.getByRole('group', { name: 'data after: [0] 4, [1] 8, [2] 8, [3] 15, [4] 15, [5] 23, [6] 99, [7] 200' }),
+        ).toBeVisible();
     });
 
     test('MailboxSemaphoreGame in F3D renders and switches modes', async ({ page }) => {
         await page.goto('/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/ipc');
 
-        // Check Visualizer presence
-        const visualizer = page.getByTestId('mailbox-semaphore-game');
-        await expect(visualizer).toBeVisible();
+        const game = page.getByRole('region', { name: 'Mailbox and semaphore lab' });
+        await expect(game).toBeVisible();
 
-        // Interact: Switch to Mailbox mode
-        await visualizer.getByRole('button', { name: 'Mailbox' }).click();
+        // Switch the lab to mailbox mode.
+        const labPicker = game.getByRole('radiogroup', { name: 'Lab' });
+        await labPicker.getByRole('radio', { name: 'Mailbox', exact: true }).click();
+        await expect(labPicker.getByRole('radio', { name: 'Mailbox', exact: true })).toHaveAttribute('aria-checked', 'true');
+        await expect(game.getByRole('heading', { name: 'Mailboxes: bounded queues that block' })).toBeVisible();
 
-        // Check title change
-        await expect(visualizer).toContainText('Mailbox (Data Flow)');
+        // Scripted run on new(2): messages 0 and 1 fill the mailbox, so put(2) waits for the consumer's first get at 10 ns.
+        await game.getByRole('radiogroup', { name: 'Mailbox program' }).getByRole('radio', { name: 'new(2)' }).click();
+        await expect(game.getByRole('list', { name: 'Code (generated from the model)' })).toContainText('mailbox #(int) mbx = new(2);');
+        await game.getByRole('radio', { name: 't = 10 ns', exact: true }).check();
+        await game.getByRole('button', { name: 'Lock in prediction' }).click();
+        await expect(game).toContainText('Correct. Right: 0 and 1 fill the mailbox and put(2) blocks.');
 
-        // Interact: Put mail
-        await visualizer.getByRole('button', { name: 'Put()' }).click({ force: true });
-        await expect(visualizer).toContainText('Producer put data');
+        // Sandbox: a consumer blocked in get() on an empty mailbox wakes by itself when the producer puts.
+        const sandbox = game.getByRole('region', { name: 'Mailbox sandbox' });
+        const consumerGet = sandbox.getByRole('button', { name: 'consumer 1: mbx.get(v)' });
+        await consumerGet.click();
+        await expect(consumerGet).toBeDisabled();
+        await expect(consumerGet).toHaveAccessibleDescription(/blocked in mbx\.get\(v\)/);
+        await sandbox.getByRole('button', { name: 'producer: mbx.put(1)', exact: true }).click();
+        await expect(consumerGet).toBeEnabled();
+        await expect(consumerGet).toHaveAccessibleDescription(/v = 1/);
+        await expect(sandbox).toContainText('consumer 1 wakes by itself with v = 1');
     });
 
 });

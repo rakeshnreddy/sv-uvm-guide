@@ -395,7 +395,7 @@ function AddOverrideForm({ onAdd, disabled }: { onAdd: (o: OvInput) => void; dis
           type="button"
           disabled={disabled}
           onClick={() => onAdd(kind === "type" ? typeOv(original, override, placement, replace) : instOv(original, override, pathArg, withThis, placement))}
-          className="inline-flex h-9 items-center rounded-lg bg-cyan-600 px-3 text-xs font-semibold text-white hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
+          className="inline-flex h-9 items-center rounded-lg bg-cyan-700 px-3 text-xs font-semibold text-white hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
         >
           Add override{disabled ? " (limit 6)" : ""}
         </button>

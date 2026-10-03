@@ -52,7 +52,7 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
     <div className="space-y-8">
       <section className="rounded-3xl border border-border/60 bg-card/80 p-6 shadow-lg shadow-primary/10">
         <header className="mb-6">
-          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-primary/80">Explore the verification stack</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.2em] text-foreground">Explore the verification stack</p>
           <h3 className="mt-2 text-2xl font-semibold text-foreground sm:text-3xl">
             See how each UVM layer hands work to the next
           </h3>
@@ -94,7 +94,7 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
                     aria-pressed={isActive}
                     aria-current={isActive ? 'step' : undefined}
                   >
-                    <span className="text-xs font-semibold uppercase tracking-wide text-primary/80">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-foreground">
                       {node.stage ?? 'Layer'}
                     </span>
                     <div className="mt-1 flex items-center justify-between gap-2">
@@ -116,7 +116,7 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
             data-testid="uvm-node-detail"
           >
             <div>
-              <span className="text-xs font-semibold uppercase tracking-wide text-primary">
+              <span className="text-xs font-semibold uppercase tracking-wide text-foreground">
                 {activeNode.stage ?? 'Layer'}
               </span>
               <h3 className="mt-1 text-2xl font-semibold text-foreground">
@@ -151,7 +151,7 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
                     {downstreamNodes.map(node => (
                       <span
                         key={node.id}
-                        className="rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-xs font-medium text-primary"
+                        className="rounded-full border border-primary/40 bg-primary/10 px-3 py-1 text-xs font-medium text-foreground"
                       >
                         {node.title}
                       </span>
@@ -213,7 +213,7 @@ const InteractiveUvmArchitectureDiagram: React.FC = () => {
                     : 'border-border/60 bg-background/70 hover:border-primary/40 hover:bg-background/80'
                 }`}
               >
-                <span className="flex items-center justify-between text-sm font-semibold text-primary">
+                <span className="flex items-center justify-between text-sm font-semibold text-foreground">
                   {node.title}
                   <ArrowRight className={`h-4 w-4 ${isActive ? 'opacity-100' : 'opacity-60'}`} aria-hidden="true" />
                 </span>
