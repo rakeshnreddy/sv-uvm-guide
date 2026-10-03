@@ -22,7 +22,7 @@ While custom or proprietary buses exist, almost all modern SoCs (System on Chips
 
 ## Why Do We Need Standard On-Chip Buses?
 
-If every IP block in an SoC (e.g., CPU, Memory Controller, Ethernet MAC, DMA) used a custom interface, connecting them would require bespoke wrapper logic for every possible pair. This scales exponentially and destroys IP reusability.
+If every IP block in an SoC (e.g., CPU, Memory Controller, Ethernet MAC, DMA) used a custom interface, connecting them would require bespoke wrapper logic for every possible pair. The number of bridges grows with the number of pairs (roughly n² for n blocks), and every IP becomes tied to its neighbours, which destroys reuse.
 
 By adhering to a standard protocol like AXI, the CPU and the Memory Controller don't need to know anything about each other's internal implementation. They both simply comply with the AXI specification. An **Interconnect Fabric** sits between them, routing AXI transactions based on the address map. 
 
@@ -51,7 +51,7 @@ AXI splits transactions across **five independent channels**:
 4. Write Data (`W`)
 5. Write Response (`B`)
 
-This channel architecture allows a master to issue multiple read/write addresses before the data comes back, supporting **multiple outstanding transactions**. Furthermore, slaves can return responses **out of order**, preventing slow peripherals from blocking fast memory access.
+This channel architecture allows a master to issue multiple read/write addresses before the data comes back, supporting **multiple outstanding transactions**. Furthermore, slaves can return responses **out of order across different IDs** (responses that share an ID stay in order, IHI0022E A5.3), so a slow peripheral does not block a fast memory.
 
 <AmbaFamilyExplorer />
 
@@ -78,10 +78,10 @@ If you are designing a simple UART peripheral, adding a full AXI4 interface migh
 | Feature | AHB-Lite | AXI4-Lite | AXI4 (Full) |
 | :--- | :--- | :--- | :--- |
 | **Topology** | Shared Bus | Point-to-Point | Point-to-Point |
-| **Channels** | 1 (Multiplexed) | 5 (Independent) | 5 (Independent) |
+| **Channels** | Pipelined address and data phases; separate HWDATA/HRDATA buses | 5 (independent handshakes) | 5 (independent handshakes) |
 | **Bursts** | Yes | No | Yes |
-| **Outstanding Tx** | Yes (Pipelined) | Yes (1 in flight typical) | Yes (Deep queues) |
-| **Out-of-Order** | No | No | Yes (via IDs) |
+| **Outstanding Tx** | One address phase overlaps one data phase | Allowed, but no IDs, so responses return in order | Yes, many, tracked by ID |
+| **Out-of-Order** | No | No | Yes, across different IDs only |
 | **Gate Count** | Low | Low to Medium | High |
 
 <Quiz 

@@ -117,7 +117,7 @@ const practiceItems: PracticeItem[] = [
   {
     href: '/practice/visualizations/data-type-comparison',
     title: 'Data Type Comparison',
-    description: 'Compare memory usage and features of different data types.',
+    description: 'Compare 2-state and 4-state types, widths, signedness and default values, then predict what each declaration holds.',
     status: 'completed',
     type: 'Chart',
   },

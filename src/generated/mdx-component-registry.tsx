@@ -33,10 +33,10 @@ const InteractiveWrapper = ({ children }: { children?: React.ReactNode }) => (
 
 const QuickTake = ({ children }: { children?: React.ReactNode }) => (
   <div className="my-6 rounded-2xl border border-blue-500/30 bg-blue-500/5 p-4 md:p-6">
-    <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-300">
+    <p className="mb-3 text-sm font-semibold uppercase tracking-wide text-blue-700 dark:text-blue-300">
       Quick Take
     </p>
-    <div className="prose prose-invert max-w-none">{children}</div>
+    <div className="prose max-w-none dark:prose-invert">{children}</div>
   </div>
 );
 

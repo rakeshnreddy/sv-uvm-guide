@@ -30,9 +30,20 @@ class proj_config extends uvm_object;
   endfunction
 endclass
 
-class proj_component extends uvm_component;
-  `uvm_component_utils(proj_component)
+// One way to fetch the project config. A helper, not a common component base:
+// a single uvm_component root cannot also be a uvm_driver (no seq_item_port).
+class proj_cfg_util;
+  static function proj_config get(uvm_component c);
+    proj_config cfg;
+    if (!uvm_config_db#(proj_config)::get(c, "", "proj_cfg", cfg))
+      `uvm_fatal("NO_CFG", {"Project config missing for ", c.get_full_name(), ": set it in the base test"})
+    return cfg;
+  endfunction
+endclass
 
+// Per-role bases keep the UVM role class and add project policy.
+class proj_driver #(type REQ = uvm_sequence_item) extends uvm_driver #(REQ);
+  `uvm_component_param_utils(proj_driver #(REQ))
   proj_config cfg;
 
   function new(string name, uvm_component parent);
@@ -41,30 +52,41 @@ class proj_component extends uvm_component;
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    if (!uvm_config_db#(proj_config)::get(this, "", "proj_cfg", cfg))
-      `uvm_fatal("NO_CFG", "Project config missing—ensure base test seeds it")
+    cfg = proj_cfg_util::get(this);
   endfunction
 
-  // Hook subclasses override for project-specific post-configure
+  // Called for every project driver; block teams override it instead of editing the base.
   virtual function void post_configure();
+  endfunction
+
+  function void end_of_elaboration_phase(uvm_phase phase);
+    super.end_of_elaboration_phase(phase);
+    post_configure();
   endfunction
 endclass
 
-class proj_driver extends proj_component;
-  `uvm_component_utils(proj_driver)
+class proj_monitor #(type T = uvm_sequence_item) extends uvm_monitor;
+  `uvm_component_param_utils(proj_monitor #(T))
+  proj_config cfg;
+  uvm_analysis_port #(T) ap;
 
-  virtual function void post_configure();
-    if (cfg.enable_scoreboard_hooks) begin
-      `uvm_info("HOOK", "Registering scoreboard analysis exports", UVM_MEDIUM)
-    end
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    ap = new("ap", this);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    cfg = proj_cfg_util::get(this);
   endfunction
 endclass
 ```
 
 **What this buys you:**
-- Lines 1–7 centralize project toggles inside a single config object.
-- Lines 9–21 give every component a consistent place to fetch config and run shared setup.
-- Lines 23–30 provide light extension hooks so downstream components override behaviour without rewriting plumbing.
+- `proj_config` centralizes project toggles in one object that the base test sets.
+- `proj_cfg_util::get` gives every component the same lookup, with a fatal that names the component when the base test forgot the config.
+- Per-role bases (`proj_driver`, `proj_monitor`) keep the UVM role classes, so `seq_item_port` and analysis ports still exist, while adding project policy. `post_configure()` is called from `end_of_elaboration_phase`, so a block team only overrides it.
+- Why not one `proj_component` base for everything: a class derived from `uvm_component` cannot also be a `uvm_driver` or `uvm_monitor`. Share behaviour through helpers, per-role bases, or callbacks instead.
 
 ### Custom Phases & Schedules
 
@@ -142,7 +164,7 @@ Pick where to add `load_fw` and predict whether it runs and calls `soc_env`. The
 1. **Codify policy:** Publish a methodology package (base classes, utilities, adapters) with semantic versioning and CI tests.
 2. **Seed configuration early:** Base tests push `proj_config` and any shared services (coverage bus, scoreboards) via [`uvm_config_db`](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources).
 3. **Offer extension hooks:** Provide virtual methods or callbacks instead of hard-coded behaviour so block teams extend safely.
-4. **Enforce adoption:** Create linting/check scripts that forbid raw `uvm_component` inheritance or missing custom phases.
+4. **Enforce adoption:** Create linting/check scripts that flag drivers and monitors extending `uvm_driver`/`uvm_monitor` directly when a project base exists, and missing custom phases.
 
 **Checklist before moving on:**
 - [ ] You know where methodology overrides live (base tests, packages, repos).

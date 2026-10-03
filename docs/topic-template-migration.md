@@ -16,3 +16,7 @@
 F3C (`content/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index.mdx`) is the reference lesson for the visual-first section sequence inside the standard H2 order: picture → synchronized animation → experiment → comparison → `VisualRecap` → debugging challenge → retrieval quiz → guided and independent katas. The recipe and conventions are in [`docs/visual-learning/visual-language.md`](visual-learning/visual-language.md) §8; per-concept rollout status is in [`docs/visual-learning/concept-visual-map.md`](visual-learning/concept-visual-map.md).
 
 Related corrections in the same session (template unchanged): F2C region table, F3A delta and `$time` examples, F3B race and region-set wording, and F4C clocking-block timing.
+
+## Visual component rebuild (2026-10-03)
+
+Every lesson and sub-lesson visual now follows the F3C pattern inside the unchanged H2 template: a `VisualFrame` with a fidelity label, a prediction gate where the learner can reason about the result, a tested model in `src/lib/*-model.ts`, and a debug mode where natural. Lesson structure and section order did not change; only the embedded visuals, their surrounding sentences, and factual corrections did. Decisions per component are in [`docs/visual-learning/rebuild-plan.md`](visual-learning/rebuild-plan.md), and per-concept coverage is in [`docs/visual-learning/concept-visual-map.md`](visual-learning/concept-visual-map.md).

@@ -460,13 +460,31 @@ const REGION_TARGETS: RegionTarget[] = [
   },
 ];
 
+/**
+ * The model's explanation for a landing. A wake step only records its trigger
+ * ("#0 delay expired."), so for resumes and woken processes the step that
+ * caused them (the suspend, or the value change) carries the useful reason.
+ */
+export function explainLanding(result: SimulationResult, landing: RegionLanding): string {
+  const step = result.trace[landing.stepIndex];
+  const before = result.trace.slice(0, landing.stepIndex).reverse();
+  if (landing.kind === "resume") {
+    const suspend = before.find((s) => s.kind === "suspend" && s.processId === landing.processId);
+    if (suspend) return suspend.why;
+  }
+  if (landing.kind === "run") {
+    const cause = before.find((s) => s.kind === "update" || s.kind === "statement");
+    if (cause && cause.kind === "update") return `${cause.what} ${cause.why}`;
+  }
+  return step.why;
+}
+
 export function buildRegionQuestion(target: RegionTarget): RegionQuestion {
   const scenario = target.build();
   const result = simulateTimeSlot(scenario);
   const landings = regionLandings(scenario, result);
   const landing = target.select(landings, scenario);
   if (!landing) throw new Error(`Region quiz target ${target.id} matched no event in ${scenario.id}`);
-  const step = result.trace[landing.stepIndex];
   return {
     type: "region",
     id: target.id,
@@ -476,7 +494,7 @@ export function buildRegionQuestion(target: RegionTarget): RegionQuestion {
     focusKey: target.focus?.(scenario) ?? landing.stmtId,
     prompt: target.prompt,
     answer: landing.region,
-    why: step.why,
+    why: explainLanding(result, landing),
     delta: landing.delta,
   };
 }

@@ -64,7 +64,7 @@ export default function PrivacyPolicyPage() {
         {sections.map((section) => (
           <section key={section.heading} className="space-y-4">
             <h2 className="text-2xl font-semibold text-primary">{section.heading}</h2>
-            <div className="prose prose-invert max-w-none text-foreground/90">{section.body}</div>
+            <div className="prose max-w-none text-foreground/90 dark:prose-invert">{section.body}</div>
           </section>
         ))}
       </div>

@@ -126,6 +126,13 @@ describe("sv-region-map-model: region quiz answer key", () => {
     }
   });
 
+  it("explains resumes and wake-ups with the step that caused them", () => {
+    const why = (id: string) => (quiz.find((q) => q.id === id) as RegionQuestion).why;
+    expect(why("zero-delay-resume")).toMatch(/#0 moves the rest of the process to Inactive/);
+    expect(why("program-zero-delay")).toMatch(/#0 moves the rest of the process to Re-Inactive/);
+    expect(why("comb-after-nba")).toMatch(/q updates 0 → 1\..*wakes assign y/);
+  });
+
   it("re-evaluating `assign y = q` happens in a later delta than the edge", () => {
     expect((quiz.find((q) => q.id === "comb-after-nba") as RegionQuestion).delta).toBeGreaterThan(0);
   });
