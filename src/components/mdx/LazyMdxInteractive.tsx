@@ -119,6 +119,16 @@ const loaders = {
   RaceConditionDebugger: () => import("@/components/visuals/RaceConditionDebugger").then(module => asMdxModule(module.default)),
   TestbenchDriveComparison: () => import("@/components/visuals/TestbenchDriveComparison").then(module => asMdxModule(module.default)),
   RaceDebugChallenge: () => import("@/components/visuals/RaceDebugChallenge").then(module => asMdxModule(module.default)),
+  NetResolutionSimulator: () => import("@/components/visuals/NetResolutionSimulator").then(module => asMdxModule(module.default)),
+  OperatorExplorer: () => import("@/components/visuals/OperatorExplorer").then(module => asMdxModule(module.default)),
+  ForkJoinVisualizer: () => import("@/components/visuals/ForkJoinVisualizer").then(module => asMdxModule(module.default)),
+  ClockingBlockSkewVisualizer: () => import("@/components/visuals/ClockingBlockSkewVisualizer").then(module => asMdxModule(module.default)),
+  ObjectHandleVisualizer: () => import("@/components/visuals/ObjectHandleVisualizer").then(module => asMdxModule(module.default)),
+  PolymorphismDispatchVisualizer: () => import("@/components/visuals/PolymorphismDispatchVisualizer").then(module => asMdxModule(module.default)),
+  AnalysisBroadcastVisualizer: () => import("@/components/visuals/AnalysisBroadcastVisualizer").then(module => asMdxModule(module.default)),
+  ScoreboardMatchingVisualizer: () => import("@/components/visuals/ScoreboardMatchingVisualizer").then(module => asMdxModule(module.default)),
+  CallbackTimingVisualizer: () => import("@/components/visuals/CallbackTimingVisualizer").then(module => asMdxModule(module.default)),
+  MultiAgentCoordinationVisualizer: () => import("@/components/visuals/MultiAgentCoordinationVisualizer").then(module => asMdxModule(module.default)),
 } satisfies Record<LazyMdxInteractiveName, MdxInteractiveLoader>;
 
 const componentCache = new Map<

@@ -98,6 +98,16 @@ export const lazyMdxInteractiveNames = [
   "RaceConditionDebugger",
   "TestbenchDriveComparison",
   "RaceDebugChallenge",
+  "NetResolutionSimulator",
+  "OperatorExplorer",
+  "ForkJoinVisualizer",
+  "ClockingBlockSkewVisualizer",
+  "ObjectHandleVisualizer",
+  "PolymorphismDispatchVisualizer",
+  "AnalysisBroadcastVisualizer",
+  "ScoreboardMatchingVisualizer",
+  "CallbackTimingVisualizer",
+  "MultiAgentCoordinationVisualizer",
 ] as const;
 
 export type LazyMdxInteractiveName = (typeof lazyMdxInteractiveNames)[number];
