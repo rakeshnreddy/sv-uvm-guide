@@ -13,11 +13,12 @@ export const metadata = {
 >
 
   ## Constructors
-  *IEEE 1800-2023, Clause 8.15: Object initialization*
+  *IEEE 1800-2023, §8.7 Constructors and §8.17 Chaining constructors*
 
   SystemVerilog uses the `new` function as a constructor to create and initialize
   class objects. Constructors can accept arguments, letting you configure an
-  object at creation time.
+  object at creation time. If a class declares no `new`, an implicit one is
+  provided (§8.7).
 
   <InteractiveCode>
   ```systemverilog
@@ -32,26 +33,38 @@ export const metadata = {
     endfunction
   endclass
 
-  program demo;
+  module demo;
+    Packet p;                    // a handle, null for now
+
     initial begin
-      Packet p = new(16'h10, 8'hFF); // calls Packet::new
+      p = new(16'h10, 8'hFF);    // calls Packet::new
       $display("addr=%0h data=%0h", p.addr, p.data);
     end
-  endprogram
+  endmodule
   ```
   </InteractiveCode>
 
+  ### What `new` does, in order (§8.7)
+
+  1. The base-class constructor runs first: your explicit `super.new(...)`, or one the compiler inserts.
+  2. Each property of this class is set to its declared initial value (for example `int count = 5;` or `header hdr = new;`).
+  3. The rest of the constructor body runs.
+
+  A shallow copy (`p2 = new p1;`) is the exception: it allocates the object without running any of these steps and copies the source's properties instead (§8.12). See [Copying and Cloning Objects](./copying-and-cloning).
+
   ## Using `this`
 
-  The `this` keyword refers to the current object. It disambiguates between
+  The `this` keyword refers to the current object: the object whose method is running (§8.11). It disambiguates between
   member variables and constructor arguments or local variables with the same
-  name.
+  name, as in `this.addr = addr;` above.
+
+  Inside a non-static method, `this` is never null: the method only runs because it was called on an object. A `static` method has no `this` at all (§8.10).
 
   ## Calling the Parent with `super`
 
   When a class extends another, its constructor can invoke the parent
   constructor using `super.new()`. The same keyword allows a method to call the
-  overridden version in the parent.
+  overridden version in the parent (§8.15).
 
   <InteractiveCode>
   ```systemverilog
@@ -68,7 +81,7 @@ export const metadata = {
   class Child extends Base;
     string name;
     function new(int id, string name);
-      super.new(id); // call Base constructor
+      super.new(id); // must be the first statement (§8.17)
       this.name = name;
     endfunction
     function void print();
@@ -77,19 +90,24 @@ export const metadata = {
     endfunction
   endclass
 
-  program demo;
+  module demo;
+    Child c;
     initial begin
-      Child c = new(1, "pkt");
+      c = new(1, "pkt");
       c.print();
     end
-  endprogram
+  endmodule
   ```
   </InteractiveCode>
 
+  If every subclass passes the same constant arguments, you can put them in the `extends` clause instead, for example `class EtherPacket extends Packet(5);`, and the compiler inserts the `super.new` call (§8.17).
+
   ## Common Pitfalls
 
-  - Forgetting to call `super.new()` leaves base-class members uninitialized.
-  - Using `this` on a null handle causes a runtime error.
+  - **Omitting `super.new(...)` does not skip the base constructor.** The compiler inserts an argument-less `super.new()` as the first statement (§8.15). If the base constructor has an argument without a default, that inserted call does not compile. If every base argument has a default, it compiles and you silently get those defaults. Pass the arguments you mean.
+  - **`super.new(...)` must be the first statement** in the constructor (§8.17).
+  - **Calling through a null handle**, not using `this`, is the real null pitfall: `p.print()` or `p.addr = 1` when `p` was never constructed is illegal and stops the simulation (§8.4).
+  - **A virtual call inside a base constructor runs the subclass override** (§8.17, §8.20), but at that moment the subclass's own properties have not been initialized yet; their values are undefined (§8.7). Keep constructors free of virtual calls that read subclass state.
 
   ## Quiz
 
@@ -103,6 +121,16 @@ export const metadata = {
         {"text": "current", "correct": false}
       ],
       "explanation": "`this` lets you access members of the current object."
+    },
+    {
+      "question": "Base has function new(int id); with no default. Child extends Base and its new() never calls super.new. What happens?",
+      "answers": [
+        {"text": "Base's constructor is skipped and id stays 0", "correct": false},
+        {"text": "It does not compile: the inserted super.new() has no argument for id", "correct": true},
+        {"text": "It compiles, and id is X", "correct": false},
+        {"text": "The simulator calls super.new with id = 0", "correct": false}
+      ],
+      "explanation": "The compiler always inserts super.new() when you omit it (§8.15). Without arguments that call cannot satisfy Base's required id, so compilation fails."
     }
   ]} />
 
@@ -110,13 +138,12 @@ export const metadata = {
     <InterviewQuestionPlayground
       question="What happens if a child class constructor does not explicitly call `super.new()`?"
       options={[
-        { text: "The base class members keep default initialization.", isCorrect: false, feedback: "Default initialization without running the base constructor can still mean some setup is bypassed." },
-        { text: "The code fails to compile.", isCorrect: false, feedback: "It will actually compile under certain conditions, but the simulator's behavior is very specific." },
-        { text: "The simulator implicitly calls `super.new()` without arguments as the first statement.", isCorrect: true, feedback: "Correct! The simulator automatically calls `super.new()` if you don't. However, if the base class constructor requires arguments and has no default values, the compilation WILL fail." },
-        { text: "The base class constructor is skipped entirely.", isCorrect: false, feedback: "SystemVerilog guarantees base constructors are called." }
+        { text: "The base class members keep default initialization.", isCorrect: false, feedback: "The base constructor is not skipped: the compiler inserts a call to it, so its body runs too." },
+        { text: "The code fails to compile.", isCorrect: false, feedback: "Only when the base constructor needs an argument that has no default. Otherwise it compiles." },
+        { text: "The simulator implicitly calls `super.new()` without arguments as the first statement.", isCorrect: true, feedback: "Correct! The compiler inserts `super.new()` if you don't (§8.15). However, if the base class constructor requires arguments and has no default values, compilation fails." },
+        { text: "The base class constructor is skipped entirely.", isCorrect: false, feedback: "Constructors always chain from the root base class down (§8.17)." }
       ]}
     />
   </div>
 
 </InfoPage>
-

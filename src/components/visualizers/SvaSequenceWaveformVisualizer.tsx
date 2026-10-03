@@ -1,391 +1,518 @@
 "use client";
 
-import React, { useState } from 'react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Button } from '@/components/ui/Button';
-import { Play, RotateCcw } from 'lucide-react';
+import React, { useId, useMemo, useState } from "react";
 
-type ResultStatus = 'PASS' | 'FAIL' | 'PENDING' | 'VACUOUS' | null;
+import { CodeTrace } from "@/components/visual-system/CodeTrace";
+import { CycleWaveform, type CycleHighlight, type CycleMarker, type CycleSignal, type MarkerTone } from "@/components/visual-system/CycleWaveform";
+import { PredictionPrompt } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  assertionCode,
+  diagnoseAttempt,
+  evaluateSva,
+  parseSva,
+  plainText,
+  scenarioTrace,
+  splitInlineCode,
+  statusGlyph,
+  summarize,
+  svaDebugCases,
+  svaLearnScenarios,
+  type AttemptStatus,
+  type BitRow,
+  type SvaAttempt,
+  type SvaSpec,
+  type SvaStep,
+} from "@/lib/sva-model";
+import { cn } from "@/lib/utils";
 
-interface CycleResult {
-  status: ResultStatus;
-  reason: string;
-}
+type Mode = "learn" | "debug" | "custom";
 
-const PRESETS = [
-  { label: "Preset 1: req ##2 ack", value: "req ##2 ack" },
-  { label: "Preset 2: req |-> ##[1:3] ack", value: "req |-> ##[1:3] ack" },
-  { label: "Preset 3: $rose(req) |=> ack [*2]", value: "$rose(req) |=> ack [*2]" },
-  { label: "Custom SVA...", value: "custom" },
+export const SVA_MODEL_ASSUMPTIONS = [
+  "One clock: each column is one posedge clk tick (cycle time, not ns). The value in column k is the value sampled at edge k, its Preponed value (§16.5.1).",
+  "Signals are logic: before edge 0 their default sampled value is X, which $rose, $fell and $past see at edge 0 (§16.5.1, §16.9.3).",
+  "A new attempt starts at every edge (§16.14.5). Sequences are weak, as in assert property, so an attempt still running when the trace ends is pending, not failed (§16.12.2).",
+  "disable iff is checked only at sampling points, using the value shown at that edge. A simulator uses the current value (§16.12), so a reset that changes between edges, or one driven by a flop on an edge, cancels attempts up to one edge earlier.",
+  "Subset: Boolean operators, $rose/$fell/$stable/$changed/$past, ##, [*], [->], [=], and/or/intersect/throughout/within, |->, |=>, not. No local variables, multiclock, first_match or liveness operators. Unsupported syntax is reported, never treated as false.",
 ];
 
-function parseCondition(condStr: string, sigs: Record<string, number[]>, c: number): boolean {
-  condStr = condStr.trim();
-  if (condStr === 'req') return sigs.req[c] === 1;
-  if (condStr === 'ack') return sigs.ack[c] === 1;
-  if (condStr === 'data_valid') return sigs.data_valid[c] === 1;
-  
-  let match = condStr.match(/^\$rose\((req|ack|data_valid)\)$/);
-  if (match) {
-    let sig = sigs[match[1]];
-    if (c === 0) return false;
-    return sig[c-1] === 0 && sig[c] === 1;
-  }
-  match = condStr.match(/^\$fell\((req|ack|data_valid)\)$/);
-  if (match) {
-    let sig = sigs[match[1]];
-    if (c === 0) return false;
-    return sig[c-1] === 1 && sig[c] === 0;
-  }
-  if (condStr.startsWith('!')) {
-      return !parseCondition(condStr.substring(1), sigs, c);
-  }
-  return false;
-}
+const statusTone: Record<AttemptStatus, MarkerTone> = { PASS: "pass", FAIL: "fail", VACUOUS: "vacuous", PENDING: "pending", DISABLED: "info" };
 
-function checkConsequent(consStr: string, sigs: Record<string, number[]>, c: number): 'PASS' | 'FAIL' | 'PENDING' {
-  consStr = consStr.trim();
-  
-  let matchDel = consStr.match(/^##(\d+)\s+(.+)$/);
-  if (matchDel) {
-     let n = parseInt(matchDel[1]);
-     let B = matchDel[2];
-     if (c + n >= 16) return 'PENDING';
-     return checkConsequent(B, sigs, c + n);
-  }
-  
-  let matchRng = consStr.match(/^##\[(\d+):(\d+)\]\s+(.+)$/);
-  if (matchRng) {
-     let n = parseInt(matchRng[1]);
-     let m = parseInt(matchRng[2]);
-     let B = matchRng[3];
-     
-     let allCheckedFail = true;
-     for (let i = n; i <= m; i++) {
-        if (c + i >= 16) {
-           allCheckedFail = false;
-           continue;
-        }
-        let res = checkConsequent(B, sigs, c + i);
-        if (res === 'PASS') return 'PASS';
-        if (res === 'PENDING') allCheckedFail = false;
-     }
-     if (allCheckedFail) return 'FAIL';
-     return 'PENDING';
-  }
-  
-  let matchRep = consStr.match(/^(.+?)\s+\[\*(\d+)\]$/);
-  if (matchRep) {
-      let B = matchRep[1].trim();
-      let n = parseInt(matchRep[2]);
-      for (let i = 0; i < n; i++) {
-         if (c + i >= 16) return 'PENDING';
-         if (!parseCondition(B, sigs, c + i)) return 'FAIL';
-      }
-      return 'PASS';
-  }
-  
-  if (c >= 16) return 'PENDING';
-  if (parseCondition(consStr, sigs, c)) {
-      return 'PASS';
-  } else {
-      return 'FAIL';
-  }
-}
-
-function evaluateProperty(prop: string, sigs: Record<string, number[]>, c: number): CycleResult {
-   let p = prop.trim();
-   if (!p) return { status: 'VACUOUS', reason: 'Empty property' };
-
-   try {
-       // Is it A |-> B ?
-       let matchImpl = p.match(/^(.+?)\s*\|->\s*(.+)$/);
-       if (matchImpl) {
-           let A = matchImpl[1];
-           let B = matchImpl[2];
-           if (!parseCondition(A, sigs, c)) return { status: 'VACUOUS', reason: `Antecedent '${A}' is false` };
-           let res = checkConsequent(B, sigs, c);
-           return { 
-               status: res, 
-               reason: res === 'PASS' ? `Matched: consequent passed` : 
-                       res === 'FAIL' ? `Failed: antecedent true, but consequent failed` : 
-                       `Pending: not enough cycles` 
-           };
-       }
-       
-       // A |=> B
-       matchImpl = p.match(/^(.+?)\s*\|=>\s*(.+)$/);
-       if (matchImpl) {
-           let A = matchImpl[1];
-           let B = matchImpl[2];
-           if (!parseCondition(A, sigs, c)) return { status: 'VACUOUS', reason: `Antecedent '${A}' is false` };
-           let res = checkConsequent(B, sigs, c + 1);
-           return { 
-               status: res, 
-               reason: res === 'PASS' ? `Matched: consequent passed` : 
-                       res === 'FAIL' ? `Failed: antecedent true, but consequent failed` : 
-                       `Pending: not enough cycles` 
-           };
-       }
-       
-       // A ##N B sequence
-       let matchSeq = p.match(/^(.+?)\s+##(\d+)\s+(.+)$/);
-       if (matchSeq) {
-           let A = matchSeq[1];
-           let n = parseInt(matchSeq[2]);
-           let B = matchSeq[3];
-           if (!parseCondition(A, sigs, c)) return { status: 'VACUOUS', reason: `Antecedent '${A}' is false` };
-           let res = checkConsequent(B, sigs, c + n);
-           return { 
-               status: res, 
-               reason: res === 'FAIL' ? `Failed: unmatched sequence` : 
-                       res === 'PASS' ? `Matched sequence` : 
-                       `Pending` 
-           };
-       }
-       
-       // A ##[N:M] B sequence
-       matchSeq = p.match(/^(.+?)\s+##\[(\d+):(\d+)\]\s+(.+)$/);
-       if (matchSeq) {
-           let A = matchSeq[1];
-           let n = parseInt(matchSeq[2]);
-           let m = parseInt(matchSeq[3]);
-           let B = matchSeq[4];
-           if (!parseCondition(A, sigs, c)) return { status: 'VACUOUS', reason: `Antecedent '${A}' is false` };
-           let allCheckedFail = true;
-           for (let i = n; i <= m; i++) {
-              if (c + i >= 16) {
-                  allCheckedFail = false;
-                  continue;
-              }
-              let res = checkConsequent(B, sigs, c + i);
-              if (res === 'PASS') return { status: 'PASS', reason: `Matched sequence at cycle ${c+i}` };
-              if (res === 'PENDING') allCheckedFail = false;
-           }
-           if (allCheckedFail) return { status: 'FAIL', reason: `Failed: unmatched sequence in range` };
-           return { status: 'PENDING', reason: `Pending data for range` };
-       }
-       
-       if (!parseCondition(p, sigs, c)) return { status: 'FAIL', reason: `'${p}' evaluated to false` };
-       return { status: 'PASS', reason: `'${p}' evaluated to true` };
-   } catch (e) {
-       return { status: 'FAIL', reason: 'Parse Error' };
-   }
-}
-
-export const SvaSequenceWaveformVisualizer = () => {
-    const [propertyValue, setPropertyValue] = useState<string>(PRESETS[0].value);
-    const [customProperty, setCustomProperty] = useState<string>('');
-    
-    // 16 cycles of state
-    const numCycles = 16;
-    const [signals, setSignals] = useState<Record<string, number[]>>({
-        req: Array(numCycles).fill(0),
-        ack: Array(numCycles).fill(0),
-        data_valid: Array(numCycles).fill(0),
-    });
-
-    const [results, setResults] = useState<CycleResult[] | null>(null);
-
-    const toggleSignal = (sig: string, cycle: number) => {
-        setSignals(prev => {
-            const newSig = [...prev[sig]];
-            newSig[cycle] = newSig[cycle] ? 0 : 1;
-            return { ...prev, [sig]: newSig };
-        });
-        // Clear results when user changes state
-        setResults(null);
-    };
-
-    const handleEvaluate = () => {
-        const propToEval = propertyValue === 'custom' ? customProperty : propertyValue;
-        const newResults: CycleResult[] = [];
-        for (let i = 0; i < numCycles; i++) {
-            newResults.push(evaluateProperty(propToEval, signals, i));
-        }
-        setResults(newResults);
-    };
-
-    const handleReset = () => {
-        setSignals({
-            req: Array(numCycles).fill(0),
-            ack: Array(numCycles).fill(0),
-            data_valid: Array(numCycles).fill(0),
-        });
-        setResults(null);
-    };
-
-    const drawGridLines = () => {
-        let lines = [];
-        for (let i = 1; i <= numCycles; i++) {
-            lines.push(<line key={i} x1={i * 40} y1={0} x2={i * 40} y2={50} stroke="rgba(255,255,255,0.05)" />);
-        }
-        return lines;
-    };
-
-    const renderWaveform = (name: string, data: number[], isEditable: boolean) => {
-        return (
-            <div className="flex items-center mb-2">
-                <div className="w-24 text-sm font-mono text-slate-400 text-right pr-4">{name}</div>
-                <div className="relative border border-slate-700 bg-slate-900 rounded" style={{ width: numCycles * 40, height: 50 }}>
-                    <svg width={numCycles * 40} height={50} className="absolute inset-0 pointer-events-none stroke-blue-500 fill-transparent stroke-2">
-                        {drawGridLines()}
-                        {data.map((cVal, c) => {
-                            const x = c * 40;
-                            const prevVal = c > 0 ? data[c - 1] : 0;
-                            const y = cVal ? 10 : 40;
-                            const prevY = prevVal ? 10 : 40;
-                            
-                            // SVG origin is top-left
-                            return (
-                                <React.Fragment key={c}>
-                                    {c > 0 && cVal !== prevVal && <line x1={x} y1={prevY} x2={x} y2={y} className="stroke-indigo-400" />}
-                                    <line x1={x} y1={y} x2={x + 40} y2={y} className="stroke-indigo-400" />
-                                </React.Fragment>
-                            );
-                        })}
-                    </svg>
-                    {isEditable && (
-                        <div className="absolute inset-0 flex">
-                            {data.map((_, c) => (
-                                <div 
-                                    key={c}
-                                    className="w-[40px] h-full cursor-pointer hover:bg-white/10"
-                                    onClick={() => toggleSignal(name, c)}
-                                />
-                            ))}
-                        </div>
-                    )}
-                </div>
-            </div>
-        );
-    };
-
-    const renderClockWaveform = () => {
-        return (
-            <div className="flex items-center mb-2">
-                <div className="w-24 text-sm font-mono text-slate-400 text-right pr-4">clk</div>
-                <div className="relative border border-slate-700 bg-slate-900 rounded" style={{ width: numCycles * 40, height: 50 }}>
-                    <svg width={numCycles * 40} height={50} className="absolute inset-0 pointer-events-none fill-transparent stroke-2">
-                        {drawGridLines()}
-                        {Array.from({ length: numCycles }).map((_, c) => {
-                            const x = c * 40;
-                            return (
-                                <React.Fragment key={c}>
-                                    {c > 0 && <line x1={x} y1={40} x2={x} y2={10} className="stroke-slate-500" />}
-                                    {c === 0 && <line x1={x} y1={40} x2={x} y2={10} className="stroke-slate-500" />}
-                                    <line x1={x} y1={10} x2={x + 20} y2={10} className="stroke-slate-500" />
-                                    <line x1={x + 20} y1={10} x2={x + 20} y2={40} className="stroke-slate-500" />
-                                    <line x1={x + 20} y1={40} x2={x + 40} y2={40} className="stroke-slate-500" />
-                                </React.Fragment>
-                            );
-                        })}
-                    </svg>
-                    <div className="absolute inset-0 flex">
-                        {Array.from({ length: numCycles }).map((_, c) => (
-                            <div key={c} className="w-[40px] h-full flex flex-col justify-end">
-                                <span className="text-[10px] text-slate-500 ml-1 mb-1 select-none">{c}</span>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-            </div>
-        );
-    };
-
-    const renderResults = () => {
-        if (!results) return null;
-        return (
-            <div className="flex items-center mt-4">
-                <div className="w-24 text-sm font-mono font-bold text-slate-300 text-right pr-4">Result</div>
-                <div className="flex" style={{ width: numCycles * 40 }}>
-                    {results.map((res, c) => {
-                        let bgColor = 'bg-slate-800';
-                        let symbol = '-';
-                        if (res.status === 'PASS') { bgColor = 'bg-green-600/80'; symbol = '✓'; }
-                        else if (res.status === 'FAIL') { bgColor = 'bg-red-600/80'; symbol = '✗'; }
-                        else if (res.status === 'PENDING') { bgColor = 'bg-yellow-600/80'; symbol = '⌛'; }
-                        
-                        return (
-                            <div 
-                                key={c} 
-                                className={`w-[40px] h-8 flex items-center justify-center border-r border-slate-700/50 ${bgColor} cursor-help`}
-                                title={res.reason}
-                                data-testid={`cycle-result-${c}`}
-                            >
-                                <span className="text-white font-bold text-xs">{symbol}</span>
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
-        );
-    };
-
-    return (
-        <Card className="my-8 overflow-hidden w-full max-w-4xl mx-auto shadow-md" data-testid="sva-waveform-visualizer">
-            <CardHeader className="bg-slate-50 dark:bg-slate-900/50 border-b border-slate-200 dark:border-slate-800">
-                <CardTitle>SVA Property Evaluator</CardTitle>
-                <p className="text-sm text-slate-500 mt-1">Interactive SystemVerilog Assertion sequence evaluation</p>
-            </CardHeader>
-            <CardContent className="p-6 bg-slate-950">
-                <div className="flex flex-col md:flex-row gap-4 mb-6 relative z-10">
-                    <div className="flex-grow">
-                        <label className="block text-sm font-medium border-slate-300 text-slate-400 mb-1">Select Property:</label>
-                        <select 
-                            className="w-full bg-slate-900 border border-slate-700 text-slate-200 rounded p-2 text-sm font-mono"
-                            value={propertyValue}
-                            onChange={e => {
-                                setPropertyValue(e.target.value);
-                                setResults(null);
-                            }}
-                        >
-                            {PRESETS.map(p => (
-                                <option key={p.value} value={p.value}>{p.label}</option>
-                            ))}
-                        </select>
-                        {propertyValue === 'custom' && (
-                            <input 
-                                type="text"
-                                className="w-full mt-2 bg-slate-900 border border-slate-600 text-slate-200 rounded p-2 text-sm font-mono"
-                                placeholder="Enter simplified SVA (e.g. req |-> ##2 ack)"
-                                value={customProperty}
-                                onChange={e => {
-                                    setCustomProperty(e.target.value);
-                                    setResults(null);
-                                }}
-                            />
-                        )}
-                    </div>
-                    <div className="flex items-end gap-2 shrink-0">
-                        <Button variant="default" onClick={handleEvaluate} className="w-32 bg-indigo-600 hover:bg-indigo-700">
-                            <Play className="w-4 h-4 mr-2" />
-                            Evaluate
-                        </Button>
-                        <Button variant="outline" onClick={handleReset} className="bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700" title="Reset Waveform">
-                            <RotateCcw className="w-4 h-4" />
-                        </Button>
-                    </div>
-                </div>
-
-                <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 overflow-x-auto">
-                    <div className="min-w-[700px] pb-2">
-                        {renderClockWaveform()}
-                        {renderWaveform('req', signals.req, true)}
-                        {renderWaveform('ack', signals.ack, true)}
-                        {renderWaveform('data_valid', signals.data_valid, true)}
-                        {renderResults()}
-                    </div>
-                </div>
-                
-                <div className="mt-4 flex gap-4 text-xs text-slate-400">
-                    <div className="flex items-center"><span className="w-3 h-3 bg-green-600 inline-block mr-1 rounded-sm"/> PASS</div>
-                    <div className="flex items-center"><span className="w-3 h-3 bg-red-600 inline-block mr-1 rounded-sm"/> FAIL</div>
-                    <div className="flex items-center"><span className="w-3 h-3 bg-yellow-600 inline-block mr-1 rounded-sm"/> PENDING</div>
-                    <div className="flex items-center"><span className="w-3 h-3 bg-slate-800 inline-block mr-1 rounded-sm border border-slate-700"/> VACUOUS</div>
-                    <div className="ml-auto text-slate-500 italic">Click signal traces to toggle values, then Evaluate. Hover over results to see why.</div>
-                </div>
-            </CardContent>
-        </Card>
-    );
+const statusClass: Record<AttemptStatus, string> = {
+  PASS: "border-emerald-500/60 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200",
+  FAIL: "border-rose-500/60 bg-rose-500/10 text-rose-800 dark:text-rose-200",
+  VACUOUS: "border-dashed border-slate-400/70 bg-slate-500/5 text-slate-700 dark:text-slate-300",
+  PENDING: "border-amber-500/60 bg-amber-500/10 text-amber-900 dark:text-amber-200",
+  DISABLED: "border-sky-500/60 bg-sky-500/10 text-sky-800 dark:text-sky-200",
 };
+
+const stepGlyph: Record<SvaStep["kind"], string> = { match: "✓", fail: "✕", wait: "…", note: "→" };
+
+const edgeLabel = (s: SvaStep) => (s.toEdge !== undefined && s.toEdge !== s.edge ? `edges ${s.edge}–${s.toEdge}` : `edge ${s.edge}`);
+
+/** Renders model sentences, turning `code` spans into code elements. */
+function Rich({ text }: { text: string }) {
+  return (
+    <>
+      {splitInlineCode(text).map((part, i) =>
+        part.code ? (
+          <code key={i} className="font-mono text-[0.92em] [font-variant-ligatures:none]">
+            {part.text}
+          </code>
+        ) : (
+          <React.Fragment key={i}>{part.text}</React.Fragment>
+        ),
+      )}
+    </>
+  );
+}
+
+function cloneRows(rows: Record<string, BitRow>): Record<string, BitRow> {
+  return Object.fromEntries(Object.entries(rows).map(([k, v]) => [k, [...v]]));
+}
+
+/**
+ * SVA trace lab: a learner-editable cycle trace evaluated by `sva-model`, with
+ * per-attempt prediction, diagnostic diff feedback, step-by-step match
+ * explanations and four debug cases.
+ */
+export function SvaSequenceWaveformVisualizer() {
+  const inputId = useId();
+  const [mode, setMode] = useState<Mode>("learn");
+  const [learnId, setLearnId] = useState(svaLearnScenarios[0].id);
+  const [debugId, setDebugId] = useState(svaDebugCases[0].id);
+  const [signals, setSignals] = useState<string[]>(svaLearnScenarios[0].signals);
+  const [rows, setRows] = useState<Record<string, BitRow>>(() => cloneRows(svaLearnScenarios[0].rows));
+  const [baseRows, setBaseRows] = useState<Record<string, BitRow>>(() => cloneRows(svaLearnScenarios[0].rows));
+  const [draft, setDraft] = useState(svaLearnScenarios[0].property);
+  const [customSource, setCustomSource] = useState(svaLearnScenarios[0].property);
+  const [showFix, setShowFix] = useState(false);
+  const [predictions, setPredictions] = useState<Record<number, AttemptStatus>>({});
+  const [revealed, setRevealed] = useState(false);
+  const [selected, setSelected] = useState<number | null>(null);
+
+  const learn = svaLearnScenarios.find((s) => s.id === learnId) ?? svaLearnScenarios[0];
+  const debugCase = svaDebugCases.find((c) => c.id === debugId) ?? svaDebugCases[0];
+
+  const property = mode === "learn" ? learn.property : mode === "debug" ? (showFix ? debugCase.fixedProperty : debugCase.property) : customSource;
+  const trace = useMemo(() => scenarioTrace({ rows }), [rows]);
+  const parsed = useMemo(() => parseSva(property, signals), [property, signals]);
+  const evaluation = useMemo(() => (parsed.ok ? evaluateSva(parsed.spec, trace) : null), [parsed, trace]);
+  const buggyEvaluation = useMemo(() => {
+    const p = parseSva(debugCase.property, signals);
+    return mode === "debug" && p.ok ? evaluateSva(p.spec, trace) : null;
+  }, [debugCase, signals, trace, mode]);
+
+  const resultsVisible = mode === "debug" || revealed;
+  const predictionCount = Object.keys(predictions).length;
+  const cycle: (AttemptStatus | undefined)[] = [undefined, "PASS", "FAIL", "VACUOUS", "PENDING", ...(parsed.ok && parsed.spec.disable ? (["DISABLED"] as const) : [])];
+
+  const resetRun = () => {
+    setPredictions({});
+    setRevealed(false);
+    setSelected(null);
+  };
+
+  const loadRows = (nextSignals: string[], nextRows: Record<string, BitRow>) => {
+    setSignals(nextSignals);
+    setRows(cloneRows(nextRows));
+    setBaseRows(cloneRows(nextRows));
+    resetRun();
+  };
+
+  const changeMode = (next: Mode) => {
+    if (next === mode) return;
+    if (next === "custom") {
+      setDraft(property);
+      setCustomSource(property);
+    } else if (next === "learn") {
+      loadRows(learn.signals, learn.rows);
+    } else {
+      setShowFix(false);
+      loadRows(debugCase.signals, debugCase.rows);
+    }
+    setMode(next);
+    resetRun();
+  };
+
+  const toggle = (signal: string, edge: number) => {
+    setRows((prev) => ({ ...prev, [signal]: prev[signal].map((v, k) => (k === edge ? (v ? 0 : 1) : v)) as BitRow }));
+    resetRun();
+  };
+
+  const cyclePrediction = (k: number) => {
+    setPredictions((prev) => {
+      const index = cycle.indexOf(prev[k]);
+      const nextStatus = cycle[(index + 1) % cycle.length];
+      const next = { ...prev };
+      if (nextStatus) next[k] = nextStatus;
+      else delete next[k];
+      return next;
+    });
+  };
+
+  const evaluate = () => {
+    setRevealed(true);
+    if (!evaluation) return;
+    const firstWrong = evaluation.attempts.find((a) => predictions[a.start] && predictions[a.start] !== a.status);
+    const firstInteresting = evaluation.attempts.find((a) => a.status !== "VACUOUS");
+    setSelected((firstWrong ?? firstInteresting ?? evaluation.attempts[0]).start);
+  };
+
+  const selectedAttempt: SvaAttempt | null = evaluation && selected !== null ? (evaluation.attempts[selected] ?? null) : null;
+
+  const markers: CycleMarker[] = useMemo(() => {
+    if (resultsVisible && evaluation) {
+      return evaluation.attempts.map((a) => ({
+        edge: a.start,
+        tone: statusTone[a.status],
+        glyph: statusGlyph[a.status],
+        short: a.status === "VACUOUS" ? undefined : a.status === "PENDING" ? "…end" : `→${a.end}`,
+        label: `Attempt A${a.start}: ${a.status}${a.status === "VACUOUS" ? "" : ` at edge ${a.end}`}. ${plainText(a.reason)}`,
+      }));
+    }
+    return Object.entries(predictions).map(([k, status]) => ({
+      edge: Number(k),
+      tone: "info" as const,
+      glyph: statusGlyph[status],
+      short: "you",
+      label: `Your prediction for attempt A${k}: ${status}`,
+    }));
+  }, [resultsVisible, evaluation, predictions]);
+
+  const highlights: CycleHighlight[] = useMemo(() => {
+    if (!resultsVisible || !selectedAttempt) return [];
+    const a = selectedAttempt;
+    const list: CycleHighlight[] = [{ from: a.start, to: Math.max(a.start, a.end), tone: "attempt", label: `Window of attempt A${a.start}` }];
+    if (a.status === "FAIL" || a.status === "PASS") list.push({ from: a.end, to: a.end, tone: a.status === "FAIL" ? "fail" : "pass", label: `Decided at edge ${a.end}` });
+    return list;
+  }, [resultsVisible, selectedAttempt]);
+
+  const waveSignals: CycleSignal[] = [
+    { name: "clk", kind: "clock" },
+    ...signals.map((name) => ({ name, kind: "bit" as const, values: rows[name], editable: true })),
+  ];
+
+  const codeLines = (parsed.ok ? assertionCode(parsed.spec) : [`// does not parse:`, `${property}`]).map((text, i) => ({ text, key: `l${i}` }));
+  const correctCount = evaluation ? evaluation.attempts.filter((a) => predictions[a.start] === a.status).length : 0;
+
+  return (
+    <VisualFrame
+      label="SVA trace lab"
+      eyebrow="Experiment"
+      title="SVA trace lab: one attempt per clock edge"
+      summary={
+        <>
+          Every edge of <code>clk</code> starts a new attempt of the property. Edit the trace, predict what each attempt reports, then evaluate. Select an attempt to see which edge matched which element.
+        </>
+      }
+      fidelity="model"
+      assumptions={SVA_MODEL_ASSUMPTIONS}
+    >
+      <div data-testid="sva-waveform-visualizer" className="space-y-4">
+        <SegmentedControl<Mode>
+          label="Mode"
+          value={mode}
+          onChange={changeMode}
+          options={[
+            { value: "learn", label: "Learn: presets" },
+            { value: "debug", label: "Debug: spot the bug" },
+            { value: "custom", label: "Write your own" },
+          ]}
+        />
+
+        {mode === "learn" ? (
+          <SegmentedControl<string>
+            label="Property preset"
+            mono
+            value={learnId}
+            onChange={(id) => {
+              const next = svaLearnScenarios.find((s) => s.id === id);
+              if (!next) return;
+              setLearnId(id);
+              loadRows(next.signals, next.rows);
+            }}
+            options={svaLearnScenarios.map((s) => ({ value: s.id, label: s.label }))}
+          />
+        ) : null}
+
+        {mode === "debug" ? (
+          <SegmentedControl<string>
+            label="Debug case"
+            value={debugId}
+            onChange={(id) => {
+              const next = svaDebugCases.find((c) => c.id === id);
+              if (!next) return;
+              setDebugId(id);
+              setShowFix(false);
+              loadRows(next.signals, next.rows);
+            }}
+            options={svaDebugCases.map((c) => ({ value: c.id, label: c.label }))}
+          />
+        ) : null}
+
+        {mode === "custom" ? (
+          <form
+            className="space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setCustomSource(draft);
+              resetRun();
+            }}
+          >
+            <label htmlFor={inputId} className="block text-sm font-semibold text-foreground">
+              Property (signals in this trace: {signals.map((s, i) => (
+                <React.Fragment key={s}>
+                  {i > 0 ? ", " : ""}
+                  <code>{s}</code>
+                </React.Fragment>
+              ))})
+            </label>
+            <div className="flex flex-wrap gap-2">
+              <input
+                id={inputId}
+                type="text"
+                value={draft}
+                spellCheck={false}
+                autoCapitalize="off"
+                autoComplete="off"
+                onChange={(e) => setDraft(e.target.value)}
+                className="min-h-10 min-w-0 flex-1 basis-56 rounded-lg border border-border bg-background px-3 font-mono text-sm text-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+              <button
+                type="submit"
+                className="inline-flex min-h-10 items-center rounded-lg border border-cyan-500/60 bg-cyan-500/15 px-4 text-sm font-semibold text-foreground hover:bg-cyan-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Check property
+              </button>
+            </div>
+            <details className="text-xs text-muted-foreground">
+              <summary className="cursor-pointer font-medium text-foreground">Supported syntax</summary>
+              <p className="mt-1 font-mono [font-variant-ligatures:none]">
+                {"! && || == != $rose() $fell() $stable() $changed() $past(e,N) ##N ##[m:n] ##[m:$] [*N] [*m:n] [->N] [=N] and or intersect throughout within not |-> |=> disable iff (e)"}
+              </p>
+            </details>
+          </form>
+        ) : null}
+
+        {!parsed.ok ? (
+          <div role="alert" className="rounded-lg border border-rose-500/60 bg-rose-500/10 p-3 text-sm text-rose-800 dark:text-rose-200">
+            <p className="font-semibold">
+              ✕ Parse error: <Rich text={parsed.error.message} />
+            </p>
+            <pre className="mt-2 overflow-x-auto font-mono text-[12.5px] leading-5 [font-variant-ligatures:none]" aria-hidden>
+              {`${property}\n${" ".repeat(parsed.error.position)}${"^".repeat(Math.max(1, Math.min(parsed.error.length, property.length - parsed.error.position || 1)))}`}
+            </pre>
+          </div>
+        ) : null}
+
+        {mode === "debug" ? (
+          <div className="space-y-2 rounded-xl border border-border/70 bg-background/40 p-3 text-sm">
+            <p>
+              <strong>Spec:</strong> <Rich text={debugCase.spec} />
+            </p>
+            {buggyEvaluation ? (
+              <p className="font-mono text-[12.5px] text-rose-700 [font-variant-ligatures:none] dark:text-rose-300">
+                assertion log, a_check: {summarize(buggyEvaluation)}
+              </p>
+            ) : null}
+            <p className="text-muted-foreground">
+              <Rich text={debugCase.focus} />
+            </p>
+          </div>
+        ) : null}
+
+        <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
+          <CodeTrace label={mode === "debug" && showFix ? "Fixed assertion (generated)" : "Assertion under test (generated)"} lines={codeLines} className="min-w-0" />
+          <div className="min-w-0 space-y-2 text-sm">
+            <p className="text-muted-foreground">
+              Legend: <span aria-hidden>✓</span> pass · <span aria-hidden>✕</span> fail · <span aria-hidden>○</span> vacuous pass · <span aria-hidden>…</span> pending · <span aria-hidden>⊘</span> disabled. The marker sits on the attempt&apos;s start edge; <code>→5</code> means the result is decided at edge 5.
+            </p>
+            <button
+              type="button"
+              onClick={() => loadRows(signals, baseRows)}
+              className="inline-flex min-h-10 items-center rounded-lg border border-border/70 px-3 text-xs font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Reset the trace
+            </button>
+          </div>
+        </div>
+
+        <CycleWaveform
+          title={`Trace for ${property}`}
+          signals={waveSignals}
+          edges={trace.length}
+          markers={markers}
+          highlights={highlights}
+          cursor={resultsVisible && selectedAttempt ? selectedAttempt.start : undefined}
+          onToggle={toggle}
+          onSelectEdge={(k) => setSelected(k)}
+          caption={`x-axis: posedge clk edges 0–${trace.length - 1} (cycle time, not ns). A level drawn changing just after edge k−1 is the value sampled at edge k (Preponed, §16.5.1), so a change "at" an edge is seen one edge later. Toggle a cell to change the value sampled at that edge; select an edge number to inspect that attempt.`}
+          className="min-w-0"
+        />
+
+        {mode !== "debug" && !revealed && parsed.ok ? (
+          <div className="space-y-3 rounded-xl border border-amber-500/40 bg-amber-500/[0.06] p-3">
+            <p className="text-sm font-semibold text-foreground">
+              <span className="mr-2 rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-200">Predict</span>
+              Mark what each attempt reports. Each button cycles ? → ✓ pass → ✕ fail → ○ vacuous → … pending{parsed.spec.disable ? " → ⊘ disabled" : ""}.
+            </p>
+            <div role="group" aria-label="Your predictions, one per attempt" className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,96px),1fr))]">
+              {Array.from({ length: trace.length }, (_, k) => {
+                const p = predictions[k];
+                return (
+                  <button
+                    key={k}
+                    type="button"
+                    onClick={() => cyclePrediction(k)}
+                    aria-label={`Attempt starting at edge ${k}: your prediction is ${p ?? "not set"}. Activate to change.`}
+                    className={cn(
+                      "min-h-10 rounded-lg border px-2 py-1 text-left text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+                      p ? statusClass[p] : "border-border/70 text-muted-foreground hover:bg-muted",
+                    )}
+                  >
+                    <span className="font-mono">A{k}</span> <span aria-hidden>{p ? `${statusGlyph[p]} ${p.toLowerCase()}` : "?"}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                disabled={predictionCount === 0}
+                onClick={evaluate}
+                className="inline-flex h-10 items-center rounded-lg bg-amber-500 px-4 text-sm font-semibold text-slate-950 hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                Evaluate ({predictionCount} predicted)
+              </button>
+              <button
+                type="button"
+                onClick={evaluate}
+                className="text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Reveal without predicting
+              </button>
+            </div>
+          </div>
+        ) : null}
+
+        {resultsVisible && evaluation ? (
+          <div className="space-y-3">
+            <p aria-live="polite" className="text-sm text-foreground">
+              <strong>Result:</strong> {summarize(evaluation)}.
+              {mode !== "debug" && predictionCount > 0 ? ` You predicted ${predictionCount} attempt${predictionCount === 1 ? "" : "s"}; ${correctCount} correct.` : ""}
+            </p>
+            {mode === "learn" ? (
+              <p className="text-sm text-muted-foreground">
+                What to notice: <Rich text={learn.focus} />
+              </p>
+            ) : null}
+            <div role="group" aria-label="Attempts" className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,132px),1fr))]">
+              {evaluation.attempts.map((a) => {
+                const p = predictions[a.start];
+                const mismatch = p !== undefined && p !== a.status;
+                return (
+                  <button
+                    key={a.start}
+                    type="button"
+                    aria-pressed={selected === a.start}
+                    onClick={() => setSelected(a.start)}
+                    aria-label={`Attempt A${a.start}: ${a.status}${a.status === "VACUOUS" ? "" : ` at edge ${a.end}`}${p ? `; you predicted ${p}, ${mismatch ? "mismatch" : "match"}` : ""}. Show explanation.`}
+                    className={cn(
+                      "min-h-10 rounded-lg border px-2 py-1 text-left text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                      statusClass[a.status],
+                      selected === a.start && "ring-2 ring-cyan-500",
+                    )}
+                  >
+                    <span className="font-mono">A{a.start}</span> <span aria-hidden>{statusGlyph[a.status]}</span> {a.status.toLowerCase()}
+                    {a.status !== "VACUOUS" && a.status !== "PENDING" ? <span className="font-mono"> →{a.end}</span> : null}
+                    {p ? (
+                      <span className={cn("block", mismatch ? "font-semibold text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300")}>
+                        you said {statusGlyph[p]} {p.toLowerCase()}: {mismatch ? "✕ wrong" : "✓ right"}
+                      </span>
+                    ) : null}
+                  </button>
+                );
+              })}
+            </div>
+
+            {selectedAttempt && parsed.ok ? (
+              <AttemptExplanation attempt={selectedAttempt} predicted={predictions[selectedAttempt.start]} spec={parsed.spec} />
+            ) : (
+              <p className="text-sm text-muted-foreground">Select an attempt (or an edge number under the waveform) to see why it got its result.</p>
+            )}
+          </div>
+        ) : null}
+
+        {mode === "debug" ? (
+          <PredictionPrompt
+            resetKey={debugCase.id}
+            question={debugCase.question}
+            options={debugCase.options.map((o) => ({ id: o.id, label: <Rich text={o.label} />, correct: o.correct, feedback: plainText(o.feedback) }))}
+          >
+            <div className="space-y-2 text-sm">
+              <button
+                type="button"
+                aria-pressed={showFix}
+                onClick={() => {
+                  setShowFix((v) => !v);
+                  setSelected(null);
+                }}
+                className="inline-flex min-h-10 items-center rounded-lg border border-cyan-500/60 bg-cyan-500/15 px-4 font-semibold text-foreground hover:bg-cyan-500/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                {showFix ? "Show the buggy property again" : "Apply the fix"}
+              </button>
+              <p>
+                Fix: <code className="font-mono [font-variant-ligatures:none]">{debugCase.fixedProperty}</code>. <Rich text={debugCase.fixNote} />
+              </p>
+              {showFix && evaluation ? (
+                <p aria-live="polite" className="font-mono text-[12.5px] text-emerald-700 [font-variant-ligatures:none] dark:text-emerald-300">
+                  after the fix, a_check: {summarize(evaluation)}
+                </p>
+              ) : null}
+            </div>
+          </PredictionPrompt>
+        ) : null}
+      </div>
+    </VisualFrame>
+  );
+}
+
+function AttemptExplanation({ attempt, predicted, spec }: { attempt: SvaAttempt; predicted?: AttemptStatus; spec: SvaSpec }) {
+  const diagnosis = predicted ? diagnoseAttempt(spec, attempt, predicted) : null;
+  return (
+    <div aria-live="polite" className={cn("rounded-xl border p-3 text-sm", statusClass[attempt.status])}>
+      <p className="font-semibold">
+        <span aria-hidden>{statusGlyph[attempt.status]} </span>
+        Attempt A{attempt.start} starts at edge {attempt.start}:{" "}
+        {attempt.status === "VACUOUS" ? "vacuous success" : attempt.status === "PENDING" ? "pending when the trace ends" : `${attempt.status} at edge ${attempt.end}`}
+      </p>
+      <p className="mt-1 text-foreground">
+        Why: <Rich text={attempt.reason} />.
+      </p>
+      {diagnosis ? (
+        <p className={cn("mt-2", diagnosis.correct ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300")}>
+          <strong>{diagnosis.correct ? "Your prediction ✓ " : `Your prediction (${predicted}) ✕ `}</strong>
+          <Rich text={diagnosis.message} />
+        </p>
+      ) : null}
+      {attempt.steps.length > 0 ? (
+        <ol className="mt-2 space-y-1 text-foreground" aria-label={`Step-by-step match for attempt A${attempt.start}`}>
+          {attempt.steps.map((s, i) => (
+            <li key={i} className="flex flex-wrap items-baseline gap-x-2">
+              <span className="w-20 shrink-0 font-mono text-[11px] text-muted-foreground">{edgeLabel(s)}</span>
+              <span aria-hidden className={s.kind === "fail" ? "text-rose-600 dark:text-rose-400" : s.kind === "match" ? "text-emerald-600 dark:text-emerald-400" : "text-muted-foreground"}>
+                {stepGlyph[s.kind]}
+              </span>
+              <span className="sr-only">{s.kind === "match" ? "matched" : s.kind === "fail" ? "failed" : s.kind === "wait" ? "waiting" : "note"}:</span>
+              <code className="font-mono text-[12.5px] [font-variant-ligatures:none]">{s.element}</code>
+              <span className="min-w-0 text-muted-foreground">{s.detail}</span>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </div>
+  );
+}
+

@@ -1,253 +1,218 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import { motion, useMotionValue } from "framer-motion";
+import React, { useId, useState } from "react";
 
-interface Milestone {
-  id: string;
-  label: string;
-  cost: number;
-  description: string;
-}
+import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  ANCHOR_OPTIONS,
+  COST_STAGES,
+  costRatio,
+  formatMultiplier,
+  formatUsd,
+  illustrativeCost,
+  type AnchorUsd,
+} from "@/lib/bug-cost-model";
+import { cn } from "@/lib/utils";
 
-const milestones: Milestone[] = [
+const ASSUMPTIONS = [
+  "Commonly cited escalation: each later stage costs roughly ten times more. Actual costs vary by product, process node and team. This is a rule of thumb, not measured data.",
+  "Dollar amounts are your chosen anchor multiplied by the rule-of-thumb factor.",
+  "Post-silicon fixes range from a firmware workaround to a full mask respin, so real ratios can be far larger or smaller.",
+];
+
+const PREDICTION_OPTIONS: PredictionOption[] = [
   {
-    id: "spec",
-    label: "Specification",
-    cost: 1,
-    description: "A wording tweak or requirement clarification – negligible cost when caught early.",
+    id: "same",
+    label: "About the same. The fix is the same few lines of RTL.",
+    correct: false,
+    feedback:
+      "The RTL edit may be identical, but after tape-out it has to be built into new masks and wafers (or worked around in firmware), re-validated in the lab, and the product waits.",
   },
   {
-    id: "design",
-    label: "Design",
-    cost: 10,
-    description: "Updating RTL and re-running designer unit tests – still manageable but adds churn.",
+    id: "x3",
+    label: "About 2–3× more, for the extra debug time.",
+    correct: false,
+    feedback:
+      "That covers the longer debug, but not the hardware: new masks, new wafers, and weeks to months of schedule. Those costs are orders of magnitude, not a small factor.",
   },
   {
-    id: "verification",
-    label: "Verification",
-    cost: 100,
-    description: "Debugging failures, triaging logs, and re-running regressions across the farm.",
+    id: "x100",
+    label: "Roughly 100× or more: orders of magnitude.",
+    correct: true,
+    feedback:
+      "The rule of thumb adds about one order of magnitude per stage. Post-silicon is two stages after RTL, so about ×100. A full respin at an advanced node can cost far more than that.",
   },
   {
-    id: "post-silicon",
-    label: "Post-Silicon",
-    cost: 1_000_000,
-    description: "Mask re-spin, lab validation, and launch delays – measured in millions of dollars.",
-  },
-  {
-    id: "in-field",
-    label: "In-Field",
-    cost: 100_000_000,
-    description: "Recalls, lawsuits, brand damage, and emergency patches shipped to customers.",
+    id: "never",
+    label: "Infinitely more. A post-silicon bug can never be fixed.",
+    correct: false,
+    feedback:
+      "Many post-silicon bugs do get fixed: with a metal-only respin, a full respin, a firmware or microcode workaround, or by disabling a feature. It is costly, not impossible.",
   },
 ];
 
-const minLogCost = Math.log10(milestones[0].cost);
-const maxLogCost = Math.log10(milestones[milestones.length - 1].cost);
-
-const formatCost = (value: number) => {
-  if (value >= 100_000_000) {
-    return "$" + (value / 100_000_000).toFixed(1) + "B+";
-  }
-  if (value >= 1_000_000) {
-    return "$" + (value / 1_000_000).toFixed(1) + "M";
-  }
-  if (value >= 1_000) {
-    return "$" + (value / 1_000).toFixed(0) + "K";
-  }
-  return `$${value.toFixed(0)}`;
+const SHORT_LABELS: Record<string, string> = {
+  spec: "Spec",
+  rtl: "RTL",
+  system: "System",
+  "post-silicon": "Silicon",
+  field: "Field",
 };
 
-const getCostAtPosition = (position: number) => {
-  if (position <= 0) return milestones[0].cost;
-  if (position >= 1) return milestones[milestones.length - 1].cost;
+function CostExplorer() {
+  const sliderId = useId();
+  const [index, setIndex] = useState(1);
+  const [anchor, setAnchor] = useState<AnchorUsd>(1_000);
+  const stage = COST_STAGES[index];
+  const vsRtl = costRatio("rtl", stage.id);
 
-  const segmentLength = 1 / (milestones.length - 1);
-  const rawIndex = position / segmentLength;
-  const lowerIndex = Math.floor(rawIndex);
-  const upperIndex = Math.min(lowerIndex + 1, milestones.length - 1);
-  const innerProgress = rawIndex - lowerIndex;
+  // Bar chart geometry (log scale: one step per order of magnitude).
+  const W = 320;
+  const H = 170;
+  const top = 26;
+  const bottom = 26;
+  const left = 8;
+  const slot = (W - left * 2) / COST_STAGES.length;
+  const maxLog = Math.log10(COST_STAGES[COST_STAGES.length - 1].multiplier) + 1;
+  const barHeight = (m: number) => ((Math.log10(m) + 1) / maxLog) * (H - top - bottom);
 
-  const lowerLog = Math.log10(milestones[lowerIndex].cost);
-  const upperLog = Math.log10(milestones[upperIndex].cost);
-  const interpolatedLog = lowerLog + innerProgress * (upperLog - lowerLog);
-
-  return 10 ** interpolatedLog;
-};
-
-const getNearestMilestone = (position: number) => {
-  const segmentLength = 1 / (milestones.length - 1);
-  const index = Math.round(position / segmentLength);
-  return milestones[Math.min(Math.max(index, 0), milestones.length - 1)];
-};
-
-const InteractiveCostOfBugGraph = () => {
-  const trackRef = useRef<HTMLDivElement | null>(null);
-  const [constraints, setConstraints] = useState({ left: 0, right: 0 });
-  const [bugPosition, setBugPosition] = useState(0);
-  const dragX = useMotionValue(0);
-
-  useEffect(() => {
-    const computeConstraints = () => {
-      const track = trackRef.current;
-      if (!track) return;
-      const width = track.offsetWidth - 48; // subtract handle width for bounds
-      setConstraints({ left: 0, right: Math.max(width, 0) });
-      const clampedX = Math.min(Math.max(dragX.get(), 0), Math.max(width, 0));
-      dragX.set(clampedX);
-      setBugPosition(width > 0 ? clampedX / width : 0);
-    };
-
-    computeConstraints();
-    window.addEventListener("resize", computeConstraints);
-    return () => window.removeEventListener("resize", computeConstraints);
-  }, [dragX]);
-
-  useEffect(() => {
-    const unsub = dragX.on("change", (latest) => {
-      const range = constraints.right - constraints.left;
-      if (range <= 0) {
-        setBugPosition(0);
-        return;
-      }
-      const normalized = (latest - constraints.left) / range;
-      setBugPosition(Math.min(Math.max(normalized, 0), 1));
-    });
-    return () => {
-      unsub?.();
-    };
-  }, [constraints.left, constraints.right, dragX]);
-
-  const activeMilestone = useMemo(() => getNearestMilestone(bugPosition), [bugPosition]);
-  const currentCost = useMemo(() => getCostAtPosition(bugPosition), [bugPosition]);
-
-  const chartPoints = useMemo(() => {
-    const samples = 32;
-    const coords: Array<{ x: number; y: number }> = [];
-    for (let i = 0; i <= samples; i += 1) {
-      const t = i / samples;
-      const logCost = Math.log10(getCostAtPosition(t));
-      const y = 1 - (logCost - minLogCost) / (maxLogCost - minLogCost);
-      coords.push({ x: t, y });
-    }
-    return coords;
-  }, []);
+  const chartLabel = `Relative cost to fix a bug, log scale, illustrative: ${COST_STAGES.map((s) => `${s.label} ${formatMultiplier(s.multiplier)}`).join(", ")}. Selected: ${stage.label}.`;
 
   return (
-    <div className="w-full space-y-6 rounded-3xl border border-white/10 bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 p-6 text-white shadow-xl dark:from-slate-900 dark:via-slate-950 dark:to-black">
-      <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h3 className="text-xl font-semibold uppercase tracking-[0.15em] text-emerald-300">
-            An Ounce of Prevention is Worth a Ton of Silicon
-          </h3>
-          <p className="mt-2 max-w-xl text-sm text-slate-300">
-            Drag the bug across the product lifecycle. Every step you wait adds orders of magnitude
-            in cost and risk.
-          </p>
-        </div>
-        <div className="overflow-hidden rounded-2xl border border-emerald-400/40 bg-emerald-500/10 px-4 py-3 text-right">
-          <p className="text-xs uppercase tracking-[0.25em] text-emerald-200/80">Estimated Impact</p>
-          <p className="text-3xl font-bold text-emerald-300">{formatCost(currentCost)}</p>
-          <p className="text-xs text-emerald-200/80">{activeMilestone.label}</p>
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <label htmlFor={sliderId} className="block text-sm font-semibold text-foreground">
+          Where is the bug found?
+        </label>
+        <input
+          id={sliderId}
+          type="range"
+          min={0}
+          max={COST_STAGES.length - 1}
+          step={1}
+          value={index}
+          onChange={(e) => setIndex(Number(e.target.value))}
+          aria-valuetext={`${stage.label}: about ${formatMultiplier(stage.multiplier)} the spec-review cost (illustrative)`}
+          className="h-2 w-full cursor-pointer accent-cyan-500"
+        />
+        <div className="grid gap-1.5 grid-cols-[repeat(auto-fit,minmax(min(100%,96px),1fr))]" role="group" aria-label="Discovery stages">
+          {COST_STAGES.map((s, i) => (
+            <button
+              key={s.id}
+              type="button"
+              aria-pressed={i === index}
+              onClick={() => setIndex(i)}
+              onFocus={() => setIndex(i)}
+              className={cn(
+                "min-h-10 rounded-lg border px-2 py-1 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+                i === index ? "border-cyan-500 bg-cyan-500/15 font-semibold text-foreground" : "border-border/70 text-muted-foreground hover:bg-muted",
+              )}
+            >
+              {i === index ? <span aria-hidden>▶ </span> : null}
+              {s.label}
+            </button>
+          ))}
         </div>
       </div>
 
-      <div className="space-y-4">
-        <div className="relative">
-          <div ref={trackRef} className="relative h-24 w-full">
-            <div className="absolute left-0 right-0 top-10 h-2 rounded-full bg-slate-700/60">
-              <div className="absolute inset-0 rounded-full bg-gradient-to-r from-emerald-400 via-amber-400 to-rose-500 opacity-70" />
-            </div>
-
-            {milestones.map((milestone, index) => {
-              const position = index / (milestones.length - 1);
+      <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
+        <figure className="min-w-0 rounded-xl border border-border/70 bg-background/40 p-3">
+          <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={chartLabel} className="h-auto w-full">
+            {COST_STAGES.map((s, i) => {
+              const h = barHeight(s.multiplier);
+              const x = left + i * slot + slot * 0.18;
+              const w = slot * 0.64;
+              const y = H - bottom - h;
+              const active = i === index;
               return (
-                <div
-                  key={milestone.id}
-                  className="group absolute top-6 flex -translate-x-1/2 flex-col items-center"
-                  style={{ left: `${position * 100}%` }}
-                >
-                  <div className="h-2 w-2 rounded-full bg-white/80 shadow-md" />
-                  <div className="mt-4 rounded-full border border-white/10 bg-white/10 px-3 py-1 text-xs font-semibold uppercase tracking-[0.2em] text-slate-200">
-                    {milestone.label}
-                  </div>
-                  <div className="pointer-events-none absolute bottom-16 w-52 origin-bottom scale-95 transform rounded-xl border border-white/10 bg-slate-900/90 p-3 text-xs opacity-0 shadow-lg backdrop-blur transition-all duration-300 group-hover:translate-y-0 group-hover:scale-100 group-hover:opacity-100">
-                    {milestone.description}
-                  </div>
-                </div>
+                <g key={s.id}>
+                  <rect
+                    x={x}
+                    y={y}
+                    width={w}
+                    height={h}
+                    rx={3}
+                    className={cn(
+                      "transition-colors motion-reduce:transition-none",
+                      active ? "fill-cyan-500/70 stroke-cyan-600 dark:stroke-cyan-300" : "fill-muted-foreground/25 stroke-transparent",
+                    )}
+                    strokeWidth={2}
+                  />
+                  <text x={x + w / 2} y={y - 5} textAnchor="middle" className={cn("font-mono text-[10px]", active ? "fill-foreground font-bold" : "fill-muted-foreground")}>
+                    {active ? "▼ " : ""}
+                    {formatMultiplier(s.multiplier)}
+                  </text>
+                  <text x={x + w / 2} y={H - bottom + 14} textAnchor="middle" className={cn("text-[10px]", active ? "fill-foreground font-semibold" : "fill-muted-foreground")}>
+                    {SHORT_LABELS[s.id]}
+                  </text>
+                </g>
               );
             })}
+            <line x1={left} x2={W - left} y1={H - bottom} y2={H - bottom} className="stroke-border" strokeWidth={1} />
+            <text x={left} y={12} className="fill-muted-foreground text-[10px]">
+              Relative cost to fix (log scale, illustrative)
+            </text>
+          </svg>
+          <figcaption className="mt-1 text-[11px] text-muted-foreground">
+            Each bar is ten times the one before it. x-axis: the stage where the bug is found.
+          </figcaption>
+        </figure>
 
-            <motion.div
-              className="absolute top-0 flex h-12 w-12 -translate-y-4 transform cursor-grab items-center justify-center rounded-full border-2 border-emerald-300 bg-slate-950 text-2xl shadow-emerald-500/30"
-              style={{ x: dragX }}
-              drag="x"
-              dragConstraints={constraints}
-              dragElastic={0.05}
-              dragMomentum={false}
-              whileTap={{ scale: 0.95 }}
-            >
-              🐞
-            </motion.div>
+        <div className="min-w-0 space-y-3 rounded-xl border border-border/70 bg-background/40 p-3 text-sm" aria-live="polite">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Found at</p>
+            <p className="text-lg font-semibold text-foreground">{stage.label}</p>
           </div>
-        </div>
-
-        <div className="grid gap-4 lg:grid-cols-[3fr,2fr]">
-          <div className="rounded-2xl border border-white/10 bg-black/40 p-4 shadow-inner">
-            <svg viewBox="0 0 100 60" className="h-40 w-full">
-              <defs>
-                <linearGradient id="bugCostGradient" x1="0%" y1="100%" x2="100%" y2="0%">
-                  <stop offset="0%" stopColor="#059669" stopOpacity={0.3} />
-                  <stop offset="60%" stopColor="#f59e0b" stopOpacity={0.45} />
-                  <stop offset="100%" stopColor="#ef4444" stopOpacity={0.6} />
-                </linearGradient>
-              </defs>
-              <rect x={0} y={0} width={100} height={60} rx={12} fill="url(#bugCostGradient)" opacity={0.2} />
-              <polyline
-                fill="none"
-                stroke="#34d399"
-                strokeWidth={1.5}
-                strokeLinecap="round"
-                points={chartPoints.map((point) => `${point.x * 100},${point.y * 50 + 5}`).join(" ")}
-              />
-              <circle
-                cx={bugPosition * 100}
-                cy={(() => {
-                  const logValue = Math.log10(currentCost);
-                  const normalized = 1 - (logValue - minLogCost) / (maxLogCost - minLogCost);
-                  return normalized * 50 + 5;
-                })()}
-                r={3}
-                fill="#facc15"
-                stroke="#fde68a"
-                strokeWidth={1.2}
-              />
-              <g>
-                <line x1={0} y1={55} x2={100} y2={55} stroke="#475569" strokeWidth={0.5} />
-                <text x={0} y={58} className="fill-slate-400" fontSize={4}>
-                  Early discovery
-                </text>
-                <text x={60} y={58} className="fill-slate-400" fontSize={4}>
-                  Catastrophic
-                </text>
-              </g>
-            </svg>
-          </div>
-          <div className="flex flex-col justify-between rounded-2xl border border-white/10 bg-black/40 p-4 shadow-inner">
-            <div>
-              <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Current Stage</p>
-              <p className="text-lg font-semibold text-white">{activeMilestone.label}</p>
-            </div>
-            <p className="text-sm text-slate-300">{activeMilestone.description}</p>
-            <p className="text-sm text-emerald-300">
-              Every week of delay multiplies debug cost, consumes lab time, and risks customer trust.
-            </p>
-          </div>
+          <p className="text-foreground">
+            About <strong>{formatMultiplier(stage.multiplier)}</strong> the cost of catching it at spec review
+            {stage.id === "rtl" ? "." : vsRtl >= 1 ? `, and ${formatMultiplier(vsRtl)} an RTL-simulation fix.` : `, and about ${formatMultiplier(1 / vsRtl).replace("×", "1/")} of an RTL-simulation fix.`}
+          </p>
+          <p className="text-muted-foreground">
+            <strong className="text-foreground">What has to be redone: </strong>
+            {stage.redo}
+          </p>
+          <p className="rounded-lg border border-dashed border-border/80 p-2 text-xs text-muted-foreground">
+            Illustrative only: if a spec-review fix costs {formatUsd(anchor)}, this one costs about{" "}
+            <strong className="text-foreground">{formatUsd(illustrativeCost(stage, anchor))}</strong>.
+          </p>
         </div>
       </div>
+
+      <div className="space-y-1">
+        <p className="text-xs font-medium text-muted-foreground">Your assumption: fixing it at spec review costs</p>
+        <SegmentedControl
+          label="Assumed cost of a spec-review fix"
+          options={ANCHOR_OPTIONS.map((a) => ({ value: String(a), label: formatUsd(a) }))}
+          value={String(anchor)}
+          onChange={(v) => setAnchor(Number(v) as AnchorUsd)}
+        />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Commonly cited escalation; actual costs vary by product and node. Treat the multipliers as orders of magnitude, not measurements.
+      </p>
     </div>
   );
-};
+}
+
+/** F1A: predict the escalation, then explore the rule-of-thumb cost ladder. */
+const InteractiveCostOfBugGraph = () => (
+  <VisualFrame
+    label="Cost of fixing a bug by discovery stage"
+    eyebrow="Predict, then explore"
+    title="How fast does the cost of a bug grow?"
+    summary="A rule of thumb, not data: it shows the order of magnitude, which is what drives verification budgets."
+    fidelity="illustration"
+    assumptions={ASSUMPTIONS}
+  >
+    <PredictionPrompt
+      question="A bug that RTL simulation could have caught escapes to post-silicon instead. Roughly how much more does fixing it cost?"
+      options={PREDICTION_OPTIONS}
+    >
+      <CostExplorer />
+    </PredictionPrompt>
+  </VisualFrame>
+);
 
 export default InteractiveCostOfBugGraph;

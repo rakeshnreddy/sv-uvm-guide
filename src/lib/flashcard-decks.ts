@@ -6,6 +6,19 @@ import F2C_Operators from '../../content/flashcards/F2C_Operators.json';
 import F3A_Procedural_Blocks_and_Flow_Control from '../../content/flashcards/F3A_Procedural_Blocks_and_Flow_Control.json';
 import F3B_Scheduling_Regions from '../../content/flashcards/F3B_Scheduling_Regions.json';
 import F3C_Delta_Cycles from '../../content/flashcards/F3C_Delta_Cycles.json';
+import F2C_Procedural_Constructs from '../../content/flashcards/F2C_Procedural_Constructs.json';
+import F2D_IPC from '../../content/flashcards/F2D_IPC.json';
+import F2D_System_Tasks from '../../content/flashcards/F2D_System_Tasks.json';
+import F2D_Tasks_Functions from '../../content/flashcards/F2D_Tasks_Functions.json';
+import F3A_Simulation_Semantics from '../../content/flashcards/F3A_Simulation_Semantics.json';
+import F4A_Modules_and_Packages from '../../content/flashcards/F4A_Modules_and_Packages.json';
+import F4B_Interfaces_and_Modports from '../../content/flashcards/F4B_Interfaces_and_Modports.json';
+import I_UVM_4_Policy_Classes from '../../content/flashcards/I-UVM-4_Policy_Classes.json';
+import I_UVM_5_Container_Classes from '../../content/flashcards/I-UVM-5_Container_Classes.json';
+import I_UVM_6_UVM_Recording_Classes from '../../content/flashcards/I-UVM-6_UVM_Recording_Classes.json';
+import I_SV_5_Synchronization_and_IPC from '../../content/flashcards/I-SV-5_Synchronization_and_IPC.json';
+import I_SV_6_Compiler_Directives_and_Generates from '../../content/flashcards/I-SV-6_Compiler_Directives_and_Generates.json';
+import I_SV_7_DPI_and_Foreign_Language_Interfaces from '../../content/flashcards/I-SV-7_DPI_and_Foreign_Language_Interfaces.json';
 import F4_RTL_and_Testbench_Constructs from '../../content/flashcards/F4_RTL_and_Testbench_Constructs.json';
 import F4C_Clocking_Blocks from '../../content/flashcards/F4C_Clocking_Blocks.json';
 import F2_HDL_Primer from '../../content/flashcards/F2_HDL_Primer.json';
@@ -72,6 +85,19 @@ export const flashcardDecks: Record<string, any[]> = {
   F3A_Procedural_Blocks_and_Flow_Control,
   F3B_Scheduling_Regions,
   F3C_Delta_Cycles,
+  'F2C_Procedural_Constructs': F2C_Procedural_Constructs,
+  'F2D_IPC': F2D_IPC,
+  'F2D_System_Tasks': F2D_System_Tasks,
+  'F2D_Tasks_Functions': F2D_Tasks_Functions,
+  'F3A_Simulation_Semantics': F3A_Simulation_Semantics,
+  'F4A_Modules_and_Packages': F4A_Modules_and_Packages,
+  'F4B_Interfaces_and_Modports': F4B_Interfaces_and_Modports,
+  'I-UVM-4_Policy_Classes': I_UVM_4_Policy_Classes,
+  'I-UVM-5_Container_Classes': I_UVM_5_Container_Classes,
+  'I-UVM-6_UVM_Recording_Classes': I_UVM_6_UVM_Recording_Classes,
+  'I-SV-5_Synchronization_and_IPC': I_SV_5_Synchronization_and_IPC,
+  'I-SV-6_Compiler_Directives_and_Generates': I_SV_6_Compiler_Directives_and_Generates,
+  'I-SV-7_DPI_and_Foreign_Language_Interfaces': I_SV_7_DPI_and_Foreign_Language_Interfaces,
   F4_RTL_and_Testbench_Constructs,
   F4C_Clocking_Blocks,
   F2_HDL_Primer,
@@ -121,5 +147,33 @@ export const flashcardDecks: Record<string, any[]> = {
   'E-UVM-ML-1_Multi_Language': E_UVM_ML_1_Multi_Language,
   'E-EMU-1_Emulation': E_EMU_1_Emulation,
 };
+
+/**
+ * Lesson frontmatter IDs for modules that were split after their combined
+ * deck was written. Each alias points at the deck that covers the module.
+ */
+const deckAliases: Record<string, string> = {
+  'I-SV-2A_Constrained_Randomization_Fundamentals': 'I-SV-2_Constrained_Randomization',
+  'I-SV-2B_Advanced_Constrained_Randomization': 'I-SV-2_Constrained_Randomization',
+  'I-SV-3A_Functional_Coverage_Fundamentals': 'I-SV-3_Functional_Coverage',
+  'I-SV-3B_Advanced_Functional_Coverage': 'I-SV-3_Functional_Coverage',
+  'I-SV-4A_Assertions_SVA_Fundamentals': 'I-SV-4_Assertions_SVA',
+  'I-SV-4B_Advanced_SVA': 'I-SV-4_Assertions_SVA',
+  'I-SV-4C_Checkers_and_Bind': 'I-SV-4_Assertions_SVA',
+  'I-UVM-1A_Components': 'I-UVM-1_UVM_Intro',
+  'I-UVM-1B_The_UVM_Factory': 'I-UVM-4_Factory_and_Overrides',
+  'I-UVM-1C_UVM_Phasing': 'I-UVM-5_Phasing_and_Synchronization',
+  'I-UVM-2A_Component_Roles': 'I-UVM-2_Building_TB',
+  'I-UVM-2B_TLM_Connections': 'I-UVM-2_Building_TB',
+  'I-UVM-2C_Configuration_and_Resources': 'I-UVM-2_Building_TB',
+  'I-UVM-3A_Fundamentals': 'I-UVM-3_Sequences',
+  'I-UVM-3B_Advanced_Sequencing': 'I-UVM-3_Sequences',
+  'A-UVM-4A_RAL_Fundamentals': 'A-UVM-4_RAL',
+  'A-UVM-4B_Advanced_RAL': 'A-UVM-4_RAL',
+};
+
+for (const [alias, target] of Object.entries(deckAliases)) {
+  if (!flashcardDecks[alias] && flashcardDecks[target]) flashcardDecks[alias] = flashcardDecks[target];
+}
 
 export default flashcardDecks;

@@ -1,17 +1,14 @@
-import dynamic from 'next/dynamic';
 import { InfoPage } from '@/components/templates/InfoPage';
-
-const AssertionBuilder = dynamic(
-  () => import('@/components/animations/AssertionBuilder'),
-  {
-    ssr: false,
-    loading: () => <div className="flex h-64 items-center justify-center">Loading visualization...</div>,
-  },
-);
+import { SvaSequenceWaveformVisualizer } from '@/components/visualizers/SvaSequenceWaveformVisualizer';
 
 const AssertionBuilderPage = () => {
   return (
-    <InfoPage title="SVA Assertion Builder" diagrams={[<AssertionBuilder key="assertion" />]} />
+    <InfoPage
+      title="SVA Trace Lab"
+      description="Predict what every attempt of a concurrent assertion reports, then check it against a tested model of IEEE 1800-2023 clause 16."
+    >
+      <SvaSequenceWaveformVisualizer />
+    </InfoPage>
   );
 };
 

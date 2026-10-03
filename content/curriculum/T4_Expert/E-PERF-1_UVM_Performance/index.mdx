@@ -5,7 +5,6 @@ flashcards: "E-PERF-1_UVM_Performance"
 ---
 
 import { InteractiveCode } from '@/components/ui';
-import { EventSchedulerVisualizer } from '@/components/visualizers/EventSchedulerVisualizer';
 
 ## Quick Take
 - **What it is:** Techniques that keep large UVM benches responsive—profiling hotspots, structuring components for concurrency, and tuning infrastructure.
@@ -30,15 +29,17 @@ import { EventSchedulerVisualizer } from '@/components/visualizers/EventSchedule
 
 ## Build Your Mental Model
 ### IEEE 1800-2023 Clause 4: The Event Scheduler
-Performance bottlenecks often trace back to a poor understanding of the SystemVerilog scheduler. Minimizing context switches across the Active, Inactive, NBA, and Postponed regions is key to scaling regression throughput.
+Performance bottlenecks often trace back to a poor understanding of the SystemVerilog scheduler. Every extra delta cycle and every process wake-up costs simulator time, so code that triggers needless re-evaluation (wide sensitivity, zero-delay loops, chatty `@` waits) slows regressions.
 
-<EventSchedulerVisualizer />
+Step through one clock edge and watch how many scheduler steps and delta cycles a single edge costs, all at the same simulation time.
+
+<TimeSlotTraceVisualizer scenario="shift-blocking" />
 
 - **Active Region:** Evaluates blocking assignments (`=`) and continuous assignments.
 - **NBA Region:** Updates variables cleanly sequenced via non-blocking assignments (`<=`).
-- **Postponed Region:** Executes sampling after all signals settle, preventing race conditions.
+- **Postponed Region:** Read-only end of the time slot: `$strobe` and `$monitor` print settled values here. It does not prevent races; clocking blocks and `<=` do that. Covergroups sample on their own sampling event, not in Postponed, unless `type_option.strobe` is set (IEEE 1800-2023 §19.7.1).
 
-> **Interview Pitfall:** Mixing `=` and `<=` indiscriminately causes the scheduler to "thrash" between Active and NBA regions for the same timestamp, stalling the simulator in an infinite delta-cycle loop (a zero-time hang).
+> **Interview Pitfall:** Mixing `=` and `<=` does not hang the scheduler. It causes races (results that depend on which process the simulator runs first) and simulation/synthesis mismatches. Zero-time hangs come from zero-delay feedback, such as a combinational loop or a process that keeps re-triggering itself without advancing time, where every update schedules another delta cycle.
 
 ### Measure before tuning
 Simulators ship with profilers—turn them on, study top offenders, then iterate.

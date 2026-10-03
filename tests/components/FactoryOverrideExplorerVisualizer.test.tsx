@@ -1,100 +1,90 @@
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
-import { FactoryOverrideExplorerVisualizer } from '@/components/visualizers/FactoryOverrideExplorerVisualizer';
+import React from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-describe('FactoryOverrideExplorerVisualizer', () => {
-  it('renders without crashing', () => {
+import { FactoryOverrideExplorerVisualizer } from "@/components/visualizers/FactoryOverrideExplorerVisualizer";
+
+const lockIn = () => fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+const choose = (label: string) => fireEvent.click(screen.getByLabelText(label));
+const hierarchy = () => screen.getByRole("list", { name: "Component hierarchy" });
+
+describe("FactoryOverrideExplorerVisualizer", () => {
+  it("hides built types and the create() log until a prediction is locked in", () => {
     render(<FactoryOverrideExplorerVisualizer />);
-    expect(screen.getByTestId('factory-explorer')).toBeInTheDocument();
-    expect(screen.getByText('Factory Override Explorer')).toBeInTheDocument();
+    expect(within(hierarchy()).getAllByLabelText("hidden until you predict").length).toBeGreaterThan(0);
+    expect(screen.queryByLabelText(/create\(\) log for/)).not.toBeInTheDocument();
+
+    choose("mock_driver");
+    lockIn();
+    expect(screen.getByText(/^Correct\./)).toBeInTheDocument();
+    expect(screen.getByLabelText("create() log for uvm_test_top.env.agt0.drv")).toHaveTextContent(/type override #1: base_driver → mock_driver/);
+    expect(within(hierarchy()).queryAllByLabelText("hidden until you predict")).toHaveLength(0);
+    expect(within(hierarchy()).getAllByText("▣ TYPE #1")).toHaveLength(2);
   });
 
-  it('renders the default component tree with all 4 levels', () => {
+  it("two matching instance overrides: the first registered wins, and reordering flips the answer", () => {
     render(<FactoryOverrideExplorerVisualizer />);
-    expect(screen.getByTestId('tree-node-test')).toBeInTheDocument();
-    expect(screen.getByTestId('tree-node-env')).toBeInTheDocument();
-    expect(screen.getByTestId('tree-node-agent')).toBeInTheDocument();
-    expect(screen.getByTestId('tree-node-drv')).toBeInTheDocument();
-    expect(screen.getByTestId('tree-node-mon')).toBeInTheDocument();
-    expect(screen.getByTestId('tree-node-sqr')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "Two instance overrides" }));
+
+    choose("err_driver");
+    lockIn();
+    expect(screen.getByText(/^Not quite\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/was registered first/).length).toBeGreaterThan(0);
+    expect(screen.getByLabelText("create() log for uvm_test_top.env.agt0.drv")).toHaveTextContent(/never reached/);
+
+    // Reordering is a new experiment: the prediction resets.
+    fireEvent.click(screen.getByRole("button", { name: "Move override #2 earlier" }));
+    expect(screen.getByRole("button", { name: /lock in prediction/i })).toBeDisabled();
+    choose("err_driver");
+    lockIn();
+    expect(screen.getByText(/^Correct\./)).toBeInTheDocument();
   });
 
-  it('renders the factory registry with all registered types', () => {
+  it("debug preset: an incompatible override ends the build with FCTTYP, and the fix removes it", () => {
     render(<FactoryOverrideExplorerVisualizer />);
-    const registry = screen.getByTestId('factory-registry');
-    expect(registry).toBeInTheDocument();
-    expect(registry).toHaveTextContent('base_driver');
-    expect(registry).toHaveTextContent('mock_driver');
-    expect(registry).toHaveTextContent('base_txn');
+    fireEvent.click(screen.getByRole("radio", { name: "Debug: FCTTYP fatal" }));
+    fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
+    expect(screen.getByRole("list", { name: "UVM messages" })).toHaveTextContent(/UVM_FATAL \[FCTTYP\] Factory did not return a component of type 'base_driver'/);
+    expect(within(hierarchy()).getAllByText("— not built").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: /apply the fix/i }));
+    expect(screen.queryByRole("list", { name: "UVM messages" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
+    expect(screen.getByText(/Result: mock_driver\./)).toBeInTheDocument();
   });
 
-  it('applies a type override and updates all matching tree nodes', () => {
+  it("an override registered in connect_phase is too late for every driver", () => {
     render(<FactoryOverrideExplorerVisualizer />);
-
-    // Default: base_driver → base_driver (select defaults to base_driver/mock_driver)
-    // Apply type override
-    fireEvent.click(screen.getByTestId('btn-apply'));
-
-    // Driver node should now show the override badge
-    expect(screen.getByTestId('badge-drv')).toBeInTheDocument();
-    expect(screen.getByTestId('badge-drv')).toHaveTextContent(/TYPE OVERRIDE/);
-
-    // Override should appear in the list
-    expect(screen.getByTestId('override-list')).toBeInTheDocument();
-    expect(screen.getByTestId('override-0')).toHaveTextContent('base_driver');
-    expect(screen.getByTestId('override-0')).toHaveTextContent('mock_driver');
+    fireEvent.click(screen.getByRole("radio", { name: "Debug: override ignored" }));
+    choose("mock_driver");
+    lockIn();
+    expect(screen.getAllByText(/after this create\(\) already ran/).length).toBeGreaterThan(0);
   });
 
-  it('applies an instance override that targets only the specified path', () => {
+  it("new() in the agent bypasses the factory", () => {
     render(<FactoryOverrideExplorerVisualizer />);
-
-    // Switch to instance override
-    fireEvent.change(screen.getByTestId('select-kind'), { target: { value: 'instance' } });
-
-    // Set base type to my_monitor, override to fast_monitor
-    fireEvent.change(screen.getByTestId('select-base'), { target: { value: 'my_monitor' } });
-    fireEvent.change(screen.getByTestId('select-override'), { target: { value: 'fast_monitor' } });
-    fireEvent.change(screen.getByTestId('input-path'), { target: { value: 'uvm_test_top.env.agent.mon' } });
-
-    fireEvent.click(screen.getByTestId('btn-apply'));
-
-    // Monitor should have instance override badge
-    expect(screen.getByTestId('badge-mon')).toBeInTheDocument();
-    expect(screen.getByTestId('badge-mon')).toHaveTextContent(/INST OVERRIDE/);
-
-    // Driver and sequencer should NOT have badges
-    expect(screen.queryByTestId('badge-drv')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('badge-sqr')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: /builds drv with new\(\)/ }));
+    fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
+    expect(screen.getByText(/Result: base_driver\./)).toBeInTheDocument();
+    expect(within(hierarchy()).getAllByText("new() · factory bypassed")).toHaveLength(2);
   });
 
-  it('simulate create() shows the factory lookup log', () => {
+  it("is keyboard operable: arrow keys switch scenarios and node buttons select the target", () => {
     render(<FactoryOverrideExplorerVisualizer />);
+    const free = screen.getByRole("radio", { name: "Free play" });
+    fireEvent.keyDown(free, { key: "ArrowRight" });
+    expect(screen.getByRole("radio", { name: "Two instance overrides" })).toHaveAttribute("aria-checked", "true");
 
-    // Apply a type override first
-    fireEvent.click(screen.getByTestId('btn-apply'));
-
-    // Simulate create() on the driver
-    fireEvent.click(screen.getByTestId('simulate-drv'));
-
-    // Simulation log should appear
-    expect(screen.getByTestId('sim-log')).toBeInTheDocument();
-    expect(screen.getByTestId('log-line-0')).toHaveTextContent(/factory.create/);
+    const mon = screen.getByRole("button", { name: /^uvm_test_top\.env\.agt1\.mon, requested my_monitor/ });
+    fireEvent.click(mon);
+    expect(mon).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText("uvm_test_top.env.agt1.mon", { selector: "code" })).toBeInTheDocument();
   });
 
-  it('reset clears all overrides and simulation log', () => {
+  it("adds an instance override from the form and shows the generated call", () => {
     render(<FactoryOverrideExplorerVisualizer />);
-
-    // Apply override
-    fireEvent.click(screen.getByTestId('btn-apply'));
-    expect(screen.getByTestId('badge-drv')).toBeInTheDocument();
-
-    // Reset
-    fireEvent.click(screen.getByTestId('btn-reset'));
-
-    // Badge should be gone
-    expect(screen.queryByTestId('badge-drv')).not.toBeInTheDocument();
-    // Override list should be gone
-    expect(screen.queryByTestId('override-list')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("Add an override"));
+    fireEvent.click(screen.getByRole("button", { name: /^Add override/ }));
+    expect(screen.getAllByText('base_driver::type_id::set_inst_override(err_driver::get_type(), "env.agt1.drv", this);').length).toBeGreaterThan(0);
   });
 });

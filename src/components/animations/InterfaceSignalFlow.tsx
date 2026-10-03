@@ -1,5 +1,5 @@
 "use client";
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { interfaceData } from './interface-data';
 import { Button } from '@/components/ui/Button';
@@ -14,7 +14,7 @@ const InterfaceSignalFlow = () => {
   const [signalValues, setSignalValues] = useState<number[]>([]);
   const [phase, setPhase] = useState<'sample' | 'drive'>('sample');
   const [arrayIndex, setArrayIndex] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(true);
+  const [isPlaying, setIsPlaying] = useState(false); // no autoplay: the learner starts the clock
   const [speed, setSpeed] = useState(1000);
 
   const handleNext = () => {
@@ -30,12 +30,12 @@ const InterfaceSignalFlow = () => {
     setCurrentStepIndex(0);
     setPhase('sample');
     setArrayIndex(0);
-    setIsPlaying(true);
+    setIsPlaying(false);
   };
 
   const currentExample = interfaceData[exampleIndex];
   const currentStep = currentExample.steps[currentStepIndex];
-  const dataSignals = currentExample.signals.filter(s => s.name !== 'clk');
+  const dataSignals = useMemo(() => currentExample.signals.filter(s => s.name !== 'clk'), [currentExample]);
 
   useEffect(() => {
     setSignalValues(dataSignals.map(() => 0));
@@ -273,9 +273,10 @@ const InterfaceSignalFlow = () => {
                 <div className="p-2 border rounded mr-2">Driver</div>
                 <div className="relative w-16 h-0.5 bg-blue-500 mx-2 overflow-hidden">
                   <motion.div
-                    className="absolute top-0 left-0 h-full w-4 bg-blue-300"
+                    key={`vif-${clock}`}
+                    className="absolute top-0 left-0 h-full w-4 bg-blue-300 motion-reduce:hidden"
                     animate={{ x: ['0%', '100%'] }}
-                    transition={{ duration: 1, repeat: Infinity }}
+                    transition={{ duration: 1 }}
                   />
                 </div>
                 <div className="p-2 border rounded ml-2">Interface</div>

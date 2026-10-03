@@ -1,15 +1,14 @@
-import dynamic from 'next/dynamic';
+import ProceduralBlocksSimulator from '@/components/animations/ProceduralBlocksSimulator';
 import { InfoPage } from '@/components/templates/InfoPage';
 
-// Procedural blocks simulator accesses browser APIs; load it only on the client.
-const ProceduralBlocksSimulator = dynamic(
-  () => import('@/components/animations/ProceduralBlocksSimulator'),
-  { ssr: false }
-);
-
+// Runs on the deterministic process model (src/lib/sv-process-model.ts); no browser-only APIs are needed at render time.
 const ProceduralBlocksPage = () => {
   return (
-    <InfoPage title="Procedural Blocks Simulator" diagrams={[<ProceduralBlocksSimulator key="proc-blocks" />]} />
+    <InfoPage
+      title="Procedural Blocks Simulator"
+      description="initial, always and final procedures over simulation time, with the region each update lands in."
+      diagrams={[<ProceduralBlocksSimulator key="proc-blocks" />]}
+    />
   );
 };
 

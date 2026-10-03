@@ -24,4 +24,14 @@ describe('PracticeHub', () => {
     const cardTitles = screen.getAllByRole('heading', { level: 3 });
     expect(cardTitles.length).toBeGreaterThan(0);
   });
+
+  it('never links coming-soon labs (their routes 404) and lists available labs first', () => {
+    render(<PracticeHub />);
+    const comingSoon = screen.getAllByText(/coming soon/i);
+    expect(comingSoon.length).toBeGreaterThan(0);
+    comingSoon.forEach((badge) => expect(badge.closest('a')).toBeNull());
+    const labLinks = screen.getAllByRole('link').filter((a) => a.getAttribute('href')?.startsWith('/practice/lab/'));
+    expect(labLinks.length).toBeGreaterThan(0);
+    labLinks.forEach((a) => expect(a).toHaveTextContent(/available/i));
+  });
 });

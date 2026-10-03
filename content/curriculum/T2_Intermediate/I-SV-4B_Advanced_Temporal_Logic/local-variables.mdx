@@ -14,46 +14,47 @@ export const metadata = {
   ## Local Variables in Sequences
   *IEEE 1800-2023, Clause 16.10: Local variables*
 
-  Local variables let a sequence remember data from an earlier match and compare it later in the evaluation.
+  Local variables let an assertion remember data from an earlier point of an attempt and compare it later in the same attempt.
 
   <InteractiveCode>
   ```systemverilog
-  sequence s_store_then_compare;
-    logic [7:0] first_data;
-    (req, first_data = data) ##1 (ack && data == first_data);
-  endsequence
-
-  property p_store_compare;
-    @(posedge clk) s_store_then_compare;
+  // data must still hold the requested value when ack arrives one cycle later
+  property p_data_held_until_ack;
+    logic [7:0] v;                         // one private copy per attempt
+    @(posedge clk) disable iff (!rst_n)
+      (req, v = data) |=> (ack && data == v);
   endproperty
 
-  assert property (p_store_compare)
-    else $error("Data changed between request and ack");
+  a_data_held: assert property (p_data_held_until_ack)
+    else $error("data changed between request and ack");
   ```
   </InteractiveCode>
 
+  The antecedent `(req, v = data)` matches only on edges where `req` is high, and stores the sampled `data` into `v` for that attempt. `|=>` then checks `ack` and the stored value one edge later. Without the implication, a sequence asserted on its own, such as `(req, v = data) ##1 (ack && data == v)`, must match from every attempt's start edge, so it **fails on every clock where `req` is low** (§16.12.2). Use the trace lab in [I-SV-4A](../I-SV-4A_SVA_Fundamentals/) to see that failure pattern with a bare `req ##2 ack`.
+
   ### Why Use Local Variables?
 
-  - Each assertion thread gets its own copy, preventing unintended data sharing.
-  - They make it easy to check relationships across time without global state.
+  - Each evaluation attempt gets its own copy, so overlapping transactions do not overwrite each other's data (§16.10).
+  - They check relationships across time without extra modeling code in the testbench or design.
 
   ### Advanced Tips
 
-  - Local variables can be declared `static` if multiple threads must share the same value.
-  - Pair local variables with `default clocking` to simplify multi-signal sequences.
+  - Local variables have no `static` or `automatic` qualifier. The declaration takes only a data type (the `assertion_variable_declaration` grammar, §16.10 and A.2.10), and each attempt always gets its own private copy. To share state across attempts, use a module-level variable written by procedural code, or modeling code in a checker.
+  - Local variables cannot be passed to sampled-value functions such as `$past` (§16.9.3), and they cannot appear in a `disable iff` condition (§16.12).
+  - Pair local variables with `default clocking` and `default disable iff` to keep long properties readable.
 
   ## Check Your Understanding
 
   <Quiz questions={[
     {
-      question: "What is a key benefit of using local variables inside a sequence?",
+      question: "What is a key benefit of using local variables inside a sequence or property?",
       answers: [
         { text: "They share the same value across all assertions", correct: false },
-        { text: "Each assertion evaluation has its own copy of the variable", correct: true },
+        { text: "Each evaluation attempt has its own copy of the variable", correct: true },
         { text: "They are visible to the entire design", correct: false },
         { text: "They must be declared as `static`", correct: false }
       ],
-      explanation: "Local variables are unique per assertion thread, avoiding race conditions."
+      explanation: "Local variables are created per attempt and removed when the attempt ends (§16.10). That is what keeps overlapping transactions apart."
     }
   ]} />
 
@@ -62,9 +63,9 @@ export const metadata = {
       question="An assertion checks that a burst read returns the exact same address that was requested. However, if two read requests happen back-to-back, the assertion fails on the second read, incorrectly checking against the first request's address. What is the most likely cause?"
       options={[
         { text: "`|=>` was used instead of `|->`.", isCorrect: false, feedback: "Overlapping vs non-overlapping implication just shifts the check by one cycle, it doesn't cause data corruption between threads." },
-        { text: "The assertion used a module-level variable to store the address instead of an SVA local variable inside the sequence.", isCorrect: true, feedback: "Correct! If a normal `logic` variable in the module is used to store state, a second request will overwrite the first request's data before the first request finishes checking. SVA local variables (`logic [31:0] addr;` declared *inside* the property/sequence) dynamically allocate a new private copy for *every* attempt that starts." },
+        { text: "The assertion used a module-level variable to store the address instead of an SVA local variable inside the sequence.", isCorrect: true, feedback: "Correct! If a normal `logic` variable in the module is used to store state, a second request will overwrite the first request's data before the first request finishes checking. SVA local variables (`logic [31:0] addr;` declared *inside* the property/sequence) get a new private copy for *every* attempt that starts." },
         { text: "The property was evaluated in the reactive region rather than the observed region.", isCorrect: false, feedback: "This relates to scheduling semantics, not data shadowing." },
-        { text: "The local variable was not explicitly typed as `automatic`.", isCorrect: false, feedback: "Local variables in SVA are automatically dynamically allocated per-attempt; `static` is the keyword used if you actually want them shared." }
+        { text: "The local variable was not explicitly typed as `automatic`.", isCorrect: false, feedback: "SVA local variables take no lifetime qualifier at all: neither `automatic` nor `static`. Every attempt always gets its own private copy." }
       ]}
     />
   </div>

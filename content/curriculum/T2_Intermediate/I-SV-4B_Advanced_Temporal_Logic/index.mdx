@@ -8,16 +8,80 @@ import { InteractiveCode, Quiz, InterviewQuestionPlayground } from '@/components
 import TemporalLogicExplorer from '@/components/curriculum/interactives/TemporalLogicExplorer';
 
 ## Quick Take
-- **What it is:** The next level of SystemVerilog Assertions. We move beyond simple single-clock protocols to handle asynchronous boundary crossings, store dynamic state inside sequences, and attach verification IP directly to the DUT without touching its source code.
-- **Why it matters:** Real-world designs have multiple clock domains and complex data-dependent pipelines. Advanced SVA is required to verify these structures robustly.
+- **What it is:** The next level of SystemVerilog Assertions: repetition operators, conditions that must hold over a whole interval, per-attempt local variables, and properties that cross clock domains.
+- **Why it matters:** Real handshakes wait an unknown number of cycles, hold signals while they wait, and move data across domains. These operators describe that directly, instead of long chains of `##1`.
+- **The rule to carry with you:** every operator here still works on attempts that start at each clock tick and on sampled values, exactly as in [I-SV-4A](../I-SV-4A_SVA_Fundamentals/). Attaching assertions to a DUT without editing it (`bind`, checkers) is the topic of I-SV-4C.
+
+## Build Your Mental Model
+### Repetition operators
+Repetition says how many times a Boolean (or a sequence) must match, and whether the matches must be back to back (§16.9.2):
+
+| Operator | Meaning | Ends |
+|---|---|---|
+| `b[*3]` | `b` at three consecutive ticks (`b ##1 b ##1 b`) | on the third tick |
+| `b[*1:3]` | one to three consecutive ticks | on any of them |
+| `b[->2]` | goto: the second occurrence of `b`, with any gap before each | exactly on the tick of the second `b` |
+| `b[=2]` | nonconsecutive: two occurrences, then any number of ticks without `b` | on or after the second `b`, before a third |
+
+The standard defines the last two through the first: `b[->N]` is `(!b[*0:$] ##1 b)[*N]`, and `b[=N]` is `b[->N] ##1 !b[*0:$]` (Annex F.3.4.2.3). So `start |=> ack[->2] ##1 done` needs `done` on the tick right after the second `ack`, while `start |=> ack[=2] ##1 done` lets quiet ticks pass between the second `ack` and `done`.
+
+### Conditions over time: throughout and within
+- `busy throughout s` matches when `s` matches and `busy` is true at **every** tick of that match, including its last tick. It is shorthand for `(busy)[*0:$] intersect s` (§16.9.9).
+- `s1 within s2` matches when `s2` matches and `s1` matches somewhere inside it. It is shorthand for `(1[*0:$] ##1 s1 ##1 1[*0:$]) intersect s2` (§16.9.10).
+- `s1 intersect s2` needs both to match with the **same** start and end; `s1 and s2` needs both to match from the same start and ends when the later one ends; `s1 or s2` needs either (§16.9.5–§16.9.7).
+
+A typical handshake rule combines the two families: `req |=> busy throughout done[->1]` says "after a request, busy stays high on every tick until the first done, including the tick where done arrives."
+
+### Compare operators on one trace
+Pick an operator, predict what the highlighted attempt reports, then compare the whole family on the same trace. Toggle `done` or `busy` to find the edge where two operators start to disagree.
 
 <TemporalLogicExplorer />
+
+## Make It Work
+1. **Exact count, back to back?** Use `[*N]` (or `[*m:n]`).
+2. **Wait for the Nth occurrence, then act on the next tick?** Use goto `[->N]`.
+3. **N occurrences, then anything quiet before the next step?** Use nonconsecutive `[=N]`.
+4. **A level that must hold while something else happens?** Use `throughout`, and remember it also covers the final tick.
+5. **Something that must happen inside a window?** Use `within`.
+6. **Data that must match later?** Store it in a [local variable](./local-variables) in the antecedent and compare it in the consequent.
+7. **Two clocks?** Hop clocks with `@(...)` inside the property and pick `##0` or `##1` deliberately ([multi-clocking](./multi-clocking)).
+
+## Push Further
+- **Pending at the end of simulation:** `##[1:$]` and `[->N]` can wait forever. In `assert property` sequences are weak, so an attempt that never finishes is not reported as a failure (§16.12.2). If "must eventually happen" matters, bound the wait (`##[1:16]`) or check for unfinished attempts at the end of the test.
+- **Liveness:** `s_eventually` and `strong(...)` make an unfinished attempt a failure. They suit formal tools better than finite simulations.
+- **Overlapping transactions:** Local variables give each attempt private storage, which is how one property checks pipelined, overlapping requests.
+
+## Practice & Reinforce
+<Quiz
+  questions={[
+    {
+      question: "start rises at edge 1; ack is high at edges 2 and 4; done is high at edge 6. Which property passes for the attempt at edge 1?",
+      answers: [
+        { text: "start |=> ack[*2] ##1 done", correct: false },
+        { text: "start |=> ack[->2] ##1 done", correct: false },
+        { text: "start |=> ack[=2] ##1 done", correct: true },
+        { text: "All three", correct: false }
+      ],
+      explanation: "[*2] needs ack at edges 2 and 3 and fails at edge 3. [->2] ends on the second ack (edge 4), so done must be high at edge 5: it fails there. [=2] may end at edge 5 because ack stays low, so done at edge 6 matches."
+    },
+    {
+      question: "req |=> busy throughout done[->1]: busy is high at edges 2 to 5, done arrives at edge 6. What happens?",
+      answers: [
+        { text: "It passes at edge 6", correct: false },
+        { text: "It fails at edge 6, because busy must also be high on the tick where done arrives", correct: true },
+        { text: "It is vacuous", correct: false },
+        { text: "It is pending", correct: false }
+      ],
+      explanation: "throughout requires the condition at every tick of the sequence's match, including the last one (§16.9.9). busy is low at edge 6."
+    }
+  ]}
+/>
 
 ## Deep Dives in this Track
 - [Local Variables in Sequences](./local-variables)
 - [Multi-Clocking Assertions](./multi-clocking)
 
 ## References & Next Topics
-- **IEEE 1800-2023, Clause 16:** Assertions.
+- **IEEE 1800-2023, Clause 16:** Assertions. Key subclauses: 16.9.2 (repetition), 16.9.5–16.9.10 (and, intersect, or, throughout, within), 16.10 (local variables), 16.13 (multiclock support); Annex F.3.4.2 (derived sequence operators).
 - **IEEE 1800-2023, Clause 17:** Checkers.
-- Next: [I-UVM-1A: Components](/curriculum/T2_Intermediate/I-UVM-1A_Components/index).
+- Next: [I-SV-4C: SystemVerilog Checkers & Bind](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index).

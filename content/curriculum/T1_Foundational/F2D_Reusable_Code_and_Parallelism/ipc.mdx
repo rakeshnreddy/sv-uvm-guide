@@ -17,18 +17,16 @@ import MailboxSemaphoreGame from '@/components/visuals/MailboxSemaphoreGame';
 ## Build Your Mental Model
 
 ### The Traffic Controller
-Visualize how threads block and unblock based on resource availability.
+Predict the scripted run first, then drive processes A, B and C yourself. Notice that a blocked process cannot do anything, and that it resumes **by itself**, oldest waiter first, the moment another process returns a key or a message. Nobody polls.
 
 <MailboxSemaphoreGame />
-
-<Mailbox3D />
 
 ### 1. Semaphores (The Key)
 Used for **mutual exclusion**.
 - `new(n)`: Create with `n` keys.
-- `get(n)`: Grab `n` keys (blocks if not available).
-- `put(n)`: Return `n` keys.
-- `try_get(n)`: Non-blocking attempt.
+- `get(n)`: Grab `n` keys. Blocks until `n` keys are free at the same time; waiters are queued first-in first-out (IEEE 1800-2023 §15.3.3).
+- `put(n)`: Return `n` keys. It never checks who took them, and the count can grow past the initial `n` (§15.3.1).
+- `try_get(n)`: Non-blocking attempt. Returns a positive value and takes the keys, or returns 0 and takes nothing (§15.3.4).
 
 ```systemverilog
 semaphore key = new(1); // Single key
@@ -56,7 +54,8 @@ Used for **data transfer** between threads.
 - `new(bound)`: Create with size `bound` (0 = infinite).
 - `put(obj)`: Place object (blocks if full).
 - `get(obj)`: Retrieve object (blocks if empty).
-- `peek(obj)`: Look at data without removing.
+- `peek(obj)`: Copy the oldest object without removing it (blocks if empty).
+- `try_put`, `try_get`, `try_peek`: Never block. They return 0 when the mailbox is full (or empty) and leave it unchanged (§15.4.4, §15.4.6).
 
 ```systemverilog
 mailbox #(int) mbx = new(2); // Capacity 2
@@ -78,9 +77,40 @@ initial begin
         $display("Got %0d", val);
       end
     end
-  join
+  join // never completes: the consumer loops forever. Real code uses join_none here.
 end
 ```
+
+Before you simulate it, predict where the first "Got" line appears among the "Sent" lines. With a bound of 2, the producer can run at most two messages ahead of the consumer.
+
+<VisualRecap
+  title="Blocking means suspended until someone else acts"
+  rule="get, put and peek suspend the caller until another process makes them possible, then resume it automatically, oldest waiter first. try_get, try_put and try_peek never block: they return 0 instead."
+  code={`semaphore bus = new(1);
+bus.get(1);          // waits for the key
+drive_packet();
+bus.put(1);          // every exit path must return it
+
+mailbox #(int) mbx = new(2);
+mbx.put(x);          // waits while 2 items are queued
+if (!mbx.try_get(y)) $display("nothing yet");`}
+  mistake="Leaving a task early, or being killed by disable fork, while holding a semaphore key. Nothing returns the key, so every later get() waits forever."
+  inTestbench="Plain-SV benches connect generator and driver with a bounded mailbox; UVM wraps the same idea in uvm_tlm_fifo. Semaphores guard a bus that several drivers share."
+>
+  <svg viewBox="0 0 320 130" role="img" aria-label="A semaphore bucket with one key, and a FIFO queue of waiting processes B then C; a put wakes B first." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="10" y="20" width="90" height="60" rx="10" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="22" y="44" fontSize="11" fill="currentColor">bucket</text>
+    <text x="22" y="66" fontSize="14" fill="currentColor">⚿</text>
+    <text x="130" y="44" fontSize="11" fill="currentColor">wait queue (FIFO)</text>
+    <rect x="130" y="52" width="40" height="24" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="140" y="68" fontSize="11" fill="currentColor">1. B</text>
+    <rect x="178" y="52" width="40" height="24" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="188" y="68" fontSize="11" fill="currentColor">2. C</text>
+    <line x1="100" y1="64" x2="126" y2="64" stroke="currentColor" strokeDasharray="5 3" markerEnd="none" />
+    <text x="10" y="104" fontSize="10" fill="currentColor">put(1) → the key goes to B, the oldest waiter;</text>
+    <text x="10" y="120" fontSize="10" fill="currentColor">B wakes by itself. C waits for the next put.</text>
+  </svg>
+</VisualRecap>
 
 ## Common Pitfalls
 - **Deadlock:** Thread A has Key 1 and wants Key 2. Thread B has Key 2 and wants Key 1. Both wait forever.
@@ -110,7 +140,7 @@ end
         <span className="text-slate-400 transition group-open:rotate-180">▼</span>
       </summary>
       <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p>`get()` is a blocking task. `try_get()` is a function that returns 1 (success) or 0 (failure) immediately. It allows a thread to do something else if the resource isn't ready, rather than sleeping.</p>
+        <p>`get()` is a blocking task. `try_get()` is a function that returns immediately. For a semaphore it returns a positive value when it got the keys and 0 otherwise (§15.3.4). For a mailbox it returns a positive value when it retrieved a message, 0 when the mailbox is empty, and a negative value when the message type does not match the variable (§15.4.6). It allows a thread to do something else if the resource isn't ready, rather than sleeping — but the thread must check the result before using the resource.</p>
       </div>
     </details>
   </CardContent>

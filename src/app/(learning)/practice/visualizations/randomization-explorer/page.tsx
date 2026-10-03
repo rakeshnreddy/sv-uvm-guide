@@ -1,17 +1,18 @@
 import dynamic from 'next/dynamic';
 import { InfoPage } from '@/components/templates/InfoPage';
 
-const RandomizationExplorer = dynamic(
-  () => import('@/components/animations/RandomizationExplorer'),
+// The exact-enumeration lab replaces the old rejection-sampling RandomizationExplorer,
+// which reported satisfiable constraints as solver failures.
+const ConstraintSolverHeatmapVisualizer = dynamic(
+  () => import('@/components/visualizers/ConstraintSolverHeatmapVisualizer').then((m) => m.ConstraintSolverHeatmapVisualizer),
   {
-    ssr: false,
     loading: () => <div className="flex h-64 items-center justify-center">Loading visualization...</div>,
   },
 );
 
 const RandomizationExplorerPage = () => {
   return (
-    <InfoPage title="Randomization Explorer" diagrams={[<RandomizationExplorer key="rand-explorer" />]} />
+    <InfoPage title="Randomization Explorer" diagrams={[<ConstraintSolverHeatmapVisualizer key="rand-explorer" />]} />
   );
 };
 

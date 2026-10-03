@@ -28,7 +28,9 @@ interface CodeTraceProps {
 
 /**
  * Code panel synchronised with a model trace. Ligatures are disabled so
- * `<=`, `==` and `!==` read exactly as typed.
+ * `<=`, `==` and `!==` read exactly as typed. Long lines wrap in place
+ * (keeping their indentation) so line numbers and per-line controls stay
+ * aligned at every width.
  */
 export function CodeTrace({ lines, activeKey, contextKeys = [], renderLineControl, label, className }: CodeTraceProps) {
   return (
@@ -46,7 +48,7 @@ export function CodeTrace({ lines, activeKey, contextKeys = [], renderLineContro
               key={`${i}-${line.key ?? "blank"}`}
               aria-current={isActive ? "step" : undefined}
               className={cn(
-                "flex min-h-6 flex-wrap items-center gap-x-2 border-l-2 pr-2 transition-colors duration-200 motion-reduce:transition-none",
+                "flex min-h-6 items-start gap-x-2 border-l-2 pr-2 transition-colors duration-200 motion-reduce:transition-none",
                 isActive
                   ? "border-cyan-400 bg-cyan-400/15"
                   : inContext
@@ -54,7 +56,7 @@ export function CodeTrace({ lines, activeKey, contextKeys = [], renderLineContro
                     : "border-transparent",
               )}
             >
-              <span className="w-7 shrink-0 select-none text-right text-[11px] text-slate-500" aria-hidden>
+              <span className="w-7 shrink-0 select-none pt-px text-right text-[11px] text-slate-500" aria-hidden>
                 {i + 1}
               </span>
               <span className="w-8 shrink-0" aria-hidden>
@@ -62,11 +64,11 @@ export function CodeTrace({ lines, activeKey, contextKeys = [], renderLineContro
                   <span className={cn("inline-block border px-1 text-[9px] font-bold leading-4", owner.className)}>{owner.tag}</span>
                 ) : null}
               </span>
-              <code className="min-w-0 whitespace-pre-wrap break-words sm:whitespace-pre">
+              <code className="min-w-0 flex-1 whitespace-pre-wrap break-words">
                 {isActive ? <span className="sr-only">Executing: </span> : null}
                 {line.text || " "}
               </code>
-              {renderLineControl ? <span className="ml-auto pl-3 py-0.5">{renderLineControl(line)}</span> : null}
+              {renderLineControl ? <span className="ml-auto shrink-0 py-0.5 pl-2">{renderLineControl(line)}</span> : null}
             </li>
           );
         })}

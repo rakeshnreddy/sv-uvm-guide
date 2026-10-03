@@ -22,12 +22,17 @@ export const metadata = {
 
   | Call | Blocking? | Use it when |
   | --- | --- | --- |
-  | `put(item)` | Blocks if the mailbox is full | Backpressure producer threads until consumers catch up. |
-  | `try_put(item)` | Returns 0 if full | Drop low-priority work instead of stalling. |
+  | `put(item)` | Blocks while a bounded mailbox is full | Backpressure producer threads until consumers catch up. |
+  | `try_put(item)` | Never; returns 0 if full and stores nothing | Drop low-priority work instead of stalling. |
   | `get(item)` | Blocks until something arrives | Classic producer/consumer handshakes. |
-  | `try_get(item)` | Returns 0 if empty | Poll without blocking a monitor. |
-  | `peek(item)` | Non-destructive read | Look at the next transaction while leaving it queued. |
-  | `num()` | Instant | Inspect queue depth for assertions or adaptive throttling. |
+  | `try_get(item)` | Never; returns 0 if empty (negative on a type mismatch) | Check for work without blocking a monitor. |
+  | `peek(item)` | Blocks until something arrives; copies without removing | Look at the next transaction while leaving it queued. |
+  | `try_peek(item)` | Never; returns 0 if empty | Look ahead without blocking. |
+  | `num()` | Instant | Inspect queue depth; the value is stale after the next put or get by any process (§15.4.2). |
+
+  Blocked callers are woken first-in first-out (IEEE 1800-2023 §15.4.5). Predict when the producer gets past a full mailbox, then drive a producer and two consumers yourself — and watch who receives the first message when both consumers are waiting.
+
+  <MailboxSemaphoreGame mode="mailbox" />
 
   <InteractiveCode>
   ```systemverilog
@@ -36,11 +41,13 @@ export const metadata = {
 
   task automatic produce_packet(int id);
     packet_t p = '{id: id, data: $urandom_range(0, 255)};
-    if (!mbx.try_put(p)) begin
-      // Backpressure: wait for space, then block on put
-      wait (mbx.num() < 4);
-      mbx.put(p);
-    end
+    mbx.put(p);   // blocks while 4 packets are queued: this IS the backpressure
+  endtask
+
+  task automatic produce_optional(int id);   // low-priority traffic
+    packet_t p = '{id: id, data: 8'hFF};
+    if (!mbx.try_put(p))
+      $display("[%0t] dropped optional packet %0d: mailbox full", $time, id);
   endtask
 
   initial begin
@@ -66,7 +73,9 @@ export const metadata = {
   **The Infinite Queue (Memory Leak):** 
   Calling `new()` with no arguments creates an unbounded (infinite) mailbox. If your producer thread (e.g., a fast transaction generator) pushes items faster than your consumer thread (e.g., a slow APB driver) can pull them, the mailbox will grow infinitely. This will eventually exhaust the simulator's memory and crash the process. 
   
-  **The Fix (Backpressure):** Always use bounded mailboxes `new(DEPTH)` for driver queues. When the mailbox is full, the producer's `put()` will naturally block, creating *backpressure* that forces the generator to wait for the hardware to catch up.
+  **The Fix (Backpressure):** Always use bounded mailboxes `new(DEPTH)` for driver queues. When the mailbox is full, the producer's `put()` will naturally block, creating *backpressure* that forces the generator to wait for the hardware to catch up. Do not build your own backpressure with `try_put` plus `wait (mbx.num() < DEPTH)`: `put()` already waits for room. Worse, the wait's only operand is the `mbx` handle, which never changes; whether a simulator re-evaluates a method call like `mbx.num()` when the mailbox's contents change is tool-dependent, so this pattern can hang.
+
+  **The Shared Handle:** For class objects, `put(tr)` stores the **handle**, not a copy. A producer that reuses one object — `tr.randomize(); mbx.put(tr);` in a loop — fills the mailbox with several handles to the same object, and the consumer sees only the last values. Call `tr = new();` (or copy the object) before every `put()`.
 
   **Mailboxes vs. TLM/FIFOs:** 
   In modern UVM environments, raw SystemVerilog mailboxes are rarely used. UVM’s `uvm_tlm_fifo` wraps a mailbox with analysis ports, standard reset control, and comprehensive blocking/non-blocking APIs. You should transition to TLM FIFOs when bridging IPC into UVM testbench architecture.

@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/Label';
 import { Gauge, HardDrive, Zap } from 'lucide-react';
 import { scaleBand, scaleLinear } from 'd3-scale';
 import { max } from 'd3-array';
+import { applyDynamicOp, createDynamicArray, formatElem, type DynamicArrayOp } from '@/lib/systemverilog-array-model';
 
 const stateColor = {
   '0': 'bg-green-500',
@@ -28,7 +29,19 @@ const SystemVerilogDataTypesAnimation = () => {
   const [unpackedDim, setUnpackedDim] = useState(3);
   const [inputA, setInputA] = useState<StateColorKey>('0');
   const [inputB, setInputB] = useState<StateColorKey>('0');
-  const [dynArray, setDynArray] = useState<number[]>([]);
+  // Dynamic array: int arr[]. Only new[], new[](arr), size() and delete() exist (IEEE 1800-2023 §7.5).
+  const [dyn, setDyn] = useState(() => ({
+    arr: createDynamicArray('arr', 'int', []),
+    log: null as { code: string; why: string } | null,
+  }));
+  const dynArray = dyn.arr;
+  const dynLog = dyn.log;
+  const runDyn = useCallback((op: DynamicArrayOp) => {
+    setDyn(prev => {
+      const result = applyDynamicOp(prev.arr, op);
+      return { arr: result.after, log: { code: result.code, why: result.why } };
+    });
+  }, []);
   const [queue, setQueue] = useState<number[]>([]);
   const [assocArray, setAssocArray] = useState<Record<string, number>>({});
   const [assocKey, setAssocKey] = useState('');
@@ -52,8 +65,8 @@ const SystemVerilogDataTypesAnimation = () => {
     () => setInputA('X'),
     () => setInputB('Z'),
     () => setIsStruct(s => !s),
-    () => setDynArray(prev => [...prev, Math.floor(Math.random() * 10)]),
-    () => setDynArray(prev => prev.slice(0, -1)),
+    () => runDyn({ op: 'new', size: 3 }),
+    () => runDyn({ op: 'new-copy', size: 5 }),
     () => setQueue(q => [...q, Math.floor(Math.random() * 10)]),
     () => setQueue(q => q.slice(1)),
     () => setAssocArray(prev => ({ ...prev, demo: Math.floor(Math.random() * 10) })),
@@ -63,7 +76,7 @@ const SystemVerilogDataTypesAnimation = () => {
     }),
     () => setLogicValue(v => cycleState(v, FourStateValues)),
     () => setLogicBitValue(v => cycleState(v, FourStateValues)),
-  ], [cycleState]);
+  ], [cycleState, runDyn]);
 
   useEffect(() => {
     if (!isPlaying) return;
@@ -542,38 +555,55 @@ const MiniBarChart = ({
 
         <hr className="my-8" />
 
-        {/* Dynamic Array Operations */}
+        {/* Dynamic Array Operations: no push/pop on dynamic arrays (§7.5) */}
         <div>
           <h3 className="text-lg font-bold mb-2">Dynamic Array Operations</h3>
-          <div className="flex gap-2 mb-2">
-            <Button
-              size="sm"
-              onClick={() => setDynArray(prev => [...prev, Math.floor(Math.random() * 10)])}
-              title="Push element"
-            >
-              Push
+          <p className="mb-2 font-mono text-xs [font-variant-ligatures:none]">int arr[];  // size() = {dynArray.values.length}</p>
+          <div className="flex flex-wrap gap-2 mb-2">
+            <Button size="sm" onClick={() => runDyn({ op: 'new', size: 3 })} title="Allocate 3 elements; old contents are discarded">
+              arr = new[3]
             </Button>
             <Button
               size="sm"
-              onClick={() => setDynArray(prev => prev.slice(0, -1))}
-              disabled={dynArray.length === 0}
-              title="Pop element"
+              onClick={() => runDyn({ op: 'new-copy', size: dynArray.values.length + 2 })}
+              title="Grow by 2 and keep the old contents"
             >
-              Pop
+              {`arr = new[${dynArray.values.length + 2}](arr)`}
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => runDyn({ op: 'write', index: 0, value: Math.floor(Math.random() * 10) })}
+              disabled={dynArray.values.length === 0}
+              title="Write element 0"
+            >
+              arr[0] = v
+            </Button>
+            <Button size="sm" onClick={() => runDyn({ op: 'delete' })} disabled={dynArray.values.length === 0} title="Empty the array">
+              arr.delete()
             </Button>
           </div>
           <div className="flex gap-1">
-            {dynArray.map((v, i) => (
+            {dynArray.values.map((v, i) => (
               <motion.div
                 key={i}
                 className="w-8 h-8 bg-purple-200 border border-purple-400 flex items-center justify-center text-xs"
                 initial={{ scale: 0 }}
                 animate={{ scale: 1 }}
+                aria-label={`arr[${i}] = ${formatElem(v)}`}
               >
-                {v}
+                {formatElem(v)}
               </motion.div>
             ))}
           </div>
+          <p className="mt-2 text-xs text-muted-foreground" aria-live="polite">
+            {dynLog ? (
+              <>
+                <code className="font-mono [font-variant-ligatures:none]">{dynLog.code}</code> {dynLog.why}
+              </>
+            ) : (
+              'A dynamic array has no push or pop. new[N] discards the old contents and fills with the default (0 for int); new[N](arr) keeps them.'
+            )}
+          </p>
         </div>
 
         <hr className="my-8" />

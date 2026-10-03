@@ -1,205 +1,226 @@
 "use client";
 
-import React, { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle2, Factory, XCircle, ArrowRight, Cog } from "lucide-react";
-import InterviewQuestionPlayground from "./InterviewQuestionPlayground";
+import React, { useCallback, useMemo, useState } from "react";
 
-type Override = {
-    id: string;
-    type: "type" | "inst";
-    original: string;
-    replacement: string;
-    instPath?: string;
-    active: boolean;
-};
+import { CodeTrace } from "@/components/visual-system/CodeTrace";
+import { PredictionPrompt } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  FACTORY_MODEL_ASSUMPTIONS,
+  FactoryMessages,
+  FactoryTree,
+  LookupLog,
+  RevealSignal,
+  factoryOptions,
+  toCodeLines,
+} from "@/components/visualizers/FactoryOverrideExplorerVisualizer";
+import {
+  FACTORY_CLASSES,
+  OUTCOME_FATAL,
+  builderSource,
+  classDeclarations,
+  explainNode,
+  nodeResult,
+  objectCreatorSource,
+  outcomeOf,
+  runFactoryProgram,
+  standardTree,
+  testSource,
+  type BuildNode,
+  type ClassTable,
+  type FactoryProgram,
+  type PlacedOverride,
+} from "@/lib/uvm-factory-model";
 
-type Requester = {
-    id: string;
-    path: string;
-    requestedType: string;
-};
+const ROOT = "uvm_test_top";
+const DRV0 = "uvm_test_top.env.agt0.drv";
+const DRV1 = "uvm_test_top.env.agt1.drv";
+const TR0 = "uvm_test_top.env.agt0.mon.tr";
 
-const defaultOverrides: Override[] = [
-    { id: "o1", type: "type", original: "packet", replacement: "bad_packet", active: true },
-    { id: "o2", type: "inst", original: "packet", replacement: "good_packet", instPath: "uvm_test_top.env.agt.*", active: false },
-    { id: "o3", type: "inst", original: "packet", replacement: "secure_packet", instPath: "uvm_test_top.env.agt.sqr", active: false },
+type Variant = { overrides: PlacedOverride[]; target: string; classes?: ClassTable; txnContext?: "parent" | "none" };
+
+interface Scenario {
+  id: string;
+  label: string;
+  story: string;
+  base: Variant;
+  flip: { label: string; variant: Variant };
+  /** Which builder code to show. */
+  show: "agent" | "monitor";
+}
+
+const type = (id: string, original: string, override: string, replace = true): PlacedOverride => ({ id, kind: "type", original, override, replace, placement: "test-build-before" });
+const inst = (id: string, original: string, override: string, pathArg: string, withThis = true): PlacedOverride => ({
+  id,
+  kind: "inst",
+  original,
+  override,
+  pathArg,
+  parentPath: withThis ? ROOT : null,
+  placement: "test-build-before",
+});
+
+const registeredQuiet: ClassTable = FACTORY_CLASSES.map((c) => (c.name === "quiet_driver" ? { ...c, registered: true } : c));
+
+const SCENARIOS: Scenario[] = [
+  {
+    id: "order",
+    label: "General vs specific",
+    story: "The test registers a broad instance override for every driver under env, then a specific one for agt0's driver.",
+    base: { overrides: [inst("a", "base_driver", "mock_driver", "uvm_test_top.env.*", false), inst("b", "base_driver", "err_driver", "env.agt0.drv")], target: DRV0 },
+    flip: {
+      label: "Register the specific override first",
+      variant: { overrides: [inst("b", "base_driver", "err_driver", "env.agt0.drv"), inst("a", "base_driver", "mock_driver", "uvm_test_top.env.*", false)], target: DRV0 },
+    },
+    show: "agent",
+  },
+  {
+    id: "inst-type",
+    label: "Instance vs type",
+    story: "A type override was registered first; an instance override for agt1's driver comes second.",
+    base: { overrides: [type("t", "base_driver", "err_driver"), inst("i", "base_driver", "mock_driver", "env.agt1.drv")], target: DRV1 },
+    flip: { label: "Ask about agt0's driver instead", variant: { overrides: [type("t", "base_driver", "err_driver"), inst("i", "base_driver", "mock_driver", "env.agt1.drv")], target: DRV0 } },
+    show: "agent",
+  },
+  {
+    id: "chain",
+    label: "Chained overrides",
+    story: "One override maps base_driver to mock_driver; another maps mock_driver to err_driver.",
+    base: { overrides: [type("1", "base_driver", "mock_driver"), type("2", "mock_driver", "err_driver")], target: DRV0 },
+    flip: { label: "Swap the order of the two calls", variant: { overrides: [type("2", "mock_driver", "err_driver"), type("1", "base_driver", "mock_driver")], target: DRV0 } },
+    show: "agent",
+  },
+  {
+    id: "replace",
+    label: "replace = 0",
+    story: "Two type overrides for base_driver. The second passes replace = 0.",
+    base: { overrides: [type("1", "base_driver", "mock_driver"), type("2", "base_driver", "err_driver", false)], target: DRV0 },
+    flip: { label: "Use the default replace = 1", variant: { overrides: [type("1", "base_driver", "mock_driver"), type("2", "base_driver", "err_driver")], target: DRV0 } },
+    show: "agent",
+  },
+  {
+    id: "macro",
+    label: "Missing macro",
+    story: "quiet_driver extends base_driver but its author forgot `uvm_component_utils. The test overrides base_driver with it.",
+    base: { overrides: [type("1", "base_driver", "quiet_driver")], target: DRV0 },
+    flip: { label: "Add `uvm_component_utils(quiet_driver)", variant: { overrides: [type("1", "base_driver", "quiet_driver")], target: DRV0, classes: registeredQuiet } },
+    show: "agent",
+  },
+  {
+    id: "object",
+    label: "Object without context",
+    story: "agt0's monitor creates a transaction in run_phase. The test targets it with an instance override under agt0.mon.",
+    base: { overrides: [inst("1", "my_txn", "err_txn", "env.agt0.mon.*")], target: TR0, txnContext: "none" },
+    flip: { label: 'Pass this: create("tr", this)', variant: { overrides: [inst("1", "my_txn", "err_txn", "env.agt0.mon.*")], target: TR0, txnContext: "parent" } },
+    show: "monitor",
+  },
 ];
 
-const requesters: Requester[] = [
-    { id: "r1", path: "uvm_test_top", requestedType: "packet" },
-    { id: "r2", path: "uvm_test_top.env.agt", requestedType: "packet" },
-    { id: "r3", path: "uvm_test_top.env.agt.sqr", requestedType: "packet" },
-];
+function treeFor(variant: Variant): BuildNode {
+  const tree = standardTree();
+  if (!variant.txnContext) return tree;
+  const addTxn = (n: BuildNode): BuildNode => ({
+    ...n,
+    children: (n.children ?? []).map((c) =>
+      c.name === "mon" ? { ...c, children: [{ name: "tr", requested: "my_txn", context: variant.txnContext, createdIn: "run" as const }] } : addTxn(c),
+    ),
+  });
+  return addTxn(tree);
+}
 
+/** Prediction-first factory puzzles. Each runs the same engine as the explorer. */
 export default function FactoryOverrideVisualizer() {
-    const [overrides, setOverrides] = useState<Override[]>(defaultOverrides);
+  const [scenarioId, setScenarioId] = useState(SCENARIOS[0].id);
+  const [flipped, setFlipped] = useState(false);
+  const [revealedKey, setRevealedKey] = useState<string | null>(null);
+  const onReveal = useCallback((k: string) => setRevealedKey(k), []);
+  const scenario = SCENARIOS.find((s) => s.id === scenarioId) ?? SCENARIOS[0];
+  const variant = flipped ? scenario.flip.variant : scenario.base;
 
-    const toggleOverride = (id: string) => {
-        setOverrides(prev => prev.map(o => o.id === id ? { ...o, active: !o.active } : o));
-    };
+  const program: FactoryProgram = useMemo(
+    () => ({ classes: variant.classes ?? FACTORY_CLASSES, root: treeFor(variant), overrides: variant.overrides }),
+    [variant],
+  );
+  const run = useMemo(() => runFactoryProgram(program), [program]);
+  const key = `${scenario.id}:${flipped ? "flip" : "base"}`;
+  const revealed = revealedKey === key;
+  const node = nodeResult(run, variant.target);
+  const options = useMemo(() => factoryOptions(program, run, variant.target), [program, run, variant.target]);
+  const decidingCall = revealed ? node?.lookup?.hops.find((h) => h.chosen)?.chosen?.callId : undefined;
 
-    // UVM Factory override resolution:
-    // 1. Instance overrides checked first. Longest matching path wins.
-    // 2. Type overrides checked next.
-    // 3. Returns original if no match.
-    const resolveType = (path: string, requestedType: string) => {
-        const activeOverrides = overrides.filter(o => o.active && o.original === requestedType);
+  const env = program.root.children?.[0];
+  const agentChildren = env?.children?.[0]?.children ?? [];
+  const monitorObjects = agentChildren.find((c) => c.name === "mon")?.children ?? [];
+  const involved = Array.from(new Set(program.overrides.flatMap((o) => [o.original, o.override])));
 
-        // Check instance overrides
-        const instOverrides = activeOverrides.filter(o => o.type === "inst");
+  return (
+    <VisualFrame
+      label="Predict the UVM factory"
+      eyebrow="Predict, then check"
+      title="Which class does create() build?"
+      summary="Six short puzzles on one factory model. Commit to an answer, read the factory's lookup, then change one thing and predict again."
+      fidelity="model"
+      assumptions={FACTORY_MODEL_ASSUMPTIONS}
+    >
+      <SegmentedControl
+        label="Factory puzzle"
+        options={SCENARIOS.map((s) => ({ value: s.id, label: s.label }))}
+        value={scenarioId}
+        onChange={(id) => {
+          setScenarioId(id);
+          setFlipped(false);
+        }}
+      />
+      <p className="text-sm text-foreground">
+        {scenario.story}
+        {flipped ? <strong className="ml-1 text-amber-800 dark:text-amber-200">Changed: {scenario.flip.label}.</strong> : null}
+      </p>
 
-        let bestMatch: Override | null = null;
-        let longestMatchLen = -1;
-
-        instOverrides.forEach(o => {
-            if (!o.instPath) return;
-            const regexStr = "^" + o.instPath.replace(/\./g, "\\.").replace(/\*/g, ".*") + "$";
-            const regex = new RegExp(regexStr);
-
-            if (regex.test(path)) {
-                if (o.instPath.length > longestMatchLen) {
-                    longestMatchLen = o.instPath.length;
-                    bestMatch = o;
-                }
-            }
-        });
-
-        if (bestMatch) {
-            return { resolved: (bestMatch as Override).replacement, by: bestMatch as Override };
-        }
-
-        // Check type overrides
-        const typeOverride = activeOverrides.find(o => o.type === "type");
-        if (typeOverride) {
-            return { resolved: typeOverride.replacement, by: typeOverride };
-        }
-
-        return { resolved: requestedType, by: null };
-    };
-
-    return (
-        <div className="my-8 flex flex-col gap-6 font-sans">
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                {/* Left: Overrides Control */}
-                <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                    <div className="flex items-center gap-2 border-b border-slate-100 pb-4 dark:border-slate-800">
-                        <Factory className="text-purple-600 dark:text-purple-400" size={24} />
-                        <h3 className="m-0 text-xl font-semibold text-slate-800 dark:text-slate-100">
-                            UVM Factory Overrides
-                        </h3>
-                    </div>
-
-                    <p className="text-sm text-slate-600 dark:text-slate-400">
-                        Toggle the overrides below to see how the factory resolves creation requests across different hierarchical paths.
-                    </p>
-
-                    <div className="flex flex-col gap-3">
-                        {overrides.map(o => (
-                            <div
-                                key={o.id}
-                                onClick={() => toggleOverride(o.id)}
-                                className={`group cursor-pointer flex items-center justify-between rounded-lg border p-3 transition-all ${o.active
-                                        ? "border-purple-300 bg-purple-50 dark:border-purple-800/50 dark:bg-purple-900/20"
-                                        : "border-slate-200 bg-slate-50 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800/50 dark:hover:bg-slate-800"
-                                    }`}
-                            >
-                                <div className="flex flex-col gap-1">
-                                    <div className="flex items-center gap-2">
-                                        <span className={`text-xs font-bold uppercase tracking-wider ${o.type === "inst" ? "text-amber-600 dark:text-amber-500" : "text-blue-600 dark:text-blue-500"
-                                            }`}>
-                                            {o.type} override
-                                        </span>
-                                    </div>
-                                    <code className="text-sm font-semibold text-slate-800 dark:text-slate-200">
-                                        {o.original} <ArrowRight className="inline" size={12} /> {o.replacement}
-                                    </code>
-                                    {o.type === "inst" && (
-                                        <code className="text-xs text-slate-500 dark:text-slate-400">
-                                            Path: {o.instPath}
-                                        </code>
-                                    )}
-                                </div>
-                                <div>
-                                    {o.active
-                                        ? <CheckCircle2 className="text-purple-600 dark:text-purple-400" size={24} />
-                                        : <div className="h-6 w-6 rounded-full border-2 border-slate-300 dark:border-slate-600" />
-                                    }
-                                </div>
-                            </div>
-                        ))}
-                    </div>
-                </div>
-
-                {/* Right: Resolution Visualization */}
-                <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-slate-900/50">
-                    <div className="flex items-center gap-2 border-b border-slate-200 pb-3 dark:border-slate-800">
-                        <Cog className="text-slate-600 dark:text-slate-400" size={20} />
-                        <h3 className="m-0 text-lg font-semibold dark:text-slate-100">Factory Resolution</h3>
-                    </div>
-
-                    <div className="flex flex-col gap-4">
-                        {requesters.map((req, idx) => {
-                            const { resolved, by } = resolveType(req.path, req.requestedType);
-
-                            return (
-                                <div key={req.id} className="relative pl-6">
-                                    {idx > 0 && (
-                                        <div className="absolute left-3 top-[-24px] h-6 w-px bg-slate-300 dark:bg-slate-700" />
-                                    )}
-                                    <div className="absolute left-3 top-3 h-px w-3 bg-slate-300 dark:bg-slate-700" />
-
-                                    <motion.div
-                                        layout
-                                        className="flex flex-col gap-2 rounded-lg border border-slate-200 bg-white p-3 shadow-sm dark:border-slate-700 dark:bg-slate-800"
-                                    >
-                                        <div className="text-xs font-mono text-slate-500 dark:text-slate-400">
-                                            {req.path}
-                                        </div>
-                                        <div className="flex items-center gap-2">
-                                            <code className="text-sm text-slate-400 line-through">
-                                                {req.requestedType}
-                                            </code>
-                                            <ArrowRight size={14} className="text-slate-400" />
-                                            <AnimatePresence mode="popLayout">
-                                                <motion.code
-                                                    key={resolved}
-                                                    initial={{ opacity: 0, y: -10 }}
-                                                    animate={{ opacity: 1, y: 0 }}
-                                                    className={`rounded px-1.5 py-0.5 text-sm font-bold ${by ? "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300" : "bg-slate-100 text-slate-800 dark:bg-slate-700 dark:text-slate-200"
-                                                        }`}
-                                                >
-                                                    {resolved}
-                                                </motion.code>
-                                            </AnimatePresence>
-                                        </div>
-                                        {by && (
-                                            <div className="text-[10px] uppercase text-slate-400 flex items-center gap-1">
-                                                Resolved by {by.type} override
-                                                {by.type === "inst" && <span className="text-amber-600 dark:text-amber-500">[{by.instPath}]</span>}
-                                            </div>
-                                        )}
-                                    </motion.div>
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            </div>
-
-            <InterviewQuestionPlayground
-                title="Override Resolution Precedence"
-                question={
-                    <p>
-                        If both a <strong>type override</strong> and an <strong>instance override</strong> apply to the exact same component creation request, which one wins?
-                    </p>
-                }
-                options={[
-                    { id: "opt1", label: "Type Override wins over Instance Override.", isCorrect: false, explanation: "Incorrect. Type overrides are global fallbacks, they are deliberately weaker than targeted instance overrides." },
-                    { id: "opt2", label: "Instance Override wins over Type Override.", isCorrect: true, explanation: "Correct! The UVM Factory checks instance overrides first. If an instance matches the path, it applies that override and completely ignores the type override for that specific instance." },
-                    { id: "opt3", label: "The last one registered in the build_phase wins.", isCorrect: false, explanation: "Incorrect. While registration order matters for identical overrides of the same category, category precedence (Instance > Type) strictly applies first regardless of registration order." },
-                ]}
-            />
+      <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
+        <CodeTrace label="my_test" lines={toCodeLines(testSource(program))} activeKey={decidingCall} className="min-w-0" />
+        <div className="min-w-0 space-y-3">
+          {scenario.show === "agent" ? (
+            <CodeTrace label="my_agent (agt0 and agt1)" lines={toCodeLines(builderSource("my_agent", agentChildren))} activeKey={revealed ? "create-drv" : undefined} />
+          ) : (
+            <CodeTrace label="my_monitor" lines={toCodeLines(objectCreatorSource("my_monitor", "uvm_monitor", monitorObjects))} activeKey={revealed ? "create-tr" : undefined} />
+          )}
+          <CodeTrace label="Classes involved" lines={toCodeLines(classDeclarations(program.classes, involved))} />
         </div>
-    );
+      </div>
+
+      <PredictionPrompt
+        question={
+          <>
+            What does create() build for <code className="font-mono text-[13px] [font-variant-ligatures:none]">{variant.target}</code>?
+          </>
+        }
+        options={options}
+        resetKey={key}
+      >
+        {node ? (
+          <div className="space-y-3">
+            <RevealSignal id={key} onReveal={onReveal} />
+            <p aria-live="polite" className="text-sm text-foreground">
+              <strong>
+                Builds {outcomeOf(node) === OUTCOME_FATAL ? "nothing: UVM_FATAL [FCTTYP]" : outcomeOf(node)}.
+              </strong>{" "}
+              {explainNode(program, run, variant.target)}
+            </p>
+            <LookupLog program={program} node={node} />
+            <FactoryMessages messages={run.messages.filter((m) => m.severity !== "INFO" || m.id === "TPREGD" || m.id === "TPREGR")} />
+            <button
+              type="button"
+              onClick={() => setFlipped((f) => !f)}
+              className="inline-flex min-h-10 items-center rounded-lg border border-amber-500/70 bg-amber-500/10 px-3 text-sm font-semibold text-foreground hover:bg-amber-500/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              {flipped ? "Undo the change" : `Change one thing: ${scenario.flip.label}`} → predict again
+            </button>
+          </div>
+        ) : null}
+      </PredictionPrompt>
+
+      <FactoryTree program={program} run={run} revealed={revealed} target={variant.target} />
+    </VisualFrame>
+  );
 }

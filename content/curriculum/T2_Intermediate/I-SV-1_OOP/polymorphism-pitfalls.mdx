@@ -12,11 +12,12 @@ export const metadata = {
 >
 
   ## Method Resolution: Virtual vs Non-Virtual
-  *IEEE 1800-2023, Clause 8.20: Virtual methods*
+  *IEEE 1800-2023, §8.14 Overridden members and §8.20 Virtual methods*
 
   When you call a method through a base class handle, SystemVerilog must decide which version of the method to execute.
-  - If the method is **non-virtual**, the compiler looks at the **type of the handle**.
-  - If the method is **virtual**, the simulator looks at the **type of the actual object** in memory.
+  - If the method is **non-virtual**, the compiler binds the call to the declaration it sees from the **handle's declared class** (§8.14).
+  - If the method is **virtual**, the call binds at run time to the **class of the object** the handle refers to: the latest override in that object's class (§8.20).
+  - Once a method is virtual, every override of it in a subclass is virtual too, with or without the keyword (§8.20).
 
   <InteractiveCode>
   ```systemverilog
@@ -30,66 +31,92 @@ export const metadata = {
     virtual function void v_print(); $display("Child v_print"); endfunction
   endclass
 
-  program demo;
+  module demo;
+    Base b;
+    Child c;
     initial begin
-      Base b;
-      Child c = new();
-      b = c; // Upcast: b points to a Child object
+      c = new();
+      b = c;       // upcast: b refers to a Child object
 
-      b.print();   // Prints "Base print" (Resolved by handle type)
-      b.v_print(); // Prints "Child v_print" (Resolved by object type)
+      b.print();   // "Base print": resolved by the handle's class
+      b.v_print(); // "Child v_print": resolved by the object's class
     end
-  endprogram
+  endmodule
   ```
   </InteractiveCode>
 
-  ## Upcasting vs. Downcasting
+  Members that a subclass adds are invisible through a base-class handle. If `Child` declared a new method `crc()`, then `b.crc()` would not compile even though the object is a `Child` (§8.14). You must first get a `Child` handle, which is what `$cast` is for.
 
-  ### Upcasting (Safe)
-  Assigning a derived class handle to a base class handle is always safe and happens automatically.
+  Explore every combination below: the handle's class, the object's class, where `virtual` is written, and three calls (`describe()`, a `print()` that chains through `super.print()`, and `corrupt()`, which only the subclass has). Open *advanced* to see what happens when `virtual` first appears in the middle of the hierarchy.
+
+  <PolymorphismDispatchVisualizer section="dispatch" />
+
+  ## Upcasting vs. Downcasting
+  *IEEE 1800-2023, §8.16 Casting and §6.24.2 $cast dynamic casting*
+
+  ### Upcasting (always legal)
+  Assigning a subclass handle to a superclass variable is always legal and needs no cast (§8.16).
 
   ```systemverilog
-  Base b = new Child(); // Implicit upcast
+  Child c;
+  Base  b;
+  initial begin
+    c = new();
+    b = c;              // implicit upcast
+    b = Child::new();   // also legal: a typed constructor call (§8.8)
+  end
   ```
 
-  ### Downcasting (Dangerous)
-  Assigning a base class handle back to a derived class handle is unsafe, because the base handle might not actually point to a derived object. You must use the `$cast` system task to attempt this safely.
+  ### Downcasting (checked at run time)
+  Assigning a superclass handle directly to a subclass variable is illegal, **whatever object it holds**: the compiler only knows the handle's declared class (§8.16). Use `$cast`, which checks the object at run time and succeeds only when the object is the destination class or a subclass of it.
 
-  *IEEE 1800-2023, Clause 8.16: Object assignment and copying (Dynamic casting)*
+  `$cast` has two forms, and they fail differently (§6.24.2):
+  - **As a function** (`if ($cast(dst, src))`), a failed cast returns 0, leaves `dst` unchanged, and reports nothing. Always test the result.
+  - **As a task** (`$cast(dst, src);`), a failed cast is a run-time error, and `dst` is unchanged.
 
   <InteractiveCode>
   ```systemverilog
-  Base b1 = new Child(); // b1 holds a Child
-  Base b2 = new Base();  // b2 holds a Base
-  Child c;
+  module demo;
+    Base  b1, b2;
+    Child c;
+    initial begin
+      b1 = Child::new();  // b1 holds a Child
+      b2 = new();         // b2 holds a Base
 
-  // c = b1; // Compile error! Cannot implicitly downcast
+      // c = b1;          // compile error: no implicit downcast
 
-  if ($cast(c, b1)) begin
-    $display("Cast successful! c now holds the Child object.");
-  end else begin
-    $fatal(1, "Cast failed!");
-  end
+      if ($cast(c, b1))
+        $display("Cast successful: c now refers to the Child object.");
+      else
+        $fatal(1, "Cast failed!");
 
-  if (!$cast(c, b2)) begin
-    $display("Cast failed! b2 does not hold a Child object.");
-  end
+      if (!$cast(c, b2))
+        $display("Cast failed: b2 does not hold a Child. c is unchanged.");
+    end
+  endmodule
   ```
   </InteractiveCode>
 
-  ## Interview Pitfall: Default Virtual Arguments
+  Predict each outcome below, then change the form: the same failed cast returns 0 as a function, stops the test as a task, and does not even compile as a plain assignment.
 
-  A common trick question tests your knowledge of how arguments are resolved when overriding virtual methods. If a base class provides default arguments, and the derived class provides different default arguments, which ones are used?
+  <PolymorphismDispatchVisualizer section="cast" />
 
-  SystemVerilog resolves default arguments based on the **handle type**, even for virtual methods!
+  ## Interview Pitfall: Default Arguments on Virtual Methods
+
+  A popular trick question gives a base virtual method and its override **different default argument values**, then asks which default a call through a base handle uses. Here is what IEEE 1800-2023 actually says:
+
+  - An override must match the **presence** of each default, but the default **expressions** may differ (§8.20).
+  - A default expression is evaluated in the scope of the subroutine declaration each time a call uses it (§13.5.3).
+
+  The standard does not say which override's declaration supplies the default when you call through a base-class handle. "The handle's type wins" is the C++ rule; it is not stated for SystemVerilog, so do not rely on it. Treat differing defaults as a portability bug: keep the default identical in every override, or pass the argument explicitly.
 
   <InterviewQuestionPlayground
-    question="Given a base virtual method `task send(int delay = 10);` overridden in a child as `task send(int delay = 50);`. If you call `b.send()` where `b` is a base handle pointing to a child object, what is the value of delay?"
+    question="Given a base virtual method `task send(int delay = 10);` overridden in a child as `task send(int delay = 50);`. If you call `b.send()` where `b` is a base handle pointing to a child object, what can you rely on?"
     options={[
-      { text: "delay = 50, because the method is virtual and the object is a Child.", isCorrect: false, feedback: "This is true for the method body, but not for default arguments." },
-      { text: "delay = 10, because default arguments are evaluated at compile time based on the handle type.", isCorrect: true, feedback: "Correct! The compiler evaluates default arguments based on the `Base` handle type before dynamically dispatching the virtual method. Therefore, the Child's `send()` is executed, but with the Base's default argument of 10." },
-      { text: "Compile error, because virtual overrides cannot change default arguments.", isCorrect: false, feedback: "They can change them, but doing so leads to confusing behavior like this." },
-      { text: "delay = 0, because default arguments are ignored in polymorphism.", isCorrect: false, feedback: "Default arguments are evaluated and passed to the method." }
+      { text: "delay = 10, because default arguments always come from the handle's class.", isCorrect: false, feedback: "That is the C++ rule. IEEE 1800-2023 does not state it for SystemVerilog, so a portable testbench cannot rely on it." },
+      { text: "delay = 50, because the child's override supplies its own default.", isCorrect: false, feedback: "Plausible, but the standard does not guarantee this either. Simulators are not required to agree." },
+      { text: "Compile error, because virtual overrides must use identical default values.", isCorrect: false, feedback: "§8.20 requires only that the presence of a default match. Different default expressions are legal." },
+      { text: "It compiles and the child's body runs, but which default value it receives is not pinned down by the standard; keep the defaults identical or pass the argument.", isCorrect: true, feedback: "Correct. The child's send() runs because the method is virtual (§8.20). Which declaration's default expression is used through a base handle is not specified, so differing defaults are a portability trap." }
     ]}
   />
 

@@ -299,7 +299,9 @@ export function CycleWaveform({
         </svg>
       </div>
       <figcaption className="mt-1 text-[11px] text-muted-foreground">{caption}</figcaption>
-      <table className="sr-only">
+      {/* sr-only on a wrapper: tables ignore the 1px width sr-only relies on and would overflow. */}
+      <div className="sr-only">
+      <table>
         <caption>{title}: value sampled at each edge</caption>
         <thead>
           <tr>
@@ -324,6 +326,7 @@ export function CycleWaveform({
             ))}
         </tbody>
       </table>
+      </div>
     </figure>
   );
 }

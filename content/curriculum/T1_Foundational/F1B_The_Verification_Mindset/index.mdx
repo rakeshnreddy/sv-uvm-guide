@@ -4,10 +4,6 @@ description: "Adopt the destructive testing philosophy and explore the methodolo
 flashcards: "F1B_Verification_Mindset"
 ---
 
-import { VerificationMethodologiesDiagram } from '@/components/visuals';
-import FirstBugHuntGame from '@/components/curriculum/f1/FirstBugHuntGame';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-
 ## Quick Take
 - **What it is:** The mindset shift from "make it work" (design) to "make it fail" (verification) — and the systematic methodologies that make destructive thinking productive.
 - **Why it matters:** Bugs hide where designers don't look. Verification engineers are paid to think adversarially and measure their progress quantitatively.
@@ -52,7 +48,7 @@ When handed any new feature or block to verify, systematically ask:
 
 ## Verification Methodologies
 
-How do we systematically break things?
+How do we systematically break things? Step through the methods below and notice which design representation each one runs on. Emulation, for example, runs the RTL, not the gate-level netlist.
 
 <VerificationMethodologiesDiagram />
 
@@ -100,17 +96,17 @@ If you are generating random tests, how do you know when you are done?
 
 ### The Coverage Closure Trap
 
-Coverage closure follows a classic diminishing-returns curve:
+Coverage closure follows a classic diminishing-returns curve. The stages below show its typical shape; where the boundaries fall varies by project:
 
-- **0–80% coverage:** Achieved quickly with basic random stimulus.
-- **80–95% coverage:** Requires constrained sequences targeting specific scenarios.
-- **95–100% coverage:** Demands highly targeted directed sequences, constraint tuning, or formal proofs. This "last mile" consumes a disproportionate amount of the schedule.
+- **The first large chunk (often most of the goals):** reached quickly with basic random stimulus.
+- **The middle stretch:** needs constrained sequences that target specific scenarios.
+- **The last few percent:** demand targeted directed sequences, constraint tuning, or formal proofs. This "last mile" consumes a disproportionate share of the schedule.
 
 Understanding this curve is critical for planning. Teams that don't plan for the last mile end up scrambling at tape-out.
 
 ## Interactive: Your First Bug Hunt
 
-You are the verifier. The designer has handed you a simple FIFO (First-In-First-Out) buffer. Your job is to break it.
+You are the verifier. The designer has handed you a 3-bit up counter and a one-line spec. Compare the spec with the waveform before you look at the code: find the first edge that is wrong, then the line that caused it, then pick the assertion that would have caught it.
 
 <FirstBugHuntGame />
 
@@ -130,15 +126,63 @@ Not all bugs are created equal. Understanding bug categories helps prioritize ve
 | **Performance** | Arbiter starvation under heavy load | Medium | Performance counters + assertions |
 | **Power** | Retention register corruption after power-down | Critical | Power-aware simulation (UPF) |
 
-### Real-World War Story: The One-Hot FSM Bug
+### War Story (composite): The One-Hot FSM Bug
 
 A verification team achieved 100% code coverage on an FSM. All states were visited, all transitions exercised. The chip taped out.
 
-In the lab, the FSM occasionally entered an **illegal state** — two bits of the one-hot encoding were set simultaneously. Why didn't code coverage catch it?
+In the lab, the FSM occasionally entered an **illegal state**: two bits of the one-hot encoding were set at once. Why didn't code coverage catch it?
 
-Because code coverage measures what the *existing* code does. The FSM had no default/illegal-state handler — there was no code *to cover*. A single SVA assertion `assert property (one_hot(state))` would have caught it during simulation.
+Because code coverage measures what the *existing* code does. The FSM had no default or illegal-state handler, so there was no code *to cover*. One concurrent assertion, `assert property (@(posedge clk) $onehot(state));`, would have flagged the illegal state the moment any simulation produced it. A formal tool, which explores every reachable state, could also have proved it unreachable or shown how to reach it. (`$onehot` is a built-in system function, IEEE 1800-2023 §20.9. A concurrent assertion also needs a clock, given here by `@(posedge clk)`.)
 
-**Lesson:** Code coverage tells you what you tested. Functional coverage and assertions tell you what you *should have* tested.
+**Lesson:** Code coverage tells you what you exercised. Functional coverage and assertions tell you whether the behaviour you *intended* was checked.
+
+
+### Retrieval check
+
+<Quiz
+  questions={[
+    {
+      question: "A team reports 100% code coverage on an FSM. What can they conclude?",
+      answers: [
+        { text: "Every line that exists ran at least once; behaviour with no code, such as a missing illegal-state handler, is invisible to this metric", correct: true },
+        { text: "The FSM is bug-free", correct: false },
+        { text: "Every requirement in the spec has been tested", correct: false },
+        { text: "Functional coverage is also 100%", correct: false }
+      ],
+      explanation: "Code coverage measures the implementation that exists. Missing features and unchecked intent need functional coverage and assertions."
+    },
+    {
+      question: "Which line checks, on every clock, that state is one-hot?",
+      answers: [
+        { text: "assert property (@(posedge clk) $onehot(state));", correct: true },
+        { text: "assert property (one_hot(state));", correct: false },
+        { text: "cover property (@(posedge clk) $onehot(state));", correct: false },
+        { text: "assert (state == 1);", correct: false }
+      ],
+      explanation: "$onehot is the built-in system function (§20.9), and a concurrent assertion needs a clock. There is no built-in one_hot(). cover only records that the property happened; it never fails. state == 1 checks one specific value, not one-hotness."
+    },
+    {
+      question: "In the bug hunt, the counter wraps at 6 and never reaches 7. Why does assert property (@(posedge clk) disable iff (rst) count == 3'd7 |=> count == 3'd0); never fail on it?",
+      answers: [
+        { text: "Its antecedent never matches, so every attempt passes vacuously", correct: true },
+        { text: "|=> checks the consequent in the same cycle", correct: false },
+        { text: "disable iff (rst) hides every failure", correct: false },
+        { text: "The property is not valid SystemVerilog", correct: false }
+      ],
+      explanation: "No antecedent match means the implication succeeds vacuously (§16.12.7, §16.14.8). A checker that never triggers proves nothing, so pair important assertions with cover property on their antecedent."
+    },
+    {
+      question: "Which statement about verification and validation is accurate?",
+      answers: [
+        { text: "Verification checks the design against its spec; validation checks that the product meets real needs, and it starts before silicon, for example by running software on an emulator", correct: true },
+        { text: "Verification is always pre-silicon and validation is always post-silicon", correct: false },
+        { text: "They are two names for the same activity", correct: false },
+        { text: "Validation only checks timing", correct: false }
+      ],
+      explanation: "The split is about the question asked (built right vs. right thing to build), not about the phase. Pre-silicon validation on emulators and FPGA prototypes is standard practice."
+    }
+  ]}
+/>
 
 ## Interview Questions
 
@@ -155,7 +199,7 @@ Because code coverage measures what the *existing* code does. The FSM had no def
       <div className="mt-4 text-sm text-slate-300 leading-relaxed">
         <p><strong>Verification</strong> answers "Are we building the product right?" (Does RTL match Spec?).</p>
         <p><strong>Validation</strong> answers "Are we building the right product?" (Does the chip meet the customer's needs in the real world?).</p>
-        <p><strong>Deeper point:</strong> Verification is pre-silicon (simulation, formal, emulation). Validation is post-silicon (lab testing with real software). A design can pass verification perfectly but fail validation if the specification itself was wrong.</p>
+        <p><strong>Deeper point:</strong> Verification is mostly pre-silicon (simulation, formal, emulation). Validation is not only post-silicon: teams validate before tape-out by running real software on emulators and FPGA prototypes, then continue in the lab on real chips. A design can pass verification perfectly but fail validation if the specification itself was wrong.</p>
       </div>
     </details>
 
@@ -220,5 +264,6 @@ Because code coverage measures what the *existing* code does. The FSM had no def
 </Card>
 
 ## References & Next Topics
-- Wilson Research Group / Siemens EDA Functional Verification Study
+- Siemens EDA and Wilson Research Group, [2022 IC/ASIC Functional Verification Trend Report](https://verificationacademy.com/topics/planning-measurement-and-analysis/wrg-industry-data-and-trends/2022-siemens-eda-and-wilson-research-group-ic-asic-functional-verification-trend-report/)
+- IEEE 1800-2023: §16 (assertions, including implication and vacuity), §20.9 (`$onehot`)
 - Next: [Why SystemVerilog?](../F1C_Why_SystemVerilog/)

@@ -12,17 +12,38 @@ import { LabLink } from '@/components/mdx/LabLink';
 - **What it is:** SystemVerilog runs many concurrent threads (`initial`, `always`, `fork...join`). To make them talk to each other without race conditions, we use events (for signaling), mailboxes (for passing data), and semaphores (for sharing resources).
 - **Why it matters:** As testbenches scale up, you will have dozens of components acting simultaneously. Without proper synchronization, you will experience non-deterministic simulation hangs or data corruption.
 
+## Build Your Mental Model
+
+### Threads first: join_any, disable fork, wait fork
+
+Every IPC bug starts with processes, so begin with how they are created and ended. Three rules from IEEE 1800-2023 drive most testbench hangs and lost threads:
+
+- Processes spawned by `fork` start only once the parent blocks or ends, whatever the join keyword (§9.3.2).
+- `disable fork` kills **every** descendant of the calling process, including threads it forked earlier (§9.6.3). `disable <block_name>` ends that block in every process running it (§9.6.2).
+- `wait fork` waits for the calling process's immediate children only, not their descendants (§9.6.1).
+
+Start with *Timeout + disable fork*: predict which processes `disable fork` kills, then switch to the isolation wrapper. The *Debug* tab is the same bug as it shows up in a driver.
+
+<ForkJoinVisualizer scenario="timeout-disable-fork" />
+
+For finer control, the built-in `process` class gives you a handle to one process: `process p = process::self();` inside the thread, then `p.kill()`, `p.await()` or `p.status()` from outside (§9.7). Unlike `disable fork`, which starts from the caller, `kill()` starts from the process you hold a handle to: it ends that process and everything it spawned (§9.7). Like any killed process, it does not return the semaphore keys it holds.
+
+### Mailboxes and semaphores
+
+Predict each scripted run, then drive the calls yourself: blocked processes wake by themselves, oldest first. The *Debug: the lost key* tab is a smaller version of the `ipc-deadlock` lab below.
+
+<MailboxSemaphoreGame />
+
 ## Deep Dives in this Track
 - [Events and Thread Signaling](./events)
 - [Mailboxes for Data Transfer](./mailboxes)
 - [Semaphores for Resource Control](./semaphores)
-
-<MailboxSemaphoreGame />
 
 ## Practice & Reinforce
 
 <LabLink labId="ipc-deadlock" />
 
 ## References & Next Topics
+- **IEEE 1800-2023, Clause 9.3.2, 9.6 and 9.7:** fork-join, process control and the `process` class.
 - **IEEE 1800-2023, Clause 15:** Interprocess synchronization and communication.
-- Next: [`/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals`](../I-SV-4A_SVA_Fundamentals/).
+- Next: [`/curriculum/T2_Intermediate/I-SV-6_Compiler_Directives_and_Generates`](../I-SV-6_Compiler_Directives_and_Generates/).

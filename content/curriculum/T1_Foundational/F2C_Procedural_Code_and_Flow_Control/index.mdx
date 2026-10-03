@@ -17,10 +17,20 @@ import EventRegionGame from '@/components/visuals/EventRegionGame';
 
 ## Build Your Mental Model
 
+### Watch procedures run over simulation time
+
+`initial` and every `always` procedure start together at time 0, in no promised order (IEEE 1800-2023 §9.2). An `initial` runs its statements once, an `always` loops forever, and a `final` runs once when simulation ends. Pick a program, predict what it prints, then step through it: watch each procedure's lane, and the region badge on every `<=` update.
+
+<ProceduralBlocksSimulator />
+
+What the four programs show:
+
+- `always @(posedge clk)` sleeps between rising edges. Its `count <= count + 1` lands in the **NBA region of the same time step** as the edge, never at a later time.
+- In the swap program, `$display` prints the old values because the `<=` updates have not landed yet; `$strobe` waits for the end of the time step and prints the swapped values.
+- Delays inside `fork … join` all count from the moment the fork starts.
+- `@(posedge ready)` waits for a *new* edge; `wait (ready)` passes at once if `ready` is already 1.
+
 ### Timeline of a Simulation Tick
-<div className="my-8 rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur shadow-2xl">
-  <ProceduralBlocksSimulator />
-</div>
 
 SystemVerilog simulators run every timestep through distinct event regions. Internalizing this timeline eliminates the feeling that the tool is acting randomly.
 
@@ -122,28 +132,76 @@ end
   ]}
 />
 
-> **Process hygiene:** When you use `fork ... join_none`, give the block a name so you can clean it up later. Pair `disable <label>;` or `process::kill()` with timeouts so runaway threads do not block simulation end.
+### Fork, join, and cleaning up threads
+
+A `fork` turns each statement inside it into its own process. The join keyword decides when the parent continues: `join` waits for every child, `join_any` for the first one to finish, and `join_none` not at all (IEEE 1800-2023 §9.3.2). One rule surprises almost everyone: **spawned processes do not start until the parent blocks or finishes**, whichever join you use.
+
+Predict when the parent continues for each join keyword, then step through the lanes. Save *fork in a loop* for last: it is the most common fork bug in real testbenches.
+
+<ForkJoinVisualizer />
+
+What the lanes showed:
+
+- With `join_none`, the parent prints before its children have even started. They run at its next blocking statement (`#`, `@`, `wait`) or when it ends.
+- A `for` loop has **one** loop variable. Children forked with `join_none` run after the loop ends, so they all read its final value. Declare `automatic int k = i;` inside the `fork` itself to give each child its own copy.
+- `wait fork` waits for the calling process's immediate children only, not for processes those children spawned (§9.6.1).
+- `disable fork` kills **every** descendant of the calling process, not just the children of the last fork (§9.6.3). A monitor forked earlier by the same process dies too.
+- `disable <block_name>` uses the block's static name, so it ends that block in **every** process executing it (§9.6.2). In a task called by several threads at once, one call's cleanup kills the others' threads.
+
+The safe cleanup idiom gives the race its own parent process, so `disable fork` has nothing else to reach:
 
 ```systemverilog
-fork : stimulus
-  begin : driver
-    repeat (5) begin
-      #5 d_in = $urandom_range(0, 1);
-    end
-  end
-  begin : monitor
-    forever @(posedge clk) $display("q_out=%0b", q_out);
-  end
-join_none
-
-#100 disable stimulus; // tidy up if the threads outlive their usefulness
+task automatic wait_for_response(int timeout_ns);
+  fork begin                 // isolation wrapper: a new parent for the race
+    fork
+      @(rsp_seen);           // response wins…
+      #(timeout_ns) $error("response timeout");   // …or the timer does
+    join_any
+    disable fork;            // kills only the losing branch
+  end join
+endtask
 ```
+
+<VisualRecap
+  title="Fork, join and cleanup"
+  rule="join waits for all children, join_any for one, join_none for none, and spawned processes start only once the parent blocks. disable fork kills every descendant of the process that calls it."
+  code={`fork begin              // wrapper process
+  fork
+    @(rsp_seen);
+    #100 $error("timeout");
+  join_any
+  disable fork;         // reaches only this race
+end join`}
+  mistake="Calling disable fork from a process that also owns long-lived threads such as monitors, or replacing it with disable <name>, which ends every activation of that block."
+  inTestbench="Per-transaction timeouts in drivers and sequences: wrap fork … join_any; disable fork; in fork begin … end join."
+>
+  <svg viewBox="0 0 320 150" role="img" aria-label="Parent lane forks three children; join_none continues at once, join_any when the first child ends, join when the last child ends." style={{ width: "100%", maxWidth: 360 }}>
+    <text x="8" y="20" fontSize="11" fill="currentColor">parent</text>
+    <line x1="60" y1="16" x2="300" y2="16" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+    <text x="8" y="48" fontSize="11" fill="currentColor">A #10</text>
+    <rect x="60" y="40" width="70" height="10" rx="3" fill="rgba(6,182,212,0.55)" />
+    <text x="134" y="49" fontSize="11" fill="currentColor">✓</text>
+    <text x="8" y="72" fontSize="11" fill="currentColor">C #20</text>
+    <rect x="60" y="64" width="140" height="10" rx="3" fill="rgba(6,182,212,0.55)" />
+    <text x="204" y="73" fontSize="11" fill="currentColor">✓</text>
+    <text x="8" y="96" fontSize="11" fill="currentColor">B #30</text>
+    <rect x="60" y="88" width="210" height="10" rx="3" fill="rgba(6,182,212,0.55)" />
+    <text x="274" y="97" fontSize="11" fill="currentColor">✓</text>
+    <line x1="60" y1="8" x2="60" y2="112" stroke="rgb(245,158,11)" strokeDasharray="3 3" />
+    <line x1="130" y1="8" x2="130" y2="112" stroke="rgb(245,158,11)" strokeDasharray="3 3" />
+    <line x1="270" y1="8" x2="270" y2="112" stroke="rgb(245,158,11)" strokeDasharray="3 3" />
+    <text x="40" y="128" fontSize="10" fill="currentColor">join_none</text>
+    <text x="112" y="128" fontSize="10" fill="currentColor">join_any</text>
+    <text x="258" y="128" fontSize="10" fill="currentColor">join</text>
+    <text x="8" y="145" fontSize="10" fill="currentColor" fillOpacity="0.7">Dashed lines: when the parent resumes</text>
+  </svg>
+</VisualRecap>
 
 ### Common Pitfalls
 - **Mixing assignments:** Never mix `=` and `<=` on the same signal. It creates unpredictable races.
 - **Implicit Latches:** Using `always @(*)` instead of `always_comb` can hide missing default cases, leading to unwanted latches.
 - **Zombie Threads:** Forgetting to terminate `fork/join_none` threads leaves them running forever, potentially hanging the simulation.
-- **The \`disable fork\` Trap:** Calling \`disable fork;\` kills *all* active child processes spawned by the current process, which can accidentally kill unrelated threads if not scoped properly. Always wrap targeted forks in a named \`begin...end\` block and disable the block name, or use an isolated process scope.
+- **The `disable fork` Trap:** `disable fork;` kills *every* descendant of the calling process, including threads it forked long before (§9.6.3). Wrap the fork you want to clean up in its own process (`fork begin … end join`) so `disable fork` only sees that fork's children. Disabling a named block is **not** a safe substitute: it ends every activation of the block, including ones started by other concurrent calls (§9.6.2).
 
 ## The Forbidden Fruit: `always_latch`
 _When you actually want a latch (which is almost never)._
@@ -216,8 +274,17 @@ endmodule
 - Using `unique case` catches missing branches while documenting intent for tools and reviewers.
 
 ## Make It Work
+
+### Debug: the monitor that went silent
+
+A test forks a coverage monitor, then runs a transfer with a timeout. The monitor stops reporting after the first transfer, and nothing fails. Find the line that kills it, then pick a fix: the model reruns your fix with one transfer and with two concurrent transfers, so a fix that only works in the simple case is caught.
+
+<ForkJoinVisualizer mode="debug" />
+
+### Build it yourself
+
 1. **Set the stage:** Draft a timing diagram for your DUT, marking where sequential and combinational regions live. Annotate which constructs you’ll use (`always_ff`, `always_comb`, `initial`).
-2. **Instrument aggressively:** Add assertions that fail if a sequential block uses `=` or if a combinational block uses `<=`. Tools like Verilator and SpyGlass can automate these checks.
+2. **Instrument aggressively:** Run a linter (for example `verilator --lint-only` or SpyGlass) to flag `=` in sequential blocks and `<=` in combinational ones. This is a coding-style check, so it belongs in lint, not in assertions.
 3. **Prototype the flow:** Use the interactive snippet above as a template. Swap in your DUT signals and run a quick sim to validate ordering.
 
 **Checklist before moving on:**
@@ -228,12 +295,13 @@ endmodule
 ## Push Further
 - Model a multi-threaded sequencer using `fork/join_any` and observe how join semantics affect stimulus timing.
 - Rewrite legacy `always @(*)` code with `always_comb` and document the tool warnings that disappear.
-- Experiment with `disable fork` to clean up auxiliary threads—visualize the effect in a waveform viewer.
+- In the fork visualizer's *disable by name* scenario, switch to two concurrent calls and explain, in one sentence, why xfer(2) never prints its response.
+- `wait fork` only waits for immediate children. Write a task that forks a child which forks a grandchild, and predict when `wait fork` returns before you simulate it.
 
 ## Practice & Reinforce
 - Flashcards – Review definitions for blocking/non-blocking, `always_ff`, `fork/join` semantics.
 - Quiz – Complete the knowledge check below.
-- Animation lab – Capture a screen recording of the procedural simulator while toggling assignments to see race conditions surface.
+- Procedural simulator – Switch the swap program between `<=` and `=` and explain every printed line, including which region each update lands in.
 - Code kata – Convert a buggy `always` block using blocking assignments into a clean `always_ff` implementation.
 
 ## Interview Questions
@@ -271,7 +339,7 @@ endmodule
       <div className="mt-4 text-sm text-slate-300 leading-relaxed">
         <p><strong>fork-join:</strong> The parent process blocks until ALL child processes finish.</p>
         <p><strong>fork-join_any:</strong> The parent process blocks until ANY ONE child process finishes. The other children continue running in the background.</p>
-        <p><strong>fork-join_none:</strong> The parent process does not block at all. All child processes run in the background concurrently. (IEEE 1800-2023 §9.3.2)</p>
+        <p><strong>fork-join_none:</strong> The parent process does not block at all. The child processes run in the background, but only once the parent blocks or terminates: no spawned process starts before that, whichever join keyword is used (IEEE 1800-2023 §9.3.2). This is why a `for` loop that forks `join_none` children which read the loop variable sees its final value in every child.</p>
       </div>
     </details>
 
@@ -281,8 +349,8 @@ endmodule
         <span className="text-slate-400 transition group-open:rotate-180">▼</span>
       </summary>
       <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p>`disable fork;` terminates all active descendants of the calling process. If your task spawns a background monitor, then later uses `fork-join_any` for a timeout and calls `disable fork;` to clean up the timeout threads, it will unintentionally kill the monitor too.</p>
-        <p><strong>Fix:</strong> Scope the timeout fork inside its own `fork...join` or `begin...end` block, or explicitly disable named blocks (e.g., `disable target_block_name;`).</p>
+        <p>`disable fork;` terminates all active descendants of the calling process (IEEE 1800-2023 §9.6.3). If your task spawns a background monitor, then later uses `fork-join_any` for a timeout and calls `disable fork;` to clean up the timeout threads, it will unintentionally kill the monitor too.</p>
+        <p><strong>Fix:</strong> Give the timeout race its own parent process: `fork begin fork … join_any; disable fork; end join`. A plain `begin…end` does not help, because it creates no new process. Avoid `disable target_block_name;` in reusable or concurrently called code: disabling a named block ends every activation of it, including other threads' (§9.6.2).</p>
       </div>
     </details>
   </CardContent>
@@ -302,13 +370,13 @@ endmodule
         { text: 'In combinational logic (`always_comb`)', correct: false },
         { text: 'In sequential logic (`always_ff`)', correct: true },
         { text: 'Inside `final` blocks', correct: false },
-        { text: 'Inside `initial` blocks for stimulus', correct: false }
+        { text: 'Never in testbench code', correct: false }
       ],
       explanation:
-        'Non-blocking assignments align with flip-flop behavior and prevent races between concurrent sequential blocks.'
+        'Non-blocking assignments align with flip-flop behavior and prevent races between concurrent sequential blocks. Testbench code driving a DUT input right after a clock edge should use them too (see F3C).'
     },
     {
-      question: 'Which procedural block runs exactly once after time zero?',
+      question: 'Which procedural block starts at time 0 and runs its statements once?',
       answers: [
         { text: '`always_comb`', correct: false },
         { text: '`initial`', correct: true },
@@ -316,7 +384,7 @@ endmodule
         { text: '`always_ff`', correct: false }
       ],
       explanation:
-        '`initial` executes a single time at simulation startup—it is ideal for reset sequences or configuration setup.'
+        '`initial` starts at time 0 and runs once — ideal for reset sequences or configuration setup. `final` also runs once, but at the end of simulation (IEEE 1800-2023 §9.2.3).'
     },
     {
       question: 'Why prefer `always_comb` over `always @(*)`?',

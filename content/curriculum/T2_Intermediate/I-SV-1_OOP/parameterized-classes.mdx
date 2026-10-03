@@ -14,7 +14,7 @@ export const metadata = {
 >
 
   ## Parameterized (Generic) Classes
-  *IEEE 1800-2023, Clause 8.25: Parameterized classes*
+  *IEEE 1800-2023, §8.25 Parameterized classes*
 
   Parameterized classes let one definition handle many data types or sizes. A
   parameter can represent a type or a value, making components highly reusable.
@@ -31,47 +31,86 @@ export const metadata = {
     endfunction
   endclass
 
-  // Instantiate FIFO for bytes
-  fifo #(byte, 8) byte_fifo = new();
+  module demo;
+    fifo #(byte, 8) byte_fifo;   // a specialization: T = byte, D = 8
+    fifo            int_fifo;    // the default specialization: fifo #(int, 4)
+
+    initial begin
+      byte_fifo = new();
+      int_fifo  = new();
+      byte_fifo.push(8'hA5);
+    end
+  endmodule
   ```
   </InteractiveCode>
 
-  ## Abstract Classes
-  *IEEE 1800-2023, Clause 8.20: Virtual methods*
+  ### The default specialization
 
-  A class with a `pure virtual` method or declared with the `virtual` keyword is
-  abstract and cannot be instantiated. It serves as a template that derived
-  classes must complete.
+  A generic class is not a type by itself; only a specialization is (§8.25). When every parameter has a default, the unadorned name means the **default specialization**, so `fifo int_fifo;` and `fifo #() int_fifo;` declare the same type. The standard's own example is `typedef vector my_vector; // use default size of 1`.
+
+  The one place you must write `#()` is in front of the scope operator outside the class: use `fifo#()::some_static`, because `fifo::some_static` is illegal there (§8.25.1). A class whose parameters have no defaults has no default specialization, so every use must supply them.
+
+  ### Each specialization is its own class, with its own statics
+
+  `fifo#(byte, 8)` and `fifo#(int, 4)` are different types. They cannot be assigned to each other, and each has its own copy of every `static` property (§8.25).
+
+  ```systemverilog
+  class counter #(type T = int);
+    static int created = 0;
+    function new();
+      created++;
+    endfunction
+  endclass
+
+  module demo;
+    counter #(int)  a, b;
+    counter #(byte) c;
+    initial begin
+      a = new;  b = new;  c = new;
+      $display("%0d %0d", counter#(int)::created, counter#(byte)::created);  // 2 1
+    end
+  endmodule
+  ```
+
+  UVM's factory relies on this: each `uvm_component_registry #(T, "name")` specialization keeps its own static registration for one class.
+
+  ## Abstract Classes
+  *IEEE 1800-2023, §8.21 Abstract classes and pure virtual methods*
+
+  A class is **abstract** when it is declared with the `virtual` keyword: `virtual class driver;`. You cannot construct an abstract class directly, but a handle of its type can refer to any complete subclass object.
+
+  A **pure virtual** method is a prototype with no body, written `pure virtual task run();`. §8.21 defines pure virtual methods as prototypes inside an abstract class (interface classes contain them too, §8.26). Writing one does not turn an ordinary class into an abstract one: the `virtual class` declaration does that, so declare the class `virtual` whenever it has a pure virtual method. A non-abstract subclass must override every pure virtual method it inherits.
 
   <InteractiveCode>
   ```systemverilog
-  virtual class driver;
-    pure virtual task run(); // makes the class abstract
+  virtual class driver;            // abstract: virtual class
+    pure virtual task run();       // prototype only; subclasses must implement it
   endclass
 
   class my_driver extends driver;
-    task run();
+    virtual task run();
       $display("running");
     endtask
   endclass
 
-  program demo;
+  module demo;
+    driver d;                      // handle to the abstract class
     initial begin
-      driver d;          // handle to abstract class
-      // d = new();      // illegal: driver is abstract
-      d = new my_driver();
-      d.run();
+      // d = new();                // illegal: driver is abstract
+      d = my_driver::new();        // typed constructor call (§8.8)
+      d.run();                     // runs my_driver::run
     end
-  endprogram
+  endmodule
   ```
   </InteractiveCode>
 
   ## Common Pitfalls
 
-  - Omitting default values makes instantiations verbose and error-prone.
-  - Parameter mismatches can introduce subtle type bugs.
-  - Forgetting to implement a `pure virtual` method prevents compilation.
-  - Attempting to instantiate an abstract class results in an error.
+  - Omitting default values makes every use spell out the parameters, and leaves no default specialization.
+  - Parameter mismatches create a different type: a `fifo#(byte)` handle cannot hold a `fifo#(int)` object.
+  - Expecting one static counter across all specializations: each specialization counts separately.
+  - Forgetting to implement a `pure virtual` method in a non-abstract subclass prevents compilation.
+  - Attempting to construct an abstract class with `new` results in an error.
 
   ## Quiz
 
@@ -84,7 +123,17 @@ export const metadata = {
         {"text": "pure", "correct": false},
         {"text": "generic", "correct": false}
       ],
-      "explanation": "Prepending 'virtual' to a class declaration makes it abstract."
+      "explanation": "Prepending 'virtual' to a class declaration makes it abstract (§8.21). 'pure' marks a method prototype; it does not make the class abstract."
+    },
+    {
+      "question": "class counter #(type T = int); static int created; ... After constructing two counter#(int) objects and one counter#(byte) object, what is counter#(byte)::created?",
+      "answers": [
+        {"text": "1", "correct": true},
+        {"text": "3", "correct": false},
+        {"text": "2", "correct": false},
+        {"text": "0, because statics are not allowed in parameterized classes", "correct": false}
+      ],
+      "explanation": "Each specialization is a separate class with its own static properties (§8.25)."
     }
   ]} />
 
@@ -92,13 +141,12 @@ export const metadata = {
     <InterviewQuestionPlayground
       question="A junior engineer writes `storage s;` where `storage` is a parameterized class `class storage #(type T = int);`. Does this compile, and if so, what is the type of `s`?"
       options={[
-        { text: "It fails to compile because type parameters must always be explicitly provided.", isCorrect: false, feedback: "If default parameters are provided in the class definition, they can be omitted." },
-        { text: "It compiles, but `s` defaults to an untyped generic handle until assigned.", isCorrect: false, feedback: "SystemVerilog handles must have a resolved type." },
-        { text: "It fails to compile. To use default parameters, you must write `storage #() s;`.", isCorrect: true, feedback: "Correct! Even if default parameters exist, SystemVerilog requires the `#()` syntax to indicate parameter specialization. Writing `storage s;` is a syntax error." },
-        { text: "It compiles and `s` is of type `storage #(int)`.", isCorrect: false, feedback: "Though logical, SystemVerilog syntax explicitly requires the empty specialization `#()` to apply default parameters." }
+        { text: "It fails to compile because type parameters must always be explicitly provided.", isCorrect: false, feedback: "Parameters that have defaults may be omitted. Only a class with a parameter that has no default lacks a default specialization (§8.25)." },
+        { text: "It compiles, but `s` defaults to an untyped generic handle until assigned.", isCorrect: false, feedback: "A generic class is not a type; the unadorned name denotes the default specialization, which is a concrete type (§8.25)." },
+        { text: "It fails to compile. To use default parameters, you must write `storage #() s;`.", isCorrect: false, feedback: "`storage #() s;` is also legal and means the same thing. The explicit `#()` is required only before `::` outside the class, as in `storage#()::count` (§8.25.1)." },
+        { text: "It compiles and `s` is of type `storage #(int)`.", isCorrect: true, feedback: "Correct. Except as the prefix of `::`, the unadorned name of a parameterized class denotes its default specialization, so `storage s;` declares a `storage #(int)` handle (§8.25)." }
       ]}
     />
   </div>
 
 </InfoPage>
-

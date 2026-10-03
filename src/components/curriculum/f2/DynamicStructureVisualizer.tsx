@@ -1,1398 +1,567 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/Tabs";
-import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
-import { Switch } from "@/components/ui/Switch";
-import { Label } from "@/components/ui/Label";
-import { Badge } from "@/components/ui/Badge";
+import React, { useMemo, useState } from "react";
+
+import { CodeTrace, type CodeTraceLine } from "@/components/visual-system/CodeTrace";
+import { PredictionPrompt } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { ValueChip } from "@/components/visual-system/ValueChip";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  applyContainerOp,
+  createAssocArray,
+  createDynamicArray,
+  createQueue,
+  declarationWithContents,
+  formatAssocKey,
+  formatElem,
+  formatElemLiteral,
+  predictContainerOp,
+  queueCapacity,
+  type ArrayDiagnostic,
+  type ArrayOpResult,
+  type AssocArrayState,
+  type AssocKey,
+  type AssocKeyType,
+  type ContainerOp,
+  type ContainerPrediction,
+  type ContainerState,
+  type SvElem,
+  type SvElemTypeId,
+} from "@/lib/systemverilog-array-model";
 import { cn } from "@/lib/utils";
 
-type DynamicArrayState = {
-  values: number[];
-  capacity: number;
-  isResizing: boolean;
-  message: string | null;
+/* -------------------------------------------------------------------------- */
+/* Shared views: also used by QueueOperationLab and SystemVerilog3DVisualizer. */
+/* -------------------------------------------------------------------------- */
+
+const diagnosticStyle: Record<ArrayDiagnostic["level"], { glyph: string; tag: string; className: string }> = {
+  warning: {
+    glyph: "⚠",
+    tag: "Warning (required)",
+    className: "border-amber-500/70 bg-amber-500/15 text-amber-900 dark:text-amber-100",
+  },
+  "may-warn": {
+    glyph: "⚠",
+    tag: "May warn (tool-dependent)",
+    className: "border-dashed border-amber-500/70 bg-amber-500/[0.07] text-amber-900 dark:text-amber-100",
+  },
+  error: {
+    glyph: "✕",
+    tag: "Error",
+    className: "border-rose-500/70 bg-rose-500/10 text-rose-800 dark:text-rose-200",
+  },
 };
 
-type QueueState = {
-  values: number[];
-  bounded: boolean;
-  boundSize: number;
-  warning: string | null;
-  message: string | null;
+/** Amber ⚠ chips for warnings, rose ✕ chips for compile errors; each cites its clause. */
+export function DiagnosticChips({ diagnostics, className }: { diagnostics: ArrayDiagnostic[]; className?: string }) {
+  if (diagnostics.length === 0) return null;
+  return (
+    <ul className={cn("flex flex-wrap gap-2", className)} aria-label="Diagnostics">
+      {diagnostics.map((d) => {
+        const style = diagnosticStyle[d.level];
+        return (
+          <li key={`${d.level}-${d.text}`} className={cn("inline-flex flex-wrap items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs", style.className)}>
+            <span aria-hidden>{style.glyph}</span>
+            <span className="font-semibold">{style.tag}:</span>
+            <span className="font-mono [font-variant-ligatures:none]">{d.text}</span>
+            <span className="opacity-75">{d.clause}</span>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+const chipValue = (v: SvElem) => (v === "X" ? "X" : v);
+
+interface ElementStripProps {
+  name: string;
+  values: SvElem[];
+  changed?: number[];
+  /** Declared bound N of a `[$:N]` queue. Draws the remaining legal positions and the bound marker. */
+  bound?: number | null;
+  discarded?: SvElem[];
+  className?: string;
+}
+
+/** Elements left to right by index. X is hatched; ▲ marks elements this step wrote. */
+export function ElementStrip({ name, values, changed = [], bound = null, discarded = [], className }: ElementStripProps) {
+  const free = bound === null ? 0 : Math.max(0, bound + 1 - values.length);
+  const summary = values.length === 0 ? "empty" : values.map((v, i) => `[${i}] ${formatElem(v)}`).join(", ");
+  return (
+    <div
+      role="group"
+      aria-label={`${name}: ${summary}${bound !== null ? `; bound $:${bound}, room for ${free} more` : ""}${discarded.length ? `; discarded ${discarded.map(formatElem).join(", ")}` : ""}`}
+      className={cn("flex min-w-0 flex-wrap items-center gap-1.5", className)}
+    >
+      <span className="mr-1 font-mono text-xs font-semibold text-muted-foreground [font-variant-ligatures:none]">{name}</span>
+      {values.length === 0 && free === 0 ? <span className="text-xs italic text-muted-foreground">empty · size() = 0</span> : null}
+      {values.map((v, i) => (
+        <ValueChip key={i} name={`[${i}]`} value={chipValue(v)} changed={changed.includes(i)} />
+      ))}
+      {Array.from({ length: free }, (_, i) => (
+        <span
+          key={`free-${i}`}
+          aria-hidden
+          className="inline-flex h-7 min-w-10 items-center justify-center rounded-md border border-dashed border-border px-1.5 font-mono text-[10px] text-muted-foreground/70"
+        >
+          [{values.length + i}]
+        </span>
+      ))}
+      {bound !== null ? (
+        <span aria-hidden className="inline-flex h-7 items-center gap-1 border-l-2 border-amber-500 pl-1.5 font-mono text-[10px] font-semibold text-amber-800 dark:text-amber-200">
+          $:{bound}
+        </span>
+      ) : null}
+      {discarded.length > 0 ? (
+        <span aria-hidden className="ml-1 inline-flex flex-wrap items-center gap-1 rounded-md border border-rose-500/50 bg-rose-500/10 px-1.5 py-0.5 text-[11px] text-rose-800 dark:text-rose-200">
+          ✕ discarded
+          {discarded.map((v, i) => (
+            <span key={i} className="font-mono line-through">
+              {formatElem(v)}
+            </span>
+          ))}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/** Associative array entries in index order, with the `key` iterator marked ▶. */
+export function AssocStrip({ state, changedKeys = [] }: { state: AssocArrayState; changedKeys?: AssocKey[] }) {
+  const iterOnEntry = state.entries.some((e) => e.key === state.iter);
+  return (
+    <div className="min-w-0 space-y-2">
+      <div
+        role="group"
+        aria-label={`${state.name} in index order: ${state.entries.length === 0 ? "empty" : state.entries.map((e) => `${formatAssocKey(e.key)} = ${formatElem(e.value)}`).join(", ")}`}
+        className="flex min-w-0 flex-wrap items-center gap-1.5"
+      >
+        <span className="mr-1 font-mono text-xs font-semibold text-muted-foreground [font-variant-ligatures:none]">{state.name}</span>
+        {state.entries.length === 0 ? <span className="text-xs italic text-muted-foreground">no entries · num() = 0</span> : null}
+        {state.entries.map((e) => (
+          <span key={String(e.key)} className="inline-flex items-center gap-1">
+            {e.key === state.iter ? (
+              <span className="text-xs text-cyan-700 dark:text-cyan-300">
+                <span aria-hidden>▶</span>
+                <span className="sr-only">key points here:</span>
+              </span>
+            ) : null}
+            <ValueChip name={formatAssocKey(e.key)} value={chipValue(e.value)} changed={changedKeys.includes(e.key)} />
+          </span>
+        ))}
+        {state.entries.length > 1 ? <span aria-hidden className="text-[10px] text-muted-foreground">index order →</span> : null}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        <span className="font-mono [font-variant-ligatures:none]">key = {formatAssocKey(state.iter)}</span>
+        {!iterOnEntry ? " (not an existing index)" : ""}
+        {state.writeOrder.length > 1 ? (
+          <>
+            {" · "}written in the order <span className="font-mono [font-variant-ligatures:none]">{state.writeOrder.map(formatAssocKey).join(", ")}</span>
+          </>
+        ) : null}
+      </p>
+    </div>
+  );
+}
+
+/** The current contents of any container, highlighting what `result` changed. */
+export function ContainerStateView({ state, result }: { state: ContainerState; result?: ArrayOpResult | null }) {
+  if (state.kind === "assoc") return <AssocStrip state={state} changedKeys={result?.changedKeys} />;
+  return (
+    <ElementStrip
+      name={state.name}
+      values={state.values}
+      changed={result?.changedIndices}
+      bound={state.kind === "queue" ? state.bound : null}
+      discarded={result?.discarded}
+    />
+  );
+}
+
+type Tone = "write" | "read" | "danger" | "illegal";
+
+const toneClass: Record<Tone, string> = {
+  write: "border-cyan-500/50 hover:bg-cyan-500/10",
+  read: "border-border/70 hover:bg-muted",
+  danger: "border-rose-500/40 hover:bg-rose-500/10",
+  illegal: "border-dashed border-rose-500/60 text-rose-800 hover:bg-rose-500/10 dark:text-rose-200",
 };
 
-type AssociativeEntry = {
-  key: string;
-  value: string;
-  highlight: boolean;
-};
+const inputClass =
+  "h-10 w-20 rounded-md border border-border bg-background px-2 font-mono text-sm text-foreground [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring";
 
-type AssociativeState = {
-  entries: AssociativeEntry[];
-  lastHashedKey: string | null;
-};
+function NumberField({ label, value, onChange, min, max }: { label: string; value: number; onChange: (n: number) => void; min?: number; max?: number }) {
+  return (
+    <label className="flex items-center gap-2 text-xs text-muted-foreground">
+      {label}
+      <input
+        type="number"
+        className={inputClass}
+        value={Number.isFinite(value) ? value : ""}
+        min={min}
+        max={max}
+        onChange={(e) => {
+          const n = Number(e.target.value);
+          if (e.target.value.trim() !== "" && Number.isFinite(n)) onChange(Math.trunc(n));
+        }}
+      />
+    </label>
+  );
+}
 
-type PackedDimension = {
-  label: string;
-  detail: string;
-};
+/** Operation buttons for a container. Each button's text is the exact statement the model will run. */
+export function ContainerControls({ state, onRun, disabled = false }: { state: ContainerState; onRun: (op: ContainerOp) => void; disabled?: boolean }) {
+  const [value, setValue] = useState(5);
+  const [index, setIndex] = useState(1);
+  const [size, setSize] = useState(6);
+  const [keyText, setKeyText] = useState(state.kind === "assoc" && state.keyType === "int" ? "7" : "eve");
 
-type IndexGuideStep = {
-  kind: "packed" | "unpacked";
-  label: string;
-  detail: string;
-};
-
-type IndexGuideExample = {
-  code: string;
-  insight: string;
-};
-
-type PackedScenario = {
-  id: string;
-  title: string;
-  declaration: string;
-  description: string;
-  packedDimensions: PackedDimension[];
-  unpackedDimensions: PackedDimension[];
-  memoryRows: Array<{ label: string; bits: string[] }>;
-  indexGuide: {
-    description: string;
-    steps: IndexGuideStep[];
-    examples: IndexGuideExample[];
-  };
-  challenge: {
-    question: string;
-    options: string[];
-    answer: string;
-    explanation: string;
-  };
-};
-
-const initialArrayValues = [8, 16, 24];
-const initialQueueValues = [101, 102, 103];
-
-const createPackedCubeMemory = (
-  u1Count: number,
-  u2Count: number,
-  u3Count: number,
-  p1Count: number,
-  p2Count: number,
-  p3Count: number,
-) => {
-  const rows: Array<{ label: string; bits: string[] }> = [];
-  for (let u1 = 0; u1 < u1Count; u1 += 1) {
-    for (let u2 = 0; u2 < u2Count; u2 += 1) {
-      for (let u3 = 0; u3 < u3Count; u3 += 1) {
-        const bits: string[] = [];
-        for (let p1 = p1Count - 1; p1 >= 0; p1 -= 1) {
-          for (let p2 = p2Count - 1; p2 >= 0; p2 -= 1) {
-            for (let p3 = p3Count - 1; p3 >= 0; p3 -= 1) {
-              bits.push(
-                `my_array[u1=${u1}][u2=${u2}][u3=${u3}][p1=${p1}][p2=${p2}][p3=${p3}]`,
-              );
-            }
-          }
-        }
-        rows.push({
-          label: `my_array[u1=${u1}][u2=${u2}][u3=${u3}] (Unpacked order U1 → U2 → U3)`,
-          bits,
-        });
-      }
+  const parsedKey: AssocKey | null = useMemo(() => {
+    if (state.kind !== "assoc") return null;
+    if (state.keyType === "int") {
+      const n = Number(keyText);
+      return keyText.trim() !== "" && Number.isInteger(n) ? n : null;
     }
-  }
-  return rows;
-};
+    return keyText.replace(/[^\x20-\x7e]/g, "").replace(/"/g, "").slice(0, 12);
+  }, [keyText, state]);
 
-const packedScenarios: PackedScenario[] = [
-  {
-    id: "byte-buffer",
-    title: "Burst Payload Buffer",
-    declaration: "logic [7:0] payload [0:3];",
-    description:
-      "A packed byte rides inside each unpacked queue slot. The packed dimension keeps contiguous bits, while the unpacked dimension walks through payload samples.",
-    packedDimensions: [
-      {
-        label: "Packed [7:0]",
-        detail: "Bits 7 down to 0 stay together as a single byte—this dimension becomes the vector width.",
-      },
-    ],
-    unpackedDimensions: [
-      {
-        label: "Unpacked [0:3]",
-        detail: "Four payload entries are stored sequentially: payload[0], payload[1], ... payload[3].",
-      },
-    ],
-    memoryRows: [
-      {
-        label: "payload[0] (unpacked slot 0)",
-        bits: [
-          "payload[0][7]",
-          "payload[0][6]",
-          "payload[0][5]",
-          "payload[0][4]",
-          "payload[0][3]",
-          "payload[0][2]",
-          "payload[0][1]",
-          "payload[0][0]",
-        ],
-      },
-      {
-        label: "payload[1] (unpacked slot 1)",
-        bits: [
-          "payload[1][7]",
-          "payload[1][6]",
-          "payload[1][5]",
-          "payload[1][4]",
-          "payload[1][3]",
-          "payload[1][2]",
-          "payload[1][1]",
-          "payload[1][0]",
-        ],
-      },
-      {
-        label: "payload[2] (unpacked slot 2)",
-        bits: [
-          "payload[2][7]",
-          "payload[2][6]",
-          "payload[2][5]",
-          "payload[2][4]",
-          "payload[2][3]",
-          "payload[2][2]",
-          "payload[2][1]",
-          "payload[2][0]",
-        ],
-      },
-      {
-        label: "payload[3] (unpacked slot 3)",
-        bits: [
-          "payload[3][7]",
-          "payload[3][6]",
-          "payload[3][5]",
-          "payload[3][4]",
-          "payload[3][3]",
-          "payload[3][2]",
-          "payload[3][1]",
-          "payload[3][0]",
-        ],
-      },
-    ],
-    indexGuide: {
-      description:
-        "Index the unpacked dimension first, then dive into the packed bits. Each payload slot returns a packed byte you can subscript again.",
-      steps: [
-        {
-          kind: "unpacked",
-          label: "payload[slot]",
-          detail: "The first brackets pick which payload entry (0..3) you are referencing.",
-        },
-        {
-          kind: "packed",
-          label: "[bit]",
-          detail: "Immediately follow with a packed bit index 7..0 to grab the exact bit inside that byte.",
-        },
-      ],
-      examples: [
-        {
-          code: "payload[2][5]",
-          insight: "Selects unpacked entry 2, then bit 5 within that packed byte.",
-        },
-        {
-          code: "payload[3]",
-          insight: "Reads the entire packed byte for slot 3 without drilling into individual bits.",
-        },
-      ],
-    },
-    challenge: {
-      question: "Which index toggles fastest as the simulator walks memory?",
-      options: ["Packed bit position", "Unpacked payload index"],
-      answer: "Packed bit position",
-      explanation:
-        "Packed bits live contiguously, so bit 0..7 flip faster than the unpacked entry number advancing.",
-    },
-  },
-  {
-    id: "lane-matrix",
-    title: "Lane Matrix",
-    declaration: "bit [3:0][1:0] lane_matrix [0:1];",
-    description:
-      "Two packed dimensions capture nibble-by-lane ordering, while the unpacked dimension selects which channel is being buffered.",
-    packedDimensions: [
-      {
-        label: "Packed [3:0]",
-        detail: "The outer packed dimension is the most-significant slice—it changes slowest across memory.",
-      },
-      {
-        label: "Packed [1:0]",
-        detail: "The inner packed dimension toggles fastest, hopping between lane_matrix[x][n][1] then [n][0].",
-      },
-    ],
-    unpackedDimensions: [
-      {
-        label: "Unpacked [0:1]",
-        detail: "Two channels exist. The entire packed payload for channel 0 is stored before channel 1.",
-      },
-    ],
-    memoryRows: [
-      {
-        label: "lane_matrix[0] (channel 0)",
-        bits: [
-          "lane_matrix[0][3][1]",
-          "lane_matrix[0][3][0]",
-          "lane_matrix[0][2][1]",
-          "lane_matrix[0][2][0]",
-          "lane_matrix[0][1][1]",
-          "lane_matrix[0][1][0]",
-          "lane_matrix[0][0][1]",
-          "lane_matrix[0][0][0]",
-        ],
-      },
-      {
-        label: "lane_matrix[1] (channel 1)",
-        bits: [
-          "lane_matrix[1][3][1]",
-          "lane_matrix[1][3][0]",
-          "lane_matrix[1][2][1]",
-          "lane_matrix[1][2][0]",
-          "lane_matrix[1][1][1]",
-          "lane_matrix[1][1][0]",
-          "lane_matrix[1][0][1]",
-          "lane_matrix[1][0][0]",
-        ],
-      },
-    ],
-    indexGuide: {
-      description:
-        "Unpacked channel first, then packed dimensions from left to right. Remember that the right-most packed dimension is the least significant lane bit.",
-      steps: [
-        {
-          kind: "unpacked",
-          label: "lane_matrix[channel]",
-          detail: "Pick channel 0 or 1 before touching the packed nibble.",
-        },
-        {
-          kind: "packed",
-          label: "[nibble]",
-          detail: "The outer packed dimension [3:0] picks which nibble (3 down to 0).",
-        },
-        {
-          kind: "packed",
-          label: "[lane]",
-          detail: "The inner packed dimension [1:0] flips fastest, choosing lane 1 or 0 for that nibble.",
-        },
-      ],
-      examples: [
-        {
-          code: "lane_matrix[1][2][0]",
-          insight: "Channel 1 → nibble index 2 → lane 0 bit within that nibble.",
-        },
-        {
-          code: "lane_matrix[0][3]",
-          insight: "Returns the two-lane packed vector for channel 0 nibble 3.",
-        },
-      ],
-    },
-    challenge: {
-      question: "Which dimension flips first when walking bits inside lane_matrix[0]?",
-      options: ["Packed [1:0] lane", "Packed [3:0] nibble", "Unpacked channel"],
-      answer: "Packed [1:0] lane",
-      explanation:
-        "Inner packed dimensions are least significant, so the lane index toggles with every adjacent bit.",
-    },
-  },
-  {
-    id: "scoreboard-grid",
-    title: "Scoreboard Grid",
-    declaration: "logic [3:0] scoreboard [0:1][0:2];",
-    description:
-      "One packed nibble per cell, arranged in a 2×3 unpacked matrix. Right-most unpacked dimensions iterate first.",
-    packedDimensions: [
-      {
-        label: "Packed [3:0]",
-        detail: "Each score entry is 4 bits wide and is stored contiguously as bits 3..0.",
-      },
-    ],
-    unpackedDimensions: [
-      {
-        label: "Unpacked row [0:1]",
-        detail: "Rows represent scoreboard phases. Row 0 is fully stored before row 1.",
-      },
-      {
-        label: "Unpacked column [0:2]",
-        detail: "Columns are the least-significant unpacked dimension and iterate first within a row.",
-      },
-    ],
-    memoryRows: [
-      {
-        label: "scoreboard[0][0] (row 0, column 0)",
-        bits: [
-          "scoreboard[0][0][3]",
-          "scoreboard[0][0][2]",
-          "scoreboard[0][0][1]",
-          "scoreboard[0][0][0]",
-        ],
-      },
-      {
-        label: "scoreboard[0][1] (row 0, column 1)",
-        bits: [
-          "scoreboard[0][1][3]",
-          "scoreboard[0][1][2]",
-          "scoreboard[0][1][1]",
-          "scoreboard[0][1][0]",
-        ],
-      },
-      {
-        label: "scoreboard[0][2] (row 0, column 2)",
-        bits: [
-          "scoreboard[0][2][3]",
-          "scoreboard[0][2][2]",
-          "scoreboard[0][2][1]",
-          "scoreboard[0][2][0]",
-        ],
-      },
-      {
-        label: "scoreboard[1][0] (row 1, column 0)",
-        bits: [
-          "scoreboard[1][0][3]",
-          "scoreboard[1][0][2]",
-          "scoreboard[1][0][1]",
-          "scoreboard[1][0][0]",
-        ],
-      },
-      {
-        label: "scoreboard[1][1] (row 1, column 1)",
-        bits: [
-          "scoreboard[1][1][3]",
-          "scoreboard[1][1][2]",
-          "scoreboard[1][1][1]",
-          "scoreboard[1][1][0]",
-        ],
-      },
-      {
-        label: "scoreboard[1][2] (row 1, column 2)",
-        bits: [
-          "scoreboard[1][2][3]",
-          "scoreboard[1][2][2]",
-          "scoreboard[1][2][1]",
-          "scoreboard[1][2][0]",
-        ],
-      },
-    ],
-    indexGuide: {
-      description:
-        "Both unpacked indices appear before the packed bits when you reference scoreboard cells. The left-most unpacked dimension (row) is indexed first, followed by the right-most unpacked dimension (column), and finally the packed nibble bits.",
-      steps: [
-        {
-          kind: "unpacked",
-          label: "scoreboard[row]",
-          detail: "Choose the row (0..1) corresponding to the scoreboard phase.",
-        },
-        {
-          kind: "unpacked",
-          label: "[column]",
-          detail: "Next, pick the column (0..2). This right-most unpacked dimension walks first in memory.",
-        },
-        {
-          kind: "packed",
-          label: "[bit]",
-          detail: "Finally, subscript 3..0 to select a bit inside that packed nibble.",
-        },
-      ],
-      examples: [
-        {
-          code: "scoreboard[1][0][2]",
-          insight: "Row 1, column 0, bit 2—useful when checking for sticky status bits.",
-        },
-        {
-          code: "scoreboard[0][2]",
-          insight: "Returns the full packed nibble for row 0 column 2.",
-        },
-      ],
-    },
-    challenge: {
-      question: "After scoreboard[0][1], which unpacked element comes next in memory?",
-      options: ["scoreboard[0][2]", "scoreboard[1][0]", "scoreboard[1][1]"],
-      answer: "scoreboard[0][2]",
-      explanation: "The right-most unpacked dimension (column) increments before the row advances.",
-    },
-  },
-  {
-    id: "packed-cube",
-    title: "Packed Cube Index Order",
-    declaration: "logic [P1-1:0][P2-1:0][P3-1:0] my_array [U1][U2][U3];",
-    description:
-      "Three packed dimensions live inside three unpacked ones. The declaration keeps packed brackets on the left so the bits stay contiguous while the unpacked indices fan out around the vector.",
-    packedDimensions: [
-      {
-        label: "Packed [P1-1:0]",
-        detail:
-          "Most-significant packed slice (for example, a vector lane group). It only advances after the inner packed dimensions roll over.",
-      },
-      {
-        label: "Packed [P2-1:0]",
-        detail: "Middle packed slice. It increments after every complete sweep of the [P3-1:0] dimension.",
-      },
-      {
-        label: "Packed [P3-1:0]",
-        detail: "Least-significant packed slice—the right-most packed brackets that flip fastest inside each unpacked location.",
-      },
-    ],
-    unpackedDimensions: [
-      {
-        label: "Unpacked [U1]",
-        detail: "Outer unpacked dimension. Selects the broad bucket (for example, socket or engine) before other unpacked indices.",
-      },
-      {
-        label: "Unpacked [U2]",
-        detail: "Middle unpacked dimension that steps after U3 completes its cycle.",
-      },
-      {
-        label: "Unpacked [U3]",
-        detail: "Innermost unpacked dimension and the fastest-changing unpacked index.",
-      },
-    ],
-    memoryRows: createPackedCubeMemory(2, 2, 2, 2, 2, 2),
-    indexGuide: {
-      description:
-        "Access unpacked dimensions from left to right (U1 → U2 → U3) and then the packed dimensions from left to right (P1 → P2 → P3). Keep the packed slices on the right so their bits stay contiguous.",
-      steps: [
-        {
-          kind: "unpacked",
-          label: "my_array[u1]",
-          detail: "Choose the outermost unpacked index first (0 .. U1-1).",
-        },
-        {
-          kind: "unpacked",
-          label: "[u2]",
-          detail: "Second bracket selects the next unpacked dimension before touching packed bits.",
-        },
-        {
-          kind: "unpacked",
-          label: "[u3]",
-          detail: "Right-most unpacked dimension toggles fastest and completes the unpacked selection.",
-        },
-        {
-          kind: "packed",
-          label: "[p1]",
-          detail: "First packed bracket slices the most-significant packed dimension, matching [P1-1:0] in the declaration.",
-        },
-        {
-          kind: "packed",
-          label: "[p2]",
-          detail: "Next packed index drills into [P2-1:0].",
-        },
-        {
-          kind: "packed",
-          label: "[p3]",
-          detail: "Final bracket selects the least-significant packed bits from [P3-1:0].",
-        },
-      ],
-      examples: [
-        {
-          code: "my_array[u1][u2][u3][p1][p2][p3]",
-          insight:
-            "Full access order: unpacked indices first, then packed indices. The expression mirrors the declaration's dimension order.",
-        },
-        {
-          code: "my_array[u1][u2][u3]",
-          insight: "Returns the entire packed payload for the selected unpacked coordinates.",
-        },
-      ],
-    },
-    challenge: {
-      question: "Which expression respects the declaration's index ordering?",
-      options: [
-        "my_array[u1][u2][u3][p1][p2][p3]",
-        "my_array[p1][p2][p3][u1][u2][u3]",
-        "my_array[u3][u2][u1][p1][p3][p2]",
-      ],
-      answer: "my_array[u1][u2][u3][p1][p2][p3]",
-      explanation:
-        "SystemVerilog expects unpacked indices before packed ones. Keeping the packed dimensions on the right preserves contiguous bit slices.",
-    },
-  },
+  let ops: Array<{ op: ContainerOp; tone: Tone }> = [];
+  if (state.kind === "dynamic") {
+    ops = [
+      { op: { op: "new", size }, tone: "danger" },
+      { op: { op: "new-copy", size }, tone: "write" },
+      { op: { op: "write", index, value }, tone: "write" },
+      { op: { op: "read", index }, tone: "read" },
+      { op: { op: "size" }, tone: "read" },
+      { op: { op: "delete" }, tone: "danger" },
+      { op: { op: "push_back", value }, tone: "illegal" },
+    ];
+  } else if (state.kind === "queue") {
+    ops = [
+      { op: { op: "push_back", value }, tone: "write" },
+      { op: { op: "push_front", value }, tone: "write" },
+      { op: { op: "insert", index, value }, tone: "write" },
+      { op: { op: "pop_front" }, tone: "read" },
+      { op: { op: "pop_back" }, tone: "read" },
+      { op: { op: "read", index }, tone: "read" },
+      { op: { op: "delete-index", index }, tone: "danger" },
+      { op: { op: "size" }, tone: "read" },
+      { op: { op: "delete" }, tone: "danger" },
+    ];
+  } else if (parsedKey !== null) {
+    ops = [
+      { op: { op: "write", key: parsedKey, value }, tone: "write" },
+      { op: { op: "read", key: parsedKey }, tone: "read" },
+      { op: { op: "exists", key: parsedKey }, tone: "read" },
+      { op: { op: "delete-key", key: parsedKey }, tone: "danger" },
+      { op: { op: "first" }, tone: "read" },
+      { op: { op: "next" }, tone: "read" },
+      { op: { op: "last" }, tone: "read" },
+      { op: { op: "prev" }, tone: "read" },
+      { op: { op: "foreach" }, tone: "read" },
+      { op: { op: "num" }, tone: "read" },
+      { op: { op: "delete" }, tone: "danger" },
+    ];
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-3">
+        {state.kind === "dynamic" ? <NumberField label="N" value={size} min={0} max={16} onChange={(n) => setSize(Math.max(-1, Math.min(16, n)))} /> : null}
+        {state.kind !== "assoc" ? <NumberField label="index" value={index} min={-1} max={20} onChange={(n) => setIndex(Math.max(-1, Math.min(20, n)))} /> : null}
+        {state.kind === "assoc" ? (
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            key ({state.keyType})
+            <input type="text" className={cn(inputClass, "w-28")} value={keyText} onChange={(e) => setKeyText(e.target.value)} aria-invalid={parsedKey === null} />
+          </label>
+        ) : null}
+        <NumberField label="value" value={value} min={-999} max={999} onChange={(n) => setValue(Math.max(-999, Math.min(999, n)))} />
+      </div>
+      {state.kind === "assoc" && parsedKey === null ? <p className="text-xs text-rose-700 dark:text-rose-300">✕ Enter an integer key for an int-indexed array.</p> : null}
+      <div className="flex flex-wrap gap-2" role="group" aria-label="Operations">
+        {ops.map(({ op, tone }) => {
+          const code = applyContainerOp(state, op).code.replace(/;$/, "");
+          return (
+            <button
+              key={code}
+              type="button"
+              disabled={disabled}
+              onClick={() => onRun(op)}
+              className={cn(
+                "min-h-10 rounded-lg border bg-background/60 px-3 py-1.5 font-mono text-xs text-foreground transition-colors [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none",
+                toneClass[tone],
+              )}
+            >
+              {code}
+              {tone === "illegal" ? <span className="ml-1 font-sans">(try it)</span> : null}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Renders `code` spans written with backticks in model sentences. */
+export function InlineCode({ text }: { text: string }) {
+  const parts = text.split("`");
+  return (
+    <>
+      {parts.map((part, i) =>
+        i % 2 === 1 ? (
+          <code key={i} className="rounded bg-muted px-1 font-mono text-[0.95em] [font-variant-ligatures:none]">
+            {part}
+          </code>
+        ) : (
+          <React.Fragment key={i}>{part}</React.Fragment>
+        ),
+      )}
+    </>
+  );
+}
+
+/** "Why" sentence, returned value and diagnostics for one operation. */
+export function OpResultPanel({ result, elemType }: { result: ArrayOpResult; elemType: SvElemTypeId }) {
+  const r = result.returned;
+  return (
+    <div className="space-y-2 text-sm">
+      <p className="font-mono text-xs text-foreground [font-variant-ligatures:none]">{result.code}</p>
+      {r ? (
+        <p className="flex flex-wrap items-center gap-2 text-muted-foreground">
+          Returned:
+          {typeof r.value === "string" && r.value !== "X" ? (
+            <span className="font-mono text-foreground">{r.label} = {formatAssocKey(r.value)}</span>
+          ) : (
+            <ValueChip name={r.label} value={r.value === "X" ? "X" : (r.value as number)} />
+          )}
+          {r.value === "X" ? <span className="font-mono text-xs">({formatElemLiteral("X", elemType)})</span> : null}
+        </p>
+      ) : null}
+      {result.visited ? (
+        <p className="text-muted-foreground">
+          Visit order: <span className="font-mono text-foreground [font-variant-ligatures:none]">{result.visited.map(formatAssocKey).join(" → ") || "(none)"}</span>
+        </p>
+      ) : null}
+      <DiagnosticChips diagnostics={result.diagnostics} />
+      <p className="text-foreground">
+        <strong>Why: </strong>
+        {result.why} <span className="text-xs text-muted-foreground">({result.clause})</span>
+      </p>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Container lab                                                               */
+/* -------------------------------------------------------------------------- */
+
+type Kind = "dynamic" | "queue" | "assoc";
+
+interface LabConfig {
+  dynamicType: "logic8" | "int";
+  queueBound: "none" | "3";
+  assocKey: AssocKeyType;
+}
+
+function initialState(kind: Kind, config: LabConfig): ContainerState {
+  if (kind === "dynamic") return createDynamicArray("buffer", config.dynamicType, [0, 10, 20, 30]);
+  if (kind === "queue") return createQueue("q", "int", config.queueBound === "none" ? null : 3, [10, 20, 30]);
+  return config.assocKey === "string"
+    ? createAssocArray("scores", "int", "string", [["beta", 3], ["alpha", 7], ["Gamma", 1]])
+    : createAssocArray("scores", "int", "int", [[10, 3], [-5, 7], [3, 1]]);
+}
+
+const LAB_ASSUMPTIONS = [
+  "Implements IEEE 1800-2023 §7.5 (dynamic arrays), §7.10 (queues), §7.8–§7.9 (associative arrays) and the invalid-index rules of §7.4.5.",
+  "“Warning (required)” means the LRM says a warning shall be issued; “May warn” means the operation has no effect and a tool may or may not warn.",
+  "Memory layout, hashing and performance are not modelled: the LRM specifies behaviour, not storage.",
+  "Values are limited to small integers and at most 32 elements so the picture stays readable.",
 ];
 
-const slotVariants = {
-  initial: { opacity: 0, scale: 0.9 },
-  animate: { opacity: 1, scale: 1 },
-  exit: { opacity: 0, scale: 0.9 },
-};
+const kindOptions = [
+  { value: "dynamic" as const, label: "Dynamic array" },
+  { value: "queue" as const, label: "Queue" },
+  { value: "assoc" as const, label: "Associative array" },
+];
 
-const warningVariants = {
-  initial: { opacity: 0, y: -8 },
-  animate: { opacity: 1, y: 0 },
-  exit: { opacity: 0, y: -8 },
-};
+interface Pending {
+  id: number;
+  result: ArrayOpResult;
+  prediction: ContainerPrediction;
+}
 
-const annotationVariants = {
-  initial: { opacity: 0, y: 6 },
-  animate: { opacity: 1, y: 0 },
-  exit: { opacity: 0, y: 6 },
-};
+export function DynamicStructureVisualizer({ initialKind = "dynamic" }: { initialKind?: Kind }) {
+  const [kind, setKind] = useState<Kind>(initialKind);
+  const [config, setConfig] = useState<LabConfig>({ dynamicType: "logic8", queueBound: "3", assocKey: "string" });
+  const [history, setHistory] = useState<ArrayOpResult[]>([]);
+  const [pending, setPending] = useState<Pending | null>(null);
+  const [predictFirst, setPredictFirst] = useState(true);
+  const [pendingCount, setPendingCount] = useState(0);
 
-const drawerVariants = {
-  initial: { opacity: 0, x: 12 },
-  animate: { opacity: 1, x: 0 },
-  exit: { opacity: 0, x: 12 },
-};
+  const start = useMemo(() => initialState(kind, config), [kind, config]);
+  const current = history.length > 0 ? history[history.length - 1].after : start;
+  const last = history.length > 0 ? history[history.length - 1] : null;
 
-const hashVariants = {
-  initial: { opacity: 0, scale: 0.95 },
-  animate: { opacity: 1, scale: 1 },
-  exit: { opacity: 0, scale: 0.95 },
-};
+  const resetWith = (nextKind: Kind, nextConfig: LabConfig) => {
+    setKind(nextKind);
+    setConfig(nextConfig);
+    setHistory([]);
+    setPending(null);
+  };
 
-const getNextCapacity = (current: number) => Math.max(current * 2, current + 1);
-
-const DynamicArrayTab: React.FC = () => {
-  const [state, setState] = useState<DynamicArrayState>({
-    values: initialArrayValues,
-    capacity: 4,
-    isResizing: false,
-    message: null,
-  });
-  const [input, setInput] = useState("32");
-  const [resizeInput, setResizeInput] = useState("6");
-
-  useEffect(() => {
-    if (!state.isResizing) {
+  const run = (op: ContainerOp) => {
+    const result = applyContainerOp(current, op);
+    const prediction = predictFirst ? predictContainerOp(current, op) : null;
+    if (prediction) {
+      setPendingCount((n) => n + 1);
+      setPending({ id: pendingCount + 1, result, prediction });
       return;
     }
-    const timeout = window.setTimeout(() => {
-      setState((prev) => ({ ...prev, isResizing: false }));
-    }, 800);
-    return () => window.clearTimeout(timeout);
-  }, [state.isResizing]);
-
-  const pushBack = () => {
-    setState((prev) => {
-      const value = Number.parseInt(input, 10);
-      const nextValue = Number.isFinite(value) ? value : prev.values.length * 8;
-      const needsResize = prev.values.length >= prev.capacity;
-      const nextCapacity = needsResize ? getNextCapacity(prev.capacity) : prev.capacity;
-      return {
-        values: [...prev.values, nextValue],
-        capacity: nextCapacity,
-        isResizing: needsResize,
-        message: needsResize
-          ? `Auto-resized to capacity ${nextCapacity} after push_back.`
-          : "Added element to the end.",
-      };
-    });
+    setHistory((h) => [...h, result]);
   };
 
-  const popBack = () => {
-    setState((prev) => {
-      if (prev.values.length === 0) {
-        return {
-          ...prev,
-          message: "Nothing to pop—dynamic arrays can shrink to zero.",
-          isResizing: false,
-        };
-      }
-      const newValues = prev.values.slice(0, -1);
-      return {
-        ...prev,
-        values: newValues,
-        isResizing: false,
-        message: "Removed the last element with pop_back().",
-      };
-    });
+  const applyPending = () => {
+    if (!pending) return;
+    setHistory((h) => [...h, pending.result]);
+    setPending(null);
   };
 
-  const deleteArray = () => {
-    setState({ values: [], capacity: 0, isResizing: false, message: "Array deleted—memory released." });
-  };
+  const codeLines: CodeTraceLine[] = [
+    { text: declarationWithContents(start), key: "decl", owner: "testbench" },
+    ...(current.kind === "assoc" ? [{ text: `${current.keyType} key;  // the ref index used by first/next/last/prev`, key: "keyvar" }] : []),
+    ...history.slice(-8).map((r, i) => {
+      const n = history.length - Math.min(8, history.length) + i;
+      const notes = [
+        r.returned ? `${r.returned.label} = ${typeof r.returned.value === "string" && r.returned.value !== "X" ? formatAssocKey(r.returned.value) : formatElem(r.returned.value as SvElem)}` : "",
+        r.diagnostics.some((d) => d.level === "error") ? "✕ error" : "",
+        r.diagnostics.some((d) => d.level === "warning") ? "⚠ warning" : "",
+        r.diagnostics.some((d) => d.level === "may-warn") ? "⚠ may warn" : "",
+      ].filter(Boolean);
+      return { text: `${r.code}${notes.length ? `  // ${notes.join(", ")}` : ""}`, key: `op-${n}`, owner: "testbench" as const };
+    }),
+  ];
 
-  const resizeArray = () => {
-    const target = Number.parseInt(resizeInput, 10);
-    if (!Number.isFinite(target) || target < 0) {
-      setState((prev) => ({
-        ...prev,
-        isResizing: false,
-        message: "Enter a non-negative size before calling new[].",
-      }));
-      return;
-    }
-
-    setState((prev) => {
-      const clipped = prev.values.slice(0, target);
-      if (target > clipped.length) {
-        const padding = Array.from({ length: target - clipped.length }, () => 0);
-        clipped.push(...padding);
-      }
-      return {
-        values: clipped,
-        capacity: target,
-        isResizing: true,
-        message: `Called new[${target}] — packed values were trimmed or padded.`,
-      };
-    });
-  };
+  const elemType = current.elemType;
 
   return (
-    <div className="space-y-4" data-testid="dynamic-array-tab">
-      <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
-        <div className="space-y-1">
-          <Label htmlFor="dynamic-array-input">Value</Label>
-          <Input
-            id="dynamic-array-input"
-            data-testid="dynamic-array-input"
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            className="w-full sm:w-40"
-          />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button data-testid="dynamic-array-push" onClick={pushBack}>
-            push_back(value)
-          </Button>
-          <Button data-testid="dynamic-array-pop" variant="secondary" onClick={popBack}>
-            pop_back()
-          </Button>
-          <Button data-testid="dynamic-array-delete" variant="outline" onClick={deleteArray}>
-            delete()
-          </Button>
-        </div>
-        <div className="flex flex-wrap gap-2 lg:ml-auto">
-          <div className="space-y-1">
-            <Label htmlFor="dynamic-array-resize">new[size]</Label>
-            <Input
-              id="dynamic-array-resize"
-              data-testid="dynamic-array-resize-input"
-              value={resizeInput}
-              onChange={(event) => setResizeInput(event.target.value)}
-              className="w-full sm:w-32"
+    <VisualFrame
+      label="Container lab"
+      eyebrow="Experiment"
+      title="Container lab: dynamic array, queue, associative array"
+      summary="Run operations as buttons. Each one writes the SystemVerilog line it executes, updates the strip, and flags warnings. Tricky operations ask for your prediction first."
+      fidelity="model"
+      assumptions={LAB_ASSUMPTIONS}
+    >
+      <div data-testid="container-lab" className="space-y-4">
+        <SegmentedControl label="Structure" options={kindOptions} value={kind} onChange={(k) => resetWith(k, config)} />
+
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+          {kind === "dynamic" ? (
+            <SegmentedControl
+              label="Element type"
+              mono
+              options={[
+                { value: "logic8", label: "logic [7:0] (4-state)" },
+                { value: "int", label: "int (2-state)" },
+              ]}
+              value={config.dynamicType}
+              onChange={(t) => resetWith(kind, { ...config, dynamicType: t })}
             />
+          ) : null}
+          {kind === "queue" ? (
+            <SegmentedControl
+              label="Queue declaration"
+              mono
+              options={[
+                { value: "none", label: "int q[$]" },
+                { value: "3", label: "int q[$:3]" },
+              ]}
+              value={config.queueBound}
+              onChange={(b) => resetWith(kind, { ...config, queueBound: b })}
+            />
+          ) : null}
+          {kind === "assoc" ? (
+            <SegmentedControl
+              label="Index type"
+              mono
+              options={[
+                { value: "string", label: "int scores[string]" },
+                { value: "int", label: "int scores[int]" },
+              ]}
+              value={config.assocKey}
+              onChange={(k) => resetWith(kind, { ...config, assocKey: k })}
+            />
+          ) : null}
+          <label className="flex items-center gap-2 text-xs text-muted-foreground">
+            <input type="checkbox" className="h-4 w-4 accent-amber-500" checked={predictFirst} onChange={(e) => setPredictFirst(e.target.checked)} />
+            Predict before tricky operations
+          </label>
+        </div>
+
+        <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]">
+          <div className="min-w-0" data-testid="container-code">
+            <CodeTrace label="Code you have run" lines={codeLines} activeKey={last ? `op-${history.length - 1}` : undefined} />
           </div>
-          <Button data-testid="dynamic-array-resize" variant="secondary" onClick={resizeArray}>
-            new[size]
-          </Button>
+          <div className="min-w-0 space-y-3 rounded-xl border border-border/70 bg-background/50 p-3" data-testid="container-state">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              {current.kind === "assoc" ? `Entries · num() = ${current.entries.length}` : `Elements · size() = ${current.values.length}`}
+              {current.kind === "queue" && current.bound !== null ? ` of at most ${queueCapacity(current)}` : ""}
+            </p>
+            <ContainerStateView state={current} result={last} />
+            {current.kind === "dynamic" ? (
+              <p className="text-xs text-muted-foreground">No capacity, no push or pop: the size changes only through new[], delete() or assigning another array.</p>
+            ) : null}
+          </div>
         </div>
-      </div>
-      <div className="relative overflow-hidden rounded-lg border border-border/60 bg-background/80 p-4" data-testid="dynamic-array-visual">
-        <div className="flex flex-wrap gap-2">
-          <AnimatePresence>
-            {state.values.map((value, index) => (
-              <motion.div
-                key={`${value}-${index}`}
-                layout
-                variants={slotVariants}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                transition={{ duration: 0.25 }}
-                className="flex h-16 w-16 flex-col items-center justify-center rounded-md border border-primary/40 bg-primary/10 text-sm font-semibold text-primary dark:bg-primary/20 dark:text-primary-foreground"
+
+        <ContainerControls key={`${kind}-${JSON.stringify(config)}`} state={current} onRun={run} disabled={pending !== null} />
+
+        {pending ? (
+          <PredictionPrompt
+            resetKey={String(pending.id)}
+            question={<InlineCode text={pending.prediction.question} />}
+            options={pending.prediction.options}
+          >
+            <div className="space-y-3 rounded-xl border border-border/70 bg-background/60 p-3">
+              <ContainerStateView state={pending.result.after} result={pending.result} />
+              <OpResultPanel result={pending.result} elemType={elemType} />
+              <button
+                type="button"
+                onClick={applyPending}
+                className="inline-flex h-10 items-center rounded-lg bg-cyan-600 px-4 text-sm font-semibold text-white hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                <span>idx {index}</span>
-                <span className="text-lg">{value}</span>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
-        <AnimatePresence>
-          {state.isResizing && (
-            <motion.div
-              className="absolute inset-x-4 bottom-4 rounded-md border border-amber-500/50 bg-amber-100/90 p-3 text-sm font-medium text-amber-700 shadow-lg dark:bg-amber-900/80 dark:text-amber-100"
-              variants={annotationVariants}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-            >
-              {state.message ?? "Resizing! This can be a hidden performance cost."}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4" data-testid="dynamic-array-info">
-        <InfoTile label="size()" value={state.values.length.toString()} />
-        <InfoTile label="capacity" value={state.capacity.toString()} />
-        <InfoTile label="sum()" value={state.values.reduce((acc, value) => acc + value, 0).toString()} />
-        <InfoTile label="Status" value={state.message ?? "Interact with the controls"} className="lg:col-span-2" />
-      </div>
-    </div>
-  );
-};
-
-const QueueTab: React.FC = () => {
-  const [state, setState] = useState<QueueState>({
-    values: initialQueueValues,
-    bounded: false,
-    boundSize: 6,
-    warning: null,
-    message: null,
-  });
-  const [input, setInput] = useState("104");
-  const [indexInput, setIndexInput] = useState("0");
-
-  const toggleBounded = (checked: boolean) => {
-    setState((prev) => ({
-      ...prev,
-      bounded: checked,
-      warning: null,
-      message: checked ? "Bound enabled—respect depth limits." : "Bound disabled—queue grows as needed.",
-    }));
-  };
-
-  const pushBack = () => {
-    setState((prev) => {
-      const value = Number.parseInt(input, 10);
-      const nextValue = Number.isFinite(value) ? value : prev.values.length + 100;
-      if (prev.bounded && prev.values.length >= prev.boundSize) {
-        return {
-          ...prev,
-          warning: "Queue Full!",
-          message: "push_back() blocked by active bound.",
-        };
-      }
-      return {
-        ...prev,
-        values: [...prev.values, nextValue],
-        warning: null,
-        message: `push_back() appended ${nextValue}.`,
-      };
-    });
-  };
-
-  const pushFront = () => {
-    setState((prev) => {
-      const value = Number.parseInt(input, 10);
-      const nextValue = Number.isFinite(value) ? value : prev.values.length + 90;
-      if (prev.bounded && prev.values.length >= prev.boundSize) {
-        return {
-          ...prev,
-          warning: "Queue Full!",
-          message: "push_front() blocked by active bound.",
-        };
-      }
-      return {
-        ...prev,
-        values: [nextValue, ...prev.values],
-        warning: null,
-        message: `push_front() inserted ${nextValue} at the head.`,
-      };
-    });
-  };
-
-  const popFront = () => {
-    setState((prev) => {
-      if (prev.values.length === 0) {
-        return {
-          ...prev,
-          warning: "Queue empty—no packet to pop.",
-          message: "Queue empty—cannot pop_front().",
-        };
-      }
-      const [, ...rest] = prev.values;
-      return {
-        ...prev,
-        values: rest,
-        warning: null,
-        message: "pop_front() removed the oldest entry.",
-      };
-    });
-  };
-
-  const popBack = () => {
-    setState((prev) => {
-      if (prev.values.length === 0) {
-        return {
-          ...prev,
-          warning: "Queue empty—no packet to pop.",
-          message: "Queue empty—cannot pop_back().",
-        };
-      }
-      const nextValues = prev.values.slice(0, -1);
-      return {
-        ...prev,
-        values: nextValues,
-        warning: null,
-        message: "pop_back() dropped the newest entry.",
-      };
-    });
-  };
-
-  const parseIndex = () => {
-    const parsed = Number.parseInt(indexInput, 10);
-    return Number.isFinite(parsed) ? parsed : NaN;
-  };
-
-  const insertAt = () => {
-    setState((prev) => {
-      const index = parseIndex();
-      const value = Number.parseInt(input, 10);
-      const nextValue = Number.isFinite(value) ? value : prev.values.length + 88;
-      if (Number.isNaN(index) || index < 0 || index > prev.values.length) {
-        return {
-          ...prev,
-          message: "Index out of range for insert().",
-        };
-      }
-      if (prev.bounded && prev.values.length >= prev.boundSize) {
-        return {
-          ...prev,
-          warning: "Queue Full!",
-          message: "insert() blocked by active bound.",
-        };
-      }
-      const values = [...prev.values];
-      values.splice(index, 0, nextValue);
-      return {
-        ...prev,
-        values,
-        warning: null,
-        message: `insert(${index}) placed ${nextValue}.`,
-      };
-    });
-  };
-
-  const deleteAt = () => {
-    setState((prev) => {
-      const index = parseIndex();
-      if (Number.isNaN(index) || index < 0 || index >= prev.values.length) {
-        return {
-          ...prev,
-          message: "Index out of range for delete().",
-        };
-      }
-      const values = prev.values.filter((_, idx) => idx !== index);
-      return {
-        ...prev,
-        values,
-        warning: null,
-        message: `delete(${index}) removed the entry.`,
-      };
-    });
-  };
-
-  const updateBoundSize = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const parsed = Number.parseInt(event.target.value, 10);
-    if (!Number.isNaN(parsed) && parsed > 0) {
-      setState((prev) => ({ ...prev, boundSize: parsed, message: `Bound set to ${parsed}.` }));
-    }
-  };
-
-  return (
-    <div className="space-y-4" data-testid="queue-tab">
-      <div className="grid gap-3 lg:grid-cols-[repeat(3,minmax(0,1fr))]">
-        <div className="space-y-1">
-          <Label htmlFor="queue-input">Value</Label>
-          <Input
-            id="queue-input"
-            data-testid="queue-input"
-            value={input}
-            onChange={(event) => setInput(event.target.value)}
-            className="w-full sm:w-40"
-          />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="queue-index">Index</Label>
-          <Input
-            id="queue-index"
-            data-testid="queue-index"
-            value={indexInput}
-            onChange={(event) => setIndexInput(event.target.value)}
-            className="w-full sm:w-32"
-          />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button data-testid="queue-push" onClick={pushBack}>
-            push_back(value)
-          </Button>
-          <Button data-testid="queue-push-front" variant="secondary" onClick={pushFront}>
-            push_front(value)
-          </Button>
-          <Button data-testid="queue-pop" variant="outline" onClick={popFront}>
-            pop_front()
-          </Button>
-          <Button data-testid="queue-pop-back" variant="outline" onClick={popBack}>
-            pop_back()
-          </Button>
-        </div>
-        <div className="flex flex-wrap gap-2 lg:col-span-3">
-          <Button data-testid="queue-insert" onClick={insertAt}>
-            insert(index, value)
-          </Button>
-          <Button data-testid="queue-delete" variant="secondary" onClick={deleteAt}>
-            delete(index)
-          </Button>
-        </div>
-      </div>
-      <div className="flex items-center gap-3 rounded-lg border border-border/60 bg-background/80 p-4">
-        <Switch id="queue-bounded" checked={state.bounded} onCheckedChange={toggleBounded} data-testid="queue-bounded-switch" />
-        <Label htmlFor="queue-bounded" className="flex-1">
-          Bounded queue
-        </Label>
-        {state.bounded && (
-          <Input
-            type="number"
-            min={1}
-            value={state.boundSize}
-            onChange={updateBoundSize}
-            className="w-24"
-            data-testid="queue-bound-input"
-          />
+                Apply and continue ▸
+              </button>
+            </div>
+          </PredictionPrompt>
+        ) : (
+          <div aria-live="polite" data-testid="container-result" className="rounded-xl border border-border/70 bg-background/50 p-3">
+            {last ? <OpResultPanel result={last} elemType={elemType} /> : <p className="text-sm text-muted-foreground">Pick an operation. The ones whose outcome often surprises people ask for your prediction first.</p>}
+          </div>
         )}
-      </div>
-      <div className="relative overflow-hidden rounded-lg border border-border/60 bg-background/80 p-4">
-        <div className="flex flex-nowrap items-center gap-3 overflow-x-auto" data-testid="queue-visual">
-          <AnimatePresence>
-            {state.values.map((value, index) => (
-              <motion.div
-                key={`${value}-${index}`}
-                layout
-                variants={slotVariants}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                transition={{ duration: 0.2 }}
-                className="flex h-16 w-20 flex-col items-center justify-center rounded-md border border-sky-500/50 bg-sky-500/10 text-sm font-semibold text-sky-600 dark:text-sky-200"
-              >
-                <span>pos {index}</span>
-                <span className="text-lg">{value}</span>
-              </motion.div>
-            ))}
-          </AnimatePresence>
-        </div>
-        <AnimatePresence>
-          {state.warning && (
-            <motion.div
-              data-testid="queue-warning"
-              className="absolute inset-x-4 bottom-4 rounded-md border border-rose-500/60 bg-rose-100/90 p-3 text-center text-sm font-semibold text-rose-700 shadow-lg dark:bg-rose-900/80 dark:text-rose-100"
-              variants={warningVariants}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-            >
-              {state.warning}
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4" data-testid="queue-info">
-        <InfoTile label="size()" value={state.values.length.toString()} />
-        <InfoTile label="front()" value={state.values[0]?.toString() ?? "—"} />
-        <InfoTile label="back()" value={state.values[state.values.length - 1]?.toString() ?? "—"} />
-        <InfoTile
-          label={state.bounded ? "capacity" : "capacity"}
-          value={state.bounded ? state.boundSize.toString() : "∞"}
-        />
-        <InfoTile
-          label="Status"
-          value={state.message ?? "Queue methods await your call"}
-          className="lg:col-span-4"
-        />
-      </div>
-    </div>
-  );
-};
 
-const AssociativeArrayTab: React.FC = () => {
-  const [state, setState] = useState<AssociativeState>({
-    entries: [
-      { key: "packet_1001", value: "ACK", highlight: false },
-      { key: "packet_1042", value: "ERR", highlight: false },
-    ],
-    lastHashedKey: null,
-  });
-  const [keyInput, setKeyInput] = useState("packet_1200");
-  const [valueInput, setValueInput] = useState("PENDING");
-
-  useEffect(() => {
-    if (state.entries.some((entry) => entry.highlight)) {
-      const timeout = window.setTimeout(() => {
-        setState((prev) => ({
-          ...prev,
-          entries: prev.entries.map((entry) => ({ ...entry, highlight: false })),
-        }));
-      }, 600);
-      return () => window.clearTimeout(timeout);
-    }
-    return undefined;
-  }, [state.entries]);
-
-  const addOrUpdate = () => {
-    setState((prev) => {
-      const entries = [...prev.entries];
-      const index = entries.findIndex((entry) => entry.key === keyInput.trim());
-      if (keyInput.trim().length === 0) {
-        return prev;
-      }
-      if (index >= 0) {
-        entries[index] = { key: keyInput.trim(), value: valueInput.trim(), highlight: true };
-      } else {
-        entries.push({ key: keyInput.trim(), value: valueInput.trim(), highlight: true });
-      }
-      return {
-        entries,
-        lastHashedKey: keyInput.trim(),
-      };
-    });
-  };
-
-  const deleteKey = () => {
-    setState((prev) => ({
-      entries: prev.entries.filter((entry) => entry.key !== keyInput.trim()),
-      lastHashedKey: keyInput.trim(),
-    }));
-  };
-
-  const hashedSlot = useMemo(() => {
-    if (!state.lastHashedKey) return null;
-    const sum = state.lastHashedKey.split("").reduce((acc, char) => acc + char.charCodeAt(0), 0);
-    return sum % Math.max(state.entries.length || 1, 5);
-  }, [state.entries.length, state.lastHashedKey]);
-
-  return (
-    <div className="space-y-4" data-testid="associative-array-tab">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
-        <div className="space-y-1">
-          <Label htmlFor="associative-key">Key</Label>
-          <Input
-            id="associative-key"
-            data-testid="associative-key"
-            value={keyInput}
-            onChange={(event) => setKeyInput(event.target.value)}
-            className="w-full sm:w-48"
-          />
-        </div>
-        <div className="space-y-1">
-          <Label htmlFor="associative-value">Value</Label>
-          <Input
-            id="associative-value"
-            data-testid="associative-value"
-            value={valueInput}
-            onChange={(event) => setValueInput(event.target.value)}
-            className="w-full sm:w-48"
-          />
-        </div>
         <div className="flex flex-wrap gap-2">
-          <Button data-testid="associative-add" onClick={addOrUpdate}>
-            Add / Update
-          </Button>
-          <Button data-testid="associative-delete" variant="secondary" onClick={deleteKey}>
-            delete(key)
-          </Button>
-        </div>
-      </div>
-      <div className="grid gap-4 lg:grid-cols-[2fr_1fr]">
-        <div className="space-y-3 rounded-lg border border-border/60 bg-background/80 p-4" data-testid="associative-visual">
-          <div className="grid gap-2 sm:grid-cols-2">
-            <AnimatePresence>
-              {state.entries.map((entry) => (
-                <motion.div
-                  key={entry.key}
-                  layout
-                  variants={drawerVariants}
-                  initial="initial"
-                  animate="animate"
-                  exit="exit"
-                  transition={{ duration: 0.25 }}
-                  className={cn(
-                    "rounded-md border border-emerald-500/50 bg-emerald-500/10 p-3 text-sm font-semibold text-emerald-700 shadow-sm dark:bg-emerald-900/80 dark:text-emerald-100",
-                    entry.highlight && "ring-2 ring-emerald-400",
-                  )}
-                >
-                  <div className="text-xs uppercase tracking-wide text-emerald-800/80 dark:text-emerald-200/80">Key</div>
-                  <div data-testid={`associative-entry-${entry.key}`}>{entry.key}</div>
-                  <div className="mt-2 text-xs uppercase tracking-wide text-emerald-800/80 dark:text-emerald-200/80">Value</div>
-                  <div>{entry.value}</div>
-                </motion.div>
-              ))}
-            </AnimatePresence>
-          </div>
-        </div>
-        <div className="space-y-3 rounded-lg border border-border/60 bg-background/80 p-4" data-testid="associative-hash">
-          <div className="text-sm font-semibold">Hashing Function</div>
-          <AnimatePresence>
-            {state.lastHashedKey && (
-              <motion.div
-                key={state.lastHashedKey}
-                variants={hashVariants}
-                initial="initial"
-                animate="animate"
-                exit="exit"
-                className="rounded-md border border-primary/50 bg-primary/10 p-3 text-sm"
-              >
-                <div className="font-semibold">Key: {state.lastHashedKey}</div>
-                <div>→ Slot {hashedSlot}</div>
-                <div className="text-xs text-muted-foreground">Associative arrays use hashing to jump to entries quickly.</div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-          <div className="text-sm font-medium" data-testid="associative-count">
-            Entries: {state.entries.length}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const PackedUnpackedTab: React.FC = () => {
-  const [scenarioIndex, setScenarioIndex] = useState(0);
-  const [selectedOption, setSelectedOption] = useState<string | null>(null);
-
-  const scenario = packedScenarios[scenarioIndex];
-
-  const goToNextScenario = () => {
-    setScenarioIndex((prev) => (prev + 1) % packedScenarios.length);
-    setSelectedOption(null);
-  };
-
-  const goToPreviousScenario = () => {
-    setScenarioIndex((prev) => (prev - 1 + packedScenarios.length) % packedScenarios.length);
-    setSelectedOption(null);
-  };
-
-  const handleSelect = (option: string) => {
-    if (selectedOption) return;
-    setSelectedOption(option);
-  };
-
-  const feedback = selectedOption
-    ? selectedOption === scenario.challenge.answer
-      ? {
-          tone: "success" as const,
-          title: "Correct!",
-          detail: scenario.challenge.explanation,
-        }
-      : {
-          tone: "error" as const,
-          title: "Try again",
-          detail: scenario.challenge.explanation,
-        }
-    : null;
-
-  return (
-    <div className="space-y-5" data-testid="packed-unpacked-tab">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h4 className="text-lg font-semibold" data-testid="packed-scenario-title">
-            {scenario.title}
-          </h4>
-          <p className="text-sm text-muted-foreground">{scenario.description}</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="outline" onClick={goToPreviousScenario} data-testid="packed-prev">
-            Previous layout
-          </Button>
-          <Button onClick={goToNextScenario} data-testid="packed-next">
-            Next layout
-          </Button>
-        </div>
-      </div>
-
-      <div className="space-y-2 rounded-xl border border-border/60 bg-background/80 p-4 shadow-sm">
-        <code className="rounded bg-muted/50 px-2 py-1 text-sm">{scenario.declaration}</code>
-        <div className="grid gap-4 lg:grid-cols-2">
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Packed dimensions</div>
-            <ul className="mt-2 space-y-2 text-sm">
-              {scenario.packedDimensions.map((dimension) => (
-                <li key={dimension.label} className="rounded-md border border-primary/40 bg-primary/10 p-3 dark:bg-primary/20">
-                  <div className="font-semibold">{dimension.label}</div>
-                  <div className="text-muted-foreground">{dimension.detail}</div>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Unpacked dimensions</div>
-            <ul className="mt-2 space-y-2 text-sm">
-              {scenario.unpackedDimensions.map((dimension) => (
-                <li key={dimension.label} className="rounded-md border border-secondary/40 bg-secondary/10 p-3 dark:bg-secondary/20">
-                  <div className="font-semibold">{dimension.label}</div>
-                  <div className="text-muted-foreground">{dimension.detail}</div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      </div>
-
-      <AnimatePresence mode="wait">
-        <motion.div
-          key={scenario.id}
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          exit={{ opacity: 0, y: -12 }}
-          transition={{ duration: 0.25 }}
-          className="space-y-4"
-        >
-          <div
-            className="space-y-3 rounded-xl border border-border/60 bg-background/80 p-4"
-            data-testid="packed-index-guide"
+          <button
+            type="button"
+            disabled={history.length === 0 || pending !== null}
+            onClick={() => setHistory((h) => h.slice(0, -1))}
+            className="min-h-10 rounded-lg border border-border/70 px-3 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
           >
-            <div className="text-sm font-semibold">Index placement map</div>
-            <p className="text-sm text-muted-foreground">{scenario.indexGuide.description}</p>
-            <div className="grid gap-3 sm:grid-cols-2" data-testid="packed-index-order">
-              {scenario.indexGuide.steps.map((step, index) => (
-                <motion.div
-                  key={`${scenario.id}-step-${step.label}`}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.2, delay: index * 0.05 }}
-                  className="space-y-2 rounded-lg border border-border/50 bg-muted/30 p-3 dark:bg-muted/20"
-                >
-                  <div className="flex items-center gap-2">
-                    <Badge variant={step.kind === "packed" ? "default" : "secondary"}>
-                      {index + 1}. {step.label}
-                    </Badge>
-                    <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                      {step.kind === "packed" ? "Packed" : "Unpacked"}
-                    </span>
-                  </div>
-                  <p className="text-sm text-muted-foreground">{step.detail}</p>
-                </motion.div>
-              ))}
-            </div>
-            <div className="space-y-2" data-testid="packed-index-examples">
-              {scenario.indexGuide.examples.map((example) => (
-                <div
-                  key={`${scenario.id}-example-${example.code}`}
-                  className="space-y-1 rounded-lg border border-border/50 bg-background/70 p-3"
-                >
-                  <code className="block text-sm">{example.code}</code>
-                  <p className="text-xs text-muted-foreground">{example.insight}</p>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-3 rounded-xl border border-border/60 bg-background/80 p-4" data-testid="packed-memory">
-            <div className="text-sm font-semibold">Memory walk</div>
-            <div className="space-y-3">
-              {scenario.memoryRows.map((row) => (
-                <div key={row.label} className="space-y-1">
-                  <div className="text-xs uppercase tracking-wide text-muted-foreground">{row.label}</div>
-                  <div className="flex flex-wrap gap-1">
-                    {row.bits.map((bitLabel, index) => (
-                      <div
-                        key={`${row.label}-${bitLabel}-${index}`}
-                        className="flex h-8 min-w-[2.5rem] items-center justify-center rounded-md border border-border/40 bg-muted/40 px-2 text-xs font-semibold"
-                      >
-                        {bitLabel}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="space-y-3 rounded-xl border border-border/60 bg-background/80 p-4" data-testid="packed-quiz">
-            <div className="text-sm font-semibold">Quick recall</div>
-            <p className="text-sm text-muted-foreground">{scenario.challenge.question}</p>
-            <div className="flex flex-wrap gap-2">
-              {scenario.challenge.options.map((option) => {
-                const isSelected = selectedOption === option;
-                const isCorrect = option === scenario.challenge.answer;
-                const showState = Boolean(selectedOption);
-                return (
-                  <Button
-                    key={option}
-                    data-testid={`packed-option-${option.replace(/[^a-z0-9]/gi, "-").toLowerCase()}`}
-                    variant="outline"
-                    className={cn(
-                      "h-auto whitespace-normal text-left",
-                      showState && isCorrect && "border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:bg-emerald-900/80 dark:text-emerald-100",
-                      showState && isSelected && !isCorrect && "border-rose-500/60 bg-rose-500/10 text-rose-700 dark:bg-rose-900/80 dark:text-rose-100",
-                    )}
-                    onClick={() => handleSelect(option)}
-                  >
-                    {option}
-                  </Button>
-                );
-              })}
-            </div>
-            <AnimatePresence>
-              {feedback && (
-                <motion.div
-                  key={feedback.title}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: 6 }}
-                  className={
-                    feedback.tone === "success"
-                      ? "rounded-md border border-emerald-500/60 bg-emerald-500/10 p-3 text-sm text-emerald-700 dark:bg-emerald-900/80 dark:text-emerald-100"
-                      : "rounded-md border border-amber-500/60 bg-amber-500/10 p-3 text-sm text-amber-700 dark:bg-amber-900/80 dark:text-amber-100"
-                  }
-                  data-testid="packed-feedback"
-                >
-                  <div className="font-semibold">{feedback.title}</div>
-                  <div>{feedback.detail}</div>
-                </motion.div>
-              )}
-            </AnimatePresence>
-            <div className="flex flex-wrap justify-end gap-2">
-              <Button
-                variant="secondary"
-                onClick={goToNextScenario}
-                data-testid="packed-advance"
-                disabled={!selectedOption}
-              >
-                {scenarioIndex === packedScenarios.length - 1 ? "Loop to start" : "Next layout"}
-              </Button>
-            </div>
-          </div>
-        </motion.div>
-      </AnimatePresence>
-    </div>
-  );
-};
-
-const InfoTile: React.FC<{ label: string; value: string; className?: string }> = ({ label, value, className }) => (
-  <div className={cn("rounded-lg border border-border/60 bg-muted/30 p-3 text-sm", className)}>
-    <div className="text-xs uppercase tracking-wide text-muted-foreground">{label}</div>
-    <div className="text-lg font-semibold">{value}</div>
-  </div>
-);
-
-export const DynamicStructureVisualizer: React.FC = () => {
-  const [tab, setTab] = useState("dynamic");
-
-  return (
-    <div className="space-y-6" data-testid="dynamic-structure-visualizer">
-      <Tabs defaultValue="dynamic" value={tab} onValueChange={setTab}>
-        <TabsList className="flex flex-wrap gap-2" data-testid="dynamic-structure-tabs">
-          <TabsTrigger value="dynamic" data-testid="tab-dynamic-array" className="rounded-full px-4 py-2 text-sm font-medium">
-            Dynamic Array
-          </TabsTrigger>
-          <TabsTrigger value="queue" data-testid="tab-queue" className="rounded-full px-4 py-2 text-sm font-medium">
-            Queue
-          </TabsTrigger>
-          <TabsTrigger
-            value="associative"
-            data-testid="tab-associative"
-            className="rounded-full px-4 py-2 text-sm font-medium"
+            ◀ Undo last operation
+          </button>
+          <button
+            type="button"
+            onClick={() => resetWith(kind, config)}
+            className="min-h-10 rounded-lg border border-border/70 px-3 text-xs hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            Associative Array
-          </TabsTrigger>
-          <TabsTrigger value="packed" data-testid="tab-packed" className="rounded-full px-4 py-2 text-sm font-medium">
-            Packed vs. Unpacked
-          </TabsTrigger>
-        </TabsList>
-        <TabsContent value="dynamic" forceMount>
-          <DynamicArrayTab />
-        </TabsContent>
-        <TabsContent value="queue" forceMount>
-          <QueueTab />
-        </TabsContent>
-        <TabsContent value="associative" forceMount>
-          <AssociativeArrayTab />
-        </TabsContent>
-        <TabsContent value="packed" forceMount>
-          <PackedUnpackedTab />
-        </TabsContent>
-      </Tabs>
-    </div>
+            Reset
+          </button>
+        </div>
+      </div>
+    </VisualFrame>
   );
-};
+}
 
 export default DynamicStructureVisualizer;

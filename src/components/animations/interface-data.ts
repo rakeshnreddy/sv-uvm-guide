@@ -37,11 +37,12 @@ export const interfaceData: InterfaceExample[] = [
   },
   {
     name: 'Modports',
-    code: 'interface simple_bus;\n  logic clk;\n  logic rw;\n  logic [7:0] data;\n\n  modport TB (input clk, output rw, inout data);\n  modport DUT (input clk, input rw, inout data);\nendinterface',
+    code: 'interface simple_bus;\n  logic clk;\n  logic rw;\n  wire  [7:0] data;  // inout needs a net: a variable cannot be an inout port\n\n  modport TB (input clk, output rw, inout data);\n  modport DUT (input clk, input rw, inout data);\nendinterface',
     steps: [
       'Modports `TB` and `DUT` are added to the interface.',
       'The `TB` modport defines the direction of the signals from the testbench\'s perspective.',
       'The `DUT` modport defines the direction of the signals from the DUT\'s perspective.',
+      '`data` is declared as a `wire` because it is `inout` in both modports: variables cannot be connected to either side of an inout port (IEEE 1800-2023 §6.5, §23.3.3).',
       'Modport restrictions prevent the testbench from driving `clk`.',
     ],
     signals: [
@@ -52,7 +53,7 @@ export const interfaceData: InterfaceExample[] = [
   },
   {
     name: 'Virtual Interface Binding',
-    code: 'interface simple_bus;\n  logic clk;\n  logic rw;\n  logic [7:0] data;\n\n  modport TB (input clk, output rw, inout data);\n  modport DUT (input clk, input rw, inout data);\nendinterface\n\nclass driver;\n  virtual simple_bus.TB vif;\n  task drive();\n    @(posedge vif.clk);\n    vif.rw <= 1\'b1;\n  endtask\nendclass\n\nmodule top;\n  simple_bus bus();\n  driver drv;\n  initial begin\n    drv = new();\n    drv.vif = bus;\n  end\nendmodule',
+    code: 'interface simple_bus;\n  logic clk;\n  logic rw;\n  wire  [7:0] data;  // net, because the modports use inout\n\n  modport TB (input clk, output rw, inout data);\n  modport DUT (input clk, input rw, inout data);\nendinterface\n\nclass driver;\n  virtual simple_bus.TB vif;\n  task drive();\n    @(posedge vif.clk);\n    vif.rw <= 1\'b1;\n  endtask\nendclass\n\nmodule top;\n  simple_bus bus();\n  driver drv;\n  initial begin\n    drv = new();\n    drv.vif = bus;\n  end\nendmodule',
     steps: [
       'A virtual interface is declared in the driver class.',
       'The driver binds to the interface instance in the testbench.',
@@ -83,12 +84,12 @@ export const interfaceData: InterfaceExample[] = [
     steps: [
       'The interface `param_bus` is parameterized with a width.',
       'Three instances form an arrayed interface accessed via indexing.',
-      'Glitches on `rw` and delays on `data` highlight signal integrity.',
+      'Each element `bus[i]` is a separate interface instance; select it with a constant index (or a generate loop) when connecting it.',
     ],
     signals: [
       { name: 'clk', direction: 'in' },
-      { name: 'rw', direction: 'in', glitch: true },
-      { name: 'data', direction: 'inout', delay: true },
+      { name: 'rw', direction: 'in' },
+      { name: 'data', direction: 'in' },
     ],
     arraySize: 3,
     parameters: { WIDTH: 16 },

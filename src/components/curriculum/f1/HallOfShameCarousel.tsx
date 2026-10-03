@@ -34,11 +34,15 @@ const HallOfShameCarousel = ({ items }: HallOfShameCarouselProps) => {
   const scrollNext = useCallback(() => emblaApi?.scrollNext(), [emblaApi]);
 
   return (
-    <div className="relative w-full overflow-hidden rounded-3xl border border-white/10 bg-slate-950/70 p-4 text-white shadow-xl backdrop-blur">
+    <section
+      aria-roledescription="carousel"
+      aria-label="Hall of Shame: cautionary bug stories"
+      className="relative w-full overflow-hidden rounded-3xl border border-white/10 bg-slate-950/70 p-4 text-white shadow-xl backdrop-blur"
+    >
       <div className="flex items-center justify-between px-2 pb-4">
         <div>
           <p className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.2em] text-rose-300">
-            <AlertTriangle className="h-4 w-4" />
+            <AlertTriangle className="h-4 w-4" aria-hidden />
             Cautionary Tales from the Trenches
           </p>
           <h3 className="text-2xl font-bold text-white">The Hall of Shame</h3>
@@ -48,17 +52,17 @@ const HallOfShameCarousel = ({ items }: HallOfShameCarouselProps) => {
             type="button"
             onClick={scrollPrev}
             aria-label="Previous incident"
-            className="rounded-full border border-white/20 bg-white/10 p-2 text-white transition hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white transition hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400 motion-reduce:transition-none"
           >
-            <ChevronLeft className="h-5 w-5" />
+            <ChevronLeft className="h-5 w-5" aria-hidden />
           </button>
           <button
             type="button"
             onClick={scrollNext}
             aria-label="Next incident"
-            className="rounded-full border border-white/20 bg-white/10 p-2 text-white transition hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
+            className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-white/20 bg-white/10 text-white transition hover:bg-white/20 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400 motion-reduce:transition-none"
           >
-            <ChevronRight className="h-5 w-5" />
+            <ChevronRight className="h-5 w-5" aria-hidden />
           </button>
         </div>
       </div>
@@ -72,12 +76,12 @@ const HallOfShameCarousel = ({ items }: HallOfShameCarouselProps) => {
               aria-roledescription="slide"
               aria-label={`${item.title} (${index + 1} of ${items.length})`}
             >
-              <div className="grid gap-6 rounded-2xl border border-white/10 bg-slate-900/80 p-6 shadow-inner lg:grid-cols-[1.4fr,1fr]">
+              <div className="grid gap-6 rounded-2xl border border-white/10 bg-slate-900/80 p-4 shadow-inner sm:p-6 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
                 <div className="space-y-4">
                   <div className="relative h-56 w-full overflow-hidden rounded-2xl border border-white/10">
                     <Image
                       src={item.image}
-                      alt={item.title}
+                      alt=""
                       fill
                       sizes="(min-width: 1024px) 60vw, 90vw"
                       className="object-cover"
@@ -105,20 +109,30 @@ const HallOfShameCarousel = ({ items }: HallOfShameCarouselProps) => {
         </div>
       </div>
 
-      <div className="mt-4 flex items-center justify-center gap-2">
-        {items.map((_, index) => (
+      <p className="sr-only" aria-live="polite">
+        {items.length > 0 ? `Incident ${selectedIndex + 1} of ${items.length}: ${items[selectedIndex]?.title ?? ""}` : ""}
+      </p>
+
+      <div className="mt-2 flex items-center justify-center gap-1">
+        {items.map((item, index) => (
           <button
             key={`dot-${index}`}
             type="button"
-            className={`h-2 w-8 rounded-full transition ${
-              index === selectedIndex ? "bg-rose-400" : "bg-white/20"
-            }`}
+            className="group inline-flex h-10 min-w-10 items-center justify-center focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-400"
             onClick={() => emblaApi?.scrollTo(index)}
-            aria-label={`Go to slide ${index + 1}`}
-          />
+            aria-label={`Go to incident ${index + 1}: ${item.title}`}
+            aria-current={index === selectedIndex ? "true" : undefined}
+          >
+            <span
+              aria-hidden
+              className={`h-2 w-8 rounded-full transition motion-reduce:transition-none ${
+                index === selectedIndex ? "bg-rose-400" : "bg-white/30 group-hover:bg-white/50"
+              }`}
+            />
+          </button>
         ))}
       </div>
-    </div>
+    </section>
   );
 };
 

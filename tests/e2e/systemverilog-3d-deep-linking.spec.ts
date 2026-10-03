@@ -3,16 +3,19 @@ import { expect, test, type Page } from "@playwright/test";
 type SceneId = "dynamic-array" | "queue" | "associative" | "packed-matrix";
 
 const sceneLabels: Record<SceneId, string> = {
-  "dynamic-array": "Dynamic Array",
+  "dynamic-array": "Dynamic array",
   queue: "Queue",
-  associative: "Associative Array",
-  "packed-matrix": "Fixed/Packed Array",
+  associative: "Associative array",
+  "packed-matrix": "Packed / unpacked",
 };
+
+const structurePicker = (page: Page) =>
+  page.getByTestId("sv-3d-visualizer").getByRole("radiogroup", { name: "Structure" });
 
 async function expectInitialScene(page: Page, scene: SceneId): Promise<void> {
   const visualizer = page.getByTestId("sv-3d-visualizer");
   await expect(visualizer).toBeVisible();
-  await expect(visualizer.getByRole("combobox")).toContainText(sceneLabels[scene]);
+  await expect(structurePicker(page).getByRole("radio", { name: sceneLabels[scene] })).toHaveAttribute("aria-checked", "true");
   if (scene !== "dynamic-array") {
     await expect(page).toHaveURL(new RegExp(`scene=${scene}`), { timeout: 15_000 });
   }
@@ -21,7 +24,7 @@ async function expectInitialScene(page: Page, scene: SceneId): Promise<void> {
 test.describe("SystemVerilog 3D Explorer deep linking", () => {
   test("loads the default scene without a query parameter", async ({ page }) => {
     await page.goto("/visualizations/systemverilog-3d");
-    await expect(page.getByRole("heading", { name: "SV Data Structures" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /Array sandbox/ })).toBeVisible();
     await expectInitialScene(page, "dynamic-array");
     await expect(page).not.toHaveURL(/scene=/, { timeout: 15_000 });
   });
@@ -30,8 +33,7 @@ test.describe("SystemVerilog 3D Explorer deep linking", () => {
     await page.goto("/visualizations/systemverilog-3d?scene=queue");
     await expectInitialScene(page, "queue");
 
-    await page.getByTestId("sv-3d-visualizer").getByRole("combobox").click();
-    await page.getByRole("option", { name: "Associative Array" }).click();
+    await structurePicker(page).getByRole("radio", { name: "Associative array" }).click();
     await expectInitialScene(page, "associative");
   });
 

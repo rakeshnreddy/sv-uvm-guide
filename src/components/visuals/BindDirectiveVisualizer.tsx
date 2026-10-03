@@ -1,190 +1,201 @@
 "use client";
 
-import React, { useState } from 'react';
-import { Layers, FileCode, CheckSquare, Link as LinkIcon, AlertTriangle, ArrowRight, X } from 'lucide-react';
+import React, { useMemo, useState } from "react";
+
+import { CodeTrace } from "@/components/visual-system/CodeTrace";
+import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import { bindToSource, resolveBinds, type BindDirective, type DesignInstance } from "@/lib/sv-elaboration-model";
+import { cn } from "@/lib/utils";
+
+const DESIGN: DesignInstance[] = [
+  { path: "tb_top.dut", module: "soc" },
+  { path: "tb_top.dut.u_slave_0", module: "ahb_slave", localNames: ["u_fifo"] },
+  { path: "tb_top.dut.u_slave_1", module: "ahb_slave", localNames: ["u_fifo"] },
+  { path: "tb_top.dut.u_spi", module: "spi_ctrl" },
+];
+
+const PORTS = ".hclk(clk_i), .hresetn(rst_ni), .haddr(addr_i)";
+const base: BindDirective = { form: "module", target: "ahb_slave", unit: "ahb_protocol_chk", instanceName: "chk_inst", ports: PORTS };
+
+type ScenarioId = "module" | "list" | "instance" | "clash";
+
+const SCENARIOS: Record<ScenarioId, { label: string; binds: BindDirective[]; note: string }> = {
+  module: { label: "every ahb_slave", binds: [base], note: "Module form: the instance goes into every instance of ahb_slave, designwide." },
+  list: {
+    label: "listed instances",
+    binds: [{ ...base, form: "module-list", instances: ["tb_top.dut.u_slave_1"] }],
+    note: "Module : instance-list form: only the listed instances of ahb_slave get it.",
+  },
+  instance: {
+    label: "one instance path",
+    binds: [{ ...base, form: "instance", target: "tb_top.dut.u_slave_0" }],
+    note: "Instance form: exactly one target instance.",
+  },
+  clash: {
+    label: "two binds, same name",
+    binds: [base, { ...base, unit: "ahb_cov_collector" }],
+    note: "Two bind statements introduce the same instance name chk_inst into ahb_slave.",
+  },
+};
+
+const RTL = [
+  "module ahb_slave (input logic clk_i, rst_ni,",
+  "                  input logic [31:0] addr_i);",
+  "  ahb_fifo u_fifo (.*);",
+  "  // ... locked RTL, owned by another team",
+  "endmodule",
+];
+
+const CHECKER = [
+  "checker ahb_protocol_chk (input logic hclk, hresetn,",
+  "                          input logic [31:0] haddr);",
+  "  a_addr_known: assert property (@(posedge hclk)",
+  "    disable iff (!hresetn) !$isunknown(haddr));",
+  "endchecker",
+];
+
+type Answer = "all" | "slave0" | "slave1" | "bindScope" | "error";
 
 export default function BindDirectiveVisualizer() {
-  const [bindActive, setBindActive] = useState(false);
-  const [bindType, setBindType] = useState<'module' | 'instance'>('module');
+  const [scenarioId, setScenarioId] = useState<ScenarioId>("module");
+  const scenario = SCENARIOS[scenarioId];
+  const result = useMemo(() => resolveBinds(DESIGN, scenario.binds), [scenario]);
+  const boundPaths = result.bound.map((b) => b.path);
+
+  const correct: Answer =
+    result.errors.length > 0
+      ? "error"
+      : boundPaths.length === 2
+        ? "all"
+        : boundPaths[0] === "tb_top.dut.u_slave_0.chk_inst"
+          ? "slave0"
+          : "slave1";
+
+  const why: Record<Answer, string> = {
+    all: "Binding to a module name inserts the instance into every instance of that module (§23.11), so both slaves get chk_inst.",
+    slave0: "Only tb_top.dut.u_slave_0 is targeted, so only it gets chk_inst; the bound instance sits inside its target (§23.11).",
+    slave1: "Only the listed instance tb_top.dut.u_slave_1 is targeted (§23.11).",
+    bindScope:
+      "The bind statement can be written anywhere (a bind file, tb_top, or $unit), but the instance is created inside the target scope, as if typed at the end of that module (§23.11).",
+    error: "Each target would get two instances named chk_inst. A bound instance name may not clash with a name already in the target, including one added by another bind (§23.11).",
+  };
+
+  const diagnose = (id: Answer): string => {
+    if (id === correct) return why[id];
+    if (id === "bindScope") return why.bindScope;
+    if (id === "error") return "Nothing clashes here: chk_inst is a new name in each target scope.";
+    if (correct === "error") return "Both statements target ahb_slave with the same instance name, so the second one cannot be inserted.";
+    if (id === "all") return "Only the module form reaches every instance. This statement names its target instance(s) explicitly.";
+    if (correct === "all") return "The module form is not limited to one instance: every instance of ahb_slave gets the checker.";
+    return "Read the target in the statement: it names the other instance.";
+  };
+
+  const option = (id: Answer, label: React.ReactNode): PredictionOption => ({ id, label, correct: id === correct, feedback: diagnose(id) });
+
+  const options: PredictionOption[] = [
+    option("all", <code className="font-mono text-xs">tb_top.dut.u_slave_0.chk_inst and tb_top.dut.u_slave_1.chk_inst</code>),
+    option("slave0", <code className="font-mono text-xs">tb_top.dut.u_slave_0.chk_inst only</code>),
+    option("slave1", <code className="font-mono text-xs">tb_top.dut.u_slave_1.chk_inst only</code>),
+    option("bindScope", <><code className="font-mono text-xs">tb_top.chk_inst</code>, where the bind statement is written</>),
+    option("error", "None: elaboration stops with an error"),
+  ];
+
+  const boundUnder = (path: string) => result.bound.filter((b) => b.parent === path);
 
   return (
-    <div className="flex flex-col gap-6 p-6 bg-slate-900 rounded-xl border border-slate-800 text-slate-200 font-sans my-8">
-      {/* Header & Controls */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800 pb-4">
-        <div>
-          <h3 className="text-xl font-bold font-display text-white m-0">The `bind` Directive</h3>
-          <p className="text-sm text-slate-400 mt-1">Attach verification logic to RTL non-intrusively.</p>
-        </div>
-        
-        <div className="flex flex-col sm:flex-row items-center gap-3">
-          <div className="flex items-center bg-slate-800 p-1 rounded-lg border border-slate-700 text-xs">
-            <button
-              onClick={() => { setBindType('module'); setBindActive(false); }}
-              className={`px-3 py-1.5 rounded-md transition-all ${
-                bindType === 'module' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300'
-              }`}
-            >
-              Bind by Target Module
-            </button>
-            <button
-              onClick={() => { setBindType('instance'); setBindActive(false); }}
-              className={`px-3 py-1.5 rounded-md transition-all ${
-                bindType === 'instance' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300'
-              }`}
-            >
-              Bind by Specific Instance
-            </button>
-          </div>
+    <VisualFrame
+      label="Bind explorer"
+      eyebrow="Experiment"
+      title="bind: add a checker without editing the RTL"
+      summary={
+        <>
+          <code className="font-mono">bind</code> is not a compiler directive (no backtick). It is processed at <strong>elaboration</strong>, when the tool builds the
+          design hierarchy: the instance is inserted into the target scope as if it were typed at the end of that module (§23.11). Pick a form and predict where
+          the checker lands.
+        </>
+      }
+      fidelity="model"
+      assumptions={[
+        "Design: tb_top.dut contains two ahb_slave instances (u_slave_0, u_slave_1) and one spi_ctrl.",
+        "Bind targets and name clashes follow §23.11; port expressions are resolved in the target scope.",
+        "Errors are classified, not quoted: the wording differs by tool.",
+      ]}
+    >
+      <SegmentedControl
+        label="Bind form"
+        options={(Object.keys(SCENARIOS) as ScenarioId[]).map((id) => ({ value: id, label: SCENARIOS[id].label }))}
+        value={scenarioId}
+        onChange={setScenarioId}
+      />
 
-          <button
-            onClick={() => setBindActive(!bindActive)}
-            className={`px-4 py-2 text-sm font-medium rounded-lg transition-all flex items-center gap-2 border ${
-              bindActive 
-                ? 'bg-rose-900/50 text-rose-300 border-rose-700/50 hover:bg-rose-900/70' 
-                : 'bg-emerald-600 text-white border-emerald-500 shadow-md hover:bg-emerald-500'
-            }`}
-          >
-            {bindActive ? <X className="w-4 h-4" /> : <LinkIcon className="w-4 h-4" />}
-            {bindActive ? 'Remove Bind' : 'Execute Bind'}
-          </button>
-        </div>
+      <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
+        <CodeTrace label="Locked RTL (not edited)" lines={RTL.map((text) => ({ text, owner: "design" as const }))} />
+        <CodeTrace label="Checker" lines={CHECKER.map((text) => ({ text, owner: "testbench" as const }))} />
       </div>
+      <CodeTrace
+        label="sva_bindings.sv · processed at elaboration"
+        lines={scenario.binds.map((b, i) => ({ text: bindToSource(b), owner: "testbench" as const, key: `bind-${i}` }))}
+        contextKeys={scenario.binds.map((_, i) => `bind-${i}`)}
+      />
+      <p className="text-sm text-muted-foreground">{scenario.note} The names in the port list (clk_i, addr_i) are looked up inside the target ahb_slave, not where the bind is written.</p>
 
-      {/* Main Diagram Area */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-        
-        {/* Source Files Overview */}
-        <div className="md:col-span-4 flex flex-col gap-4">
-          <div className="bg-slate-800/40 rounded-xl border border-slate-700 p-4">
-            <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-300">
-              <FileCode className="w-4 h-4 text-blue-400" />
-              Locked DUT Source (RTL)
-            </div>
-            <pre className="text-[10px] font-mono text-slate-400 bg-slate-900 p-2 rounded border border-slate-800 opacity-70">
-{`module ahb_slave (
-  input hclk,
-  input hresetn,
-  input [31:0] haddr,
-  // ...
-);
-  // Implementation
-endmodule`}
-            </pre>
-          </div>
-
-          <div className="bg-slate-800/40 rounded-xl border border-slate-700 p-4">
-            <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-300">
-              <CheckSquare className="w-4 h-4 text-purple-400" />
-              Checker Definition
-            </div>
-            <pre className="text-[10px] font-mono text-slate-400 bg-slate-900 p-2 rounded border border-slate-800">
-{`checker ahb_protocol_chk (
-  clock, reset, addr
-);
-  // SVA assertions
-  assert property (@(posedge clock) ...);
-endchecker`}
-            </pre>
-          </div>
-        </div>
-
-        {/* Instantiation Hierarchy */}
-        <div className="md:col-span-8 flex flex-col gap-4">
-          <div className="bg-slate-800/80 rounded-xl border border-slate-600 p-5 flex-1 relative overflow-hidden">
-            <div className="flex items-center gap-2 mb-4 text-sm font-semibold text-slate-300">
-              <Layers className="w-4 h-4 text-emerald-400" />
-              Simulation Hierarchy (Elaboration)
-            </div>
-
-            {/* Top Level */}
-            <div className="bg-slate-700/30 border border-slate-600 rounded-lg p-4 font-mono text-sm relative">
-              <div className="text-slate-300 font-bold">tb_top</div>
-              
-              <div className="mt-3 pl-6 border-l-2 border-slate-600 flex flex-col gap-3 relative">
-                
-                {/* Instance 1 */}
-                <div className="bg-blue-900/20 border border-blue-800/50 rounded p-3 relative z-10 w-full max-w-sm">
-                  <div className="text-blue-300 font-semibold mb-1">ahb_slave <span className="text-slate-400 font-normal">u_slave_0</span></div>
-                  
-                  {/* Bound checker 1 */}
-                  <div className={`mt-2 transition-all duration-500 overflow-hidden ${bindActive ? 'max-h-20 opacity-100' : 'max-h-0 opacity-0'}`}>
-                    <div className="bg-purple-900/30 border border-purple-700/50 rounded flex items-center p-2 text-xs">
-                      <LinkIcon className="w-3 h-3 text-purple-400 mr-2 shrink-0" />
-                      <div>
-                        <span className="text-purple-300 font-semibold">ahb_protocol_chk</span>{' '}
-                        <span className="text-slate-400">chk_inst</span>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Instance 2 */}
-                <div className="bg-blue-900/20 border border-blue-800/50 rounded p-3 relative z-10 w-full max-w-sm">
-                  <div className="text-blue-300 font-semibold mb-1">ahb_slave <span className="text-slate-400 font-normal">u_slave_1</span></div>
-                  
-                  {/* Bound checker 2 */}
-                  <div className={`mt-2 transition-all duration-500 overflow-hidden ${bindActive && bindType === 'module' ? 'max-h-20 opacity-100' : 'max-h-0 opacity-0'}`}>
-                    <div className="bg-purple-900/30 border border-purple-700/50 rounded flex items-center p-2 text-xs">
-                      <LinkIcon className="w-3 h-3 text-purple-400 mr-2 shrink-0" />
-                      <div>
-                        <span className="text-purple-300 font-semibold">ahb_protocol_chk</span>{' '}
-                        <span className="text-slate-400">chk_inst</span>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Warning if trying to bind entirely new instance but missing this one */}
-                  <div className={`mt-2 transition-all duration-500 overflow-hidden ${bindActive && bindType === 'instance' ? 'max-h-20 opacity-100' : 'max-h-0 opacity-0'}`}>
-                     <div className="flex items-center text-[10px] text-slate-500 italic px-2">
-                       (Not bound: specific instance targeting was used)
-                     </div>
-                  </div>
-                </div>
-
-              </div>
-            </div>
-
-            {/* Bind logic animation overlay */}
-            <div className={`absolute top-12 right-4 max-w-[220px] bg-slate-900/90 border-l-4 border-emerald-500 rounded-r-lg p-3 shadow-2xl backdrop-blur-sm transition-all duration-500 transform ${bindActive ? 'translate-x-0 opacity-100' : 'translate-x-8 opacity-0 pointer-events-none'}`}>
-              <div className="text-xs font-semibold text-emerald-400 mb-1 flex items-center gap-1.5">
-                <AlertTriangle className="w-3.5 h-3.5" /> Elaboration Hook
-              </div>
-              <p className="text-[10px] text-slate-300 leading-relaxed">
-                The compiler seamlessly injects the checker into the target scope as if you had typed the instantiation inside the RTL itself.
-              </p>
-            </div>
-          </div>
-        </div>
-
-      </div>
-
-      {/* Code syntax generator */}
-      <div className="bg-black/50 rounded-lg border border-slate-800 p-4">
-        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-3 border-b border-slate-800 pb-2">
-          Compile-time Directive Syntax
-        </div>
-        <div className="font-mono text-xs overflow-x-auto whitespace-pre">
-          <span className="text-emerald-400">bind</span>{' '}
-          {bindType === 'module' ? (
-            <span className="text-blue-300" title="Target Module Definition">ahb_slave</span>
+      <PredictionPrompt resetKey={scenarioId} question="After elaboration, where does the checker instance appear?" options={options}>
+        <div className="space-y-3" aria-live="polite">
+          {result.errors.length > 0 ? (
+            <ul className="space-y-1 rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-2 text-sm text-rose-900 dark:text-rose-100">
+              {result.errors.map((e, i) => (
+                <li key={i}>
+                  ✕ Elaboration error: {e.message} ({e.clause})
+                </li>
+              ))}
+            </ul>
           ) : (
-            <span className="text-blue-300" title="Target specific instance">tb_top.u_slave_0</span>
+            <p className="rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-900 dark:text-emerald-100">
+              ✓ Bound: {boundPaths.map((p) => (
+                <code key={p} className="mr-2 font-mono text-xs">
+                  {p}
+                </code>
+              ))}
+            </p>
           )}
-          {' '}
-          <span className="text-purple-300" title="Checker name">ahb_protocol_chk</span>{' '}
-          <span className="text-slate-300" title="Instance name">chk_inst</span> (
-          <div className="pl-4 text-slate-400">
-            .clock ( hclk ),<br/>
-            .reset ( hresetn ),<br/>
-            .addr  ( haddr )
+          <div className="rounded-xl border border-border/70 bg-background/50 p-3">
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+              {result.errors.length > 0 ? "Hierarchy when elaboration stopped" : "Elaborated hierarchy"}
+            </p>
+            <ul aria-label="Elaborated hierarchy" className="space-y-1 font-mono text-xs [font-variant-ligatures:none]">
+              <li>tb_top</li>
+              <li className="pl-4">
+                dut <span className="text-muted-foreground">(soc)</span>
+                <ul className="space-y-1 border-l border-border/70 pl-4">
+                  {DESIGN.filter((d) => d.path.split(".").length === 3).map((d) => (
+                    <li key={d.path}>
+                      {d.path.split(".").pop()} <span className="text-muted-foreground">({d.module})</span>
+                      <ul className="space-y-0.5 border-l border-border/70 pl-4">
+                        {(d.localNames ?? []).map((n) => (
+                          <li key={n} className="text-muted-foreground">
+                            {n}
+                          </li>
+                        ))}
+                        {boundUnder(d.path).map((b) => (
+                          <li
+                            key={b.path}
+                            aria-label={`${b.path}, bound ${b.unit}`}
+                            className={cn("w-fit rounded border px-1.5", "border-violet-500/60 bg-violet-500/10 text-violet-900 dark:text-violet-100")}
+                          >
+                            ⊕ chk_inst <span className="opacity-75">({b.unit}, bound)</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            </ul>
           </div>
-          );
         </div>
-        <div className="mt-3 text-[10px] text-slate-500 flex items-start gap-1.5">
-          <ArrowRight className="w-3 h-3 mt-0.5 flex-shrink-0" />
-          <span>Notice how the checker's port connections can freely access the internal signals (<code className="text-slate-400">hclk</code>, <code className="text-slate-400">haddr</code>) of the target scope.</span>
-        </div>
-      </div>
-    </div>
+      </PredictionPrompt>
+    </VisualFrame>
   );
 }

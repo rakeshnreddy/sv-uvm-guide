@@ -11,7 +11,7 @@ sources:
 import { InteractiveCode, Quiz } from '@/components/ui';
 
 ## Quick Take
-- **What it is:** **Clocking blocks** define a timing discipline for driving and sampling signals relative to a clock edge. **Program blocks** are a legacy construct for separating testbench events from DUT events.
+- **What it is:** **Clocking blocks** define a timing discipline for driving and sampling signals relative to a clock edge. **Program blocks** are an older mechanism (still in IEEE 1800, not deprecated) for running testbench code in the reactive region set.
 - **Why it matters:** Without clocking blocks, you risk "race conditions" where the testbench and DUT try to read/write a signal at the exact same simulation time, leading to unpredictable results.
 - **The Analogy:** A clocking block is like an airlock. It ensures that data only enters or leaves the clean room (the testbench) at specific, safe times, preventing contamination (race conditions).
 
@@ -35,9 +35,46 @@ end
 Reading `q` with a plain `@(posedge clk)` is deterministic *only* while the DUT writes `q` with `<=`: the read happens in Active, before the NBA update. If any design logic on that path uses blocking assignments, the read races too. A clocking block removes both risks. See F3C's Race Condition Debugger to try every legal order.
 
 **Clocking blocks solve this by:**
-1.  **Sampling** inputs just *before* the clock edge in the **Preponed** region. The testbench is guaranteed to read the stable, old value.
+1.  **Sampling** inputs before the clock edge. With the default `#1step` input skew the sample is taken in the **Preponed** region, so the testbench reads the stable, old value. A `#N` skew samples N time units earlier, in the Postponed region of that time step; an explicit `#0` samples at the edge, in **Observed** (§14.13).
 2.  **Driving** outputs synchronized to the clock edge. With the default `#0` output skew the update is scheduled in the **Re-NBA** region of that time step, whichever code issued the drive (§14.16), so it lands after every design NBA update.
 3.  **Signalling** the clocking event `@(cb)` in the **Observed** region (§14.10), after the design's NBA updates. Code that waits on `@(vif.cb)` therefore never competes with the flops for the same edge.
+
+Picture the clocking block as a camera and a delivery truck on the timeline: it takes a **photo** of each input just before the edge (▼) and **delivers** each drive after the edge (◆). The visual below runs a tested model of those rules over four clock cycles.
+
+### Experiment: move the skews
+
+Start with the defaults and predict what `cb.dout` returns at edge 3. Then try an explicit `#0` input skew, a `#2ns` skew against a late `+9 ns` DUT path, and a blocking DUT update, and watch which reading style in the comparison table starts to race.
+
+<ClockingBlockSkewVisualizer />
+
+What to take away:
+
+- The photo is taken *before* the edge for every skew except an explicit `#0`. A nonzero input skew is a setup window: a DUT output that changes inside it is only seen one cycle later.
+- `@(cb)` then `cb.x` is always safe. `@(posedge clk)` then `cb.x` races the clocking block's own update (§14.13), so never mix the two styles.
+- A synchronous drive issued after `@(cb)` at edge *k* reaches the DUT's flops at edge *k* + 1, whatever the output skew below one period.
+
+<VisualRecap
+  title="Photo before the edge, delivery after it"
+  rule="Clocking-block inputs are a photo taken before the edge (#1step: Preponed; #N: Postponed of edge minus N; explicit #0: Observed). Outputs are delivered after the edge, in Re-NBA plus the output skew. @(cb) fires in Observed, after the photo is stored."
+  code={`default clocking cb @(posedge clk);
+  default input #1step output #0;
+  input dout;  output din;
+endclocking
+@(cb) x = cb.dout;   // photo of this edge
+cb.din <= 8'hA5;     // DUT flops see it next edge`}
+  mistake="Waiting on @(posedge clk) and then reading cb.dout: that read races the clocking block's own update. Second place: an input skew longer than the DUT output's settling margin, which silently samples last cycle's value."
+  inTestbench="Every UVM driver waits on @(vif.cb) and drives vif.cb.sig; every monitor waits on @(vif.mon_cb) and reads an input-only clocking block."
+>
+  <svg viewBox="0 0 320 110" role="img" aria-label="Timeline around one clock edge: the input photo is taken just before the edge, the drive lands just after it." style={{ width: "100%", maxWidth: 360 }}>
+    <line x1="10" y1="70" x2="310" y2="70" stroke="currentColor" strokeOpacity="0.5" />
+    <polyline points="10,85 150,85 150,55 300,55" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <text x="152" y="102" fontSize="11" fill="currentColor">edge</text>
+    <text x="128" y="30" fontSize="16" fill="rgb(139,92,246)">▼</text>
+    <text x="70" y="18" fontSize="11" fill="currentColor">photo (input skew)</text>
+    <text x="172" y="30" fontSize="14" fill="rgb(217,119,6)">◆</text>
+    <text x="186" y="18" fontSize="11" fill="currentColor">delivery (Re-NBA + skew)</text>
+  </svg>
+</VisualRecap>
 
 ### Interactive Example: The Clocking Block Solution
 <InteractiveCode
@@ -62,25 +99,23 @@ interface memory_if (input logic clk);
   endclocking
 endinterface
 
-module testbench (memory_if vif);
+module testbench (memory_if bus);
   initial begin
-    // Drive via clocking block
-    vif.drv_cb.we <= 1; 
-    vif.drv_cb.data_in <= 32'hDEAD_BEEF;
-    
-    // Wait for edge
-    @(vif.drv_cb); 
-    
-    // Sample via clocking block
-    $display("Read Data: %h", vif.drv_cb.data_out);
+    @(bus.drv_cb);                        // first clocking event
+    bus.drv_cb.we      <= 1;              // lands 2ns after this edge
+    bus.drv_cb.data_in <= 32'hDEAD_BEEF;
+
+    @(bus.drv_cb);                        // next edge: the DUT captured we/data_in
+    $display("Read Data: %h", bus.drv_cb.data_out);
   end
 endmodule
   `}
   explanationSteps={[
-    { target: "7-11", title: "Driver Clocking Block", explanation: "Defines timing for the driver. Inputs are sampled 1 step before the edge. Outputs are driven 2ns after the edge." },
-    { target: "13-16", title: "Monitor Clocking Block", explanation: "Monitors only need to read. They sample everything 1 step before the edge to get stable values." },
-    { target: "22-23", title: "Synchronous Drive", explanation: "Using `vif.drv_cb.signal <= val` schedules the drive to happen at the specified skew (2ns after clock), ensuring no race with the DUT." },
-    { target: "29", title: "Synchronous Sample", explanation: "Reading `vif.drv_cb.data_out` returns the value sampled in the Preponed region, guaranteeing the stable 'old' value." }
+    { target: "7-11", title: "Driver Clocking Block", explanation: "Defines timing for the driver. Inputs are sampled #1step before the edge (Preponed). Outputs change 2ns after the edge, in the Re-NBA region of that time step (§14.16)." },
+    { target: "13-16", title: "Monitor Clocking Block", explanation: "Monitors only read. Every signal is an input sampled #1step before the edge, so the monitor sees the stable value." },
+    { target: "19", title: "A real interface port", explanation: "This module receives the interface instance through a port named bus. In a class you would hold a virtual interface handle instead (F4B)." },
+    { target: "21-23", title: "Synchronous Drive", explanation: "After the first @(bus.drv_cb), `bus.drv_cb.we <= 1` changes we 2ns after that edge, so the DUT's flops capture it at the next edge. A drive issued before any clocking event (for example at time 0) would simply wait for the first one (§14.16)." },
+    { target: "25-26", title: "Synchronous Sample", explanation: "`bus.drv_cb.data_out` returns the value sampled #1step before this edge. Waiting on @(bus.drv_cb), not @(posedge clk), guarantees the sample is already updated (§14.13)." }
   ]}
 />
 
@@ -89,7 +124,62 @@ endmodule
 ### Clocking Blocks (LRM Clause 14)
 - **Input Skew:** When to sample inputs relative to the clock (default: `#1step`).
 - **Output Skew:** When to drive outputs relative to the clock (default: `#0`).
-- **Cycle Delay:** `##N` waits for N clocking events of the **default clocking** block. It needs a `default clocking cb;` declaration in scope (§14.11); otherwise the compiler reports an error. Inside class-based drivers, use `repeat (N) @(vif.cb);` instead.
+- **Cycle Delay:** `##N` waits for N clocking events of the **default clocking** block. It needs a `default clocking` declaration in that module, interface, program or checker (§14.11, §14.12); otherwise the compiler reports an error. A class in a package has no default clocking, so class-based drivers use `repeat (N) @(vif.cb);` (or call an interface task that uses `##`).
+- **`##` inside a drive:** `cb.sig <= ##2 v;` evaluates `v` now and updates `sig` two cycles of `cb` later; the statement does not block, and it needs no default clocking because it counts `cb`'s own clock (§14.16). `##2 cb.sig <= v;` instead blocks the process for two default-clocking cycles first.
+
+### A driver and a monitor through `vif.cb`
+
+This is the pattern every UVM agent uses. The interface owns the timing; the classes only wait on clocking events and touch signals through clocking blocks.
+
+```systemverilog
+interface fifo_if (input logic clk);
+  logic       rst_n;            // asynchronous reset: drive it directly, not through cb
+  logic [7:0] din, dout;
+  logic       push, full;
+
+  default clocking cb @(posedge clk);   // the default clocking of this interface (§14.12)
+    default input #1step output #0;
+    output din, push;
+    input  full, dout;
+  endclocking
+
+  clocking mon_cb @(posedge clk);       // monitor view: inputs only, #1step by default
+    input din, push, full, dout;
+  endclocking
+
+  // ## is legal here because cb is this scope's default clocking (§14.11).
+  task automatic wait_cycles(int n);
+    ##(n);
+  endtask
+endinterface
+
+class fifo_driver;
+  virtual fifo_if vif;
+
+  task push_byte(byte data);
+    @(vif.cb);                          // resume after the clocking event (Observed)
+    while (vif.cb.full) @(vif.cb);      // full is the #1step sample: no race with the DUT
+    vif.cb.din  <= data;                // lands in Re-NBA of this edge (§14.16)
+    vif.cb.push <= 1'b1;
+    @(vif.cb);                          // the DUT captured din/push at this edge
+    vif.cb.push <= 1'b0;
+  endtask
+endclass
+
+class fifo_monitor;
+  virtual fifo_if vif;
+
+  task run();
+    forever begin
+      @(vif.mon_cb);                    // never @(posedge vif.clk) before reading mon_cb (§14.13)
+      if (vif.mon_cb.push && !vif.mon_cb.full)
+        $display("%0t push %h", $time, vif.mon_cb.din);
+    end
+  endtask
+endclass
+```
+
+The driver raises `push` after `@(vif.cb)` at edge *k*; the DUT's flops capture it at edge *k* + 1. The monitor wakes on `@(vif.mon_cb)` at edge *k* + 1 and sees `push` = 1 in its #1step sample, the same edge on which the DUT accepted the byte. Both classes get `vif` from `uvm_config_db` (F4B).
 
 ### Program Blocks (LRM Clause 24)
 - **Purpose:** Originally designed to separate testbench execution (Reactive region) from DUT execution (Active region).
@@ -100,10 +190,11 @@ endmodule
 1.  **Define Clocking:** Add a `clocking` block to your interface for each agent (Driver, Monitor).
 2.  **Set Skews:** Start from the defaults, `default input #1step output #0;`. A nonzero output skew (for example `#1ns`) makes waveforms easier to read but moves drives to a later time step; choose it deliberately.
 3.  **Drive/Sample:** In your testbench/UVM driver, *always* access signals through the clocking block handle (e.g., `vif.cb.req`).
-4.  **Wait for Events:** Use `@(vif.cb)` to wait for the clock edge.
+4.  **Wait for Events:** Use `@(vif.cb)` to wait for the clock edge. Do not wait on `@(posedge vif.clk)` and then read `vif.cb` inputs: that read races the clocking block's update (§14.13).
+5.  **Keep reset out of the clocking block** when it is asynchronous: drive it directly so it can change between edges.
 
 ## Push Further
-- Explore how to use `##N` inside clocking blocks to delay execution by N cycles instead of writing loops.
+- Open the skew visualizer's advanced controls and compare `cb.din <= ##1 v;` with `##1 cb.din <= v;`, with and without `default clocking`. Explain why only one of them needs the default clocking.
 - Investigate the difference between synchronous drive (`vif.cb.sig <= val`) and asynchronous drive (`vif.sig = val`).
 
 ## Practice & Reinforce
@@ -151,7 +242,7 @@ endmodule
 
 ## References & Next Topics
 - **IEEE 1800-2023 Standard:**
-    - Clause 14: Clocking Blocks
+    - Clause 14: Clocking Blocks (§14.4 skews, §14.10 `@(cb)`, §14.11 `##`, §14.12 default clocking, §14.13 input sampling, §14.16 synchronous drives)
     - Clause 24: Programs
 - **Next:** [I-SV-1: Object-Oriented Programming for Verification](../../T2_Intermediate/I-SV-1_OOP)
 
@@ -173,11 +264,33 @@ endmodule
       answers: [
         { text: 'They are not supported by simulators', correct: false },
         { text: 'They cannot contain classes', correct: false },
-        { text: 'Clocking blocks and UVM phasing handle the race avoidance better', correct: true },
+        { text: 'Clocking blocks already give module and class code race-free sampling and driving', correct: true },
         { text: 'They are too slow', correct: false }
       ],
       explanation:
-        'UVM achieves race freedom through the use of clocking blocks (for signal timing) and phasing (for execution ordering), making the special scheduling semantics of program blocks unnecessary.'
+        'Clocking blocks sample in Preponed (or at the skew) and drive in Re-NBA no matter where the code runs, so the reactive-region scheduling of program blocks adds little. UVM phasing orders whole phases; it does nothing about two processes on the same clock edge.'
+    },
+    {
+      question: 'A driver does @(posedge vif.clk) and then reads vif.cb.ready. What can go wrong?',
+      answers: [
+        { text: 'Nothing: cb inputs are always the Preponed sample', correct: false },
+        { text: 'It may read the previous sample or the new one: it races the clocking block update', correct: true },
+        { text: 'It is a compile error', correct: false },
+        { text: 'It always reads X', correct: false }
+      ],
+      explanation:
+        'The clocking block updates its samples and then triggers @(cb) in Observed. A process woken by @(posedge clk) runs in Active, racing that update (IEEE 1800-2023 §14.13). Wait on @(vif.cb) instead.'
+    },
+    {
+      question: 'With default input #2ns and a rising edge at 25 ns, when is the input sampled?',
+      answers: [
+        { text: 'In the Preponed region of 25 ns', correct: false },
+        { text: 'In the Observed region of 25 ns', correct: false },
+        { text: 'In the Postponed region of 23 ns, so a change at exactly 23 ns is included', correct: true },
+        { text: 'At 27 ns', correct: false }
+      ],
+      explanation:
+        'A nonzero input skew samples the value at the Postponed region of the time step skew units before the clocking event (§14.13). Input skews always look backwards from the edge; output skews look forwards.'
     }
   ]}
 />

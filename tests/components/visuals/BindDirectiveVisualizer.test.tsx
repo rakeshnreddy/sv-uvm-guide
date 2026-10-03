@@ -1,43 +1,58 @@
-import React from 'react';
-import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
-import BindDirectiveVisualizer from '@/components/visuals/BindDirectiveVisualizer';
+import React from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-describe('BindDirectiveVisualizer', () => {
-  it('renders default state without bind active', () => {
+import BindDirectiveVisualizer from "@/components/visuals/BindDirectiveVisualizer";
+
+const lockIn = (label: RegExp) => {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+};
+
+describe("BindDirectiveVisualizer", () => {
+  it("labels bind as elaboration-time, not a compiler directive", () => {
     render(<BindDirectiveVisualizer />);
-    
-    expect(screen.getByText('The `bind` Directive')).toBeInTheDocument();
-    expect(screen.getByText('Execute Bind')).toBeInTheDocument();
+    expect(screen.getByText(/is not a compiler directive/)).toBeInTheDocument();
+    expect(screen.getByText(/processed at elaboration/)).toBeInTheDocument();
+    expect(screen.queryByText(/Compile-time Directive/i)).not.toBeInTheDocument();
   });
 
-  it('toggles bind state on click', () => {
+  it("hides the elaborated hierarchy until the learner predicts the bound path", () => {
     render(<BindDirectiveVisualizer />);
-    
-    const bindBtn = screen.getByRole('button', { name: /Execute Bind/i });
-    fireEvent.click(bindBtn);
-
-    // Button should now say "Remove Bind"
-    expect(screen.getByText('Remove Bind')).toBeInTheDocument();
-
-    // The visualizer dynamically updates classes to show the checker, but the 
-    // checker text is always in the DOM (hidden by CSS max-height/opacity).
-    // We can at least check that the button toggles back.
-    fireEvent.click(bindBtn);
-    expect(screen.getByText('Execute Bind')).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Elaborated hierarchy" })).not.toBeInTheDocument();
+    lockIn(/tb_top\.dut\.u_slave_0\.chk_inst and tb_top\.dut\.u_slave_1\.chk_inst/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    const tree = screen.getByRole("list", { name: "Elaborated hierarchy" });
+    expect(within(tree).getByLabelText("tb_top.dut.u_slave_0.chk_inst, bound ahb_protocol_chk")).toBeInTheDocument();
+    expect(within(tree).getByLabelText("tb_top.dut.u_slave_1.chk_inst, bound ahb_protocol_chk")).toBeInTheDocument();
   });
 
-  it('switches between bind by module and bind by instance', () => {
+  it("diagnoses the 'lands where the bind is written' misconception", () => {
     render(<BindDirectiveVisualizer />);
-    
-    // Default is binding by target module. 'ahb_slave' appears in source and hierarchy
-    expect(screen.getAllByText('ahb_slave').length).toBeGreaterThanOrEqual(1);
+    lockIn(/where the bind statement is written/);
+    expect(screen.getByText(/Not quite/)).toBeInTheDocument();
+    expect(screen.getAllByText(/created inside the target scope/).length).toBeGreaterThan(0);
+  });
 
-    // Switch to instance
-    const instanceBtn = screen.getByRole('button', { name: /Bind by Specific Instance/i });
-    fireEvent.click(instanceBtn);
+  it("the instance form binds exactly one instance (keyboard selection)", () => {
+    render(<BindDirectiveVisualizer />);
+    const forms = screen.getByRole("radiogroup", { name: "Bind form" });
+    const first = within(forms).getByRole("radio", { name: "every ahb_slave" });
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowRight" });
+    fireEvent.keyDown(within(forms).getByRole("radio", { name: "listed instances" }), { key: "ArrowRight" });
+    expect(within(forms).getByRole("radio", { name: "one instance path" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText(/^bind tb_top\.dut\.u_slave_0 ahb_protocol_chk chk_inst/)).toBeInTheDocument();
+    lockIn(/tb_top\.dut\.u_slave_0\.chk_inst only/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.queryByLabelText("tb_top.dut.u_slave_1.chk_inst, bound ahb_protocol_chk")).not.toBeInTheDocument();
+  });
 
-    // The code syntax box should now show the instance path
-    expect(screen.getByText('tb_top.u_slave_0')).toBeInTheDocument();
+  it("two binds that introduce the same instance name are an elaboration error", () => {
+    render(<BindDirectiveVisualizer />);
+    fireEvent.click(screen.getByRole("radio", { name: "two binds, same name" }));
+    lockIn(/None: elaboration stops with an error/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/✕ Elaboration error/).length).toBe(2);
   });
 });
