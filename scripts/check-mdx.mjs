@@ -68,6 +68,8 @@ function deckIds() {
   return ids;
 }
 
+const labStatus = new Map();
+
 function labIds() {
   const ids = new Set();
   const walk = (dir) => {
@@ -76,8 +78,11 @@ function labIds() {
       if (e.isDirectory()) walk(p);
       else if (e.name === "lab.json") {
         try {
-          const id = JSON.parse(fs.readFileSync(p, "utf8")).id;
-          if (id) ids.add(id);
+          const manifestJson = JSON.parse(fs.readFileSync(p, "utf8"));
+          if (manifestJson.id) {
+            ids.add(manifestJson.id);
+            labStatus.set(manifestJson.id, manifestJson.status);
+          }
         } catch {
           /* reported by the manifest validator */
         }
@@ -119,6 +124,14 @@ function routeExists(route) {
     dir = path.join(dir, match);
   }
   return true;
+}
+
+/** Canonical lesson URL: /curriculum/<exact tier folder>/<exact module folder>/<existing lesson>[#anchor]. */
+function isCanonical(route) {
+  const clean = route.split("#")[0].split("?")[0].replace(/^\/curriculum\/?/, "");
+  const parts = clean.split("/").filter(Boolean);
+  if (parts.length !== 3) return false;
+  return fs.existsSync(path.join(curriculumRoot, parts[0], parts[1], `${parts[2]}.mdx`));
 }
 
 function collectFiles(args) {
@@ -194,14 +207,22 @@ for (const file of files) {
             const value = typeof id?.value === "string" ? id.value : null;
             if (!value) errors.push(`<LabLink> without a literal labId at body line ${line}`);
             else if (!labs.has(value)) errors.push(`<LabLink labId="${value}"> has no lab manifest (body line ${line})`);
+            else if (labStatus.get(value) !== "available") errors.push(`<LabLink labId="${value}"> points at a lab that is "${labStatus.get(value)}", not available (body line ${line})`);
           }
           if (KIT.has(node.name)) {
             if (!attr("title")) errors.push(`<${node.name}> needs a title (its accessible name) at body line ${line}`);
             if (!attr("caption")) errors.push(`<${node.name}> needs a caption at body line ${line}`);
           }
         }
-        if (node.type === "link" && typeof node.url === "string" && node.url.startsWith("/curriculum")) {
-          if (!routeExists(node.url)) errors.push(`broken link ${node.url} at body line ${node.position?.start.line}`);
+        if (node.type === "link" && typeof node.url === "string") {
+          const url = node.url;
+          const line = node.position?.start.line;
+          if (url.startsWith("/curriculum")) {
+            if (!routeExists(url)) errors.push(`broken link ${url} at body line ${line}`);
+            else if (!isCanonical(url)) warnings.push(`non-canonical link ${url} at body line ${line}: use /curriculum/<Tier_Folder>/<Module_Folder>/<lesson>`);
+          } else if (!/^(https?:|mailto:|#|\/)/.test(url)) {
+            errors.push(`relative link ${url} at body line ${line}: use the absolute canonical /curriculum/... URL (relative links break at module URLs)`);
+          }
         }
         for (const child of node.children || []) visit(child);
       };

@@ -10,6 +10,9 @@ export interface Section {
   title: string;
   slug: string;
   topics: Topic[];
+  track?: 'core' | 'elective';
+  prerequisites?: string[];
+  milestones?: string[];
 }
 
 export interface Module {
@@ -34,6 +37,11 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Understand the economic and reputational stakes of verification in the semiconductor industry."
           }
+        ],
+        "track": "core",
+        "prerequisites": [],
+        "milestones": [
+          "M0"
         ]
       },
       {
@@ -45,6 +53,14 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Adopt the destructive testing philosophy and explore the methodologies used to break designs."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F1A_The_Cost_of_Bugs"
+        ],
+        "milestones": [
+          "M0",
+          "M4"
         ]
       },
       {
@@ -56,7 +72,12 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Discover why SystemVerilog replaced Verilog as the industry standard for verification."
           }
-        ]
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F1B_The_Verification_Mindset"
+        ],
+        "milestones": []
       },
       {
         "title": "F2A: Core Data Types",
@@ -67,6 +88,13 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Dive deep into SystemVerilog nets, variables, and value systems with interactive explorers grounded in IEEE 1800-2023."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F1C_Why_SystemVerilog"
+        ],
+        "milestones": [
+          "M0"
         ]
       },
       {
@@ -78,6 +106,14 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Manipulate dynamic arrays, queues, and associative arrays with an IEEE 1800-2023 guided workflow."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F2A_Core_Data_Types"
+        ],
+        "milestones": [
+          "M0",
+          "M3"
         ]
       },
       {
@@ -94,6 +130,14 @@ export const curriculumData: Module[] = [
             "slug": "flow-control",
             "description": "Guide decisions with if, case, and loop constructs to steer simulation flow."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F2A_Core_Data_Types"
+        ],
+        "milestones": [
+          "M0",
+          "M1"
         ]
       },
       {
@@ -106,15 +150,22 @@ export const curriculumData: Module[] = [
             "description": "Interact with the simulator kernel: print messages, cast types, generate random numbers, and read/write files."
           },
           {
-            "title": "F2D: Interprocess Communication",
-            "slug": "ipc",
-            "description": "Coordinate parallel threads safely using Semaphores and Mailboxes."
-          },
-          {
             "title": "Tasks and Functions",
             "slug": "tasks-functions",
             "description": "Encapsulate logic, understand variable lifetimes, and safely pass arguments."
+          },
+          {
+            "title": "F2D: Interprocess Communication",
+            "slug": "ipc",
+            "description": "Coordinate parallel threads safely using Semaphores and Mailboxes."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F2C_Procedural_Code_and_Flow_Control"
+        ],
+        "milestones": [
+          "M0"
         ]
       },
       {
@@ -126,6 +177,14 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Understand the SystemVerilog event-driven simulation model, time steps, and the distinction between simulation time and delta time."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F2C_Procedural_Code_and_Flow_Control",
+          "F2D_Reusable_Code_and_Parallelism"
+        ],
+        "milestones": [
+          "M1"
         ]
       },
       {
@@ -137,6 +196,13 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Master the SystemVerilog scheduler regions and how statements are ordered for execution to eliminate race conditions."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F3A_Simulation_Semantics"
+        ],
+        "milestones": [
+          "M1"
         ]
       },
       {
@@ -148,6 +214,13 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Explore delta cycles, race conditions, and the critical differences between blocking and non-blocking assignments."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F3B_Scheduling_Regions"
+        ],
+        "milestones": [
+          "M1"
         ]
       },
       {
@@ -159,6 +232,14 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Wire up designs and verification harnesses with modules and packages that keep signal intent crystal clear."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F2A_Core_Data_Types",
+          "F2D_Reusable_Code_and_Parallelism"
+        ],
+        "milestones": [
+          "M1"
         ]
       },
       {
@@ -170,6 +251,13 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Learn how to use SystemVerilog interfaces and modports to simplify connections and create reusable verification components."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F4A_Modules_and_Packages"
+        ],
+        "milestones": [
+          "M1"
         ]
       },
       {
@@ -181,6 +269,14 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Understand how clocking blocks help create race-free testbenches by defining clear timing for signal interaction."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F3C_Delta_Cycles_and_Race_Conditions",
+          "F4B_Interfaces_and_Modports"
+        ],
+        "milestones": [
+          "M1"
         ]
       }
     ]
@@ -205,6 +301,11 @@ export const curriculumData: Module[] = [
             "description": "How to create objects with new and reference parent and current class members using this and super."
           },
           {
+            "title": "Polymorphism Pitfalls and Type Casting | SystemVerilog OOP",
+            "slug": "polymorphism-pitfalls",
+            "description": "Learn how virtual method resolution works, upcasting vs. downcasting, and how to safely use $cast."
+          },
+          {
             "title": "Copying and Cloning Objects | SystemVerilog OOP",
             "slug": "copying-and-cloning",
             "description": "Understand shallow vs. deep copy in SystemVerilog, and how to implement robust copy() and clone() methods."
@@ -213,12 +314,17 @@ export const curriculumData: Module[] = [
             "title": "Parameterized Classes and Abstract Classes | Advanced SystemVerilog for Verification",
             "slug": "parameterized-classes",
             "description": "Use generics and abstract classes to build reusable components while avoiding common pitfalls."
-          },
-          {
-            "title": "Polymorphism Pitfalls and Type Casting | SystemVerilog OOP",
-            "slug": "polymorphism-pitfalls",
-            "description": "Learn how virtual method resolution works, upcasting vs. downcasting, and how to safely use $cast."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F2B_Dynamic_Structures",
+          "F2D_Reusable_Code_and_Parallelism",
+          "F4B_Interfaces_and_Modports"
+        ],
+        "milestones": [
+          "M2",
+          "M3"
         ]
       },
       {
@@ -235,6 +341,14 @@ export const curriculumData: Module[] = [
             "slug": "constraint-blocks",
             "description": "Control dependencies and defaults using constraint blocks, soft values, and solve-before ordering."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-SV-1_OOP"
+        ],
+        "milestones": [
+          "M2",
+          "M4"
         ]
       },
       {
@@ -266,6 +380,14 @@ export const curriculumData: Module[] = [
             "slug": "solver-debug",
             "description": "Learn how to approach constraint solver failures, debug conflicting constraints, and use built-in simulator tools."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-SV-2A_Constrained_Randomization_Fundamentals"
+        ],
+        "milestones": [
+          "M2",
+          "M4"
         ]
       },
       {
@@ -282,6 +404,14 @@ export const curriculumData: Module[] = [
             "slug": "coverage-options",
             "description": "Learn how covergroup options influence when and how data is sampled."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-SV-2A_Constrained_Randomization_Fundamentals",
+          "I-SV-1_OOP"
+        ],
+        "milestones": [
+          "M4"
         ]
       },
       {
@@ -294,9 +424,9 @@ export const curriculumData: Module[] = [
             "description": "Master coverage to V-Plan linkage, API querying, and coverage-driven constrained random loops."
           },
           {
-            "title": "The Coverage Closure Loop | Advanced SystemVerilog for Verification",
-            "slug": "closure-workflow",
-            "description": "Learn the methodology of identifying coverage holes, adjusting generators, and closing coverage."
+            "title": "Linking Coverage to the V-Plan | Advanced UVM Techniques & Strategy",
+            "slug": "linking-coverage",
+            "description": "Tie functional coverage points back to verification plan items."
           },
           {
             "title": "Coverage APIs and Runtime Querying | Advanced SystemVerilog for Verification",
@@ -304,10 +434,17 @@ export const curriculumData: Module[] = [
             "description": "Learn how to query coverage data at runtime using SystemVerilog APIs."
           },
           {
-            "title": "Linking Coverage to the V-Plan | Advanced UVM Techniques & Strategy",
-            "slug": "linking-coverage",
-            "description": "Tie functional coverage points back to verification plan items."
+            "title": "The Coverage Closure Loop | Advanced SystemVerilog for Verification",
+            "slug": "closure-workflow",
+            "description": "Learn the methodology of identifying coverage holes, adjusting generators, and closing coverage."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-SV-3A_Functional_Coverage_Fundamentals"
+        ],
+        "milestones": [
+          "M4"
         ]
       },
       {
@@ -324,6 +461,16 @@ export const curriculumData: Module[] = [
             "slug": "immediate-vs-concurrent",
             "description": "Compare procedural checks with temporal properties through hands-on examples."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F3B_Scheduling_Regions",
+          "F4C_Clocking_Blocks"
+        ],
+        "milestones": [
+          "M6",
+          "M1",
+          "M2"
         ]
       },
       {
@@ -345,6 +492,13 @@ export const curriculumData: Module[] = [
             "slug": "multi-clocking",
             "description": "Coordinate assertions across clock domains and mask reset behavior with disable iff."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-SV-4A_SVA_Fundamentals"
+        ],
+        "milestones": [
+          "M6"
         ]
       },
       {
@@ -356,6 +510,15 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Use IEEE Clause 17 checkers and the bind directive to attach assertions to your RTL without touching the source code."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-SV-4A_SVA_Fundamentals",
+          "F4A_Modules_and_Packages"
+        ],
+        "milestones": [
+          "M6",
+          "M8"
         ]
       },
       {
@@ -382,6 +545,15 @@ export const curriculumData: Module[] = [
             "slug": "semaphores",
             "description": "Control access to shared resources using semaphore keys."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F2C_Procedural_Code_and_Flow_Control",
+          "I-SV-1_OOP"
+        ],
+        "milestones": [
+          "M2",
+          "M5"
         ]
       },
       {
@@ -393,6 +565,14 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Master SystemVerilog's compile-time toolkit: preprocessor directives, macro hygiene, and generate blocks for scalable, configurable verification IP."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F4A_Modules_and_Packages"
+        ],
+        "milestones": [
+          "M2",
+          "M8"
         ]
       },
       {
@@ -404,17 +584,15 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Connect SystemVerilog to C/C++ and beyond using the Direct Programming Interface. Master import/export semantics, type marshaling, memory ownership, and build workflows."
           }
-        ]
-      },
-      {
-        "title": "Power Intent and UPF Fundamentals",
-        "slug": "I-SV-8_Power_Intent_and_UPF",
-        "topics": [
-          {
-            "title": "Power Intent and UPF Fundamentals",
-            "slug": "index",
-            "description": "Understanding IEEE 1801 Unified Power Format (UPF), supply networks, power states, and isolation strategies for low-power verification."
-          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F2D_Reusable_Code_and_Parallelism",
+          "I-SV-1_OOP"
+        ],
+        "milestones": [
+          "M3",
+          "M8"
         ]
       },
       {
@@ -426,6 +604,17 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Understand the testbench scalability and reuse problems that motivated the Universal Verification Methodology, and preview the four pillars you will master across T2 and T3."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-SV-1_OOP",
+          "I-SV-2A_Constrained_Randomization_Fundamentals",
+          "I-SV-3A_Functional_Coverage_Fundamentals",
+          "I-SV-5_Synchronization_and_IPC",
+          "F4C_Clocking_Blocks"
+        ],
+        "milestones": [
+          "M2"
         ]
       },
       {
@@ -437,6 +626,14 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Understand the fundamental split between data containers and structural elements in UVM testbenches."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-SV-9_Why_UVM",
+          "I-SV-1_OOP"
+        ],
+        "milestones": [
+          "M2"
         ]
       },
       {
@@ -448,6 +645,14 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Swap component and object implementations dynamically using UVM's factory registry without touching your testbench wiring."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-1A_Components"
+        ],
+        "milestones": [
+          "M2",
+          "M8"
         ]
       },
       {
@@ -459,6 +664,14 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Orchestrate build, run, and cleanup with UVM phases, domains, objections, and synchronization primitives so every component stays in lockstep."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-1A_Components"
+        ],
+        "milestones": [
+          "M2",
+          "M3"
         ]
       },
       {
@@ -470,6 +683,15 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Understand the blueprint of a UVM environment—tests orchestrate, environments aggregate, agents wrap interface logic, monitors observe, and scoreboards verify."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-1B_The_UVM_Factory",
+          "I-UVM-1C_UVM_Phasing",
+          "F4C_Clocking_Blocks"
+        ],
+        "milestones": [
+          "M2"
         ]
       },
       {
@@ -481,6 +703,13 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Wire sequencers, drivers, monitors, and scoreboards using UVM's Transaction-Level Modeling (TLM) components."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-2A_Component_Roles"
+        ],
+        "milestones": [
+          "M3"
         ]
       },
       {
@@ -492,6 +721,14 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Use uvm_config_db and uvm_resource_db to pass settings and virtual interface handles down the hierarchy without tight coupling."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-2A_Component_Roles",
+          "F4B_Interfaces_and_Modports"
+        ],
+        "milestones": [
+          "M2"
         ]
       },
       {
@@ -503,6 +740,15 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Model robust transaction items and author reusable UVM sequences that drive the sequencer ↔ driver handshake."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-2A_Component_Roles",
+          "I-UVM-2B_TLM_Connections",
+          "I-SV-2A_Constrained_Randomization_Fundamentals"
+        ],
+        "milestones": [
+          "M2"
         ]
       },
       {
@@ -515,19 +761,9 @@ export const curriculumData: Module[] = [
             "description": "Master virtual sequences, arbitration, layering, and driver-sequencer synchronization patterns."
           },
           {
-            "title": "Lab: Coordinated Attack",
-            "slug": "coordinated-attack-lab",
-            "description": "Apply your knowledge of virtual sequences to coordinate transactions between a slow configuration interface and a fast data interface."
-          },
-          {
-            "title": "Interrupt Handling and Layered Stimulus | Advanced UVM Sequencing",
-            "slug": "interrupt-handling",
-            "description": "Turn asynchronous interrupts into deterministic stimulus by combining monitor events, routing policy, and virtual sequences."
-          },
-          {
-            "title": "Layered Sequences and p_sequencer | Advanced UVM Sequencing",
-            "slug": "layered-sequences",
-            "description": "Design atomic, scenario, and virtual layers of sequences while using p_sequencer to orchestrate cross-agent stimulus."
+            "title": "The Sequencer-Driver Handshake | Advanced UVM Sequencing",
+            "slug": "sequencer-driver-handshake",
+            "description": "Dissect the blocking protocol between UVM sequencers and drivers, from arbitration to item_done(), and learn how to instrument and debug the flow."
           },
           {
             "title": "Sequence Arbitration and Priority | Advanced UVM Sequencing",
@@ -540,9 +776,14 @@ export const curriculumData: Module[] = [
             "description": "Package reusable stimulus into a uvm_sequence_library, choose its selection mode, and know what it can and cannot control."
           },
           {
-            "title": "The Sequencer-Driver Handshake | Advanced UVM Sequencing",
-            "slug": "sequencer-driver-handshake",
-            "description": "Dissect the blocking protocol between UVM sequencers and drivers, from arbitration to item_done(), and learn how to instrument and debug the flow."
+            "title": "Layered Sequences and p_sequencer | Advanced UVM Sequencing",
+            "slug": "layered-sequences",
+            "description": "Design atomic, scenario, and virtual layers of sequences while using p_sequencer to orchestrate cross-agent stimulus."
+          },
+          {
+            "title": "Virtual Sequences and Sequencers",
+            "slug": "virtual-sequences",
+            "description": "Learn how to use virtual sequences and sequencers to coordinate and synchronize stimulus across multiple agents in a UVM testbench."
           },
           {
             "title": "UVM Virtual Sequencer",
@@ -550,10 +791,22 @@ export const curriculumData: Module[] = [
             "description": "Coordinating stimulus across multiple agents."
           },
           {
-            "title": "Virtual Sequences and Sequencers",
-            "slug": "virtual-sequences",
-            "description": "Learn how to use virtual sequences and sequencers to coordinate and synchronize stimulus across multiple agents in a UVM testbench."
+            "title": "Interrupt Handling and Layered Stimulus | Advanced UVM Sequencing",
+            "slug": "interrupt-handling",
+            "description": "Turn asynchronous interrupts into deterministic stimulus by combining monitor events, routing policy, and virtual sequences."
+          },
+          {
+            "title": "Lab: Coordinated Attack",
+            "slug": "coordinated-attack-lab",
+            "description": "Apply your knowledge of virtual sequences to coordinate transactions between a slow configuration interface and a fast data interface."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-3A_Fundamentals"
+        ],
+        "milestones": [
+          "M5"
         ]
       },
       {
@@ -565,6 +818,14 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Master the five utility classes — printer, comparer, packer, recorder, copier — that give you total control over how UVM objects present, compare, serialize, record, and clone themselves."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-1A_Components",
+          "I-UVM-3A_Fundamentals"
+        ],
+        "milestones": [
+          "M3"
         ]
       },
       {
@@ -576,6 +837,15 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Learn when uvm_pool and uvm_queue add value over native SystemVerilog data structures — and when plain SV is the simpler choice."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-1A_Components",
+          "F2B_Dynamic_Structures"
+        ],
+        "milestones": [
+          "M5",
+          "M3"
         ]
       },
       {
@@ -587,6 +857,34 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Understand how transaction recording bridges the gap between object-oriented verification models and traditional waveform viewing tools."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-4_UVM_Policy_Classes",
+          "I-UVM-2A_Component_Roles"
+        ],
+        "milestones": [
+          "M8",
+          "M3"
+        ]
+      },
+      {
+        "title": "Power Intent and UPF Fundamentals",
+        "slug": "I-SV-8_Power_Intent_and_UPF",
+        "topics": [
+          {
+            "title": "Power Intent and UPF Fundamentals",
+            "slug": "index",
+            "description": "Understanding IEEE 1801 Unified Power Format (UPF), supply networks, power states, and isolation strategies for low-power verification."
+          }
+        ],
+        "track": "elective",
+        "prerequisites": [
+          "F2A_Core_Data_Types",
+          "F4A_Modules_and_Packages"
+        ],
+        "milestones": [
+          "M8"
         ]
       }
     ]
@@ -597,6 +895,89 @@ export const curriculumData: Module[] = [
     "tier": "T3",
     "sections": [
       {
+        "title": "A-UVM-6: Scoreboards and Reference Models",
+        "slug": "A-UVM-6_Scoreboards_and_Reference_Models",
+        "topics": [
+          {
+            "title": "A-UVM-6: Scoreboards and Reference Models",
+            "slug": "index",
+            "description": "Build self-checking testbenches using transaction-level scoreboards, reference models, and analysis FIFOs to catch DUT bugs without manual waveform inspection."
+          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-2B_TLM_Connections",
+          "I-UVM-4_UVM_Policy_Classes",
+          "I-UVM-3A_Fundamentals"
+        ],
+        "milestones": [
+          "M3"
+        ]
+      },
+      {
+        "title": "A-UVM-7: VIP Construction",
+        "slug": "A-UVM-7_VIP_Construction",
+        "topics": [
+          {
+            "title": "A-UVM-7: VIP Construction",
+            "slug": "index",
+            "description": "Architect, build, and package reusable Verification IP for standard protocols — from agent internals to directory structure and integration best practices."
+          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-2A_Component_Roles",
+          "I-UVM-2C_Configuration_and_Resources",
+          "I-UVM-3A_Fundamentals",
+          "A-UVM-6_Scoreboards_and_Reference_Models",
+          "F4C_Clocking_Blocks",
+          "I-SV-4A_SVA_Fundamentals"
+        ],
+        "milestones": [
+          "M2"
+        ]
+      },
+      {
+        "title": "A-UVM-5: UVM Callbacks",
+        "slug": "A-UVM-5_UVM_Callbacks",
+        "topics": [
+          {
+            "title": "A-UVM-5: UVM Callbacks",
+            "slug": "index",
+            "description": "Inject optional behavior into components without exploding your class hierarchy or hacking the base code."
+          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-1B_The_UVM_Factory",
+          "I-UVM-2A_Component_Roles",
+          "A-UVM-7_VIP_Construction"
+        ],
+        "milestones": [
+          "M8"
+        ]
+      },
+      {
+        "title": "A-UVM-8: Multi-Agent Topologies",
+        "slug": "A-UVM-8_Multi_Agent_Topologies",
+        "topics": [
+          {
+            "title": "A-UVM-8: Multi-Agent Topologies",
+            "slug": "index",
+            "description": "Coordinate multiple protocol agents across complex SoC environments using virtual sequencers, virtual sequences, and cross-agent synchronization patterns."
+          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-3B_Advanced_Sequencing_and_Layering",
+          "A-UVM-7_VIP_Construction",
+          "I-SV-5_Synchronization_and_IPC"
+        ],
+        "milestones": [
+          "M5"
+        ]
+      },
+      {
         "title": "A-UVM-4A: RAL Fundamentals",
         "slug": "A-UVM-4A_RAL_Fundamentals",
         "topics": [
@@ -605,6 +986,15 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Model DUT registers once and decouple stimulus from physical bus protocols."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-3A_Fundamentals",
+          "I-UVM-2B_TLM_Connections",
+          "A-UVM-6_Scoreboards_and_Reference_Models"
+        ],
+        "milestones": [
+          "M7"
         ]
       },
       {
@@ -617,11 +1007,6 @@ export const curriculumData: Module[] = [
             "description": "Master adapters, predictors, and sophisticated debug workflows for robust UVM register environments."
           },
           {
-            "title": "Built-in RAL Sequences & Utilities | Advanced UVM RAL",
-            "slug": "built-in-ral-sequences",
-            "description": "Leverage UVM’s prebuilt register sequences—reset, bit-bash, mem tests—and learn how to extend or constrain them safely."
-          },
-          {
             "title": "Explicit vs. Implicit Prediction | Advanced UVM RAL",
             "slug": "explicit-vs-implicit",
             "description": "Choose the right prediction strategy so your RAL mirror tracks DUT state without redundant bus traffic."
@@ -630,84 +1015,19 @@ export const curriculumData: Module[] = [
             "title": "Frontdoor vs. Backdoor Access | Advanced UVM RAL",
             "slug": "frontdoor-vs-backdoor",
             "description": "Blend frontdoor realism with backdoor speed—learn when to poke directly and when to march through the bus for accurate checking."
-          }
-        ]
-      },
-      {
-        "title": "A-UVM-5: UVM Callbacks",
-        "slug": "A-UVM-5_UVM_Callbacks",
-        "topics": [
+          },
           {
-            "title": "A-UVM-5: UVM Callbacks",
-            "slug": "index",
-            "description": "Inject optional behavior into components without exploding your class hierarchy or hacking the base code."
+            "title": "Built-in RAL Sequences & Utilities | Advanced UVM RAL",
+            "slug": "built-in-ral-sequences",
+            "description": "Leverage UVM’s prebuilt register sequences—reset, bit-bash, mem tests—and learn how to extend or constrain them safely."
           }
-        ]
-      },
-      {
-        "title": "A-UVM-6: Scoreboards and Reference Models",
-        "slug": "A-UVM-6_Scoreboards_and_Reference_Models",
-        "topics": [
-          {
-            "title": "A-UVM-6: Scoreboards and Reference Models",
-            "slug": "index",
-            "description": "Build self-checking testbenches using transaction-level scoreboards, reference models, and analysis FIFOs to catch DUT bugs without manual waveform inspection."
-          }
-        ]
-      },
-      {
-        "title": "A-UVM-7: VIP Construction",
-        "slug": "A-UVM-7_VIP_Construction",
-        "topics": [
-          {
-            "title": "A-UVM-7: VIP Construction",
-            "slug": "index",
-            "description": "Architect, build, and package reusable Verification IP for standard protocols — from agent internals to directory structure and integration best practices."
-          }
-        ]
-      },
-      {
-        "title": "A-UVM-8: Multi-Agent Topologies",
-        "slug": "A-UVM-8_Multi_Agent_Topologies",
-        "topics": [
-          {
-            "title": "A-UVM-8: Multi-Agent Topologies",
-            "slug": "index",
-            "description": "Coordinate multiple protocol agents across complex SoC environments using virtual sequencers, virtual sequences, and cross-agent synchronization patterns."
-          }
-        ]
-      },
-      {
-        "title": "AHB Protocol Design & Timing",
-        "slug": "B-AHB-1_AHB_Design_Timing_Mechanics",
-        "topics": [
-          {
-            "title": "AHB Protocol Design & Timing",
-            "slug": "index",
-            "description": "Master the timing mechanics of AHB, including address/data pipelining, wait states, and burst types."
-          }
-        ]
-      },
-      {
-        "title": "AHB Pitfalls & Real-World Failures",
-        "slug": "B-AHB-2_AHB_Pitfalls_and_Deadlocks",
-        "topics": [
-          {
-            "title": "AHB Pitfalls & Real-World Failures",
-            "slug": "index",
-            "description": "Learn the most common AHB protocol violations—HREADY mishandling, two-cycle ERROR responses, arbitration deadlocks, and 1 KB boundary crossing failures—and the verification strategies that catch them."
-          }
-        ]
-      },
-      {
-        "title": "AHB Verification Methodology",
-        "slug": "B-AHB-3_AHB_Verification",
-        "topics": [
-          {
-            "title": "AHB Verification Methodology",
-            "slug": "index",
-            "description": "Build a complete AHB verification environment: transaction modeling, monitor/checker architecture, protocol assertions, functional coverage, debug strategies, and interview-ready knowledge."
-          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "A-UVM-4A_RAL_Fundamentals"
+        ],
+        "milestones": [
+          "M7"
         ]
       },
       {
@@ -719,6 +1039,13 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "An overview of the AMBA protocol landscape, comparing AHB, AXI, and their derivatives to understand when and why each is used."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-2A_Component_Roles"
+        ],
+        "milestones": [
+          "M6"
         ]
       },
       {
@@ -730,39 +1057,72 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Build a permanent mental model of AMBA protocols using intuitive analogies, ensuring you never forget channel directions or handshake rules."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "B-AMBA-1_Protocol_Families_and_Tradeoffs"
+        ],
+        "milestones": [
+          "M6"
         ]
       },
       {
-        "title": "AHB↔AXI Bridges & System Integration",
-        "slug": "B-AMBA-F1_Bridges_and_System_Integration",
+        "title": "AHB Protocol Design & Timing",
+        "slug": "B-AHB-1_AHB_Design_Timing_Mechanics",
         "topics": [
           {
-            "title": "AHB↔AXI Bridges & System Integration",
+            "title": "AHB Protocol Design & Timing",
             "slug": "index",
-            "description": "Master the design and verification of protocol bridge IPs, including AHB-to-AXI burst translation, AXI-to-AHB 1KB burst splitting, width conversion, reset domain crossings, and formal verification strategies for bridge correctness."
+            "description": "Master the timing mechanics of AHB, including address/data pipelining, wait states, and burst types."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "B-AMBA-1_Protocol_Families_and_Tradeoffs",
+          "B-AMBA-2_Protocol_Intuition_and_Memory_Hooks",
+          "F4C_Clocking_Blocks"
+        ],
+        "milestones": [
+          "M6"
         ]
       },
       {
-        "title": "AMBA Coherency Protocols: ACE and CHI",
-        "slug": "B-AMBA-F2_Future_Protocols_ACE_CHI",
+        "title": "AHB Pitfalls & Real-World Failures",
+        "slug": "B-AHB-2_AHB_Pitfalls_and_Deadlocks",
         "topics": [
           {
-            "title": "AMBA Coherency Protocols: ACE and CHI",
+            "title": "AHB Pitfalls & Real-World Failures",
             "slug": "index",
-            "description": "Master coherent AMBA protocols in production today: ACE cache coherency extensions for AXI and AMBA 5 CHI packetized interconnects for scalable multi-core SoCs."
+            "description": "Learn the most common AHB protocol violations—HREADY mishandling, two-cycle ERROR responses, arbitration deadlocks, and 1 KB boundary crossing failures—and the verification strategies that catch them."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "B-AHB-1_AHB_Design_Timing_Mechanics",
+          "I-SV-4A_SVA_Fundamentals"
+        ],
+        "milestones": [
+          "M6"
         ]
       },
       {
-        "title": "AMBA Interview & Debug Clinic",
-        "slug": "B-AMBA-F3_Interview_Debug_Clinic",
+        "title": "AHB Verification Methodology",
+        "slug": "B-AHB-3_AHB_Verification",
         "topics": [
           {
-            "title": "AMBA Interview & Debug Clinic",
+            "title": "AHB Verification Methodology",
             "slug": "index",
-            "description": "Practice AMBA whiteboard design, waveform triage, verification test planning, and common AHB/AXI trick questions used in senior verification interviews."
+            "description": "Build a complete AHB verification environment: transaction modeling, monitor/checker architecture, protocol assertions, functional coverage, debug strategies, and interview-ready knowledge."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "B-AHB-2_AHB_Pitfalls_and_Deadlocks",
+          "A-UVM-6_Scoreboards_and_Reference_Models",
+          "I-SV-3A_Functional_Coverage_Fundamentals"
+        ],
+        "milestones": [
+          "M6"
         ]
       },
       {
@@ -774,6 +1134,13 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Master the five-channel AXI4 architecture: Write Address, Write Data, Write Response, Read Address, and Read Data channels, with the VALID/READY handshake contract and combinatorial loop prevention."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "B-AMBA-2_Protocol_Intuition_and_Memory_Hooks"
+        ],
+        "milestones": [
+          "M6"
         ]
       },
       {
@@ -785,6 +1152,13 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Master AXI burst address computation: AWLEN/ARLEN, AWSIZE/ARSIZE, AWBURST/ARBURST, wrap boundary math, WSTRB generation, and the critical 4 KB boundary rule."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "B-AXI-1_AXI_Channel_Architecture"
+        ],
+        "milestones": [
+          "M6"
         ]
       },
       {
@@ -796,6 +1170,14 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Understand AXI outstanding transactions, ID-based routing, same-ID ordering guarantees, out-of-order completion, and interconnect reordering rules."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "B-AXI-2_AXI_Burst_Math",
+          "A-UVM-6_Scoreboards_and_Reference_Models"
+        ],
+        "milestones": [
+          "M6"
         ]
       },
       {
@@ -807,6 +1189,13 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Master advanced AXI sideband signals: AxCACHE memory types, AxPROT privilege levels, AxQOS routing, and Exclusive Accesses (LDREX/STREX) for atomic operations."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "B-AXI-3_AXI_Ordering_and_IDs"
+        ],
+        "milestones": [
+          "M6"
         ]
       },
       {
@@ -818,6 +1207,14 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Learn how subtle design flaws in AXI channel handling lead to catastrophic system deadlocks, including circular channel dependencies and cyclic interconnect routing deadlocks."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "B-AXI-1_AXI_Channel_Architecture",
+          "B-AXI-2_AXI_Burst_Math"
+        ],
+        "milestones": [
+          "M6"
         ]
       },
       {
@@ -829,6 +1226,75 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Master the architecture of an AXI Verification IP (VIP), from channel-level monitors to per-ID scoreboards, protocol assertions, and transaction latency measurement."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "B-AXI-3_AXI_Ordering_and_IDs",
+          "B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks",
+          "A-UVM-6_Scoreboards_and_Reference_Models",
+          "A-UVM-7_VIP_Construction"
+        ],
+        "milestones": [
+          "M6"
+        ]
+      },
+      {
+        "title": "AHB↔AXI Bridges & System Integration",
+        "slug": "B-AMBA-F1_Bridges_and_System_Integration",
+        "topics": [
+          {
+            "title": "AHB↔AXI Bridges & System Integration",
+            "slug": "index",
+            "description": "Master the design and verification of protocol bridge IPs, including AHB-to-AXI burst translation, AXI-to-AHB 1KB burst splitting, width conversion, reset domain crossings, and formal verification strategies for bridge correctness."
+          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "B-AHB-3_AHB_Verification",
+          "B-AXI-6_AXI_Verification_Performance"
+        ],
+        "milestones": [
+          "M6",
+          "M8"
+        ]
+      },
+      {
+        "title": "AMBA Coherency Protocols: ACE and CHI",
+        "slug": "B-AMBA-F2_Future_Protocols_ACE_CHI",
+        "topics": [
+          {
+            "title": "AMBA Coherency Protocols: ACE and CHI",
+            "slug": "index",
+            "description": "Master coherent AMBA protocols in production today: ACE cache coherency extensions for AXI and AMBA 5 CHI packetized interconnects for scalable multi-core SoCs."
+          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "B-AXI-3_AXI_Ordering_and_IDs",
+          "B-AXI-6_AXI_Verification_Performance"
+        ],
+        "milestones": [
+          "M8"
+        ]
+      },
+      {
+        "title": "AMBA Interview & Debug Clinic",
+        "slug": "B-AMBA-F3_Interview_Debug_Clinic",
+        "topics": [
+          {
+            "title": "AMBA Interview & Debug Clinic",
+            "slug": "index",
+            "description": "Practice AMBA whiteboard design, waveform triage, verification test planning, and common AHB/AXI trick questions used in senior verification interviews."
+          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "B-AXI-6_AXI_Verification_Performance",
+          "B-AHB-3_AHB_Verification",
+          "B-AMBA-F1_Bridges_and_System_Integration"
+        ],
+        "milestones": [
+          "M6"
         ]
       }
     ]
@@ -838,28 +1304,6 @@ export const curriculumData: Module[] = [
     "slug": "T4_Expert",
     "tier": "T4",
     "sections": [
-      {
-        "title": "E-AI-1: AI-Driven Verification",
-        "slug": "E-AI-1_AI_Driven_Verification",
-        "topics": [
-          {
-            "title": "E-AI-1: AI-Driven Verification",
-            "slug": "index",
-            "description": "Explore how machine learning and large language models are transforming hardware verification — from intelligent stimulus generation to automated coverage closure and assertion writing."
-          }
-        ]
-      },
-      {
-        "title": "E-CUST-1: UVM Methodology Customization",
-        "slug": "E-CUST-1_UVM_Methodology_Customization",
-        "topics": [
-          {
-            "title": "E-CUST-1: UVM Methodology Customization",
-            "slug": "index",
-            "description": "Design project-wide extensions to UVM—custom bases, phases, and governance—to keep large teams aligned without forking the methodology."
-          }
-        ]
-      },
       {
         "title": "E-DBG-1: Advanced UVM Debug Methodologies",
         "slug": "E-DBG-1_Advanced_UVM_Debug_Methodologies",
@@ -879,28 +1323,35 @@ export const curriculumData: Module[] = [
             "slug": "hang-lab",
             "description": "Use the debugging simulator to rehearse objection tracing, heartbeat analysis, and item_done triage on realistic UVM hangs."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-6_UVM_Recording_Classes",
+          "I-UVM-1C_UVM_Phasing",
+          "A-UVM-6_Scoreboards_and_Reference_Models"
+        ],
+        "milestones": [
+          "M8"
         ]
       },
       {
-        "title": "E-EMU-1: Emulation-Aware Verification",
-        "slug": "E-EMU-1_Emulation_Aware_Verification",
+        "title": "E-CUST-1: UVM Methodology Customization",
+        "slug": "E-CUST-1_UVM_Methodology_Customization",
         "topics": [
           {
-            "title": "E-EMU-1: Emulation-Aware Verification",
+            "title": "E-CUST-1: UVM Methodology Customization",
             "slug": "index",
-            "description": "Adapt UVM testbenches for hardware emulation platforms — transaction-level acceleration, virtual probes, and the compile-time vs. run-time tradeoffs that determine emulation success."
+            "description": "Design project-wide extensions to UVM—custom bases, phases, and governance—to keep large teams aligned without forking the methodology."
           }
-        ]
-      },
-      {
-        "title": "E-INT-1: Integrating UVM with Formal Verification",
-        "slug": "E-INT-1_Integrating_UVM_with_Formal_Verification",
-        "topics": [
-          {
-            "title": "E-INT-1: Integrating UVM with Formal Verification",
-            "slug": "index",
-            "description": "Bridge simulation and proof: share assertions, align coverage, and orchestrate flows where UVM and formal reinforce each other."
-          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-1C_UVM_Phasing",
+          "I-UVM-1B_The_UVM_Factory",
+          "A-UVM-5_UVM_Callbacks"
+        ],
+        "milestones": [
+          "M8"
         ]
       },
       {
@@ -912,6 +1363,35 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Profile, architect, and operationalize UVM environments so regressions stay fast without sacrificing fidelity."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-1C_UVM_Phasing",
+          "A-UVM-6_Scoreboards_and_Reference_Models"
+        ],
+        "milestones": [
+          "M8"
+        ]
+      },
+      {
+        "title": "E-INT-1: Integrating UVM with Formal Verification",
+        "slug": "E-INT-1_Integrating_UVM_with_Formal_Verification",
+        "topics": [
+          {
+            "title": "E-INT-1: Integrating UVM with Formal Verification",
+            "slug": "index",
+            "description": "Bridge simulation and proof: share assertions, align coverage, and orchestrate flows where UVM and formal reinforce each other."
+          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-SV-4B_Advanced_Temporal_Logic",
+          "I-SV-4C_Checkers",
+          "A-UVM-6_Scoreboards_and_Reference_Models"
+        ],
+        "milestones": [
+          "M8",
+          "M6"
         ]
       },
       {
@@ -923,6 +1403,14 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Write your test intent once and compile it to simulation, emulation, or post-silicon targets using the Accellera Portable Stimulus Standard (PSS 2.0)."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "A-UVM-8_Multi_Agent_Topologies",
+          "I-UVM-3B_Advanced_Sequencing_and_Layering"
+        ],
+        "milestones": [
+          "M8"
         ]
       },
       {
@@ -934,28 +1422,15 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Expert guide on verifying power intent, corruption semantics, PMU handshakes, and shutdown/wake-up sequences within a UVM environment."
           }
-        ]
-      },
-      {
-        "title": "E-PYUVM-1: Python-Based Verification",
-        "slug": "E-PYUVM-1_Python_Based_Verification",
-        "topics": [
-          {
-            "title": "E-PYUVM-1: Python-Based Verification",
-            "slug": "index",
-            "description": "Leverage Python's ecosystem for hardware verification using cocotb and pyUVM — from coroutine-based testbenches to full UVM environments in Python."
-          }
-        ]
-      },
-      {
-        "title": "E-RISCV-1: RISC-V Verification Methodology",
-        "slug": "E-RISCV-1_RISC_V_Verification_Methodology",
-        "topics": [
-          {
-            "title": "E-RISCV-1: RISC-V Verification Methodology",
-            "slug": "index",
-            "description": "Master the specialized verification methodology for RISC-V processors — from constrained-random instruction generation with RISCV-DV to ISA compliance checking and formal verification."
-          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-SV-8_Power_Intent_and_UPF",
+          "A-UVM-8_Multi_Agent_Topologies",
+          "I-SV-4A_SVA_Fundamentals"
+        ],
+        "milestones": [
+          "M8"
         ]
       },
       {
@@ -972,6 +1447,54 @@ export const curriculumData: Module[] = [
             "slug": "pss",
             "description": "Intent-based test description that runs across simulation, emulation, and silicon with minimal adaptation."
           }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "A-UVM-8_Multi_Agent_Topologies",
+          "A-UVM-4B_Advanced_RAL_Techniques",
+          "E-DBG-1_Advanced_UVM_Debug_Methodologies"
+        ],
+        "milestones": [
+          "M8"
+        ]
+      },
+      {
+        "title": "E-EMU-1: Emulation-Aware Verification",
+        "slug": "E-EMU-1_Emulation_Aware_Verification",
+        "topics": [
+          {
+            "title": "E-EMU-1: Emulation-Aware Verification",
+            "slug": "index",
+            "description": "Adapt UVM testbenches for hardware emulation platforms — transaction-level acceleration, virtual probes, and the compile-time vs. run-time tradeoffs that determine emulation success."
+          }
+        ],
+        "track": "elective",
+        "prerequisites": [
+          "A-UVM-8_Multi_Agent_Topologies",
+          "I-SV-7_DPI_and_Foreign_Language_Interfaces",
+          "E-PERF-1_UVM_Performance"
+        ],
+        "milestones": [
+          "M8"
+        ]
+      },
+      {
+        "title": "E-PYUVM-1: Python-Based Verification",
+        "slug": "E-PYUVM-1_Python_Based_Verification",
+        "topics": [
+          {
+            "title": "E-PYUVM-1: Python-Based Verification",
+            "slug": "index",
+            "description": "Leverage Python's ecosystem for hardware verification using cocotb and pyUVM — from coroutine-based testbenches to full UVM environments in Python."
+          }
+        ],
+        "track": "elective",
+        "prerequisites": [
+          "I-UVM-3A_Fundamentals",
+          "I-UVM-2B_TLM_Connections"
+        ],
+        "milestones": [
+          "M2"
         ]
       },
       {
@@ -983,6 +1506,55 @@ export const curriculumData: Module[] = [
             "slug": "index",
             "description": "Connect SystemVerilog UVM agents with SystemC TLM-2.0 models and C++ reference models using the Accellera UVM-ML Open Architecture framework."
           }
+        ],
+        "track": "elective",
+        "prerequisites": [
+          "I-SV-7_DPI_and_Foreign_Language_Interfaces",
+          "I-UVM-2B_TLM_Connections"
+        ],
+        "milestones": [
+          "M3",
+          "M8"
+        ]
+      },
+      {
+        "title": "E-RISCV-1: RISC-V Verification Methodology",
+        "slug": "E-RISCV-1_RISC_V_Verification_Methodology",
+        "topics": [
+          {
+            "title": "E-RISCV-1: RISC-V Verification Methodology",
+            "slug": "index",
+            "description": "Master the specialized verification methodology for RISC-V processors — from constrained-random instruction generation with RISCV-DV to ISA compliance checking and formal verification."
+          }
+        ],
+        "track": "elective",
+        "prerequisites": [
+          "I-SV-2B_Advanced_Constrained_Randomization",
+          "E-INT-1_Integrating_UVM_with_Formal_Verification",
+          "A-UVM-6_Scoreboards_and_Reference_Models"
+        ],
+        "milestones": [
+          "M3"
+        ]
+      },
+      {
+        "title": "E-AI-1: AI-Driven Verification",
+        "slug": "E-AI-1_AI_Driven_Verification",
+        "topics": [
+          {
+            "title": "E-AI-1: AI-Driven Verification",
+            "slug": "index",
+            "description": "Explore how machine learning and large language models are transforming hardware verification — from intelligent stimulus generation to automated coverage closure and assertion writing."
+          }
+        ],
+        "track": "elective",
+        "prerequisites": [
+          "I-SV-3B_Advanced_Functional_Coverage",
+          "I-SV-4B_Advanced_Temporal_Logic",
+          "E-PYUVM-1_Python_Based_Verification"
+        ],
+        "milestones": [
+          "M4"
         ]
       }
     ]
@@ -1078,26 +1650,66 @@ export function getBreadcrumbs(slug: string[]): { title: string, path: string }[
   return breadcrumbs;
 }
 
+export interface NavTopic extends Topic {
+  /** Folder name of the module (section) this topic belongs to. */
+  moduleSlug: string;
+  track: 'core' | 'elective';
+}
+
+function allNavTopics(): NavTopic[] {
+  const all: NavTopic[] = [];
+  curriculumData.forEach(m => {
+    m.sections.forEach(s => {
+      s.topics.forEach(t => {
+        all.push({ ...t, slug: `${m.slug}/${s.slug}/${t.slug}`, moduleSlug: s.slug, track: s.track ?? 'core' });
+      });
+    });
+  });
+  return all;
+}
+
+/**
+ * Previous and next lessons along the learning path. From a core lesson the
+ * path skips elective modules (they stay reachable from the outline); inside a
+ * module, and from an elective, every lesson is visited in order.
+ */
 export function findPrevNextTopics(slug: string[]): { prev: Topic | undefined, next: Topic | undefined } {
   const normalized = normalizeSlug(slug);
   if (normalized.length !== 3) return { prev: undefined, next: undefined };
 
-  const allTopics: Topic[] = [];
-  curriculumData.forEach(m => {
-    m.sections.forEach(s => {
-      s.topics.forEach(t => {
-        allTopics.push({ ...t, slug: `${m.slug}/${s.slug}/${t.slug}` });
-      });
-    });
-  });
-
+  const allTopics = allNavTopics();
   const currentIndex = allTopics.findIndex(t => t.slug === normalized.join('/'));
   if (currentIndex === -1) return { prev: undefined, next: undefined };
+  const current = allTopics[currentIndex];
+  const onPath = (t: NavTopic) => current.track === 'elective' || t.track === 'core' || t.moduleSlug === current.moduleSlug;
 
-  const prev = currentIndex > 0 ? allTopics[currentIndex - 1] : undefined;
-  const next = currentIndex < allTopics.length - 1 ? allTopics[currentIndex + 1] : undefined;
+  let prev: NavTopic | undefined;
+  for (let i = currentIndex - 1; i >= 0; i -= 1) {
+    if (onPath(allTopics[i])) { prev = allTopics[i]; break; }
+  }
+  let next: NavTopic | undefined;
+  for (let i = currentIndex + 1; i < allTopics.length; i += 1) {
+    if (onPath(allTopics[i])) { next = allTopics[i]; break; }
+  }
+  const strip = (t?: NavTopic): Topic | undefined => (t ? { title: t.title, slug: t.slug, description: t.description } : undefined);
+  return { prev: strip(prev), next: strip(next) };
+}
 
-  return { prev, next };
+/** The section (module) for a lesson slug, with its manifest metadata. */
+export function findSectionBySlug(slug: string[]): Section | undefined {
+  const normalized = normalizeSlug(slug);
+  if (normalized.length !== 3) return undefined;
+  const [tierSlug, sectionSlug] = normalized;
+  return curriculumData.find(m => m.slug === tierSlug)?.sections.find(s => s.slug === sectionSlug);
+}
+
+/** Canonical URL of a module's first lesson, given its folder name. */
+export function moduleHref(moduleSlug: string): string | undefined {
+  for (const m of curriculumData) {
+    const s = m.sections.find(x => x.slug === moduleSlug);
+    if (s) return `/curriculum/${m.slug}/${s.slug}/${(s.topics.find(t => t.slug === 'index') ?? s.topics[0])?.slug ?? 'index'}`;
+  }
+  return undefined;
 }
 
 // ---- Derived convenience types for the application UI ----

@@ -74,16 +74,28 @@ describe('curriculum navigation contract', () => {
     }
   });
 
-  it('keeps previous and next topic links reciprocal across the whole course', () => {
-    const routes = allTopicRoutes();
-    const canonicalPaths = routes.map(({ tierSlug, sectionSlug, topic }) =>
-      [tierSlug, sectionSlug, topic.slug].join('/'),
-    );
+  it('keeps the core path reciprocal, and returns from electives to it', () => {
+    const routes = allTopicRoutes().map((route) => ({
+      ...route,
+      path: [route.tierSlug, route.sectionSlug, route.topic.slug].join('/'),
+      track: curriculumData.find((t) => t.slug === route.tierSlug)?.sections.find((s) => s.slug === route.sectionSlug)?.track ?? 'core',
+    }));
+    const core = routes.filter((r) => r.track === 'core');
 
-    routes.forEach(({ tierSlug, sectionSlug, topic }, index) => {
-      const navigation = findPrevNextTopics([tierSlug, sectionSlug, topic.slug]);
-      expect(navigation.prev?.slug, `${canonicalPaths[index]} previous`).toBe(canonicalPaths[index - 1]);
-      expect(navigation.next?.slug, `${canonicalPaths[index]} next`).toBe(canonicalPaths[index + 1]);
+    // Core lessons form one reciprocal chain: electives are skipped.
+    core.forEach((route, index) => {
+      const navigation = findPrevNextTopics([route.tierSlug, route.sectionSlug, route.topic.slug]);
+      expect(navigation.prev?.slug, `${route.path} previous`).toBe(core[index - 1]?.path);
+      expect(navigation.next?.slug, `${route.path} next`).toBe(core[index + 1]?.path);
+    });
+
+    // Elective lessons step through their neighbours, so the last one returns to the core path.
+    routes.forEach((route, index) => {
+      if (route.track !== 'elective') return;
+      const navigation = findPrevNextTopics([route.tierSlug, route.sectionSlug, route.topic.slug]);
+      expect(navigation.prev?.slug, `${route.path} previous`).toBe(routes[index - 1]?.path);
+      expect(navigation.next?.slug, `${route.path} next`).toBe(routes[index + 1]?.path);
     });
   });
+
 });
