@@ -90,6 +90,9 @@ module ahb_checker_solution (
   localparam logic [1:0] IDLE = 2'b00, BUSY = 2'b01, NONSEQ = 2'b10, SEQ = 2'b11;
   localparam logic [2:0] INCR = 3'b001;
 
+  // Explicit equality preserves inside's four-state behavior for these binary
+  // encodings and avoids Verilator 5.050's named-constant inside limitation.
+
   // 0 at the first edge after reset, so $past() never looks inside reset.
   logic past_ok;
   always_ff @(posedge HCLK or negedge HRESETn)
@@ -104,7 +107,7 @@ module ahb_checker_solution (
   //    change the address.
   property p_addr_stable;
     @(posedge HCLK) disable iff (!HRESETn)
-      (!HREADY && HTRANS inside {NONSEQ, SEQ}) |=>
+      (!HREADY && (HTRANS == NONSEQ || HTRANS == SEQ)) |=>
         $stable(HADDR) || ($past(HRESP) && HTRANS == IDLE);
   endproperty
   a_addr_stable: assert property (p_addr_stable)
@@ -114,7 +117,7 @@ module ahb_checker_solution (
   //    cancel exception.
   property p_ctrl_stable;
     @(posedge HCLK) disable iff (!HRESETn)
-      (!HREADY && HTRANS inside {NONSEQ, SEQ}) |=>
+      (!HREADY && (HTRANS == NONSEQ || HTRANS == SEQ)) |=>
           ($stable(HTRANS) && $stable({HWRITE, HSIZE, HBURST}))
        || ($past(HRESP) && HTRANS == IDLE);
   endproperty
@@ -127,8 +130,8 @@ module ahb_checker_solution (
   property p_busy_in_wait;
     @(posedge HCLK) disable iff (!HRESETn)
       (!HREADY && HTRANS == BUSY) |=>
-          (HTRANS inside {BUSY, SEQ} && $stable(HADDR))
-       || ($past(HBURST) == INCR && HTRANS inside {IDLE, NONSEQ})
+          ((HTRANS == BUSY || HTRANS == SEQ) && $stable(HADDR))
+       || ($past(HBURST) == INCR && (HTRANS == IDLE || HTRANS == NONSEQ))
        || ($past(HRESP) && HTRANS == IDLE);
   endproperty
   a_busy_in_wait: assert property (p_busy_in_wait)
