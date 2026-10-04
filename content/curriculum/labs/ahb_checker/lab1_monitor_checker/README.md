@@ -78,4 +78,4 @@ The master BFM drives IDLE during every data phase and issues only SINGLE transf
 
 ## Need Help?
 
-Review the [B-AHB-3: AHB Verification Methodology](../../../T3_Advanced/B-AHB-3_AHB_Verification/index.mdx) lesson for the complete monitor and checker architecture. You can also view `solution.sv` for the working implementation.
+Review the [B-AHB-3: AHB Verification Methodology](/curriculum/T3_Advanced/B-AHB-3_AHB_Verification/index) lesson for the complete monitor and checker architecture. You can also view `solution.sv` for the working implementation.

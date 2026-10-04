@@ -59,4 +59,4 @@ Change step 3 to call `add()` on `uvm_domain::get_common_domain()` instead. The 
 
 ## Need Help?
 
-Review the [E-CUST-1: UVM Methodology Customization](/curriculum/T4_Expert/E-CUST-1_UVM_Methodology_Customization) lesson for the phase-insertion pattern. You can also view `solution.sv` for the complete working code.
+Review the [E-CUST-1: UVM Methodology Customization](/curriculum/T4_Expert/E-CUST-1_UVM_Methodology_Customization/index) lesson for the phase-insertion pattern. You can also view `solution.sv` for the complete working code.

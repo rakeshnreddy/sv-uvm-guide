@@ -29,4 +29,4 @@ Use your preferred SV-UVM simulator.
 
 ## Need Help?
 
-Stuck? Review the [E-DBG-1: Advanced UVM Debug Methodologies](../../../T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index.mdx) lesson for the conceptual architecture of an event bus. You can also view `solution.sv` for the completed working code.
+Stuck? Review the [E-DBG-1: Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) lesson for the conceptual architecture of an event bus. You can also view `solution.sv` for the completed working code.

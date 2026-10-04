@@ -42,4 +42,4 @@ UVM_INFO ... [SPI_MON] Observed APB WRITE to SPI_CTRL = 0x1
 
 ## Need Help?
 
-Review the [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies) lesson for the `uvm_config_db` syntax. View `solution.sv` for the completed testbench.
+Review the [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index) lesson for the `uvm_config_db` syntax. View `solution.sv` for the completed testbench.

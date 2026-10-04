@@ -10,11 +10,11 @@ export const GENERATED_LAB_MANIFESTS = [
     "owningModule": "B-AMBA-F1",
     "routeSlug": "ahb-axi-bridge-debug",
     "status": "available",
-    "labPrerequisites": [],
-    "modulePrerequisites": [
+    "labPrerequisites": [
       "ahb-checker-lab",
       "axi-scoreboard-lab"
     ],
+    "modulePrerequisites": [],
     "steps": [
       {
         "id": "1",
@@ -214,9 +214,7 @@ export const GENERATED_LAB_MANIFESTS = [
     "routeSlug": "axi-deadlock-hunt-lab",
     "status": "available",
     "labPrerequisites": [],
-    "modulePrerequisites": [
-      "axi-scoreboard-lab"
-    ],
+    "modulePrerequisites": [],
     "steps": [
       {
         "id": "1",
@@ -451,9 +449,7 @@ export const GENERATED_LAB_MANIFESTS = [
     "owningModule": "I-UVM-2C",
     "routeSlug": "config-debug",
     "status": "available",
-    "labPrerequisites": [
-      "simple-dut-1"
-    ],
+    "labPrerequisites": [],
     "modulePrerequisites": [],
     "steps": [
       {
@@ -744,7 +740,7 @@ export const GENERATED_LAB_MANIFESTS = [
     "status": "available",
     "labPrerequisites": [],
     "modulePrerequisites": [
-      "systemverilog-basics"
+      "F2D"
     ],
     "steps": [
       {
@@ -796,9 +792,7 @@ export const GENERATED_LAB_MANIFESTS = [
     "owningModule": "E-CUST-1",
     "routeSlug": "methodology-custom-phase",
     "status": "available",
-    "labPrerequisites": [
-      "simple-dut-1"
-    ],
+    "labPrerequisites": [],
     "modulePrerequisites": [],
     "steps": [
       {
@@ -909,8 +903,7 @@ export const GENERATED_LAB_MANIFESTS = [
     "status": "available",
     "labPrerequisites": [],
     "modulePrerequisites": [
-      "I-UVM-3A",
-      "E-PSS-1"
+      "I-UVM-3A"
     ],
     "steps": [
       {
@@ -980,9 +973,7 @@ export const GENERATED_LAB_MANIFESTS = [
     "owningModule": "A-UVM-4B",
     "routeSlug": "ral-mirror-bug",
     "status": "available",
-    "labPrerequisites": [
-      "simple-dut-1"
-    ],
+    "labPrerequisites": [],
     "modulePrerequisites": [],
     "steps": [
       {
@@ -1171,9 +1162,7 @@ export const GENERATED_LAB_MANIFESTS = [
     "owningModule": "I-UVM-2B",
     "routeSlug": "scoreboard-decoupling",
     "status": "available",
-    "labPrerequisites": [
-      "simple-dut-1"
-    ],
+    "labPrerequisites": [],
     "modulePrerequisites": [],
     "steps": [
       {
@@ -1246,7 +1235,7 @@ export const GENERATED_LAB_MANIFESTS = [
     "version": "1",
     "title": "Simple DUT Verification",
     "description": "Create a basic UVM testbench for a simple DUT.",
-    "owningModule": "F4",
+    "owningModule": "F4C",
     "routeSlug": "simple-dut-1",
     "status": "coming_soon",
     "labPrerequisites": [],
@@ -1282,9 +1271,7 @@ export const GENERATED_LAB_MANIFESTS = [
     "owningModule": "E-SOC-1",
     "routeSlug": "soc-vip-reuse",
     "status": "available",
-    "labPrerequisites": [
-      "simple-dut-1"
-    ],
+    "labPrerequisites": [],
     "modulePrerequisites": [],
     "steps": [
       {
@@ -1411,9 +1398,7 @@ export const GENERATED_LAB_MANIFESTS = [
     "owningModule": "A-UVM-5",
     "routeSlug": "callbacks-driver-behavior",
     "status": "available",
-    "labPrerequisites": [
-      "simple-dut-1"
-    ],
+    "labPrerequisites": [],
     "modulePrerequisites": [],
     "steps": [
       {

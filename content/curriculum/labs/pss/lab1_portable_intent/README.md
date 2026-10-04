@@ -87,4 +87,4 @@ Your PSS model is complete when every TODO is filled and it matches the solution
 
 ## Need Help?
 
-Review [E-PSS-1: Portable Stimulus Standard](../../../T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index.mdx), especially the sections on actions and flow objects, activities, and compiling PSS to each target.
+Review [E-PSS-1: Portable Stimulus Standard](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index), especially the sections on actions and flow objects, activities, and compiling PSS to each target.

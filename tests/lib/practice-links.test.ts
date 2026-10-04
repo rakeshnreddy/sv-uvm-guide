@@ -261,8 +261,12 @@ describe('lab back link', () => {
 });
 
 describe('lab prerequisites', () => {
-  it('flags the B-AXI-5 deadlock lab as "do this after" B-AXI-6 (G30-PRAC-V04)', () => {
-    const { items, doAfter } = getLabPrerequisites(getLabById('axi-deadlock-hunt-lab') as LabManifest);
+  it('flags a lab prerequisite owned by a later module as "do this after" it (G30-PRAC-V04)', () => {
+    // The deadlock lab no longer depends on the B-AXI-6 scoreboard lab (it never used it), so build the
+    // forward case explicitly: a B-AXI-5 lab that needs the B-AXI-6 scoreboard lab.
+    const deadlock = getLabById('axi-deadlock-hunt-lab') as LabManifest;
+    const forwardCase = { ...deadlock, labPrerequisites: ['axi-scoreboard-lab'] } as LabManifest;
+    const { items, doAfter } = getLabPrerequisites(forwardCase);
     expect(items).toEqual([
       expect.objectContaining({
         kind: 'lab',
@@ -273,6 +277,12 @@ describe('lab prerequisites', () => {
       }),
     ]);
     expect(doAfter?.href).toBe('/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index');
+  });
+
+  it('has no forward dependency left for the real B-AXI-5 deadlock lab', () => {
+    const { items, doAfter } = getLabPrerequisites(getLabById('axi-deadlock-hunt-lab') as LabManifest);
+    expect(items).toEqual([]);
+    expect(doAfter).toBeUndefined();
   });
 
   it('links module prerequisites as lessons and skips the lab own module', () => {

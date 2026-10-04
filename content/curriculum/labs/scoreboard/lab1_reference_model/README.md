@@ -42,4 +42,4 @@ However, the environment **has no scoreboard** — the tests run but never check
 
 ## Need Help?
 
-Stuck? Review the [A-UVM-6: Scoreboards and Reference Models](../../../T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index.mdx) lesson. You can also view `solution.sv` for the completed working code.
+Stuck? Review the [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) lesson. You can also view `solution.sv` for the completed working code.

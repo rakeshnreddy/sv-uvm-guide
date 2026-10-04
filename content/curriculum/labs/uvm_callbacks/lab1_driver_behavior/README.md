@@ -44,4 +44,4 @@ so the report summary counts three `CB` messages and three `PARITY_ERR` errors: 
 
 ## Need Help?
 
-Stuck? Review the [A-UVM-5: UVM Callbacks](../../../T3_Advanced/A-UVM-5_UVM_Callbacks/index.mdx) lesson for the exact syntax to register and attach callbacks. You can also view `solution.sv` for the completed working code.
+Stuck? Review the [A-UVM-5: UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index) lesson for the exact syntax to register and attach callbacks. You can also view `solution.sv` for the completed working code.
