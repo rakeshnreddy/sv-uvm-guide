@@ -9,8 +9,12 @@ interface MdxQuestion {
   answers: {
     text: string;
     correct: boolean;
+    /** Why this option is right or wrong; shown when the learner picks it. */
+    feedback?: string;
   }[];
   explanation: string;
+  /** 1-based index of the lesson objective this question checks (not rendered). */
+  objective?: number;
 }
 
 // This is the structure the component internally uses
@@ -19,6 +23,8 @@ interface FormattedQuestion {
   options: string[];
   correctAnswer: string;
   explanation: string;
+  /** Option text -> feedback for that option. */
+  feedback?: Record<string, string>;
 }
 
 interface LegacyFormattedQuestion {
@@ -81,11 +87,13 @@ const toFormatted = (qs: (FormattedQuestion | LegacyFormattedQuestion | MdxQuest
       const mdxQ = anyQ as MdxQuestion;
       const correctAnswer = mdxQ.answers.find((a) => a.correct)?.text;
       const options = mdxQ.answers.map((a) => a.text);
+      const feedback = Object.fromEntries(mdxQ.answers.filter((a) => a.feedback).map((a) => [a.text, String(a.feedback)]));
       return {
         question: mdxQ.question,
         options,
         correctAnswer: correctAnswer ?? options[0] ?? '',
         explanation: mdxQ.explanation,
+        feedback: Object.keys(feedback).length ? feedback : undefined,
       };
     }
 
@@ -112,12 +120,14 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
   const [selectedAnswer, setSelectedAnswer] = useState<string | null>(null);
   const [isCorrect, setIsCorrect] = useState<boolean | null>(null);
   const [showExplanation, setShowExplanation] = useState(false);
+  const [score, setScore] = useState(0);
 
 
   const handleAnswerSelection = (option: string) => {
     setSelectedAnswer(option);
     const correct = option === parsedQuestions[currentQuestionIndex].correctAnswer;
     setIsCorrect(correct);
+    if (correct) setScore((s) => s + 1);
     setShowExplanation(true);
   };
 
@@ -128,22 +138,45 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
     setCurrentQuestionIndex(currentQuestionIndex + 1);
   };
 
-  if (!parsedQuestions || parsedQuestions.length === 0) {
-    return <div className="p-4 bg-red-900/50 border border-red-500/50 rounded-lg shadow-lg"><p className="text-white">Failed to load quiz. Check the console for errors.</p></div>;
-  }
+  const handleRetry = () => {
+    setSelectedAnswer(null);
+    setIsCorrect(null);
+    setShowExplanation(false);
+    setScore(0);
+    setCurrentQuestionIndex(0);
+  };
 
-  if (currentQuestionIndex >= parsedQuestions.length) {
+  if (!parsedQuestions || parsedQuestions.length === 0) {
     return (
-      <div className="rounded-lg border border-border bg-card/60 p-4 shadow-sm">
-        <h3 className="text-xl font-bold text-primary">Quiz Complete!</h3>
+      <div role="alert" className="rounded-lg border border-red-500/50 bg-red-500/10 p-4">
+        <p className="text-red-800 dark:text-red-200">Failed to load quiz. Check the console for errors.</p>
       </div>
     );
   }
 
-  const { question, options, explanation } = parsedQuestions[currentQuestionIndex];
+  if (currentQuestionIndex >= parsedQuestions.length) {
+    const total = parsedQuestions.length;
+    return (
+      <div className="rounded-lg border border-border bg-card/60 p-4 shadow-sm" role="status" aria-live="polite">
+        <h3 className="text-xl font-bold text-primary">Quiz Complete!</h3>
+        <p className="mt-2 text-foreground">
+          You answered {score} of {total} correctly{score === total ? '.' : '. Review the explanations, then try again.'}
+        </p>
+        <Button onClick={handleRetry} variant="outline" className="mt-4">
+          Retry quiz
+        </Button>
+      </div>
+    );
+  }
+
+  const { question, options, explanation, correctAnswer, feedback } = parsedQuestions[currentQuestionIndex];
+  const selectedFeedback = selectedAnswer ? feedback?.[selectedAnswer] : undefined;
 
   return (
     <div className="rounded-lg border border-border bg-card/60 p-4 shadow-sm">
+      <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        Question {currentQuestionIndex + 1} of {parsedQuestions.length}
+      </p>
       <h3 className="text-xl font-bold text-primary mb-4">{question}</h3>
       <div className="space-y-2">
         {options.map((option) => (
@@ -155,6 +188,11 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
             className="h-auto min-h-10 w-full justify-start whitespace-normal py-2 text-left [overflow-wrap:anywhere]"
           >
             {option}
+            {selectedAnswer !== null && !isCorrect && option === correctAnswer ? (
+              <span className="ml-2 shrink-0 font-semibold text-emerald-700 dark:text-emerald-400">
+                <span aria-hidden="true">✓ </span>correct answer
+              </span>
+            ) : null}
           </Button>
         ))}
       </div>
@@ -164,6 +202,7 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
             <span aria-hidden="true">{isCorrect ? '✓ ' : '✕ '}</span>
             <span>{isCorrect ? 'Correct!' : 'Incorrect.'}</span>
           </p>
+          {selectedFeedback ? <p className="mt-2 text-sm font-medium text-foreground">{selectedFeedback}</p> : null}
           <p className="text-sm mt-2 text-foreground/80">{explanation}</p>
           <Button onClick={handleNextQuestion} className="mt-4">
             Next Question
