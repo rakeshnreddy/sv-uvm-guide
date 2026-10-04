@@ -1,9 +1,15 @@
 import type { Metadata } from 'next';
+
+import LearnInLesson from '@/components/practice/LearnInLesson';
 import WaveformStudio from '@/components/practice/WaveformStudio';
 import { InfoPage } from '@/components/templates/InfoPage';
+import { requirePracticePage } from '@/lib/practice-links';
+
+const HREF = '/practice/waveform-studio';
+const practice = requirePracticePage(HREF);
 
 export const metadata: Metadata = {
-  title: 'Waveform Studio | SystemVerilog & UVM Mastery',
+  title: practice.title,
   description:
     'Edit WaveJSON timing diagrams for AXI and AHB, redraw them live, and check AXI handshakes against the VALID/READY and channel-dependency rules.',
 };
@@ -12,9 +18,11 @@ export const metadata: Metadata = {
 export default function WaveformStudioPage() {
   return (
     <InfoPage
-      title="Waveform Studio"
+      title={practice.title}
       description="Read, edit and debug protocol timing diagrams. The checker uses the same AXI model as the B-AXI-1 lesson figures."
       diagrams={[<WaveformStudio key="waveform-studio" />]}
-    />
+    >
+      <LearnInLesson item={practice} />
+    </InfoPage>
   );
 }

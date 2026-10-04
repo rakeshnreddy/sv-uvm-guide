@@ -9,8 +9,10 @@ import {
   lazyMdxInteractiveNames,
   type LazyMdxInteractiveName,
 } from "@/components/mdx/lazy-mdx-interactives";
+import { BeforeYouStart, type BeforeYouStartProps } from "@/components/mdx/BeforeYouStart";
 import MdxImage from "@/components/mdx/Image";
 import { LabLink } from "@/components/mdx/LabLink";
+import { NextLesson, type NextLessonProps } from "@/components/mdx/NextLesson";
 import { InfoPage } from "@/components/templates/InfoPage";
 import {
   Accordion,
@@ -112,9 +114,23 @@ export const mdxComponents = {
   ArchitectureDiagram,
   TimingDiagram,
   SequenceDiagram,
+  BeforeYouStart,
+  NextLesson,
   ...lazyMdxComponents,
 };
 
-export function getMdxComponents(_requestedComponents: readonly string[] = []) {
-  return mdxComponents;
+export interface MdxRenderContext {
+  /** The lesson being rendered. <BeforeYouStart /> and <NextLesson /> describe it when written without props. */
+  lessonSlug?: readonly string[];
+}
+
+export function getMdxComponents(_requestedComponents: readonly string[] = [], context: MdxRenderContext = {}) {
+  const { lessonSlug } = context;
+  if (!lessonSlug) return mdxComponents;
+  return {
+    ...mdxComponents,
+    // An explicit `lesson` prop in the MDX still wins over the page's lesson.
+    BeforeYouStart: (props: BeforeYouStartProps) => <BeforeYouStart lesson={lessonSlug} {...props} />,
+    NextLesson: (props: NextLessonProps) => <NextLesson lesson={lessonSlug} {...props} />,
+  };
 }

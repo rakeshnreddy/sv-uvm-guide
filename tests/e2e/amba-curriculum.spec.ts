@@ -2,9 +2,9 @@ import { expect, test, type Page } from '@playwright/test';
 import {
   curriculumData,
   findPrevNextTopics,
-  getBreadcrumbs,
   type Topic,
 } from '../../src/lib/curriculum-data';
+import { lessonBreadcrumbs } from '../../src/lib/curriculum/lesson-context';
 
 type TopicRoute = {
   tierSlug: string;
@@ -122,11 +122,11 @@ test.describe('AMBA curriculum coverage', () => {
     const href = hrefFor(route!);
     await expectLesson(page, route!);
 
-    const breadcrumbs = getBreadcrumbs([route!.tierSlug, route!.sectionSlug, route!.topic.slug]);
-    for (const breadcrumb of breadcrumbs.slice(0, -1)) {
+    const breadcrumbNav = page.getByRole('navigation', { name: 'Breadcrumb' });
+    for (const crumb of lessonBreadcrumbs([route!.tierSlug, route!.sectionSlug, route!.topic.slug])) {
       await expect(
-        page.locator(`a[href="${breadcrumb.path}"]`).filter({ hasText: breadcrumb.title }).first(),
-        `${href} should expose breadcrumb ${breadcrumb.path}`,
+        breadcrumbNav.locator(`a[href="${crumb.href}"]`).filter({ hasText: crumb.label }).first(),
+        `${href} should expose breadcrumb ${crumb.href}`,
       ).toBeVisible();
     }
 

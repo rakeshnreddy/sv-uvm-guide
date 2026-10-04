@@ -1,166 +1,60 @@
-"use client";
-
-import React from "react";
+import { ChevronRight } from "lucide-react";
 import Link from "next/link";
-import { getBreadcrumbs, curriculumData, normalizeSlug } from "@/lib/curriculum-data";
-import { buildCurriculumStatus, type TopicStatus } from "@/lib/curriculum-status";
-import { ChevronRight, ChevronsUpDown, CheckCircle, Circle, Clock } from "lucide-react";
-import { useState, useId } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import React from "react";
+
+import ModuleJumpMenu from "@/components/curriculum/ModuleJumpMenu";
+import { getLessonContext, lessonBreadcrumbs } from "@/lib/curriculum/lesson-context";
+import { cn } from "@/lib/utils";
 
 type BreadcrumbsProps = {
-  slug: string[];
+  /** The lesson's slug in any accepted form; the trail always uses canonical links. */
+  slug: readonly string[];
+  className?: string;
 };
 
-// Mock progress data - in a real app, this would come from a context or API
-type ProgressState = 'completed' | 'in_progress';
-
-const topicStatuses = buildCurriculumStatus();
-
-const statusToProgress = (status: TopicStatus): ProgressState =>
-  status === 'complete' ? 'completed' : 'in_progress';
-
-const tally = (map: Map<string, { total: number; complete: number }>, key: string, isComplete: boolean) => {
-  const current = map.get(key) ?? { total: 0, complete: 0 };
-  current.total += 1;
-  if (isComplete) current.complete += 1;
-  map.set(key, current);
-};
-
-const progressData: Record<string, ProgressState> = (() => {
-  const topicProgress: Record<string, ProgressState> = {};
-  const sectionStats = new Map<string, { total: number; complete: number }>();
-  const moduleStats = new Map<string, { total: number; complete: number }>();
-
-  topicStatuses.forEach(entry => {
-    const topicPath = `/curriculum/${entry.moduleSlug}/${entry.sectionSlug}/${entry.topicSlug}`;
-    const sectionPath = `/curriculum/${entry.moduleSlug}/${entry.sectionSlug}`;
-    const modulePath = `/curriculum/${entry.moduleSlug}`;
-
-    const isComplete = entry.status === 'complete';
-
-    topicProgress[topicPath] = statusToProgress(entry.status);
-    tally(sectionStats, sectionPath, isComplete);
-    tally(moduleStats, modulePath, isComplete);
-  });
-
-  const aggregate = (
-    stats: Map<string, { total: number; complete: number }>,
-    target: Record<string, ProgressState>,
-  ) => {
-    stats.forEach((value, key) => {
-      target[key] = value.total > 0 && value.complete === value.total ? 'completed' : 'in_progress';
-    });
-  };
-
-  aggregate(sectionStats, topicProgress);
-  aggregate(moduleStats, topicProgress);
-
-  return topicProgress;
-})();
-
-export default function Breadcrumbs({ slug }: BreadcrumbsProps) {
-  const normalizedSlug = normalizeSlug(slug);
-  const breadcrumbs = getBreadcrumbs(normalizedSlug);
-  const [isJumpToOpen, setJumpToOpen] = useState(false);
-  const jumpMenuId = useId();
-  const jumpMenuHeadingId = `${jumpMenuId}-heading`;
-
-  if (breadcrumbs.length <= 1) { // Hide if only on main curriculum page
-    return null;
-  }
-
-  const currentModule = curriculumData.find(m => m.slug === normalizedSlug[0]);
-  const currentSection = currentModule?.sections.find(s => s.slug === normalizedSlug[1]);
-
-  const timeToComplete = currentSection ? currentSection.topics.length * 5 : 0; // 5 mins per topic
+/**
+ * Curriculum › Tier › Module › Lesson (G30-PAGE-05..08, G30-PAGE-14, G30-PAGE-V14):
+ * an ordered list in a named navigation landmark, with aria-current="page" on
+ * the last crumb and canonical links throughout. No progress icons: there is no
+ * learner progress data to show yet. "Jump to" lists the module's lessons.
+ */
+export default function Breadcrumbs({ slug, className }: BreadcrumbsProps) {
+  const crumbs = lessonBreadcrumbs(slug);
+  const context = getLessonContext(slug);
+  if (crumbs.length === 0 || !context) return null;
 
   return (
-    <div className="bg-muted/20 border-b border-border/40 mb-8 -mt-8 print:hidden">
-        <nav aria-label="Breadcrumb" className="container mx-auto px-4 sm:px-6 lg:px-8 flex items-center justify-between text-sm text-muted-foreground h-14">
-            <div className="flex items-center overflow-x-auto whitespace-nowrap py-4">
-                {breadcrumbs.map((breadcrumb, index) => {
-                    const status = progressData[breadcrumb.path];
-                    const isLast = index === breadcrumbs.length - 1;
-                    return (
-                        <div key={breadcrumb.path} className="flex items-center">
-                        {index > 0 && <ChevronRight className="w-4 h-4 mx-2 flex-shrink-0" />}
-                        <Link
-                            href={breadcrumb.path}
-                            className={`flex items-center gap-1.5 hover:text-foreground transition-colors ${
-                            isLast ? "text-foreground font-semibold" : ""
-                            }`}
-                        >
-                            {status === 'completed' ? (
-                              <CheckCircle className="h-4 w-4 text-green-500 flex-shrink-0" />
-                            ) : status === 'in_progress' ? (
-                              <Clock className="h-4 w-4 text-amber-500 flex-shrink-0" />
-                            ) : isLast ? (
-                              <Circle className="h-4 w-4 text-primary flex-shrink-0" />
-                            ) : (
-                              <Circle className="h-4 w-4 flex-shrink-0" />
-                            )}
-                            <span className="truncate">{breadcrumb.title}</span>
-                        </Link>
-                        </div>
-                    )
-                })}
-            </div>
-            <div className="hidden sm:flex items-center gap-4 ml-4">
-                {currentSection && (
-                    <div className="hidden lg:flex items-center gap-2 text-xs">
-                        <Clock className="h-4 w-4" />
-                        <span>Est. {timeToComplete} mins left</span>
-                    </div>
+    <div
+      className={cn(
+        "flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border/60 bg-card/60 px-3 py-1 text-sm text-muted-foreground print:hidden sm:px-4",
+        className,
+      )}
+    >
+      <nav aria-label="Breadcrumb" className="min-w-0 flex-1">
+        <ol className="flex flex-wrap items-center gap-x-1 gap-y-0">
+          {crumbs.map((crumb, index) => (
+            <li key={crumb.href} className="flex min-w-0 items-center gap-1">
+              {index > 0 ? <ChevronRight aria-hidden="true" className="h-3.5 w-3.5 shrink-0" /> : null}
+              <Link
+                href={crumb.href}
+                aria-current={crumb.current ? "page" : undefined}
+                className={cn(
+                  "inline-flex min-h-[2.5rem] max-w-[15rem] items-center rounded-md px-1 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:max-w-[20rem]",
+                  crumb.current && "font-semibold text-foreground",
                 )}
-                {currentSection && (
-                    <div className="relative">
-                        <button
-                            id={`${jumpMenuId}-trigger`}
-                            type="button"
-                            onClick={() => setJumpToOpen(!isJumpToOpen)}
-                            className="flex items-center gap-1 text-xs font-semibold p-2 rounded-md hover:bg-muted/50 border border-transparent hover:border-border/40"
-                            aria-haspopup="menu"
-                            aria-expanded={isJumpToOpen}
-                            aria-controls={`${jumpMenuId}-menu`}
-                        >
-                            Jump to
-                            <ChevronsUpDown className="w-3 h-3" />
-                        </button>
-                         <AnimatePresence>
-                            {isJumpToOpen && (
-                                <motion.div
-                                    initial={{ opacity: 0, y: -10 }}
-                                    animate={{ opacity: 1, y: 0 }}
-                                    exit={{ opacity: 0, y: -10 }}
-                                    id={`${jumpMenuId}-menu`}
-                                    role="menu"
-                                    aria-labelledby={jumpMenuHeadingId}
-                                    className="absolute top-full right-0 mt-2 w-72 bg-background border border-border/40 rounded-md shadow-lg z-10"
-                                >
-                                    <div id={jumpMenuHeadingId} className="p-2 font-semibold border-b border-border/40 text-sm">
-                                        Topics in {currentSection.title}
-                                    </div>
-                                    <div className="p-2 max-h-60 overflow-y-auto">
-                                        {currentSection.topics.map(topic => (
-                                            <Link
-                                                key={topic.slug}
-                                                href={`/curriculum/${currentModule?.slug}/${currentSection?.slug}/${topic.slug}`}
-                                                onClick={() => setJumpToOpen(false)}
-                                                className={`block w-full text-left p-2 text-sm rounded-md hover:bg-muted ${normalizedSlug[2] === topic.slug ? 'bg-muted font-semibold' : ''}`}
-                                                role="menuitem"
-                                            >
-                                                {topic.title}
-                                            </Link>
-                                        ))}
-                                    </div>
-                                </motion.div>
-                            )}
-                        </AnimatePresence>
-                    </div>
-                )}
-            </div>
-        </nav>
+              >
+                <span className="truncate">{crumb.label}</span>
+              </Link>
+            </li>
+          ))}
+        </ol>
+      </nav>
+      {context.lessons.length > 1 ? (
+        <ModuleJumpMenu
+          moduleLabel={context.module.label}
+          lessons={context.lessons.map((lesson) => ({ href: lesson.href, title: lesson.title, current: lesson.current }))}
+        />
+      ) : null}
     </div>
   );
 }

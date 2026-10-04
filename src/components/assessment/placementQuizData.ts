@@ -1,3 +1,5 @@
+import type { PlacementRouteTarget } from '@/lib/learning-paths';
+
 export type PlacementCategory = 'foundations' | 'methodology' | 'debug';
 
 export type PlacementDifficulty = 'intro' | 'intermediate' | 'advanced';
@@ -44,10 +46,25 @@ export const PLACEMENT_ASSESSMENT_VERSION = 'placement-v2';
 export const PLACEMENT_SCORING_VERSION = 'placement-scoring-v2';
 
 export interface PlacementTierRecommendation {
+  /** The curriculum tier the learner is ready for (1–4). */
   tier: number;
+  /** The manifest title of that tier, for example "Tier 2: Intermediate". */
   label: string;
   summary: string;
   focus: string;
+  /** Where to start: a learning route, its start step and the steps to skim first (src/lib/learning-paths.ts). */
+  route: PlacementRouteTarget;
+}
+
+export interface PlacementResource {
+  label: string;
+  href: string;
+}
+
+export interface PlacementCategoryFocus {
+  title: string;
+  summary: string;
+  resources: PlacementResource[];
 }
 
 export const placementQuestions: PlacementQuestion[] = [
@@ -197,56 +214,100 @@ const difficultyWeight: Record<PlacementDifficulty, number> = {
   advanced: 1.4,
 };
 
+/**
+ * One entry per curriculum tier, highest first. Labels are the manifest tier
+ * titles (tests/placement-links.spec.ts checks them), and each tier maps to a
+ * route step whose first lesson is the recommended start.
+ */
 const tierThresholds: PlacementTierRecommendation[] = [
   {
     tier: 4,
-    label: 'Tier 4 • Optimization and Leadership',
-    summary: 'You are ready for advanced coverage closure, methodology customization, and mentoring peers.',
-    focus: 'Dive into lab series that stress performance tuning and scenario synthesis.',
+    label: 'Tier 4: Expert',
+    summary:
+      'You apply UVM, coverage and debug patterns reliably. Go straight to the expert material: debug at scale, methodology, formal, portable stimulus, power and SoC strategy.',
+    focus: 'When a Tier 4 lesson assumes something you have not met, the expert index and each lesson’s prerequisites point back to it.',
+    route: { tier: 4, routeId: 'expert', startStepId: 'debug-methodology', skimStepIds: [] },
   },
   {
     tier: 3,
-    label: 'Tier 3 • Systems Integration',
-    summary: 'Solid fundamentals with room to sharpen complex debug and UVM configuration patterns.',
-    focus: 'Prioritize intermediate labs on phasing, factory overrides, and layered sequences.',
+    label: 'Tier 3: Advanced',
+    summary:
+      'Your SystemVerilog and UVM fundamentals are solid. Next come complete environments: scoreboards, VIP, callbacks, multi-agent topologies, register models and the AMBA protocols.',
+    focus: 'Skim the Tier 2 deep dives you have not met at work, then build environments on the Practitioner route.',
+    route: { tier: 3, routeId: 'practitioner', startStepId: 'environments', skimStepIds: ['deeper-sv', 'deeper-uvm'] },
   },
   {
     tier: 2,
-    label: 'Tier 2 • Guided Ramp-Up',
-    summary: 'Core concepts are forming; targeted practice on interfaces, sequences, and coverage will accelerate growth.',
-    focus: 'Work through foundational curriculum modules and guided scoreboarding labs.',
+    label: 'Tier 2: Intermediate',
+    summary:
+      'The SystemVerilog basics are in place. Next come class-based testbenches, constrained random stimulus, coverage and assertions, then your first UVM testbench.',
+    focus: 'If a foundations answer surprised you, skim the Tier 1 language and timing lessons before you start.',
+    route: { tier: 2, routeId: 'junior', startStepId: 'class-based-tb', skimStepIds: ['language', 'time-and-races'] },
   },
   {
     tier: 1,
-    label: 'Tier 1 • Foundations First',
-    summary: 'Start with the baseline SystemVerilog path to cement syntax, scheduling, and reset-safe patterns.',
-    focus: 'Follow the Tier 1 curriculum track before tackling UVM-heavy content.',
+    label: 'Tier 1: Foundations',
+    summary:
+      'Start at the beginning: why verification exists, SystemVerilog data and procedural code, then time, races and interfaces.',
+    focus: 'Follow the Junior route from its first lesson; every step ends with practice.',
+    route: { tier: 1, routeId: 'junior', startStepId: 'why-verify', skimStepIds: [] },
   },
 ];
 
-const categoryFocus: Record<PlacementCategory, { title: string; summary: string; resources: { label: string; href: string }[] }> = {
+/** The four tier recommendations, highest tier first. The placement page resolves each to a starting lesson. */
+export const placementTierRecommendations: readonly PlacementTierRecommendation[] = tierThresholds;
+
+const categoryFocus: Record<PlacementCategory, PlacementCategoryFocus> = {
   foundations: {
     title: 'SystemVerilog Foundations',
-    summary: 'Reinforce scheduling semantics, interfaces, and constraint techniques so RTL corner cases stay controlled.',
+    summary: 'Reinforce data types, procedural blocks, interfaces and constraints so RTL corner cases stay controlled.',
     resources: [
-      { label: 'T1 • SystemVerilog Basics', href: '/curriculum/T1_Foundational/F2_SystemVerilog_Basics/index' },
-      { label: 'Interactive • Data Type Explorer', href: '/practice/visualizations/systemverilog-data-types' },
+      { label: 'F2A: Core Data Types', href: '/curriculum/T1_Foundational/F2A_Core_Data_Types/index' },
+      {
+        label: 'F2C: Procedural Code and Flow Control',
+        href: '/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index',
+      },
+      {
+        label: 'F4B: Bundling Signals with Interfaces and Modports',
+        href: '/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index',
+      },
+      {
+        label: 'I-SV-2A: Constrained Randomization Fundamentals',
+        href: '/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index',
+      },
+      { label: 'Interactive: SystemVerilog Data Types', href: '/practice/visualizations/systemverilog-data-types' },
     ],
   },
   methodology: {
     title: 'Verification Methodology',
-    summary: 'Deepen your UVM fluency across handshakes, configuration, and agent roles to keep testbenches scalable.',
+    summary: 'Deepen your UVM fluency across agent roles, configuration and the sequencer-driver handshake.',
     resources: [
-      { label: 'T2 • UVM Building Blocks', href: '/curriculum/T2_Intermediate/I-UVM-2_Agents_and_Sequences/index' },
-      { label: 'Practice • UVM Sequencer Arbitration', href: '/exercises/sequencer-arbitration' },
+      {
+        label: 'I-UVM-2A: Component Roles and the Testbench Hierarchy',
+        href: '/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index',
+      },
+      {
+        label: 'I-UVM-2C: Configuration and Resources',
+        href: '/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index',
+      },
+      { label: 'I-UVM-3A: Basic UVM Sequences and Items', href: '/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index' },
+      { label: 'Exercise: Sequencer Arbitration Sandbox', href: '/exercises/sequencer-arbitration' },
     ],
   },
   debug: {
     title: 'Debug & Coverage Habits',
-    summary: 'Sharpen coverage-driven strategies and failure triage so regressions converge faster.',
+    summary: 'Sharpen coverage closure, end-of-test control and failure triage so regressions converge faster.',
     resources: [
-      { label: 'T3 • Coverage Closure Playbook', href: '/curriculum/T3_Advanced/A-COV-1_Coverage_Strategies/index' },
-      { label: 'Lab • Functional Coverage Analyzer', href: '/practice/visualizations/coverage-analyzer' },
+      {
+        label: 'I-SV-3B: The Coverage Closure Loop',
+        href: '/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow',
+      },
+      { label: 'I-UVM-1C: UVM Phasing and Synchronization', href: '/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index' },
+      {
+        label: 'E-DBG-1: Advanced UVM Debug Methodologies',
+        href: '/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index',
+      },
+      { label: 'Interactive: Coverage Closure Lab', href: '/practice/visualizations/coverage-analyzer' },
     ],
   },
 };
@@ -334,4 +395,4 @@ export const calculatePlacementResults = (
   };
 };
 
-export const placementCategoryFocus = categoryFocus;
+export const placementCategoryFocus: Readonly<Record<PlacementCategory, PlacementCategoryFocus>> = categoryFocus;

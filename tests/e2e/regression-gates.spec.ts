@@ -70,9 +70,10 @@ test.describe('Curriculum Interaction Gates', () => {
     });
 
     await test.step('Prev/Next navigation', async () => {
-      const nav = page.locator('main nav');
-      await expect(nav.locator('a:has-text("Next")')).toBeVisible({ timeout: 30000 });
-      await expect(nav.locator('a:has-text("Previous")')).toBeVisible({ timeout: 30000 });
+      // The lesson's own pager; the breadcrumb and "On this page" are navigation landmarks too.
+      const nav = page.getByRole('navigation', { name: 'Previous and next lesson' });
+      await expect(nav.getByRole('link', { name: /^Next lesson/ })).toBeVisible({ timeout: 30000 });
+      await expect(nav.getByRole('link', { name: /^Previous lesson/ })).toBeVisible({ timeout: 30000 });
     });
   });
 });

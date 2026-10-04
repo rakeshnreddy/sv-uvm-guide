@@ -1,11 +1,13 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
 import type { LabAssetSummary, LabProgressDto, LearnerLabDto } from "@/types/lab";
 import { SITE_MONACO_THEME, defineSiteMonacoThemes } from '@/lib/monaco-themes';
+import type { LabBackLink as LabBackLinkData, LabPrerequisites, LessonLink } from "@/lib/practice-links";
+
+import { LabBackLink, LabLessonContext } from "./LabNavigation";
 
 const MonacoEditor = dynamic(() => import("@monaco-editor/react"), {
   ssr: false,
@@ -20,6 +22,12 @@ type LabClientPageProps = {
   lab: LearnerLabDto;
   assets: LabAssetSummary[];
   initialProgress: LabProgressDto;
+  /** From getLabBackLink(): the lesson that launches this lab (never a bare /curriculum fallback). */
+  backLink: LabBackLinkData;
+  /** From getLabLessons(): the launching lesson first, then related lessons. */
+  lessons: LessonLink[];
+  /** From getLabPrerequisites(): prerequisite lessons and labs, and "do this lab after" for forward dependencies. */
+  prerequisites: Pick<LabPrerequisites, "items" | "doAfter">;
 };
 
 const roleLabel: Record<LabAssetSummary["role"], string> = {
@@ -41,7 +49,7 @@ function assetUrl(labId: string, assetPath: string): string {
   return `/api/me/labs/${encodeURIComponent(labId)}/assets/${encodedPath}`;
 }
 
-export default function LabClientPage({ lab, assets, initialProgress }: LabClientPageProps) {
+export default function LabClientPage({ lab, assets, initialProgress, backLink, lessons, prerequisites }: LabClientPageProps) {
   const initialStepIndex = Math.max(
     0,
     lab.steps.findIndex((step) => step.id === initialProgress.currentStepId),
@@ -65,7 +73,6 @@ export default function LabClientPage({ lab, assets, initialProgress }: LabClien
   const selectedContent = selectedAsset
     ? (selectedAsset.editable ? fileBuffers[selectedAsset.path] : readOnlyBuffers[selectedAsset.path]) ?? ""
     : stepCode;
-  const moduleHref = lab.moduleHref ?? "/curriculum";
   const editableAssets = useMemo(() => assets.filter((asset) => asset.editable), [assets]);
   const simulatableAssets = useMemo(
     () => editableAssets.filter((asset) => asset.language === "systemverilog"),
@@ -136,6 +143,7 @@ export default function LabClientPage({ lab, assets, initialProgress }: LabClien
         <div>
           <h1 className="text-3xl font-bold">{lab.title}</h1>
           <p className="mt-3 text-muted-foreground">This lab does not yet have a learner workflow.</p>
+          <LabBackLink backLink={backLink} className="mt-4" />
         </div>
       </div>
     );
@@ -259,11 +267,19 @@ export default function LabClientPage({ lab, assets, initialProgress }: LabClien
   };
 
   return (
-    <div className="flex min-h-screen bg-background text-foreground">
-      <aside className="flex w-80 shrink-0 flex-col border-r border-border bg-secondary p-4 text-secondary-foreground">
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{lab.owningModule}</p>
-        <h1 className="mb-2 text-xl font-bold">{lab.title}</h1>
+    // Stacks at phone and tablet widths; the guide column docks beside the workspace from lg.
+    <div className="flex min-h-screen flex-col bg-background text-foreground lg:flex-row">
+      <aside
+        aria-label="Lab guide"
+        className="flex w-full shrink-0 flex-col border-b border-border bg-secondary p-4 text-secondary-foreground lg:w-80 lg:border-b-0 lg:border-r"
+      >
+        <LabBackLink backLink={backLink} className="mb-3" />
+        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          {backLink.lesson?.code ?? lab.owningModule}
+        </p>
+        <h1 className="mb-2 text-xl font-bold [overflow-wrap:anywhere]">{lab.title}</h1>
         <p className="mb-5 text-sm text-muted-foreground">{lab.description}</p>
+        <LabLessonContext lessons={lessons} prerequisites={prerequisites} className="mb-5" />
 
         <h2 className="mb-2 text-sm font-semibold uppercase tracking-wide">Steps</h2>
         <ol className="space-y-2">
@@ -272,6 +288,7 @@ export default function LabClientPage({ lab, assets, initialProgress }: LabClien
               <button
                 type="button"
                 className="w-full text-left"
+                aria-current={currentStepIndex === index ? "step" : undefined}
                 disabled={index > 0 && !completedSteps.includes(lab.steps[index - 1].id)}
                 onClick={() => {
                   setCurrentStepIndex(index);
@@ -305,9 +322,9 @@ export default function LabClientPage({ lab, assets, initialProgress }: LabClien
         )}
       </aside>
 
-      <main className="flex min-w-0 flex-1 flex-col">
+      {/* A section, not <main>: the learning layout already provides the page's main landmark. */}
+      <section aria-label="Lab workspace" className="flex min-w-0 flex-1 flex-col">
         <div className="border-b border-border bg-card p-4 text-card-foreground">
-          <Link href={moduleHref} className="mb-2 inline-flex text-sm font-medium text-primary underline-offset-4 hover:underline">Back to module</Link>
           <h2 className="text-lg font-bold">{currentStep.title}</h2>
           <p className="mt-1 text-sm text-muted-foreground">{currentStep.instructions}</p>
         </div>
@@ -334,7 +351,7 @@ export default function LabClientPage({ lab, assets, initialProgress }: LabClien
           ) : (
             <p className="text-sm text-muted-foreground">This step is complete. Your progress and workspace edits are saved.</p>
           )}
-          <pre aria-live="polite" className={isSuccess === true ? "text-success" : isSuccess === false ? "text-destructive" : ""}>{consoleOutput}</pre>
+          <pre aria-live="polite" className={`whitespace-pre-wrap [overflow-wrap:anywhere] ${isSuccess === true ? "text-success" : isSuccess === false ? "text-destructive" : ""}`}>{consoleOutput}</pre>
           {simulatableAssets.length > 0 && (
             <CodeExecutionEnvironment prepareFiles={async () => {
               const workspace = await loadMissingEditableFiles();
@@ -345,7 +362,7 @@ export default function LabClientPage({ lab, assets, initialProgress }: LabClien
             }} />
           )}
         </div>
-      </main>
+      </section>
     </div>
   );
 }

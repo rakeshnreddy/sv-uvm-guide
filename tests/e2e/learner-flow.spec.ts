@@ -61,7 +61,8 @@ test.describe('Learner navigation flow', () => {
     });
 
     await test.step('Navigate to the next module', async () => {
-      await page.locator('main nav').getByRole('link', { name: /Next/i }).click();
+      // The lesson's own pager; the breadcrumb and "On this page" are navigation landmarks too.
+      await page.getByRole('navigation', { name: 'Previous and next lesson' }).getByRole('link', { name: /^Next lesson/ }).click();
       await expect(page.locator('header h1')).toContainText('Power-Aware UVM Verification Strategy', {
         timeout: 60000,
       });

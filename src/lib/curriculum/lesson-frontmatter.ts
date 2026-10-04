@@ -12,7 +12,9 @@ export const lessonFrontmatterSchema = z.object({
   description: z.string().trim().min(1).optional(),
   flashcardId: z.string().trim().min(1).optional(),
   flashcards: z.string().trim().min(1).optional(),
-  conceptLinking: z.boolean().default(true),
+  // Automatic concept links are off unless a lesson opts in: the knowledge graph
+  // behind them is a 15-node placeholder with wrong tiers (G30 request 10).
+  conceptLinking: z.boolean().default(false),
   components: z.array(z.string().trim().min(1)).default([]),
   order: z.number().int().positive().optional(),
   tier: z.string().trim().min(1).optional(),

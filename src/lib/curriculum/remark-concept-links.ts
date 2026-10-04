@@ -85,6 +85,11 @@ function transformChildren(
   parent.children = transformed;
 }
 
+/**
+ * Wraps concept names in lesson prose with <ConceptLink>. Opt-in per lesson:
+ * the lesson page runs it only when the frontmatter sets `conceptLinking: true`
+ * (the default is false while the knowledge graph is a placeholder; G30 request 10).
+ */
 export function remarkConceptLinks({ concepts }: { concepts: readonly ConceptNode[] }) {
   const uniqueConcepts = new Map(
     concepts

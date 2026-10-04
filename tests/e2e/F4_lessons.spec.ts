@@ -25,6 +25,7 @@ test.describe('F4 Lessons', () => {
     test('F4C: Clocking Blocks loads correctly', async ({ page }) => {
         await page.goto('/curriculum/T1_Foundational/F4C_Clocking_Blocks');
         await expect(page.getByRole('heading', { name: 'F4C: Synchronizing with Clocking and Program Blocks' })).toBeVisible();
-        await expect(page.getByText('The Race Condition Problem')).toBeVisible();
+        // Scoped to the lesson body: the "On this page" list repeats every H2 and H3.
+        await expect(page.getByTestId('lesson-content').getByText('The Race Condition Problem')).toBeVisible();
     });
 });

@@ -7,9 +7,11 @@ export default function CurriculumLayout({
 }: {
   children: React.ReactNode;
 }) {
+  // No horizontal padding of its own: the learning layout's 16 px gutter is the
+  // only one at 390 px. ConceptModal serves lessons that opt in to concept links.
   return (
     <KnowledgeContextProvider>
-      <div className="relative p-4 md:p-6">
+      <div className="relative">
         {children}
         <ConceptModal />
       </div>

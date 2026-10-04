@@ -1,12 +1,18 @@
 import React from 'react';
 import ScoreboardConnectorExercise from '@/components/exercises/ScoreboardConnectorExercise';
 import { InfoPage } from '@/components/templates/InfoPage';
+import LearnInLesson from '@/components/practice/LearnInLesson';
+import { requirePracticePage } from '@/lib/practice-links';
+
+// The back link and lesson list come from the practice map (src/lib/practice-links.ts).
+const practice = requirePracticePage('/exercises/scoreboard-connector');
 
 const ScoreboardConnectorPage: React.FC = () => {
   const pageTitle = "Exercise: Scoreboard Connector";
 
   const content = (
     <>
+      <LearnInLesson item={practice} />
       <section className="mb-6">
         <h2 className="text-2xl font-semibold text-primary mb-2">Wire the checking side of an agent environment</h2>
         <p className="text-muted-foreground mb-1">
@@ -46,7 +52,7 @@ export default ScoreboardConnectorPage;
 
 export async function generateMetadata() {
   return {
-    title: "Exercise: Scoreboard Connector | SystemVerilog & UVM Mastery",
+    title: "Exercise: Scoreboard Connector",
     description: "Wire a monitor, predictor, scoreboard FIFOs and coverage in a UVM env's connect_phase, graded by a model of uvm-core's connection rules.",
   };
 }

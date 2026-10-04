@@ -6,7 +6,8 @@ test.describe('F1 Revamp', () => {
         await page.goto('/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs');
 
         await expect(page.getByRole('heading', { name: 'F1A: The Cost of Bugs' })).toBeVisible();
-        await expect(page.getByText('The Multi-Million Dollar Question')).toBeVisible();
+        // Scoped to the lesson body: the "On this page" list repeats every H2 and H3.
+        await expect(page.getByTestId('lesson-content').getByText('The Multi-Million Dollar Question')).toBeVisible();
 
         // Check Design Gap Chart
         await expect(page.getByText('Design vs. Verification')).toBeVisible();

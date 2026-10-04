@@ -1,5 +1,9 @@
+import type { Metadata } from 'next';
 import dynamic from 'next/dynamic';
+
+import LearnInLesson from '@/components/practice/LearnInLesson';
 import { InfoPage } from '@/components/templates/InfoPage';
+import { requirePracticePage } from '@/lib/practice-links';
 
 const StateMachineDesigner = dynamic(
   () => import('@/components/animations/StateMachineDesigner'),
@@ -9,9 +13,16 @@ const StateMachineDesigner = dynamic(
   },
 );
 
+const HREF = '/practice/visualizations/state-machine-designer';
+const practice = requirePracticePage(HREF);
+
+export const metadata: Metadata = { title: practice.title, description: practice.description };
+
 const StateMachineDesignerPage = () => {
   return (
-    <InfoPage title="State Machine Designer" diagrams={[<StateMachineDesigner key="state-machine" />]} />
+    <InfoPage title={practice.title} description={practice.description} diagrams={[<StateMachineDesigner key="state-machine" />]}>
+      <LearnInLesson item={practice} />
+    </InfoPage>
   );
 };
 

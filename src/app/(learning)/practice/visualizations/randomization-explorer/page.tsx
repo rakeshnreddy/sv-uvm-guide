@@ -1,5 +1,9 @@
+import type { Metadata } from 'next';
 import dynamic from 'next/dynamic';
+
+import LearnInLesson from '@/components/practice/LearnInLesson';
 import { InfoPage } from '@/components/templates/InfoPage';
+import { requirePracticePage } from '@/lib/practice-links';
 
 // The exact-enumeration lab replaces the old rejection-sampling RandomizationExplorer,
 // which reported satisfiable constraints as solver failures.
@@ -10,9 +14,20 @@ const ConstraintSolverHeatmapVisualizer = dynamic(
   },
 );
 
+const HREF = '/practice/visualizations/randomization-explorer';
+const practice = requirePracticePage(HREF);
+
+export const metadata: Metadata = { title: practice.title, description: practice.description };
+
 const RandomizationExplorerPage = () => {
   return (
-    <InfoPage title="Randomization Explorer" diagrams={[<ConstraintSolverHeatmapVisualizer key="rand-explorer" />]} />
+    <InfoPage
+      title={practice.title}
+      description={practice.description}
+      diagrams={[<ConstraintSolverHeatmapVisualizer key="rand-explorer" />]}
+    >
+      <LearnInLesson item={practice} />
+    </InfoPage>
   );
 };
 

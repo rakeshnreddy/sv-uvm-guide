@@ -4,6 +4,7 @@ import { notFound, redirect } from "next/navigation";
 import { AuthenticationError, requireSession } from "@/lib/auth";
 import { getLearnerLabAssets } from "@/lib/lab-assets";
 import { getLabById, toLearnerLabDto } from "@/lib/lab-registry";
+import { getLabBackLink, getLabLessons, getLabPrerequisites } from "@/lib/practice-links";
 import { getLabProgress, labAccessService } from "@/server/labs";
 
 import LabClientPage from "./LabClientPage";
@@ -36,11 +37,18 @@ export default async function LabPage({ params }: LabPageProps) {
       getLabProgress(session.user.id, lab),
     ]);
 
+    // Orientation comes from the practice map and the manifest order (src/lib/practice-links.ts):
+    // the launching lesson for "Back to module", prerequisites, and "do this lab after" for forward ones.
+    const { items, doAfter } = getLabPrerequisites(lab);
+
     return (
       <LabClientPage
         lab={toLearnerLabDto(lab)}
         assets={assets}
         initialProgress={initialProgress}
+        backLink={getLabBackLink(lab)}
+        lessons={getLabLessons(lab)}
+        prerequisites={{ items, doAfter }}
       />
     );
   } catch (error) {

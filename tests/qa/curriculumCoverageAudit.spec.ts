@@ -317,7 +317,10 @@ describe('Curriculum coverage audit', () => {
   });
 
   it('keeps retained learner-facing practice routes discoverable from the practice hub', () => {
+    // The hub renders every route in the practice map (src/lib/practice-links.ts) through getPracticePages().
     const practiceHubSource = fs.readFileSync(path.join(repoRoot, 'src', 'components', 'practice', 'PracticeHub.tsx'), 'utf8');
+    const practiceMapSource = fs.readFileSync(path.join(repoRoot, 'src', 'lib', 'practice-links.ts'), 'utf8');
+    expect(practiceHubSource).toContain('getPracticePages()');
     const navbarSource = fs.readFileSync(path.join(repoRoot, 'src', 'components', 'Navbar.tsx'), 'utf8');
     const sidebarSource = fs.readFileSync(path.join(repoRoot, 'src', 'components', 'layout', 'Sidebar.tsx'), 'utf8');
     const retainedPracticeRoutes = [
@@ -336,7 +339,7 @@ describe('Curriculum coverage audit', () => {
     ];
 
     retainedPracticeRoutes.forEach((route) => {
-      expect(practiceHubSource).toContain(route);
+      expect(practiceMapSource).toContain(`href: '${route}'`);
     });
 
     expect(navbarSource).toContain('/practice');

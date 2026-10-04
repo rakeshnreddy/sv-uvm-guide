@@ -1,87 +1,131 @@
 'use client';
 
 import React from 'react';
-import { curriculumData, getModules, type Tier, type ModuleEntry } from '@/lib/curriculum-data';
-import { useCurriculumProgress } from '../../hooks/useCurriculumProgress';
-import { ModuleCard } from './ModuleCard';
+import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 
-export const Recommendations = () => {
-  const { isLoaded, progress, getModuleProgress, isModuleLocked, isTierUnlocked } = useCurriculumProgress();
+import { labelWithCode, lessonKey, type IndexedLesson } from '@/lib/curriculum-overview';
+import type { ResolvedRoute } from '@/lib/learning-paths';
+import { nextOnRoute, recentVisits, type ProgressLike, type RouteId } from '@/lib/learning-route-state';
+import { eyebrow, inlineLink, primaryAction, textLink } from './overview-ui';
 
-  if (!isLoaded) {
-    return null; // Or a skeleton loader
-  }
+export interface RecommendationsProps {
+  routes: ResolvedRoute[];
+  selectedRoute: RouteId | null;
+  /** Lesson visits stored in this browser. */
+  progress: ProgressLike;
+  /** Every lesson by key, with the next lesson on the learning path. */
+  lessons: ReadonlyMap<string, IndexedLesson>;
+  /** False until stored visits have loaded; nothing renders before then. */
+  ready: boolean;
+}
 
-  type ModuleSelection = { module: ModuleEntry; tier: Tier };
-  const unlockedTiers = curriculumData.filter(tier => isTierUnlocked(tier.slug));
-  const unlockedModules: ModuleSelection[] = unlockedTiers.flatMap(tier =>
-    getModules(tier).map(module => ({ module, tier })),
-  );
+/**
+ * "Pick up where you left off": the next lesson on the route the learner
+ * follows, the lesson after the one they opened last, and their recent
+ * lessons. Every suggestion says where it comes from; nothing is presented as
+ * a recommendation the site cannot back up.
+ */
+export function Recommendations({ routes, selectedRoute, progress, lessons, ready }: RecommendationsProps) {
+  if (!ready) return null;
 
-  const visitedModules = unlockedModules
-    .map(entry => ({ ...entry, details: progress[entry.module.id] }))
-    .filter((entry): entry is ModuleSelection & { details: NonNullable<typeof progress[string]> } =>
-      Boolean(entry.details?.lastVisitedAt),
-    )
-    .sort((a, b) => (b.details.lastVisitedAt ?? 0) - (a.details.lastVisitedAt ?? 0));
+  const route = routes.find((r) => r.id === selectedRoute) ?? null;
+  const visits = recentVisits(progress, 4).filter((v) => lessons.has(lessonKey(v.moduleId, v.lessonSlug)));
+  if (!route && visits.length === 0) return null;
 
-  const selected: ModuleSelection[] = [];
-  const seen = new Set<string>();
+  const routePosition = route ? nextOnRoute(route.sequence, progress) : null;
+  const routeLesson =
+    route && routePosition && routePosition.status !== 'complete' ? route.sequence[routePosition.index] : undefined;
+  const routeStep = route && routeLesson ? route.steps[routeLesson.stepIndex] : undefined;
 
-  const addModule = (entry: ModuleSelection) => {
-    if (seen.has(entry.module.id) || isModuleLocked(entry.module.id, entry.tier.slug)) {
-      return;
-    }
-    seen.add(entry.module.id);
-    selected.push(entry);
-  };
-
-  for (const entry of visitedModules) {
-    if (selected.length >= 3) break;
-    addModule(entry);
-  }
-
-  if (selected.length < 3) {
-    for (const entry of unlockedModules) {
-      if (selected.length >= 3) break;
-      if (getModuleProgress(entry.module.id) === 0) {
-        addModule(entry);
-      }
-    }
-  }
-
-  if (selected.length < 3) {
-    for (const entry of unlockedModules) {
-      if (selected.length >= 3) break;
-      addModule(entry);
-    }
-  }
-
-  if (selected.length === 0) {
-    return null;
-  }
+  const last = visits[0] ? lessons.get(lessonKey(visits[0].moduleId, visits[0].lessonSlug)) : undefined;
+  const courseNext = last?.next ? lessons.get(last.next) : undefined;
+  const showCourseNext = Boolean(last) && courseNext?.key !== routeLesson?.key;
 
   return (
-    <div className="mb-12 md:mb-16">
-        <div className="flex items-center justify-between mb-6">
-            <h2 className="text-2xl sm:text-3xl font-bold flex items-center">
-                <ArrowRight className="w-6 h-6 mr-3 text-primary" />
-                Recommended For You
-            </h2>
-            <p className="text-muted-foreground text-sm">Your next steps</p>
-        </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-        {selected.map(({ module, tier }) => (
-          <ModuleCard
-            key={module.id}
-            module={module}
-            tier={tier}
-            progress={getModuleProgress(module.id)}
-            isLocked={false} // We already filtered for unlocked modules
-          />
-        ))}
+    <section
+      aria-labelledby="resume-heading"
+      className="mb-12 rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-sm sm:p-6"
+    >
+      <h2 id="resume-heading" className="text-xl font-semibold text-foreground sm:text-2xl">
+        Pick up where you left off
+      </h2>
+      <p className="mt-1 text-sm text-muted-foreground">Based on the lessons you opened in this browser.</p>
+
+      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+        {route && (
+          <div className="min-w-0 rounded-2xl border border-border bg-background p-4">
+            <p className={eyebrow}>Next on your {route.name} route</p>
+            {routeLesson && routeStep ? (
+              <>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Step {routeStep.number} of {route.steps.length}: {routeStep.title}
+                </p>
+                <Link href={routeLesson.href} className={`${primaryAction} mt-3 max-w-full`}>
+                  <span className="[overflow-wrap:anywhere]">
+                    {routePosition?.status === 'not-started' ? 'Start with ' : 'Continue with '}
+                    {labelWithCode(routeLesson.moduleCode, routeLesson.title)}
+                  </span>
+                  <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
+                </Link>
+              </>
+            ) : (
+              <p className="mt-1 text-sm text-foreground">
+                You have opened every lesson on this route.{' '}
+                <a href="#routes" className={inlineLink}>
+                  Choose another route
+                </a>
+                .
+              </p>
+            )}
+          </div>
+        )}
+
+        {showCourseNext && last && (
+          <div className="min-w-0 rounded-2xl border border-border bg-background p-4">
+            <p className={eyebrow}>Continue the course</p>
+            {courseNext ? (
+              <>
+                <p className="mt-1 text-sm text-muted-foreground [overflow-wrap:anywhere]">
+                  The lesson after {labelWithCode(last.moduleCode, last.title)}, which you opened last.
+                </p>
+                <Link href={courseNext.href} className={`${primaryAction} mt-3 max-w-full`}>
+                  <span className="[overflow-wrap:anywhere]">
+                    Continue with {labelWithCode(courseNext.moduleCode, courseNext.title)}
+                  </span>
+                  <ArrowRight className="h-4 w-4 shrink-0" aria-hidden="true" />
+                </Link>
+              </>
+            ) : (
+              <p className="mt-1 text-sm text-foreground [overflow-wrap:anywhere]">
+                You last opened {labelWithCode(last.moduleCode, last.title)}, the final lesson of the curriculum.
+              </p>
+            )}
+          </div>
+        )}
       </div>
-    </div>
+
+      {visits.length > 0 && (
+        <div className="mt-5">
+          <h3 id="recent-lessons-heading" className="text-sm font-semibold text-foreground">
+            Recently visited
+          </h3>
+          <ul aria-labelledby="recent-lessons-heading" className="mt-2 flex flex-wrap gap-x-5 gap-y-2 text-sm">
+            {visits.map((visit) => {
+              const lesson = lessons.get(lessonKey(visit.moduleId, visit.lessonSlug))!;
+              return (
+                <li key={lesson.key} className="min-w-0 [overflow-wrap:anywhere]">
+                  <Link href={lesson.href} className={textLink}>
+                    {labelWithCode(lesson.moduleCode, lesson.title)}
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+    </section>
   );
-};
+}
+
+export default Recommendations;

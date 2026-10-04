@@ -2,15 +2,17 @@ import { expect, test, type Page } from '@playwright/test';
 import {
   curriculumData,
   findPrevNextTopics,
-  getBreadcrumbs,
   toPrettyCurriculumSlug,
   type Topic,
 } from '../../src/lib/curriculum-data';
+import { lessonBreadcrumbs } from '../../src/lib/curriculum/lesson-context';
 
 type TopicRoute = {
   tierSlug: string;
   sectionSlug: string;
   topic: Topic;
+  /** Lessons in the topic's module. */
+  lessonCount: number;
 };
 
 const topicRoutes: TopicRoute[] = curriculumData.flatMap((tier) =>
@@ -19,6 +21,7 @@ const topicRoutes: TopicRoute[] = curriculumData.flatMap((tier) =>
       tierSlug: tier.slug,
       sectionSlug: section.slug,
       topic,
+      lessonCount: section.topics.length,
     })),
   ),
 );
@@ -85,32 +88,39 @@ test.describe('comprehensive curriculum navigation', () => {
       await test.step(href, async () => {
         await expectRouteToLoad(page, href, route.topic.title);
 
-        const breadcrumbs = getBreadcrumbs([route.tierSlug, route.sectionSlug, route.topic.slug]);
-        for (const breadcrumb of breadcrumbs.slice(0, -1)) {
-          const breadcrumbLink = page.locator(`a[href="${breadcrumb.path}"]`).filter({ hasText: breadcrumb.title }).first();
-          await expect(breadcrumbLink, `${href} should expose breadcrumb ${breadcrumb.path}`).toBeVisible();
+        // Canonical crumbs: the tier opens its overview section, the module its first page,
+        // and the current page ends the trail with aria-current="page".
+        const breadcrumbNav = page.getByRole('navigation', { name: 'Breadcrumb' });
+        for (const crumb of lessonBreadcrumbs([route.tierSlug, route.sectionSlug, route.topic.slug])) {
+          const breadcrumbLink = breadcrumbNav.locator(`a[href="${crumb.href}"]`).filter({ hasText: crumb.label }).first();
+          await expect(breadcrumbLink, `${href} should expose breadcrumb ${crumb.href}`).toBeVisible();
+          if (crumb.current) await expect(breadcrumbLink).toHaveAttribute('aria-current', 'page');
         }
 
-        const jumpToButton = page.getByRole('button', { name: 'Jump to' });
-        await expect(jumpToButton, `${href} should expose the jump menu`).toBeVisible();
-        await expect.poll(async () => {
-          if ((await jumpToButton.getAttribute('aria-expanded')) === 'true') {
-            return 'true';
-          }
+        // "Jump to" lists the module's lessons; a one-lesson module has nothing to jump to.
+        if (route.lessonCount > 1) {
+          const jumpToButton = page.getByRole('button', { name: 'Jump to' });
+          await expect(jumpToButton, `${href} should expose the jump menu`).toBeVisible();
+          await expect.poll(async () => {
+            if ((await jumpToButton.getAttribute('aria-expanded')) === 'true') {
+              return 'true';
+            }
 
-          await jumpToButton.click();
-          await page.waitForTimeout(100);
-          return jumpToButton.getAttribute('aria-expanded');
-        }, {
-          message: `${href} should toggle the jump menu after hydration`,
-          timeout: 10_000,
-        }).toBe('true');
+            await jumpToButton.click();
+            await page.waitForTimeout(100);
+            return jumpToButton.getAttribute('aria-expanded');
+          }, {
+            message: `${href} should toggle the jump menu after hydration`,
+            timeout: 10_000,
+          }).toBe('true');
 
-        const jumpMenuId = await jumpToButton.getAttribute('aria-controls');
-        expect(jumpMenuId, `${href} should point at the jump menu`).toBeTruthy();
-        const jumpMenu = page.locator(`[id="${jumpMenuId}"]`);
-        await expect(jumpMenu, `${href} should open the jump menu`).toBeVisible();
-        await expect(jumpMenu.locator('a[href^="/curriculum/"]').first()).toBeVisible();
+          const jumpMenuId = await jumpToButton.getAttribute('aria-controls');
+          expect(jumpMenuId, `${href} should point at the jump menu`).toBeTruthy();
+          const jumpMenu = page.locator(`[id="${jumpMenuId}"]`);
+          await expect(jumpMenu, `${href} should open the jump menu`).toBeVisible();
+          await expect(jumpMenu.locator('a[href^="/curriculum/"]')).toHaveCount(route.lessonCount);
+          await expect(jumpMenu.locator(`a[aria-current="page"][href="${href}"]`)).toBeVisible();
+        }
 
         const { prev, next } = findPrevNextTopics([route.tierSlug, route.sectionSlug, route.topic.slug]);
         for (const target of [prev, next].filter((item): item is Topic => Boolean(item))) {
@@ -164,14 +174,23 @@ test.describe('comprehensive curriculum navigation', () => {
       linksBySource.set(sourceHref, normalized);
     }
 
+    // Every lesson page carries the course outline and the footer site map, so
+    // most links repeat on every page: request each target once, and report
+    // every page that links a broken one.
+    const sourcesByTarget = new Map<string, string[]>();
     for (const [sourceHref, hrefs] of linksBySource) {
-      await test.step(sourceHref, async () => {
-        for (const href of hrefs) {
-          const [pathAndSearch] = href.split('#');
-          const response = await page.request.get(pathAndSearch || href);
-          if (response.status() >= 400) {
-            brokenLinks.push(`${sourceHref} -> ${href} returned ${response.status()}`);
-          }
+      for (const href of hrefs) {
+        const [pathAndSearch] = href.split('#');
+        const target = pathAndSearch || href;
+        sourcesByTarget.set(target, [...(sourcesByTarget.get(target) ?? []), `${sourceHref} -> ${href}`]);
+      }
+    }
+
+    for (const [target, sources] of sourcesByTarget) {
+      await test.step(target, async () => {
+        const response = await page.request.get(target);
+        if (response.status() >= 400) {
+          brokenLinks.push(...sources.map((source) => `${source} returned ${response.status()}`));
         }
       });
     }

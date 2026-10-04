@@ -1,76 +1,40 @@
 import React from 'react';
+import type { Metadata } from 'next';
+import Link from 'next/link';
+
 import { InfoPage } from '@/components/templates/InfoPage';
-import ExerciseList from '@/components/exercises/ExerciseList'; // Import the new client component
+import { PracticeCardGrid } from '@/components/practice/PracticeHub';
+import { getPracticePages } from '@/lib/practice-links';
 
-interface ExerciseLink { // This interface can be moved to a shared types file if used elsewhere
-  href: string;
-  title: string;
-  description: string;
-  status: 'completed' | 'wip' | 'planned';
-}
-
-const exercises: ExerciseLink[] = [
-  {
-    href: '/exercises/uvm-agent-builder',
-    title: 'UVM Agent Builder',
-    description: 'Drag and drop components to build a complete UVM agent (Sequencer, Driver, Monitor).',
-    status: 'completed',
-  },
-  {
-    href: '/exercises/uvm-phase-sorter',
-    title: 'UVM Phase Sorter',
-    description: 'Place each phase in the right lane (run_phase beside the runtime schedule) and mark function phases top-down or bottom-up.',
-    status: 'completed',
-  },
-  {
-    href: '/exercises/scoreboard-connector',
-    title: 'Scoreboard Connector',
-    description: 'Wire a monitor, predictor, scoreboard FIFOs and coverage in an env\'s connect_phase, graded by uvm-core\'s connection rules.',
-    status: 'completed',
-  },
-  {
-    href: '/exercises/sequencer-arbitration',
-    title: 'Sequencer Arbitration Sandbox',
-    description: 'Play with lock(), grab(), and arbitration settings to see which sequence the sequencer grants next.',
-    status: 'completed',
-  },
-  // Add more exercises as they are conceptualized
-];
+export const metadata: Metadata = {
+  title: 'Learning Exercises',
+  description:
+    'Interactive SystemVerilog and UVM exercises with instant feedback: sort the UVM phases, build an agent, wire a scoreboard and predict sequencer arbitration.',
+};
 
 const ExercisesLandingPage: React.FC = () => {
-  const pageTitle = "Interactive Learning Exercises";
+  // Same registry as the Practice Hub, in curriculum order.
+  const exercises = getPracticePages().filter((item) => item.kind === 'exercise');
 
-  const content = (
-    <>
+  return (
+    <InfoPage title="Interactive Learning Exercises">
       <section className="mb-8">
-        <h2 className="text-2xl font-semibold text-primary mb-3">Test Your Knowledge!</h2>
         <p className="mb-4">
-          Put your SystemVerilog and UVM knowledge to the test with these interactive exercises. Each exercise is designed to be engaging and provide instant feedback to help reinforce key concepts. Your scores will be saved to track your progress.
+          Each exercise checks your answer straight away and explains what is wrong. Your best score is kept in this browser.
+          They are listed in curriculum order, and each card names the lesson that teaches the idea.
         </p>
         <p>
-          Select an exercise below to get started. More exercises will be added over time!
+          For guided labs, interactive models and interview questions, see the{' '}
+          <Link href="/practice">Practice Hub</Link>.
         </p>
       </section>
 
       <section>
-        <h2 className="text-2xl font-semibold text-primary mb-4">Available Exercises</h2>
-        <ExerciseList exercises={exercises} />
+        <h2 className="mb-4 text-2xl font-semibold text-primary">Available exercises</h2>
+        <PracticeCardGrid items={exercises} />
       </section>
-    </>
-  );
-
-  return (
-    <InfoPage title={pageTitle}>
-      {content}
     </InfoPage>
   );
 };
 
 export default ExercisesLandingPage;
-
-export async function generateMetadata() {
-  return {
-    title: "Learning Exercises | SystemVerilog & UVM Mastery",
-    description: "Engage with interactive exercises to test and reinforce your SystemVerilog and UVM knowledge. Build UVM components, sort phases, and more!",
-  };
-}

@@ -1,235 +1,274 @@
 import React from 'react';
 import Link from 'next/link';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { getAllLabs } from '@/lib/lab-registry';
 
-interface PracticeItem {
-  href: string;
-  title: string;
-  description: string;
-  status: 'completed' | 'wip' | 'planned';
-  type: 'Exercise' | 'Interactive model' | 'Diagram' | 'Chart' | 'Tool';
+import { getInterviewPracticeItems, loadInterviewBanks } from '@/app/(learning)/interview-prep/interview-banks';
+import { createSlugger } from '@/lib/heading-slug';
+import type { LabManifest } from '@/lib/lab-manifest';
+import { getAllLabs } from '@/lib/lab-registry';
+import {
+  PRACTICE_KIND_LABELS,
+  getLabPrerequisites,
+  getPracticeLabItems,
+  getPracticePages,
+  type LabPrerequisites,
+  type PracticeItem,
+  type PracticeKind,
+} from '@/lib/practice-links';
+import { cn } from '@/lib/utils';
+
+import { LabPrerequisiteList, LessonChipLink, focusRing } from './LearnInLesson';
+
+const eyebrow = 'text-[11px] font-semibold uppercase tracking-wider text-muted-foreground';
+const textLink = cn('rounded-sm font-medium text-primary underline-offset-4 hover:underline', focusRing);
+
+/** Extra lines for a card: lab prerequisites and sign-in notes, interview question counts. */
+export interface PracticeCardDetails {
+  notes?: string[];
+  prerequisites?: Pick<LabPrerequisites, 'items' | 'doAfter'>;
 }
 
-const practiceItems: PracticeItem[] = [
-  // Exercises
+interface PracticeCardProps {
+  item: PracticeItem;
+  details?: PracticeCardDetails;
+  /** Heading level of the card title inside its section. */
+  headingLevel?: 'h3' | 'h4';
+}
+
+/**
+ * One practice item. The title links to the item and its hit area covers the
+ * card; the lesson and prerequisite links sit above that layer. An item that
+ * cannot be opened yet has no link at all.
+ */
+export function PracticeCard({ item, details, headingLevel = 'h3' }: PracticeCardProps) {
+  const Heading = headingLevel;
+  const [lesson] = item.lessons;
+  const statusLabel =
+    item.kind === 'lab' ? (item.status === 'available' ? 'Available' : 'Coming soon') : PRACTICE_KIND_LABELS[item.kind];
+  return (
+    <li className="relative flex min-w-0 flex-col rounded-2xl border border-border bg-card p-5 text-card-foreground shadow-sm transition-shadow hover:shadow-md motion-reduce:transition-none">
+      <div className="flex items-start justify-between gap-3">
+        <Heading className="min-w-0 text-lg font-semibold leading-snug text-foreground [overflow-wrap:anywhere]">
+          {item.href ? (
+            <Link
+              href={item.href}
+              className="rounded-sm underline-offset-4 after:absolute after:inset-0 after:rounded-2xl hover:underline focus-visible:outline-none focus-visible:after:ring-2 focus-visible:after:ring-primary"
+            >
+              {item.title}
+            </Link>
+          ) : (
+            item.title
+          )}
+        </Heading>
+        <span className="shrink-0 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          {statusLabel}
+        </span>
+      </div>
+      <p className="mt-2 text-sm text-muted-foreground">{item.description}</p>
+      {details?.notes?.map((note) => (
+        <p key={note} className="mt-2 text-xs text-muted-foreground">
+          {note}
+        </p>
+      ))}
+      {details?.prerequisites ? (
+        <LabPrerequisiteList prerequisites={details.prerequisites} className="mt-3" linkClassName="relative z-10" />
+      ) : null}
+      <div className="mt-auto pt-4">
+        <p className={eyebrow}>Learn it in</p>
+        {lesson ? (
+          <LessonChipLink lesson={lesson} className="relative z-10 mt-0.5" />
+        ) : (
+          <p className="mt-1 text-sm text-muted-foreground">Lesson to be assigned</p>
+        )}
+      </div>
+    </li>
+  );
+}
+
+/** A responsive grid of practice cards, used by the hub and the /exercises index. */
+export function PracticeCardGrid({
+  items,
+  details,
+  headingLevel,
+}: {
+  items: readonly PracticeItem[];
+  details?: Readonly<Record<string, PracticeCardDetails>>;
+  headingLevel?: 'h3' | 'h4';
+}) {
+  return (
+    <ul role="list" className="not-prose grid grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] gap-5">
+      {items.map((item) => (
+        <PracticeCard key={item.id} item={item} details={details?.[item.id]} headingLevel={headingLevel} />
+      ))}
+    </ul>
+  );
+}
+
+/** Coming-soon items: plain text with the lesson they are planned for, never a link to the item. */
+function ComingSoonList({ items }: { items: readonly PracticeItem[] }) {
+  return (
+    <ul role="list" className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] gap-3">
+      {items.map((item) => {
+        const [lesson] = item.lessons;
+        return (
+          <li key={item.id} className="min-w-0 rounded-xl border border-dashed border-border p-4 text-sm">
+            <div className="flex items-start justify-between gap-3">
+              <h4 className="min-w-0 font-semibold text-foreground [overflow-wrap:anywhere]">{item.title}</h4>
+              <span className="shrink-0 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Coming soon
+              </span>
+            </div>
+            <p className="mt-1 text-muted-foreground">{item.description}</p>
+            <p className={cn(eyebrow, 'mt-3')}>Planned for</p>
+            {lesson ? (
+              <LessonChipLink lesson={lesson} />
+            ) : (
+              <p className="mt-1 text-muted-foreground">Lesson to be assigned</p>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+const PAGE_SECTIONS: readonly { kind: PracticeKind; title: string; intro: React.ReactNode }[] = [
   {
-    href: '/exercises/uvm-agent-builder',
-    title: 'UVM Agent Builder',
-    description: 'Drag and drop components to build a complete UVM agent.',
-    status: 'completed',
-    type: 'Exercise',
+    kind: 'exercise',
+    title: 'Exercises',
+    intro: (
+      <>
+        Short, graded drills with instant feedback. Your best score is kept in this browser. They are also listed on the{' '}
+        <Link href="/exercises" className={textLink}>
+          exercises page
+        </Link>
+        .
+      </>
+    ),
   },
-  {
-    href: '/exercises/uvm-phase-sorter',
-    title: 'UVM Phase Sorter',
-    description: 'Two lanes: run_phase beside the 12 runtime phases, plus top-down vs bottom-up function phases.',
-    status: 'completed',
-    type: 'Exercise',
-  },
-  {
-    href: '/exercises/scoreboard-connector',
-    title: 'Scoreboard Connector',
-    description: 'Wire a monitor, predictor, scoreboard FIFOs and coverage in an env\'s connect_phase, graded by uvm-core\'s connection rules.',
-    status: 'completed',
-    type: 'Exercise',
-  },
-  // Animations
-  {
-    href: '/practice/visualizations/systemverilog-data-types',
-    title: 'SystemVerilog Data Types',
-    description: 'Compare 2-state and 4-state types and see what new[N] really does to a dynamic array.',
-    status: 'completed',
-    type: 'Interactive model',
-  },
-  {
-    href: '/practice/visualizations/procedural-blocks',
-    title: 'Procedural Blocks',
-    description: 'Predict when initial, always and final blocks run, and where <= updates land, on a tested process model.',
-    status: 'completed',
-    type: 'Interactive model',
-  },
-  {
-    href: '/practice/visualizations/concurrency',
-    title: 'Fork/Join Lab',
-    description: 'One lane per process for join, join_any, join_none, disable fork and wait fork. Predict when the parent resumes.',
-    status: 'completed',
-    type: 'Interactive model',
-  },
-  {
-    href: '/practice/visualizations/state-machine-designer',
-    title: 'State Machine Designer',
-    description: 'Design and simulate a simple finite state machine.',
-    status: 'completed',
-    type: 'Interactive model',
-  },
-  {
-    href: '/practice/visualizations/randomization-explorer',
-    title: 'Constraint Solution Space',
-    description: 'Exact probabilities for dist, soft and solve…before, plus the minimal conflicting set when randomize() fails.',
-    status: 'completed',
-    type: 'Interactive model',
-  },
-  {
-    href: '/practice/visualizations/assertion-builder',
-    title: 'SVA Trace Lab',
-    description: 'Edit a trace, predict each attempt (pass, fail, vacuous), then evaluate with Preponed sampling.',
-    status: 'completed',
-    type: 'Interactive model',
-  },
-  {
-    href: '/practice/visualizations/coverage-analyzer',
-    title: 'Coverage Closure Lab',
-    description: 'Build bins and crosses with ignore and illegal bins, predict samples to closure, and hunt the holes.',
-    status: 'completed',
-    type: 'Interactive model',
-  },
-  {
-    href: '/practice/visualizations/interface-signal-flow',
-    title: 'Interface Signal Flow',
-    description: 'Visualize how signals flow through an interface with modports.',
-    status: 'completed',
-    type: 'Interactive model',
-  },
-  // Diagrams
-  {
-    href: '/practice/visualizations/uvm-architecture',
-    title: 'Interactive UVM Architecture',
-    description: 'Explore the components of a UVM testbench.',
-    status: 'completed',
-    type: 'Diagram',
-  },
-  {
-    href: '/practice/visualizations/uvm-component-relationships',
-    title: 'UVM Component Relationships',
-    description: 'See how UVM components are connected and interact.',
-    status: 'completed',
-    type: 'Diagram',
-  },
-  {
-    href: '/practice/visualizations/uvm-phasing',
-    title: 'UVM Phasing Diagram',
-    description: 'An interactive diagram of the UVM phasing mechanism.',
-    status: 'completed',
-    type: 'Diagram',
-  },
-  // Charts
-  {
-    href: '/practice/visualizations/data-type-comparison',
-    title: 'Data Type Comparison',
-    description: 'Compare 2-state and 4-state types, widths, signedness and default values, then predict what each declaration holds.',
-    status: 'completed',
-    type: 'Chart',
-  },
-  // Tools
-  {
-    href: '/practice/waveform-studio',
-    title: 'Waveform Studio',
-    description: 'Edit AXI and AHB timing diagrams and get AXI handshake violations, with spec clauses, as you type. Includes two debug samples.',
-    status: 'completed',
-    type: 'Tool',
-  }
+  { kind: 'interactive', title: 'Interactive models', intro: 'Predict, then run a tested model of the language or methodology rule.' },
+  { kind: 'diagram', title: 'Diagrams', intro: 'Explorable pictures of how UVM testbenches are built and run.' },
+  { kind: 'chart', title: 'Charts', intro: 'Side-by-side comparisons to check your recall.' },
+  { kind: 'tool', title: 'Tools', intro: 'Free-form workbenches for protocol timing.' },
 ];
 
-const PracticeHub = () => {
-  const categorizedItems = practiceItems.reduce((acc, item) => {
-    if (!acc[item.type]) {
-      acc[item.type] = [];
-    }
-    acc[item.type].push(item);
-    return acc;
-  }, {} as Record<PracticeItem['type'], PracticeItem[]>);
+function labNotes(lab: LabManifest): string[] {
+  const graded = Boolean(lab.graderId) && lab.steps.some((step) => step.completion === 'graded');
+  return [`${graded ? 'Auto-graded steps' : 'Self-checked steps: you mark each one complete'}. Sign in to open.`];
+}
 
-  // Available labs first, then curriculum order (T1 → T4) by owning module.
-  const tierRank = (module: string) =>
-    module.startsWith('F') ? 1 : module.startsWith('I-SV') ? 2 : module.startsWith('I-UVM') ? 3 : module.startsWith('A-') ? 4 : module.startsWith('B-') ? 5 : 6;
-  const labs = [...getAllLabs()].sort(
-    (a, b) =>
-      Number(b.status === 'available') - Number(a.status === 'available') ||
-      tierRank(a.owningModule) - tierRank(b.owningModule) ||
-      a.owningModule.localeCompare(b.owningModule),
+const PracticeHub = () => {
+  const labs = getAllLabs();
+  const labItems = getPracticeLabItems(labs);
+  const availableLabs = labItems.filter((item) => item.status === 'available');
+  const comingSoonLabs = labItems.filter((item) => item.status !== 'available');
+  const labDetails: Record<string, PracticeCardDetails> = Object.fromEntries(
+    labs.map((lab) => {
+      const { items, doAfter } = getLabPrerequisites(lab);
+      return [`lab:${lab.id}`, { notes: labNotes(lab), prerequisites: { items, doAfter } }];
+    }),
   );
 
+  const pages = getPracticePages();
+  const sections = PAGE_SECTIONS.map((section) => ({
+    ...section,
+    items: pages.filter((page) => page.kind === section.kind),
+  })).filter((section) => section.items.length > 0);
+
+  const banks = loadInterviewBanks();
+  const interviewItems = getInterviewPracticeItems(banks);
+  const interviewDetails: Record<string, PracticeCardDetails> = Object.fromEntries(
+    banks.map((bank) => [`interview:${bank.topic}`, { notes: [`${bank.questionCount} questions with model answers`] }]),
+  );
+
+  // Section anchors use the shared heading slugger, so /practice#labs and friends stay stable.
+  const slug = createSlugger();
+  const labsAnchor = slug('Labs');
+  const comingSoonAnchor = slug('Coming soon');
+  const sectionAnchors = sections.map((section) => slug(section.title));
+  const interviewAnchor = slug('Interview prep');
+
+  const jumpLinks = [
+    { href: `#${labsAnchor}`, label: 'Labs', count: labItems.length },
+    ...sections.map((section, index) => ({ href: `#${sectionAnchors[index]}`, label: section.title, count: section.items.length })),
+    { href: `#${interviewAnchor}`, label: 'Interview prep', count: interviewItems.length },
+  ];
+
   return (
-    <div className="relative w-full bg-[color:var(--blueprint-bg)] text-[color:var(--blueprint-foreground)] overflow-hidden">
-      <div className="absolute inset-0 hero-gradient opacity-40" />
-      <div className="absolute inset-0 bg-gradient-to-b from-transparent via-[#050B1A]/60 to-[#050B1A]" />
+    <div className="mx-auto w-full max-w-6xl pb-16">
+      <header className="rounded-3xl border border-border bg-card p-5 text-card-foreground shadow-sm sm:p-8">
+        <h1 className="text-3xl font-bold text-foreground sm:text-4xl">Practice Hub</h1>
+        <p className="mt-3 max-w-3xl text-base text-muted-foreground sm:text-lg">
+          Sharpen your SystemVerilog and UVM skills with labs, exercises, interactive models, tools and interview questions.
+          Items are listed in curriculum order, and each one names the lesson that teaches it.
+        </p>
+        <nav aria-label="Practice sections" className="mt-5">
+          <ul className="flex flex-wrap gap-2">
+            {jumpLinks.map((link) => (
+              <li key={link.href}>
+                <a
+                  href={link.href}
+                  className={cn(
+                    'inline-flex min-h-[40px] items-center gap-2 rounded-full border border-border px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted',
+                    focusRing,
+                  )}
+                >
+                  {link.label}
+                  <span className="text-xs text-muted-foreground">{link.count}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </nav>
+      </header>
 
-      <div className="relative z-10 container mx-auto px-6 py-16">
-        <div className="glass-card glow-border px-8 py-10 mb-12 text-center">
-          <h1 className="text-4xl md:text-5xl font-bold mb-4">Practice Hub</h1>
-          <p className="text-lg text-[color:var(--blueprint-foreground)]/75 max-w-2xl mx-auto">
-            Sharpen your SystemVerilog & UVM skills with immersive exercises, visualizations, and tools.
-          </p>
+      <section aria-labelledby={labsAnchor} className="mt-12">
+        <h2 id={labsAnchor} className="scroll-mt-24 text-2xl font-semibold text-foreground">
+          Labs
+        </h2>
+        <p className="mt-1 text-muted-foreground">
+          Guided labs with starter code, step-by-step instructions and reference solutions. Labs open after you sign in.
+        </p>
+        <div className="mt-5">
+          <PracticeCardGrid items={availableLabs} details={labDetails} />
         </div>
+        {comingSoonLabs.length > 0 ? (
+          <section aria-labelledby={comingSoonAnchor} className="mt-8">
+            <h3 id={comingSoonAnchor} className="scroll-mt-24 text-lg font-semibold text-foreground">
+              Coming soon
+            </h3>
+            <p className="mb-3 mt-1 text-sm text-muted-foreground">Planned labs, listed where they will sit in the curriculum.</p>
+            <ComingSoonList items={comingSoonLabs} />
+          </section>
+        ) : null}
+      </section>
 
-        {/* Interactive Labs Section */}
-        <section className="mb-14">
-          <div className="flex items-center justify-between mb-5">
-            <h2 className="text-2xl font-semibold text-[color:var(--blueprint-accent)]">Interactive Labs</h2>
-            <div className="neon-divider w-40" />
-          </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {labs.map((lab) => {
-              const available = lab.status === 'available';
-              const card = (
-                <Card className={`h-full px-6 py-8 transition-transform duration-300 motion-reduce:transition-none ${available ? 'group-hover:-translate-y-1' : 'opacity-60'}`}>
-                  <CardHeader className="p-0 mb-4">
-                    <div className="flex justify-between items-start gap-3">
-                      <CardTitle className={`text-[color:var(--blueprint-foreground)] ${available ? 'group-hover:text-[color:var(--blueprint-accent)]' : ''}`}>{lab.title}</CardTitle>
-                      <span className={`shrink-0 text-xs uppercase tracking-widest ${available ? 'text-[color:var(--blueprint-success)] font-bold' : 'text-[color:var(--blueprint-foreground)]/60'}`}>
-                        {available ? 'Available' : 'Coming soon'}
-                      </span>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="p-0">
-                    <p className="text-sm text-[color:var(--blueprint-foreground)]/70">{lab.description}</p>
-                    <p className="mt-4 text-xs text-[color:var(--blueprint-foreground)]/60 font-mono">Module: {lab.owningModule}</p>
-                    {available ? (
-                      <p className="mt-2 text-xs text-[color:var(--blueprint-foreground)]/60">Self-checked: you mark steps complete. Sign in to open.</p>
-                    ) : null}
-                  </CardContent>
-                </Card>
-              );
-              return available ? (
-                <Link href={`/practice/lab/${lab.id}`} key={lab.id} className="group">
-                  {card}
-                </Link>
-              ) : (
-                <div key={lab.id} aria-disabled="true">
-                  {card}
-                </div>
-              );
-            })}
+      {sections.map((section, index) => (
+        <section key={section.kind} aria-labelledby={sectionAnchors[index]} className="mt-12">
+          <h2 id={sectionAnchors[index]} className="scroll-mt-24 text-2xl font-semibold text-foreground">
+            {section.title}
+          </h2>
+          <p className="mt-1 text-muted-foreground">{section.intro}</p>
+          <div className="mt-5">
+            <PracticeCardGrid items={section.items} />
           </div>
         </section>
+      ))}
 
-        {Object.entries(categorizedItems).map(([category, items]) => (
-          <section key={category} className="mb-14">
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-2xl font-semibold text-[color:var(--blueprint-accent)]">{category}</h2>
-              <div className="neon-divider w-40" />
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {items.map((item) => (
-                <Link href={item.href} key={item.href} className="group">
-                  <Card className="h-full px-6 py-8 transition-transform duration-300 group-hover:-translate-y-1">
-                    <CardHeader className="p-0 mb-4">
-                      <div className="flex justify-between items-start">
-                        <CardTitle className="text-[color:var(--blueprint-foreground)] group-hover:text-[color:var(--blueprint-accent)]">{item.title}</CardTitle>
-                        <span className="text-xs uppercase tracking-widest text-[color:var(--blueprint-foreground)]/50">{item.type}</span>
-                      </div>
-                    </CardHeader>
-                    <CardContent className="p-0">
-                      <p className="text-sm text-[color:var(--blueprint-foreground)]/70">{item.description}</p>
-                    </CardContent>
-                  </Card>
-                </Link>
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
+      <section aria-labelledby={interviewAnchor} className="mt-12">
+        <h2 id={interviewAnchor} className="scroll-mt-24 text-2xl font-semibold text-foreground">
+          Interview prep
+        </h2>
+        <p className="mt-1 text-muted-foreground">
+          Question banks from junior to senior staff. Answer first, then reveal the model answer on the{' '}
+          <Link href="/interview-prep" className={textLink}>
+            interview prep page
+          </Link>
+          .
+        </p>
+        <div className="mt-5">
+          <PracticeCardGrid items={interviewItems} details={interviewDetails} />
+        </div>
+      </section>
     </div>
   );
 };

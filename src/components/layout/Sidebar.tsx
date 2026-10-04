@@ -1,268 +1,432 @@
 "use client";
 
-import React, { useMemo, useState } from 'react';
-import { useNavigation } from '@/contexts/NavigationContext';
-import { motion, AnimatePresence } from 'framer-motion';
-import { X, Book, ChevronsUpDown, LayoutList } from 'lucide-react';
-import { DndContext, closestCenter, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
-import { SortableContext, useSortable, arrayMove, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { CSS } from '@dnd-kit/utilities';
-import Link from 'next/link';
-import { usePathname } from 'next/navigation';
-import { curriculumData, normalizeSlug } from '@/lib/curriculum-data';
-import { buildCurriculumStatus, type TopicStatus } from '@/lib/curriculum-status';
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { motion } from "framer-motion";
+import { ChevronDown, PanelLeftClose, X } from "lucide-react";
+import React, { useEffect, useId, useMemo, useRef, useState, type MouseEvent } from "react";
 
-type OutlineSection = {
-  id: string;
-  title: string;
-  href: string;
-  status: TopicStatus;
-  current: boolean;
-};
+import {
+  buildCourseOutline,
+  currentLessonSlug,
+  defaultExpansion,
+  isLessonPath,
+  manifestTierMeta,
+  type OutlineModule,
+  type OutlineTier,
+} from "@/components/search/course-outline";
+import { focusAfterNavigation } from "@/components/search/focus-target";
+import {
+  LG_MIN_WIDTH,
+  MODAL_LAYER,
+  shellStore,
+  useMinWidth,
+  useShellState,
+  viewportAtLeast,
+} from "@/components/search/shell-store";
+import { useModalDialog } from "@/components/search/useModalDialog";
+import { curriculumData } from "@/lib/curriculum-data";
+import { cn } from "@/lib/utils";
 
-type OutlineModule = {
-  title: string;
-  sections: OutlineSection[];
-};
+/** The id the navbar's outline button points at (aria-controls) while the drawer is open. */
+export const OUTLINE_DRAWER_ID = "course-outline-drawer";
+/** The id of the docked outline column on lesson pages. */
+export const DOCKED_OUTLINE_ID = "course-outline-docked";
 
-const statusLabels: Record<TopicStatus, string> = {
-  complete: 'Complete',
-  'in-review': 'In Review',
-  draft: 'Draft',
-};
+type Density = "compact" | "comfortable";
 
-const statusStyles: Record<TopicStatus, string> = {
-  complete: 'border border-emerald-400/30 bg-emerald-500/15 text-emerald-200',
-  'in-review': 'border border-amber-400/30 bg-amber-500/15 text-amber-200',
-  draft: 'border border-slate-400/30 bg-slate-500/15 text-slate-200',
-};
+const focusRing =
+  "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
-const formatTierTitle = (slug: string, fallback: string): string => {
-  if (!slug) return fallback;
-  const [tierCode, ...rest] = slug.split('_');
-  if (!tierCode) return fallback;
-  const tierLabel = tierCode.replace(/^T/, 'Tier ');
-  if (rest.length === 0) return `${tierLabel}: ${fallback}`;
-  const descriptor = rest.join(' ').replace(/_/g, ' ');
-  const titled = descriptor.replace(/\b\w/g, char => char.toUpperCase());
-  return `${tierLabel}: ${titled}`;
-};
+function isModifiedClick(event: MouseEvent): boolean {
+  return event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey;
+}
 
-const quickLinks = [
-  { id: '1', label: 'Practice Hub', href: '/practice', icon: LayoutList },
-  { id: '2', label: 'UVM Phase Sorter', href: '/exercises/uvm-phase-sorter', icon: LayoutList },
-];
-
-const initialBookmarks = [
-  { id: 'bookmark-1', label: 'Advanced Sequencing' },
-  { id: 'bookmark-2', label: 'RAL Model' },
-  { id: 'bookmark-3', label: 'Scoreboarding' },
-];
-
-// Sortable Item Component
-const SortableItem = ({ id, label }: { id: string, label: string }) => {
-  const { attributes, listeners, setNodeRef, transform, transition } = useSortable({ id });
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-  };
-  return (
-    <div ref={setNodeRef} style={style} {...attributes} {...listeners} className="p-2 bg-muted/50 rounded-md mb-2 flex items-center cursor-grab active:cursor-grabbing">
-      <Book className="h-4 w-4 mr-2 flex-shrink-0" />
-      <span className="flex-grow">{label}</span>
-    </div>
+function linkClass(current: boolean, density: Density): string {
+  return cn(
+    "flex w-full min-w-0 items-start gap-2 rounded-lg border-l-4 px-2 text-left text-sm transition-colors motion-reduce:transition-none",
+    density === "compact" ? "min-h-8 py-1.5" : "min-h-10 py-2",
+    current
+      ? "border-primary bg-primary/10 font-semibold text-foreground"
+      : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
+    focusRing,
   );
-};
+}
 
+interface TreeProps {
+  outline: OutlineTier[];
+  density: Density;
+  /** Runs when a lesson link is followed (the drawer closes itself). */
+  onNavigate?: (href: string) => void;
+}
 
-const Sidebar = () => {
-  const { isSidebarOpen, toggleSidebar } = useNavigation();
-  const [isOutlineOpen, setOutlineOpen] = useState(true);
-  const [bookmarks, setBookmarks] = useState(initialBookmarks);
-  const pathname = usePathname();
+function useExpansion(outline: OutlineTier[]) {
+  const initial = useMemo(() => defaultExpansion(outline), [outline]);
+  const [tiers, setTiers] = useState<Set<string>>(() => new Set(initial.tiers));
+  const [modules, setModules] = useState<Set<string>>(() => new Set(initial.modules));
 
-  const curriculumStatus = useMemo(() => buildCurriculumStatus(), []);
+  // Moving to a lesson elsewhere in the course opens its tier and module.
+  useEffect(() => {
+    setTiers((open) => (initial.tiers.every((id) => open.has(id)) ? open : new Set([...open, ...initial.tiers])));
+    setModules((open) => (initial.modules.every((id) => open.has(id)) ? open : new Set([...open, ...initial.modules])));
+  }, [initial]);
 
-  const moduleOutline: OutlineModule | null = useMemo(() => {
-    if (!curriculumData.length) {
-      return null;
-    }
-
-    const activePath = pathname ?? '';
-    const segments = activePath.split('/').filter(Boolean);
-    let normalized: string[] = [];
-
-    if (segments[0] === 'curriculum') {
-      normalized = normalizeSlug(segments.slice(1));
-    }
-
-    if (normalized.length === 0) {
-      const defaultTier = curriculumData[0];
-      normalized = defaultTier ? normalizeSlug([defaultTier.slug]) : [];
-    }
-
-    if (normalized.length < 2) {
-      return null;
-    }
-
-    const [tierSlug, sectionSlug] = normalized;
-    const tier = curriculumData.find(module => module.slug === tierSlug);
-    if (!tier || tier.sections.length === 0) {
-      return null;
-    }
-
-    const tierStatuses = curriculumStatus.filter(entry => entry.moduleSlug === tierSlug);
-
-    const sections: OutlineSection[] = tier.sections.map(section => {
-      const sectionStatuses = tierStatuses.filter(entry => entry.sectionSlug === section.slug);
-      let status: TopicStatus = 'draft';
-
-      if (sectionStatuses.length > 0) {
-        if (sectionStatuses.every(entry => entry.status === 'complete')) {
-          status = 'complete';
-        } else if (sectionStatuses.some(entry => entry.status === 'in-review')) {
-          status = 'in-review';
-        }
-      }
-
-      const targetSlug = normalizeSlug([tier.slug, section.slug]);
-      const href = targetSlug.length === 3 ? `/curriculum/${targetSlug.join('/')}` : `/curriculum/${tier.slug}`;
-
-      return {
-        id: section.slug,
-        title: section.title,
-        href,
-        status,
-        current: section.slug === sectionSlug,
-      };
+  const toggle = (setter: typeof setTiers, id: string) =>
+    setter((open) => {
+      const next = new Set(open);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
     });
 
-    return {
-      title: formatTierTitle(tier.slug, tier.title),
-      sections,
-    };
-  }, [curriculumStatus, pathname]);
+  return {
+    tierOpen: (id: string) => tiers.has(id),
+    moduleOpen: (id: string) => modules.has(id),
+    toggleTier: (id: string) => toggle(setTiers, id),
+    toggleModule: (id: string) => toggle(setModules, id),
+  };
+}
 
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 8,
-      },
-    })
-  );
-
-  const handleDragEnd = (event: { active: any; over: any; }) => {
-    const { active, over } = event;
-    if (active.id !== over.id) {
-      setBookmarks((items) => {
-        const oldIndex = items.findIndex(item => item.id === active.id);
-        const newIndex = items.findIndex(item => item.id === over.id);
-        return arrayMove(items, oldIndex, newIndex);
-      });
-    }
+function ModuleItem({
+  mod,
+  density,
+  open,
+  onToggle,
+  idPrefix,
+  onNavigate,
+}: {
+  mod: OutlineModule;
+  density: Density;
+  open: boolean;
+  onToggle: () => void;
+  idPrefix: string;
+  onNavigate?: (href: string) => void;
+}) {
+  const [first, ...rest] = mod.lessons;
+  const lessonsId = `${idPrefix}-${mod.code}-lessons`;
+  const follow = (event: MouseEvent<HTMLAnchorElement>, href: string) => {
+    if (!isModifiedClick(event)) onNavigate?.(href);
   };
 
   return (
-    <AnimatePresence>
-      {isSidebarOpen && (
-        <>
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 0.5 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.3 }}
-            className="fixed inset-0 bg-black/50 z-40 md:hidden"
-            onClick={toggleSidebar}
-          />
-          <motion.div
-            initial={{ x: '-100%' }}
-            animate={{ x: 0 }}
-            exit={{ x: '-100%' }}
-            transition={{ type: 'spring', stiffness: 300, damping: 30 }}
-            className="fixed top-0 left-0 h-full w-80 bg-background z-50 shadow-lg border-r border-border/40 flex flex-col"
+    <li>
+      <div className="flex items-start gap-1">
+        <Link
+          href={first.href}
+          aria-current={first.current ? "page" : undefined}
+          // One name in every browser ("F1A: The Cost of Bugs"); the visible code and title, in order.
+          aria-label={`${mod.code}: ${mod.title}`}
+          onClick={(event) => follow(event, first.href)}
+          className={linkClass(first.current, density)}
+        >
+          <span className="mt-0.5 shrink-0 font-mono text-[11px] font-semibold text-muted-foreground">{mod.code}</span>
+          <span className={cn("min-w-0 break-words", mod.current && !first.current && "font-medium text-foreground")}>
+            {mod.title}
+          </span>
+        </Link>
+        {rest.length > 0 && (
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-controls={lessonsId}
+            onClick={onToggle}
+            className={cn(
+              "inline-flex shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground",
+              density === "compact" ? "h-8 w-8" : "h-10 w-10",
+              focusRing,
+            )}
           >
-            <div className="p-4 flex justify-between items-center border-b border-border/40 flex-shrink-0">
-              <h2 className="text-lg font-semibold">Quick Access</h2>
-              <button
-                type="button"
-                onClick={toggleSidebar}
-                className="p-1 rounded-md hover:bg-muted"
-                aria-label="Close quick access sidebar"
+            <ChevronDown
+              aria-hidden="true"
+              className={cn("h-4 w-4 transition-transform motion-reduce:transition-none", open && "rotate-180")}
+            />
+            <span className="sr-only">{`${mod.code} lessons (${rest.length})`}</span>
+          </button>
+        )}
+      </div>
+      {rest.length > 0 && (
+        <ul id={lessonsId} hidden={!open} className="ml-3 mt-1 space-y-0.5 border-l border-border pl-2">
+          {rest.map((lesson) => (
+            <li key={lesson.slug}>
+              <Link
+                href={lesson.href}
+                aria-current={lesson.current ? "page" : undefined}
+                onClick={(event) => follow(event, lesson.href)}
+                className={linkClass(lesson.current, density)}
               >
-                <X className="h-6 w-6" />
-              </button>
-            </div>
-            <div className="flex-grow overflow-y-auto p-4 space-y-6">
-              {/* Module Outline */}
-              {moduleOutline && moduleOutline.sections.length > 0 && (
-                <div>
-                  <button
-                    onClick={() => setOutlineOpen(!isOutlineOpen)}
-                    className="w-full flex justify-between items-center font-semibold text-left mb-2"
-                    aria-expanded={isOutlineOpen}
-                    aria-controls="module-outline-content"
-                  >
-                    <span>Module Outline</span>
-                    <ChevronsUpDown className={`h-4 w-4 transition-transform ${isOutlineOpen ? 'rotate-180' : ''}`} />
-                  </button>
-                  <AnimatePresence>
-                    {isOutlineOpen && (
-                      <motion.div
-                        id="module-outline-content"
-                        initial={{ height: 0, opacity: 0 }}
-                        animate={{ height: 'auto', opacity: 1 }}
-                        exit={{ height: 0, opacity: 0 }}
-                        className="mt-2 space-y-2 overflow-hidden"
-                      >
-                        <h3 className="font-semibold text-sm text-muted-foreground px-2">{moduleOutline.title}</h3>
-                        <div className="mt-1 space-y-1">
-                          {moduleOutline.sections.map(section => (
-                            <Link
-                              key={section.id}
-                              href={section.href}
-                              className={`flex items-center justify-between gap-2 rounded-md p-2 text-sm transition-colors ${section.current ? 'bg-primary/10 text-primary font-semibold' : 'text-muted-foreground hover:bg-muted/50'}`}
-                            >
-                              <span className="truncate">{section.title}</span>
-                              <span className={`shrink-0 rounded-full px-2 py-0.5 text-xs font-medium ${statusStyles[section.status]}`}>
-                                {statusLabels[section.status]}
-                              </span>
-                            </Link>
-                          ))}
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-              )}
-
-              {/* Quick Links */}
-              <div>
-                <h3 className="font-semibold mb-2">Quick Links</h3>
-                <div className="space-y-2">
-                  {quickLinks.map(link => (
-                    <Link key={link.id} href={link.href} className="flex items-center p-2 bg-muted/50 rounded-md hover:bg-muted">
-                      <link.icon className="h-4 w-4 mr-2" />
-                      <span>{link.label}</span>
-                    </Link>
-                  ))}
-                </div>
-              </div>
-
-              {/* Bookmarks */}
-              <div>
-                <h3 className="font-semibold mb-2">Bookmarks</h3>
-                <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                  <SortableContext items={bookmarks} strategy={verticalListSortingStrategy}>
-                    {bookmarks.map(bookmark => <SortableItem key={bookmark.id} id={bookmark.id} label={bookmark.label} />)}
-                  </SortableContext>
-                </DndContext>
-              </div>
-            </div>
-          </motion.div>
-        </>
+                <span className="min-w-0 break-words">{lesson.title}</span>
+              </Link>
+            </li>
+          ))}
+        </ul>
       )}
-    </AnimatePresence>
+    </li>
   );
-};
+}
 
-export default Sidebar;
+/** Tiers → modules → lessons, each tier and multi-lesson module a disclosure. */
+export function CourseOutlineTree({ outline, density, onNavigate }: TreeProps) {
+  const idPrefix = useId().replace(/:/g, "");
+  const { tierOpen, moduleOpen, toggleTier, toggleModule } = useExpansion(outline);
+
+  return (
+    <ul className="space-y-1">
+      {outline.map((tier) => {
+        const open = tierOpen(tier.id);
+        const panelId = `${idPrefix}-${tier.code}`;
+        return (
+          <li key={tier.id}>
+            <button
+              type="button"
+              aria-expanded={open}
+              aria-controls={panelId}
+              onClick={() => toggleTier(tier.id)}
+              className={cn(
+                "flex w-full items-start gap-2 rounded-lg px-2 py-2 text-left hover:bg-muted",
+                density === "compact" ? "min-h-9" : "min-h-11",
+                focusRing,
+              )}
+            >
+              <ChevronDown
+                aria-hidden="true"
+                className={cn(
+                  "mt-0.5 h-4 w-4 shrink-0 text-muted-foreground transition-transform motion-reduce:transition-none",
+                  !open && "-rotate-90",
+                )}
+              />
+              <span className="min-w-0">
+                <span className={cn("block text-sm text-foreground", tier.current ? "font-bold" : "font-semibold")}>
+                  {tier.title}
+                </span>
+                <span className="sr-only">, </span>
+                <span className="block text-xs text-muted-foreground">
+                  {tier.moduleCount} modules · {tier.lessonCount} lessons
+                </span>
+              </span>
+            </button>
+            <div id={panelId} hidden={!open}>
+              {tier.audience && <p className="px-2 pb-2 pl-8 text-xs text-muted-foreground">{tier.audience}</p>}
+              {tier.groups.map((group, groupIndex) => {
+                const items = group.modules.map((mod) => (
+                  <ModuleItem
+                    key={mod.id}
+                    mod={mod}
+                    density={density}
+                    open={moduleOpen(mod.id)}
+                    onToggle={() => toggleModule(mod.id)}
+                    idPrefix={idPrefix}
+                    onNavigate={onNavigate}
+                  />
+                ));
+                if (group.track === "core") {
+                  return (
+                    <ul key={`core-${groupIndex}`} className="space-y-0.5 pl-4">
+                      {items}
+                    </ul>
+                  );
+                }
+                const labelId = `${panelId}-electives-${groupIndex}`;
+                return (
+                  <div
+                    key={`elective-${groupIndex}`}
+                    role="group"
+                    aria-labelledby={labelId}
+                    className="mb-1 ml-4 mt-2 rounded-lg border border-dashed border-border p-1"
+                  >
+                    <p id={labelId} className="px-2 pb-1 pt-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                      Electives
+                      <span className="ml-1 font-normal normal-case tracking-normal">(optional: the core path skips them)</span>
+                    </p>
+                    <ul className="space-y-0.5">{items}</ul>
+                  </div>
+                );
+              })}
+            </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function useCourseOutline() {
+  const pathname = usePathname();
+  const current = useMemo(() => currentLessonSlug(pathname), [pathname]);
+  const outline = useMemo(() => buildCourseOutline(curriculumData, manifestTierMeta, current), [current]);
+  return { outline, isLessonPage: current !== null };
+}
+
+/** The outline docked beside the lesson at lg and wider; hidden below lg, where the drawer takes over. */
+function DockedOutline({ outline }: { outline: OutlineTier[] }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // Keep the current lesson in view inside the column, without scrolling the page.
+  // The container is `relative`, so offsetTop is measured from its top edge.
+  useEffect(() => {
+    const container = scrollRef.current;
+    const currentLink = container?.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!container || !currentLink) return;
+    const top = currentLink.offsetTop;
+    if (top < container.scrollTop || top > container.scrollTop + container.clientHeight - currentLink.offsetHeight) {
+      container.scrollTop = Math.max(0, top - container.clientHeight / 3);
+    }
+  }, [outline]);
+
+  const hide = () => {
+    shellStore.setOutlineCollapsed(true);
+    document.querySelector<HTMLElement>("[data-outline-toggle]")?.focus();
+  };
+
+  return (
+    <div id={DOCKED_OUTLINE_ID} className="hidden w-64 shrink-0 border-r border-border lg:block xl:w-72">
+      <nav aria-label="Course outline" className="sticky top-16 flex max-h-[calc(100vh-4rem)] flex-col">
+        <div className="flex items-center justify-between gap-2 px-3 pb-1 pt-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Course outline</p>
+          <button
+            type="button"
+            onClick={hide}
+            aria-label="Hide course outline"
+            title="Hide course outline"
+            className={cn(
+              "inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground",
+              focusRing,
+            )}
+          >
+            <PanelLeftClose aria-hidden="true" className="h-4 w-4" />
+          </button>
+        </div>
+        <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-6">
+          <CourseOutlineTree outline={outline} density="compact" />
+        </div>
+      </nav>
+    </div>
+  );
+}
+
+/** The outline as a modal drawer (G30-SIDE-V08): below lg, and on pages without the docked column. */
+function OutlineDrawer({ outline }: { outline: OutlineTier[] }) {
+  const panelRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
+  useModalDialog(panelRef, {
+    onClose: shellStore.closeOutline,
+    initialFocus: () =>
+      panelRef.current?.querySelector<HTMLElement>('[aria-current="page"]') ??
+      panelRef.current?.querySelector<HTMLElement>("[data-outline-close]"),
+  });
+
+  const onNavigate = (href: string) => {
+    shellStore.closeOutline();
+    focusAfterNavigation(href);
+  };
+
+  return (
+    <div className={cn("fixed inset-0", MODAL_LAYER)}>
+      <div
+        aria-hidden="true"
+        data-testid="course-outline-backdrop"
+        className="absolute inset-0 bg-background/80 backdrop-blur-sm"
+        onClick={shellStore.closeOutline}
+      />
+      <motion.div
+        ref={panelRef}
+        id={OUTLINE_DRAWER_ID}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        initial={{ x: "-100%" }}
+        animate={{ x: 0 }}
+        transition={{ duration: 0.2, ease: "easeOut" }}
+        className="absolute inset-y-0 left-0 flex w-[min(22rem,88vw)] flex-col border-r border-border bg-background text-foreground shadow-2xl focus:outline-none"
+      >
+        <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
+          <h2 id={titleId} className="text-base font-semibold text-foreground">
+            Course outline
+          </h2>
+          <button
+            type="button"
+            data-outline-close
+            onClick={shellStore.closeOutline}
+            aria-label="Close course outline"
+            className={cn(
+              "inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border text-foreground hover:bg-muted",
+              focusRing,
+            )}
+          >
+            <X aria-hidden="true" className="h-5 w-5" />
+          </button>
+        </div>
+        <nav aria-label="Course outline" className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-3">
+          <CourseOutlineTree outline={outline} density="comfortable" onNavigate={onNavigate} />
+        </nav>
+        <div className="flex flex-wrap gap-x-4 gap-y-2 border-t border-border px-4 py-3 text-sm">
+          <Link
+            href="/curriculum"
+            onClick={(event) => !isModifiedClick(event) && onNavigate("/curriculum")}
+            className={cn("rounded font-medium text-foreground underline-offset-4 hover:underline", focusRing)}
+          >
+            Curriculum overview
+          </Link>
+          <Link
+            href="/practice"
+            onClick={(event) => !isModifiedClick(event) && onNavigate("/practice")}
+            className={cn("rounded font-medium text-foreground underline-offset-4 hover:underline", focusRing)}
+          >
+            Practice hub
+          </Link>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+/** True when the outline is docked right now: a lesson page at lg or wider. */
+export function outlineDockedNow(pathname: string | null): boolean {
+  return isLessonPath(pathname) && viewportAtLeast(LG_MIN_WIDTH);
+}
+
+/**
+ * State and action for the navbar's outline button (and Ctrl/Cmd+B): where the
+ * outline is docked it shows or hides the column, elsewhere it opens or
+ * closes the drawer. Both cases report aria-expanded the same way.
+ */
+export function useOutlineToggle() {
+  const pathname = usePathname();
+  const wide = useMinWidth(LG_MIN_WIDTH);
+  const drawerOpen = useShellState((state) => state.outlineOpen);
+  const collapsed = useShellState((state) => state.outlineCollapsed);
+  const docked = wide && isLessonPath(pathname);
+  const expanded = docked ? !collapsed : drawerOpen;
+  return {
+    expanded,
+    controls: expanded ? (docked ? DOCKED_OUTLINE_ID : OUTLINE_DRAWER_ID) : undefined,
+    toggle: () => shellStore.toggleOutline(outlineDockedNow(pathname)),
+  };
+}
+
+/**
+ * The course outline (G30-SIDE-01): tiers → modules → lessons in manifest
+ * order, the current lesson marked with aria-current="page", electives
+ * grouped and labelled, each tier collapsible. On lesson pages at lg and
+ * wider it is docked beside the lesson (hideable, remembered per browser);
+ * below lg, and on other pages, the navbar button and Ctrl/Cmd+B open it as a
+ * modal drawer.
+ */
+export default function Sidebar() {
+  const { outline, isLessonPage } = useCourseOutline();
+  const drawerOpen = useShellState((state) => state.outlineOpen);
+  const collapsed = useShellState((state) => state.outlineCollapsed);
+  const wide = useMinWidth(LG_MIN_WIDTH);
+
+  // Growing the window past lg on a lesson page hands over from the drawer to the docked column.
+  useEffect(() => {
+    if (drawerOpen && isLessonPage && wide) shellStore.closeOutline();
+  }, [drawerOpen, isLessonPage, wide]);
+
+  return (
+    <>
+      {isLessonPage && !collapsed && <DockedOutline outline={outline} />}
+      {drawerOpen && <OutlineDrawer outline={outline} />}
+    </>
+  );
+}

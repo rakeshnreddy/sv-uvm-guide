@@ -1,84 +1,111 @@
-import React from 'react';
-import { Tier, getModules } from '@/lib/curriculum-data';
-import { ModuleCard } from './ModuleCard';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Lock, ChevronDown } from 'lucide-react';
-import { cn } from '@/lib/utils';
+'use client';
 
-interface TierSectionProps {
-  tier: Tier;
-  tierProgress: number;
-  isTierUnlocked: boolean;
-  getModuleProgress: (moduleId: string) => number;
-  isModuleLocked: (moduleId: string) => boolean;
-  isOpen: boolean;
+import React from 'react';
+import { ChevronDown } from 'lucide-react';
+
+import type { OverviewModule, OverviewTier } from '@/lib/curriculum-overview';
+import { cn } from '@/lib/utils';
+import { ModuleCard, type ModuleCardPrerequisite } from './ModuleCard';
+import { focusRing } from './overview-ui';
+
+export interface TierSectionProps {
+  tier: OverviewTier;
+  /** The modules to show: every module of the tier, or the ones matching a search. */
+  modules: OverviewModule[];
+  open: boolean;
   onToggle: () => void;
+  /** Set while a search is active: the counts say how many modules match. */
+  searching?: boolean;
+  /** Every module by id, to resolve prerequisites in earlier tiers. */
+  moduleIndex: ReadonlyMap<string, OverviewModule>;
+  milestoneNames: Readonly<Record<string, string>>;
+  visitedModules: ReadonlySet<string>;
+  hereModuleId?: string;
 }
 
-const TierProgressBar: React.FC<{ progress: number; color: string }> = ({ progress, color }) => (
-    <div className="w-full bg-muted rounded-full h-2.5">
-        <div
-            className="h-2.5 rounded-full transition-all duration-500"
-            style={{ width: `${progress}%`, backgroundColor: color }}
-        ></div>
-    </div>
-);
+function countLine(tier: OverviewTier, shown: number, searching: boolean): string {
+  const modules = `${tier.modules.length} ${tier.modules.length === 1 ? 'module' : 'modules'}`;
+  const electives = tier.electiveCount > 0 ? ` (${tier.electiveCount} elective)` : '';
+  const lessons = `${tier.lessonCount} ${tier.lessonCount === 1 ? 'lesson' : 'lessons'}`;
+  const matches = searching ? ` · ${shown} ${shown === 1 ? 'module matches' : 'modules match'}` : '';
+  return `${modules}${electives} · ${lessons}${matches}`;
+}
 
-
+/**
+ * One tier of the overview: a heading that holds the disclosure button (so
+ * heading navigation still finds the tier), who the tier is for, its counts,
+ * and its modules in manifest order. The section id ("t1"…"t4") is the anchor
+ * that /curriculum#t3 opens.
+ */
 export const TierSection: React.FC<TierSectionProps> = ({
   tier,
-  tierProgress,
-  isTierUnlocked,
-  getModuleProgress,
-  isModuleLocked,
-  isOpen,
+  modules,
+  open,
   onToggle,
+  searching = false,
+  moduleIndex,
+  milestoneNames,
+  visitedModules,
+  hereModuleId,
 }) => {
+  const headingId = `${tier.anchor}-heading`;
+  const panelId = `${tier.anchor}-panel`;
+
+  const prerequisitesOf = (module: OverviewModule): ModuleCardPrerequisite[] =>
+    module.prerequisites.flatMap((id) => {
+      const prerequisite = moduleIndex.get(id);
+      return prerequisite
+        ? [{ id, code: prerequisite.code, title: prerequisite.displayTitle, href: prerequisite.href }]
+        : [];
+    });
 
   return (
-    <div className={cn("relative mb-4 border rounded-lg overflow-hidden", !isTierUnlocked && "opacity-60 cursor-not-allowed", isOpen && "shadow-lg")}>
-        <button onClick={onToggle} disabled={!isTierUnlocked} className="w-full p-6 text-left hover:bg-muted/50 transition-colors">
-            <div className="flex justify-between items-center mb-2">
-                <h2 className="text-2xl md:text-3xl font-bold font-sans">
-                    {tier.title}
-                </h2>
-                <div className="flex items-center gap-4">
-                  {!isTierUnlocked && <Lock className="w-6 h-6 text-muted-foreground" />}
-                  <ChevronDown className={cn("w-6 h-6 transition-transform", isOpen && "rotate-180")} />
-                </div>
-            </div>
-            <TierProgressBar progress={tierProgress} color="#0ea5e9" />
+    <section id={tier.anchor} aria-labelledby={headingId} className="scroll-mt-24 rounded-3xl border border-border bg-card/60">
+      <h3 id={headingId} className="text-xl font-semibold text-foreground sm:text-2xl">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={panelId}
+          onClick={onToggle}
+          className={cn(
+            'flex min-h-[44px] w-full items-center justify-between gap-3 rounded-3xl px-4 pt-4 text-left sm:px-6 sm:pt-5',
+            focusRing,
+          )}
+        >
+          <span>{tier.title}</span>
+          <ChevronDown
+            className={cn('h-6 w-6 shrink-0 transition-transform motion-reduce:transition-none', open && 'rotate-180')}
+            aria-hidden="true"
+          />
         </button>
-        <AnimatePresence initial={false}>
-            {isOpen && (
-                <motion.section
-                    key="content"
-                    initial="collapsed"
-                    animate="open"
-                    exit="collapsed"
-                    variants={{
-                        open: { opacity: 1, height: "auto" },
-                        collapsed: { opacity: 0, height: 0 }
-                    }}
-                    transition={{ duration: 0.4, ease: [0.04, 0.62, 0.23, 0.98] }}
-                    className="overflow-hidden"
-                >
-                    <div className="p-6 pt-2">
-                      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                        {getModules(tier).map(module => (
-                          <ModuleCard
-                            key={module.id}
-                            module={module}
-                            tier={tier}
-                            progress={getModuleProgress(module.id)}
-                            isLocked={isModuleLocked(module.id)}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                </motion.section>
-            )}
-        </AnimatePresence>
-    </div>
+      </h3>
+      <div className="px-4 pb-4 sm:px-6 sm:pb-5">
+        {tier.audience && (
+          <p className="mt-1 max-w-3xl text-sm text-muted-foreground">
+            <span className="font-semibold text-foreground">Who it is for:</span> {tier.audience}
+          </p>
+        )}
+        <p className="mt-1 text-xs text-muted-foreground">{countLine(tier, modules.length, searching)}</p>
+      </div>
+      <div id={panelId} hidden={!open} className="px-4 pb-5 sm:px-6">
+        {open && (
+          <ol className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {modules.map((module) => (
+              <li key={module.id} className="min-w-0">
+                <ModuleCard
+                  module={module}
+                  prerequisites={prerequisitesOf(module)}
+                  milestoneNames={milestoneNames}
+                  visited={visitedModules.has(module.id)}
+                  here={hereModuleId === module.id}
+                />
+              </li>
+            ))}
+          </ol>
+        )}
+      </div>
+    </section>
   );
 };
+
+export default TierSection;
