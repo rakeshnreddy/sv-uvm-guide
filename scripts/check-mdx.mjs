@@ -185,7 +185,14 @@ for (const file of files) {
     if (meta && (!fm.data.title || !fm.data.description)) warnings.push("legacy `export const metadata` block: move title and description into frontmatter");
     if (/<InfoPage[\s>]/.test(fm.content)) warnings.push("legacy <InfoPage> wrapper: lesson pages get their title and layout from the lesson route");
     const deck = fm.data.flashcards ?? fm.data.flashcardId;
-    if (deck && !decks.has(String(deck))) errors.push(`frontmatter: flashcards "${deck}" is not a registered deck id or alias (src/lib/flashcard-decks.ts)`);
+    if (deck && !decks.has(String(deck))) {
+      // A new deck file the lead has not registered yet is fine while authoring.
+      if (fs.existsSync(path.join(root, "content", "flashcards", `${deck}.json`))) {
+        warnings.push(`frontmatter: flashcards "${deck}" exists but is not registered yet (the lead registers it in src/lib/flashcard-decks.ts)`);
+      } else {
+        errors.push(`frontmatter: flashcards "${deck}" is not a registered deck id or alias, and content/flashcards/${deck}.json does not exist`);
+      }
+    }
     let tree;
     try {
       tree = parser.parse(fm.content);
