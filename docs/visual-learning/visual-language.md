@@ -141,3 +141,97 @@ Every waveform states its x-axis in its caption. For example, the F3C waveform s
    10. independent kata.
 6. **Reinforce.** Add flashcards that name the visual anchor (for example "Picture the ladder…"). Register the deck.
 7. **Validate.** Component tests that fail on wrong semantics; full suite; build; Playwright captures at 1440 and 390 px.
+
+## 9. MDX diagram kit (static diagrams written as data)
+
+Use the kit when a concept needs an accurate picture but not an interactive model. It draws with the same encodings as the visuals above: role tags (DRV, MON…), TLM port symbols (■ port, ○ export, ● imp, ◆ analysis port), line styles, and theme-safe colours. It is readable at 390 px and has an accessible name. Data errors (unknown node, overlapping cells, a waveform longer than its edge count) appear on the page as a "Diagram data error" notice. They are never drawn silently, and the lesson sweep fails on them.
+
+Every diagram needs a `title` (its accessible name) and a `caption` that tells the learner what to look at.
+
+### `<ArchitectureDiagram>`: components and connections on a grid
+
+Nodes sit on a grid by `col` and `row` (zero-based), with optional `colSpan` and `rowSpan`. Containers (`container: true`) are drawn around the cells they span, with growing margins when nested. Edges connect node ids or port ids. `via` adds bend points in grid units (fractions allowed).
+
+```mdx
+<ArchitectureDiagram
+  title="A UVM environment with one active agent and a scoreboard"
+  caption="Data flows from the sequencer to the driver, and from the monitor's analysis port to the scoreboard."
+  nodes={[
+    { id: "env", label: "env", kind: "env", col: 0, row: 0, colSpan: 3, rowSpan: 2, container: true },
+    { id: "agt", label: "agent (active)", kind: "agent", col: 0, row: 0, colSpan: 2, rowSpan: 2, container: true },
+    { id: "sqr", label: "sqr", kind: "sequencer", col: 0, row: 0 },
+    { id: "drv", label: "drv", kind: "driver", col: 0, row: 1 },
+    { id: "mon", label: "mon", kind: "monitor", col: 1, row: 1 },
+    { id: "scb", label: "scb", kind: "scoreboard", col: 2, row: 1 }
+  ]}
+  ports={[
+    { id: "drv.port", node: "drv", side: "top", kind: "port", label: "seq_item_port" },
+    { id: "sqr.export", node: "sqr", side: "bottom", kind: "export", label: "seq_item_export" },
+    { id: "mon.ap", node: "mon", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "scb.imp", node: "scb", side: "left", kind: "analysis_imp", label: "analysis_export" }
+  ]}
+  edges={[
+    { from: "drv.port", to: "sqr.export", style: "control", label: "get_next_item" },
+    { from: "mon.ap", to: "scb.imp", style: "data", label: "write(t)" }
+  ]}
+/>
+```
+
+Node kinds: `test env agent sequencer driver monitor scoreboard subscriber predictor model fifo sequence dut interface reg generic`. Edge styles: `data` (solid with a filled arrow), `control` (dotted), `causal` (dashed, call order), `structural` (plain).
+
+### `<TimingDiagram>`: cycle-accurate waveforms
+
+`values[k]` is the value **sampled at rising edge k**, drawn as changing just after edge k−1, like a flop output. Use `undefined` for X. Markers sit on an edge and must explain themselves through `label`.
+
+```mdx
+<TimingDiagram
+  title="VALID/READY handshake"
+  caption="The transfer happens at edge 3, the first edge where VALID and READY are both 1."
+  edges={5}
+  signals={[
+    { name: "ACLK", kind: "clock" },
+    { name: "VALID", kind: "bit", values: [0, 1, 1, 1, 0] },
+    { name: "READY", kind: "bit", values: [0, 0, 0, 1, 0] },
+    { name: "DATA", kind: "bus", values: [undefined, "D0", "D0", "D0", undefined] }
+  ]}
+  markers={[{ edge: 3, tone: "pass", label: "transfer: VALID and READY both 1" }]}
+/>
+```
+
+For AMBA figures that already use WaveDrom, `<ProtocolWaveform>` remains available. Prefer generating that JSON from a tested model, as B-AXI-1 does.
+
+### `<SequenceDiagram>`: who calls whom, in order
+
+Message kinds:
+- `call` (default): solid line with a filled head.
+- `return`: dashed.
+- `async`: no wait, open head.
+- `self`: loops back to the same lifeline.
+- `note`: spans `from` to `to`.
+- `divider`: time passes or an event, e.g. `@(posedge clk)`.
+
+Calls, async sends and returns are numbered. A "Steps as text" list under the drawing repeats every step for screen readers.
+
+```mdx
+<SequenceDiagram
+  title="Sequence-driver handshake for one item"
+  caption="The driver pulls items; finish_item() returns only after the driver calls item_done()."
+  participants={[
+    { id: "seq", label: "seq", kind: "sequence" },
+    { id: "sqr", label: "sequencer", kind: "sequencer" },
+    { id: "drv", label: "driver", kind: "driver" }
+  ]}
+  messages={[
+    { from: "drv", to: "sqr", label: "get_next_item(req)" },
+    { from: "seq", to: "sqr", label: "start_item(req)" },
+    { kind: "note", from: "seq", to: "sqr", label: "start_item returns when the sequencer grants this sequence" },
+    { from: "seq", to: "sqr", label: "finish_item(req)" },
+    { kind: "return", from: "sqr", to: "drv", label: "req" },
+    { kind: "self", from: "drv", label: "drive req on the pins" },
+    { kind: "async", from: "drv", to: "sqr", label: "item_done()" },
+    { kind: "return", from: "sqr", to: "seq", label: "finish_item returns" }
+  ]}
+/>
+```
+
+**Accuracy rule.** A diagram is part of the lesson's claims. Every node name, port, method and edge must match the code on the page and the standard. Reviewers check diagrams with the same rigour as code.

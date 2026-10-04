@@ -23,3 +23,5 @@ export {
   type PortKind,
   type EdgeStyle,
 } from "./BlockDiagram";
+export { SequenceDiagram, DiagramProblems } from "./SequenceDiagram";
+export * from "./diagram-layout";

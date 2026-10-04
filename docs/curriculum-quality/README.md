@@ -121,10 +121,12 @@ Every core concept needs a picture the learner can use. Choose the strongest hon
 |---|---|---|
 | Behaviour over time or rules a learner should experiment with | An existing model-backed visualizer (see the registry `src/components/mdx/lazy-mdx-interactives.ts` and `docs/visual-learning/concept-visual-map.md`) | Introduce it, ask the learner to predict, then debrief what it showed. Use its props to pick the right scenario. |
 | A concept no existing visualizer covers | Request a new one in your report (concept, rules, scenarios, what the learner predicts) | The lead decides and builds it on a tested model in phase 3b. |
-| Structure: hierarchy, topology, connections, data flow | A diagram: inline SVG in the MDX, an SVG under `public/visuals/<module>/`, or the MDX diagram kit's block diagram once it exists | Must match the code on the page exactly (names, ports, directions). |
-| Timing: handshakes, pipelines, sampling | `<ProtocolWaveform>` (WaveDrom JSON), or the kit's waveform | Every edge and value must follow the rules the lesson states. Say which edge samples. |
-| Call order, phases, protocols between components | The kit's sequence diagram once it exists; until then an inline SVG or an ordered, traced example | Use the real method names. |
+| Structure: hierarchy, topology, connections, data flow | `<ArchitectureDiagram>` from the MDX diagram kit (grid layout, UVM role tags and port symbols), or inline SVG, or an SVG under `public/visuals/<module>/` | Must match the code on the page exactly (names, ports, directions). |
+| Timing: handshakes, pipelines, sampling | `<TimingDiagram>` from the kit (values[k] = value sampled at edge k), or `<ProtocolWaveform>` (WaveDrom JSON) | Every edge and value must follow the rules the lesson states. Say which edge samples. |
+| Call order, phases, protocols between components | `<SequenceDiagram>` from the kit (calls, returns, async sends, notes, dividers) | Use the real method names, in the real order. |
 | Code behaviour step by step | A traced example: code with a line-by-line state table, or a model-backed visualizer with CodeTrace | Show the values after each step. |
+
+The kit's syntax and copy-ready examples are in [`docs/visual-learning/visual-language.md` §9](../visual-learning/visual-language.md#9-mdx-diagram-kit-static-diagrams-written-as-data).
 
 **Rules for pictures:**
 - Accurate: generated from or checked against the model or standard, never "approximately right".

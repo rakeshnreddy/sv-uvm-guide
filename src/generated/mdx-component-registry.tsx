@@ -24,6 +24,7 @@ import { CodeBlock } from "@/components/ui/CodeBlock";
 import Panel from "@/components/ui/Panel";
 import QuizBase from "@/components/ui/Quiz";
 import { VisualRecap } from "@/components/visual-system/VisualRecap";
+import { ArchitectureDiagram, SequenceDiagram, TimingDiagram } from "@/components/mdx/DiagramKit";
 
 const InteractiveWrapper = ({ children }: { children?: React.ReactNode }) => (
   <div className="my-6 rounded-2xl border border-border/60 bg-muted/20 p-4 md:p-6">
@@ -108,6 +109,9 @@ export const mdxComponents = {
   Image: MdxImage,
   LabLink,
   VisualRecap,
+  ArchitectureDiagram,
+  TimingDiagram,
+  SequenceDiagram,
   ...lazyMdxComponents,
 };
 
