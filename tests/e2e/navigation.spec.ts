@@ -12,8 +12,10 @@ test('sequence arbitration page next link navigates to sequence libraries', asyn
 
 test.describe('Advanced Navigation Features', () => {
 
+  // The navbar, sidebar and keyboard shortcuts belong to the (learning) layout;
+  // the public landing page at / does not render them.
   test.beforeEach(async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/curriculum');
   });
 
   test('should toggle sidebar with navbar button', async ({ page }) => {
@@ -53,7 +55,20 @@ test.describe('Advanced Navigation Features', () => {
     // Test Notification Center
     await page.getByTestId('notification-button').click();
     await expect(page.getByText('Notifications', { exact: true }).first()).toBeVisible();
-    await expect(page.getByText(/View all/)).toBeVisible();
+  });
+
+  test('should link to the notifications hub when accountUI is enabled', async ({ page, request }) => {
+    // NEXT_PUBLIC_* flags are inlined at build time, so ask the running server
+    // rather than this process's environment.
+    const flags = await (await request.get('/api/feature-flags')).json();
+    test.skip(
+      !flags.accountUI,
+      'accountUI is off on this server. Rebuild with NEXT_PUBLIC_FEATURE_FLAG_ACCOUNT_UI=true (inlined at build time), '
+        + 'or let playwright.config.ts start its own next dev server, which turns every flag on.',
+    );
+
+    await page.getByTestId('notification-button').click();
+    await expect(page.getByRole('link', { name: 'View all' })).toBeVisible();
   });
 
   test('should show enhanced breadcrumbs on a curriculum page', async ({ page }) => {

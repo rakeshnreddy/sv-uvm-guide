@@ -9,12 +9,14 @@ test('AI assistant shows loading spinner when sending message', async ({ page })
       body: JSON.stringify({ reply: 'hi there' })
     });
   });
-  await page.goto('/');
-  await page.getByLabel('Open AI Assistant').click();
-  const input = page.getByPlaceholder(/ask about systemverilog, uvm/i);
-  await input.fill('hello');
-  await page.getByLabel('Send message').click();
-  await expect(page.getByText('Assistant is thinking...')).toBeVisible();
-  await expect(page.getByText('Assistant is thinking...')).toBeHidden();
-  await expect(page.getByText('hi there')).toBeVisible();
+  // The assistant is mounted by the (learning) layout; the public landing page at / does not render it.
+  await page.goto('/curriculum');
+  await page.getByRole('button', { name: 'Open AI assistant' }).click();
+  const dialog = page.getByRole('dialog', { name: 'AI Assistant' });
+  await dialog.getByRole('textbox', { name: 'Message to AI tutor' }).fill('hello');
+  await dialog.getByRole('button', { name: 'Send message' }).click();
+  const thinking = dialog.getByText('Assistant is thinking…');
+  await expect(thinking).toBeVisible();
+  await expect(thinking).toBeHidden();
+  await expect(dialog.getByText('hi there')).toBeVisible();
 });

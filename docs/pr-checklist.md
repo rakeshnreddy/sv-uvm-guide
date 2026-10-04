@@ -18,7 +18,7 @@ Every contribution should ship with a quick self-review. Use this checklist befo
 - [ ] `npm run type-check` passes locally.
 - [ ] `npm run test` (or the targeted subset) passes locally, including `tests/topicTemplate.spec.ts` for migrated curriculum pages.
 - [ ] `npm run audit:uvm-factory` passes when UVM sources change.
-- [ ] Playwright or lab smoke tests are run when interactive behaviour, routing, or curriculum data changes.
+- [ ] Playwright or lab smoke tests are run when interactive behaviour, routing, or curriculum data changes. Auth-gated suites need `next dev`, `AUTH_TEST_MODE` and a throwaway database; see [Running the Playwright suites locally](../CONTRIBUTING.md#running-the-playwright-suites-locally).
 
 ## Documentation & Tracking
 - [ ] Relevant planning docs (`TODO.md`, `MASTER_PLAN.md`, or module trackers) reflect scope changes.

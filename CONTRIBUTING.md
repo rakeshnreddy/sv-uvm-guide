@@ -40,6 +40,34 @@ All new content must follow this structure.
 
 All pull requests must be linked to an existing issue in the issue tracker.
 
+## Running the Playwright suites locally
+
+`playwright.config.ts` starts its own `next dev` server on `127.0.0.1:3100` with every feature flag on. Outside CI it reuses anything already listening on port 3100, so a production `next start` there changes what the suites see:
+
+*   Flag-dependent checks read `/api/feature-flags` and skip, with a reason, when the flag is off. `NEXT_PUBLIC_FEATURE_FLAG_*` values are inlined at build time, so rebuild to change them.
+*   `tests/e2e/mobile-navigation.spec.ts` runs on WebKit and is skipped until you run `npx playwright install webkit`. Pass `--browser=chromium` for a quicker run with iPhone emulation in Chromium.
+
+### Auth-gated suites
+
+`labs.spec.ts`, `learner-flow.spec.ts` and `regression-gates.spec.ts` (part of `npm run test:e2e:release`) sign in through the `test-credentials` provider in `src/lib/auth.ts`. That provider exists only when `NODE_ENV` is not `production` and `AUTH_TEST_MODE=true`, so these specs cannot pass against `next start`. Stop any server on port 3100 so Playwright starts its own `next dev`.
+
+These specs also write to the database: each protected request upserts a user row for a fresh test identity, and labs record progress. Use a throwaway PostgreSQL database, never the one in `.env`:
+
+```bash
+docker run --rm -d --name sv-uvm-e2e-db -e POSTGRES_PASSWORD=postgres -e POSTGRES_DB=sv_uvm_e2e -p 55432:5432 postgres:16
+export DATABASE_URL=postgresql://postgres:postgres@127.0.0.1:55432/sv_uvm_e2e
+export AUTH_TEST_MODE=true
+export AUTH_TEST_TOKEN=local-browser-test-token-at-least-32-characters
+export SESSION_SECRET=local-session-secret-at-least-32-characters
+npx prisma migrate deploy
+npm run test:e2e:release
+docker stop sv-uvm-e2e-db   # --rm discards the database
+```
+
+*   Export `DATABASE_URL` before `prisma migrate deploy`. Prisma falls back to `.env` when the variable is unset. Playwright's server is safer: it passes an empty `DATABASE_URL` when none is exported, and Next.js does not replace an empty value from `.env`.
+*   Export `AUTH_TEST_TOKEN` and `SESSION_SECRET` in the same shell. The server and `tests/fixtures/auth.ts` must see the same token, and the server refuses to start auth without a secret.
+*   This mirrors the `Required quality gates` workflow, which runs the same suites against a `postgres:16` service container.
+
 ## Definition of Done
 
 For any new content to be merged, it must meet the following criteria:

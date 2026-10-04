@@ -18,7 +18,11 @@ export async function authenticateTestLearner(page: Page): Promise<void> {
       json: "true",
     },
   });
-  expect(response.ok()).toBe(true);
+  expect(
+    response.ok(),
+    "Test sign-in failed. Auth-gated specs need Playwright's own next dev server with AUTH_TEST_MODE=true, "
+      + "AUTH_TEST_TOKEN and a disposable DATABASE_URL; see 'Running the Playwright suites locally' in CONTRIBUTING.md.",
+  ).toBe(true);
   const result: unknown = await response.json();
   expect(result).toEqual(expect.objectContaining({ url: expect.any(String) }));
 }
