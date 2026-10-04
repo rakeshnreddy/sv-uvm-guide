@@ -169,12 +169,13 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
         id: 'language',
         title: 'The language',
         summary:
-          'Declare SystemVerilog data correctly and write procedural code with tasks, functions and threads that behaves predictably.',
+          'Declare SystemVerilog data correctly, write procedural code with tasks, functions and threads that behaves predictably, and assemble your first self-checking testbench.',
         modules: [
           { id: 'F2A_Core_Data_Types' },
           { id: 'F2B_Dynamic_Structures' },
           { id: 'F2C_Procedural_Code_and_Flow_Control' },
           { id: 'F2D_Reusable_Code_and_Parallelism' },
+          { id: 'F2E_First_Self_Checking_Testbench' },
         ],
         practice: [
           lab('basics-1'),
@@ -279,6 +280,7 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
         'F2B_Dynamic_Structures',
         'F2C_Procedural_Code_and_Flow_Control',
         'F2D_Reusable_Code_and_Parallelism',
+        'F2E_First_Self_Checking_Testbench',
         'I-SV-1_OOP',
         'I-SV-2A_Constrained_Randomization_Fundamentals',
         'I-SV-3A_Functional_Coverage_Fundamentals',

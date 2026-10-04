@@ -88,7 +88,7 @@ describe('curriculum overview data', () => {
 
   it('points each lesson at the next lesson on the learning path', () => {
     const lessons = indexOverviewLessons(tiers);
-    expect(lessons.get('F2D_Reusable_Code_and_Parallelism/ipc')?.next).toBe('F3A_Simulation_Semantics/index');
+    expect(lessons.get('F2D_Reusable_Code_and_Parallelism/ipc')?.next).toBe('F2E_First_Self_Checking_Testbench/index');
     expect(lessons.get('F2D_Reusable_Code_and_Parallelism/index')?.next).toBe('F2D_Reusable_Code_and_Parallelism/tasks-functions');
     // The core path skips the I-SV-8 elective; the elective itself returns to the path.
     expect(lessons.get('I-UVM-6_UVM_Recording_Classes/index')?.next).toBe('A-UVM-6_Scoreboards_and_Reference_Models/index');

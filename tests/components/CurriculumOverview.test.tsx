@@ -208,7 +208,7 @@ describe('modules by tier', () => {
     expect(links).toHaveLength(tiers.reduce((n, t) => n + t.modules.length, 0));
     expect(within(map).getAllByText('Planned')).toHaveLength(PLANNED_MODULES.length);
     const f2d = links.find((a) => a.getAttribute('href') === '/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index')!;
-    expect(f2d).toHaveAccessibleDescription(/Needs F2C\. Unlocks F3A, F4A/);
+    expect(f2d).toHaveAccessibleDescription(/Needs F2C\. Unlocks F2E, F3A, F4A/);
     act(() => {
       f2d.focus();
     });
@@ -224,13 +224,13 @@ describe('pick up where you left off', () => {
     expect(screen.queryByText(/Recommended For You/i)).not.toBeInTheDocument();
   });
 
-  it('continues with the lesson after the last one opened (F2D/ipc -> F3A)', async () => {
+  it('continues with the lesson after the last one opened (F2D/ipc -> F2E)', async () => {
     visit('F2D_Reusable_Code_and_Parallelism', 'ipc');
     renderOverview();
     const resume = await screen.findByRole('region', { name: 'Pick up where you left off' });
-    expect(within(resume).getByRole('link', { name: 'Continue with F3A: Simulation Semantics' })).toHaveAttribute(
+    expect(within(resume).getByRole('link', { name: /^Continue with F2E: / })).toHaveAttribute(
       'href',
-      '/curriculum/T1_Foundational/F3A_Simulation_Semantics/index',
+      '/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index',
     );
     expect(within(resume).getByRole('heading', { name: 'Recently visited' })).toBeInTheDocument();
     expect(within(resume).getByRole('link', { name: 'F2D: Interprocess Communication' })).toBeInTheDocument();
@@ -244,12 +244,13 @@ describe('pick up where you left off', () => {
     renderOverview();
     const resume = await screen.findByRole('region', { name: 'Pick up where you left off' });
     expect(within(resume).getByText('Next on your Junior route')).toBeInTheDocument();
-    expect(screen.getAllByRole('link', { name: 'Continue with F3A: Simulation Semantics' })).toHaveLength(1);
+    expect(screen.getAllByRole('link', { name: /^Continue with F2E: / })).toHaveLength(1);
     const steps = screen.getByRole('region', { name: 'The Junior route: 6 steps' });
     const current = within(steps).getAllByRole('listitem').find((li) => li.getAttribute('aria-current') === 'step');
-    expect(current).toHaveTextContent('Time, races and interfaces');
+    // F2E closes the language step, so the learner is still in it.
+    expect(current).toHaveTextContent('The language');
     expect(current).toHaveTextContent('You are here');
-    expect(within(current!).getByRole('link', { name: 'Next lesson: F3A: Simulation Semantics' })).toBeInTheDocument();
+    expect(within(current!).getByRole('link', { name: /^Next lesson: F2E: / })).toBeInTheDocument();
   });
 });
 

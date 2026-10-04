@@ -215,7 +215,7 @@ describe('placement plans', () => {
     );
     expect(plan.startHref).toBe('/curriculum/T2_Intermediate/I-SV-1_OOP/index');
     expect(plan.startStepNumber).toBe(4);
-    expect(plan.skim.map((s) => s.code)).toEqual(['F2A', 'F2B', 'F2C', 'F2D', 'F3A', 'F3B', 'F3C', 'F4A', 'F4B', 'F4C']);
+    expect(plan.skim.map((s) => s.code)).toEqual(['F2A', 'F2B', 'F2C', 'F2D', 'F2E', 'F3A', 'F3B', 'F3C', 'F4A', 'F4B', 'F4C']);
   });
 
   it('refuse a skim step that does not come before the start', () => {

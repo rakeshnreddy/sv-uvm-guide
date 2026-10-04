@@ -127,14 +127,6 @@ export interface PlannedModule {
  */
 export const PLANNED_MODULES: readonly PlannedModule[] = [
   {
-    code: 'F2E',
-    title: 'Your First Self-Checking Testbench',
-    tierId: 'T1_Foundational',
-    after: 'F2D_Reusable_Code_and_Parallelism',
-    lane: 'The language',
-    summary: 'Assemble a directed, self-checking testbench that prints PASS and FAIL counts (milestone M0).',
-  },
-  {
     code: 'I-UVM-1D',
     title: 'Reporting, Run Control and Pass/Fail',
     tierId: 'T2_Intermediate',

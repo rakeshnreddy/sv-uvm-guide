@@ -87,6 +87,16 @@ export const curriculumData: Module[] = [
             "title": "F2A: Core Data Types",
             "slug": "index",
             "description": "Dive deep into SystemVerilog nets, variables, and value systems with interactive explorers grounded in IEEE 1800-2023."
+          },
+          {
+            "title": "Structs, Unions and Enums",
+            "slug": "structs-unions-enums",
+            "description": "Group related fields with packed and unpacked structs and unions, and name values safely with enums and their methods."
+          },
+          {
+            "title": "Operators and Expressions",
+            "slug": "operators-and-expressions",
+            "description": "Predict what SystemVerilog expressions return: precedence, bit widths and signedness, 4-state equality, wildcard matching, streaming and shifts."
           }
         ],
         "track": "core",
@@ -163,6 +173,25 @@ export const curriculumData: Module[] = [
         "track": "core",
         "prerequisites": [
           "F2C_Procedural_Code_and_Flow_Control"
+        ],
+        "milestones": [
+          "M0"
+        ]
+      },
+      {
+        "title": "F2E: Your First Self-Checking Testbench",
+        "slug": "F2E_First_Self_Checking_Testbench",
+        "topics": [
+          {
+            "title": "F2E: Your First Self-Checking Testbench",
+            "slug": "index",
+            "description": "Build a directed, self-checking SystemVerilog testbench without UVM: clock and reset, stimulus, expected values, a scoreboard queue, a watchdog and a PASS/FAIL summary."
+          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "F2B_Dynamic_Structures",
+          "F2D_Reusable_Code_and_Parallelism"
         ],
         "milestones": [
           "M0"

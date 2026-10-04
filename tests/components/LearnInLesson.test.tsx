@@ -37,7 +37,9 @@ describe('LearnInLesson', () => {
 
 describe('LabPrerequisiteList', () => {
   it('links available labs and lessons, keeps planned labs as text, and says when to do the lab', () => {
-    const prerequisites = getLabPrerequisites(getLabById('axi-deadlock-hunt-lab') as LabManifest);
+    // The real deadlock lab has no forward dependency any more; build one: a B-AXI-5 lab that needs the B-AXI-6 scoreboard lab.
+    const deadlock = getLabById('axi-deadlock-hunt-lab') as LabManifest;
+    const prerequisites = getLabPrerequisites({ ...deadlock, labPrerequisites: ['axi-scoreboard-lab'] } as LabManifest);
     render(<LabPrerequisiteList prerequisites={prerequisites} />);
     expect(screen.getByRole('link', { name: 'Lab: Building an AXI Out-of-Order Scoreboard' })).toHaveAttribute(
       'href',

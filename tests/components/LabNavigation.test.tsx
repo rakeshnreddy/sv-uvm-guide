@@ -49,8 +49,9 @@ describe('lab lesson context', () => {
   });
 
   it('warns about a forward dependency with "Do this lab after"', () => {
+    // The real deadlock lab has no forward dependency any more; build one: a B-AXI-5 lab that needs the B-AXI-6 scoreboard lab.
     const deadlock = lab('axi-deadlock-hunt-lab');
-    const { items, doAfter } = getLabPrerequisites(deadlock);
+    const { items, doAfter } = getLabPrerequisites({ ...deadlock, labPrerequisites: ['axi-scoreboard-lab'] } as LabManifest);
     render(<LabLessonContext lessons={getLabLessons(deadlock)} prerequisites={{ items, doAfter }} />);
     expect(screen.getByText('Do this lab after')).toBeInTheDocument();
   });

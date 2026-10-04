@@ -78,7 +78,7 @@ describe('Breadcrumbs', () => {
   });
 
   it('leaves out "Jump to" for a one-lesson module', () => {
-    render(<Breadcrumbs slug={['T1_Foundational', 'F2A_Core_Data_Types', 'index']} />);
+    render(<Breadcrumbs slug={['T1_Foundational', 'F2B_Dynamic_Structures', 'index']} />);
     expect(screen.queryByRole('button', { name: 'Jump to' })).toBeNull();
   });
 });
