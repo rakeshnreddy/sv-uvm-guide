@@ -194,6 +194,7 @@ Score each dimension 0–3: 0 = missing or wrong, 1 = weak, 2 = adequate, 3 = ex
 
 ## Validation commands
 
+- `node scripts/check-mdx.mjs <your module folders or files>` checks only your files: MDX syntax, unregistered components, frontmatter, LabLink and flashcard ids, internal links (pretty slugs resolve), duplicate H1s, and template H2 order (as warnings). **Run it after every edit; it must report 0 errors.** It is safe while other authors are editing their own files.
 - `node scripts/validate-content-manifests.mjs` compiles every MDX file and checks manifests. If it reports a stale lab registry, say so; regenerating it is the lead's job.
 - `npm run -s validate:flashcards`
 - `npx vitest run tests/qa`: curriculum coverage, scheduling-semantics lint and quiz audits.
