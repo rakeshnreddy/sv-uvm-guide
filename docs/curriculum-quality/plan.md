@@ -85,7 +85,7 @@ P1 gaps are assigned to the owning module's group as extra must-cover items: str
 ### 1.5 Labs, flashcards, quizzes, banks
 
 - **Labs.** No simulator is available locally, so new runnable labs wait until one is approved: Verilator via Homebrew, which needs the user's OK. Groups fix their existing labs (README, steps, starter and solution coherence) by careful reading, and add in-lesson katas with worked solutions.
-- **Flashcards.** One deck per module, in the canonical format. New decks are named `<ModuleShortId>_<Topic>.json`; the lead registers them in `src/lib/flashcard-decks.ts`.
+- **Flashcards.** One deck per module, in the canonical format. New decks are named `<ModuleShortId>_<Topic>.json`; the lead registers them in `src/lib/flashcard-decks.ts`. When a module's pages are written by split groups, each sub-lesson gets its own deck (at least 6 cards, aligned with the page). The lead creates and registers a one-card placeholder before the wave, so no two authors edit the same deck.
 - **Quizzes.** Migrate to the canonical format whenever a page is touched. Keep the release-pinned questions (B-AXI-4 Q1, E-PSS-1) word for word.
 - **Interview banks.** G29's report drives a bank group: rewrite `uvm.json`, apply major fixes to the other five, and add coverage gaps from junior to staff level.
 

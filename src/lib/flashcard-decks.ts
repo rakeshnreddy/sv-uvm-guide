@@ -20,6 +20,10 @@ import I_UVM_4_Policy_Classes from '../../content/flashcards/I-UVM-4_Policy_Clas
 import I_UVM_5_Container_Classes from '../../content/flashcards/I-UVM-5_Container_Classes.json';
 import I_UVM_6_UVM_Recording_Classes from '../../content/flashcards/I-UVM-6_UVM_Recording_Classes.json';
 import I_SV_5_Synchronization_and_IPC from '../../content/flashcards/I-SV-5_Synchronization_and_IPC.json';
+import I_SV_5_Events from '../../content/flashcards/I-SV-5_Events.json';
+import I_SV_5_Mailboxes from '../../content/flashcards/I-SV-5_Mailboxes.json';
+import I_SV_5_Semaphores from '../../content/flashcards/I-SV-5_Semaphores.json';
+import I_SV_9_Why_UVM from '../../content/flashcards/I-SV-9_Why_UVM.json';
 import I_SV_6_Compiler_Directives_and_Generates from '../../content/flashcards/I-SV-6_Compiler_Directives_and_Generates.json';
 import I_SV_7_DPI_and_Foreign_Language_Interfaces from '../../content/flashcards/I-SV-7_DPI_and_Foreign_Language_Interfaces.json';
 import F4_RTL_and_Testbench_Constructs from '../../content/flashcards/F4_RTL_and_Testbench_Constructs.json';
@@ -102,6 +106,10 @@ export const flashcardDecks: Record<string, any[]> = {
   'I-UVM-5_Container_Classes': I_UVM_5_Container_Classes,
   'I-UVM-6_UVM_Recording_Classes': I_UVM_6_UVM_Recording_Classes,
   'I-SV-5_Synchronization_and_IPC': I_SV_5_Synchronization_and_IPC,
+  'I-SV-5_Events': I_SV_5_Events,
+  'I-SV-5_Mailboxes': I_SV_5_Mailboxes,
+  'I-SV-5_Semaphores': I_SV_5_Semaphores,
+  'I-SV-9_Why_UVM': I_SV_9_Why_UVM,
   'I-SV-6_Compiler_Directives_and_Generates': I_SV_6_Compiler_Directives_and_Generates,
   'I-SV-7_DPI_and_Foreign_Language_Interfaces': I_SV_7_DPI_and_Foreign_Language_Interfaces,
   F4_RTL_and_Testbench_Constructs,
