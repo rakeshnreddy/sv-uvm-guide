@@ -7,7 +7,7 @@ flashcards: "E-INT-1_UVM_Formal"
 import { InteractiveCode } from '@/components/ui';
 
 ## Quick Take
-- **What it is:** A partnership between UVM simulation and formal tools using shared assertions, constraints, and coverage targets.
+- **What it is:** A partnership between UVM simulation and formal tools using shared assertions, interface assumptions, and coverage targets.
 - **Why it matters:** Simulation finds deep data-path bugs; formal proves corner-case safety. Together they close gaps faster than either technique alone.
 - **The Analogy:** Imagine mission control (UVM) running real-time rehearsals while a mathematical twin (formal) proves the mission profile safe under every scenario.
 
@@ -34,7 +34,7 @@ SystemVerilog Assertions (SVA) become the common artefact: `assert` in simulatio
   endproperty
   assert property (p_full_is_correct);
 
-  // Formal constraint
+  // Assumption: constrains formal, checked in simulation
   property p_legal_transactions;
     @(posedge clk) disable iff (!rst_n)
       !(push && full) && !(pop && empty);
@@ -49,25 +49,25 @@ SystemVerilog Assertions (SVA) become the common artefact: `assert` in simulatio
   cover property (p_cover_fill_and_drain);
 endmodule
 
-// Simulation bind
-bind fifo dut_props (.clk(clk), .rst_n(rst_n), .push(push), .pop(pop),
+// One bind for both flows: module name, parameters, instance name, ports
+bind fifo fifo_properties #(.DEPTH(8)) u_fifo_props (.clk(clk), .rst_n(rst_n), .push(push), .pop(pop),
                      .count(count), .full(full), .empty(empty));
 
-// Formal script
-do_proof -assert p_full_is_correct -assume p_legal_transactions
-run_cover -property p_cover_fill_and_drain`}
+// Illustrative formal-tool commands (real syntax differs per tool)
+prove -property p_full_is_correct
+cover -property p_cover_fill_and_drain`}
   explanationSteps={[
-    { target: "6-15", title: "Shared safety assertion", explanation: "`assert` in simulation, `prove` in formal—same code base enforces FIFO correctness." },
-    { target: "17-22", title: "Formal-only constraints", explanation: "Assumptions focus formal engines on legal stimulus analogous to UVM constraints." },
-    { target: "24-32", title: "Coverage handshake", explanation: "`cover` drives both reachability proofs and UVM coverage goals." },
-    { target: "34-36", title: "Bind once", explanation: "Attach properties in simulation via `bind` so the DUT sees identical checkers in both worlds." },
-    { target: "38-39", title: "Tool directives", explanation: "Scripts instruct the formal tool which properties to prove or cover using familiar names." }
+    { target: "6-11", title: "Shared safety assertion", explanation: "`assert` in simulation, `prove` in formal—same code base enforces FIFO correctness." },
+    { target: "13-18", title: "Assumptions: constraints in formal, checks in simulation", explanation: "Formal only explores inputs that satisfy the `assume`. Simulation checks the same `assume` like an assertion (IEEE 1800-2023 §16.14.2), so a testbench that breaks the contract is flagged." },
+    { target: "20-25", title: "Coverage handshake", explanation: "`cover` drives both reachability proofs and UVM coverage goals." },
+    { target: "28-30", title: "Bind once", explanation: "Attach properties in simulation via `bind` so the DUT sees identical checkers in both worlds." },
+    { target: "32-34", title: "Tool directives (illustrative)", explanation: "Every formal tool has its own command syntax; what carries over is that you name the properties to prove or cover, and the bound `assume` properties constrain every proof." }
   ]}
 />
 
 ### Interactive: Formal vs Simulation comparison
 
-Toggle assumptions in the formal panel to see how removing constraints exposes real bugs, then replay counterexamples as directed simulation seeds.
+Toggle the assumptions and switch to the buggy RTL. Predict what formal reports before each run, then replay each counterexample in UVM and decide whether it is a real RTL bug or a hole in your assumptions.
 
 <FormalVsSimulationVisualizer />
 
@@ -79,7 +79,7 @@ Building a formal testbench from an existing UVM environment requires stripping 
 
 | UVM Component | Formal Equivalent | Notes |
 |---|---|---|
-| Driver + Sequencer | Free inputs + `assume` properties | Assumptions replace constrained stimulus |
+| Driver + Sequencer | Free inputs + `assume` properties | Assumptions written from the interface specification replace constrained stimulus; formal explores every input they allow |
 | Monitor | Not needed | Formal engines observe all signals natively |
 | Scoreboard | `assert` properties | Correctness is expressed as SVA, not procedural checks |
 | Coverage | `cover` properties | Reachability proofs replace sampling-based coverage |
@@ -87,68 +87,79 @@ Building a formal testbench from an existing UVM environment requires stripping 
 
 ### Building the harness step by step
 
-1. **Isolate the DUT block** — formal scales best on small modules (1K–10K gates). Extract the block you want to prove.
+1. **Isolate the DUT block** — formal scales best on small blocks with a well-defined interface and shallow state. Extract the block you want to prove.
 2. **Declare free inputs** — inputs left undriven become unconstrained; the formal engine explores all possible values.
-3. **Add assumptions** — constrain free inputs to legal stimulus. Map these directly from your UVM sequence constraints.
+3. **Add assumptions** — restrict free inputs to what the interface specification (or the upstream block) guarantees. If the interface already has protocol assertions, reuse those properties as `assume`. Sequence constraints can suggest rules, but they are not equivalent to assumptions (see below).
 4. **Assert safety properties** — these are the same properties your UVM assertions check in simulation.
 5. **Add cover properties** — verify that interesting states are reachable under your assumptions.
 6. **Bind the property module** — use `bind` so the same checkers attach in both simulation and formal without modifying the DUT.
 
-> ⚠️ **Over-constraining is the #1 formal pitfall.** If your assumptions are tighter than what the real environment produces, the formal engine cannot find real bugs. Always audit assumptions against actual UVM driver behavior.
+> ⚠️ **Over-constraining is the #1 formal pitfall.** If your assumptions are tighter than what the real environment produces, the formal engine cannot find real bugs. Audit each assumption against the interface specification, not against the UVM driver: a driver can be wrong too, and copying its habits imports testbench bugs into the proof. Add a `cover` for each behaviour an assumption must still allow.
 
 ## Assumption Alignment
 
-### Mapping UVM constraints to formal assumptions
+### Constraints and assumptions: related, not equivalent
 
-Every constraint block in a UVM sequence item has a formal equivalent:
+A sequence-item constraint and a formal assumption can describe the same rule, but they act at different times and on different data. Before you read the explanation, predict which of the three constraints below would be safe to turn into an assumption:
 
 <InteractiveCode
   language="systemverilog"
-  fileName="constraint_mapping.sv"
-  code={`// UVM sequence item constraint
+  fileName="constraint_vs_assumption.sv"
+  code={`// UVM sequence item: stimulus for ONE transaction, solved before it is driven
 class fifo_txn extends uvm_sequence_item;
   rand bit push, pop;
+  bit      full_seen, empty_seen; // copied in by the sequence before randomize()
+
   constraint c_legal {
-    !(push && full_flag);   // never push when full
-    !(pop && empty_flag);   // never pop when empty
+    full_seen  -> !push;          // the flags as the sequence last saw them
+    empty_seen -> !pop;
   }
+  constraint c_one_op { !(push && pop); } // this test's choice, not an interface rule
 endclass
 
-// Equivalent formal assumption
+// Interface rule: evaluated at every clock edge, on the live signals
 property a_legal_push;
   @(posedge clk) disable iff (!rst_n)
-    !(push && full);
+    full |-> !push;
 endproperty
 assume property (a_legal_push);
 
 property a_legal_pop;
   @(posedge clk) disable iff (!rst_n)
-    !(pop && empty);
+    empty |-> !pop;
 endproperty
 assume property (a_legal_pop);`}
   explanationSteps={[
-    { target: "3-7", title: "UVM constraints", explanation: "The sequence item constrains randomization — the solver never generates illegal transactions." },
-    { target: "10-20", title: "Formal assumptions", explanation: "The same constraints appear as `assume` properties. The formal engine restricts its state-space exploration to legal traces." }
+    { target: "6-9", title: "Constraint: decided once per item", explanation: "`c_legal` is solved when the sequence calls `randomize()`. The flags hold whatever the sequence copied in at that moment, and the item may reach the pins cycles later, after `full` has changed. The rule it hints at is real; the constraint cannot enforce it per cycle." },
+    { target: "10", title: "Test intent, not a rule", explanation: "`c_one_op` shapes this test's traffic. As an assumption it would forbid simultaneous push and pop, and every bug that needs both would become unreachable: an over-constraint." },
+    { target: "13-24", title: "Assumption: applies at every clock", explanation: "The rule comes from the interface specification and holds on the live signals at every edge, however late an item is driven. Simulation checks the same `assume` like an assertion (IEEE 1800-2023 §16.14.2), so a testbench that breaks it is reported." }
   ]}
 />
+
+Constraints can inspire assumptions, but they are not automatically equivalent:
+- Constraints are solved per transaction, ahead of time; they cannot see cycle-level DUT state.
+- Drivers implement protocol rules (handshakes, timing) that never appear in any constraint.
+- Many constraints express test intent (biases, narrowed ranges) that would over-constrain a proof.
+
+So write assumptions from the interface specification, per clock, on the signals at the DUT boundary. The best source is the interface's own protocol assertions: the same properties are asserted where the DUT drives a signal and assumed where the environment drives it.
 
 ### Common assumption pitfalls
 
 | Pitfall | Symptom | Fix |
 |---|---|---|
-| **Over-constraining** | Everything proves, but bugs exist in silicon | Audit each assumption against actual driver behavior |
-| **Under-constraining** | Spurious CEX on legal inputs | Add missing constraints; check environment guarantees |
+| **Over-constraining** | Everything proves, but bugs exist in silicon | Audit each assumption against the interface specification; add a `cover` for each behaviour it must still allow |
+| **Under-constraining** | Spurious CEX: the trace uses an input sequence the real environment never produces | Add the missing assumption from the specification; replay the CEX in simulation to confirm |
 | **Vacuous proofs** | Property passes but antecedent is never true | Add a cover property for the antecedent; verify reachability |
 | **Assumption/assertion confusion** | Properties accidentally assumed instead of asserted | Review property directives; use linting tools |
 
 ## Counterexample Replay
 
-When a formal engine finds a counterexample trace, that trace is a guaranteed bug witness. Converting it into a directed UVM test closes the formal→simulation feedback loop.
+When a formal engine finds a counterexample trace, that trace is a witness **relative to your assumptions**: a real bug if every input in it is legal, or a missing assumption if it is not. Replaying it in UVM, where the same `assume` properties are checked like assertions (IEEE 1800-2023 §16.14.2), tells you which. Converting a genuine one into a directed UVM test closes the formal→simulation feedback loop.
 
 ### The replay workflow
 
 1. **Export the CEX** — formal tools produce VCD, FSDB, or waveform databases. Extract signal values per cycle.
-2. **Build a directed sequence** — create a UVM sequence that replays the exact input values from the CEX trace.
+2. **Build a directed sequence** — create a UVM sequence that replays the exact input values from the CEX trace. This works only if the driver applies one item per clock with the trace's timing; otherwise drive the trace values directly from a small directed testbench.
 3. **Run in UVM** — execute the directed sequence in your full UVM environment to reproduce the bug with full scoreboard and coverage instrumentation.
 4. **Debug with waveforms** — use the familiar simulation debug flow to root-cause the failure.
 5. **Verify the fix** — re-run formal to confirm the property now proves, then add the CEX-derived test to your regression suite as a permanent guard.
@@ -201,8 +212,8 @@ Apply the concepts above in a hands-on lab:
 ### Plan and map
 Link requirements to both UVM scenarios and formal proof goals; track progress in a shared dashboard.
 
-### Share constraints
-Convert UVM sequence constraints into formal assumptions where legal stimulus must be mirrored. Use the mapping table above as a translation guide.
+### Share rules, not constraints
+Keep interface rules as properties in one library: assumed by formal, checked by simulation. Use sequence constraints only as a prompt for which rules to write, never as a mechanical translation.
 
 ### Swap drivers
 Replace expensive UVM drivers with lightweight formal stubs when building formal harnesses; reuse monitors for scoreboarding.
@@ -218,7 +229,7 @@ Feed proven properties back into UVM (waive unreachable coverage bins) and use f
 
 **Checklist before moving on:**
 - [ ] Assertions live in one library consumed by both simulation and formal flows.
-- [ ] Formal assumptions align with UVM stimulus constraints.
+- [ ] Formal assumptions come from the interface specification, and simulation checks the same properties.
 - [ ] Counterexample-to-testcase scripts exist.
 - [ ] Dashboards track both formal proof depth and UVM coverage.
 
@@ -230,13 +241,13 @@ Feed proven properties back into UVM (waive unreachable coverage bins) and use f
 - **Portable Stimulus:** See [PSS: Portable Stimulus](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/pss) for how intent-based test descriptions extend across simulation, emulation, and silicon.
 
 ## Practice & Reinforce
-- Translate an existing UVM constraint into a formal assumption and check equivalence.
+- Take one constraint from a UVM sequence item, write the per-cycle interface rule it was trying to express as a property, and list what the constraint could not express (timing, live DUT state).
 - Use a formal counterexample to seed a UVM regression test and verify the bug fix.
 - Run a joint coverage report combining formal `cover` and UVM coverage to identify gaps.
 - Complete the <LabLink labId="formal-harness" /> to experience over-constraining firsthand.
 
 ## References & Next Topics
-- IEEE 1800-2017 §16–17 (Assertions and Checkers) — the shared language for simulation and formal.
+- IEEE 1800-2023 Clause 16 (Assertions) and Clause 17 (Checkers) — the shared language for simulation and formal; §16.14.2 defines how `assume` behaves in formal and in simulation.
 - Accellera *UVM User Guide* (App. on Assertions) and SVA cookbooks.
 - Cadence/Jasper, Synopsys VC Formal, Mentor Questa Formal best-practice guides.
 - Prerequisites: [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) and [I-SV-4C: Checkers](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index).

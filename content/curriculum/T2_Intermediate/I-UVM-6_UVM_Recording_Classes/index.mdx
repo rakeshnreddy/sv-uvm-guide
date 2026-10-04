@@ -4,33 +4,71 @@ description: "Understand how transaction recording bridges the gap between objec
 flashcardId: "I-UVM-6_UVM_Recording_Classes"
 ---
 
-# UVM Recording Classes
-
-As your UVM testbench grows in complexity, standard text-based `$display` or `uvm_info` logs become insufficient for debugging complex bus transactions or system-level flows. You need a way to visualize UVM transaction objects—which exist dynamically in simulator memory—alongside physical RTL signals in a waveform viewer.
-
-The **UVM Recording Classes** define a standard, vendor-neutral API for recording these dynamic transaction objects into a structured transaction database (usually mapped to vendor-specific formats like FSDB or GUI databases).
-
 ## Quick Take
-- **`uvm_recorder`**: The policy object responsible for packing transaction fields. It provides the API (`uvm_record_field`, `uvm_record_string`, etc.) used when `do_record()` is called on a transaction.
-- **`uvm_tr_stream`**: Represents a specific channel or "stream" of transactions, much like a signal trace in a waveform. Streams belong to a database.
-- **`uvm_tr_database`**: The backend engine that receives the recorded transaction data. In practical terms, this is implemented by the EDA vendor to dump directly into the simulation's waveform file.
-
+- **Why it exists:** text logs are a poor way to debug long bus transactions. Recording writes each UVM transaction — its start time, end time and field values — into a transaction database, so a waveform viewer can draw it next to the RTL signals.
+- **`uvm_recorder`**: The policy object that receives a transaction's fields. Your `do_record()` (or the field macros) calls it, for example through `` `uvm_record_field ``.
+- **`uvm_tr_stream`**: A channel of transactions, like one row in the viewer. A component opens one stream per stream name.
+- **`uvm_tr_database`**: The backend that stores everything. The UVM library's default writes a text file (`tr_db.log`); simulators plug in their own database so transactions appear in the waveform tool.
+- **The rule that bites:** recording is **off by default**. Until it is enabled on the component, `begin_tr()` returns 0 and nothing is recorded.
 
 ## Build Your Mental Model
 
 Think of a UVM transaction as a cargo box filled with items (data fields). The `uvm_recorder` acts as a packing slip generator, noting down every item in the box. The `uvm_tr_stream` is the conveyor belt that moves this specific type of box, and the `uvm_tr_database` is the warehouse where all boxes are stored and cataloged for later inspection.
 
-When a `uvm_driver` starts executing a transaction, it tells the warehouse, "I'm starting a new box now." When it finishes, it says, "I'm done with this box." The warehouse records exactly how long that box took to process and exactly what was inside it at that moment.
+When a `uvm_driver` starts executing a transaction, it tells the warehouse, "I'm starting a new box now." When it finishes, it says, "I'm done with this box" — and only then is the packing slip written. So the recorded field values are the values **at `end_tr()`**: a read's response data, filled in during the drive, is captured.
+
+Three conditions must all hold for a transaction to appear with its fields:
+
+1. Recording is **enabled** on the component that calls `begin_tr()`.
+2. Something tells `record()` **what to write**: field macros or a `do_record()`.
+3. The component calls **`end_tr()`**, which records the fields and closes the transaction.
 
 ## Interactive: Transaction Recording Visualization
 
-Use the visualizer below to see how standard UVM components interact with the recording infrastructure to push transaction data to an external viewing database. Observe how `begin_tr` and `end_tr` define the transaction's lifetime in the waveform viewer.
+Change one condition at a time and predict what the waveform tool's stream would show for three driven items before you look.
 
 <TransactionRecordingVisualizer />
 
+<VisualRecap
+  title="Enabled, described, closed"
+  rule="A transaction reaches the database only if recording is enabled on the component, record() has fields to write (field macros or do_record), and end_tr() runs — fields are recorded at end_tr()."
+  code={`// pkt_driver::build_phase
+set_recording_enabled(1);
+// pkt_driver::run_phase
+void'(begin_tr(req, "drv"));
+drive(req);
+end_tr(req);              // records req, closes it`}
+  mistake="Adding begin_tr()/end_tr() and do_record(), then wondering why the stream is empty: recording_detail is still UVM_NONE."
+  inTestbench="Drivers and monitors bracket each item with begin_tr()/end_tr(); the base test enables recording for the agents it wants in the waveform."
+>
+  <ol style={{ margin: 0, paddingLeft: "1.2rem", fontSize: "0.85rem", lineHeight: 1.6 }}>
+    <li>begin_tr: opens a recorder (or returns 0 if recording is off).</li>
+    <li>drive: the item's fields change.</li>
+    <li>end_tr: record() writes the fields, then the recorder closes.</li>
+  </ol>
+</VisualRecap>
+
 ## Make It Work: Recording in Practice
 
-To leverage recording effectively, you need to instrument both your transaction object and the component processing it.
+To leverage recording effectively, you need to enable it, instrument the transaction, and instrument the component processing it.
+
+### Step 0: Enable Recording on the Component
+
+A component's `recording_detail` starts at `UVM_NONE`, so `get_recording_enabled()` returns 0. Enable it explicitly:
+
+```sv
+// IEEE 1800.2: in the component itself (or on it, from the test)
+function void build_phase(uvm_phase phase);
+  super.build_phase(phase);
+  set_recording_enabled(1);
+endfunction
+
+// uvm-core library behaviour (also UVM 1.2 style): set recording_detail
+// before the component is built, e.g. in the test's build_phase
+uvm_config_db#(int)::set(this, "env.agt.*", "recording_detail", UVM_FULL);
+```
+
+The component reads `recording_detail` when it is constructed and when its `build_phase` applies configuration. A `config_db::set` made later (for example in `run_phase`) is never read.
 
 ### Step 1: Implement `do_record` in the Transaction
 
@@ -44,21 +82,25 @@ class axi_transfer extends uvm_sequence_item;
 
   `uvm_object_utils(axi_transfer)
 
+  function new(string name = "axi_transfer");
+    super.new(name);
+  endfunction
+
   virtual function void do_record(uvm_recorder recorder);
     super.do_record(recorder);
-    // Use the `uvm_record_field` macro or direct recorder API
+    // The macros use the argument named 'recorder'
     `uvm_record_field("ADDR", addr)
     `uvm_record_field("DATA", data)
     `uvm_record_string("CMD", (is_read ? "READ" : "WRITE"))
   endfunction
-  
-  // ... constructor ...
 endclass
 ```
 
+If the class registers its fields with `` `uvm_field_* `` macros instead, `record()` writes them for you; do not record the same field in both places.
+
 ### Step 2: Demarcate the Transaction in the Component
 
-In the component that executes or observes the transaction (like a driver or monitor), you must mark when the transaction begins and ends physical time. The base `uvm_component` provides the `begin_tr()` and `end_tr()` methods for this purpose. Usually `accept_tr()` is called before `begin_tr()` to indicate the component has taken ownership.
+In the component that executes or observes the transaction (like a driver or monitor), you must mark when the transaction begins and ends in simulation time. The base `uvm_component` provides the `begin_tr()` and `end_tr()` methods for this purpose. `accept_tr()` can be called before `begin_tr()` to mark when the component took ownership.
 
 ```sv
 class axi_driver extends uvm_driver #(axi_transfer);
@@ -67,17 +109,17 @@ class axi_driver extends uvm_driver #(axi_transfer);
   virtual task run_phase(uvm_phase phase);
     forever begin
       seq_item_port.get_next_item(req);
-      
-      // Start recording. This creates a stream linkage and records the start time.
-      // 'req' is the transaction, and the driver is the stream context.
+
+      // Start recording on stream "axi_driver_stream".
+      // Returns 0 (and records nothing) while recording is disabled.
       void'(begin_tr(req, "axi_driver_stream"));
-      
+
       // Drive physical signals (consume simulation time)
       drive_transaction(req);
-      
-      // End recording. This records the end time and triggers do_record().
+
+      // Record the fields (calls req.record → do_record) and close the transaction.
       end_tr(req);
-      
+
       seq_item_port.item_done();
     end
   endtask
@@ -85,22 +127,59 @@ endclass
 ```
 
 > [!TIP]
-> By default, `begin_tr` and `end_tr` assume that transaction recording is globally permitted and stream settings are valid. Vendor simulators often require specific plusargs (like `+UVM_TR_RECORD`) or API options to attach their proprietary database engine to the default UVM database instance.
+> The UVM library only needs recording enabled on the component. To see the transactions in your waveform tool, the simulator must also connect its own `uvm_tr_database`; each vendor documents its own switch for that. Without it, uvm-core's default database writes a text file.
 
 ## Push Further: Telemetry and Structured Debug
 
 Transaction recording bridges the gap between pure UVM logic and structured debug. While `uvm_info` statements are interspersed linearly in a text log, recorded transactions have rigid start/end times and hierarchical relationships.
 
-This allows EDA tools to correlate a high-level `uvm_sequence_item` directly with the toggling of wires on a physical interface. For example, by recording both the original generic sequence item and the translated mapped packets, you can visualize parent-child object relationships directly atop your waveform traces. This concept seamlessly integrates with the centralized event-bus telemetry and debug strategies discussed in the **Advanced UVM Debug Methodologies** section. Tools can show a single transaction encompassing multiple sub-transactions, providing a clearer system-level debug flow.
+This allows EDA tools to correlate a high-level `uvm_sequence_item` directly with the toggling of wires on a physical interface. When a sequence item has a parent sequence, `begin_tr()` links the two recorders (`uvm_parent_child_link`), so tools can show a parent transaction containing its children. The **Advanced UVM Debug Methodologies** module combines recording with report control to make large failures explainable.
 
 ## Practice & Reinforce
 
-1. **Why not just use `do_print()` instead of `do_record()`?**
-   Printing converts an object into a single formatted string, which is hard to parse programmatically. Recording hands over typed fields (integers, strings) individually to a backend database, allowing a waveform viewer to render `[31:0] addr` as an expandable hex signal rather than monolithic plain text.
-2. **What happens if you forget to call `end_tr()`?**
-   The transaction will remain "open" indefinitely in the database, appearing in the waveform viewer as a block that stretches to the end of simulation without ever concluding, potentially consuming excessive memory.
+<Quiz questions={[
+  {
+    "question": "A driver calls begin_tr()/end_tr() and the item has a do_record(), but the transaction stream is empty. What is the most likely cause?",
+    "answers": [
+      {"text": "Recording was never enabled on the driver, so begin_tr() returned 0 and opened nothing.", "correct": true},
+      {"text": "do_record() must call print() as well.", "correct": false},
+      {"text": "end_tr() must be called before begin_tr().", "correct": false}
+    ],
+    "explanation": "recording_detail defaults to UVM_NONE. Call set_recording_enabled(1) on the component, or set recording_detail through config_db before the component is built."
+  },
+  {
+    "question": "The driver fills req.rdata while driving a READ. Does the recorded transaction show rdata?",
+    "answers": [
+      {"text": "Yes: fields are recorded inside end_tr(), after the drive.", "correct": true},
+      {"text": "No: fields are recorded at begin_tr(), before the drive.", "correct": false},
+      {"text": "Only if the driver calls record() itself.", "correct": false}
+    ],
+    "explanation": "uvm_component::end_tr() calls tr.record(recorder) and then closes the recorder, so values reflect the transaction at end_tr()."
+  },
+  {
+    "question": "Why not just use `do_print()` instead of `do_record()`?",
+    "answers": [
+      {"text": "Recording hands typed fields with begin and end times to a database the waveform tool can display; printing produces text.", "correct": true},
+      {"text": "do_print() cannot be overridden.", "correct": false},
+      {"text": "do_record() is faster than do_print() in every simulator.", "correct": false}
+    ],
+    "explanation": "A recorded field such as [31:0] addr can be displayed as a value on a transaction row aligned with the RTL signals; a printed string cannot."
+  },
+  {
+    "question": "What happens if you forget to call `end_tr()`?",
+    "answers": [
+      {"text": "The transaction stays open with no recorded fields, because fields are written inside end_tr().", "correct": true},
+      {"text": "UVM closes it automatically at the next begin_tr().", "correct": false},
+      {"text": "The simulation stops with a fatal error.", "correct": false}
+    ],
+    "explanation": "Each begin_tr() opens a recorder that only end_tr() closes. Open recorders also keep their handles alive."
+  }
+]} />
 
 ## References & Next Topics
 
-- **IEEE 1800.2-2020 Clause 11**: UVM Recording Classes
+- **IEEE 1800.2-2020 Clause 7** — Recording classes: §7.1 `uvm_tr_database`, §7.2 `uvm_tr_stream`, §7.3 links.
+- **IEEE 1800.2-2020 §16.4** — `uvm_recorder`.
+- **IEEE 1800.2-2020 §13.1.6.13–14 and §13.1.7** — `set_recording_enabled` / `get_recording_enabled` and the component transaction interface (`accept_tr`, `begin_tr`, `end_tr`).
+- **Previous:** [I-UVM-5: UVM Container Classes](/curriculum/T2_Intermediate/I-UVM-5_UVM_Container_Classes)
 - **Next Topic**: [Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies) for applying recording and structured logs to complex verification triage.

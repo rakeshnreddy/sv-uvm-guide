@@ -1,254 +1,174 @@
 "use client";
 
-import React, { useEffect, useId, useState } from "react";
-import { scalePoint } from "d3-scale";
+import React, { useId, useMemo, useState } from "react";
 
-interface DataTypeFeature {
-  name: string;
-  states: number;
-  isNet: boolean;
-  allowsMultipleDrivers: boolean;
-  primaryUseContext: string;
-}
+import { PredictionPrompt } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import { DATA_TYPE_ROWS, buildValueDrills, writerRule, type DataTypeRow } from "@/lib/sv-data-type-model";
+import { cn } from "@/lib/utils";
 
-const data: DataTypeFeature[] = [
-  {
-    name: "logic",
-    states: 4,
-    isNet: false,
-    allowsMultipleDrivers: false,
-    primaryUseContext: "General-purpose variable for single procedural or continuous assignments.",
-  },
-  {
-    name: "wire",
-    states: 4,
-    isNet: true,
-    allowsMultipleDrivers: true,
-    primaryUseContext: "Resolved connectivity between modules; ideal for structural wiring.",
-  },
-  {
-    name: "reg",
-    states: 4,
-    isNet: false,
-    allowsMultipleDrivers: false,
-    primaryUseContext: "Legacy procedural storage kept for compatibility; replaced by logic in new code.",
-  },
-  {
-    name: "bit",
-    states: 2,
-    isNet: false,
-    allowsMultipleDrivers: false,
-    primaryUseContext: "Two-state storage for performance-critical modelling (no X/Z).",
-  },
+const ASSUMPTIONS = [
+  "Facts from IEEE 1800-2023: Table 6-8 and §6.11 (widths, 2/4-state, signedness), Table 6-7 (default values), §6.5–§6.7 (nets vs variables).",
+  "Defaults are for variables declared without an initializer. Nets have no initializer: an undriven wire reads z.",
+  "Drill answers are computed by the four-state model (src/lib/sv-four-state-model.ts), not typed in.",
 ];
 
-const stateSymbols = ["0", "1", "X", "Z"];
-const card = {
-  width: 280,
-  height: 220,
-  gutterX: 48,
-  gutterY: 56,
-  padding: 24,
-};
+const widthText = (r: DataTypeRow) => (r.width === null ? (r.id === "string" ? "varies" : "you choose (1 if no range)") : String(r.width));
+const signedText = (r: DataTypeRow) => (r.signed === null ? "—" : r.signed ? "signed" : "unsigned");
+const statesText = (r: DataTypeRow) => (r.states === null ? "—" : `${r.states}-state`);
 
-const layout = {
-  maxColumns: 2,
-  margin: { top: 32, right: 32, bottom: 32, left: 32 },
-};
-
-const stateActiveColor = "#6366f1";
-const stateInactiveColor = "#c7d2fe";
-const netColor = "#0ea5e9";
-const variableColor = "#8b5cf6";
-const driverColor = "#f59e0b";
-const labelClass = "fill-slate-700 dark:fill-slate-200";
-
-const DataTypeComparisonChart: React.FC = () => {
-  const titleId = useId();
-  const [columns, setColumns] = useState(() =>
-    typeof window !== "undefined" && window.innerWidth < 768 ? 1 : layout.maxColumns,
-  );
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    const handleResize = () => {
-      const nextColumns = window.innerWidth < 768 ? 1 : layout.maxColumns;
-      setColumns((prev) => (prev === nextColumns ? prev : nextColumns));
-    };
-    handleResize();
-    window.addEventListener("resize", handleResize);
-    return () => window.removeEventListener("resize", handleResize);
-  }, []);
-
-  const rows = Math.ceil(data.length / columns);
-  const innerWidth = columns * card.width + (columns - 1) * card.gutterX;
-  const innerHeight = rows * card.height + (rows - 1) * card.gutterY;
-  const width = innerWidth + layout.margin.left + layout.margin.right;
-  const height = innerHeight + layout.margin.top + layout.margin.bottom;
-
+/** Bits per value for the fixed-width types, drawn to scale. 4-state bars are hatched. */
+function WidthChart() {
+  const patternId = useId().replace(/:/g, "");
+  const rows = DATA_TYPE_ROWS.filter((r) => r.width !== null);
+  const W = 360;
+  const labelW = 70;
+  const barMax = W - labelW - 44;
+  const rowH = 22;
+  const H = rows.length * rowH + 22;
   return (
-    <div data-testid="data-type-chart" className="w-full">
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        className="h-full w-full"
-        role="application"
-        aria-labelledby={titleId}
-      >
-        <title id={titleId}>SystemVerilog data type guide</title>
-        <g transform={`translate(${layout.margin.left}, ${layout.margin.top})`}>
-          <text x={0} y={-12} fontSize={16} fontWeight={600} className={labelClass}>
-            Storage semantics across common SystemVerilog types
-          </text>
-
-          {data.map((datum, index) => {
-            const row = Math.floor(index / columns);
-            const column = index % columns;
-            const x = column * (card.width + card.gutterX);
-            const y = row * (card.height + card.gutterY);
-            const activeStates = datum.states === 2 ? 2 : stateSymbols.length;
-            const stateScale = scalePoint<string>()
-              .domain(stateSymbols)
-              .range([card.padding, card.width - card.padding]);
-            const cardTitleId = `${titleId}-${datum.name}`;
-
+    <figure className="min-w-0">
+      <div className="overflow-x-auto">
+        <svg
+          viewBox={`0 0 ${W} ${H}`}
+          className="block h-auto w-full min-w-[300px] max-w-[520px]"
+          role="img"
+          aria-label={`Bits per value: ${rows.map((r) => `${r.id} ${r.width}${r.states === 4 ? ", 4-state" : r.states === 2 ? ", 2-state" : ""}`).join("; ")}.`}
+        >
+          <defs>
+            <pattern id={patternId} width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+              <rect width="6" height="6" className="fill-rose-500/20" />
+              <line x1="0" y1="0" x2="0" y2="6" className="stroke-rose-500/70" strokeWidth="2" />
+            </pattern>
+          </defs>
+          {rows.map((r, i) => {
+            const y = i * rowH + 4;
+            const w = ((r.width as number) / 64) * barMax;
             return (
-              <g key={datum.name} transform={`translate(${x}, ${y})`} aria-labelledby={cardTitleId}>
+              <g key={r.id}>
+                <text x={labelW - 6} y={y + 13} textAnchor="end" className="fill-foreground font-mono text-[11px]">
+                  {r.id}
+                </text>
                 <rect
-                  width={card.width}
-                  height={card.height}
-                  rx={18}
-                  className="fill-white dark:fill-slate-900 stroke-slate-300/60 dark:stroke-slate-600/50"
-                  strokeWidth={1.5}
+                  x={labelW}
+                  y={y}
+                  width={w}
+                  height={rowH - 6}
+                  rx={3}
+                  fill={r.states === 4 ? `url(#${patternId})` : undefined}
+                  className={r.states === 4 ? "stroke-rose-500/70" : "fill-indigo-500/25 stroke-indigo-500/70"}
+                  strokeWidth={1}
                 />
-                <text id={cardTitleId} x={card.padding} y={card.padding} fontSize={18} fontWeight={700} className={labelClass}>
-                  {datum.name.toUpperCase()}
-                </text>
-                <foreignObject
-                  x={card.padding}
-                  y={card.padding + 12}
-                  width={card.width - card.padding * 2}
-                  height={56}
-                >
-                  <div
-                    className="text-xs leading-relaxed text-slate-600 dark:text-slate-300"
-                  >
-                    {datum.primaryUseContext}
-                  </div>
-                </foreignObject>
-
-                <text
-                  x={card.padding}
-                  y={card.padding + 84}
-                  fontSize={12}
-                  fontWeight={600}
-                  className={labelClass}
-                >
-                  State space
-                </text>
-                <g transform={`translate(0, ${card.padding + 92})`}>
-                  {stateSymbols.map((symbol, symbolIndex) => {
-                    const cx = stateScale(symbol) ?? card.width / 2;
-                    const active = symbolIndex < activeStates;
-                    return (
-                      <g key={symbol} transform={`translate(${cx}, 0)`}>
-                        <circle
-                          r={18}
-                          fill={active ? stateActiveColor : stateInactiveColor}
-                          fillOpacity={active ? 1 : 0.4}
-                          stroke={active ? stateActiveColor : stateInactiveColor}
-                          strokeWidth={active ? 2 : 1}
-                        />
-                        <text
-                          y={4}
-                          textAnchor="middle"
-                          fontSize={13}
-                          fontWeight={600}
-                          fill={active ? "#ffffff" : stateActiveColor}
-                        >
-                          {symbol}
-                        </text>
-                      </g>
-                    );
-                  })}
-                </g>
-
-                <text
-                  x={card.padding}
-                  y={card.padding + 142}
-                  fontSize={12}
-                  fontWeight={600}
-                  className={labelClass}
-                >
-                  Signal model
-                </text>
-                <g transform={`translate(${card.width / 2}, ${card.padding + 152})`}>
-                  <rect
-                    x={-38}
-                    y={18}
-                    width={76}
-                    height={20}
-                    rx={10}
-                    fill={datum.isNet ? netColor : variableColor}
-                    fillOpacity={0.18}
-                    stroke={datum.isNet ? netColor : variableColor}
-                    strokeDasharray={datum.isNet ? "0" : "6 4"}
-                    strokeWidth={datum.isNet ? 2 : 1.5}
-                  />
-                  <text
-                    y={22}
-                    fontSize={11}
-                    textAnchor="middle"
-                    fill={datum.isNet ? netColor : variableColor}
-                    fontWeight={600}
-                  >
-                    {datum.isNet ? "Resolved net" : "Variable"}
-                  </text>
-                  {datum.allowsMultipleDrivers ? [-34, 34].map((offset) => (
-                    <g key={offset}>
-                      <line
-                        x1={offset}
-                        y1={-8}
-                        x2={0}
-                        y2={28}
-                        stroke={driverColor}
-                        strokeWidth={2}
-                        strokeLinecap="round"
-                      />
-                      <circle cx={offset} cy={-12} r={8} fill={driverColor} fillOpacity={0.9} />
-                    </g>
-                  )) : (
-                    <g>
-                      <line x1={0} y1={-12} x2={0} y2={28} stroke={driverColor} strokeWidth={2} strokeLinecap="round" />
-                      <circle cx={0} cy={-16} r={9} fill={driverColor} fillOpacity={0.9} />
-                    </g>
-                  )}
-                  <circle cx={0} cy={40} r={10} fill={datum.isNet ? netColor : variableColor} />
-                </g>
-
-                <text
-                  x={card.padding}
-                  y={card.padding + 188}
-                  fontSize={12}
-                  className="fill-slate-600 dark:fill-slate-300"
-                >
-                  {datum.isNet ? "Supports connect-by-resolution semantics." : "Treated as single-source storage."}
-                </text>
-                <text
-                  x={card.padding}
-                  y={card.padding + 204}
-                  fontSize={12}
-                  className="fill-slate-600 dark:fill-slate-300"
-                >
-                  {datum.allowsMultipleDrivers ? "Multiple structural drivers permitted." : "Single driver enforced."}
+                <text x={labelW + w + 6} y={y + 13} className="fill-muted-foreground text-[10.5px]">
+                  {r.width}
+                  {r.states === 4 ? " · 4-state" : r.states === 2 ? " · 2-state" : " · float"}
                 </text>
               </g>
             );
           })}
-        </g>
-      </svg>
-      <p className="mt-2 text-center text-xs text-muted-foreground">
-        Each card highlights how the type stores values, resolves drivers, and why you would choose it in a verification environment.
-      </p>
+          <text x={labelW} y={H - 4} className="fill-muted-foreground text-[10px]">
+            Bar length = bits per value (64 = full bar). Hatched = 4-state.
+          </text>
+        </svg>
+      </div>
+    </figure>
+  );
+}
+
+function ComparisonTable() {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-border/70">
+      <table className="w-full border-collapse text-left text-xs">
+        <caption className="px-3 pt-3 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+          Common data types (IEEE 1800-2023 Table 6-7, Table 6-8)
+        </caption>
+        <thead>
+          <tr className="border-b border-border/70 bg-muted/30">
+            {["Declaration", "Kind", "States", "Bits", "Default sign", "Value with no initializer", "Note"].map((h) => (
+              <th key={h} scope="col" className="px-3 py-2 font-semibold text-foreground">
+                {h}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {DATA_TYPE_ROWS.map((r) => (
+            <tr key={r.id} className="border-b border-border/40 align-top">
+              <th scope="row" className="px-3 py-2 font-mono font-semibold text-foreground [font-variant-ligatures:none]">
+                {r.example}
+              </th>
+              <td className="px-3 py-2">{r.kind === "net" ? "net" : "variable"}</td>
+              <td className="px-3 py-2">
+                <span className={cn("rounded border px-1.5 py-0.5", r.states === 4 ? "border-dashed border-rose-500/60" : r.states === 2 ? "border-indigo-500/60" : "border-transparent")}>
+                  {statesText(r)}
+                </span>
+              </td>
+              <td className="px-3 py-2">{widthText(r)}</td>
+              <td className="px-3 py-2">{signedText(r)}</td>
+              <td className="px-3 py-2 font-mono [font-variant-ligatures:none]">
+                {r.defaultText} <span className="font-sans text-[10px] text-muted-foreground">({r.clause})</span>
+              </td>
+              <td className="px-3 py-2 text-muted-foreground">{r.note}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+const DataTypeComparisonChart: React.FC = () => {
+  const drills = useMemo(() => buildValueDrills(), []);
+  const [drillId, setDrillId] = useState(drills[0].id);
+  const drill = drills.find((d) => d.id === drillId) ?? drills[0];
+
+  return (
+    <div data-testid="data-type-chart" className="w-full">
+      <VisualFrame
+        label="Data type comparison"
+        eyebrow="Reference · predict"
+        title="2-state or 4-state, signed or not, and what it holds before you assign it"
+        summary="Read the table, then test yourself: predict the value before revealing it."
+        fidelity="model"
+        assumptions={ASSUMPTIONS}
+      >
+        <div className="grid items-start gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
+          <WidthChart />
+          <div className="space-y-2 text-sm">
+            <p className="font-semibold text-foreground">Who may write it</p>
+            <p>
+              <strong>Variable:</strong> {writerRule.variable}
+            </p>
+            <p>
+              <strong>Net:</strong> {writerRule.net}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Assigning a 4-state value to a 2-state variable turns every x and z bit into 0 (§6.11.2), silently.
+            </p>
+          </div>
+        </div>
+
+        <ComparisonTable />
+
+        <section aria-label="Predict the value" className="space-y-3">
+          <p className="text-sm font-semibold text-foreground">Predict the value</p>
+          <SegmentedControl label="Declaration to test" mono options={drills.map((d) => ({ value: d.id, label: d.code.split("\n")[0] }))} value={drill.id} onChange={setDrillId} />
+          <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12.5px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+            <code>{drill.code}</code>
+          </pre>
+          <PredictionPrompt
+            resetKey={drill.id}
+            question={drill.question}
+            options={drill.options.map((o) => ({ id: o.id, label: <span className="font-mono [font-variant-ligatures:none]">{o.label}</span>, correct: o.correct, feedback: o.feedback }))}
+          >
+            <p aria-live="polite" className="rounded-lg border border-emerald-500/50 bg-emerald-500/10 px-3 py-2 text-sm text-foreground">
+              <strong>Value: </strong>
+              <code className="font-mono [font-variant-ligatures:none]">{drill.answer}</code>. {drill.why} <span className="text-xs opacity-80">({drill.clause})</span>
+            </p>
+          </PredictionPrompt>
+        </section>
+      </VisualFrame>
     </div>
   );
 };

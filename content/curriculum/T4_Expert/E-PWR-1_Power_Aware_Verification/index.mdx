@@ -50,8 +50,6 @@ The PMU is basically a massive state machine. You must extract its definition an
 PMUs rely on handshakes. For example, the PMU asserts `cpu_pwr_req` to the external voltage regulator, and waits for `cpu_pwr_ack`.
 - **Delay randomization:** Your UVM PMU VIP should randomize the delay between `req` and `ack` across a massive range (from 0 cycles to thousands of cycles) to expose race conditions in the RTL.
 
-<PowerDomainVisualizer />
-
 ---
 
 ## 3. Shutdown and Wake-up UVM Sequences
@@ -64,10 +62,16 @@ A robust power-cycle sequence pattern:
 3. **Assert Isolation:** Program the PMU to clamp the domain's outputs.
 4. **Power Down (`OFF`):** Program the PMU to drop the supply net.
 5. **Hold:** Wait a randomized duration.
-6. **Power Up (`ON`):** Restore the supply net.
-7. **Release Isolation:** Remove the boundary clamps.
-8. **Restore Context:** Load the saved state back into the active registers.
+6. **Power Up (`ON`):** Restore the supply net. The domain's registers are still `X`: power returning restores nothing.
+7. **Restore Context:** Load the saved state back into the active registers.
+8. **Release Isolation:** Remove the boundary clamps only now, when the outputs are driven by valid state again.
 9. **Resume Traffic:** Send functional stimulus and use the scoreboard to verify the domain retained its state and handles new traffic correctly.
+
+Steps 2 and 3 may swap: both must happen while the domain is powered, before step 4. Steps 7 and 8 may not: releasing isolation before the restore hands `X` to the always-on logic.
+
+Step through the sequence below. Predict whether `X` ever reaches the always-on domain, then try the presets that break the order, or build your own:
+
+<PowerDomainVisualizer />
 
 ---
 
@@ -76,7 +80,7 @@ A robust power-cycle sequence pattern:
 SystemVerilog Assertions (SVA) are highly effective for catching low-power sequencing violations that are invisible to the UVM scoreboard.
 
 **Isolation before Power Down:**
-Isolation must be active *before* the supply net drops, and remain active until *after* the supply net returns.
+Isolation must be active *before* the supply net drops, and remain active until the domain's outputs are valid again: after the supply returns *and* the context is restored.
 ```systemverilog
 property p_iso_before_pwr_down;
   @(posedge pmu_clk)
@@ -123,18 +127,48 @@ endgroup
 ### Power-Aware Virtual Sequences
 Virtual sequences are the ideal place to orchestrate power events because they have handles to both the PMU sequencer and the functional (e.g., AXI/PCIe) sequencers. This is covered in depth in [Virtual Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences).
 
-### UVM Callbacks for Power Events
-If a domain suddenly powers down, the active UVM driver trying to send a packet might hang waiting for a handshake (`ACK`) that will never come. Use [UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks) injected into the driver to cleanly abort the active sequence when the PMU signals a power-down event.
+### Stopping Traffic on a Power Event
+If a domain powers down mid-transfer, a driver waiting for a handshake (`ACK`) from that domain hangs. A [UVM callback](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks) does not fix this on its own: it runs only where the driver calls `` `uvm_do_callbacks ``, it can modify the item or set a flag the driver honours to drop it, and when it returns, control goes back to the driver. It has no way to stop the sequence that produced the item. Stopping traffic takes three pieces:
+
+1. **A power-aware driver.** It races each handshake against the power-down event and always pairs `get_next_item()` with `item_done()`, so the sequence that is waiting in `finish_item()` is released.
+2. **Sequences that stop.** Preferably by design: the virtual sequence quiesces traffic before it programs the PMU, and functional sequences check the power state between items and return. For an abrupt power loss, `sqr.stop_sequences()` kills every sequence running on that sequencer and flushes its queued requests; `seq.kill()` kills one sequence.
+3. **Optionally, a callback** in the driver, so a test can corrupt or drop items around the power event without editing the driver.
+
+Read the driver below and predict what happens to the sequence if the `item_done()` line is removed:
+
+```systemverilog
+// Illustrative power-aware driver: names such as pwr, drop and status are project-specific
+task run_phase(uvm_phase phase);
+  forever begin
+    seq_item_port.get_next_item(req);
+    `uvm_do_callbacks(pwr_driver, pwr_driver_cb, pre_drive(this, req)) // may set req.drop
+    if (req.drop || pwr.state == POWER_OFF) begin
+      req.status = DROPPED;               // domain is off: do not touch its pins
+    end else begin
+      fork begin                           // isolate so disable fork kills only these
+        fork
+          drive_and_wait_ack(req);         // blocks forever if the ACK never comes
+          begin pwr.power_down.wait_trigger(); req.status = ABORTED; end
+        join_any
+        disable fork;
+      end join
+    end
+    seq_item_port.item_done();             // without it, finish_item() never returns
+  end
+endtask
+```
+
+Without `item_done()`, the sequence stays blocked in `finish_item()` and the next `get_next_item()` call is an error. One ordering rule matters if you also call `stop_sequences()`: it clears the sequencer's record of the item the driver holds, so an `item_done()` for that item afterwards is fatal (`SQRBADITMDN` in uvm-core 2020.3.1). Either let the driver finish the item first, or drop the item without calling `item_done()` once the sequences have been stopped.
 
 ### Phasing and Objections
-Never drop a power supply while an essential `run_phase` [objection](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing) is raised by the domain's traffic generator, or you run the risk of deadlocking the test.
+An objection keeps a phase alive; it does not protect the traffic. If the domain powers down while a sequence that raised an [objection](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing) is blocked on a handshake that will never complete, the objection is never dropped and the phase never ends. The test hangs, and the UVM timeout watchdog (`PH_TIMEOUT`) only guards `run_phase`, so a hang in a run-time phase such as `main_phase` may never be timed out. Quiesce or stop that traffic first (above) so the sequence finishes and drops its objection normally.
 
 ---
 
 ## 7. Debug and Triage Playbook
 
 When a power-aware test fails, start here:
-1. **Did `X` leak?** If a failure is caused by an `X` value on a bus, check the isolation control signals. The PMU likely dropped the supply voltage before asserting the isolation clamps.
+1. **Did `X` leak?** If a failure is caused by an `X` value on a bus, check the isolation control signals. The PMU likely dropped the supply voltage before asserting the isolation clamps, or released them before the restore.
 2. **Did a register lose its value?** If a retention register initializes to `0` instead of its pre-sleep value upon wake-up, verify the `save_en` and `restore_en` toggles occurred exactly per the UPF constraints.
 3. **Did the testbench hang?** If the simulation runs forever, verify that your UVM driver isn't waiting for a blocked `req/ack` handshake from a domain that is currently `OFF`.
 

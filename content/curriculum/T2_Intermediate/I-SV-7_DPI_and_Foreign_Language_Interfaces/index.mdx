@@ -5,7 +5,7 @@ flashcards: "I-SV-7_DPI_and_Foreign_Language_Interfaces"
 ---
 
 ## Quick Take
-- **What it is:** The Direct Programming Interface (DPI) is a standardized boundary (IEEE 1800-2017 Clause 35) that lets SystemVerilog call C functions and C code call back into SystemVerilog — without the complexity of the older VPI/PLI interfaces.
+- **What it is:** The Direct Programming Interface (DPI) is a standardized boundary (IEEE 1800-2023 Clause 35 and Annex H) that lets SystemVerilog call C functions and C code call back into SystemVerilog — without the complexity of the older VPI/PLI interfaces.
 - **Why it matters:** Real verification environments need to model firmware, run reference algorithms, talk to external tools, or reuse legacy C checkers. DPI provides a clean, typed, zero-PLI-overhead way to do this.
 - **The Analogy:** Think of DPI as a customs checkpoint at a national border. Both countries (SV and C) operate freely inside their own territory, but any goods (data) crossing the border must go through customs (type marshaling) and follow the treaty rules (calling conventions).
 
@@ -18,61 +18,59 @@ flashcards: "I-SV-7_DPI_and_Foreign_Language_Interfaces"
 The most common DPI use case is importing a C function so SystemVerilog can call it.
 
 ```systemverilog
-// Declaration in SV — tells the compiler about the C function
-import "DPI-C" function int c_crc32(
-  input int unsigned data[],
-  input int len
-);
+// Declaration in SV: tells the compiler about the C function
+import "DPI-C" function int c_crc32(input int unsigned data[], input int len);
 
-// Usage in a sequence or test
-class crc_sequence extends uvm_sequence #(packet_item);
-  task body();
-    packet_item pkt = packet_item::type_id::create("pkt");
-    pkt.randomize();
-    // Call C for the golden CRC
-    pkt.expected_crc = c_crc32(pkt.payload, pkt.payload.size());
-    start_item(pkt);
-    finish_item(pkt);
-  endtask
-endclass
+module crc_demo;
+  int unsigned payload[] = '{32'h0000_0001, 32'hDEAD_BEEF};
+  initial $display("golden CRC = %h", c_crc32(payload, payload.size()));
+endmodule
 ```
 
 The corresponding C implementation:
 
 ```c
-// crc32.c — compiled separately, linked as shared library
+// crc32.c: compiled separately, linked as a shared library
+#include <stdint.h>
 #include "svdpi.h"
 
+/* Reflected CRC-32 over every bit of every 32-bit word, LSB first. */
 int c_crc32(const svOpenArrayHandle data, int len) {
-    uint32_t crc = 0xFFFFFFFF;
-    for (int i = 0; i < len; i++) {
-        int val;
-        svGetIntElement(data, i, &val);
-        // CRC32 algorithm...
-        crc ^= (uint32_t)val;
-        for (int j = 0; j < 8; j++)
-            crc = (crc >> 1) ^ (0xEDB88320 & -(crc & 1));
+    uint32_t crc = 0xFFFFFFFFu;
+    for (int i = svLow(data, 1); i <= svHigh(data, 1); i++) {        /* SV indices */
+        uint32_t word = *(const uint32_t*)svGetArrElemPtr1(data, i); /* int elements are C-compatible */
+        for (int b = 0; b < 32; b++) {
+            uint32_t bit = (word >> b) & 1u;
+            crc = (crc >> 1) ^ (0xEDB88320u & (0u - ((crc ^ bit) & 1u)));
+        }
     }
-    return ~crc;
+    (void)len;   /* svSize(data, 1) returns the same element count */
+    return (int)~crc;
 }
 ```
+
+An open (unsized) array always arrives as a `const svOpenArrayHandle`. Read it with the svdpi.h query functions (`svLow`, `svHigh`, `svSize`) and accessors such as `svGetArrElemPtr1` (Annex H.12). There is no `svGetIntElement`.
 
 ### DPI Export: Calling SystemVerilog from C
 
 You can also export SV functions so C can call back into the simulation:
 
 ```systemverilog
-// Export declaration — makes this SV function visible to C
+// Export declaration: makes this SV function visible to C
 export "DPI-C" function sv_get_sim_time;
 
 function longint sv_get_sim_time();
   return $time;
 endfunction
+
+// The import whose C body calls the export MUST be context (§35.5.1.3)
+import "DPI-C" context function void my_c_checker(input int value);
 ```
 
 ```c
-// C code can now call sv_get_sim_time()
-extern long long sv_get_sim_time(void);
+#include <stdio.h>
+#include "svdpi.h"
+extern long long sv_get_sim_time(void);   /* exported from SV */
 
 void my_c_checker(int value) {
     long long t = sv_get_sim_time();
@@ -80,19 +78,21 @@ void my_c_checker(int value) {
 }
 ```
 
-> **Caution:** Exported functions run *inside the SV simulation context*. The C code is temporarily "visiting" the SV world — it must not fork threads or hold locks that could deadlock with the simulator.
+> **Caution:** An import that calls exported subroutines (or VPI) shall be declared `context`; without it the call has no proper SystemVerilog scope and the behaviour is unpredictable, often a crash (§35.5.1.3). Exported *tasks* are stricter: only a `context` imported *task* may call them, never an imported function (§35.8). Write C++ implementations with `extern "C"` linkage.
 
 ### Function Qualifiers: `pure`, `context`, and Standard
+
+Predict the C type for a few SystemVerilog types first, then judge each import/export pair: legal, a compile error, or legal-looking code that is illegal or undefined at run time. The explorer is a deterministic model of Clause 35 and Annex H.
 
 <DPIBoundaryInspector />
 
 The qualifier you choose has major performance and capability implications:
 
-| Qualifier | Can read SV state? | Can call SV tasks? | Optimization | Use when… |
+| Qualifier | May touch SV data or call exports? | May call exported tasks? | Optimization | Use when… |
 |---|---|---|---|---|
-| `pure` | ❌ No | ❌ No | Aggressive (inlined) | The C function depends only on its arguments |
-| `context` | ✅ Yes | ✅ Yes | Minimal | C needs to call back into SV or read simulation state |
-| *(standard)* | ❌ No | ❌ No | Moderate | Default — no special needs, no extra optimization |
+| `pure` (functions only) | ❌ No | ❌ No | Calls may be removed or reused | Non-void, no output/inout args, result depends only on inputs, no side effects (§35.5.2) |
+| `context` | ✅ Yes | Only if the import is a **task** (§35.8) | Each call is an optimization barrier | C calls exported subroutines or VPI (§35.5.3) |
+| *(none)* | ❌ Only its own arguments | ❌ No | Normal | C does self-contained work; side effects such as file I/O are allowed (§35.5.1.3) |
 
 ```systemverilog
 // Pure: safe to inline, result depends only on inputs
@@ -105,7 +105,7 @@ import "DPI-C" context function void c_monitor_check();
 import "DPI-C" function int c_add(input int a, input int b);
 ```
 
-> **Performance tip:** Always mark pure functions as `pure`. Some simulators can eliminate redundant calls entirely if inputs haven't changed.
+> **Performance tip:** Mark a function `pure` only when it truly has no side effects. The compiler may eliminate or reuse calls, so a `pure` function that prints, writes a file, or counts calls can silently lose those effects (§35.5.2).
 
 ---
 
@@ -113,17 +113,22 @@ import "DPI-C" function int c_add(input int a, input int b);
 
 The core DPI challenge is mapping SystemVerilog's 4-state types to C's 2-state types.
 
-| SystemVerilog Type | C Type | Notes |
-|---|---|---|
-| `int` | `int` | Direct map (32-bit, 2-state) |
-| `longint` | `long long` | 64-bit |
-| `shortint` | `short int` | 16-bit |
-| `byte` | `char` | 8-bit |
-| `real` | `double` | IEEE 754 |
-| `string` | `const char*` | Null-terminated |
-| `bit [N:0]` | `svBitVecVal*` | Packed 2-state vector |
-| `logic [N:0]` | `svLogicVecVal*` | Packed 4-state vector (aval/bval pairs) |
-| `int arr[]` | `svOpenArrayHandle` | Open (unsized) array |
+| SystemVerilog type | C type (input) | C type (output / inout) | Notes |
+|---|---|---|---|
+| `byte` | `char` | `char*` | 8-bit, 2-state |
+| `shortint` | `short int` | `short int*` | 16-bit |
+| `int` | `int` | `int*` | 32-bit, 2-state |
+| `longint` | `long long` | `long long*` | 64-bit |
+| `real` / `shortreal` | `double` / `float` | `double*` / `float*` | IEEE 754 |
+| `chandle` | `void*` | `void**` | Opaque C pointer that SV stores and passes back |
+| `string` | `const char*` | `const char**` | Do not free or keep it; copy if needed (H.8.10) |
+| `bit` (scalar) | `svBit` | `svBit*` | unsigned char: 0 or 1 |
+| `logic` (scalar) | `svLogic` | `svLogic*` | `sv_0`, `sv_1`, `sv_z` = 2, `sv_x` = 3 |
+| `bit [N:0]` | `const svBitVecVal*` | `svBitVecVal*` | Packed 2-state vector, 32-bit chunks |
+| `logic [N:0]` | `const svLogicVecVal*` | `svLogicVecVal*` | Packed 4-state vector (aval/bval pairs) |
+| `int arr[]` (open array) | `const svOpenArrayHandle` | `const svOpenArrayHandle` | Always a handle; use `svLow`/`svHigh`/`svGetArrElemPtr1` |
+
+Small inputs (the basic types, scalar `bit`/`logic`, `chandle`, `string`) are passed by value; every other input arrives by `const` reference, and every output or inout arrives by pointer (H.8.7, H.8.8). Only small types can be function results: `function logic [31:0] f()` is not a legal DPI import; return wide values through an `output` argument (§35.5.5).
 
 ### The 4-State Problem
 
@@ -169,18 +174,32 @@ void c_set_name(const char* name) {
 
 ## Blocking Behavior: Functions vs Tasks
 
-- **`import "DPI-C" function`** — Executes in **zero simulation time**. The entire simulator thread blocks until the C function returns. Long-running C computation will freeze `$time`.
-- **`import "DPI-C" task`** — Can consume simulation time. The task is allowed to call `tf_dofinish` or block on I/O, and the simulator can schedule other SV processes while waiting.
+- **`import "DPI-C" function`** executes in **zero simulation time**, like any SystemVerilog function (§35.5.1.1). The simulator waits until the C code returns.
+- **`import "DPI-C" task`** can consume simulation time, but only in one way: its C code calls an **exported SystemVerilog task** that executes a delay, event control or `wait` (§35.5.1.5). To call that export, the import must be declared `context` (§35.8). Without such a call, an imported task also takes zero simulation time.
+- C code that **blocks on I/O or computes for a long time freezes the whole simulator**, whether it is imported as a function or a task. `$time` does not move and no other SystemVerilog process runs until the C code returns.
 
 ```systemverilog
 // Zero-time function: fast computation only
 import "DPI-C" function int c_compute_hash(input int data);
 
-// Time-consuming task: e.g., reading from a socket, waiting for firmware
-import "DPI-C" task c_wait_for_firmware_ack(output int status);
+// Time passes only inside the exported SV task that C calls
+export "DPI-C" task sv_wait_cycles;
+task sv_wait_cycles(int n); repeat (n) @(posedge clk); endtask
+import "DPI-C" context task c_wait_for_firmware_ack(output int status);
 ```
 
-> **Warning:** A function that takes 500ms of wall-clock time will hold the simulator hostage for that duration. No other SV process evaluates. If your C code does I/O, networking, or heavy computation, use a task instead.
+```c
+extern int sv_wait_cycles(int n);          /* exported SV task */
+int c_wait_for_firmware_ack(int* status) {
+    while (!fw_ack_ready()) {              /* non-blocking poll of the firmware model */
+        sv_wait_cycles(10);                /* let simulation time advance in SV */
+    }
+    *status = fw_ack_value();
+    return 0;                              /* 0 = not disabled (§35.9) */
+}
+```
+
+> **Warning:** A C call that takes 500 ms of wall-clock time holds the simulator for those 500 ms, task or not. If C must wait for something, poll without blocking and let time pass by calling an exported task that waits, as above.
 
 ---
 
@@ -190,8 +209,7 @@ DPI requires compiling C code into a shared library and telling the simulator wh
 
 ```bash
 # 1. Compile the C code into a shared library
-gcc -shared -fPIC -o libmydpi.so crc32.c -I${VCS_HOME}/include/svdpi.h
-# or for VCS:
+# -I takes the directory that contains svdpi.h (your simulator's include dir)
 gcc -shared -fPIC -o libmydpi.so crc32.c -I${VCS_HOME}/include
 
 # 2. Run simulation with the library
@@ -214,8 +232,8 @@ vcs -sverilog top.sv crc32.c
 | Symptom | Likely Cause | Fix |
 |---|---|---|
 | `undefined symbol` at runtime | Missing `-sv_lib` or library not on `LD_LIBRARY_PATH` | Add correct linker flags |
-| Segmentation fault | Mismatched types (e.g., passing `logic` to `int` parameter) | Check type table; use `bit` for 2-state |
-| Simulation hang | Long-running `function` (not `task`) | Convert to `import task` or add C-side timeout |
+| Segmentation fault | C prototype does not match the import (e.g., `int` where SV passes `const svLogicVecVal*`), open-array misuse, or an export called from a non-`context` import | Check the C prototype against the type table; declare imports that call exports `context` |
+| Simulation hang | C code blocks or loops (function and task alike) | Make the C side non-blocking; let time pass in an exported SV task called from a `context` import task |
 | Corrupted return values | Incorrect `svLogicVecVal` packing | Verify `aval`/`bval` encoding |
 | Memory leak | C allocates, SV never frees | Add explicit `c_free()` import |
 | Stack overflow | Deep C recursion from context function | Increase simulator stack or restructure |
@@ -224,7 +242,7 @@ vcs -sverilog top.sv crc32.c
 
 ## Make It Work
 
-1. **Start with `pure function`** — begin with the simplest qualification and only upgrade to `context` when you need callbacks.
+1. **Start with a plain import.** Add `pure` only for side-effect-free functions, and `context` only when the C code calls back into SystemVerilog.
 2. **Match types exactly** — consult the type table above and always check the `svdpi.h` header.
 3. **Test the C code independently** — write a standalone `main()` that exercises your C function before integrating with the simulator.
 4. **Version your shared libraries** — include a `c_get_version()` function so the SV side can assert the expected library version at `$time 0`.
@@ -232,7 +250,7 @@ vcs -sverilog top.sv crc32.c
 **Checklist before moving on:**
 - [ ] You understand the difference between `import` and `export`.
 - [ ] You can choose between `pure`, `context`, and standard qualifiers.
-- [ ] You know when to use a `function` vs a `task` for DPI calls.
+- [ ] You know that simulation time can pass during a DPI call only inside an exported SV task called from a `context` import task.
 - [ ] You know that `logic` marshals as `svLogicVecVal` (4-state) and `bit` as `svBitVecVal` (2-state).
 
 ---
@@ -252,8 +270,9 @@ DPI is the modern interface, but two older APIs still exist:
 Most modern workflows use DPI for performance-critical paths and VPI only for tool/infrastructure code.
 
 ## References & Next Topics
-- **IEEE 1800-2017 Clause 35** — Direct Programming Interface (DPI).
-- **IEEE 1800-2017 Clause 36 & 37** — VPI (PLI 2.0).
+- **IEEE 1800-2023 Clause 35** — Direct Programming Interface (§35.5.1 restrictions, §35.5.2 pure, §35.5.3 context, §35.8 exported tasks).
+- **IEEE 1800-2023 Annex H** — DPI C layer (Table H.1 type mapping, H.8 argument passing, H.12 open arrays).
+- **IEEE 1800-2023 Clauses 36 & 37** — VPI.
 - **`svdpi.h`** — The canonical C header shipped with every simulator.
 - **Previous:** [I-SV-6: Compiler Directives & Generates](/curriculum/T2_Intermediate/I-SV-6_Compiler_Directives_and_Generates)
-- **Next:** Apply DPI in formal integration workflows with [E-INT-1: Integrating UVM with Formal Verification](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification).
+- **Next:** [I-SV-8: Power Intent and UPF](/curriculum/T2_Intermediate/I-SV-8_Power_Intent_and_UPF)

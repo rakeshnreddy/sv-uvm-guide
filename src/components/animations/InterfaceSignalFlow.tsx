@@ -1,308 +1,341 @@
 "use client";
-import React, { useEffect, useState } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { interfaceData } from './interface-data';
-import { Button } from '@/components/ui/Button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { CodeBlock } from '@/components/ui/CodeBlock';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
 
-const InterfaceSignalFlow = () => {
-  const [exampleIndex, setExampleIndex] = useState(0);
-  const [currentStepIndex, setCurrentStepIndex] = useState(0);
-  const [clock, setClock] = useState(0);
-  const [signalValues, setSignalValues] = useState<number[]>([]);
-  const [phase, setPhase] = useState<'sample' | 'drive'>('sample');
-  const [arrayIndex, setArrayIndex] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(true);
-  const [speed, setSpeed] = useState(1000);
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
-  const handleNext = () => {
-    setCurrentStepIndex(prev => (prev < interfaceData[exampleIndex].steps.length - 1 ? prev + 1 : prev));
-  };
+import { CodeTrace } from "@/components/visual-system/CodeTrace";
+import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  FLOW_PRESETS,
+  FLOW_STATEMENTS,
+  HANDLE_MODPORTS,
+  SIMPLE_BUS_IF,
+  checkVifAccess,
+  flowSource,
+  vifTypeText,
+  type FlowStep,
+  type VifSetup,
+  type VifVerdict,
+} from "@/lib/sv-interface-flow-model";
+import { viewOf } from "@/lib/sv-interface-model";
+import { cn } from "@/lib/utils";
 
-  const handlePrev = () => {
-    setCurrentStepIndex(prev => (prev > 0 ? prev - 1 : prev));
-  };
+const ASSUMPTIONS = [
+  "Rules: virtual interfaces and null handles §25.9; modports §25.5 and §25.5.5; input ports §23.3.3.2; clockvars §14.3, §14.13, §14.16.",
+  "Interface signals are logic variables; clk is the interface's input port. The DUT connects through the slave modport.",
+  "Errors are classified (compile time vs run time), not quoted: every tool words them differently.",
+  "Compile-time checks come first: a design that does not compile never reaches the null-handle check at run time.",
+];
 
-  const handleExampleChange = (index: string) => {
-    setExampleIndex(parseInt(index));
-    setCurrentStepIndex(0);
-    setPhase('sample');
-    setArrayIndex(0);
-    setIsPlaying(true);
-  };
+const decl = SIMPLE_BUS_IF;
 
-  const currentExample = interfaceData[exampleIndex];
-  const currentStep = currentExample.steps[currentStepIndex];
-  const dataSignals = currentExample.signals.filter(s => s.name !== 'clk');
-
+/** Calls `onReveal` once the prediction prompt shows its revealed content. */
+function RevealSignal({ onReveal }: { onReveal: () => void }) {
   useEffect(() => {
-    setSignalValues(dataSignals.map(() => 0));
-    setClock(0);
-    setPhase('sample');
-    setArrayIndex(0);
-  }, [currentExample, dataSignals]);
+    onReveal();
+  }, [onReveal]);
+  return null;
+}
 
-  useEffect(() => {
-    if (!isPlaying) return;
-    const id = setInterval(() => {
-      setClock(prev => 1 - prev);
-      setSignalValues(prev => prev.map(v => (v ? 0 : 1)));
-      setPhase(prev => (prev === 'sample' ? 'drive' : 'sample'));
-      if (currentExample.arraySize) {
-        setArrayIndex(prev => (prev + 1) % currentExample.arraySize!);
-      }
-    }, speed);
-    return () => clearInterval(id);
-  }, [currentExample, isPlaying, speed]);
+const statementLabel = (path: string, op: "read" | "drive") => (op === "read" ? `x = vif.${path};` : `vif.${path} <= …;`);
+const handleKey = (m: string | null) => m ?? "none";
 
+const outcomeText: Record<VifVerdict["outcome"], string> = {
+  legal: "✓ Compiles and runs",
+  "compile-error": "✕ Compile-time error",
+  "fatal-runtime": "✕ Fatal run-time error",
+};
+
+function options(verdict: VifVerdict): PredictionOption[] {
+  return [
+    {
+      id: "legal",
+      label: "It compiles and runs: the signal is driven or read.",
+      correct: verdict.outcome === "legal",
+      feedback: verdict.outcome === "legal" ? `${verdict.rule} (${verdict.clause})` : `Something stops it first: ${verdict.rule} (${verdict.clause})`,
+    },
+    {
+      id: "compile-error",
+      label: "The tool rejects it before simulation starts.",
+      correct: verdict.outcome === "compile-error",
+      feedback:
+        verdict.outcome === "compile-error"
+          ? `${verdict.rule} (${verdict.clause})`
+          : verdict.outcome === "fatal-runtime"
+            ? "The statement is legal for this handle type, so it compiles. Whether the handle points anywhere is only known at run time."
+            : "Nothing in the handle's type forbids this access, so the compiler accepts it.",
+    },
+    {
+      id: "fatal-runtime",
+      label: "It compiles, then stops with a fatal error when the driver runs.",
+      correct: verdict.outcome === "fatal-runtime",
+      feedback:
+        verdict.outcome === "fatal-runtime"
+          ? `${verdict.rule} (${verdict.clause})`
+          : verdict.outcome === "compile-error"
+            ? "Direction and visibility rules are static: they are checked before time 0, so the run never starts."
+            : "The handle was assigned, so it points at bus_if and nothing fails at run time.",
+    },
+  ];
+}
+
+const stepTitles: Record<FlowStep["id"], string> = {
+  instance: "Interface instance in top",
+  handle: "Virtual interface handle (drv.vif)",
+  modport: "Modport view in the handle's type",
+  signal: "Signal on bus_if, seen by the DUT",
+};
+
+const flowLabels: Partial<Record<FlowStep["id"], string>> = {
+  handle: "handle points to",
+  modport: "access limited by",
+  signal: "drives / reads",
+};
+
+function FlowChain({ steps, revealed }: { steps: FlowStep[]; revealed: boolean }) {
   return (
-    <Card className="w-full">
-      <CardHeader>
-        <CardTitle>Interface Signal Flow</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <Select onValueChange={handleExampleChange} defaultValue={exampleIndex.toString()}>
-          <SelectTrigger className="w-[280px] mb-4">
-            <SelectValue placeholder="Select an example" />
-          </SelectTrigger>
-          <SelectContent>
-            {interfaceData.map((example, index) => (
-              <SelectItem key={example.name} value={index.toString()}>{example.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <div className="flex flex-wrap items-center gap-2 mb-4">
-          <Button variant="outline" onClick={() => setIsPlaying(p => !p)}>
-            {isPlaying ? 'Pause' : 'Play'}
-          </Button>
-          <Select onValueChange={v => setSpeed(parseInt(v))} defaultValue={speed.toString()}>
-            <SelectTrigger className="w-24">
-              <SelectValue placeholder="Speed" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="2000">Slow</SelectItem>
-              <SelectItem value="1000">Normal</SelectItem>
-              <SelectItem value="500">Fast</SelectItem>
-            </SelectContent>
-          </Select>
-          {currentExample.arraySize && (
-            <div className="flex items-center gap-1">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() =>
-                  setArrayIndex(prev =>
-                    (prev - 1 + currentExample.arraySize!) % currentExample.arraySize!
-                  )
-                }
-              >
-                -
-              </Button>
-              <span className="text-sm font-mono">{arrayIndex}</span>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() =>
-                  setArrayIndex(prev => (prev + 1) % currentExample.arraySize!)
-                }
-              >
-                +
-              </Button>
+    <ol aria-label="Signal path from the class to the pins" className="space-y-1">
+      {steps.map((s, i) => {
+        const status = revealed ? s.status : "pending";
+        return (
+          <li key={s.id}>
+            {i > 0 ? (
+              <div className="flex items-center gap-2 py-0.5 pl-4 text-[11px] text-muted-foreground" aria-hidden>
+                <span className="text-base leading-none">↓</span>
+                <span>{flowLabels[s.id]}</span>
+              </div>
+            ) : null}
+            <div
+              aria-label={`${stepTitles[s.id]}: ${status === "pending" ? "predict first" : status === "ok" ? "ok" : status === "error" ? "fails here" : "not reached"}`}
+              className={cn(
+                "rounded-lg border px-3 py-2 text-sm",
+                status === "ok" && "border-emerald-500/60 bg-emerald-500/10",
+                status === "error" && "border-rose-500/70 bg-rose-500/10",
+                status === "not-reached" && "border-dashed border-border/70 opacity-70",
+                status === "pending" && "border-border/70 bg-background/50",
+              )}
+            >
+              <p className="flex items-center gap-2 font-semibold text-foreground">
+                <span aria-hidden className="w-4 text-center">
+                  {status === "ok" ? "✓" : status === "error" ? "✕" : status === "not-reached" ? "○" : "·"}
+                </span>
+                {stepTitles[s.id]}
+              </p>
+              {revealed ? (
+                <p className="mt-1 pl-6 text-xs text-muted-foreground [font-variant-ligatures:none]">
+                  {s.text}
+                  {s.clause ? <span className="opacity-80"> ({s.clause})</span> : null}
+                </p>
+              ) : null}
             </div>
-          )}
-        </div>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <div>
-            <CodeBlock code={currentExample.code} language="systemverilog" />
-          </div>
-          <div className="flex flex-col justify-center items-center">
-            <div className="w-full h-48 bg-muted rounded-lg p-4 flex flex-col justify-around">
-              {currentExample.parameters && (
-                <div className="mb-2 text-sm font-mono">
-                  {Object.entries(currentExample.parameters).map(([p, v]) => (
-                    <span key={p} className="mr-2">{`${p}=${v}`}</span>
-                  ))}
-                </div>
-              )}
-              {currentExample.arraySize && (
-                <div className="mb-2 font-mono">Index: {arrayIndex}</div>
-              )}
-              <div className="relative w-full h-2 bg-background rounded mb-2 overflow-hidden">
-                <motion.div
-                  key={clock}
-                  initial={{ width: 0 }}
-                  animate={{ width: '100%' }}
-                  transition={{ duration: speed / 1000, ease: 'linear' }}
-                  className="absolute top-0 left-0 h-full bg-blue-200"
-                />
-                {dataSignals.map(
-                  signal =>
-                    signal.timing?.sample !== undefined && (
-                      <div
-                        key={`${signal.name}-sample-marker`}
-                        title={`${signal.name} sample`}
-                        style={{ left: `${signal.timing.sample * 100}%` }}
-                        className="absolute top-0 bottom-0 w-0.5 bg-green-500"
-                      />
-                    )
-                )}
-                {dataSignals.map(
-                  signal =>
-                    signal.timing?.drive !== undefined && (
-                      <div
-                        key={`${signal.name}-drive-marker`}
-                        title={`${signal.name} drive`}
-                        style={{ left: `${signal.timing.drive * 100}%` }}
-                        className="absolute top-0 bottom-0 w-0.5 bg-blue-500"
-                      />
-                    )
-                )}
-              </div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-mono text-lg" title="clock">clk</span>
-                <motion.div
-                  animate={{ backgroundColor: clock ? '#22c55e' : '#ef4444' }}
-                  className="w-16 h-2 rounded"
-                />
-              </div>
-              {dataSignals.map((signal, index) => {
-                const showPhaseLabel =
-                  !!signal.timing &&
-                  ((phase === 'sample' && signal.timing.sample !== undefined) ||
-                    (phase === 'drive' && signal.timing.drive !== undefined));
-                const tooltip = `${signal.direction} signal` +
-                  (signal.restricted ? ' - modport restricted' : '') +
-                  (signal.timing?.sample !== undefined ? ` - sample @${signal.timing.sample}` : '') +
-                  (signal.timing?.drive !== undefined ? ` - drive @${signal.timing.drive}` : '') +
-                  (signal.glitch ? ' - glitch' : '') +
-                  (signal.delay ? ' - delay' : '');
+const MATRIX_SIGNALS = ["clk", "addr", "data", "rw", "valid", "ready"];
+
+function DirectionMatrix() {
+  const modports = decl.modports;
+  const cell = (modport: string, signal: string) => {
+    const view = viewOf(decl, modport);
+    const v = view.find((s) => s.signal === signal);
+    if (!v) return { text: "—", aria: "not visible" };
+    const prefix = v.path.includes(`.${decl.clocking.name}.`) ? `${decl.clocking.name}.` : "";
+    if (v.dir === "input") return { text: `◀ ${prefix}input`, aria: `${prefix}input, read only` };
+    if (v.dir === "output") return { text: `▶ ${prefix}output`, aria: `${prefix}output, may drive` };
+    return { text: `◆ ${prefix}inout`, aria: `${prefix}inout` };
+  };
+  return (
+    <div className="overflow-x-auto">
+      <table className="min-w-[300px] w-full border-collapse text-left text-xs">
+        <caption className="mb-2 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Direction per modport, seen from the module or handle using it</caption>
+        <thead>
+          <tr className="border-b border-border/70">
+            <th scope="col" className="py-1.5 pr-2 font-semibold">
+              Signal
+            </th>
+            {modports.map((m) => (
+              <th key={m.name} scope="col" className="px-2 py-1.5 font-mono font-semibold [font-variant-ligatures:none]">
+                {m.name}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {MATRIX_SIGNALS.map((signal) => (
+            <tr key={signal} className="border-b border-border/40">
+              <th scope="row" className="py-1.5 pr-2 font-mono font-semibold [font-variant-ligatures:none]">
+                {signal}
+              </th>
+              {modports.map((m) => {
+                const c = cell(m.name, signal);
                 return (
-                  <motion.div
-                    key={`${signal.name}-${clock}-${arrayIndex}`}
-                    initial={{ opacity: 0, x: signal.direction === 'out' ? 50 : -50 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    transition={{ duration: 0.5 }}
-                    className="flex items-center justify-between"
-                    title={tooltip}
-                  >
-                    <span className="font-mono text-lg">
-                      {signal.name}
-                      {signal.restricted && (
-                        <span className="text-red-500 text-xs ml-1">(restricted)</span>
-                      )}
-                    </span>
-                    <div className="flex items-center">
-                      {signal.timing ? (
-                        showPhaseLabel && (
-                          <motion.span
-                            key={`${signal.name}-label-${phase}-${clock}`}
-                            initial={{ opacity: 0, y: -5 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            transition={{ duration: 0.3 }}
-                            className="text-sm mr-2"
-                          >
-                            {phase}
-                          </motion.span>
-                        )
-                      ) : (
-                        <motion.span
-                          key={`${signal.name}-label-${clock}`}
-                          initial={{ opacity: 0, y: -5 }}
-                          animate={{ opacity: 1, y: 0 }}
-                          transition={{ duration: 0.3 }}
-                          className="text-sm mr-2"
-                        >
-                          {signal.direction === 'in'
-                            ? 'sample'
-                            : signal.direction === 'out'
-                            ? 'drive'
-                            : 'bidirectional'}
-                        </motion.span>
-                      )}
-                      <div className="relative">
-                        <motion.div
-                          key={`${signalValues[index]}-${clock}`}
-                          initial={{ width: 0 }}
-                          animate={{ width: 64 }}
-                          transition={{ duration: 0.5, delay: signal.delay ? 0.3 : 0 }}
-                          className={`h-2 rounded ${
-                            signal.direction === 'in'
-                              ? 'bg-green-500'
-                              : signal.direction === 'out'
-                              ? 'bg-blue-500'
-                              : 'bg-yellow-500'
-                          }`}
-                        />
-                        {signal.glitch && (
-                          <motion.div
-                            key={`glitch-${clock}`}
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: [0, 1, 0] }}
-                            transition={{ duration: 0.2, delay: 0.2 }}
-                            className="absolute inset-0 bg-red-500 rounded"
-                          />
-                        )}
-                        {signal.timing && showPhaseLabel && (
-                          <motion.div
-                            key={`${signal.name}-marker-${phase}-${clock}`}
-                            initial={{ opacity: 0 }}
-                            animate={{ opacity: 1 }}
-                            transition={{ duration: 0.2 }}
-                            style={{
-                              left: `${
-                                (phase === 'sample'
-                                  ? signal.timing.sample!
-                                  : signal.timing.drive!) * 100
-                              }%`,
-                            }}
-                            className="absolute -top-1 w-1 h-4 bg-black"
-                          />
-                        )}
-                      </div>
-                    </div>
-                  </motion.div>
+                  <td key={m.name} aria-label={`${m.name} ${signal}: ${c.aria}`} className={cn("px-2 py-1.5 font-mono [font-variant-ligatures:none]", c.text === "—" && "text-muted-foreground")}>
+                    {c.text}
+                  </td>
                 );
               })}
-            </div>
-            {currentExample.name === 'Virtual Interface Binding' && (
-              <div className="flex items-center justify-center mt-4">
-                <div className="p-2 border rounded mr-2">Driver</div>
-                <div className="relative w-16 h-0.5 bg-blue-500 mx-2 overflow-hidden">
-                  <motion.div
-                    className="absolute top-0 left-0 h-full w-4 bg-blue-300"
-                    animate={{ x: ['0%', '100%'] }}
-                    transition={{ duration: 1, repeat: Infinity }}
-                  />
-                </div>
-                <div className="p-2 border rounded ml-2">Interface</div>
-              </div>
-            )}
-          </div>
-        </div>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-2 text-xs text-muted-foreground">
+        ◀ input: flows into the user, read only. ▶ output: the user may drive it. — : not reachable through that view. No view uses <code className="font-mono">inout</code>: the signals are variables, and a
+        variable cannot sit on either side of an inout port (§6.5, §23.3.3). A handle with no modport sees every row with no direction checks.
+      </p>
+    </div>
+  );
+}
 
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={currentStep}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.3 }}
-            className="p-4 border rounded-lg bg-background/50 mt-4"
-          >
-            <p>{currentStep}</p>
-          </motion.div>
-        </AnimatePresence>
+/**
+ * Interface → modport → virtual-interface flow, driven by
+ * `sv-interface-flow-model.ts`. The learner varies the handle type, whether
+ * the handle is assigned, and the statement, then predicts whether it
+ * compiles, runs, or stops with a null-handle fatal error.
+ */
+const InterfaceSignalFlow = () => {
+  const [presetId, setPresetId] = useState(FLOW_PRESETS[0].id);
+  const [setup, setSetup] = useState<VifSetup>(FLOW_PRESETS[0].setup);
+  const [revealed, setRevealed] = useState(false);
+  /** Bumped on every change so the prediction and the revealed path always reset together. */
+  const [round, setRound] = useState(0);
 
-        <div className="flex justify-between mt-4">
-          <Button onClick={handlePrev} disabled={currentStepIndex === 0}>Previous</Button>
-          <Button onClick={handleNext} disabled={currentStepIndex === currentExample.steps.length - 1}>Next</Button>
+  const key = `${handleKey(setup.modport)}|${setup.assigned}|${setup.path}|${setup.op}`;
+  const verdict = useMemo(() => checkVifAccess(decl, setup), [setup]);
+  const lines = useMemo(() => flowSource(decl, setup), [setup]);
+  const onReveal = useCallback(() => setRevealed(true), []);
+  const preset = FLOW_PRESETS.find((p) => p.id === presetId);
+  const matchesPreset = Boolean(preset && JSON.stringify(preset.setup) === JSON.stringify(setup));
+
+  const update = (patch: Partial<VifSetup>) => {
+    setSetup((s) => ({ ...s, ...patch }));
+    setRevealed(false);
+    setRound((r) => r + 1);
+  };
+
+  return (
+    <VisualFrame
+      label="Interface signal flow"
+      eyebrow="Experiment · spot the bug"
+      title="From a class to the pins: interface, modport, virtual interface"
+      summary={
+        <>
+          A class cannot hold an interface, only a <em>handle</em> to one. Choose the handle&apos;s type, whether <code className="font-mono">top</code> fills it in, and what the driver
+          does. Predict, then follow the path.
+        </>
+      }
+      fidelity="model"
+      assumptions={ASSUMPTIONS}
+    >
+      <div className="space-y-2">
+        <p className="text-sm font-semibold text-foreground">Start from</p>
+        <div role="group" aria-label="Load a scenario" className="flex flex-wrap gap-2">
+          {FLOW_PRESETS.map((p) => {
+            const active = matchesPreset && p.id === presetId;
+            return (
+              <button
+                key={p.id}
+                type="button"
+                aria-pressed={active}
+                onClick={() => {
+                  setPresetId(p.id);
+                  setSetup(p.setup);
+                  setRevealed(false);
+                  setRound((r) => r + 1);
+                }}
+                className={cn(
+                  "min-h-9 rounded-full border px-3 py-1.5 text-xs transition-colors motion-reduce:transition-none focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  active ? "border-cyan-500 bg-cyan-500/15 font-semibold text-foreground" : "border-border/70 text-muted-foreground hover:bg-muted",
+                )}
+              >
+                {p.label}
+              </button>
+            );
+          })}
         </div>
-      </CardContent>
-    </Card>
+        <p className="text-xs text-muted-foreground">Load a scenario, or change the three controls below to build your own.</p>
+      </div>
+
+      <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
+        <div className="min-w-0 space-y-1">
+          <p className="text-xs font-semibold text-muted-foreground">Handle type</p>
+          <SegmentedControl
+            label="Virtual interface type"
+            mono
+            options={HANDLE_MODPORTS.map((m) => ({ value: handleKey(m), label: vifTypeText(decl, m) }))}
+            value={handleKey(setup.modport)}
+            onChange={(v) => update({ modport: v === "none" ? null : v })}
+          />
+        </div>
+        <div className="min-w-0 space-y-1">
+          <p className="text-xs font-semibold text-muted-foreground">In top</p>
+          <SegmentedControl
+            label="Handle assignment in top"
+            mono
+            options={[
+              { value: "yes", label: "drv.vif = bus_if;" },
+              { value: "no", label: "(assignment missing)" },
+            ]}
+            value={setup.assigned ? "yes" : "no"}
+            onChange={(v) => update({ assigned: v === "yes" })}
+          />
+        </div>
+      </div>
+      <div className="min-w-0 space-y-1">
+        <p className="text-xs font-semibold text-muted-foreground">The driver executes</p>
+        <SegmentedControl
+          label="Statement in the driver"
+          mono
+          options={FLOW_STATEMENTS.map((s) => ({ value: `${s.op}:${s.path}`, label: statementLabel(s.path, s.op) }))}
+          value={`${setup.op}:${setup.path}`}
+          onChange={(v) => {
+            const [op, path] = v.split(":");
+            update({ op: op as VifSetup["op"], path });
+          }}
+        />
+      </div>
+
+      <div className="grid items-start gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
+        <CodeTrace
+          label="Generated testbench code"
+          lines={lines}
+          activeKey={revealed ? (verdict.outcome === "fatal-runtime" ? "wait" : "stmt") : undefined}
+          contextKeys={["vif-decl", "assign"]}
+        />
+        <FlowChain steps={verdict.steps} revealed={revealed} />
+      </div>
+
+      <PredictionPrompt resetKey={`${key}#${round}`} question={<>What happens when the driver runs this code?</>} options={options(verdict)}>
+        <RevealSignal onReveal={onReveal} />
+        <div
+          aria-live="polite"
+          className={cn(
+            "rounded-lg border px-3 py-2 text-sm",
+            verdict.outcome === "legal" ? "border-emerald-500/50 bg-emerald-500/10" : "border-rose-500/50 bg-rose-500/10",
+          )}
+        >
+          <p className="font-semibold text-foreground">
+            {outcomeText[verdict.outcome]}: <code className="font-mono [font-variant-ligatures:none]">{verdict.statement}</code>
+          </p>
+          <p className="mt-1 text-foreground [font-variant-ligatures:none]">
+            {verdict.rule} <span className="text-xs opacity-80">({verdict.clause})</span>
+          </p>
+          {matchesPreset && preset ? <p className="mt-1 text-xs text-muted-foreground">What you would see: {preset.symptom}</p> : null}
+          {verdict.outcome === "fatal-runtime" ? (
+            <p className="mt-1 text-xs text-muted-foreground">
+              Debug habit: check the handle where it is set, e.g. <code className="font-mono">if (vif == null) $fatal(1, &quot;vif not set&quot;);</code> in the driver&apos;s build or
+              connect code, so the message names the cause.
+            </p>
+          ) : null}
+        </div>
+      </PredictionPrompt>
+
+      <DirectionMatrix />
+    </VisualFrame>
   );
 };
 

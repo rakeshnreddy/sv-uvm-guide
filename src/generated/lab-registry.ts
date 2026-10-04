@@ -6,7 +6,7 @@ export const GENERATED_LAB_MANIFESTS = [
     "id": "ahb-axi-bridge-debug",
     "version": "1",
     "title": "AHB-to-AXI Bridge Debug",
-    "description": "Debug burst translation and 4KB boundary splitting in a buggy AHB-to-AXI bridge.",
+    "description": "Debug burst translation in a buggy AHB-to-AXI bridge: split long AHB INCR bursts at the AXI4 256-transfer limit, check WLAST per AXI burst, and flag AHB stimulus that crosses 1KB.",
     "owningModule": "B-AMBA-F1",
     "routeSlug": "ahb-axi-bridge-debug",
     "status": "available",
@@ -21,7 +21,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 1: Reproduce the Split Bug",
-        "instructions": "Run `testbench.sv` and inspect the AXI AW log for the `crossing_4kb_bug` request. The first translated AXI burst crosses the 0x1000 boundary.",
+        "instructions": "Run `testbench.sv` and inspect the AXI AW log for the `long_incr_bytes` request. The bridge sends a 300-transfer AHB INCR as one AXI burst: AWLEN wraps to 43, but WLAST arrives on transfer 300.",
         "starterCode": ""
       },
       {
@@ -29,7 +29,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 2: Complete the Checker",
-        "instructions": "Open `bridge_split_checker.sv` and implement the 4KB boundary, first split length, size preservation, and W beat accounting checks.",
+        "instructions": "Open `bridge_split_checker.sv` and implement the AHB 1KB input check, per-burst WLAST accounting, the first split length, and total W transfer accounting.",
         "starterCode": ""
       },
       {
@@ -37,7 +37,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 3: Fix the Split Function",
-        "instructions": "Replace the buggy `beats_to_4kb_boundary_buggy()` logic with the corrected boundary calculation from `solution.sv`, then rerun the lab.",
+        "instructions": "Replace the body of `choose_buggy_burst_beats()` with the 256-transfer cap from `solution.sv`, then rerun the lab.",
         "starterCode": ""
       }
     ],
@@ -588,7 +588,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 1: Run and Analyze",
-        "instructions": "Run the simulation. Notice the coverage score. Open `alu_cov_mon.sv` and see what the bin requirements are for `MAX_VAL`.",
+        "instructions": "Run the simulation and note the score (about 70%). Open `alu_cov_mon.sv`: the score is the average of `cp_op` (7 bins), `cp_a` and `cp_b` (2 bins each; the `others` default bins never count) and `cross_edge_op` (7 operations x {zero, max} = 14 bins; default bins are excluded from crosses).",
         "starterCode": ""
       },
       {
@@ -596,7 +596,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 2: Add Missing Operations",
-        "instructions": "The constraint block in `testbench.sv` explicitly omits `DIV`. Add it back to the `inside` block.",
+        "instructions": "The constraint in `testbench.sv` omits `DIV`. Add it to the `inside` list. `cp_op` reaches 100%, but the score only rises to about 74%: the cross still needs every operation with `a == 0` and with `a == 8'hFF`.",
         "starterCode": ""
       },
       {
@@ -604,7 +604,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 3: Weight Edge Cases",
-        "instructions": "The generic `std::randomize()` rarely hits `8'hFF`. Add a `dist` constraint for `a` and `b` to assign weight to `8'hFF` so it occurs frequently.",
+        "instructions": "Uniform inputs hit each edge value about once in 256 samples. Add a `dist` for `a` and `b` that weights BOTH `8'h00` and `8'hFF`, e.g. `a dist { 8'h00 := 1, 8'hFF := 1, [8'h01:8'hFE] :/ 2 };`. Each cross bin then has probability 1/28 per sample, and 500 samples close coverage at 100% (weighting only `8'hFF` stalls near 80%).",
         "starterCode": ""
       }
     ],
@@ -806,23 +806,23 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 1: Complete the Singleton",
-        "instructions": "Open `testbench.sv` and complete the `load_fw_phase` singleton `get()` method so UVM can find a single canonical phase instance.",
+        "instructions": "Open `testbench.sv` and complete the `load_fw_phase_c` singleton: declare `m_inst` and implement `get()` so every call returns the same phase instance.",
         "starterCode": ""
       },
       {
         "id": "2",
         "version": "1",
         "completion": "self_attested",
-        "title": "Step 2: Insert Into the Schedule",
-        "instructions": "In `base_test::build_phase`, use `uvm_domain::get_common_domain().add()` to insert `load_fw_phase` after `reset_phase`.",
+        "title": "Step 2: Connect the Phase to the Environment",
+        "instructions": "Override `exec_task(uvm_component comp, uvm_phase phase)` in `load_fw_phase_c`: `$cast` `comp` to `soc_env` and call `env.load_fw_phase(phase)`. Then implement `soc_env::load_fw_phase`: raise an objection, check `reset_done`, print `uvm_info(\"ORDER\", \"load_fw\", UVM_LOW)`, wait 20ns, set `firmware_loaded`, and drop the objection. Without `exec_task`, the phase runs but never calls your code.",
         "starterCode": ""
       },
       {
         "id": "3",
         "version": "1",
         "completion": "self_attested",
-        "title": "Step 3: Implement the Phase Task",
-        "instructions": "In `soc_env`, implement `load_fw_phase` as a task that raises an objection, prints a firmware-load banner, waits 20ns, and drops the objection. Run the simulation to verify the phase order.",
+        "title": "Step 3: Insert Into the Schedule and Run",
+        "instructions": "In `base_test::build_phase`, call `uvm_domain::get_uvm_schedule().add(load_fw_phase_c::get(), .after_phase(uvm_reset_phase::get()))`; `reset_phase` lives in the uvm run-time schedule, not the common domain. Run and check the log: `[ORDER] reset` at 0, `load_fw` at 50, `configure` at 70 and `main` at 80 ns, with no `ORDER` errors.",
         "starterCode": ""
       }
     ],
@@ -909,7 +909,7 @@ export const GENERATED_LAB_MANIFESTS = [
     "status": "available",
     "labPrerequisites": [],
     "modulePrerequisites": [
-      "A-UVM-1",
+      "I-UVM-3A",
       "E-PSS-1"
     ],
     "steps": [
@@ -917,8 +917,8 @@ export const GENERATED_LAB_MANIFESTS = [
         "id": "1",
         "version": "1",
         "completion": "self_attested",
-        "title": "Step 1: Complete the Write Action",
-        "instructions": "Open `starter/mem_test.pss` and add the 4-byte address alignment constraint plus the `0x0000` through `0xffff` data range constraint.",
+        "title": "Step 1: Constrain the Write's Buffer",
+        "instructions": "Open `starter/mem_test.pss`. In `write_mem`, constrain the output buffer: `wr.addr % 4 == 0` for 4-byte alignment and `wr.data in [0x0000..0xFFFF]` for the data range.",
         "starterCode": ""
       },
       {
@@ -926,7 +926,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 2: Bind Read-Verify to the Write",
-        "instructions": "Add the `write_mem` input handle to `read_verify`, then bind `rd.wr == wr` in the activity graph so the read checks the exact write action.",
+        "instructions": "Give `read_verify` an `input mem_buf_s rd;`. In the activity, traverse `wr_a: do write_mem;` then `rd_a: do read_verify;`, and add `bind wr_a.wr rd_a.rd;` so the read consumes exactly the buffer that write produced.",
         "starterCode": ""
       },
       {
@@ -934,7 +934,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 3: Compare Generated Targets",
-        "instructions": "Review `solution/generated_uvm_sequence.sv` and `solution/generated_baremetal_test.c`; identify how the same PSS constraints become UVM randomization and C helper calls.",
+        "instructions": "Compare the generated UVM and C excerpts in the README (the full files in `solution/` unlock when you finish). Identify where each `exec body` template and each solved value from your PSS constraints appears in both targets.",
         "starterCode": ""
       }
     ],
@@ -1047,8 +1047,8 @@ export const GENERATED_LAB_MANIFESTS = [
         "id": "1",
         "version": "1",
         "completion": "self_attested",
-        "title": "Step 1: Check the Source",
-        "instructions": "Open `test.sv` and notice that the generator loop is ignoring the return value of `packet.randomize()`. The packets shown in the log will all look identical (zeros) when randomization fails.",
+        "title": "Step 1: Make the Failure Loud",
+        "instructions": "Run the starter and find the IPV6 rows: they print `Got proto: IPV4 | Length: 0` because `randomize()` failed and the fields kept their default values. In `test.sv`, check the return value of `randomize()` and call `$fatal(1, ...)` when it is 0.",
         "starterCode": ""
       },
       {
@@ -1056,7 +1056,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 2: Triage with constraint_mode",
-        "instructions": "The constraint contradiction is between the length rules and the hardware hardware limit rules. Use `pkt.c_hardware_limit.constraint_mode(0)` in your test before the `randomize()` call. Does it succeed?",
+        "instructions": "Before `randomize()`, turn off one constraint block at a time, for example `pkt.c_hardware_limit.constraint_mode(0);`. Disabling any one of `c_proto_len`, `c_payload_size` or `c_hardware_limit` lets IPV6 succeed, so all three take part in the contradiction. The spec, not the solver, decides which one is wrong.",
         "starterCode": ""
       },
       {
@@ -1064,16 +1064,16 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 3: Fix the Model",
-        "instructions": "In `packet.sv`, notice that the IPV6 length is hardcoded to 40 bytes, but 40 is not a power of two in `c_hardware_limit`! Fix `c_hardware_limit` or `c_proto_len` so an IPV6 packet can be legally generated.",
+        "instructions": "Compare each constraint in `packet.sv` with the spec excerpt at the top of the file. IPV6 needs exactly 40 bytes, but `c_hardware_limit` only allows powers of two. Rewrite `c_hardware_limit` to match the spec (multiples of 8 bytes, 8 to 256), remove the `constraint_mode(0)` line, and confirm that all six packets randomize.",
         "starterCode": ""
       }
     ],
     "assets": [
       {
         "path": "packet_buggy.sv",
-        "role": "starter",
+        "role": "reference",
         "language": "systemverilog",
-        "editable": true
+        "editable": false
       },
       {
         "path": "packet_solution.sv",
@@ -1421,7 +1421,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 1: Review the Hook",
-        "instructions": "Open `testbench.sv` and locate the `packet_driver_cb` virtual class. Find where `uvm_do_callbacks` is invoked inside the driver's `run_phase`.",
+        "instructions": "Open `testbench.sv` and locate the `packet_driver_cb` virtual class, the `uvm_do_callbacks` call inside the driver's `run_phase`, and the `a_parity_ok` checker in `packet_if`. Note which packet fields the driver reads after the hook returns.",
         "starterCode": ""
       },
       {
@@ -1429,7 +1429,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 2: Implement the Callback",
-        "instructions": "Create a class `error_inject_cb` extending `packet_driver_cb`. Override `pre_drive` to add a 10ns delay and flip the packet's parity bit.",
+        "instructions": "Create a class `error_inject_cb` extending `packet_driver_cb`. Override the function `pre_drive(packet_driver driver, packet pkt)` to set `pkt.inject_parity_error = 1` and `pkt.extra_delay_cycles = 2`.",
         "starterCode": ""
       },
       {
@@ -1437,7 +1437,7 @@ export const GENERATED_LAB_MANIFESTS = [
         "version": "1",
         "completion": "self_attested",
         "title": "Step 3: Attach in the Test",
-        "instructions": "In `my_test`, instantiate your callback and add it to the driver using `uvm_callbacks#(packet_driver, packet_driver_cb)::add()`. Run the simulation to verify the delay and corruption appear in the driver's log.",
+        "instructions": "In `my_test::connect_phase` (not `build_phase`: `env.drv` is still null there, and `add(null, cb)` would register the callback type-wide), create the callback and attach it with `uvm_callbacks#(packet_driver, packet_driver_cb)::add(env.drv, my_cb)`. Run: each of the three packets should show a `CB` message, `error=1 delay_cycles=2` in the `DRV` line, and one `PARITY_ERR` error.",
         "starterCode": ""
       }
     ],

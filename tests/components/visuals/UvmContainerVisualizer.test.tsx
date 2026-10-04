@@ -1,96 +1,76 @@
-import React from 'react';
-import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
-import UvmContainerVisualizer from '@/components/visuals/UvmContainerVisualizer';
+import React from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-describe('UvmContainerVisualizer', () => {
-  it('renders header and default uvm_pool view', () => {
+import UvmContainerVisualizer from "@/components/visuals/UvmContainerVisualizer";
+
+const runNext = () => fireEvent.click(screen.getByRole("button", { name: /run next statement/i }));
+const lockIn = (label: RegExp) => {
+  fireEvent.click(screen.getByRole("radio", { name: label }));
+  fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+};
+
+describe("UvmContainerVisualizer", () => {
+  it("uvm_pool: blocks the get() of a missing key behind a prediction, then shows the inserted entry", () => {
     render(<UvmContainerVisualizer />);
-
-    expect(screen.getByText('UVM vs Native SV Containers')).toBeInTheDocument();
-    expect(screen.getAllByText(/uvm_pool/).length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText(/Global singleton/i).length).toBeGreaterThanOrEqual(1);
+    runNext();
+    runNext();
+    expect(screen.getByRole("button", { name: /predict first/i })).toBeDisabled();
+    expect(screen.queryByText("→ n = 0")).not.toBeInTheDocument();
+    lockIn(/n = 0, and the pool is unchanged/);
+    expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Run n = err_pool\.get\("timeout"\);/ }));
+    expect(screen.getByText("→ n = 0")).toBeInTheDocument();
+    const objects = screen.getByRole("list", { name: "Container objects" });
+    expect(within(objects).getByText('"timeout"')).toBeInTheDocument();
+    runNext();
+    expect(screen.getByText("→ 2")).toBeInTheDocument();
   });
 
-  it('switches between all four container tabs', () => {
+  it("uvm_pool: delete of a missing key warns POOLDEL; the global pool is one singleton", () => {
     render(<UvmContainerVisualizer />);
-
-    // Switch to uvm_queue
-    fireEvent.click(screen.getByRole('button', { name: /uvm_queue/i }));
-    expect(screen.getByText(/parameterized FIFO/i)).toBeInTheDocument();
-
-    // Switch to SV Associative Array
-    fireEvent.click(screen.getByRole('button', { name: /SV Associative Array/i }));
-    expect(screen.getByText(/Hash-map semantics/i)).toBeInTheDocument();
-
-    // Switch to SV Queue
-    const svQueueBtns = screen.getAllByRole('button', { name: /SV Queue/i });
-    fireEvent.click(svQueueBtns[0]);
-    expect(screen.getByText(/double-ended/i)).toBeInTheDocument();
+    runNext();
+    runNext();
+    fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Run n = err_pool/ }));
+    for (let i = 0; i < 5; i += 1) runNext();
+    expect(screen.getByText(/\[POOLDEL\] delete: pool key doesn't exist/)).toBeInTheDocument();
+    expect(screen.getByText(/Same specialization, same singleton/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /program finished/i })).toBeDisabled();
+    // Try-it console: exists() never inserts.
+    fireEvent.change(screen.getByRole("combobox", { name: "Method" }), { target: { value: "exists" } });
+    fireEvent.click(screen.getByRole("button", { name: /Run \$display\(err_pool\.exists\("parity"\)\);/ }));
+    expect(screen.getAllByText(/exists\(\) only looks/).length).toBeGreaterThan(0);
   });
 
-  it('shows comparison table when Compare All is clicked', () => {
+  it("uvm_event_pool: a plain uvm_pool of events returns null and the trigger is a null access", () => {
     render(<UvmContainerVisualizer />);
-
-    fireEvent.click(screen.getByRole('button', { name: /Compare All/i }));
-
-    // Comparison table should show feature rows
-    expect(screen.getByText('Global access')).toBeInTheDocument();
-    expect(screen.getByText('Factory support')).toBeInTheDocument();
-    expect(screen.getByText('Performance')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "uvm_event_pool" }));
+    runNext();
+    runNext();
+    lockIn(/A null object access/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Run raw\.get\("dma_done"\)\.trigger\(\);/ }));
+    expect(screen.getByText(/Null object access: raw\.get\("dma_done"\) returned null/)).toBeInTheDocument();
   });
 
-  it('interactive demo adds and searches entries', () => {
+  it("uvm_queue: insert(size(), v) is ignored and compare() of different queues returns 1 (keyboard mode switch)", () => {
     render(<UvmContainerVisualizer />);
-
-    // Default entries should be visible
-    expect(screen.getByText('status')).toBeInTheDocument();
-    expect(screen.getByText('PASS')).toBeInTheDocument();
-
-    // Add a new entry
-    const inputs = screen.getAllByRole('textbox');
-    const keyInput = inputs.find(i => i.getAttribute('placeholder') === 'key')!;
-    const valInput = inputs.find(i => i.getAttribute('placeholder') === 'value')!;
-
-    fireEvent.change(keyInput, { target: { value: 'test_key' } });
-    fireEvent.change(valInput, { target: { value: 'test_val' } });
-    fireEvent.click(screen.getByTitle('Add entry'));
-
-    expect(screen.getByText('test_key')).toBeInTheDocument();
-    expect(screen.getByText('test_val')).toBeInTheDocument();
-  });
-
-  it('interactive demo searches for existing and missing keys', () => {
-    render(<UvmContainerVisualizer />);
-
-    const searchInput = screen.getByPlaceholderText('search key');
-
-    // Search for existing key — result text appears alongside existing entries
-    fireEvent.change(searchInput, { target: { value: 'status' } });
-    fireEvent.click(screen.getByTitle('Search'));
-    // 'PASS' appears both in the entry list and as search result
-    const passTexts = screen.getAllByText('PASS');
-    expect(passTexts.length).toBeGreaterThanOrEqual(2); // entry + result
-
-    // Search for missing key
-    fireEvent.change(searchInput, { target: { value: 'nonexistent' } });
-    fireEvent.click(screen.getByTitle('Search'));
-    expect(screen.getByText(/Not found/)).toBeInTheDocument();
-  });
-
-  it('interactive demo deletes entries', () => {
-    render(<UvmContainerVisualizer />);
-
-    // Verify 'PASS' exists before delete
-    expect(screen.getAllByText('PASS').length).toBeGreaterThanOrEqual(1);
-
-    // Delete the first entry via its trash button
-    const trashIcons = document.querySelectorAll('.lucide-trash-2');
-    expect(trashIcons.length).toBeGreaterThanOrEqual(1);
-    fireEvent.click(trashIcons[0].closest('button')!);
-
-    // 'PASS' should no longer appear, but 'count' should remain
-    expect(screen.queryByText('PASS')).not.toBeInTheDocument();
-    expect(screen.getByText('count')).toBeInTheDocument();
+    const group = screen.getByRole("radiogroup", { name: "Container" });
+    fireEvent.keyDown(within(group).getByRole("radio", { name: "uvm_pool" }), { key: "End" });
+    expect(within(group).getByRole("radio", { name: "uvm_queue" })).toHaveAttribute("aria-checked", "true");
+    runNext();
+    runNext();
+    runNext();
+    lockIn(/Appends 7/);
+    expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Run q\.insert\(q\.size\(\), 7\);/ }));
+    expect(screen.getByText(/\[QUEUEINS\]/)).toBeInTheDocument();
+    for (let i = 0; i < 4; i += 1) runNext();
+    expect(screen.getByText(/compare\(\) has nothing to compare and returns 1/)).toBeInTheDocument();
+    runNext();
+    expect(screen.getByText(/print\(\) shows only the object header/)).toBeInTheDocument();
+    runNext();
+    expect(screen.getByText("→ '{5, 9}")).toBeInTheDocument();
   });
 });

@@ -4,26 +4,26 @@ description: "Manipulate dynamic arrays, queues, and associative arrays with an 
 flashcards: "F2_Data_Types"
 ---
 
-import { DynamicStructureVisualizer, PacketSorterGame, QueueOperationLab, PackedUnpackedPlayground, SystemVerilog3DVisualizer } from '@/components/curriculum/f2';
+import { DynamicStructureVisualizer, PacketSorterGame, QueueOperationLab, SystemVerilog3DVisualizer } from '@/components/curriculum/f2';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
 import ArrayMethodExplorer from '@/components/visuals/ArrayMethodExplorer';
 
 ## Quick Take
-- **What it is:** SystemVerilog collections that resize (`dynamic array`), preserve order (`queue`), or map sparse keys (`associative array`).
-- **Why it matters:** Choosing the wrong structure wastes sim time, hides ordering bugs, or burns memory. The right choice keeps scoreboards and stimulus responsive when traffic spikes.
-- **The Analogy:** Dynamic arrays are expandable trays, queues are conveyor belts, associative arrays are labeled drawers. Packed vs. unpacked tells you how the bits stack inside each drawer.
-- **The Standard:** IEEE 1800-2023 §7.4–§7.10 (Arrays) and §7.12 (Array manipulation methods).
+- **What it is:** SystemVerilog collections that resize at run time (`dynamic array`), grow and shrink at either end (`queue`), or map sparse keys (`associative array`).
+- **Why it matters:** Choosing the wrong structure wastes sim time, hides ordering bugs, or burns memory. Most real bugs here are silent: a wiped array, a dropped queue entry, or a default value read from a missing key.
+- **The Analogy:** A dynamic array is a tray you replace (`new[N]`) rather than stretch. A queue is a conveyor belt, optionally with a hard end stop. An associative array is a drawer cabinet that is always sorted by label.
+- **The Standard:** IEEE 1800-2023 §7.4–§7.10 (arrays) and §7.12 (array manipulation methods).
 
 ## Build Your Mental Model
 ### Choose the Right Structure
 
-<div className="grid gap-4 md:grid-cols-3">
+<div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))]">
   <Card className="h-full bg-background">
     <CardHeader>
       <CardTitle className="text-base">Dynamic Array (§7.5)</CardTitle>
     </CardHeader>
     <CardContent className="text-sm text-muted-foreground space-y-2">
-      <p>Resizable with `new[size]` or assigned from another array. Great for buffers you re-measure mid-sim.</p>
+      <p>Sized at run time with `new[N]`. Plain `new[N]` discards the old contents; `new[N](arr)` copies them and pads with the default. There is no `push_back`, no `pop`, and no hidden capacity.</p>
       <p>Indexed access is commonly constant-time; resize cost and storage strategy are simulator implementation choices.</p>
     </CardContent>
   </Card>
@@ -32,8 +32,8 @@ import ArrayMethodExplorer from '@/components/visuals/ArrayMethodExplorer';
       <CardTitle className="text-base">Queue (§7.10)</CardTitle>
     </CardHeader>
     <CardContent className="text-sm text-muted-foreground space-y-2">
-      <p>FIFO/LIFO with `push_front/back` and `pop_front/back`. Use bounds (`[$:N]`) to model backpressure.</p>
-      <p>Middle inserts commonly cost more than end operations; measure on your simulator before optimizing hot paths.</p>
+      <p>FIFO or LIFO with `push_front/back` and `pop_front/back`. A bound `[$:N]` caps the size at N+1 elements: anything pushed past it is discarded with a warning, not blocked.</p>
+      <p>The LRM describes end operations and element access as constant-time. Middle `insert()` and `delete(i)` carry no such promise.</p>
     </CardContent>
   </Card>
   <Card className="h-full bg-background">
@@ -41,8 +41,8 @@ import ArrayMethodExplorer from '@/components/visuals/ArrayMethodExplorer';
       <CardTitle className="text-base">Associative Array (§7.8)</CardTitle>
     </CardHeader>
     <CardContent className="text-sm text-muted-foreground space-y-2">
-      <p>Sparse map keyed by integers, strings, or enums. Perfect for outstanding transactions and coverage bins.</p>
-      <p>Sparse lookup behavior is convenient; the IEEE standard does not guarantee a particular complexity or backing structure.</p>
+      <p>Sparse map keyed by integers, strings, or enums. Entries exist only once written, and iteration always follows index order: numeric, or character-code order for strings.</p>
+      <p>The IEEE standard does not prescribe hashing, a particular complexity, or a backing structure.</p>
     </CardContent>
   </Card>
 </div>
@@ -51,35 +51,92 @@ import ArrayMethodExplorer from '@/components/visuals/ArrayMethodExplorer';
 
 | Scenario | Best Choice | Why | Avoid |
 |----------|-------------|-----|-------|
-| Scoreboard tracking outstanding TXNs by ID | **Associative array** (keyed by ID) | Sparse lookup by ID and explicit cleanup with `delete()` | Dynamic array (wastes memory for sparse IDs) |
-| Driver stimulus sequence of packets | **Queue** | Preserves order, push/pop at ends, bounded for backpressure | Associative array (no ordering guarantee) |
-| Coverage bin collection (known size) | **Dynamic array** | Fixed-size after init, O(1) access | Queue (unnecessary overhead) |
-| Monitor collecting variable-length bursts | **Queue** | Unknown length, grows naturally | Dynamic array (requires explicit resize) |
-| Protocol field lookup table | **Associative array** (keyed by enum/string) | Self-documenting, sparse | Queue (wrong abstraction) |
+| Scoreboard tracking outstanding TXNs by ID | **Associative array** (keyed by ID) | Sparse lookup by ID, `exists()` checks, explicit cleanup with `delete(id)` | Dynamic array (wastes memory for sparse IDs) |
+| Driver stimulus sequence of packets | **Queue** | Preserves arrival order, push/pop at ends | Associative array (ordered by key, not by arrival) |
+| Per-lane results, lane count read from a plusarg | **Dynamic array** | `new[n_lanes]` once, then write any index in any order | Queue (writing past `size()` is an invalid index) |
+| Monitor collecting variable-length bursts | **Queue** | Unknown length, `push_back` grows it by one | Dynamic array (no `push_back`; every resize is `new[n+1](arr)`) |
+| Protocol field lookup table | **Associative array** (keyed by enum/string) | Self-documenting, sparse | Queue (linear search for every lookup) |
 
-### See Them Move
+### Run the Containers Yourself
+
+Drive each structure with real operations. Every button is the exact statement it runs, and the strip shows the result. Try the operations that surprise people most: `new[N]` on an array that already holds data, `push_back` on a dynamic array, `push_front` on a full bounded queue, and a read of a missing key. Each of these asks for your prediction first.
+
 <DynamicStructureVisualizer />
 
-- Drive each tab to watch `push_back`, `new[size]`, queue bounds, and associative lookups animate in real time.
-- The packed/unpacked tab pairs with the playground below so you can memorize index order before writing code.
+What the lab should have taught you:
 
-### Queue Ops Without the Guesswork
+- `arr = new[N]` is a fresh array: every element restarts at its type's default, which is `x` for 4-state `logic` and `0` for 2-state `int` (§7.5.1, Table 7-1). Only `arr = new[N](arr)` keeps the old values.
+- An invalid index never stops the simulation. A read returns the default value; a write does nothing. Either may warn (§7.4.5).
+- Associative arrays do not remember insertion order. `first()`, `next()` and `foreach` follow index order, and `"Gamma"` comes before `"alpha"` because uppercase letters have smaller character codes (§7.8.2).
+- Reading a missing key returns the default with a warning and does **not** create the entry; `exists()` asks without warning (§7.8.6, §7.9.3).
+
+### Bounded Queues: What Gets Thrown Away?
+
+The same program runs on `int q[$]` and on `int bq[$:N]`. Predict what the bounded queue keeps, then find the first step where the two diverge. Pay attention to which end loses an element.
+
 <QueueOperationLab />
 
-- Measure how depth and head/tail respond to `push_front`, `insert(index)`, and `pop_back()`.
-- Use the pressure indicator to decide when to assert backpressure in your driver.
+The rule (§7.10.5): every write to a bounded queue first behaves as if the queue were unbounded; then every element beyond index N is discarded and a warning is issued. So `push_back` on a full queue loses the **new** item, but `push_front` and a middle `insert()` lose the **old last** item. Nothing blocks. If you need backpressure, check `size()` yourself before you push.
 
-### Packed vs. Unpacked—Memory Walks
-<PackedUnpackedPlayground />
+### Packed vs. Unpacked: One Rule
 
-- Step through declarations like `logic [7:0] payload [0:3];` and `bit [3:0][1:0] lane_matrix [0:1];` to see which dimension advances first.
-- Carry that mental model into scoreboards so byte lanes never swap.
+Packed dimensions sit before the name; unpacked dimensions sit after it. When you index, you write the unpacked indices first, then the packed ones. In that list the rightmost index varies fastest, and every packed dimension varies faster than every unpacked one (§7.4.4). For `bit [3:0][7:0] joe [1:10];`, `joe[9]` is a 32-bit element, `joe[9][3]` is its top byte, and `joe[9][3][7]` is a single bit.
 
-### Tour the Structures in 3D
-<SystemVerilog3DVisualizer />
+Set the dimensions below, then pick indices and press **Find bit**. The 2D view lists every unpacked element as a row and its packed bits from MSB to LSB. The 3D view draws the same order, but it is a picture of index order, not of simulator memory: the LRM defines how arrays are indexed and assigned, not how they are stored.
 
-- Jump into a volumetric view of capacity, head/tail markers, hash buckets, and packed/unpacked cubes to cement the spatial model.
-- View specific scenes: [Dynamic Array](/visualizations/systemverilog-3d?scene=dynamic-array) | [Queue](/visualizations/systemverilog-3d?scene=queue) | [Associative Array](/visualizations/systemverilog-3d?scene=associative) | [Packed Matrix](/visualizations/systemverilog-3d?scene=packed-matrix)
+<SystemVerilog3DVisualizer initialScene="packed-matrix" syncSceneToUrl={false} />
+
+- The sandbox also drives the three containers in 3D: [Dynamic Array](/visualizations/systemverilog-3d?scene=dynamic-array) | [Queue](/visualizations/systemverilog-3d?scene=queue) | [Associative Array](/visualizations/systemverilog-3d?scene=associative) | [Packed Matrix](/visualizations/systemverilog-3d?scene=packed-matrix)
+
+<VisualRecap
+  title="Three containers, three rules"
+  rule="A dynamic array changes size only through new[] (destructive) or new[N](arr) (copy, then pad with defaults). A queue grows at either end, and a [$:N] bound discards whatever lands past index N, with a warning. An associative array has entries only for written keys and always iterates in index order."
+  code={`logic [7:0] mem[];  mem = new[6](mem);     // keep old, pad with 8'hxx
+int q[$:3];         q.push_front(9);       // full? the old q[3] is discarded
+int aa[string];     if (aa.exists("k")) v = aa["k"];  // no warning, no default`}
+  mistake="Writing arr = new[N] when you meant arr = new[N](arr) silently wipes the data, and calling push_back on a dynamic array does not compile. Both come from treating a dynamic array like a C++ vector."
+  inTestbench="Monitors collect into queues, scoreboards key expected items by ID in associative arrays, and buffers sized from configuration use dynamic arrays."
+>
+  <svg viewBox="0 0 320 200" role="img" aria-label="Three strips. Dynamic array after new[6](mem): 0, 10, 20, 30, x, x. Bounded queue int q[$:3] after push_front(9): 9, 1, 2, 3; the old 4 is discarded past the bound. Associative array with string keys iterates Gamma, alpha, beta in index order." style={{ width: "100%", maxWidth: 360 }}>
+    <text x="8" y="14" fontSize="10" fill="currentColor" fillOpacity="0.75">{"mem = new[6](mem) · dynamic array"}</text>
+    <rect x="8" y="22" width="36" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="26" y="38" fontSize="11" textAnchor="middle" fill="currentColor">0</text>
+    <rect x="48" y="22" width="36" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="66" y="38" fontSize="11" textAnchor="middle" fill="currentColor">10</text>
+    <rect x="88" y="22" width="36" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="106" y="38" fontSize="11" textAnchor="middle" fill="currentColor">20</text>
+    <rect x="128" y="22" width="36" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="146" y="38" fontSize="11" textAnchor="middle" fill="currentColor">30</text>
+    <rect x="168" y="22" width="36" height="24" rx="4" fill="rgba(244,63,94,0.12)" stroke="rgb(244,63,94)" strokeDasharray="3 2" />
+    <text x="186" y="38" fontSize="11" textAnchor="middle" fill="currentColor">x</text>
+    <rect x="208" y="22" width="36" height="24" rx="4" fill="rgba(244,63,94,0.12)" stroke="rgb(244,63,94)" strokeDasharray="3 2" />
+    <text x="226" y="38" fontSize="11" textAnchor="middle" fill="currentColor">x</text>
+    <text x="250" y="38" fontSize="9" fill="currentColor" fillOpacity="0.75">← padded</text>
+    <text x="8" y="76" fontSize="10" fill="currentColor" fillOpacity="0.75">q.push_front(9) on a full int q[$:3]</text>
+    <rect x="8" y="84" width="36" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="26" y="100" fontSize="11" textAnchor="middle" fill="currentColor">9</text>
+    <rect x="48" y="84" width="36" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="66" y="100" fontSize="11" textAnchor="middle" fill="currentColor">1</text>
+    <rect x="88" y="84" width="36" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="106" y="100" fontSize="11" textAnchor="middle" fill="currentColor">2</text>
+    <rect x="128" y="84" width="36" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="146" y="100" fontSize="11" textAnchor="middle" fill="currentColor">3</text>
+    <line x1="170" y1="78" x2="170" y2="114" stroke="rgb(245,158,11)" strokeWidth="2" />
+    <text x="160" y="124" fontSize="9" fill="currentColor">$:3</text>
+    <rect x="178" y="84" width="36" height="24" rx="4" fill="none" stroke="rgb(244,63,94)" strokeDasharray="3 2" />
+    <text x="196" y="100" fontSize="11" textAnchor="middle" fill="currentColor" textDecoration="line-through">4</text>
+    <text x="220" y="100" fontSize="10" fill="currentColor">✕ discarded</text>
+    <text x="8" y="140" fontSize="10" fill="currentColor" fillOpacity="0.75">int aa[string] · first(), next(), foreach</text>
+    <rect x="8" y="148" width="64" height="24" rx="4" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+    <text x="40" y="164" fontSize="11" textAnchor="middle" fill="currentColor">"Gamma"</text>
+    <rect x="76" y="148" width="64" height="24" rx="4" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+    <text x="108" y="164" fontSize="11" textAnchor="middle" fill="currentColor">"alpha"</text>
+    <rect x="144" y="148" width="64" height="24" rx="4" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+    <text x="176" y="164" fontSize="11" textAnchor="middle" fill="currentColor">"beta"</text>
+    <text x="214" y="164" fontSize="10" fill="currentColor">index order →</text>
+    <text x="8" y="194" fontSize="9.5" fill="currentColor" fillOpacity="0.75">Defaults: logic → x, int → 0. Order: by index, never by insertion.</text>
+  </svg>
+</VisualRecap>
 
 ## Code Patterns You'll Use Daily
 
@@ -90,62 +147,70 @@ import ArrayMethodExplorer from '@/components/visuals/ArrayMethodExplorer';
 logic [7:0] buffer [];
 
 initial begin
-  buffer = new[4];           // Allocate 4 elements
+  buffer = new[4];           // 4 elements, each 8'hxx (logic is 4-state)
   foreach (buffer[i]) buffer[i] = i * 10;
 
-  buffer = new[8](buffer);   // Grow to 8, PRESERVE first 4 elements
-  // buffer[0..3] = {0, 10, 20, 30}, buffer[4..7] = {0, 0, 0, 0}
+  buffer = new[8](buffer);   // Grow to 8, PRESERVE the first 4 elements
+  // buffer[0..3] = {0, 10, 20, 30}, buffer[4..7] = {8'hxx, 8'hxx, 8'hxx, 8'hxx}
 
   buffer = new[2](buffer);   // Shrink to 2, TRUNCATES
   // buffer = {0, 10} — elements [2..7] are LOST
 
-  buffer.delete();            // Free all memory; buffer.size() == 0
+  buffer.delete();           // Empty the array; buffer.size() == 0
 end
 ```
 
 > [!WARNING]
-> **Common bug:** `buffer = new[8]` without the copy argument `(buffer)` allocates a fresh array and **discards all existing data**. Always pass the old array when growing.
+> **Common bug:** `buffer = new[8]` without the initializer `(buffer)` allocates a fresh array and **discards all existing data** (§7.5.1). Pass the old array whenever you resize and want to keep its contents. New slots get the type default: `x` for 4-state types such as `logic`, `0` for 2-state types such as `int`.
 
-### Queue — Bounded Backpressure
+### Queue — Bounded Buffer With Your Own Backpressure
 
 ```systemverilog
-// IEEE 1800-2023 §7.10
+// IEEE 1800-2023 §7.10, §7.10.5
 typedef struct { int id; bit [31:0] data; } txn_t;
 
-txn_t pending_q [$:63];  // indices 0..63: at most 64 entries
+txn_t pending_q [$:63];  // bound 63 is the last legal index: at most 64 entries
 
-task enqueue(txn_t t);
-  if (pending_q.size() >= 64) begin
-    `uvm_warning("BACKPRESSURE", $sformatf("Queue full, dropping TXN id=%0d", t.id))
-    return;
+function automatic bit enqueue(txn_t t);
+  if (pending_q.size() == 64) begin
+    $warning("Queue full, dropping TXN id=%0d", t.id);  // your message, with context
+    return 0;
   end
-  pending_q.push_back(t);
-endtask
+  pending_q.push_back(t);  // without the check, a 65th item is discarded with only a tool warning
+  return 1;
+endfunction
 
-task dequeue(output txn_t t);
-  wait (pending_q.size() > 0);  // Block until something arrives
+task automatic dequeue(output txn_t t);
+  wait (pending_q.size() > 0);  // queues never block on their own
   t = pending_q.pop_front();
 endtask
 ```
 
 > [!TIP]
-> **Performance insight:** Simulators commonly optimize queue operations at the ends, while middle insertion often requires more work. SystemVerilog specifies behavior, not algorithmic complexity; profile the target simulator before relying on a cost model.
+> **Performance:** §7.10 describes a queue as supporting constant-time insertion and removal at either end and constant-time access to every element. It promises nothing for `insert()` or `delete(i)` in the middle, which simulators typically implement by moving elements. Profile before you build a hot path on them.
 
 ### Associative Array — Transaction Tracking
 
 ```systemverilog
-// IEEE 1800-2023 §7.8 — associative array with int key
+// IEEE 1800-2023 §7.8, §7.9 — associative array with int key
 class scoreboard extends uvm_component;
-  txn_t expected_txns [int];  // Keyed by transaction ID
+  `uvm_component_utils(scoreboard)
+  txn_t expected_txns [int];  // keyed by transaction ID
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
 
   function void add_expected(txn_t t);
-    if (expected_txns.exists(t.id))
+    if (expected_txns.exists(t.id)) begin
       `uvm_error("DUPE", $sformatf("TXN id=%0d already pending", t.id))
+      return;                     // keep the original expectation
+    end
     expected_txns[t.id] = t;
   endfunction
 
   function void check_actual(txn_t actual);
-    if (!expected_txns.exists(actual.id)) begin
+    if (!expected_txns.exists(actual.id)) begin   // exists() never warns
       `uvm_error("UNEXPECTED", $sformatf("TXN id=%0d not in expected map", actual.id))
       return;
     end
@@ -153,7 +218,7 @@ class scoreboard extends uvm_component;
     expected_txns.delete(actual.id);  // Clean up after match
   endfunction
 
-  function void report_phase(uvm_phase phase);
+  function void check_phase(uvm_phase phase);
     if (expected_txns.num() > 0)
       `uvm_error("LEAK", $sformatf("%0d unmatched TXNs remain", expected_txns.num()))
   endfunction
@@ -161,134 +226,153 @@ endclass
 ```
 
 > [!IMPORTANT]
-> **Memory leak pattern:** If you never `delete()` matched entries, the associative array grows unbounded during long regressions, consuming gigabytes. Always clean up completed transactions.
+> **Memory leak pattern:** If you never `delete()` matched entries, the associative array grows without bound during long regressions. Always clean up completed transactions. And never read `expected_txns[id]` for an ID that might be missing: you get a default-valued struct and a warning, not an error (§7.8.6).
 
 ### Array Manipulation Methods
 
 ```systemverilog
-// IEEE 1800-2023 §7.12 — built-in array methods
-int data_q [$] = '{3, 1, 4, 1, 5, 9, 2, 6};
+// IEEE 1800-2023 §7.12
+module array_methods_demo;
+  int       data_q [$] = '{3, 1, 4, 1, 5, 9, 2, 6};  // module scope: initializers allowed
+  bit [7:0] bytes  [$] = '{200, 100};
+  int       total;
+  int       idx [$], mx [$], uniq [$];
 
-// Reduction
-int total = data_q.sum();        // 31
-int product = data_q.product();  // 6480
+  initial begin
+    // Reductions return the element type, or the type of the with expression (§7.12.3)
+    total = data_q.sum();                        // 31
+    total = bytes.sum();                         // 44: 300 wraps to 8 bits BEFORE it reaches total
+    total = bytes.sum() with (int'(item));       // 300
+    total = data_q.sum() with (int'(item > 4));  // 3: counts matches
 
-// Searching
-int indices [$] = data_q.find_index with (item > 4);  // '{4, 5, 7}
-int first_big_q [$] = data_q.find_first with (item > 4);
-if (first_big_q.size() != 0)
-  $display("First item greater than four: %0d", first_big_q[0]);
+    // Locators always return a queue, even for one value (§7.12.1)
+    idx  = data_q.find_index with (item > 4);    // '{4, 5, 7}
+    mx   = data_q.max();                         // '{9}   (int m = data_q.max(); does not compile)
+    uniq = data_q.unique();                      // one copy of each value; order unspecified
 
-// Ordering
-data_q.sort();                   // '{1, 1, 2, 3, 4, 5, 6, 9}
-data_q.rsort();                  // '{9, 6, 5, 4, 3, 2, 1, 1}
-data_q.shuffle();                // Random permutation
-data_q.reverse();                // Reverse in place
-
-// Unique
-int uniq [$] = data_q.unique();  // Remove duplicates
+    // Ordering methods are void, work in place, and are illegal on associative arrays (§7.12.2)
+    data_q.sort();                               // '{1, 1, 2, 3, 4, 5, 6, 9}
+    data_q.rsort();                              // '{9, 6, 5, 4, 3, 2, 1, 1}
+    data_q.reverse();                            // '{1, 1, 2, 3, 4, 5, 6, 9}
+    data_q.shuffle();                            // random permutation
+  end
+endmodule
 ```
+
+Now predict before you look. Pick a method and a `with` clause, commit to an answer, and check the return type the explorer reports. Try `sum()` on `bit [7:0]` first, then `max()`, then `sort()` on `data[string]`.
+
+<ArrayMethodExplorer />
 
 ## Deeper Understanding
 
 ### Common Implementation Characteristics by Structure
 
-The table below is a practical rule of thumb, not an IEEE language guarantee. Simulators may choose different storage and lookup algorithms.
+Only the queue rows marked † are described by the LRM (§7.10). Everything else is a rule of thumb about typical simulators, not an IEEE guarantee.
 
 | Operation | Dynamic Array | Queue | Associative Array |
 |-----------|:---:|:---:|:---:|
-| Random access `[i]` | O(1) | O(1) | O(log N) or O(1) amortized |
-| `push_back` / `push_front` | N/A (must resize) | O(1) | N/A |
+| Random access `[i]` | O(1) | O(1) † | O(log N) or O(1) amortized |
+| `push_back` / `push_front` | N/A (no such method) | O(1) † | N/A |
 | `insert(mid)` | N/A | O(N) | N/A |
 | `delete(key)` | N/A | O(N) | O(1) amortized |
 | Resize / `new[N]` | O(N) copy | N/A | N/A |
 | Memory overhead | Often low | Implementation-dependent | Implementation-dependent |
-| `foreach` iteration | O(N) | O(N) | O(N) sorted order |
+| `foreach` iteration | O(N) | O(N) | O(N), index order |
 
 ### Corner Cases Interviewers Love
 
 1. **What happens if you pop from an empty queue?**
-   The simulator returns the default value for the element type and may issue a warning (simulator-dependent behavior, not defined in the LRM). Always check `size() > 0` before popping.
+   §7.10.2.4 and §7.10.2.5 define it: the call returns the value Table 7-1 gives for a nonexistent entry (`'0` for `int`, `'x` for `logic`), leaves the queue unchanged, and may issue a warning. Nothing stops, so check `size() > 0` before popping.
 
 2. **Can a dynamic array hold classes?**
-   Yes. `my_class handles [];` is valid. But be careful — `new[N]` creates N null handles, not N objects. You must `new()` each element individually.
+   Yes. `my_class handles [];` is valid. But `new[N]` creates N null handles, not N objects (the default for a class is `null`). You must `new()` each element individually.
 
 3. **What is the iteration order of an associative array?**
-   When using `foreach` or `first()`/`next()`, iteration follows the key's sort order (ascending for int/string keys). This is guaranteed by IEEE 1800-2023 §7.8.
+   `foreach`, `first()` and `next()` follow index order: signed or unsigned numeric order for integral keys (§7.8.4) and lexicographic character-code order for strings, so `"Zed"` comes before `"apple"` (§7.8.2). Insertion order is not kept.
 
 4. **Can you assign a queue to a dynamic array?**
-   Yes — SystemVerilog allows assignment between compatible array types (IEEE 1800-2023 §7.4). `int da []; int q [$] = '{1,2,3}; da = q;` works and creates a dynamic array with 3 elements.
+   Yes. A queue, dynamic array or fixed-size array of equivalent element type is assignment compatible, and a dynamic-array or queue target is resized to the source (§7.6). `int da []; int q [$] = '{1,2,3}; da = q;` leaves `da` with 3 elements. Associative arrays are the exception: they only assign to associative arrays (§7.9.9).
 
 5. **What is a bounded queue and when should you use one?**
-   Declared as `type q [$:N]`. It limits maximum size. Use it to model hardware FIFOs with fixed depth, or to add backpressure to testbench components. Pushing beyond the bound is implementation-defined — always check size first.
+   Declared as `type q [$:N]`, it holds at most N+1 elements. §7.10.5 defines overflow: after any write, elements beyond the bound are discarded and a warning is issued. `push_back` on a full queue loses the new element, while `push_front` loses the old last one. Use a bound to model a fixed-depth FIFO, and still check `size()` when you need to count or report drops yourself.
 
 ## Make It Work
-- Pre-size dynamic arrays when you know the target (`new[size]`) to avoid silent copies during hot paths.
-- Guard queues with bounds and logs so overflow becomes an intentional backpressure event, not a mystery performance cliff.
-- Use associative arrays for sparse spaces (transaction IDs, addresses) and delete keys when work completes.
-- Double-check packed vs. unpacked ordering before slicing signals for serializers or coverage bins.
 
-<ArrayMethodExplorer />
+A checklist for every container you declare:
+
+1. **Unknown count, ordered:** use a queue and `push_back`. **Count known at run time, random writes:** a dynamic array sized once with `new[N]`. **Sparse keys:** an associative array.
+2. **Resize to keep data** only with `arr = new[N](arr)`. Plain `new[N]` wipes the array.
+3. **A bound is not backpressure.** `[$:N]` discards and warns. If the producer must wait or count drops, check `size()` before you push.
+4. **Never read an associative array blindly.** Call `exists()` first, or declare a default such as `int hits[string] = '{default: 0};` so missing keys read as 0 without a warning (§7.9.11).
+5. **Capture locator results in a queue** (`int r[$] = q.max();`) and **cast inside `with`** whenever a sum can outgrow the element type.
+6. **Delete matched scoreboard entries** and check `num()` at the end of the test.
+
+## Push Further
+
+- **Never resize what you are iterating.** If a dynamic array, queue or associative array changes size inside a `foreach` over it, the results are undefined (§12.7.3). Collect the keys first, then delete: `int done[$] = exp.find_index with (item.matched); foreach (done[i]) exp.delete(done[i]);`. For an associative array, `find_index` returns a queue of the index type (§7.12.1).
+- **Queues of class handles store handles, not copies.** A monitor that reuses one transaction object and pushes it every cycle fills the queue with the same handle, so every entry shows the last value (§8.4, §8.12). Create or clone a new object per item before `push_back`.
+- **Defaults change the warning story.** An associative array declared with `'{default: v}` returns `v` for a missing key without a warning (§7.9.11), and `a[k]++` on a missing key allocates the entry with that default first (§7.8.7). That is the idiom for hit counters.
+- **What the models above do not cover:** iterator and index arguments (`find(x) with (x.id > 4)`), struct elements, multidimensional dynamic arrays, and wildcard `[*]` indices. Use a simulator for those.
 
 ## Practice & Reinforce
-- Apply the structures inside the **PacketSorterGame**—choose the best fit, earn XP, and read the rationale after every scenario.
+Six scenarios, one container each. Answer before you read the options twice: the feedback explains every wrong choice, and the score is simply how many you got right.
 
 <PacketSorterGame />
 
-- Drill built-in methods: `find()` for associative arrays, `sum()/sort()` for queues and dynamic arrays, and `insert/delete` when you truly need middle edits.
+- Drill built-in methods: `find_index()` on associative arrays (it returns keys), `sum() with (int'(item))` on narrow element types, and `sort()` only on queues, dynamic and fixed-size arrays.
 
 ## Interview Questions
 
-<Card className="mt-8 border-slate-700 bg-slate-900">
+<Card className="mt-8">
   <CardHeader>
     <CardTitle>Ready for the Interview?</CardTitle>
   </CardHeader>
   <CardContent className="space-y-4">
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        Compare dynamic arrays, queues, and associative arrays. When would you use each in a UVM testbench?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">Compare dynamic arrays, queues, and associative arrays. When would you use each in a UVM testbench?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
         <p><strong>Dynamic arrays</strong> (IEEE 1800-2023 §7.5): use when size is known after construction and random access is needed (e.g., pre-built stimulus sequences, coverage bins).</p>
-        <p><strong>Queues</strong> (§7.10): use for FIFO/LIFO ordering with efficient push/pop (e.g., driver stimulus queues, monitor output buffers). Bounded queues model hardware FIFO depth.</p>
+        <p><strong>Queues</strong> (§7.10): use for FIFO/LIFO ordering with constant-time push/pop at the ends (e.g., driver stimulus queues, monitor output buffers). A bounded queue <code>[$:N]</code> models a fixed depth, but it discards overflow with a warning rather than applying backpressure.</p>
         <p><strong>Associative arrays</strong> (§7.8): use for sparse key-value lookup (e.g., scoreboard tracking outstanding TXNs by ID, config DB implementations). Always delete completed entries to avoid memory leaks.</p>
       </div>
     </details>
 
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        What is the performance difference between queue push_back vs. insert in the middle?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">What is the performance difference between queue push_back vs. insert in the middle?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p>Many simulators make <code>push_back()</code> and <code>push_front()</code> cheaper than middle insertion, but the LRM does not mandate an algorithm or complexity bound.</p>
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
+        <p>§7.10 describes queue insertion and removal at either end, and access to any element, as constant-time. It says nothing about <code>insert()</code> in the middle, which simulators typically implement by moving elements, so expect it to scale with queue length.</p>
         <p>In a scoreboard processing millions of transactions, mid-queue inserts can become a simulation bottleneck. If you need ordered insertion, consider an associative array with a sortable key instead.</p>
       </div>
     </details>
 
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        Your regression slows down over time and eventually runs out of memory. The scoreboard uses an associative array. What's the likely cause?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">Your regression slows down over time and eventually runs out of memory. The scoreboard uses an associative array. What's the likely cause?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p>The associative array is never cleaned up — matched or timed-out entries aren't being <code>delete()</code>'d. Over millions of transactions, the hash table grows unbounded, consuming memory and slowing lookups.</p>
-        <p><strong>Fix:</strong> Call <code>expected_txns.delete(id)</code> after every successful comparison. Add a <code>report_phase()</code> check that flags non-zero <code>.num()</code> as an error. For very long tests, consider periodic garbage collection sweeps that timeout old entries.</p>
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
+        <p>The associative array is never cleaned up — matched or timed-out entries aren't being <code>delete()</code>'d. Over millions of transactions the array grows without bound, consuming memory and slowing every lookup and iteration.</p>
+        <p><strong>Fix:</strong> Call <code>expected_txns.delete(id)</code> after every successful comparison. Add a <code>check_phase()</code> check that flags non-zero <code>.num()</code> as an error. For very long tests, periodically sweep and delete entries that have timed out, collecting their keys first so you never delete inside a <code>foreach</code> over the same array.</p>
       </div>
     </details>
 
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        How do array manipulation methods like find_index, sort, and sum work? Give a practical verification use case.
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">How do array manipulation methods like find_index, sort, and sum work? Give a practical verification use case.</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p>IEEE 1800-2023 §7.12 defines built-in methods on all unpacked arrays:</p>
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
+        <p>IEEE 1800-2023 §7.12 defines three families. Locator and reduction methods work on any unpacked array; ordering methods work on every unpacked array except associative arrays.</p>
         <ul className="list-disc pl-5 mt-2 space-y-1">
-          <li><code>find_index with (item &gt; threshold)</code> — returns indices matching a predicate. Use in coverage analysis to find which bins are uncovered.</li>
-          <li><code>sort()</code> / <code>rsort()</code> — in-place ordering. Use to normalize transaction queues before comparison in an out-of-order scoreboard.</li>
-          <li><code>sum()</code> — reduction. Use to compute expected checksum from a packet payload array.</li>
+          <li><code>find_index with (item &gt; threshold)</code> — returns a <em>queue</em> of matching indices (keys, for an associative array). Use in coverage analysis to find which bins are uncovered. <code>min()</code>, <code>max()</code> and <code>unique()</code> also return queues.</li>
+          <li><code>sort()</code> / <code>rsort()</code> — void, in-place ordering. Use to normalize transaction queues before comparison in an out-of-order scoreboard.</li>
+          <li><code>sum()</code> — reduction whose result has the element type. Summing a byte payload for a checksum needs <code>sum() with (int'(item))</code>, or it wraps at 8 bits.</li>
         </ul>
       </div>
     </details>
@@ -296,5 +380,5 @@ The table below is a practical rule of thumb, not an IEEE language guarantee. Si
 </Card>
 
 ## References & Next Topics
-- IEEE 1800-2023 §7.4–§7.12 (Arrays, queues, associative arrays, array methods)
+- IEEE 1800-2023 §7.4 (packed and unpacked arrays, Table 7-1), §7.5 (dynamic arrays), §7.6 (array assignment), §7.8–§7.9 (associative arrays), §7.10 (queues), §7.12 (array manipulation methods), §12.7.3 (`foreach`)
 - Next: [Procedural Code and Flow Control](../F2C_Procedural_Code_and_Flow_Control/)

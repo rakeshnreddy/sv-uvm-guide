@@ -7,33 +7,34 @@ flashcards: "I-SV-1_OOP"
 import { InteractiveCode, Quiz, InterviewQuestionPlayground } from '@/components/ui';
 
 ## Quick Take
-- **What it is:** Object-Oriented Programming (OOP) wraps data and behavior into classes so we can spawn many tailored verification objects from a single blueprint.
-- **Why it matters:** UVM is built entirely on OOP. Without classes, inheritance, and polymorphism, you cannot create reusable drivers, sequences, or factories that scale across projects.
-- **The Analogy:** Think of a high-end kitchen. A **class** is your recipe card; an **object** is the plated dish. **Inheritance** tweaks the base recipe (vegan, gluten-free) while **polymorphism** lets the same chef robot cook any variant as long as it knows the recipe interface.
+- **What it is:** A **class** is a type that bundles data and methods. `new` creates an **object** of that class. A class variable never holds the object itself: it holds a **handle** that refers to the object, or `null`.
+- **Why it matters:** UVM is built from classes. Most OOP bugs in a testbench are handle bugs: two names for one object, a copy that still shares a nested object, a scoreboard that stores an item the monitor later overwrites, or a call through a handle that was never constructed.
+- **The picture to keep:** **a handle is an arrow, not the box.** Assignment copies the arrow. `new` builds a box. When no arrow reaches a box any more, SystemVerilog reclaims it for you.
+- **The Analogy:** A handle is a house address written on a card. Copying the card gives you two cards and still one house. Repainting the house through either card changes the one house.
 
 > **Note:** Mastering OOP is the gatekeeper skill between procedural benches and professional-grade UVM environments.
 > *SystemVerilog OOP is formally defined in **IEEE 1800-2023, Clause 8: Classes**.*
 
-### Foundation Refresh (from Tier 1)
-- **Class vs. object vs. handle:** the class defines the blueprint, `new()` creates the object in memory, and the handle is the remote control you store in variables.
-- **Constructors:** add a `function new()` to seed default field values so every object starts sane.
-- **Random-ready properties:** mark fields with `rand` and call `.randomize()` to generate stimulus; guide it with `constraint` blocks (`a != 0; b < 10;`).
-- **Memory hook:** remember *Instantiate → Drive → Check*—now you’ll wrap each step in classes instead of raw tasks. If these ideas feel rusty, revisit the Tier-1 spotlight embedded in `F2A_Data_Types_and_Arrays` before continuing.
+### Before you start
+- Tier 1 only previewed a class. This module is where classes, objects and handles are taught properly, so you do not need prior OOP experience.
+- You do need procedural code (`initial`, tasks and functions) and queues. If those feel rusty, revisit [`F2A_Core_Data_Types`](../../T1_Foundational/F2A_Core_Data_Types/) and [`F2B_Dynamic_Structures`](../../T1_Foundational/F2B_Dynamic_Structures/).
+- Keep the Tier 1 rhythm *Instantiate → Drive → Check*. From here on, each step becomes a class.
 
 ## Build Your Mental Model
-### Visual Blueprint
-<div className="my-8 glass-card glow-border px-6 py-8">
-  <Image
-    src="/visuals/oop-blueprint.svg"
-    alt="Diagram showing base packet, specialized packet, and polymorphic driver"
-    width={720}
-    height={360}
-    sizes="(min-width: 1024px) 720px, 100vw"
-    className="w-full"
-  />
-</div>
 
-### Classes & Objects – Creating Blueprints
+### A handle is an arrow, not the box
+
+Three rules explain almost every handle bug you will meet:
+
+1. Declaring `packet p1;` creates a variable that holds a handle. Its initial value is `null`; no object exists yet (§8.4, §8.12).
+2. `p1 = new;` allocates an object, initializes its properties, then runs the constructor (§8.7). Only then does `p1` refer to something.
+3. `p2 = p1;` copies the handle. There is still one object, now reachable through two names (§8.12).
+
+Step through the code below and watch the arrows. Before each key line the visual asks you to predict, and it hides the result until you commit. Then switch to **null & garbage** and **static count**.
+
+<ObjectHandleVisualizer scenario="aliasing" scenarios={["aliasing", "null-and-garbage", "static-count"]} />
+
+### Classes and objects: blueprint, object, handle
 <InteractiveCode>
 ```systemverilog
 // Blueprint for a reusable transaction
@@ -46,18 +47,70 @@ class BasePacket;
   endfunction
 endclass
 
-program demo;
+module demo;
+  BasePacket pkt1, pkt2;   // two handles, both null
+
   initial begin
-    BasePacket pkt1 = new();
-    BasePacket pkt2 = new();
+    pkt1 = new();          // one object
+    pkt2 = pkt1;           // still one object, two names
     void'(pkt1.randomize());
-    pkt1.print();
+    pkt2.print();          // prints the values pkt1 just randomized
   end
-endprogram
+endmodule
 ```
 </InteractiveCode>
 
-### Encapsulation – Guard the Internals
+Declare the handle first and call `new` as a statement. Writing `BasePacket p = new();` inside an `initial` block of an ordinary module or program is illegal: a static variable with an initializer needs an explicit `static` or `automatic` keyword (§6.21). With `static`, the `new` runs only once at time zero, which surprises people inside loops.
+
+### Static members: one box for the whole class
+
+A `static` property exists once per class, not once per object, and it exists before any object is created (§8.9). Every handle, and the class scope `packet::count`, names the same storage. A `static` method behaves like an ordinary subroutine scoped inside the class: it has no `this`, can only touch static members, and cannot be virtual (§8.10).
+
+<InteractiveCode>
+```systemverilog
+class packet;
+  static int count = 0;   // shared by every packet (§8.9)
+  int id;
+
+  function new();
+    count++;              // runs once per new, never for a shallow copy
+    id = count;
+  endfunction
+
+  static function int created();  // no object needed (§8.10)
+    return count;
+  endfunction
+endclass
+
+module demo;
+  packet a, b, c;
+  initial begin
+    a = new;
+    b = new;
+    c = new a;            // shallow copy: the constructor does not run (§8.12)
+    $display("%0d %0d %0d", packet::count, packet::created(), c.id);  // 2 2 1
+  end
+endmodule
+```
+</InteractiveCode>
+
+You already rely on this in UVM: `my_driver::type_id::create("drv", this)` calls a static function of a registry class, without any object in hand.
+
+### Object lifetime and null handles
+
+- **Lifetime is automatic.** An object lives as long as some handle in an active scope can reach it, directly or through other objects. When none can, it becomes unreachable and is eligible for reclamation (§8.29). There is no `delete` or `free` for class objects.
+- **Null is the default.** Every class variable starts as `null`. Test with `if (h == null)` (§8.4).
+- **Calling through null is illegal.** Touching a non-static member or calling a virtual method through a null handle is illegal; the result is indeterminate and simulators stop with a null-object access error (§8.4). Static members stay reachable through a null handle.
+- **Where null handles come from in a testbench:** a missing `new` or `type_id::create`, a `uvm_config_db::get` that found nothing, or a `$cast` called as a function whose return value was ignored.
+
+```systemverilog
+if (cfg == null)
+  $fatal(1, "cfg was never constructed or never set in config_db");
+```
+
+The 2023 standard also adds `weak_reference#(T)` (§8.30), a reference that does not keep its object alive. Check that your simulator supports it before you use it.
+
+### Encapsulation: guard the internals
 <InteractiveCode>
 ```systemverilog
 class CrcPacket;
@@ -74,9 +127,9 @@ class CrcPacket;
 endclass
 ```
 </InteractiveCode>
-Encapsulation hides implementation details (`crc`) while exposing intent (`calculate_crc`, `get_crc`). This prevents careless external writes and keeps APIs clean.
+Encapsulation hides implementation details (`crc`) while exposing intent (`calculate_crc`, `get_crc`). `local` members are visible only inside the class; `protected` members are also visible to subclasses (§8.18). This prevents careless external writes and keeps APIs clean.
 
-### Inheritance & Polymorphism – Specialize Without Rewrite
+### Inheritance and polymorphism: specialize without rewriting
 <InteractiveCode>
 ```systemverilog
 class BasePacket;
@@ -88,7 +141,7 @@ endclass
 class EthernetPacket extends BasePacket;
   rand bit [47:0] dst_mac;
 
-  function void pack();
+  function void pack();   // still virtual: inherited from BasePacket (§8.20)
     $display("[EthernetPacket] packing MAC=%h", dst_mac);
   endfunction
 endclass
@@ -101,49 +154,166 @@ endclass
 
 class GenericDriver;
   task run(BasePacket pkt);
-    pkt.pack(); // resolves to the concrete implementation
+    pkt.pack(); // resolves to the object's implementation
   endtask
 endclass
 ```
 </InteractiveCode>
-A single `GenericDriver` talks to any `BasePacket` descendant—exactly how UVM drivers use `uvm_sequence_item` handles.
+A single `GenericDriver` talks to any `BasePacket` descendant, exactly as UVM drivers use `uvm_sequence_item` handles.
+
+Which `pack()` runs depends on two things you can see in the code: the handle's declared class and whether the method is `virtual`. Try a `base_txn` handle holding a `bad_crc_txn` object, predict, then make `describe()` non-virtual and predict again.
+
+<PolymorphismDispatchVisualizer section="dispatch" />
+
+<VisualRecap
+  title="A handle is an arrow, not the box"
+  rule="A class variable holds a handle. Assignment copies the handle; new builds an object; new h builds a shallow copy that still shares nested objects; only your own copy() or clone() duplicates them. An object that no handle reaches is reclaimed automatically."
+  code={`p2 = p1;               // copy the arrow: one object, two names
+p2 = new p1;           // shallow copy: new box, nested objects shared
+p3 = new; p3.copy(p1); // deep copy: user-written
+p1 = null;             // drop an arrow; no delete exists`}
+  mistake="Storing a handle (in a queue, a mailbox, or an analysis write) and then reusing the same object: every stored entry changes with it."
+  inTestbench="A monitor constructs a new item for every transaction it publishes. Anything that keeps an item it did not create stores a copy (clone in UVM)."
+>
+  <svg viewBox="0 0 320 150" role="img" aria-label="Two handles p1 and p2 point to one packet object, whose hdr handle points to a header object. A third object with no arrow is dashed and marked eligible for garbage collection." style={{ width: "100%", maxWidth: 360 }}>
+    <defs>
+      <marker id="recap-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="rgb(8,145,178)" />
+      </marker>
+    </defs>
+    <rect x="6" y="14" width="56" height="22" rx="11" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="16" y="29" fontSize="11" fontFamily="monospace" fill="currentColor">p1</text>
+    <rect x="6" y="50" width="56" height="22" rx="11" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="16" y="65" fontSize="11" fontFamily="monospace" fill="currentColor">p2</text>
+    <path d="M 56 25 C 80 25, 84 34, 104 34" fill="none" stroke="rgb(8,145,178)" strokeWidth="1.5" markerEnd="url(#recap-arrow)" />
+    <path d="M 56 61 C 80 61, 84 40, 104 40" fill="none" stroke="rgb(8,145,178)" strokeWidth="1.5" markerEnd="url(#recap-arrow)" />
+    <rect x="104" y="18" width="104" height="58" rx="4" fill="rgba(99,102,241,0.1)" stroke="rgb(99,102,241)" />
+    <text x="110" y="33" fontSize="11" fontFamily="monospace" fontWeight="bold" fill="currentColor">packet@1</text>
+    <text x="110" y="50" fontSize="10.5" fontFamily="monospace" fill="currentColor">id = 7</text>
+    <text x="110" y="66" fontSize="10.5" fontFamily="monospace" fill="currentColor">hdr</text>
+    <path d="M 200 62 C 222 62, 220 34, 236 34" fill="none" stroke="rgb(8,145,178)" strokeWidth="1.5" markerEnd="url(#recap-arrow)" />
+    <rect x="236" y="22" width="78" height="38" rx="4" fill="rgba(99,102,241,0.1)" stroke="rgb(99,102,241)" />
+    <text x="242" y="37" fontSize="11" fontFamily="monospace" fontWeight="bold" fill="currentColor">header@1</text>
+    <text x="242" y="52" fontSize="10.5" fontFamily="monospace" fill="currentColor">len = 4</text>
+    <rect x="104" y="96" width="104" height="38" rx="4" fill="none" stroke="rgb(148,163,184)" strokeDasharray="5 3" />
+    <text x="110" y="111" fontSize="11" fontFamily="monospace" fill="currentColor" fillOpacity="0.6">packet@2 ⊘ GC</text>
+    <text x="110" y="126" fontSize="10" fill="currentColor" fillOpacity="0.6">no handle left</text>
+    <text x="6" y="146" fontSize="10" fill="currentColor" fillOpacity="0.7">Arrows are handles; boxes are objects.</text>
+  </svg>
+</VisualRecap>
+
+### Forward declarations with `typedef class`
+
+Two classes that refer to each other need a forward declaration, because a class name must be known before a variable of that type is declared (§8.27). You will also need one when `include` order puts a user before the definition.
+
+```systemverilog
+typedef class scoreboard;   // "scoreboard is a class, defined later"
+
+class monitor;
+  scoreboard sb;            // legal thanks to the forward declaration
+endclass
+
+class scoreboard;
+  monitor mon;
+endclass
+```
+
+The keyword `class` in `typedef class scoreboard;` is optional documentation: `typedef scoreboard;` means the same (§8.27).
+
+### Interface classes: one class, several roles
+
+A class can extend only one base class, but it can **implement** any number of interface classes (§8.26). An interface class contains only pure virtual methods, types and parameters, and every implementation must be a virtual method.
+
+```systemverilog
+interface class has_crc;
+  pure virtual function bit check_crc();
+endclass
+
+interface class printable;
+  pure virtual function string to_string();
+endclass
+
+class base_txn;
+  int addr;
+endclass
+
+class crc_txn extends base_txn implements has_crc, printable;
+  bit [7:0] crc;
+  virtual function bit check_crc();      return (crc == 8'h5a); endfunction
+  virtual function string to_string();   return $sformatf("addr=%0h crc=%0h", addr, crc); endfunction
+endclass
+```
+
+A `printable` handle can refer to any object whose class implements `printable`, regardless of its base class. Converting it back to `crc_txn` needs `$cast`, checked at run time (§8.16).
 
 ## Make It Work
 1. **Define your transactions:** Start with a base class containing shared fields, methods, and automation (`rand`, `constraint`, `copy`/`compare`).
-2. **Specialize via inheritance:** Create derived packet classes for protocol-specific fields. Override virtual methods (e.g., `pack`, `convert2string`).
+2. **Specialize via inheritance:** Create derived packet classes for protocol-specific fields. Override virtual methods (for example `pack` or `convert2string`).
 3. **Drive polymorphically:** Use base-class handles (`BasePacket pkt_h`) across sequencers, drivers, and scoreboards to minimize coupling.
-4. **Instrument with encapsulation:** expose intent methods (`start_transfer`) while protecting internals with `local`/`protected` attributes.
+4. **Instrument with encapsulation:** Expose intent methods (`start_transfer`) while protecting internals with `local`/`protected` members.
+5. **Decide who owns each object:** Whoever stores an item it did not create stores a copy, and whoever publishes an item never modifies it afterwards.
+
+### Debug it: the scoreboard whose expected items change
+
+This is the most common handle bug in real testbenches. Read the symptom, select the line that causes it, then try fixes; the model reruns the monitor and the scoreboard reads the stored items back.
+
+<ObjectHandleVisualizer mode="bug" />
 
 **Checklist before moving on:**
-- [ ] You can explain class vs. object vs. handle.
+- [ ] You can draw the handles and objects for any short sequence of `new`, `=`, `new h` and `null`.
+- [ ] You can explain why a static property changes for every object at once, and why `new h` does not increment a counter kept in `new()`.
+- [ ] You can predict which method body runs from the handle's class, the object's class and the `virtual` keyword.
+- [ ] You can name three ways a handle ends up `null` in a testbench, and guard against each.
 - [ ] You can demonstrate encapsulation with `local`/`protected` members.
-- [ ] You can show how virtual methods enable polymorphic drivers.
 
 ## Push Further
 - Implement factory overrides (UVM `type_id::create`) to swap derived packets at runtime.
-- Explore abstract classes & pure virtual methods for defining protocol templates.
-- Profile simulation performance when using deep inheritance hierarchies—know when composition might be cleaner.
+- Explore abstract classes and pure virtual methods for defining protocol templates ([Parameterized and Abstract Classes](./parameterized-classes)).
+- IEEE 1800-2023 adds the method specifiers `:initial`, `:extends` and `:final` (§8.20), which let the compiler catch an accidental override or a missing one. Check simulator support before using them.
+- Profile simulation performance when using deep inheritance hierarchies, and know when composition is cleaner.
 
 ## Practice & Reinforce
-- Flashcards – Drill the vocabulary for classes, handles, inheritance, polymorphism.
-- Quiz – Answer the OOP readiness questions below.
-- Mini-lab – Convert a procedural driver to a class-based, polymorphic driver that accepts any packet type.
-- Visual notebook – Sketch your transaction hierarchy and mark which methods are virtual/overridden.
+- **Flashcards:** drill the vocabulary for classes, handles, inheritance, and polymorphism.
+- **Retrieval quiz:** answer the questions below without the visuals.
+- **Guided kata (run it in your simulator):** write a `txn` class with an `int data`, a `byte payload[$]` and a `header hdr`. Implement a deep `copy()` and a virtual `clone()`. Prove the copy is deep by changing the clone's header and printing the original.
+- **Independent kata:** convert a procedural driver into a class-based driver whose `run` task accepts any `BasePacket` descendant, then add a second packet type without editing the driver.
 
 ## Deep Dives in this Track
 - [Constructors, `this`, and `super`](./constructors)
 - [Parameterized and Abstract Classes](./parameterized-classes)
 - **[Copying and Cloning Objects](./copying-and-cloning)** - *Interview Pitfalls*
-- **[Polymorphism Pitfalls & Typesasting](./polymorphism-pitfalls)** - *Interview Pitfalls*
+- **[Polymorphism Pitfalls & Type Casting](./polymorphism-pitfalls)** - *Interview Pitfalls*
 
 ## References & Next Topics
-- **IEEE 1800-2023, Clause 8:** Classes.
+- **IEEE 1800-2023, Clause 8:** Classes. Handles and null §8.4, constructors §8.7, static members §8.9–8.10, copying §8.12, casting §8.16, virtual methods §8.20, interface classes §8.26, `typedef class` §8.27, memory management §8.29.
 - Chris Spear, *SystemVerilog for Verification*, Chapters 7–9.
 - Siemens Verification Academy: “Object Oriented Programming in UVM.”
 - Next: [`/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals`](../I-SV-2A_Constrained_Randomization_Fundamentals/).
 
 <Quiz
   questions={[
+    {
+      question: 'packet a, b; a = new; b = a; b.id = 3; What does a.id read?',
+      answers: [
+        { text: '3', correct: true },
+        { text: '0, because b received its own copy', correct: false },
+        { text: 'It is a compile error to assign one handle to another', correct: false },
+        { text: 'X, because two handles wrote the same object', correct: false }
+      ],
+      explanation:
+        'b = a copies the handle, not the object. One packet exists, reachable through both names, so a write through b is visible through a (§8.12).'
+    },
+    {
+      question: 'packet declares header hdr = new; and you run p1 = new; p2 = new p1; How many header objects exist?',
+      answers: [
+        { text: 'One: p1.hdr and p2.hdr refer to the same header', correct: true },
+        { text: 'Two: the initializer runs again for p2', correct: false },
+        { text: 'Zero: p2.hdr is null after a shallow copy', correct: false },
+        { text: 'Two: a shallow copy copies one level of nested objects', correct: false }
+      ],
+      explanation:
+        'A shallow copy runs neither the constructor nor the property initializers, and it copies handle properties as handles (§8.12). Duplicating the header needs a user-written deep copy.'
+    },
     {
       question: 'What problem does encapsulation solve in verification classes?',
       answers: [
@@ -174,9 +344,9 @@ A single `GenericDriver` talks to any `BasePacket` descendant—exactly how UVM 
     question="A junior engineer forgot to declare the `pack()` method as `virtual` in the BasePacket class. What happens when a GenericDriver calls `pkt.pack()` on a BasePacket handle pointing to an EthernetPacket object?"
     options={[
       { text: "It fails to compile because drivers must use exact child handle types.", isCorrect: false, feedback: "Drivers almost always use base handle types for polymorphism." },
-      { text: "The GenericDriver calls the BasePacket's `pack()` method, ignoring the child's implementation.", isCorrect: true, feedback: "Correct! Without `virtual`, method resolution is static (based on the handle type), not dynamic (based on the object type). This is a classic source of \"missing stimulus\" bugs." },
-      { text: "The simulator throws a null-pointer exception.", isCorrect: false, feedback: "The method is executed, just the wrong one." },
-      { text: "The EthernetPacket's `pack()` method is called correctly because inheritance automatically propagates method overrides.", isCorrect: false, feedback: "Only virtual methods propagate overrides to base class handles." }
+      { text: "The GenericDriver calls the BasePacket's `pack()` method, ignoring the child's implementation.", isCorrect: true, feedback: "Correct! Without `virtual`, the call binds to the declaration the compiler sees from the handle's class, not the object's class (§8.14, §8.20). This is a classic source of \"missing stimulus\" bugs." },
+      { text: "The simulator throws a null-pointer exception.", isCorrect: false, feedback: "The handle is not null, so a method runs: just the wrong one." },
+      { text: "The EthernetPacket's `pack()` method is called correctly because inheritance automatically propagates method overrides.", isCorrect: false, feedback: "Only virtual methods dispatch on the object's class through a base-class handle." }
     ]}
   />
 </div>

@@ -1,93 +1,72 @@
-import React from 'react';
-import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
-import UvmPolicyVisualizer from '@/components/visuals/UvmPolicyVisualizer';
+import React from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-describe('UvmPolicyVisualizer', () => {
-  it('renders the header and default Print tab', () => {
+import UvmPolicyVisualizer from "@/components/visuals/UvmPolicyVisualizer";
+
+const lockIn = (label: RegExp | string) => {
+  fireEvent.click(screen.getByRole("radio", { name: label }));
+  fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+};
+
+describe("UvmPolicyVisualizer", () => {
+  it("compare: hides the field walk until the prediction is committed, then shows the threshold effect", () => {
     render(<UvmPolicyVisualizer />);
-
-    expect(screen.getByText('UVM Policy Classes')).toBeInTheDocument();
-    // Print tab should be active by default and show printer content
-    expect(screen.getByText('Print')).toBeInTheDocument();
-    expect(screen.getByText(/uvm_printer/)).toBeInTheDocument();
+    expect(screen.queryByRole("table", { name: /How the comparer walked the fields/ })).not.toBeInTheDocument();
+    lockIn("returns 0, get_result() = 2");
+    expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/default comparer threshold is 1/).length).toBeGreaterThan(0);
+    const walk = screen.getByRole("table", { name: /How the comparer walked the fields/ });
+    expect(within(walk).getAllByText(/not compared \(threshold\)/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/UVM_INFO @ 0: reporter \[MISCMP\] Miscompare for exp\.data/)).toBeInTheDocument();
   });
 
-  it('switches between all five tabs', () => {
+  it("compare: editing a field flag re-arms the prediction and changes the result", () => {
     render(<UvmPolicyVisualizer />);
-
-    // Click the Compare tab (first button matching /Compare/)
-    const compareBtns = screen.getAllByRole('button', { name: /Compare/i });
-    fireEvent.click(compareBtns[0]);
-    expect(screen.getByText(/uvm_comparer/)).toBeInTheDocument();
-
-    // Switch to Pack
-    fireEvent.click(screen.getByRole('button', { name: /Pack/i }));
-    expect(screen.getByText(/uvm_packer/)).toBeInTheDocument();
-
-    // Switch to Record
-    fireEvent.click(screen.getByRole('button', { name: /Record/i }));
-    expect(screen.getByText(/uvm_recorder/)).toBeInTheDocument();
-
-    // Switch to Copy (first button matching /Copy/)
-    const copyBtns = screen.getAllByRole('button', { name: /Copy/i });
-    fireEvent.click(copyBtns[0]);
-    expect(screen.getByText(/uvm_copier/)).toBeInTheDocument();
+    fireEvent.change(screen.getByRole("combobox", { name: "Flag for data" }), { target: { value: "nocompare" } });
+    expect(screen.getByText("`uvm_field_int(data, UVM_ALL_ON | UVM_NOCOMPARE)")).toBeInTheDocument();
+    lockIn("returns 0, get_result() = 1");
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getByText(/Miscompare for exp\.tag/)).toBeInTheDocument();
   });
 
-  it('Compare tab shows diff highlighting after clicking Compare button', () => {
+  it("compare: UVM_REFERENCE scenario reports a handle miscompare", () => {
     render(<UvmPolicyVisualizer />);
-
-    // Navigate to Compare tab, then click the action button
-    const compareBtns = screen.getAllByRole('button', { name: /Compare/i });
-    fireEvent.click(compareBtns[0]); // tab button
-
-    // The action button is the second "Compare" button
-    const actionBtns = screen.getAllByRole('button', { name: /Compare/i });
-    fireEvent.click(actionBtns[actionBtns.length - 1]); // action button
-
-    expect(screen.getByText(/MISMATCH/)).toBeInTheDocument();
-    expect(screen.getByText(/2 field/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "UVM_REFERENCE on cfg" }));
+    lockIn("returns 0, get_result() = 1");
+    expect(screen.getByText(/Miscompare for exp\.cfg: lhs = @7 : rhs = @9/)).toBeInTheDocument();
   });
 
-  it('Print tab switches between table, tree, and line formats', () => {
+  it("copy: the do_copy aliasing bug shares the nested object", () => {
     render(<UvmPolicyVisualizer />);
-
-    // Default is table format — shows a table header
-    expect(screen.getByText('Field')).toBeInTheDocument();
-
-    // Switch to tree
-    fireEvent.click(screen.getByRole('button', { name: /^tree$/i }));
-    const treeMatches = screen.getAllByText(/my_packet/);
-    expect(treeMatches.length).toBeGreaterThanOrEqual(1);
-
-    // Switch to line
-    fireEvent.click(screen.getByRole('button', { name: /^line$/i }));
-    expect(screen.getByText(/my_packet:/)).toBeInTheDocument();
+    const modes = screen.getByRole("radiogroup", { name: "Policy operation" });
+    fireEvent.keyDown(within(modes).getByRole("radio", { name: "compare()" }), { key: "ArrowRight" });
+    expect(within(modes).getByRole("radio", { name: "copy()" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText(/cfg = rhs_\.cfg;/)).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: /Handles and objects/ })).not.toBeInTheDocument();
+    lockIn("p1 burst_len = 8");
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getByText(/One pkt_cfg is shared by both packets/)).toBeInTheDocument();
   });
 
-  it('Copy tab shows deep copy result with new handle after clicking copy', () => {
+  it("copy: field-macro deep copy keeps p1 unchanged", () => {
     render(<UvmPolicyVisualizer />);
-
-    // Navigate to Copy tab
-    const copyBtns = screen.getAllByRole('button', { name: /Copy/i });
-    fireEvent.click(copyBtns[0]); // tab button
-
-    // Click the action button
-    fireEvent.click(screen.getByRole('button', { name: /pkt_copy\.copy/i }));
-
-    expect(screen.getByText(/Deep Copy/)).toBeInTheDocument();
-    // Use getAllByText since "new clone" appears in both the handle and tooltip
-    const cloneTexts = screen.getAllByText(/new clone/);
-    expect(cloneTexts.length).toBeGreaterThanOrEqual(1);
+    fireEvent.click(screen.getByRole("radio", { name: "copy()" }));
+    fireEvent.click(screen.getByRole("radio", { name: "macro, UVM_ALL_ON" }));
+    lockIn("p1 burst_len = 4");
+    expect(screen.getByText(/Each packet owns its pkt_cfg/)).toBeInTheDocument();
   });
 
-  it('Pack tab shows bitstream layout with total bits', () => {
+  it("print: teaches the 1800.2 flag rule and uses uvm_printer::set_default", () => {
     render(<UvmPolicyVisualizer />);
-
-    fireEvent.click(screen.getByRole('button', { name: /Pack/i }));
-
-    // Should show total bits (32+32+1+8 = 73)
-    expect(screen.getByText(/73 bits/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: "print()" }));
+    lockIn(/tag is printed and copied/);
+    expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
+    expect(screen.getByText(/uvm_printer::set_default\(uvm_table_printer::get_default\(\)\);/)).toBeInTheDocument();
+    expect(screen.getByRole("figure", { name: "Output" })).toHaveTextContent("[UVM/FIELDS/NO_FLAG]");
+    expect(screen.getByRole("figure", { name: "Output" })).not.toHaveTextContent(/tag\s+integral/);
+    expect(screen.getByRole("figure", { name: "Output" })).toHaveTextContent(/addr\s+integral\s+32\s+'h40/);
+    fireEvent.click(screen.getByRole("radio", { name: "tree" }));
+    expect(screen.getByText(/uvm_tree_printer::get_default/)).toBeInTheDocument();
   });
 });

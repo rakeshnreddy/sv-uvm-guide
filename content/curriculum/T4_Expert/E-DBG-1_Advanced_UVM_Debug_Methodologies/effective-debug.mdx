@@ -7,17 +7,36 @@ export const metadata = {
 
 <InfoPage title="Effective Debug Techniques in UVM" uvm_concept_tags={["debug"]}>
 
-## Level 1
+## Level 1: Read the First Failure
 
-Debugging is detective work. Start by narrowing down what changed between a passing and failing run.
+Debugging is detective work. Start by narrowing down what changed between a passing and failing run — and read the log from the top, not the bottom.
 
-## Level 2
+- **Find the first `UVM_ERROR` or `UVM_FATAL`.** Later errors are usually consequences. The report summary at the end lists counts by severity and by ID; the ID of the first error is your failure signature.
+- **Check how the run ended.** A `PH_TIMEOUT` fatal means a hang (practise in the [Hang Lab](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab)). A run that ends at 0 ns with no traffic means nobody raised an objection.
+- **Check that the verdict is honest.** `UVM_ERROR : 0` proves nothing if a catcher returns `CAUGHT`, an action is `UVM_NO_ACTION`, or an assertion reported with `$error` (the simulator prints it; UVM never counts it).
 
-- Use `uvm_info` with verbosity levels to toggle detail.
-- Add waveform triggers around key events.
+## Level 2: Turn Up Visibility Surgically
 
-## Level 3
+Use command-line switches so you do not have to recompile, and target only the components and IDs involved.
 
-Long simulations often mask the real failure. Divide and conquer by reducing randomization or time until the bug reproduces in seconds.
+| Need | Switch or call |
+| --- | --- |
+| More detail from one agent | `+uvm_set_verbosity=uvm_test_top.env.agt.*,_ALL_,UVM_HIGH,run` |
+| One noisy ID quiet | `+uvm_set_action=uvm_test_top.*,DRV_DBG,UVM_INFO,UVM_NO_ACTION` |
+| Who holds the phase open | `+UVM_OBJECTION_TRACE`, or `phase.get_objection().display_objections()` |
+| Did my configuration arrive | `+UVM_CONFIG_DB_TRACE` and `check_config_usage()` |
+| Which class was really built | `uvm_factory::get().print()` and `uvm_top.print_topology()` |
+| Transactions next to signals | `set_recording_enabled(1)` on the agents, plus the simulator's database switch |
+
+Verbosity only affects `UVM_INFO`. Warnings, errors and fatals are always issued; change what they *do* with actions, never hide them with `UVM_NO_ACTION` in a regression.
+
+## Level 3: Reproduce, Compare, Shrink
+
+Long simulations often mask the real failure.
+
+1. **Reproduce exactly:** same test, same seed, same code. Record the seed in every log header.
+2. **Compare:** a passing seed against the failing one, or the last passing code revision against this one. The first divergence in the transaction stream or the log usually points at the cause.
+3. **Shrink:** cut the test length, disable unrelated agents, and reduce the stimulus until it fails within seconds. Re-check that it still fails after each change — adding threads, objects or messages can shift what a seed produces (IEEE 1800-2023 §18.14).
+4. **Lock it in:** turn the reproduction into a directed regression test or an assertion so the bug cannot return silently.
 
 </InfoPage>

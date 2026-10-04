@@ -3,6 +3,7 @@
 import { AuthProvider } from "@/contexts/AuthContext";
 import { NavigationProvider } from "@/contexts/NavigationContext";
 
+import { ReducedMotionProvider } from "./ReducedMotionProvider";
 import { SessionProvider } from "./SessionProvider";
 import { ThemeProvider } from "./ThemeProvider";
 
@@ -11,7 +12,9 @@ export default function ClientProviders({ children }: { children: React.ReactNod
     <ThemeProvider attribute="data-theme" defaultTheme="default-dark" disableTransitionOnChange>
       <SessionProvider>
         <AuthProvider>
-          <NavigationProvider>{children}</NavigationProvider>
+          <NavigationProvider>
+            <ReducedMotionProvider>{children}</ReducedMotionProvider>
+          </NavigationProvider>
         </AuthProvider>
       </SessionProvider>
     </ThemeProvider>

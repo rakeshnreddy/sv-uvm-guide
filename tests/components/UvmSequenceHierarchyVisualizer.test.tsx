@@ -1,117 +1,75 @@
-import React from 'react';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
-import { describe, it, expect } from 'vitest';
-import UvmSequenceHierarchyVisualizer from '@/components/visualizers/UvmSequenceHierarchyVisualizer';
+import React from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-describe('UvmSequenceHierarchyVisualizer', () => {
-  it('renders without crashing and shows the header', () => {
-    render(<UvmSequenceHierarchyVisualizer />);
-    expect(screen.getByText('UVM Sequence Hierarchy Explorer')).toBeInTheDocument();
+import UvmSequenceHierarchyVisualizer, { UvmSequenceHierarchyVisualizer as Named } from "@/components/visualizers/UvmSequenceHierarchyVisualizer";
+
+function revealAndJumpToEnd() {
+  const controls = screen.getByRole("group", { name: "Call playback controls" });
+  fireEvent.change(within(controls).getByRole("slider"), { target: { value: "999" } });
+}
+
+describe("UvmSequenceHierarchyVisualizer", () => {
+  it("keeps both default and named exports", () => {
+    expect(Named).toBe(UvmSequenceHierarchyVisualizer);
   });
 
-  it('renders all nodes in the basic hierarchy tree', () => {
+  it("gates the call trace behind a prediction about write_seq's hooks", () => {
     render(<UvmSequenceHierarchyVisualizer />);
-    expect(screen.getByText('top_sequence')).toBeInTheDocument();
-    expect(screen.getByText('write_burst_sequence')).toBeInTheDocument();
-    expect(screen.getByText('read_check_sequence')).toBeInTheDocument();
-    // There should be two base_rw_sequence nodes
-    expect(screen.getAllByText('base_rw_sequence').length).toBe(2);
+    expect(screen.getByText(/top_seq.body\(\) starts write_seq with write_seq.start\(m_sequencer, this\);/)).toBeInTheDocument();
+    expect(screen.queryByRole("group", { name: "Call playback controls" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/^write_seq.pre_start\(\) → write_seq.pre_body\(\) → top_seq.pre_do\(0\)/));
+    fireEvent.click(screen.getByRole("button", { name: "Lock in prediction" }));
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Call playback controls" })).toBeInTheDocument();
   });
 
-  it('step forward advances the execution log', async () => {
+  it("`uvm_do skips pre_body/post_body for read_seq (call_pre_post = 0)", () => {
     render(<UvmSequenceHierarchyVisualizer />);
-
-    // Initially no log entries
-    expect(screen.queryAllByTestId('log-entry')).toHaveLength(0);
-
-    // Click step
-    fireEvent.click(screen.getByTestId('step-forward'));
-    await waitFor(() => {
-      expect(screen.getAllByTestId('log-entry').length).toBe(1);
-    });
-
-    // Step again
-    fireEvent.click(screen.getByTestId('step-forward'));
-    await waitFor(() => {
-      expect(screen.getAllByTestId('log-entry').length).toBe(2);
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Reveal without predicting" }));
+    revealAndJumpToEnd();
+    const log = screen.getByRole("list", { name: "Call log so far" });
+    expect(within(log).getByText("write_seq.pre_body()")).toBeInTheDocument();
+    expect(within(log).queryByText("read_seq.pre_body()")).not.toBeInTheDocument();
+    expect(within(log).getByText("top_seq.mid_do(read_seq)")).toBeInTheDocument();
+    expect(within(log).getByText("read_seq.randomize()")).toBeInTheDocument();
   });
 
-  it('reset clears execution state', async () => {
+  it("changing the start style resets the prediction and changes the correct answer", () => {
     render(<UvmSequenceHierarchyVisualizer />);
-
-    // Advance a few steps
-    fireEvent.click(screen.getByTestId('step-forward'));
-    fireEvent.click(screen.getByTestId('step-forward'));
-    await waitFor(() => {
-      expect(screen.getAllByTestId('log-entry').length).toBe(2);
-    });
-
-    // Reset
-    fireEvent.click(screen.getByTestId('reset-btn'));
-    await waitFor(() => {
-      expect(screen.queryAllByTestId('log-entry')).toHaveLength(0);
-    });
+    fireEvent.click(screen.getByRole("button", { name: "Reveal without predicting" }));
+    const group = screen.getByRole("radiogroup", { name: "How top_seq starts write_seq" });
+    fireEvent.click(within(group).getByRole("radio", { name: "start(m_sequencer)" }));
+    expect(screen.queryByRole("group", { name: "Call playback controls" })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/^write_seq.pre_start\(\) → write_seq.pre_body\(\) → write_seq.body\(\)/));
+    fireEvent.click(screen.getByRole("button", { name: "Lock in prediction" }));
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
   });
 
-  it('collapse and expand works on parent nodes', async () => {
+  it("debug: a parent lock deadlocks a child started without a parent", () => {
     render(<UvmSequenceHierarchyVisualizer />);
-
-    // Initially all nodes are visible
-    expect(screen.getByText('write_burst_sequence')).toBeInTheDocument();
-
-    // Click on top_sequence node to collapse it
-    fireEvent.click(screen.getByTestId('seq-node-top'));
-
-    // Children should animate out
-    await waitFor(() => {
-      expect(screen.queryByText('write_burst_sequence')).not.toBeInTheDocument();
-    });
-
-    // Click again to expand
-    fireEvent.click(screen.getByTestId('seq-node-top'));
-    await waitFor(() => {
-      expect(screen.getByText('write_burst_sequence')).toBeInTheDocument();
-    });
+    fireEvent.click(screen.getByRole("checkbox", { name: /top_seq calls lock\(\) first/ }));
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "How top_seq starts write_seq" })).getByRole("radio", { name: "start(m_sequencer)" }));
+    fireEvent.click(screen.getByLabelText(/It waits forever/));
+    fireEvent.click(screen.getByRole("button", { name: "Lock in prediction" }));
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    revealAndJumpToEnd();
+    expect(screen.getByText(/✕ Deadlock: nothing reports an error/)).toBeInTheDocument();
+    expect(screen.getByText(/write_seq: blocked/)).toBeInTheDocument();
   });
 
-  it('switches to virtual sequencer preset', () => {
+  it("item detail shows wait_for_grant and the item hooks; the playback is keyboard operable", () => {
     render(<UvmSequenceHierarchyVisualizer />);
-
-    // Initially basic preset
-    expect(screen.getByText('top_sequence')).toBeInTheDocument();
-
-    // Switch to virtual
-    fireEvent.click(screen.getByTestId('preset-virtual'));
-
-    expect(screen.getByText('virtual_sequence')).toBeInTheDocument();
-    expect(screen.getByText('axi_write_seq')).toBeInTheDocument();
-    expect(screen.getByText('apb_config_seq')).toBeInTheDocument();
-  });
-
-  it('node status updates correctly during execution', async () => {
-    render(<UvmSequenceHierarchyVisualizer />);
-
-    // Initially all idle
-    const topStatus = screen.getByTestId('status-top');
-    expect(topStatus).toHaveTextContent('idle');
-
-    // Step forward once — top should start
-    fireEvent.click(screen.getByTestId('step-forward'));
-    await waitFor(() => {
-      expect(screen.getByTestId('status-top')).toHaveTextContent('running');
-    });
-  });
-
-  it('displays the correct step counter', async () => {
-    render(<UvmSequenceHierarchyVisualizer />);
-
-    // Initially shows dash
-    expect(screen.getByText(/Step:/)).toBeInTheDocument();
-
-    fireEvent.click(screen.getByTestId('step-forward'));
-    await waitFor(() => {
-      expect(screen.getByText(/Step: 1/)).toBeInTheDocument();
-    });
+    fireEvent.click(screen.getByRole("checkbox", { name: /Show the calls inside start_item/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Reveal without predicting" }));
+    const controls = screen.getByRole("group", { name: "Call playback controls" });
+    const next = within(controls).getByRole("button", { name: "Next call" });
+    fireEvent.keyDown(next, { key: "ArrowRight" });
+    fireEvent.keyDown(next, { key: "ArrowRight" });
+    expect(screen.getByText(/call 3 of/)).toBeInTheDocument();
+    revealAndJumpToEnd();
+    const log = screen.getByRole("list", { name: "Call log so far" });
+    expect(within(log).getAllByText("m_sequencer.wait_for_grant(write_seq, priority)")).toHaveLength(1);
+    expect(within(log).getByText("write_seq.mid_do(req)")).toBeInTheDocument();
   });
 });

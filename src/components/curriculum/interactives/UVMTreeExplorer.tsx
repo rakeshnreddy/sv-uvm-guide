@@ -1,289 +1,281 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Play, RotateCcw, Box, ArrowDown, ArrowUp, Activity } from "lucide-react";
-import InterviewQuestionPlayground from "./InterviewQuestionPlayground";
+import React, { useMemo, useState } from "react";
 
-type Phase = "build" | "connect" | "run";
-type PhaseDir = "top-down" | "bottom-up" | "parallel";
+import { CodeTrace, type CodeTraceLine } from "@/components/visual-system/CodeTrace";
+import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  AGENT_NUM_TXNS_DEFAULT,
+  EXAMPLE_TREE,
+  agentBuild,
+  childrenInVisitOrder,
+  phaseCallOrder,
+  type AgentBuildOutcome,
+  type ComponentNode,
+  type PhaseOrder,
+} from "@/lib/uvm-phase-model";
+import { cn } from "@/lib/utils";
 
-type UVMNode = {
-    id: string;
-    name: string;
-    type: string;
-    depth: number;
-    children?: UVMNode[];
+export const TREE_EXPLORER_ASSUMPTIONS = [
+  "Model of uvm-core 2020.3.1 (IEEE 1800.2-2020): uvm_topdown_phase / uvm_bottomup_phase traversal, uvm_component::build_phase, uvm_agent::build_phase.",
+  "uvm_root is the traversal root and is not numbered. Siblings are visited in instance-name order (uvm-core stores children in m_children[string]).",
+  "use_automatic_config() keeps its default (1).",
+];
+
+type TreePhase = "build" | "connect" | "run";
+
+const PHASE_INFO: Record<TreePhase, { method: string; order: PhaseOrder; rule: string }> = {
+  build: {
+    method: "build_phase",
+    order: "top-down",
+    rule: "Top-down, depth-first: a parent runs before its children, because the parent's build_phase is what creates them.",
+  },
+  connect: {
+    method: "connect_phase",
+    order: "bottom-up",
+    rule: "Bottom-up, depth-first: every child runs before its parent. Every component already exists, so any order would work; bottom-up is the rule.",
+  },
+  run: {
+    method: "run_phase",
+    order: "parallel",
+    rule: "A task: the phasing engine forks every component's run_phase in the same time step. They run in parallel, so do not rely on which starts first.",
+  },
 };
 
-const treeData: UVMNode = {
-    id: "root",
-    name: "uvm_root",
-    type: "uvm_root",
-    depth: 0,
-    children: [
-        {
-            id: "test",
-            name: "uvm_test_top",
-            type: "base_test",
-            depth: 1,
-            children: [
-                {
-                    id: "env",
-                    name: "env",
-                    type: "base_env",
-                    depth: 2,
-                    children: [
-                        {
-                            id: "agt",
-                            name: "agent",
-                            type: "active_agent",
-                            depth: 3,
-                            children: [
-                                { id: "sqr", name: "sqr", type: "uvm_sequencer", depth: 4 },
-                                { id: "drv", name: "drv", type: "uvm_driver", depth: 4 },
-                                { id: "mon", name: "mon", type: "uvm_monitor", depth: 4 }
-                            ]
-                        },
-                        {
-                            id: "sb",
-                            name: "sb",
-                            type: "uvm_scoreboard",
-                            depth: 3
-                        }
-                    ]
-                }
-            ]
+function NumberedTree({ node, prefix, numbers, parallel }: { node: ComponentNode; prefix: string; numbers: Map<string, number>; parallel: boolean }) {
+  const path = prefix ? `${prefix}.${node.name}` : node.name;
+  const n = numbers.get(path);
+  return (
+    <li>
+      <span className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-card px-2 py-0.5 font-mono text-[12px] text-foreground [font-variant-ligatures:none]">
+        <span
+          className={cn(
+            "inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 font-sans text-[10px] font-bold",
+            parallel ? "bg-amber-500/20 text-amber-900 dark:text-amber-100" : "bg-cyan-500/20 text-cyan-900 dark:text-cyan-100",
+          )}
+          aria-label={parallel ? "runs in parallel" : `call ${n}`}
+        >
+          {parallel ? "∥" : n}
+        </span>
+        {node.name}
+        <span className="text-[10px] text-muted-foreground">{node.type}</span>
+      </span>
+      {node.children?.length ? (
+        <ul className="ml-4 mt-1 space-y-1 border-l border-border/70 pl-3">
+          {childrenInVisitOrder(node).map((c) => (
+            <NumberedTree key={c.name} node={c} prefix={path} numbers={numbers} parallel={parallel} />
+          ))}
+        </ul>
+      ) : null}
+    </li>
+  );
+}
+
+function PhaseOrderPicture() {
+  const [phase, setPhase] = useState<TreePhase>("build");
+  const info = PHASE_INFO[phase];
+  const order = useMemo(() => phaseCallOrder(phase), [phase]);
+  const numbers = new Map(order.calls.map((c, i) => [c.path, i + 1]));
+  const parallel = info.order === "parallel";
+  return (
+    <div className="space-y-3">
+      <SegmentedControl
+        label="Phase"
+        mono
+        value={phase}
+        onChange={setPhase}
+        options={[
+          { value: "build", label: "↓ build_phase", ariaLabel: "build_phase, top-down" },
+          { value: "connect", label: "↑ connect_phase", ariaLabel: "connect_phase, bottom-up" },
+          { value: "run", label: "∥ run_phase", ariaLabel: "run_phase, parallel" },
+        ]}
+      />
+      <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]">
+        <div className="rounded-xl border border-border/70 bg-background/40 p-3">
+          <p className="mb-2 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">uvm_root (traversal root)</p>
+          <ul className="space-y-1" aria-label={`Component tree numbered in ${info.method} call order`}>
+            <NumberedTree node={EXAMPLE_TREE} prefix="" numbers={numbers} parallel={parallel} />
+          </ul>
+        </div>
+        <div className="space-y-2 text-sm" aria-live="polite">
+          <p>
+            <strong>Rule: </strong>
+            {info.rule}
+          </p>
+          {parallel ? null : (
+            <ol className="list-decimal space-y-0.5 pl-5 font-mono text-[12px] [font-variant-ligatures:none]">
+              {order.calls.map((c) => (
+                <li key={c.path}>{c.path.replace(/^uvm_test_top\.?/, "") || "uvm_test_top"}</li>
+              ))}
+            </ol>
+          )}
+          <p className="text-muted-foreground">
+            env creates <code>scb</code> before <code>agt</code>, yet <code>agt</code> is visited first: siblings go in name order, not creation order.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// super.build_phase experiment
+// ---------------------------------------------------------------------------
+
+const CONFIG = { configuredIsActive: "UVM_PASSIVE" as const, configuredNumTxns: 50 };
+
+function agentCode(callsSuper: boolean): CodeTraceLine[] {
+  return [
+    { text: "// my_test::build_phase", owner: "testbench" },
+    { text: 'uvm_config_db#(uvm_active_passive_enum)::set(this, "env.agt", "is_active", UVM_PASSIVE);', owner: "testbench" },
+    { text: `uvm_config_db#(int)::set(this, "env.agt", "num_txns", ${CONFIG.configuredNumTxns});`, owner: "testbench" },
+    { text: "" },
+    { text: "class my_agent extends uvm_agent;", owner: "testbench" },
+    { text: `  int num_txns = ${AGENT_NUM_TXNS_DEFAULT};`, owner: "testbench" },
+    { text: "  my_monitor mon;  my_driver drv;  my_sequencer sqr;", owner: "testbench" },
+    { text: "  `uvm_component_utils_begin(my_agent)", owner: "testbench" },
+    { text: "    `uvm_field_int(num_txns, UVM_DEFAULT)", owner: "testbench" },
+    { text: "  `uvm_component_utils_end", owner: "testbench" },
+    { text: "  function new(string name, uvm_component parent);", owner: "testbench" },
+    { text: "    super.new(name, parent);", owner: "testbench" },
+    { text: "  endfunction", owner: "testbench" },
+    { text: "  function void build_phase(uvm_phase phase);", owner: "testbench" },
+    { key: "super", owner: "testbench", text: callsSuper ? "    super.build_phase(phase);" : "    // super.build_phase(phase);   <- forgotten" },
+    { text: '    mon = my_monitor::type_id::create("mon", this);', owner: "testbench" },
+    { text: "    if (get_is_active() == UVM_ACTIVE) begin", owner: "testbench" },
+    { text: '      drv = my_driver::type_id::create("drv", this);', owner: "testbench" },
+    { text: '      sqr = my_sequencer::type_id::create("sqr", this);', owner: "testbench" },
+    { text: "    end", owner: "testbench" },
+    { text: "  endfunction", owner: "testbench" },
+    { text: "endclass", owner: "testbench" },
+  ];
+}
+
+type BuildAnswer = "nothing" | "passive" | "active" | "error";
+
+const BUILD_OPTIONS: { id: BuildAnswer; label: string; feedback: string }[] = [
+  {
+    id: "nothing",
+    label: "No children: without super.build_phase the tree stops growing at the agent.",
+    feedback:
+      "Children are created only by your own type_id::create calls. uvm_component::build_phase creates nothing; the phasing engine then calls each new child's build_phase.",
+  },
+  {
+    id: "passive",
+    label: "Only mon, with num_txns = 50, as configured.",
+    feedback:
+      "uvm_agent::build_phase reads is_active from the configuration database, and uvm_component::build_phase applies `uvm_field_* settings (apply_config_settings). Both run only through super.build_phase.",
+  },
+  {
+    id: "active",
+    label: "mon, drv and sqr, with num_txns = 10: both settings are ignored.",
+    feedback:
+      "Without super.build_phase the is_active lookup and auto-config are skipped. is_active keeps its default UVM_ACTIVE and num_txns keeps 10. Children are still created by your own create calls.",
+  },
+  {
+    id: "error",
+    label: "A compile or elaboration error.",
+    feedback: "Leaving out super.build_phase is legal and UVM reports nothing. The failure is silent, which is what makes it dangerous.",
+  },
+];
+
+const answerFor = (o: AgentBuildOutcome): BuildAnswer => (o.isActive === "UVM_PASSIVE" ? "passive" : "active");
+
+function SuperBuildExperiment() {
+  const [callsSuper, setCallsSuper] = useState(false);
+  const outcome = agentBuild({ callsSuper, ...CONFIG });
+  const correct = answerFor(outcome);
+  const options: PredictionOption[] = BUILD_OPTIONS.map((o) => ({ ...o, correct: o.id === correct }));
+  return (
+    <div className="space-y-3">
+      <CodeTrace
+        label="The test configures the agent as passive"
+        lines={agentCode(callsSuper)}
+        renderLineControl={(line) =>
+          line.key === "super" ? (
+            <button
+              type="button"
+              onClick={() => setCallsSuper((v) => !v)}
+              aria-label={callsSuper ? "Remove the super.build_phase call" : "Restore the super.build_phase call"}
+              className="min-h-7 rounded-md border border-cyan-400/50 bg-cyan-400/10 px-2 py-0.5 font-mono text-[11px] text-cyan-100 hover:bg-cyan-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 [font-variant-ligatures:none]"
+            >
+              {callsSuper ? "remove super" : "restore super"}
+            </button>
+          ) : null
         }
-    ]
-};
+      />
+      <PredictionPrompt
+        question={`With super.build_phase ${callsSuper ? "called" : "forgotten"}, what does uvm_test_top.env.agt end up with?`}
+        options={options}
+        resetKey={String(callsSuper)}
+      >
+        <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]" aria-live="polite">
+          <div className="rounded-xl border border-border/70 bg-background/40 p-3 text-sm">
+            <p className="mb-2 font-mono text-[12px] [font-variant-ligatures:none]">uvm_test_top.env.agt</p>
+            <ul className="space-y-1 font-mono text-[12px] [font-variant-ligatures:none]">
+              {["mon", "drv", "sqr"].map((c) => {
+                const built = outcome.children.includes(c);
+                return (
+                  <li key={c} className={built ? "text-foreground" : "text-muted-foreground line-through"}>
+                    {built ? "✓" : "✕"} {c} {built ? "(built; its own build_phase still runs)" : "(not built)"}
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+          <dl className="space-y-2 text-sm">
+            <div>
+              <dt className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">is_active</dt>
+              <dd className="font-mono [font-variant-ligatures:none]">
+                {outcome.isActive} {outcome.isActiveSource === "config_db" ? "(from config_db)" : "(default; the config_db setting was never read)"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">num_txns</dt>
+              <dd className="font-mono [font-variant-ligatures:none]">
+                {outcome.numTxns} {outcome.numTxnsSource === "config_db" ? "(auto-config applied)" : "(default; apply_config_settings never ran)"}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Why</dt>
+              <dd>
+                {callsSuper
+                  ? "super.build_phase ran apply_config_settings for this agent's `uvm_field_* members and uvm_agent's is_active lookup."
+                  : "Nothing in the agent's own build_phase reads the configuration, so both settings are silently ignored. The children are created regardless, by the create calls."}
+              </dd>
+            </div>
+          </dl>
+        </div>
+      </PredictionPrompt>
+    </div>
+  );
+}
 
-const flattenTree = (node: UVMNode): UVMNode[] => {
-    let list = [node];
-    if (node.children) {
-        node.children.forEach(child => {
-            list = [...list, ...flattenTree(child)];
-        });
-    }
-    return list;
-};
-
-const flatNodes = flattenTree(treeData);
+type Section = "order" | "super";
 
 export default function UVMTreeExplorer() {
-    const [activePhase, setActivePhase] = useState<Phase>("build");
-    const [isPlaying, setIsPlaying] = useState(false);
-    const [activeNodeIds, setActiveNodeIds] = useState<string[]>([]);
-
-    const phases: Record<Phase, { title: string, dir: PhaseDir, desc: string }> = {
-        build: { title: "Build Phase", dir: "top-down", desc: "Executes top-down. Parent creates children." },
-        connect: { title: "Connect Phase", dir: "bottom-up", desc: "Executes bottom-up. Components connect ports/exports." },
-        run: { title: "Run Phase", dir: "parallel", desc: "Time-consuming phase. Executes in parallel via fork-join_none." }
-    };
-
-    useEffect(() => {
-        if (!isPlaying) return;
-
-        let timers: NodeJS.Timeout[] = [];
-        const delays: string[] = [];
-
-        if (activePhase === "run") {
-            setActiveNodeIds(flatNodes.map(n => n.id));
-            const t = setTimeout(() => setIsPlaying(false), 3000);
-            timers.push(t);
-        } else {
-            const isTopDown = activePhase === "build";
-            const maxDepth = Math.max(...flatNodes.map(n => n.depth));
-
-            let stepTime = 600;
-
-            for (let d = 0; d <= maxDepth; d++) {
-                const currentDepth = isTopDown ? d : maxDepth - d;
-                const nodesAtDepth = flatNodes.filter(n => n.depth === currentDepth).map(n => n.id);
-
-                const t = setTimeout(() => {
-                    setActiveNodeIds(prev => isTopDown ? [...prev, ...nodesAtDepth] : [...nodesAtDepth, ...prev]);
-                }, d * stepTime);
-
-                timers.push(t);
-            }
-
-            const tEnd = setTimeout(() => setIsPlaying(false), (maxDepth + 1.5) * stepTime);
-            timers.push(tEnd);
-        }
-
-        return () => timers.forEach(clearTimeout);
-    }, [isPlaying, activePhase]);
-
-    const resetPhase = () => {
-        setIsPlaying(false);
-        setActiveNodeIds([]);
-    };
-
-    const startPhase = () => {
-        setActiveNodeIds([]);
-        setIsPlaying(false);
-        setTimeout(() => setIsPlaying(true), 100);
-    };
-
-    const renderNode = (node: UVMNode) => {
-        const isActive = activeNodeIds.includes(node.id);
-        const isCompleted = !isPlaying && activeNodeIds.length > 0 && activePhase !== "run" && isActive;
-
-        return (
-            <div key={node.id} className="relative flex flex-col items-center">
-                <motion.div
-                    animate={
-                        isActive && isPlaying
-                            ? { scale: [1, 1.05, 1], borderColor: "#3b82f6", backgroundColor: "#eff6ff" }
-                            : isCompleted
-                                ? { borderColor: "#22c55e", backgroundColor: "#f0fdf4" }
-                                : { scale: 1, borderColor: "#e2e8f0", backgroundColor: "#ffffff" }
-                    }
-                    className="relative z-10 flex min-w-[140px] flex-col items-center justify-center rounded-lg border-2 p-3 shadow-sm transition-colors dark:bg-slate-900"
-                    style={{
-                        borderColor: "var(--tw-colors)",
-                        backgroundColor: "var(--tw-colors)"
-                    }}
-                >
-                    <Box size={16} className={`mb-1 ${isActive ? "text-blue-500" : "text-slate-400"}`} />
-                    <span className="font-mono text-sm font-bold text-slate-800 dark:text-slate-200">{node.name}</span>
-                    <span className="mt-0.5 text-[10px] tracking-wide text-slate-500 uppercase">{node.type}</span>
-
-                    <AnimatePresence>
-                        {isActive && isPlaying && activePhase === "run" && (
-                            <motion.div
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                exit={{ opacity: 0 }}
-                                className="absolute -right-2 -top-2 flex h-6 w-6 items-center justify-center rounded-full bg-blue-100 dark:bg-blue-900"
-                            >
-                                <Activity size={12} className="text-blue-600 dark:text-blue-400 animate-pulse" />
-                            </motion.div>
-                        )}
-                    </AnimatePresence>
-                </motion.div>
-
-                {node.children && (
-                    <div className="flex gap-4 pt-6 md:gap-8">
-                        {/* The vertical connecting line to children container */}
-                        <div className="absolute left-1/2 top-[72px] h-6 w-px -translate-x-1/2 bg-slate-300 dark:bg-slate-700" />
-
-                        {/* The horizontal connecting line */}
-                        {node.children.length > 1 && (
-                            <div
-                                className="absolute left-0 top-[96px] h-px bg-slate-300 dark:bg-slate-700"
-                                style={{
-                                    width: `calc(100% - ${100 / node.children.length}%)`,
-                                    left: `${50 / node.children.length}%`
-                                }}
-                            />
-                        )}
-
-                        {node.children.map((child, i) => (
-                            <div key={child.id} className="relative pt-6">
-                                {/* Vertical drops to each child */}
-                                <div className="absolute left-1/2 top-0 h-6 w-px -translate-x-1/2 bg-slate-300 dark:bg-slate-700" />
-                                {renderNode(child)}
-                            </div>
-                        ))}
-                    </div>
-                )}
-            </div>
-        );
-    };
-
-    return (
-        <div className="my-8 flex flex-col gap-6">
-            <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                <div className="mb-6 flex flex-col flex-wrap items-start justify-between gap-4 border-b border-slate-100 pb-4 md:flex-row md:items-center dark:border-slate-800">
-                    <div>
-                        <h3 className="m-0 text-xl font-bold dark:text-slate-100">UVM Component Phase Explorer</h3>
-                        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                            Visualize how standard UVM phases propagate through the component hierarchy.
-                        </p>
-                    </div>
-
-                    <div className="flex gap-2">
-                        <select
-                            disabled={isPlaying}
-                            value={activePhase}
-                            onChange={(e) => {
-                                setActivePhase(e.target.value as Phase);
-                                resetPhase();
-                            }}
-                            className="rounded-lg border border-slate-300 bg-slate-50 px-3 py-2 text-sm font-medium disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                        >
-                            <option value="build">Build Phase (Top-Down)</option>
-                            <option value="connect">Connect Phase (Bottom-Up)</option>
-                            <option value="run">Run Phase (Parallel)</option>
-                        </select>
-
-                        <button
-                            onClick={isPlaying ? resetPhase : startPhase}
-                            className={`flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white transition-colors \${
-                isPlaying 
-                  ? "bg-rose-500 hover:bg-rose-600 dark:bg-rose-600 dark:hover:bg-rose-700" 
-                  : "bg-blue-600 hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600"
-              }`}
-                        >
-                            {isPlaying ? <RotateCcw size={16} /> : <Play size={16} />}
-                            {isPlaying ? "Stop" : "Simulate"}
-                        </button>
-                    </div>
-                </div>
-
-                <div className="mb-8 flex items-start gap-4 rounded-lg bg-blue-50 p-4 dark:bg-blue-900/20">
-                    <div className="mt-1 text-blue-500 dark:text-blue-400">
-                        {phases[activePhase].dir === "top-down" && <ArrowDown size={20} />}
-                        {phases[activePhase].dir === "bottom-up" && <ArrowUp size={20} />}
-                        {phases[activePhase].dir === "parallel" && <Activity size={20} />}
-                    </div>
-                    <div>
-                        <h4 className="m-0 font-semibold text-blue-900 dark:text-blue-300">
-                            {phases[activePhase].title} Direction: {phases[activePhase].dir}
-                        </h4>
-                        <p className="m-0 mt-1 text-sm text-blue-800 dark:text-blue-400">
-                            {phases[activePhase].desc}
-                        </p>
-                    </div>
-                </div>
-
-                <div className="overflow-x-auto pb-8 pt-4">
-                    <div className="flex min-w-[600px] justify-center">
-                        {renderNode(treeData)}
-                    </div>
-                </div>
-            </div>
-
-            <InterviewQuestionPlayground
-                title="UVM Phasing Pitfall"
-                question={
-                    <p>
-                        You have a <code>uvm_agent</code> that instantiates a <code>uvm_driver</code>. If the agent's <code>build_phase</code> fails to call <code>super.build_phase(phase)</code>, what happens to the driver?
-                    </p>
-                }
-                options={[
-                    {
-                        id: "opt1",
-                        label: "The driver is created anyway because uvm_component automatically traverses children in build_phase.",
-                        isCorrect: false,
-                        explanation: "Incorrect. While traversal is automatic down the hierarchy, auto-configuration (apply_config_settings) relies on super.build_phase(). However, instantiation is manual in user code, so the driver isn't created automatically anyway—unless using the field macros which require super.build_phase()."
-                    },
-                    {
-                        id: "opt2",
-                        label: "The driver's build_phase doesn't execute, but it is still instantiated.",
-                        isCorrect: false,
-                        explanation: "Incorrect. If it's instantiated via factory, its build_phase will execute. But omitting super.build_phase() affects automatic config and field macros."
-                    },
-                    {
-                        id: "opt3",
-                        label: "The field macros for the driver won't be automatically extracted, and standard UVM base setup is skipped.",
-                        isCorrect: true,
-                        explanation: "Correct! If you don't call super.build_phase(phase), the base uvm_component::build_phase() doesn't execute. This means apply_config_settings() is skipped, and any `uvm_field` macro automation fails."
-                    }
-                ]}
-            />
-        </div>
-    );
+  const [section, setSection] = useState<Section>("order");
+  return (
+    <VisualFrame
+      label="UVM component tree explorer"
+      eyebrow="Mental picture · experiment"
+      title="The component tree, phase order, and what super.build_phase really does"
+      summary="Components form a tree rooted at uvm_test_top. Phases walk it depth-first; your build_phase code grows it."
+      fidelity="model"
+      assumptions={TREE_EXPLORER_ASSUMPTIONS}
+    >
+      <SegmentedControl
+        label="View"
+        value={section}
+        onChange={setSection}
+        options={[
+          { value: "order", label: "Phase order in the tree" },
+          { value: "super", label: "Forgotten super.build_phase" },
+        ]}
+      />
+      {section === "order" ? <PhaseOrderPicture /> : <SuperBuildExperiment />}
+    </VisualFrame>
+  );
 }

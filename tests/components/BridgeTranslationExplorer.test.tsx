@@ -1,99 +1,80 @@
-import React from 'react';
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
-import { BridgeTranslationExplorer } from '../../src/components/visualizers/BridgeTranslationExplorer';
+import React from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-describe('BridgeTranslationExplorer', () => {
-  it('renders without crashing', () => {
+import { BridgeTranslationExplorer } from "@/components/visualizers/BridgeTranslationExplorer";
+
+const lockIn = (label: RegExp) => {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+};
+
+describe("BridgeTranslationExplorer", () => {
+  it("hides the output bursts until the learner predicts the count", () => {
     render(<BridgeTranslationExplorer />);
-    expect(screen.getByTestId('bridge-translation-explorer')).toBeDefined();
+    expect(screen.getByTestId("bridge-translation-explorer")).toBeInTheDocument();
+    expect(screen.queryByTestId("axi-bursts-container")).not.toBeInTheDocument();
+    lockIn(/^1 burst$/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    const out = screen.getByTestId("axi-bursts-container");
+    expect(out.textContent).toContain("AXI Burst 1");
+    expect(out.textContent).not.toContain("AXI Burst 2");
   });
 
-  it('displays the component title', () => {
+  it("a 1024-transfer undefined-length INCR splits only because of the AXI 256-transfer cap", () => {
     render(<BridgeTranslationExplorer />);
-    expect(screen.getByText('Bridge Translation Explorer')).toBeDefined();
+    fireEvent.click(screen.getByTestId("scenario-btn-2"));
+    lockIn(/^3 or more bursts$/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(within(screen.getByTestId("axi-bursts-container")).getAllByText(/AXI Burst \d/)).toHaveLength(4);
+    expect(screen.getAllByText(/stop at 256 transfers/).length).toBeGreaterThan(0);
   });
 
-  it('renders all 6 scenario buttons', () => {
+  it("the old 0x0FE0 example is illegal AHB stimulus, not a 4KB split", () => {
     render(<BridgeTranslationExplorer />);
-    for (let i = 0; i < 6; i++) {
-      expect(screen.getByTestId(`scenario-btn-${i}`)).toBeDefined();
-    }
+    fireEvent.click(screen.getByTestId("scenario-btn-4"));
+    lockIn(/^2 bursts$/);
+    expect(screen.getByText(/Not quite/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Check the input before translating it/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/cross the 1KB boundary at 0x1000/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/a_ahb_no_1kb_cross/)).toBeInTheDocument();
   });
 
-  it('defaults to the 4KB boundary split scenario with split indicator', () => {
+  it("AXI to AHB: a legal AXI INCR16 across 0x0400 must be split at the 1KB boundary", () => {
     render(<BridgeTranslationExplorer />);
-    // The 4KB boundary scenario should show a split indicator text
-    const container = screen.getByTestId('bridge-translation-explorer');
-    expect(container.textContent).toContain('SPLIT');
+    fireEvent.click(screen.getByTestId("scenario-btn-5"));
+    lockIn(/^2 bursts$/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    const out = screen.getByTestId("axi-bursts-container");
+    expect(out.textContent).toContain("AHB Burst 1");
+    expect(out.textContent).toContain("INCR4");
+    expect(out.textContent).toContain("AHB Burst 2");
   });
 
-  it('switches to direct translation when clicking Simple Write', () => {
+  it("editing the AHB address to cross 1KB turns the input illegal and re-arms the prediction", () => {
     render(<BridgeTranslationExplorer />);
-    // Click the "Simple Write" scenario (index 0)
-    fireEvent.click(screen.getByTestId('scenario-btn-0'));
-    // Should show "Direct Translation" instead of SPLIT
-    const directText = screen.getByText((content) => content.includes('Direct Translation'));
-    expect(directText).toBeDefined();
+    lockIn(/^1 burst$/);
+    fireEvent.change(screen.getByLabelText(/HADDR \(hex\)/), { target: { value: "0x03F8" } });
+    expect(screen.getByRole("button", { name: /lock in prediction/i })).toBeDisabled();
+    lockIn(/^None: the input is illegal/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
   });
 
-  it('shows two AXI bursts for the 4KB boundary split scenario', () => {
+  it("downsizing a WRAP16 of doublewords needs two INCR bursts", () => {
     render(<BridgeTranslationExplorer />);
-    // Default scenario (index 1) splits into 2 bursts
-    const container = screen.getByTestId('axi-bursts-container');
-    expect(container.textContent).toContain('AXI Burst 1');
-    expect(container.textContent).toContain('AXI Burst 2');
+    fireEvent.click(screen.getByTestId("scenario-btn-3"));
+    lockIn(/^2 bursts$/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/limited to 2, 4, 8 or 16/).length).toBeGreaterThan(0);
   });
 
-  it('shows one AXI burst for the simple write scenario', () => {
+  it("scenario buttons expose their state and the output bus is keyboard operable", () => {
     render(<BridgeTranslationExplorer />);
-    fireEvent.click(screen.getByTestId('scenario-btn-0'));
-    // Should have "AXI Burst 1" but NOT "AXI Burst 2"
-    const container = screen.getByTestId('axi-bursts-container');
-    expect(container.textContent).toContain('AXI Burst 1');
-    expect(container.textContent).not.toContain('AXI Burst 2');
-  });
-
-  it('renders the animate and reset buttons', () => {
-    render(<BridgeTranslationExplorer />);
-    expect(screen.getByTestId('animate-btn')).toBeDefined();
-    expect(screen.getByTestId('reset-btn')).toBeDefined();
-  });
-
-  it('renders animation step log lines', () => {
-    render(<BridgeTranslationExplorer />);
-    const log = screen.getByTestId('anim-log');
-    expect(log.children.length).toBeGreaterThan(0);
-  });
-
-  it('shows WRAP burst type for WRAP8 scenario', () => {
-    render(<BridgeTranslationExplorer />);
-    // Click the WRAP8 scenario (index 3)
-    fireEvent.click(screen.getByTestId('scenario-btn-3'));
-    // Should show WRAP burst label in the burst container
-    const container = screen.getByTestId('axi-bursts-container');
-    expect(container.textContent).toContain('WRAP');
-  });
-
-  it('shows AHB beat count in summary stats', () => {
-    render(<BridgeTranslationExplorer />);
-    // The default scenario (4KB split) has 8 beats — summary stat should show it
-    // Use getAllByText since "8" may appear multiple places
-    const elements = screen.getAllByText('8');
-    expect(elements.length).toBeGreaterThan(0);
-  });
-
-  it('reset button is clickable without errors', () => {
-    render(<BridgeTranslationExplorer />);
-    const resetBtn = screen.getByTestId('reset-btn');
-    expect(resetBtn).toBeDefined();
-    fireEvent.click(resetBtn); // Should not throw
-  });
-
-  it('shows correct number of AXI bursts in summary stat', () => {
-    render(<BridgeTranslationExplorer />);
-    // Default scenario (4KB split) should show 2 bursts
-    const burstCountElements = screen.getAllByText('2');
-    expect(burstCountElements.length).toBeGreaterThan(0);
+    expect(screen.getByTestId("scenario-btn-0")).toHaveAttribute("aria-pressed", "true");
+    const bus = within(screen.getByRole("radiogroup", { name: "Output bus width" })).getByRole("radio", { name: "32-bit" });
+    bus.focus();
+    fireEvent.keyDown(bus, { key: "ArrowRight" });
+    expect(within(screen.getByRole("radiogroup", { name: "Output bus width" })).getByRole("radio", { name: "64-bit" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByTestId("scenario-btn-0")).toHaveAttribute("aria-pressed", "false");
   });
 });

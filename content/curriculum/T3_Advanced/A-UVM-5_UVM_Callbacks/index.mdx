@@ -7,7 +7,7 @@ flashcards: "A-UVM-5_Callbacks"
 ## Quick Take
 - **What it is:** A standardized mechanism for exposing safe extension points within a UVM component's main execution loop, allowing test-specific behavior injection without subclassing.
 - **Why it matters:** Without callbacks, every test-specific tweak (error injection, delay insertion, scoring hooks) requires a factory override and a dedicated subclass. Callbacks let you append, prepend, or stack multiple independent extensions on a single component instance—and toggle them at runtime.
-- **The Standard:** IEEE 1800.2-2020 Clause 10.7 (`uvm_callback`) defines the callback base class and the `uvm_callbacks` parameterized type-wrapper for registration. Clause 10.8 (`uvm_callback_iter`) defines the iteration mechanism that components use internally to walk the callback queue.
+- **The Standard:** IEEE 1800.2-2020 §10.7 defines the `uvm_callback` base class (§10.7.1) and the `uvm_callbacks#(T,CB)` registration API (§10.7.2). The macros `` `uvm_register_cb `` and `` `uvm_do_callbacks `` are in Annex B.4, and the iterator class `uvm_callback_iter` is in Annex D.1 (clause numbers as tagged in the uvm-core 2020.3.1 sources).
 
 ## Build Your Mental Model
 
@@ -21,6 +21,8 @@ Every callback scenario has exactly three participants:
 
 ```systemverilog
 // ──── Part 1: Callback interface (component developer) ────
+typedef class my_driver;   // forward declaration: the hooks take a my_driver handle
+
 virtual class my_driver_cb extends uvm_callback;
   // Called right before the driver wiggles pins
   virtual task pre_send(my_driver driver, ref packet pkt);
@@ -75,43 +77,56 @@ endclass
 
 ### Passing by Reference (`ref`) vs Handles
 
-The `ref` keyword in a callback hook task changes the power dynamic significantly:
-- **By value (default):** The callback can modify the *contents* of the transaction object through its handle. This is usually enough for field corruption, delay injection, or passive observation.
-- **By `ref`:** The callback can *replace the entire transaction handle* in the driver's variable—substituting one object for another.
-- **By `const ref`:** The callback can observe but not modify anything. Use this for post-action monitoring hooks.
+A transaction is a class object, so every hook receives a *handle*. The argument direction only decides what happens to that handle:
+- **By value (default):** The hook gets a copy of the handle. It can still change the object's fields (`pkt.crc = ~pkt.crc` changes the packet the driver sends), but assigning a new object to `pkt` changes only the hook's local copy.
+- **By `ref`:** The hook can also *replace the handle* in the driver's variable, substituting a different object.
+- **By `const ref`:** The hook cannot reassign the handle, but it **can still modify the object's fields**. `const` protects the handle, not the object. A "read-only" observer hook is read-only by discipline only; if it must never disturb the driver, give it a `clone()`.
 
 Choose deliberately: `ref` should be reserved for hooks that genuinely need object-swap power.
 
 ### Callback Lifecycle and the Iteration Queue
 
-When `` `uvm_do_callbacks `` executes, the UVM library instantiates a `uvm_callback_iter` object internally. This iterator walks the callback queue for the given `(component_type, callback_type)` pair **in FIFO registration order**—the first callback added executes first.
+When `` `uvm_do_callbacks `` executes, it creates a `uvm_callback_iter` and walks **one queue**: the component's own instance queue if it has one, otherwise the type-wide queue for that `(component_type, callback_type)` pair. It runs the callbacks **in queue order** and skips any whose `callback_mode()` is off.
 
-Key lifecycle rules:
-- **Registration** uses `` `uvm_register_cb(comp_type, cb_type) `` inside the component class body. This is a compile-time type binding.
-- **Attachment** uses `uvm_callbacks#(comp_type, cb_type)::add(comp_inst, cb_inst)` at runtime (typically in `build_phase`).
-- **Removal** uses `uvm_callbacks#(comp_type, cb_type)::delete(comp_inst, cb_inst)`.
-- **Iteration** happens each time `` `uvm_do_callbacks `` fires. The iterator walks the queue snapshot—modifications to the queue mid-iteration do not affect the current pass.
+Key lifecycle rules (checked against `uvm_callback.svh` in uvm-core 2020.3.1):
+- **Registration** uses `` `uvm_register_cb(comp_type, cb_type) `` inside the component class body. It declares that the pair is legal; it attaches nothing.
+- **Attachment** uses `uvm_callbacks#(comp_type, cb_type)::add(comp_inst, cb_inst, ordering)`. The handle is read **when `add()` runs**. If it is `null`, the callback is registered **type-wide**: every instance of the type runs it, including ones created later. UVM builds top-down, so in any `build_phase` the components below you do not exist yet. Attach in `connect_phase`, `end_of_elaboration_phase` or `start_of_simulation_phase`, or at run time.
+- **Order** follows the queue. `UVM_APPEND` (the default) adds at the back, `UVM_PREPEND` at the front. The first instance-specific `add()` creates the instance queue by **copying the type-wide queue**, then adds the new callback. A type-wide `add()` made later is appended to every existing instance queue as well.
+- **Removal** uses `uvm_callbacks#(comp_type, cb_type)::delete(comp_inst, cb_inst)`; `delete(null, cb)` removes a type-wide callback from every queue.
+- **Iteration** walks the live queue by index (`get_first`/`get_next`). There is no snapshot, so do not add or delete callbacks from inside a hook: a deleted entry shifts the queue and the next callback can be skipped.
+
+Set the attachment point and the handle, predict which drivers corrupt their packets, then open the advanced options to see `UVM_PREPEND` and `callback_mode()` change the order a log callback sees.
+
+<CallbackTimingVisualizer />
 
 ## Managing Callbacks at Runtime
 
 ### Adding and Removing
 
 ```systemverilog
+// In connect_phase or later: env.agent.driver exists now
 // Add a callback to a specific driver instance
 uvm_callbacks#(my_driver, my_driver_cb)::add(env.agent.driver, err_cb);
 
-// Add a callback to ALL instances of my_driver (global)
-uvm_callbacks#(my_driver, my_driver_cb)::add(null, err_cb);
+// Run it before every callback already in that driver's queue
+uvm_callbacks#(my_driver, my_driver_cb)::add(env.agent.driver, dly_cb, UVM_PREPEND);
+
+// Add a callback to ALL instances of my_driver (type-wide), on purpose
+uvm_callbacks#(my_driver, my_driver_cb)::add(null, log_cb);
+
+// Switch a callback off and on without removing it (affects every queue that holds it)
+void'(err_cb.callback_mode(0));
+void'(err_cb.callback_mode(1));
 
 // Remove a specific callback from a specific instance
 uvm_callbacks#(my_driver, my_driver_cb)::delete(env.agent.driver, err_cb);
 ```
 
-> **Ordering rule:** When multiple callbacks are attached to the same component instance, they execute in *FIFO registration order*. If you attach an error injector first and a delay injector second, errors are always injected before delays are added within the same hook invocation.
+> **Ordering rule:** Callbacks run in *queue order*. `UVM_APPEND` puts a callback at the back, `UVM_PREPEND` at the front. A driver's instance queue starts as a copy of the type-wide queue, so a type-wide `log_cb` registered first runs before an instance `err_cb` appended later, and logs the CRC before it is corrupted.
 
 ### Displaying Registered Callbacks
 
-During debug, call `display()` to see all registered callbacks for a given type pair:
+During debug, call `display()` (provided by the uvm-core reference implementation, not specified by IEEE 1800.2) to see all registered callbacks for a given type pair:
 
 ```systemverilog
 // Print every callback attached to every my_driver instance
@@ -141,26 +156,35 @@ The most common design question is: *Should I use a callback or a factory overri
 
 1. **"My callback is not firing"**
    - Verify registration: did the component class declare `` `uvm_register_cb ``?
-   - Verify attachment: did the test call `uvm_callbacks#(...)::add()` *before* the phase where the callback fires?
-   - Verify type parameters: `uvm_callbacks#(wrong_driver_type, my_cb)::add(...)` will silently attach to a different type's queue.
+   - Verify attachment: did the test call `uvm_callbacks#(...)::add()` *before* the phase where the callback fires, and *after* the target component was built?
+   - Verify type parameters: if `(T, CB)` was never paired with `` `uvm_register_cb ``, `add()` issues a `CBUNREG` warning. Read your warnings.
+   - Verify `callback_mode()`: a disabled callback stays in the queue but is skipped.
    - Run `uvm_callbacks#(comp, cb)::display()` to inspect the queue.
 
-2. **Callback ordering surprises**
-   - Remember: callbacks execute in *add-order*, not alphabetical or priority order. If ordering matters, control the sequence of `add()` calls in your test's `build_phase`.
+2. **"My callback fires on every instance"**
+   - The handle was `null` when `add()` ran, usually because the call sits in a `build_phase` and the target is built later. `add(null, cb)` is type-wide and issues no warning. Move the call to `connect_phase` or later.
+   - In the test's `build_phase`, `env.agent.driver` is worse than null: `env.agent` itself is null, so reading `.driver` is a null-object access (IEEE 1800-2023 §8.4) and the simulation stops.
 
-3. **Ghost callbacks after `delete()`**
-   - If you `delete()` a callback mid-phase, it is removed from the queue for *future* `` `uvm_do_callbacks `` invocations. It will **not** be retroactively removed from an iteration already in progress.
+3. **Callback ordering surprises**
+   - Callbacks execute in *queue order*, not alphabetical or priority order. Use `UVM_PREPEND` when a callback must run first, and remember that an instance queue starts as a copy of the type-wide queue at its first instance `add()`.
 
-4. **Performance in hot loops**
-   - Each `` `uvm_do_callbacks `` invocation creates a `uvm_callback_iter` and walks the queue. In sub-nanosecond per-bit driver loops, this overhead can compound across millions of transactions. Profile before deploying callbacks in very tight loops.
+4. **Adding or deleting inside a hook**
+   - Iteration walks the live queue by index. Deleting the current callback from inside its own hook shifts the queue, and the next callback in that pass can be skipped. Change the queue between invocations, or use `callback_mode()`.
+
+5. **Performance in hot loops**
+   - Each `` `uvm_do_callbacks `` invocation creates a `uvm_callback_iter` and walks the queue. In per-bit driver loops that run millions of times, this costs real CPU time. Profile before deploying callbacks in very tight loops.
+
+The regression below shows CRC errors from a driver the test never meant to touch. Find the line, then pick a fix; the model rebuilds the tree and reruns both drivers.
+
+<CallbackTimingVisualizer mode="debug" />
 
 ### Debug Checklist
 
 When a callback-related issue arises:
 1. Call `uvm_callbacks#(T, CB)::display()` at the start of `run_phase`.
 2. Add `uvm_info` traces inside callback hook methods to confirm they execute.
-3. Verify the `ref`/value semantics—if your mutation is not visible, you may be editing a copy.
-4. Check whether the callback was added to the correct *instance* vs `null` (all instances).
+3. Verify the `ref`/value semantics: reassigning a by-value handle changes only the hook's copy; changing fields through any handle changes the shared object.
+4. Check whether the callback was added to the correct *instance* or to `null` (all instances). A handle read during `build_phase` is usually still `null`.
 
 ## Push Further: Advanced Patterns
 
@@ -169,7 +193,7 @@ When a callback-related issue arises:
 One of the most powerful patterns is stacking multiple independent callbacks on the same component:
 
 ```systemverilog
-// In test build_phase:
+// In the test's connect_phase (or end_of_elaboration_phase): every component exists
 inject_error_cb err_cb = inject_error_cb::type_id::create("err_cb");
 add_delay_cb    dly_cb = add_delay_cb::type_id::create("dly_cb");
 scoreboard_cb   scb_cb = scoreboard_cb::type_id::create("scb_cb");
@@ -215,8 +239,10 @@ endtask
 
 ## References & Next Topics
 
-- **IEEE 1800.2-2020 Clause 10.7** — `uvm_callback` base class and `uvm_callbacks` type-wrapper API.
-- **IEEE 1800.2-2020 Clause 10.8** — `uvm_callback_iter` iteration mechanism.
+- **IEEE 1800.2-2020 §10.7** — `uvm_callback` (§10.7.1) and the `uvm_callbacks` registration API (§10.7.2): `add`, `add_by_name`, `delete`, `get_first`/`get_next`.
+- **IEEE 1800.2-2020 Annex B.4 and D.1** — callback macros and the `uvm_callback_iter` iterator.
+- **uvm-core 2020.3.1** — `src/base/uvm_callback.svh` and `src/macros/uvm_callback_defines.svh`, the reference implementation this lesson's model follows.
 - **Prerequisite:** [I-UVM-1B: The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory) — understand factory overrides before comparing them to callbacks.
 - **Prerequisite:** [I-UVM-2A: Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles) — agents, drivers, and monitors where callbacks are most commonly deployed.
-- **Next:** [A-UVM-4A: RAL Fundamentals](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals) — the Register Abstraction Layer uses callbacks internally for predictor hooks.
+- **Next:** [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models) — build the checking side of the environment that callbacks and monitors feed.
+- **Related:** [A-UVM-4A: RAL Fundamentals](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals) — RAL exposes its own callback hook, `uvm_reg_cbs`, for field and register side effects.

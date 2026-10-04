@@ -9,6 +9,7 @@ import { InteractiveCode, Quiz, InterviewQuestionPlayground } from '@/components
 ## Quick Take
 - **What it is:** Functional coverage captures the design scenarios you *intend* to test, recording hits whenever stimulus exercises them.
 - **Why it matters:** Code coverage only says which lines executed; functional coverage maps directly to the verification plan, answering “Are we done yet?”
+- **The rule to remember:** A covergroup counts only what its bins say. A value outside every bin is simply not counted, unless you declare a `default` bin. `default`, `ignore_bins` and `illegal_bins` never count toward the percentage.
 - **The Analogy:** Imagine a mission checklist—every time a specific combination happens (burst write, secure mode, minimal latency), you tick a box. Unticked boxes reveal coverage holes.
 
 > **Reminder:** Coverage is actionable only when tied to a plan. Define meaningful bins, not just random value ranges.
@@ -27,6 +28,31 @@ import { InteractiveCode, Quiz, InterviewQuestionPlayground } from '@/components
   />
 </div>
 
+### Bins decide what counts
+
+A coverpoint samples one expression. Its **bins** decide which sampled values count, and where. Each line below is one declaration (IEEE 1800-2023 §19.5):
+
+| Declaration | What it creates | Counts toward the %? |
+| --- | --- | --- |
+| `bins low = {[0:3]};` | One bin for every listed value | Yes |
+| `bins mid[] = {[4:7]};` | One bin per value: `mid[4]` … `mid[7]` | Yes |
+| `bins q[3] = {[0:9]};` | 3 bins. Each gets floor(10 / 3) = 3 values and the last keeps the rest: `{0,1,2}`, `{3,4,5}`, `{6,7,8,9}` | Yes |
+| no `bins` at all | Automatic bins: one per enum constant, otherwise min(2^M, `option.auto_bin_max`) ranges (default 64) | Yes |
+| `wildcard bins up = {4'b11??};` | `?` matches 0 or 1: values 12 to 15 | Yes |
+| `bins rise = (0 => 1 => 2);` | A sequence of consecutive samples. `[* n]` repeats, `[-> n]` allows gaps | Yes |
+| `bins others = default;` | Every value no other bin lists | **No**, and it is never crossed |
+| `ignore_bins skip = {[4:7]};` | Removes these values from every bin | No |
+| `illegal_bins bad = {13};` | Removes these values; a hit is a **run-time error** | No |
+
+Two rules explain most surprises:
+
+1. **Exclusions apply after the bins are built** (§19.5.5, §19.5.6). An `ignore_bins` or `illegal_bins` value is removed from every other bin. A bin left with no values drops out of the percentage (§19.11).
+2. **An illegal hit beats everything.** The value counts in no bin and the simulator reports a run-time error. Whether the run then stops depends on your simulator's error-limit setting, not on the covergroup.
+
+Predict where 13 lands before you sample it. Then switch presets and predict again: 9 in *explicit ranges* (there is no default bin), 9 in *[N] fixed arrays*, 12 in *wildcard*, and 0 after 15 in *transitions*.
+
+<CovergroupBuilder />
+
 ### Core Constructs in Action
 <InteractiveCode>
 ```systemverilog
@@ -36,9 +62,12 @@ interface bus_if (input logic clk);
   logic       rw;
   logic       valid;
 
+  // Samples on every rising edge. Design and testbench drive these
+  // signals with <= (or through a clocking block), so the covergroup
+  // reads the values from just before the edge.
   covergroup cg_bus @(posedge clk);
-    // Address coverage
-    cp_addr: coverpoint addr {
+    // Address coverage: count real transfers only
+    cp_addr: coverpoint addr iff (valid) {
       bins low   = {[0:3]};
       bins high  = {[12:15]};
       bins mid[] = {[4:11]};
@@ -46,13 +75,13 @@ interface bus_if (input logic clk);
 
     // Data sampled only on valid writes
     cp_data: coverpoint data iff (valid && rw) {
-      bins zero = {8'h00};
-      bins full = {8'hFF};
-      bins others = default;
+      bins zero   = {8'h00};
+      bins full   = {8'hFF};
+      bins others = default;   // catches the rest; never counted
     }
 
     // Read vs write
-    cp_rw: coverpoint rw;
+    cp_rw: coverpoint rw iff (valid);
 
     // Cross coverage for interaction
     addr_x_rw: cross cp_addr, cp_rw {
@@ -65,14 +94,29 @@ endinterface
 ```
 </InteractiveCode>
 
-### Visualize & Iterate
-Coverage is part of a loop: randomize → measure → analyze → refine. Use coverage reports, or in this case, the analyzer, to spot unhit bins.
+### Crosses: where combinations hide
+
+A cross is the Cartesian product of the **counted** bins of its coverpoints (§19.6). `cp_addr` with 3 bins crossed with `cp_op` with 3 bins gives 9 cross bins. Default, ignored and illegal coverpoint bins are not crossed. To exclude combinations, select cross bins with `binsof` (§19.6.1):
+
+- `binsof(cp_addr.high)` names a bin. It selects every cross bin whose `cp_addr` part is `high`.
+- `binsof(cp_op) intersect {BURST}` selects by **value**: every `cp_op` bin that contains `BURST`. `intersect` takes values, never bin names.
+- Combine selections with `&&`, `||` and `!`.
+
+Cross coverage = covered cross bins / (automatic cross bins + your own cross bins). Ignored and illegal products leave the denominator (§19.11.2).
+
+Predict how many random samples it takes to fill every cell, then replay a seeded run. Next, try the *biased* stimulus, then *constrained (hole)*, and finally mark one cell with ✕ `illegal_bins` and watch the errors.
 
 <CoverageCrossExplorerVisualizer />
 
+What you just saw:
+
+- **Closure is a coupon-collector problem.** With k equally likely bins you need about k × (1 + 1/2 + … + 1/k) random samples: about 25 for 9 bins. The last holes take longest, because almost every sample lands in a bin that is already covered.
+- **Uniform values are not uniform bins.** In *corners + default*, two bins hold one value each, so the wait jumps into the hundreds even with plain `randomize()`.
+- **A hole with probability 0 never closes.** No number of seeds helps. Either the constraint is wrong, or the spec says the combination cannot happen and it belongs in `ignore_bins` or `illegal_bins`.
+
 ### Beyond Basics
-- **Illegal bins:** flag scenarios that must never occur—ideal for catching spec violations early.
-- **Soft bins:** `ignore_bins` drop uninteresting combinations from metrics.
+- **Illegal bins:** flag scenarios that must never occur. A hit raises a run-time error, so a spec violation is caught as soon as it happens.
+- **Ignore bins:** `ignore_bins` drop combinations that cannot happen, or do not matter, from the metric. They report nothing if the value does show up.
 - **Crosses:** verify feature interactions (e.g., command × power mode).
 
 <InteractiveCode>
@@ -100,33 +144,61 @@ endclass
 ```
 </InteractiveCode>
 
+<VisualRecap
+  title="Bins decide what counts"
+  rule="A sampled value increments the bins that list it. Ignore and illegal values are removed from every bin first; default catches the rest. Only bins and automatic bins count toward the percentage, and a cross multiplies only those."
+  code={`cp_addr: coverpoint addr iff (valid) {
+  bins low       = {[0:3]};
+  bins high      = {[12:15]};
+  ignore_bins na = {[4:7]};
+  illegal_bins x = {13};      // error, even though high lists 13
+  bins others    = default;   // not counted, not crossed
+}`}
+  mistake="Assuming every sampled value counts somewhere. Without a default bin, a value outside every bin leaves coverage unchanged, and an over-narrow bin list can report 100% while real traffic was never classified."
+  inTestbench="Covergroups live in a monitor or subscriber that calls sample() once per observed transaction. Bins come straight from the verification plan, with illegal_bins for spec violations and ignore_bins for documented exclusions."
+>
+  <svg viewBox="0 0 320 128" role="img" aria-label="A value lands in illegal first, then ignore, then the counted bins that list it, then default, otherwise nowhere." style={{ width: "100%", maxWidth: 360 }}>
+    <text x="8" y="16" fontSize="11" fill="currentColor">sampled value v</text>
+    <rect x="8" y="24" width="300" height="20" rx="4" fill="rgba(244,63,94,0.12)" stroke="rgb(244,63,94)" />
+    <text x="16" y="38" fontSize="10.5" fill="currentColor">✕ in illegal_bins? → run-time error, counts nowhere</text>
+    <rect x="8" y="48" width="300" height="20" rx="4" fill="rgba(100,116,139,0.12)" stroke="rgb(100,116,139)" />
+    <text x="16" y="62" fontSize="10.5" fill="currentColor">⊘ in ignore_bins? → counts nowhere</text>
+    <rect x="8" y="72" width="300" height="20" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="16" y="86" fontSize="10.5" fill="currentColor">● listed by bins? → each such bin +1 (counted)</text>
+    <rect x="8" y="96" width="300" height="20" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+    <text x="16" y="110" fontSize="10.5" fill="currentColor">◌ default bin? → +1, never counted · else: nothing</text>
+  </svg>
+</VisualRecap>
+
 ## Make It Work
 1. **Forecast scenarios:** Derive coverpoints and crosses directly from the verification plan features.
-2. **Sample intelligently:** Place covergroups where the data is observable (monitors, subscribers) and use `iff` for valid sampling.
+2. **Sample once per real transaction:** Put the covergroup where the data is observable (a monitor or subscriber). Either call `sample()` once per transaction, or use a clocking event with an `iff` guard. Never both on the same edge, or each transfer counts twice.
 3. **Review reports:** After regressions, inspect bin hit counts; prioritize holes that map to high-risk features.
-4. **Close the loop:** Adjust stimulus (constraints, directed sequences) to target unhit bins, rerun, and iterate.
+4. **Close the loop:** For each hole decide: rare (bias the stimulus), impossible by spec (`ignore_bins`, or `illegal_bins` if it must never happen), or a generator bug (fix the constraint). Rerun and repeat.
 
 **Checklist before moving on:**
-- [ ] You can author a covergroup with meaningful bins and documented intent.
-- [ ] You know when to add `ignore_bins` or `illegal_bins`.
-- [ ] You can explain how cross coverage catches interaction bugs.
+- [ ] You can say where any value lands: a bin, the default bin, ignored, illegal, or nowhere.
+- [ ] You know when to add `ignore_bins` or `illegal_bins`, and that only `illegal_bins` reports anything.
+- [ ] You can write a cross exclusion with `binsof(cp.bin)` or `binsof(cp) intersect {values}`.
+- [ ] You can estimate how many samples a cross needs, and recognize a hole that no seed can close.
 
 ## Push Further
 - Integrate coverage goals into automation (e.g., stop regression when goals met).
-- Use weighted coverage (`option.goal`) to focus on critical bins first.
+- Weight what matters: `option.weight` sets how much a coverpoint or cross counts in the covergroup's weighted average; `option.goal` is only the target percentage. `option.weight = 0` on coverpoints that exist only to feed a cross makes the cross the number that counts.
 - Tie coverage data to dashboards that show closure status by feature.
 
 ## Practice & Reinforce
 - Flashcards – Solidify terminology for coverpoints, bins, crosses.
 - Quiz – Complete the coverage fundamentals check below.
-- Mini-lab – Build a covergroup for a custom protocol, add an illegal bin, and observe simulator behavior.
-- Visual notebook – Sketch how coverage bins map to your plan and track holes over time.
+- Bins drill – In the bins editor above, model a 4-bit opcode: one bin per legal opcode, `ignore_bins` for reserved codes, `illegal_bins` for the one forbidden code. Predict three values before you sample them.
+- Closure drill – In the cross explorer, choose *corners + default* with *biased* stimulus. Predict, run, then change one setting so the forecast drops below 500 samples, and explain why it worked.
+- Lab – [The Coverage Closure Loop](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow) in I-SV-3B closes a real ALU covergroup.
 
 ## Deep Dives in this Track
 - [Coverage Options and Sampling](./coverage-options)
 
 ## References & Next Topics
-- **IEEE 1800-2023, Clause 19:** Functional coverage.
+- **IEEE 1800-2023, Clause 19:** Functional coverage. §19.5 defines bins, §19.6 crosses and `binsof`, §19.11 how the percentages are computed.
 - Next: [`/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage`](../I-SV-3B_Advanced_Functional_Coverage/).
 
 <Quiz
@@ -140,7 +212,29 @@ endclass
         { text: 'To define default bins automatically', correct: false }
       ],
       explanation:
-        'Illegal bins terminate simulation if sampled, catching forbidden combinations as soon as they occur.'
+        'Hitting an illegal bin raises a run-time error, and the sample counts in no bin. Whether the simulation then stops depends on the tool\'s error-limit setting. Excluding a scenario without any error is what ignore_bins does.'
+    },
+    {
+      question: 'cp_addr has bins low = {[0:3]} and high = {[12:15]} and no default bin. The value 9 is sampled. What happens?',
+      answers: [
+        { text: 'An automatic bin is created for 9', correct: false },
+        { text: 'Nothing is counted; coverage does not change', correct: true },
+        { text: 'It is counted in the closest bin', correct: false },
+        { text: 'The simulator reports an error', correct: false }
+      ],
+      explanation:
+        'Automatic bins are created only when a coverpoint declares no bins of its own. A value outside every declared bin is simply not counted. Add bins others = default if you want to see such values (they still do not count toward the percentage).'
+    },
+    {
+      question: 'Which cross select picks exactly the cell <high, BURST>?',
+      answers: [
+        { text: 'binsof(cp_addr) intersect {high} && binsof(cp_op) intersect {BURST}', correct: false },
+        { text: 'binsof(cp_addr.high) && binsof(cp_op) intersect {BURST}', correct: true },
+        { text: 'binsof(cp_addr.high) || binsof(cp_op) intersect {BURST}', correct: false },
+        { text: 'cross(cp_addr.high, cp_op.BURST)', correct: false }
+      ],
+      explanation:
+        'binsof(cp.bin) names a bin; intersect takes values, never bin names. && keeps only cross bins that satisfy both selections, while || would select the whole high row plus the whole BURST column.'
     },
     {
       question: 'Why add cross coverage?',

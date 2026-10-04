@@ -1,81 +1,71 @@
-import React from 'react';
-import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
-import GenerateElaborationVisualizer from '@/components/visuals/GenerateElaborationVisualizer';
+import React from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-describe('GenerateElaborationVisualizer', () => {
-  it('renders default state in generate mode', () => {
+import GenerateElaborationVisualizer from "@/components/visuals/GenerateElaborationVisualizer";
+
+const lockIn = (path: string) => {
+  fireEvent.click(screen.getByLabelText(path));
+  fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+};
+
+const instances = () => within(screen.getByRole("list", { name: "Elaborated instances" })).getAllByRole("listitem").map((li) => li.textContent);
+
+describe("GenerateElaborationVisualizer", () => {
+  it("hides the elaborated paths until the learner predicts one", () => {
     render(<GenerateElaborationVisualizer />);
-
-    expect(screen.getByText('Generate vs Runtime')).toBeInTheDocument();
-    expect(screen.getByText('Elaborated Hardware (Compile Time)')).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Elaborated instances" })).not.toBeInTheDocument();
+    lockIn("tb_top.gen_chk[1].chk_inst");
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(instances()).toEqual(["tb_top.gen_chk[0].chk_inst", "tb_top.gen_chk[1].chk_inst"]);
   });
 
-  it('switches to runtime mode on click', () => {
+  it("diagnoses the instance-array misconception", () => {
     render(<GenerateElaborationVisualizer />);
-
-    const runtimeBtn = screen.getByRole('button', { name: /Runtime Loop/i });
-    fireEvent.click(runtimeBtn);
-
-    expect(screen.getByText('Runtime Execution (Simulation Time)')).toBeInTheDocument();
+    lockIn("tb_top.chk_inst[1]");
+    expect(screen.getByText(/Not quite/)).toBeInTheDocument();
+    expect(screen.getByText(/The index belongs to the block, not to the instance/)).toBeInTheDocument();
   });
 
-  it('switches back to generate mode', () => {
+  it("an unlabelled loop becomes genblk1, and genblk2 when another generate construct comes first (§27.6)", () => {
     render(<GenerateElaborationVisualizer />);
-
-    // Switch to runtime first
-    const runtimeBtn = screen.getByRole('button', { name: /Runtime Loop/i });
-    fireEvent.click(runtimeBtn);
-
-    // Switch back
-    const generateBtn = screen.getByRole('button', { name: /Generate \(Elaboration\)/i });
-    fireEvent.click(generateBtn);
-
-    expect(screen.getByText('Elaborated Hardware (Compile Time)')).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/Label the loop block/));
+    lockIn("tb_top.genblk1[1].chk_inst");
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText(/generate block first/));
+    lockIn("tb_top.genblk2[1].chk_inst");
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(instances()).toContain("tb_top.gen_cov.u_cov");
   });
 
-  it('increases channel count and shows new instance', () => {
+  it("the NUM_CH stepper changes the code and the number of elaborated instances", () => {
     render(<GenerateElaborationVisualizer />);
-
-    // Default is NUM_CH = 2, should show gen_chk[0] and gen_chk[1]
-    expect(screen.getByText('gen_chk[0].chk_inst')).toBeInTheDocument();
-    expect(screen.getByText('gen_chk[1].chk_inst')).toBeInTheDocument();
-    expect(screen.queryByText('gen_chk[2].chk_inst')).not.toBeInTheDocument();
-
-    const increaseBtn = screen.getByRole('button', { name: /Increase channels/i });
-    fireEvent.click(increaseBtn);
-
-    // Should now show 3 instances
-    expect(screen.getByText('gen_chk[2].chk_inst')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /Increase channels/i }));
+    expect(screen.getByText(/parameter int NUM_CH = 3;/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /reveal without predicting/i }));
+    expect(instances()).toHaveLength(3);
+    expect(instances()).toContain("tb_top.gen_chk[2].chk_inst");
   });
 
-  it('decreases channel count and removes instance', () => {
+  it("clamps NUM_CH between 1 and 4", () => {
     render(<GenerateElaborationVisualizer />);
-
-    const decreaseBtn = screen.getByRole('button', { name: /Decrease channels/i });
-    fireEvent.click(decreaseBtn);
-
-    // Now at 1 — gen_chk[1] should be gone
-    expect(screen.getByText('gen_chk[0].chk_inst')).toBeInTheDocument();
-    expect(screen.queryByText('gen_chk[1].chk_inst')).not.toBeInTheDocument();
+    const dec = screen.getByRole("button", { name: /Decrease channels/i });
+    fireEvent.click(dec);
+    expect(dec).toBeDisabled();
+    const inc = screen.getByRole("button", { name: /Increase channels/i });
+    fireEvent.click(inc);
+    fireEvent.click(inc);
+    fireEvent.click(inc);
+    expect(inc).toBeDisabled();
   });
 
-  it('disables decrease button at minimum', () => {
+  it("the runtime view shows one process iterating, selected with the keyboard", () => {
     render(<GenerateElaborationVisualizer />);
-
-    const decreaseBtn = screen.getByRole('button', { name: /Decrease channels/i });
-    fireEvent.click(decreaseBtn); // now at 1
-
-    expect(decreaseBtn).toBeDisabled();
-  });
-
-  it('disables increase button at maximum', () => {
-    render(<GenerateElaborationVisualizer />);
-
-    const increaseBtn = screen.getByRole('button', { name: /Increase channels/i });
-    fireEvent.click(increaseBtn); // 3
-    fireEvent.click(increaseBtn); // 4
-
-    expect(increaseBtn).toBeDisabled();
+    const view = screen.getByRole("radiogroup", { name: "View" });
+    const gen = within(view).getByRole("radio", { name: "Generate (Elaboration)" });
+    gen.focus();
+    fireEvent.keyDown(gen, { key: "ArrowRight" });
+    expect(screen.getByText(/Runtime execution \(simulation time\)/)).toBeInTheDocument();
+    expect(screen.getByText(/cannot instantiate/)).toBeInTheDocument();
   });
 });

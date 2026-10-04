@@ -1,143 +1,124 @@
-import React from 'react';
-import { render, screen, fireEvent, cleanup, act } from '@testing-library/react';
-import { afterEach, describe, it, expect, vi } from 'vitest';
-import AhbPipelineBurstVisualizer from '../../src/components/visualizers/AhbPipelineBurstVisualizer';
+import React from "react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
 
-// Mock Lucide icons
-vi.mock('lucide-react', () => ({
-  Play: () => <div data-testid="icon-play" />,
-  Pause: () => <div data-testid="icon-pause" />,
-  SkipBack: () => <div data-testid="icon-skip-back" />,
-  SkipForward: () => <div data-testid="icon-skip-forward" />,
-  RotateCcw: () => <div data-testid="icon-rotate-ccw" />
-}));
+import AhbPipelineBurstVisualizer from "../../src/components/visualizers/AhbPipelineBurstVisualizer";
 
-describe('AhbPipelineBurstVisualizer', () => {
-  afterEach(() => {
-    cleanup();
-    vi.useRealTimers();
+const waveform = () => screen.queryByRole("group", { name: /AHB signals per cycle/ });
+const scenarioGroup = () => screen.getByRole("radiogroup", { name: "Scenario" });
+
+const choose = (scenario: string) => fireEvent.click(within(scenarioGroup()).getByRole("radio", { name: scenario }));
+
+const commit = (optionLabel: string | RegExp) => {
+  fireEvent.click(screen.getByLabelText(optionLabel));
+  fireEvent.click(screen.getByRole("button", { name: "Lock in prediction" }));
+};
+
+describe("AhbPipelineBurstVisualizer", () => {
+  afterEach(() => cleanup());
+
+  it("keeps the lesson test id and opens on the wait-state scenario with a model fidelity badge", () => {
+    render(<AhbPipelineBurstVisualizer />);
+    expect(screen.getByTestId("ahb-pipeline-burst-visualizer")).toBeInTheDocument();
+    expect(within(scenarioGroup()).getByRole("radio", { name: "Wait state" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText(/Deterministic educational model/i)).toBeInTheDocument();
   });
 
-  it('renders without crashing and shows default scenario', () => {
+  it("hides the waveform until the learner commits a prediction", () => {
     render(<AhbPipelineBurstVisualizer />);
-    
-    // Check title
-    expect(screen.getByText('AHB Timing Visualizer')).toBeInTheDocument();
-    
-    // Check default scenario is "pipeline"
-    const select = screen.getByRole('combobox');
-    expect(select).toHaveValue('pipeline');
-    expect(screen.getByText('Two back-to-back transfers showing Address/Data phase overlap.')).toBeInTheDocument();
+    expect(screen.getByText(/At which edge does the slave sample B's write data\?/)).toBeInTheDocument();
+    expect(waveform()).toBeNull();
+    commit("Edge 4");
+    expect(screen.getByText("Correct.")).toBeInTheDocument();
+    expect(waveform()).not.toBeNull();
   });
 
-  it('changes scenario when dropdown is used', () => {
+  it("diagnoses the 'address phase is always one cycle' misconception", () => {
     render(<AhbPipelineBurstVisualizer />);
-    
-    const select = screen.getByRole('combobox');
-    fireEvent.change(select, { target: { value: 'wait_state' } });
-    
-    expect(select).toHaveValue('wait_state');
-    expect(screen.getByText('The slave inserts a wait state (HREADYOUT=0), stalling the pipeline.')).toBeInTheDocument();
+    commit("Edge 3");
+    expect(screen.getByText("Not quite.")).toBeInTheDocument();
+    expect(screen.getByText(/address phase started in cycle 2 but was extended until edge 3/)).toBeInTheDocument();
   });
 
-  it('steps forward through clock cycles', () => {
+  it("recomputes the question from the model and re-locks the reveal when the learner changes the wait states", () => {
     render(<AhbPipelineBurstVisualizer />);
-    
-    // Initial state: Cycle 0
-    expect(screen.getByText('Cycle 0 Status')).toBeInTheDocument();
-    expect(screen.getByText('IDLE')).toBeInTheDocument(); // Address bus IDLE
-    
-    const stepForwardBtn = screen.getByTitle('Step Forward');
-    
-    // Step to Cycle 1
-    fireEvent.click(stepForwardBtn);
-    expect(screen.getByText('Cycle 1 Status')).toBeInTheDocument();
-    
-    // Address phase for transfer A should be active in Cycle 1
-    expect(screen.getByText(/Broadcasting/)).toBeInTheDocument();
-    expect(screen.getAllByText('0x1000').length).toBeGreaterThan(0); // Transfer A's address
+    commit("Edge 4");
+    expect(waveform()).not.toBeNull();
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Wait states on A" })).getByRole("radio", { name: "2" }));
+    expect(waveform()).toBeNull();
+    expect(screen.getByText(/A has 2 wait states and B has 0/)).toBeInTheDocument();
+    commit("Edge 5");
+    expect(screen.getByText("Correct.")).toBeInTheDocument();
   });
 
-  it('steps backward through clock cycles', () => {
+  it("steps through cycles from the keyboard with a narrated why", () => {
     render(<AhbPipelineBurstVisualizer />);
-    
-    const stepForwardBtn = screen.getByTitle('Step Forward');
-    const stepBackwardBtn = screen.getByTitle('Step Backward');
-    
-    fireEvent.click(stepForwardBtn); // To Cycle 1
-    expect(screen.getByText('Cycle 1 Status')).toBeInTheDocument();
-    
-    fireEvent.click(stepBackwardBtn); // Back to Cycle 0
-    expect(screen.getByText('Cycle 0 Status')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Reveal without predicting" }));
+    const controls = screen.getByRole("group", { name: "Cycle playback controls" });
+    expect(screen.getByText("Cycle 0 → edge 0")).toBeInTheDocument();
+    fireEvent.keyDown(controls, { key: "ArrowRight" });
+    fireEvent.keyDown(controls, { key: "ArrowRight" });
+    expect(screen.getByText("Cycle 2 → edge 2")).toBeInTheDocument();
+    expect(screen.getByText(/A's data phase is waited: HREADY is low with OKAY/)).toBeInTheDocument();
+    expect(screen.getByText(/NONSEQ B \(0x80\) is held on the address bus/)).toBeInTheDocument();
+    fireEvent.keyDown(controls, { key: "Home" });
+    expect(screen.getByText("Cycle 0 → edge 0")).toBeInTheDocument();
   });
 
-  it('resets to cycle 0 when reset button is clicked', () => {
+  it("moves between scenarios with the arrow keys", () => {
     render(<AhbPipelineBurstVisualizer />);
-    
-    const stepForwardBtn = screen.getByTitle('Step Forward');
-    const resetBtn = screen.getByTitle('Reset');
-    
-    fireEvent.click(stepForwardBtn);
-    fireEvent.click(stepForwardBtn);
-    expect(screen.getByText('Cycle 2 Status')).toBeInTheDocument();
-    
-    fireEvent.click(resetBtn);
-    expect(screen.getByText('Cycle 0 Status')).toBeInTheDocument();
+    const wait = within(scenarioGroup()).getByRole("radio", { name: "Wait state" });
+    fireEvent.keyDown(wait, { key: "ArrowRight" });
+    expect(within(scenarioGroup()).getByRole("radio", { name: "Read with waits" })).toHaveAttribute("aria-checked", "true");
+    expect(screen.getByText(/At which edge does the master sample A's read data\?/)).toBeInTheDocument();
   });
 
-  it('wait state scenario correctly models HREADY=0', () => {
+  it("two-cycle ERROR: a cancelling master drives IDLE, B is cancelled, and the old stability check false-fires", () => {
     render(<AhbPipelineBurstVisualizer />);
-    
-    // Switch to wait state scenario
-    const select = screen.getByRole('combobox');
-    fireEvent.change(select, { target: { value: 'wait_state' } });
-    
-    const stepForwardBtn = screen.getByTitle('Step Forward');
-    
-    // Cycle 0: IDLE
-    fireEvent.click(stepForwardBtn); // Cycle 1: Addr A
-    fireEvent.click(stepForwardBtn); // Cycle 2: Data A (Wait state)
-    
-    expect(screen.getByText('Cycle 2 Status')).toBeInTheDocument();
-    // HREADY=0 message
-    expect(screen.getByText('Slave needs more time (HREADY=0).')).toBeInTheDocument();
-    // Addr B should be held
-    expect(screen.getAllByText('0x2000').length).toBeGreaterThan(0);
-    
-    fireEvent.click(stepForwardBtn); // Cycle 3: Data A (Finishes)
-    expect(screen.getByText('Cycle 3 Status')).toBeInTheDocument();
-    // HREADY=1 message
-    expect(screen.getByText('Data sampled (HREADY=1).')).toBeInTheDocument();
-    // Addr B should STILL be held because previous cycle had wait state
-    expect(screen.getAllByText('0x2000').length).toBeGreaterThan(0);
+    choose("Two-cycle ERROR");
+    expect(screen.getByText(/What does the master drive on HTRANS in cycle 4, the second ERROR cycle\?/)).toBeInTheDocument();
+    commit("IDLE");
+    expect(screen.getByText("Correct.")).toBeInTheDocument();
+    expect(screen.getByText("◇ cancelled")).toBeInTheDocument();
+    const oldCheck = screen.getByRole("button", { name: /p_ctrl_stable \(old\)/ });
+    expect(oldCheck).toHaveTextContent("fails at edge 4");
+    expect(screen.getByRole("button", { name: /p_hold_in_wait/ })).toHaveTextContent("holds");
   });
 
-  it('stops autoplay at the final valid cycle and clears its timer', async () => {
-    vi.useFakeTimers();
+  it("two-cycle ERROR: a continuing master keeps B, so the held transfer is the right answer", () => {
     render(<AhbPipelineBurstVisualizer />);
-
-    fireEvent.click(screen.getByRole('button', { name: 'Play simulation' }));
-    for (let cycle = 0; cycle < 8; cycle += 1) {
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(1_200);
-      });
-    }
-
-    expect(screen.getByText('Cycle 5 Status')).toBeInTheDocument();
-    expect(screen.queryByText('Cycle 6 Status')).not.toBeInTheDocument();
-    expect(vi.getTimerCount()).toBe(0);
+    choose("Two-cycle ERROR");
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Master after ERROR" })).getByRole("radio", { name: "continues" }));
+    commit("NONSEQ B, unchanged");
+    expect(screen.getByText("Correct.")).toBeInTheDocument();
+    expect(screen.queryByText("◇ cancelled")).toBeNull();
   });
 
-  it('cancels autoplay when the scenario changes', () => {
-    vi.useFakeTimers();
+  it("debug: the original ERROR assertion is vacuous on a one-cycle ERROR; the new one fails", () => {
     render(<AhbPipelineBurstVisualizer />);
+    choose("Debug: one-cycle ERROR");
+    expect(screen.getByRole("button", { name: /Need a hint/ })).toBeInTheDocument();
+    commit("Only p_error_second_needs_first");
+    expect(screen.getByText("Correct.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /p_error_first_then_second/ })).toHaveTextContent("never triggered (vacuous)");
+    const fixed = screen.getByRole("button", { name: /p_error_second_needs_first/ });
+    expect(fixed).toHaveTextContent("fails at edge 3");
+    fireEvent.click(fixed);
+    expect(fixed).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByText(/\(HRESP && HREADY\) \|-> \$past\(HRESP && !HREADY\);/)).toBeInTheDocument();
+  });
 
-    fireEvent.click(screen.getByRole('button', { name: 'Play simulation' }));
-    expect(vi.getTimerCount()).toBe(1);
-
-    fireEvent.change(screen.getByRole('combobox'), { target: { value: 'single' } });
-
-    expect(screen.getByText('Cycle 0 Status')).toBeInTheDocument();
-    expect(vi.getTimerCount()).toBe(0);
+  it("WRAP vs INCR: flags the INCR4 that crosses 1KB and shows the old 1KB check firing on a legal WRAP4", () => {
+    render(<AhbPipelineBurstVisualizer />);
+    choose("WRAP vs INCR");
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "Start address" })).getByRole("radio", { name: "0x3F8" }));
+    commit("0x3F4");
+    expect(screen.getByText("Correct.")).toBeInTheDocument();
+    expect(screen.getByText(/✓ Legal burst\./)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /p_1kb_boundary \(old\)/ })).toHaveTextContent("fails at edge 1");
+    fireEvent.click(within(screen.getByRole("radiogroup", { name: "HBURST" })).getByRole("radio", { name: "INCR4" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reveal without predicting" }));
+    expect(screen.getByText(/✕ INCR4 from 0x3F8 crosses the 1KB boundary at 0x400/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /p_incr_no_1kb_cross/ })).toHaveTextContent("fails at edge 4");
   });
 });

@@ -1,385 +1,87 @@
 "use client";
-import React, { useState, useEffect } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { proceduralBlocksData } from './procedural-blocks-data';
-import { Button } from '@/components/ui/Button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/Select';
-import { InteractiveCode } from '@/components/ui/InteractiveCode';
 
-// Waveform data for blocking vs non-blocking assignments
-const waveformData = {
-  blocking: [
-    { time: 0, a: 1, b: 2 },
-    { time: 1, a: 2, b: 2 },
-    { time: 2, a: 2, b: 2 },
-  ],
-  nonBlocking: [
-    { time: 0, a: 1, b: 2 },
-    { time: 1, a: 1, b: 2 },
-    { time: 2, a: 2, b: 1 },
-  ],
-};
+import React, { useMemo, useState } from "react";
 
-const Waveform: React.FC<{ data: { time: number; a: number; b: number }[]; step: number }> = ({ data, step }) => {
-  const width = 200;
-  const height = 60;
-  const stepWidth = width / (data.length - 1);
-  const scaleY = (v: number) => height - v * 20;
+import { CodeTrace } from "@/components/visual-system/CodeTrace";
+import { PredictionPrompt } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import { PROCESS_MODEL_ASSUMPTIONS, ProcessTraceView, linesFor } from "@/components/visuals/ForkJoinVisualizer";
+import { prepareScenario, simulateProcesses } from "@/lib/sv-process-model";
 
-  const buildPath = (key: 'a' | 'b') => {
-    let d = `M 0 ${scaleY(data[0][key])}`;
-    for (let i = 1; i < data.length; i++) {
-      const x = i * stepWidth;
-      d += ` H ${x} V ${scaleY(data[i][key])}`;
-    }
-    return d;
-  };
+import { getProceduralScenario, proceduralScenarios, type AssignStyle, type ProceduralScenarioId } from "./procedural-blocks-data";
 
-  const pathA = buildPath('a');
-  const pathB = buildPath('b');
+interface ProceduralBlocksSimulatorProps {
+  scenario?: ProceduralScenarioId;
+}
 
-  const pointerX = (Math.min(step, data.length - 1) * stepWidth) || 0;
+/**
+ * initial, always and final procedures over simulation time, run on the
+ * process model. The code is generated from the model data and is read-only:
+ * learners change behaviour through the explicit controls, not by editing.
+ */
+const ProceduralBlocksSimulator = ({ scenario: initial = "procedures" }: ProceduralBlocksSimulatorProps) => {
+  const [scenarioId, setScenarioId] = useState<ProceduralScenarioId>(initial);
+  const [style, setStyle] = useState<AssignStyle>("nba");
+  const preset = getProceduralScenario(scenarioId);
+  const scenario = useMemo(() => preset.build(style), [preset, style]);
+  const prepared = useMemo(() => prepareScenario(scenario), [scenario]);
+  const result = useMemo(() => simulateProcesses(scenario), [scenario]);
+  const lines = useMemo(() => linesFor(prepared), [prepared]);
+  const resetKey = `${scenarioId}:${preset.styleToggle ? style : ""}`;
 
   return (
-    <svg width={width} height={height} className="bg-background rounded">
-      <motion.path
-        d={pathA}
-        fill="none"
-        stroke="#ef4444"
-        strokeWidth={2}
-        initial={{ pathLength: 0 }}
-        animate={{ pathLength: 1 }}
-        transition={{ duration: 1 }}
+    <VisualFrame
+      label="Procedural blocks simulator"
+      eyebrow="Procedures over time"
+      title="initial, always and final across simulation time"
+      summary="Pick a program, predict its output, then step through it. Lanes show each procedure over simulation time; the region badge shows where in a time step each update lands."
+      fidelity="model"
+      assumptions={[
+        ...PROCESS_MODEL_ASSUMPTIONS,
+        "Within one time step the model shows the Active, NBA and Postponed regions only; F3C's ladder covers all regions.",
+      ]}
+    >
+      <SegmentedControl
+        label="Program"
+        value={scenarioId}
+        onChange={(id) => {
+          setScenarioId(id);
+          setStyle("nba");
+        }}
+        options={proceduralScenarios.map((s) => ({ value: s.id, label: s.label }))}
       />
-      <motion.path
-        d={pathB}
-        fill="none"
-        stroke="#3b82f6"
-        strokeWidth={2}
-        initial={{ pathLength: 0 }}
-        animate={{ pathLength: 1 }}
-        transition={{ duration: 1, delay: 0.2 }}
-      />
-      <motion.line
-        x1={pointerX}
-        x2={pointerX}
-        y1={0}
-        y2={height}
-        stroke="#888"
-        strokeWidth={1}
-        animate={{ x1: pointerX, x2: pointerX }}
-        transition={{ duration: 0.3 }}
-      />
-    </svg>
-  );
-};
-
-const BlockingNonBlockingTimeline: React.FC<{ step: number }> = ({ step }) => (
-  <div className="grid md:grid-cols-2 gap-4 mt-4">
-    <div className="flex flex-col items-center">
-      <h4 className="mb-2">Blocking</h4>
-      <Waveform data={waveformData.blocking} step={step} />
-      <div className="text-xs mt-1">
-        a={waveformData.blocking[Math.min(step, 2)].a}, b={waveformData.blocking[Math.min(step, 2)].b}
-      </div>
-    </div>
-    <div className="flex flex-col items-center">
-      <h4 className="mb-2">Non-blocking</h4>
-      <Waveform data={waveformData.nonBlocking} step={step} />
-      <div className="text-xs mt-1">
-        a={waveformData.nonBlocking[Math.min(step, 2)].a}, b={waveformData.nonBlocking[Math.min(step, 2)].b}
-      </div>
-    </div>
-  </div>
-);
-
-const ForkJoinAnimation: React.FC<{ step: number }> = ({ step }) => {
-  const progress1 = Math.min(step / 5, 1) * 100;
-  const progress2 = Math.min(step / 10, 1) * 100;
-  return (
-    <div className="relative w-full h-24 bg-muted rounded mt-4 overflow-hidden">
-      <div className="absolute top-2 left-0 h-6 w-full border border-primary/50">
-        <motion.div
-          className="h-full bg-primary"
-          animate={{ width: `${progress1}%` }}
-          transition={{ duration: 0.3 }}
-        />
-      </div>
-      <div className="absolute top-14 left-0 h-6 w-full border border-secondary/50">
-        <motion.div
-          className="h-full bg-secondary"
-          animate={{ width: `${progress2}%` }}
-          transition={{ duration: 0.3 }}
-        />
-      </div>
-      {step >= 10 && (
-        <motion.div
-          className="absolute bottom-0 left-0 right-0 h-2 bg-accent"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-        />
-      )}
-    </div>
-  );
-};
-
-const WaitAnimation: React.FC<{ step: number }> = ({ step }) => {
-  const signalHigh = step >= 1;
-  const triggered = step >= 2;
-  return (
-    <div className="flex items-center space-x-4 mt-4">
-      <div className="flex items-center space-x-2">
-        <span>done</span>
-        <motion.div
-          className="w-4 h-4 rounded-full"
-          animate={{ backgroundColor: signalHigh ? '#22c55e' : '#6b7280' }}
-          transition={{ duration: 0.2 }}
-        />
-      </div>
-      <AnimatePresence>
-        {triggered && (
-          <motion.div
-            key="waited"
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 10 }}
-            className="px-2 py-1 bg-primary text-primary-foreground rounded"
-          >
-            a = 1
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-};
-
-const EventControlAnimation: React.FC<{ step: number }> = ({ step }) => {
-  const clkHigh = step >= 1;
-  const assigned = step >= 2;
-  return (
-    <div className="flex items-center space-x-4 mt-4">
-      <div className="flex items-center space-x-2">
-        <span>clk</span>
-        <motion.div
-          className="w-4 h-4 rounded-full"
-          animate={{ backgroundColor: clkHigh ? '#22c55e' : '#6b7280' }}
-          transition={{ duration: 0.2 }}
-        />
-      </div>
-      <AnimatePresence>
-        {clkHigh && (
-          <motion.div
-            key="edge"
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 10 }}
-            className="px-2 py-1 bg-secondary text-secondary-foreground rounded"
-          >
-            posedge
-          </motion.div>
-        )}
-      </AnimatePresence>
-      <AnimatePresence>
-        {assigned && (
-          <motion.div
-            key="assigned"
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 10 }}
-            className="px-2 py-1 bg-primary text-primary-foreground rounded"
-          >
-            a = 1
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-};
-
-const DelayAnimation: React.FC<{ step: number }> = ({ step }) => {
-  const progress = step === 0 ? 0 : step === 1 ? 50 : 100;
-  return (
-    <div className="relative w-full h-6 bg-muted rounded mt-4">
-      <motion.div
-        className="h-full bg-primary"
-        animate={{ width: `${progress}%` }}
-        transition={{ duration: 0.3 }}
-      />
-      {step === 2 && (
-        <span className="absolute right-0 -top-6 text-xs">a = 1</span>
-      )}
-    </div>
-  );
-};
-
-const LoopAnimation: React.FC<{ step: number }> = ({ step }) => {
-  const iterations = 3;
-  return (
-    <div className="flex space-x-2 mt-4">
-      {Array.from({ length: iterations }).map((_, i) => (
-        <motion.div
-          key={i}
-          className="w-6 h-6 rounded-full bg-muted"
-          animate={{ backgroundColor: i < step ? '#3b82f6' : '#e5e7eb' }}
-          transition={{ duration: 0.2 }}
-        />
-      ))}
-    </div>
-  );
-};
-
-const TaskFunctionAnimation: React.FC<{ step: number }> = ({ step }) => {
-  const functionDone = step >= 1;
-  const taskProgress = step < 2 ? 0 : step === 2 ? 50 : 100;
-  return (
-    <div className="space-y-4 mt-4">
-      <div className="flex items-center space-x-2">
-        <span>f()</span>
-        <motion.div
-          className="w-4 h-4 rounded-full"
-          animate={{ backgroundColor: functionDone ? '#22c55e' : '#6b7280' }}
-          transition={{ duration: 0.2 }}
-        />
-      </div>
-      <div>
-        <div className="text-xs mb-1">t()</div>
-        <div className="relative w-full h-4 bg-muted rounded">
-          <motion.div
-            className="h-full bg-secondary"
-            animate={{ width: `${taskProgress}%` }}
-            transition={{ duration: 0.3 }}
+      <p className="text-sm text-muted-foreground">{preset.summary}</p>
+      {preset.styleToggle ? (
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">Assignments</span>
+          <SegmentedControl
+            label="Assignment style"
+            mono
+            value={style}
+            onChange={setStyle}
+            options={[
+              { value: "nba", label: "a <= b; b <= a;", ariaLabel: "Nonblocking assignments" },
+              { value: "blocking", label: "a = b; b = a;", ariaLabel: "Blocking assignments" },
+            ]}
           />
         </div>
-      </div>
-    </div>
-  );
-};
-
-const ProceduralBlocksSimulator = () => {
-  const [exampleIndex, setExampleIndex] = useState(0);
-  const [currentStepIndex, setCurrentStepIndex] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [speed, setSpeed] = useState(1);
-
-  useEffect(() => {
-    if (!isPlaying) return;
-    const id = setInterval(() => {
-      setCurrentStepIndex(prev => {
-        if (prev < proceduralBlocksData[exampleIndex].steps.length - 1) {
-          return prev + 1;
-        } else {
-          setIsPlaying(false);
-          return prev;
-        }
-      });
-    }, 1000 / speed);
-    return () => clearInterval(id);
-  }, [isPlaying, speed, exampleIndex]);
-
-  const handleStep = () => {
-    setCurrentStepIndex(prev => (prev < proceduralBlocksData[exampleIndex].steps.length - 1 ? prev + 1 : prev));
-  };
-
-  const handleStepBack = () => {
-    setCurrentStepIndex(prev => (prev > 0 ? prev - 1 : 0));
-  };
-
-  const handleRewind = () => {
-    setCurrentStepIndex(0);
-    setIsPlaying(false);
-  };
-
-  const handleExampleChange = (index: string) => {
-    setExampleIndex(parseInt(index));
-    setCurrentStepIndex(0);
-    setIsPlaying(false);
-  };
-
-  const currentExample = proceduralBlocksData[exampleIndex];
-  const currentStep = currentExample.steps[currentStepIndex];
-
-  const renderVisualization = () => {
-    switch (currentExample.name) {
-      case 'Blocking vs. Non-blocking':
-        return <BlockingNonBlockingTimeline step={currentStepIndex} />;
-      case 'Fork/Join':
-        return <ForkJoinAnimation step={currentStepIndex} />;
-      case 'Event Control':
-        return <EventControlAnimation step={currentStepIndex} />;
-      case 'Wait Statement':
-        return <WaitAnimation step={currentStepIndex} />;
-      case '#Delay':
-        return <DelayAnimation step={currentStepIndex} />;
-      case 'Loop':
-        return <LoopAnimation step={currentStepIndex} />;
-      case 'Task vs Function':
-        return <TaskFunctionAnimation step={currentStepIndex} />;
-      default:
-        return null;
-    }
-  };
-
-  return (
-    <Card className="w-full">
-      <CardHeader>
-        <CardTitle>Procedural Blocks Simulator</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <Select onValueChange={handleExampleChange} defaultValue={exampleIndex.toString()}>
-          <SelectTrigger className="w-[280px] mb-4" aria-label="Select example">
-            <SelectValue placeholder="Select an example" />
-          </SelectTrigger>
-          <SelectContent>
-            {proceduralBlocksData.map((example, index) => (
-              <SelectItem key={example.name} value={index.toString()}>{example.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-
-        <InteractiveCode language="systemverilog" isEditable>
-          {currentExample.code}
-        </InteractiveCode>
-
-        {renderVisualization()}
-
-        <AnimatePresence mode="wait">
-          <motion.div
-            key={currentStep}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.3 }}
-            className="p-4 border rounded-lg bg-background/50 mt-4"
-            aria-live="polite"
-          >
-            <p>{currentStep}</p>
-          </motion.div>
-        </AnimatePresence>
-
-        <div className="flex items-center justify-between mt-4">
-          <div className="flex space-x-2">
-            <Button onClick={handleRewind} disabled={currentStepIndex === 0} aria-label="Rewind simulation">Rewind</Button>
-            <Button onClick={() => setIsPlaying(p => !p)} aria-label={isPlaying ? 'Pause simulation' : 'Run simulation'}>{isPlaying ? 'Pause' : 'Run'}</Button>
-            <Button onClick={handleStepBack} disabled={currentStepIndex === 0} aria-label="Step back">Step Back</Button>
-            <Button onClick={handleStep} disabled={currentStepIndex === currentExample.steps.length - 1} aria-label="Step forward">Step</Button>
-          </div>
-          <div className="flex items-center space-x-2">
-            <span className="text-xs">Speed</span>
-            <input
-              type="range"
-              min={0.5}
-              max={2}
-              step={0.5}
-              value={speed}
-              onChange={e => setSpeed(parseFloat(e.target.value))}
-              aria-label="Speed control"
-            />
-            <span className="text-xs">{speed.toFixed(1)}x</span>
-          </div>
+      ) : null}
+      <CodeTrace label="Code (read-only, generated from the model)" lines={lines} />
+      <PredictionPrompt
+        resetKey={resetKey}
+        question={preset.question}
+        options={preset.options.map((o) => ({ id: o.id, label: o.label, correct: o.matches(result), feedback: o.feedback(style) }))}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-foreground">
+            <strong>What to notice: </strong>
+            {preset.notice}
+          </p>
+          <ProcessTraceView prepared={prepared} result={result} resetKey={resetKey} watch={scenario.vars?.map((d) => d.name)} />
         </div>
-      </CardContent>
-    </Card>
+      </PredictionPrompt>
+    </VisualFrame>
   );
 };
 

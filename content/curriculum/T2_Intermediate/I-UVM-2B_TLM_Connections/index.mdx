@@ -4,17 +4,12 @@ description: "Wire sequencers, drivers, monitors, and scoreboards using UVM's Tr
 flashcards: "I-UVM-2B_TLM_Connections"
 ---
 
-import { InteractiveCode, Quiz } from '@/components/ui';
-import { AnimatedUvmSequenceDriverHandshakeDiagram } from '@/components/diagrams/AnimatedUvmSequenceDriverHandshakeDiagram';
-import TLMPortConnector from '@/components/curriculum/interactives/TLMPortConnector';
-
-
 ## Quick Take
 - **What it is:** Transaction-Level Modeling (TLM) is the UVM standard for moving objects between components without hardcoding pin wiggles.
 - **Why it matters:** By decoupling *what* data is moving from *how* it's carried, you can swap drivers or scoreboards freely as long as they speak the same TLM contract.
 - **The Analogy:** Think of TLM as pneumatic tubes in a pneumatic dispatch system. You define the tube shape (the TLM port) and drop the payload (the object); the infrastructure handles the delivery.
 
-> **Retention Hook:** Ports send, exports receive. Analysis ports yell, analysis imps listen.
+> **Retention Hook:** The port calls, the imp answers. `connect()` points from caller to implementer; the data may travel either way.
 
 ## Build Your Mental Model
 ### Three Types of TLM Connections
@@ -23,27 +18,43 @@ In typical UVM testbenches, you'll encounter three common TLM usage patterns:
 2. **Point-to-Point TLM (Put/Get/FIFO):** Used less frequently in modern environments, but standard blocking/non-blocking FIFO interfaces.
 3. **The Analysis Fabric (Publish/Subscribe):** Used by monitors to fan-out data to 0-to-N listeners (scoreboards, coverage).
 
+Three kinds of endpoint carry every connection:
+
+| Symbol | Kind | Role | Example |
+|---|---|---|---|
+| ■ | **port** | Requires an interface: the caller. Calls `connect()`. | `drv.seq_item_port`, `scb.get_port` |
+| ○ | **export** | Passes calls down to a child. Needs at least one imp below it. | `uvm_analysis_export` on a sub-env |
+| ● | **imp** | Implements the methods. Always the end of a chain, never the caller of `connect()`. | `sqr.seq_item_export`, `fifo.analysis_export` |
+
+Several handles named "export" are really imps: the sequencer's `seq_item_export`, a `uvm_subscriber`'s `analysis_export`, and the analysis FIFO's `analysis_export` and `get_export`.
+
 ### Sequencer ↔ Driver Handshake
 Sequencers manage high-level intent, drivers translate that intent into pin-wiggles. Their protocol keeps stimulus moving.
 
 <AnimatedUvmSequenceDriverHandshakeDiagram />
 
-<Dataflow3D />
+The driver's port calls into the sequencer, yet the item travels the other way. Pick each `connect_phase` line below, predict what happens, then step through it.
+
+<TLMPortConnector />
 
 ```systemverilog
 class my_driver extends uvm_driver#(my_txn);
   `uvm_component_utils(my_driver)
-  
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
   task run_phase(uvm_phase phase);
     forever begin
-      seq_item_port.get_next_item(req); // Block until sequence generates an item
-      drive_transfer(req);              // Translate to pins
-      seq_item_port.item_done();        // Unblock the sequence
+      seq_item_port.get_next_item(req); // Block until a sequence offers an item
+      drive_transfer(req);              // Your task: translate to pins
+      seq_item_port.item_done();        // Unblock the sequence's finish_item()
     end
   endtask
 endclass
 
-// In the agent's connect_phase:
+// In the agent's connect_phase: the driver's port is the caller
 function void connect_phase(uvm_phase phase);
   drv.seq_item_port.connect(sqr.seq_item_export);
 endfunction
@@ -52,53 +63,142 @@ endfunction
 <a id="monitors-scoreboards-and-the-analysis-fabric"></a>
 
 ### The Analysis Fabric (Publish/Subscribe)
-Monitors reconstruct transactions and broadcast them. They use a `uvm_analysis_port`, which expects listeners to provide a path to a terminal node that implements the analysis write method.
+Monitors reconstruct transactions and broadcast them. They use a `uvm_analysis_port`, and every connection from it must end at an imp that provides the `write()` function.
 
-> **Correction on Hierarchy:** A common mistake is thinking an `analysis_port` connects directly to an `analysis_export`. It does *not*. In UVM, an `analysis_port` must ultimately resolve to an `analysis_imp` (implementation) which provides the actual `write()` SV function. The `analysis_export` is just a pass-through structural node used to cross hierarchical boundaries (like an Agent boundary).
+> **Connection rule:** An `analysis_port` may connect directly to an `analysis_imp`, or to an `analysis_export` that passes the calls down to an imp further inside a component. `uvm_subscriber::analysis_export` and `uvm_tlm_analysis_fifo::analysis_export` are themselves imps, so `ap.connect(cov.analysis_export)` is the everyday case. What is illegal is a chain that ends without an imp: an `analysis_export` must reach at least one imp by end of elaboration.
 
-<Analysis3D />
+Watch one `ap.write(t)` below: predict when the monitor's next statement runs, then reorder the `connect()` calls and see whether the call order changes.
+
+<AnalysisBroadcastVisualizer />
 
 ```systemverilog
 // 1. The Broadcaster (Monitor)
 class my_monitor extends uvm_monitor;
-  uvm_analysis_port#(my_txn) ap;
-  // ... inside run_phase after observing bus:
-  // ap.write(txn_clone);
+  `uvm_component_utils(my_monitor)
+  uvm_analysis_port #(my_txn) ap;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    ap = new("ap", this);
+  endfunction
+
+  task run_phase(uvm_phase phase);
+    forever begin
+      my_txn t = my_txn::type_id::create("t");  // a new item per transaction
+      collect(t);                                // your task: sample the bus
+      ap.write(t);                               // zero time: calls every subscriber's write()
+    end
+  endtask
 endclass
 
-// 2. The Subscriber (Scoreboard/Coverage)
-class my_scoreboard extends uvm_component;
-  uvm_analysis_imp#(my_txn, my_scoreboard) analysis_export;
-  
-  // Must implement the write() method!
+// 2. The Subscriber (Scoreboard)
+class my_scoreboard extends uvm_scoreboard;
+  `uvm_component_utils(my_scoreboard)
+  uvm_analysis_imp #(my_txn, my_scoreboard) item_imp;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    item_imp = new("item_imp", this);
+  endfunction
+
+  // Must implement write(): a function, so it cannot wait
   virtual function void write(my_txn t);
-    // process the transaction ...
+    // compare t against the expected value; do not modify t
   endfunction
 endclass
 
 // 3. The Connection (Environment)
 function void connect_phase(uvm_phase phase);
-  agent.monitor.ap.connect(scb.analysis_export);
+  agent.ap.connect(scb.item_imp);
 endfunction
 ```
 
-## Decoupling the Scoreboard
-A critical design pattern in UVM is decoupling the fast monitor from the slow scoreboard. Because `write()` is a blocking function call (it executes in zero time, but the thread cannot advance until `write()` finishes), a slow scoreboard will artificially prevent the monitor from capturing the next bus cycle!
+### One scoreboard, two inputs: `` `uvm_analysis_imp_decl ``
 
-To fix this, we insert a `uvm_tlm_analysis_fifo` between them:
-1. The Monitor's `analysis_port` connects to the FIFO's `analysis_export`. 
-2. The Scoreboard no longer implements `write()`. Instead, it runs a `forever` loop in its `run_phase`, calling `get()` on the FIFO's blocking `get_export`. 
-3. Now the Monitor can spray transactions into the elastic FIFO buffer without being blocked by the Scoreboard's processing delay.
+A class can have only one `write()` method, so a scoreboard with an expected stream and an actual stream needs two differently named write methods. The macro `` `uvm_analysis_imp_decl(SFX) `` declares an imp class whose `write()` calls `write<SFX>()` on your component:
+
+```systemverilog
+`uvm_analysis_imp_decl(_exp)
+`uvm_analysis_imp_decl(_act)
+
+class bridge_scoreboard extends uvm_scoreboard;
+  `uvm_component_utils(bridge_scoreboard)
+  uvm_analysis_imp_exp #(bus_item, bridge_scoreboard) exp_imp;
+  uvm_analysis_imp_act #(pkt_item, bridge_scoreboard) act_imp;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    exp_imp = new("exp_imp", this);
+    act_imp = new("act_imp", this);
+  endfunction
+
+  function void write_exp(bus_item t);  /* predict and queue */  endfunction
+  function void write_act(pkt_item t);  /* compare with queue */ endfunction
+endclass
+
+// env connect_phase
+in_agt.ap.connect(scb.exp_imp);
+out_agt.ap.connect(scb.act_imp);
+```
+
+## Decoupling the Scoreboard
+`write()` is a **function**. An analysis port's `write()` calls each connected subscriber's `write()` one after another, inside the monitor's own process, all at the same simulation time. It has no buffer and no back-pressure: a subscriber cannot slow the monitor down, because a function cannot consume simulation time. A delay or a task call inside `write()` does not compile.
+
+So when a subscriber needs to *wait* (for a DUT response, for the matching item on another stream, or for a clock), the waiting cannot live in `write()`. Insert a `uvm_tlm_analysis_fifo`:
+1. The monitor's `analysis_port` connects to the FIFO's `analysis_export` (an imp). The FIFO's `write()` is a zero-time `try_put()` into an unbounded queue, so it always succeeds.
+2. The scoreboard no longer implements `write()` for that stream. It runs a `forever` loop in its `run_phase`, calling `get()` (a task, which may block) through a `uvm_blocking_get_port` connected to the FIFO's `get_export`.
+3. The queue now holds the backlog. Make sure it is empty before the test ends: keep an objection until the scoreboard is idle, or report leftovers in `check_phase`.
+
+```systemverilog
+class my_env extends uvm_env;
+  `uvm_component_utils(my_env)
+  my_agent                         agt;
+  my_checker                       chk;      // has uvm_blocking_get_port #(my_txn) get_port
+  uvm_tlm_analysis_fifo #(my_txn)  chk_fifo;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    agt      = my_agent::type_id::create("agt", this);
+    chk      = my_checker::type_id::create("chk", this);
+    chk_fifo = new("chk_fifo", this);
+  endfunction
+
+  function void connect_phase(uvm_phase phase);
+    agt.ap.connect(chk_fifo.analysis_export);
+    chk.get_port.connect(chk_fifo.get_export);
+  endfunction
+endclass
+
+// my_checker::run_phase
+task run_phase(uvm_phase phase);
+  my_txn t;
+  forever begin
+    get_port.get(t);          // blocks until the FIFO has an item
+    wait_for_response(t);     // time-consuming work is legal here
+    compare(t);
+  end
+endtask
+```
 
 ## Make It Work
-1. **Connect everything in `connect_phase`**: Ports exist after the `build_phase` completes. Connect them before `run_phase` wakes up.
-2. **Analysis Ports support 0-to-N connections**: You can wire an agent's `analysis_port` to an `analysis_imp` on a subscriber, a FIFO for a scoreboard, and a logger simultaneously.
-3. **Use FIFOs for decoupling**: If your environment components operate on completely different clocks, place a `uvm_tlm_analysis_fifo` between them.
-4. **Be careful with references**: Items passed via TLM are handles. Always `clone()` items in the monitor before calling `write()` so that multiple subscribers don't accidentally mutate shared data.
+1. **Connect everything in `connect_phase`**: Ports exist after the `build_phase` completes. Bindings are resolved when `end_of_elaboration` starts; a `connect()` at or after that point is ignored with a "Late Connection" warning.
+2. **Analysis Ports support 0-to-N connections**: You can wire an agent's `analysis_port` to an `analysis_imp` on a subscriber, a FIFO for a scoreboard, and a logger simultaneously. Most other ports (put, get, and exports) need at least one connection, or end of elaboration reports "connection count of 0 does not meet required minimum of 1" and stops the run.
+3. **Use FIFOs when the consumer must wait**: Put a `uvm_tlm_analysis_fifo` in front of any subscriber that needs task context (waiting, pairing two streams, timing).
+4. **Be careful with references**: Items passed via TLM are handles, and every subscriber receives the same object. Create a new item per transaction in the monitor, never modify an item inside `write()`, and `clone()` anything you need to change or store.
+5. **Never rely on subscriber order**: The standard promises no order for the `write()` calls. (The reference implementation happens to call them sorted by the imps' full names, not in `connect()` order.)
 
 ## Interview Pitfalls
 **Missing the `connect_phase` Hierarchy Rule:**
-You can only connect components going UP or DOWN the hierarchy. `child_port.connect(parent_export)` is valid. `peerA_port.connect(peerB_export)` is valid. But you cannot bypass hierarchy boundaries. 
+Connections cross one level of hierarchy at a time:
+- **port → port goes up**: a child's port connects to its parent's port (`mon.ap.connect(ap)` inside the agent).
+- **port → export or imp goes across**: between siblings, written in their common parent's `connect_phase` (`agt.ap.connect(scb.item_imp)` in the env).
+- **export → export or imp goes down**: a parent's export connects to a child's export or imp (`analysis_export.connect(scb.item_imp)` inside a sub-env).
+
+UVM checks these levels only as *warnings*, and only when `check_connection_relationships` is set; analysis ports skip the check. What it always enforces is direction: an imp can never call `connect()`, and an export can never connect to a port.
 
 **Missing `item_done()`:**
 Interviewers will present a testbench that runs exactly one transaction and hangs. If the driver loops but never calls `item_done()`, the sequence blocks forever waiting for acknowledgment.
@@ -113,7 +213,7 @@ Interviewers will present a testbench that runs exactly one transaction and hang
         {"text": "connect_phase", "correct": true},
         {"text": "run_phase", "correct": false}
       ],
-      "explanation": "Because ports and components are instantiated via factory rules top-down during build_phase, they can only be successfully wired bottom-up in the connect_phase."
+      "explanation": "connect_phase runs after every component and its ports exist. Bindings are resolved when end_of_elaboration starts, and a connect() at or after that point is ignored with a 'Late Connection' warning."
     },
     {
       "question": "How many subscribers can connect to a single `uvm_analysis_port`?",
@@ -123,30 +223,64 @@ Interviewers will present a testbench that runs exactly one transaction and hang
         {"text": "A maximum of 2", "correct": false}
       ],
       "explanation": "Analysis ports implement publish/subscribe logic. If no one connects, the `write()` call is safely ignored. If 10 components connect, `write()` runs for all 10."
+    },
+    {
+      "question": "A subscriber's write() method starts with #10ns to wait for the DUT. What happens?",
+      "answers": [
+        {"text": "The monitor stalls 10 ns on every ap.write()", "correct": false},
+        {"text": "A compile error: write() is a function and cannot contain a delay", "correct": true},
+        {"text": "UVM queues the item and runs write() 10 ns later", "correct": false}
+      ],
+      "explanation": "A function cannot contain time-controlling statements (IEEE 1800-2023 §13.4). Move the waiting into a task, fed by a uvm_tlm_analysis_fifo and a get() loop."
+    },
+    {
+      "question": "Which connect() call is illegal?",
+      "answers": [
+        {"text": "agt.ap.connect(cov.analysis_export)   // cov is a uvm_subscriber", "correct": false},
+        {"text": "sqr.seq_item_export.connect(drv.seq_item_port)", "correct": true},
+        {"text": "mon.ap.connect(ap)   // inside the agent", "correct": false}
+      ],
+      "explanation": "seq_item_export is an imp, and an imp cannot call connect(): UVM reports a Connection Error and stops at end of elaboration. The driver's port is the caller: drv.seq_item_port.connect(sqr.seq_item_export)."
     }
   ]} />
 
 ### Interactive: Build the TLM Topology
 
-Use the interactive builder below to practice wiring UVM components together. Click a source port, then click a compatible destination to connect them. Use **Check Connections** to validate your work.
+Pick the endpoint that calls `connect()`, then the one it connects to, and read the verdict. When the goals look met, run to `end_of_elaboration` to see what each port actually reaches. Try **Spot the bug** for four broken `connect_phase` listings.
 
 <TlmConnectionBuilderVisualizer />
 
-<div className="my-6 rounded-2xl border border-muted bg-muted/40 p-6">
-  <h3 className="text-lg font-semibold">Lab: Wire It Up!</h3>
-  <p className="mt-2 text-sm text-muted-foreground">
-    In this lab, practice connecting the `seq_item_port` to the `seq_item_export`. 
-    Notice how transactions flow from the sequence to the driver. 
-  </p>
-
-  <TLMPortConnector />
-
-</div>
+<VisualRecap
+  title="Caller to implementer, one level at a time"
+  rule="requirer.connect(provider): ports call connect(), imps never do, and every chain must end in an imp. Analysis write() is a zero-time function call to each subscriber, so anything that must wait goes behind a uvm_tlm_analysis_fifo."
+  code={`drv.seq_item_port.connect(sqr.seq_item_export); // port -> imp
+mon.ap.connect(ap);                             // child port -> parent port
+agt.ap.connect(chk_fifo.analysis_export);       // analysis port -> imp
+chk.get_port.connect(chk_fifo.get_export);      // get port -> imp`}
+  mistake="Writing the connection backwards (an imp or export calling connect() on a port), or putting a delay in write() to model a slow scoreboard."
+  inTestbench="Agents promote their monitor's ap; the env wires agent ports to scoreboards, coverage and FIFOs in connect_phase; end_of_elaboration reports anything left unconnected."
+>
+  <svg viewBox="0 0 320 120" role="img" aria-label="A square port on the driver points with a dashed arrow to a filled circle imp on the sequencer, labelled get_next_item. A solid arrow returns the item from sequencer to driver." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="8" y="30" width="110" height="56" rx="8" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
+    <text x="20" y="62" fontSize="12" fontFamily="monospace" fill="currentColor">sqr</text>
+    <circle cx="118" cy="58" r="6" fill="currentColor" />
+    <rect x="202" y="30" width="110" height="56" rx="8" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
+    <text x="250" y="62" fontSize="12" fontFamily="monospace" fill="currentColor">drv</text>
+    <rect x="196" y="52" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M 196 58 L 128 58" fill="none" stroke="currentColor" strokeDasharray="5 3" strokeWidth="1.4" />
+    <path d="M 134 53 L 126 58 L 134 63" fill="none" stroke="currentColor" strokeWidth="1.4" />
+    <text x="130" y="50" fontSize="9" fontFamily="monospace" fill="currentColor">get_next_item()</text>
+    <path d="M 64 30 L 64 14 L 256 14 L 256 26" fill="none" stroke="rgb(6,182,212)" strokeWidth="1.6" />
+    <path d="M 251 22 L 256 30 L 261 22 Z" fill="rgb(6,182,212)" />
+    <text x="140" y="10" fontSize="9" fontFamily="monospace" fill="currentColor">req</text>
+    <text x="8" y="110" fontSize="10" fill="currentColor" fillOpacity="0.7">Dashed: the call. Solid: the item coming back.</text>
+  </svg>
+</VisualRecap>
 
 <div className="my-6 rounded-2xl border border-muted bg-muted/40 p-6">
   <h3 className="text-lg font-semibold">Lab: Decoupling the Scoreboard</h3>
   <p className="mt-2 text-sm text-muted-foreground">
-    Put the theory into practice. Learn to diagnose artificial monitor backpressure, instantiate an analysis FIFO, and refactor a slow Scoreboard to use a blocking `get()` loop instead of a `write()` implementation.
+    Put the theory into practice: move a time-consuming check out of a scoreboard's write() function and into a run_phase loop that pulls from an analysis FIFO with a blocking get().
   </p>
   <div className="mt-4">
     <a href="/practice/lab/scoreboard-decoupling" className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground shadow ring-offset-background transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
@@ -160,5 +294,6 @@ Use the interactive builder below to practice wiring UVM components together. Cl
 <LabLink labId="uvm-mini-capstone" />
 
 ## References & Next Topics
-- IEEE 1800.2-2020 LRM: Clause 12 (TLM Interfaces).
+- IEEE 1800.2-2020: §5.5 `uvm_port_base` (`connect` §5.5.2.14, `resolve_bindings` §5.5.2.15), §12.2.10 analysis port, export and imp, §15.2.2 sequence-item pull ports, §B.5.22 `` `uvm_analysis_imp_decl ``. Clause numbers taken from the `@uvm-ieee` annotations in the uvm-core 2020.3.1 source.
+- IEEE 1800-2023 §13.4: a function cannot contain time-controlling statements or call tasks.
 - Next: [/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources](../I-UVM-2C_Configuration_and_Resources/index).

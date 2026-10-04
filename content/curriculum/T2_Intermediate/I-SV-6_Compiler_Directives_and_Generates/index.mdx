@@ -13,7 +13,7 @@ flashcards: "I-SV-6_Compiler_Directives_and_Generates"
 
 ## Build Your Mental Model
 
-### Compiler Directives (IEEE 1800-2017 Clause 22)
+### Compiler Directives (IEEE 1800-2023 Clause 22)
 
 Directives begin with a backtick (`` ` ``) and are processed by the **preprocessor** before the code reaches the compiler. They operate on the source text, not on the language semantics.
 
@@ -80,7 +80,7 @@ Use `` `ifndef `` for include guards:
 
 | Directive | Purpose |
 |---|---|
-| `` `timescale 1ns/1ps `` | Sets the time unit and precision for the file. |
+| `` `timescale 1ns/1ps `` | Sets the time unit and precision for every design element that follows it in compilation order, across file boundaries, until the next `` `timescale `` or `` `resetall `` (§3.14.2, §22.7). Compile order can change it. |
 | `` `resetall `` | Resets all directives to their default states. |
 | `` `undef MACRO_NAME `` | Undefines a previously defined macro. |
 | `` `default_nettype none `` | Forces explicit declarations — catches typos. |
@@ -104,7 +104,7 @@ Use `` `ifndef `` for include guards:
 
 ---
 
-## Generate Constructs (IEEE 1800-2017 Clause 27)
+## Generate Constructs (IEEE 1800-2023 Clause 27)
 
 Generate constructs operate at **elaboration time** — the phase between parsing and simulation where the compiler resolves parameters and builds the design hierarchy. They create or omit structural elements (modules, interfaces, checkers, assertions, covergroups) based on compile-time-known values.
 
@@ -127,8 +127,9 @@ endmodule
 ```
 
 Key points:
-- **`genvar`** is the loop variable — it exists only at elaboration time and is not accessible at runtime.
-- Each iteration creates a **named scope** (`gen_mon[0]`, `gen_mon[1]`, …) that appears in the hierarchy.
+- **`genvar`** is the loop index. It exists only during elaboration. Inside each generated block, `i` is a constant (an implicit `localparam`, §27.4), so procedural code in the block may use it.
+- Each iteration creates a **named scope**: the checkers are `multi_channel_monitor.gen_mon[0].u_chk`, `gen_mon[1].u_chk`, …. The index belongs to the block, not to the instance.
+- If you leave out the `: gen_mon` label, the block is named `genblk<n>`, where *n* counts every generate construct in that scope (§27.6). Always label generate blocks so their paths stay stable.
 - You are creating *parallel hardware*, not running a sequential loop.
 
 ### `generate if` / `generate case`
@@ -145,11 +146,11 @@ generate
 endgenerate
 ```
 
-This lets you configure entirely different sub-architectures at compile time, which is invaluable for protocol-parameterized VIP wrappers.
+This lets you configure entirely different sub-architectures at elaboration time, which is invaluable for protocol-parameterized VIP wrappers.
 
 ### Generate vs Runtime: The Critical Distinction
 
-This is the single most important concept in this lesson. Use the interactive below to build your intuition:
+This is the single most important concept in this lesson. In the interactive below, change `NUM_CH`, remove the loop label, and add a generate block before the loop. Predict the checker's full hierarchical path each time before revealing the elaborated hierarchy.
 
 <GenerateElaborationVisualizer />
 
@@ -176,17 +177,19 @@ You **cannot** instantiate a module inside a runtime `for` loop. You **cannot** 
    `endif
    ```
 
-2. **Parameterized checker arrays:**
+2. **Parameterized checker arrays:** put the generate loop in a small wrapper module and bind the wrapper once.
    ```systemverilog
-   generate
-     for (genvar i = 0; i < NUM_PORTS; i++) begin : gen_chk
-       bind router_port protocol_checker chk_inst (
-         .clk  (clk),
-         .data (port_data[i])
-       );
+   module port_checkers #(int N = 4) (input logic clk, input logic [7:0] data [N]);
+     for (genvar i = 0; i < N; i++) begin : gen_chk
+       protocol_checker chk_inst (.clk(clk), .data(data[i]));
      end
-   endgenerate
+   endmodule
+
+   // Names in a bind are resolved inside the target (router): NUM_PORTS, clk, port_data
+   bind router port_checkers #(.N(NUM_PORTS)) u_chks (.clk(clk), .data(port_data));
+   // Paths: <each router instance>.u_chks.gen_chk[i].chk_inst
    ```
+   Do **not** write `bind` inside a `for (genvar i …)` loop that targets the same module. Every iteration would insert the same instance name `chk_inst` into the same target, which is an elaboration error, and `port_data[i]` would be resolved inside the target, where `i` does not exist (§23.11).
 
 3. **Config headers for bench variants:**
    ```systemverilog
@@ -215,9 +218,8 @@ You **cannot** instantiate a module inside a runtime `for` loop. You **cannot** 
 // BAD: semicolon in the macro definition
 `define CLK_PERIOD 10;  // <-- trailing semicolon!
 
-// This expands to: #10;; — double semicolon, subtle parse errors
 initial begin
-  #`CLK_PERIOD;
+  half = `CLK_PERIOD / 2;   // expands to: half = 10; / 2;  -> syntax error
 end
 ```
 
@@ -238,24 +240,29 @@ Always wrap generate loop bodies with `begin : label_name … end`.
 ### `genvar` Scope Confusion
 
 ```systemverilog
-// genvar is NOT a runtime variable
 generate
   for (genvar i = 0; i < N; i++) begin : gen_blk
-    // ILLEGAL inside an always block:
-    // always_ff @(posedge clk) x <= data[i];  // 'i' is a genvar!
-    
-    // LEGAL: use 'i' to parameterize structural connections
+    // LEGAL: inside the block, i is a constant (implicit localparam, §27.4)
+    always_ff @(posedge clk) q[i] <= d[i];
     assign out[i] = in[i];
   end
 endgenerate
+
+// ILLEGAL: a genvar may only be used in a loop generate scheme (§27.4)
+genvar j;
+always_ff @(posedge clk)
+  for (j = 0; j < N; j++) q[j] <= d[j];   // use: for (int j = 0; ...)
 ```
+
+The trap is not using `i` inside procedural code in the generated block. It is using a `genvar` *as* a procedural loop variable.
 
 ### Recursive Include
 
 If `a.svh` includes `b.svh` and `b.svh` includes `a.svh`, you get infinite recursion. The fix: **always use include guards** in every header file.
 
 ## References & Next Topics
-- **IEEE 1800-2017 Clause 22** — Compiler directives.
-- **IEEE 1800-2017 Clause 27** — Generate constructs.
+- **IEEE 1800-2023 Clause 22** — Compiler directives (`` `timescale `` scope: §3.14.2).
+- **IEEE 1800-2023 Clause 27** — Generate constructs (§27.4 loop generate, §27.6 names of unnamed blocks).
+- **IEEE 1800-2023 §23.11** — `bind`.
 - **Previous:** [I-SV-5: Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC)
-- **Next:** Explore assertion-based verification with [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals) or begin the UVM journey with [I-UVM-1A: Components](/curriculum/T2_Intermediate/I-UVM-1A_Components).
+- **Next:** [I-SV-7: DPI & Foreign Language Interfaces](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces)

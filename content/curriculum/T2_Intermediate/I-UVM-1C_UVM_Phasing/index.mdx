@@ -18,40 +18,77 @@ import UvmPhasingDiagram from '@/components/diagrams/UvmPhasingDiagram';
 ## Build Your Mental Model
 ### Three Buckets of Phases
 Phases fall into predictable groups (Clause 9 of the IEEE 1800.2-2020 LRM):
-- **Build-time (functions, top-down):** `build` (creates components), `connect` (wires ports/exports), `end_of_elaboration` (final checks).
-- **Run-time (tasks, parallel):** `run_phase` is the workhorse. (Optional runtime phases like `reset`, `configure`, `main`, `shutdown` execute sequentially but run in parallel across all components.)
-- **Cleanup (functions, bottom-up):** `extract`, `check`, `report` gather results and print summaries.
+- **Build-time (functions, zero time):** `build` runs top-down, because a parent's `build_phase` creates its children. `connect`, `end_of_elaboration` and `start_of_simulation` run bottom-up: every child finishes before its parent.
+- **Run-time (tasks):** `run_phase` starts in every component at once. Beside it, the `uvm` schedule steps through 12 runtime phases (`pre_reset` … `post_shutdown`), and all components move through them together.
+- **Cleanup (functions, zero time):** `extract`, `check` and `report` run bottom-up; `final` runs top-down, like `build`.
 
-<UvmPhasingDiagram />
-
-<PhaseTimeline3D />
+"Top-down" and "bottom-up" are depth-first walks of the tree, not level-by-level sweeps. Click any phase in the map for its rule and a minimal example. Then predict the call order for a function phase and step through it, or switch to the second experiment to see how `run_phase` and the runtime phases share time.
 
 <UvmPhaseTimelineVisualizer />
 
 ### Objection Flow
-Task-based phases (like `run_phase`) end only when all raised objections drop.
+A task phase ends when every objection raised in it has dropped, after any drain time. If nothing has raised an objection by the end of the phase's first time step, UVM ends the phase at once and kills its threads. The test owns the objection around its stimulus:
 
 <InteractiveCode>
 ```systemverilog
-class my_driver extends uvm_driver#(my_txn);
-  `uvm_component_utils(my_driver)
+class my_test extends uvm_test;
+  `uvm_component_utils(my_test)
+  my_env env;
 
-  virtual task run_phase(uvm_phase phase);
-    // 1. Raise objection to keep simulation alive
-    phase.raise_objection(this, "Driver warming up");
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
 
-    repeat (10) begin
-      drive_one_transaction();
-    end
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    env = my_env::type_id::create("env", this);
+  endfunction
 
-    // 2. Drop objection when work is complete
-    phase.drop_objection(this, "Driver finished");
+  task run_phase(uvm_phase phase);
+    my_seq seq = my_seq::type_id::create("seq");
+    phase.raise_objection(this, "stimulus running");
+    seq.start(env.agt.sqr);
+    phase.drop_objection(this, "stimulus done");
   endtask
 endclass
 ```
 </InteractiveCode>
 
-If you forget to drop an objection, your simulation hangs. Automate safety nets with `uvm_objection::set_drain_time` to let sequences drain gracefully.
+**Why the driver does not object:** a driver loops `forever` (`get_next_item`, drive, `item_done`) and never knows when the test is finished, so it would never drop. The test decides when stimulus is done. When `run_phase` ends, UVM kills the driver's loop for you.
+
+**Drain time is not a hang safety net.** It only delays the end of a phase *after* the count reaches zero, so transactions still in flight can reach the scoreboard. Set it on the phase's objection, `phase.get_objection().set_drain_time(this, 50ns);` (there is no static `set_drain_time`). A raise during the drain cancels it. For a forgotten drop, the safety net is the global timeout: `uvm_root::get().set_timeout(2ms);` or `+UVM_TIMEOUT=<value>,<YES|NO>` on the command line. When it expires before `run_phase` can end, UVM issues `UVM_FATAL [PH_TIMEOUT]` and no `check_phase` or `report_phase` runs. The default is 9200 s, so set a realistic value.
+
+**phase_ready_to_end:** once every objection has dropped (and the drain has passed), UVM calls `phase_ready_to_end(phase)` on every component. A component with unfinished work, such as a scoreboard still waiting for responses, can raise an objection there and drop it later. UVM then asks again, at most 20 times by default.
+
+Try the scenarios below. Each one is a real end-of-test bug: predict when `run_phase` ends before you look at the timeline.
+
+<UvmPhasingDiagram />
+
+<VisualRecap
+  title="Who keeps a phase alive"
+  rule="A task phase ends when its objection count reaches 0 and stays there through the drain time and phase_ready_to_end. No objection in the first time step means the phase ends at once."
+  code={`task run_phase(uvm_phase phase);          // in the test
+  phase.get_objection().set_drain_time(this, 50ns);
+  phase.raise_objection(this);              // before any delay
+  seq.start(env.agt.sqr);
+  phase.drop_objection(this);
+endtask
+// sim: +UVM_TIMEOUT=... or uvm_root::get().set_timeout(...)`}
+  mistake="Raising the objection in the driver, raising it after a delay, or treating drain time as a fix for a missing drop. Only the timeout ends a stuck objection, and it ends the test with UVM_FATAL."
+  inTestbench="The test (or a top-level virtual sequence) raises around the stimulus; scoreboards use phase_ready_to_end or a drain time for in-flight traffic; regressions always set a timeout. Debug with +UVM_OBJECTION_TRACE and +UVM_PHASE_TRACE."
+>
+  <svg viewBox="0 0 320 120" role="img" aria-label="Objection count over time: rises to 1 at raise, falls to 0 at drop, then a hatched drain period, then the phase ends." style={{ width: "100%", maxWidth: 360 }}>
+    <line x1="10" y1="90" x2="310" y2="90" stroke="currentColor" strokeOpacity="0.4" />
+    <path d="M 10 90 H 30 V 50 H 200 V 90 H 300" fill="none" stroke="rgb(6,182,212)" strokeWidth="2.5" />
+    <rect x="200" y="50" width="50" height="40" fill="rgba(245,158,11,0.15)" stroke="rgb(245,158,11)" strokeDasharray="3 2" />
+    <line x1="250" y1="20" x2="250" y2="90" stroke="currentColor" strokeDasharray="4 3" />
+    <text x="24" y="44" fontSize="11" fill="currentColor">▲ raise</text>
+    <text x="180" y="44" fontSize="11" fill="currentColor">▼ drop</text>
+    <text x="204" y="74" fontSize="10" fill="currentColor">drain</text>
+    <text x="254" y="30" fontSize="10" fill="currentColor">■ phase ends</text>
+    <text x="10" y="110" fontSize="10" fill="currentColor" fillOpacity="0.7">count 1 while objected, 0 after the drop</text>
+  </svg>
+</VisualRecap>
 
 ## Advanced Mechanics
 
@@ -59,11 +96,11 @@ If you forget to drop an objection, your simulation hangs. Automate safety nets 
 
 > **Senior/Staff Interview Trap:** `run_phase` and the runtime sub-phases (`pre_reset_phase`, `reset_phase`, `configure_phase`, `main_phase`, `shutdown_phase`, etc.) execute **concurrently in parallel domains**, not sequentially.
 
-This is the most commonly misunderstood aspect of UVM phasing. Here is what actually happens at runtime (IEEE 1800.2-2020 §9.2–9.3):
+This is the most commonly misunderstood aspect of UVM phasing. Here is what actually happens at runtime (IEEE 1800.2-2020 §9.4 and §9.8; in uvm-core, `uvm_domain::get_common_domain()` adds the `uvm` domain `.with_phase(run)`):
 
 1. **`run_phase`** executes in the **common domain** — it is a single task-based phase shared by all components.
 2. **Runtime sub-phases** (`pre_reset_phase` through `post_shutdown_phase`) execute in the **`uvm` domain** — they proceed sequentially within their domain, but the entire domain runs **in parallel** with `run_phase`.
-3. **Both must complete** (all objections dropped in both domains) before cleanup phases (`extract_phase`, `check_phase`, `report_phase`) begin.
+3. **Both must complete** (all objections dropped in both domains) before cleanup phases (`extract_phase`, `check_phase`, `report_phase`) begin. `run_phase` itself cannot end before the schedule has finished, even when nothing objects in it.
 
 <InteractiveCode>
 ```systemverilog
@@ -71,20 +108,22 @@ This is the most commonly misunderstood aspect of UVM phasing. Here is what actu
 // does NOT keep main_phase alive — they are independent!
 class my_test extends uvm_test;
   `uvm_component_utils(my_test)
+  my_env env;
+  // new() and build_phase() as in the test above
 
   // This objection keeps run_phase alive...
   task run_phase(uvm_phase phase);
     phase.raise_objection(this, "run_phase work");
-    #1000;
+    #1us;
     phase.drop_objection(this);
   endtask
 
   // ...but main_phase has its OWN objection count.
-  // If nothing raises an objection here, main_phase ends immediately!
+  // Without the raise below, main_phase ends at once and kills seq.
   task main_phase(uvm_phase phase);
+    my_seq seq = my_seq::type_id::create("seq");
     phase.raise_objection(this, "main_phase work");
-    // Your actual stimulus goes here
-    my_seq.start(env.agent.sequencer);
+    seq.start(env.agt.sqr);
     phase.drop_objection(this);
   endtask
 endclass
@@ -92,7 +131,7 @@ endclass
 </InteractiveCode>
 
 **Common failure modes:**
-- **Hanging simulation:** `run_phase` raises an objection but never drops it. Even if all sub-phases complete, the simulation hangs because `run_phase` never finishes.
+- **Hanging simulation:** `run_phase` raises an objection but never drops it. Even if all sub-phases complete, `run_phase` never finishes; only the global timeout ends the run, with `UVM_FATAL [PH_TIMEOUT]` (after 9200 s if you never set one).
 - **Premature end:** A sub-phase ends immediately because no component raised an objection in that specific sub-phase, even though `run_phase` is still active. Stimulus that was intended to run during `main_phase` never executes.
 - **Phase confusion:** An engineer implements logic in both `run_phase` and `main_phase` expecting them to execute sequentially — instead, they race.
 
@@ -102,16 +141,9 @@ endclass
 - **Never mix both** unless you fully understand the parallel domain semantics.
 
 ### Domains and Phase Jumping
-Phases execute in a **domain**. The default *common* domain runs all components together. You can create additional domains to run a subset of components on their own schedule (e.g., a configuration agent that stays alive while the rest of the test jumps phases).
+Phases execute in a **domain**. The *common* domain holds `build` through `final`, including `run_phase`. The 12 runtime phases belong to the **`uvm`** domain, whose schedule runs beside `run_phase`. Every component starts in the `uvm` domain, so all of them step through the runtime phases together. With `set_domain()` you can move a subset of components (say, a second clock domain's agents) into their own domain, whose runtime phases are then not synchronized with the rest unless you call `sync()`.
 
-UVM components can **jump** to another phase using `phase.jump()`. This is helpful to skip remaining runtime phases when a stopping condition is met, but use it sparingly! Skipping cleanup phases can leave files open or threads running.
-
-```systemverilog
-task run_phase(uvm_phase phase);
-  if (stop_simulation)
-    phase.jump(uvm_shutdown_phase::get()); // Jump forward
-endtask
-```
+A runtime phase can **jump** with `phase.jump(<target>::get())`. The usual reason is a mid-test reset: from `main_phase`, jump back to `reset_phase` so the whole schedule replays reset, configure and main. Jump to a phase in the same schedule; jumping from `run_phase` into the runtime schedule is not the intended use. Jumps are advanced and are not modelled in the visuals on this page.
 
 ### uvm_event and uvm_barrier (Clause 10)
 Beyond phase objections, you often need cross-component signaling:
@@ -122,10 +154,13 @@ Beyond phase objections, you often need cross-component signaling:
 **The `build_phase` vs `connect_phase` Mix-Up:**
 If you try to call `<port>.connect(<export>)` inside the `build_phase`, you will face null pointer exceptions. `build_phase` builds from the top-down, meaning peer components might not exist yet when you try to connect them. Always wait for `connect_phase` (which resolves bottom-up) to wire ports.
 
+**The Test That Ends at 0 ns:**
+"My test passes, but nothing was driven." Nobody raised an objection in `run_phase` (or in the runtime phase that starts the stimulus) during its first time step. Raising after a delay is too late: the phase has already ended and killed the thread. Run with `+UVM_OBJECTION_TRACE` and `+UVM_PHASE_TRACE` to see it.
+
 **The Hanging Simulation:**
 "My test says time 0 and never finishes."
-1. Did you raise an objection but never drop it?
-2. Did you forget to consume time in a `run_phase` loop? If you raise an objection and enter a loop without `#` delays or `@(posedge clk)`, simulation time freezes.
+1. Did you raise an objection but never drop it? Then the run ends only at the timeout, with `UVM_FATAL [PH_TIMEOUT]`.
+2. Did you forget to consume time in a `run_phase` loop? If you raise an objection and enter a loop without `#` delays or `@(posedge clk)`, simulation time freezes and even the timeout cannot fire.
 
 ## Practice & Reinforce
 
@@ -168,9 +203,38 @@ If you try to call `<port>.connect(<export>)` inside the `build_phase`, you will
       { text: 'Only if you explicitly enable parallel domains.', correct: false }
     ],
     explanation: 'run_phase and runtime sub-phases execute concurrently in parallel domains (common vs uvm domain). Both must complete before cleanup phases begin. This is a common senior/staff interview trap.'
+  },
+  {
+    question: 'The tree is uvm_test_top → env → agt → drv. Each component prints a message in connect_phase. In which order do the messages appear?',
+    answers: [
+      { text: 'uvm_test_top, env, agt, drv', correct: false },
+      { text: 'drv, agt, env, uvm_test_top', correct: true },
+      { text: 'All four at the same time', correct: false },
+      { text: 'In the order the components were created', correct: false }
+    ],
+    explanation: 'connect_phase is bottom-up: a depth-first walk that finishes every child before its parent. Only build_phase and final_phase are top-down, and only task phases run components in parallel.'
+  },
+  {
+    question: 'A test forgets drop_objection in run_phase but sets a 100 ns drain time. What happens?',
+    answers: [
+      { text: 'run_phase ends 100 ns after the sequence finishes.', correct: false },
+      { text: 'The run continues until the global timeout fires UVM_FATAL [PH_TIMEOUT].', correct: true },
+      { text: 'run_phase ends at once because the drain time expired.', correct: false }
+    ],
+    explanation: 'Drain time only starts when the objection count reaches zero, which never happens here. The global timeout (+UVM_TIMEOUT or set_timeout, 9200 s by default) is the only thing that ends the run.'
+  },
+  {
+    question: 'The test raises its objection after `#10ns` in run_phase. Nothing else objects. When does run_phase end?',
+    answers: [
+      { text: 'At 0 ns: the phase found no objection in its first time step and killed the thread.', correct: true },
+      { text: 'At 10 ns, when the objection is raised.', correct: false },
+      { text: 'When the test drops the objection.', correct: false }
+    ],
+    explanation: 'UVM checks for objections once the phase has started and the first time step has settled. With none raised, it ends the phase at once, so the delayed raise never executes.'
   }
 ]} />
 
 ## References & Next Topics
-- IEEE 1800.2-2020 LRM: Clause 9 (Phasing) and Clause 10 (Synchronization).
+- IEEE 1800.2-2020 LRM: Clause 9 (Phasing) and Clause 10 (Synchronization; objections are §10.5).
+- Accellera uvm-core 2020.3.1 reference implementation: `src/base/uvm_common_phases.svh`, `uvm_runtime_phases.svh`, `uvm_domain.svh`, `uvm_phase_hopper.svh` (end-of-phase rules and the timeout) and `uvm_objection.svh` (drain time).
 - Next: [/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles](../../T2_Intermediate/I-UVM-2A_Component_Roles/index).

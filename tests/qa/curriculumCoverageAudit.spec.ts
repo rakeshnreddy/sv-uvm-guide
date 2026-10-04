@@ -129,7 +129,11 @@ function collectCustomMdxTags(): Set<string> {
   const mdxFiles = walkFiles(contentRoot, (filePath) => filePath.endsWith('.mdx'));
 
   mdxFiles.forEach((filePath) => {
-    const source = fs.readFileSync(filePath, 'utf8').replace(/```[\s\S]*?```/g, '');
+    // Ignore fenced code and inline code spans: `<SFX>` inside backticks is literal text, not a tag.
+    const source = fs
+      .readFileSync(filePath, 'utf8')
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/``[^\n]*?``|`[^`\n]*`/g, '');
 
     for (const match of source.matchAll(/<([A-Z][A-Za-z0-9]*)\b/g)) {
       tags.add(match[1]);

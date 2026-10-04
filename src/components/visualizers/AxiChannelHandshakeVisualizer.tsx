@@ -1,303 +1,276 @@
-'use client';
+"use client";
 
-import React, { useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { Play, Pause, SkipForward, SkipBack, RotateCcw } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 
-// ── Types ──
+import { CodeTrace, type CodeTraceLine } from "@/components/visual-system/CodeTrace";
+import { CycleWaveform, type CycleMarker, type CycleSignal } from "@/components/visual-system/CycleWaveform";
+import { HintLadder } from "@/components/visual-system/HintLadder";
+import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  CHANNEL_INFO,
+  CHANNEL_SCENARIOS,
+  CHANNEL_SVA,
+  HANDSHAKE_BASICS,
+  answerEdge,
+  explainEdgeChoice,
+  simulateChannels,
+  type ChannelName,
+  type ChannelScenario,
+  type ChannelTrace,
+  type EdgeQuestion,
+  type HandshakeScenarioSpec,
+  type ProtocolRule,
+} from "@/lib/axi-channel-model";
+import { cn } from "@/lib/utils";
 
-interface ChannelState {
-  valid: boolean;
-  ready: boolean;
-  data: string;
-  transferred: boolean;
-}
-
-interface CycleState {
-  aw: ChannelState;
-  w: ChannelState;
-  b: ChannelState;
-  ar: ChannelState;
-  r: ChannelState;
-  label: string;
-}
-
-interface Scenario {
-  id: string;
-  name: string;
-  description: string;
-  cycles: CycleState[];
-}
-
-// ── Scenario Data ──
-
-const defaultChannel: ChannelState = { valid: false, ready: false, data: '', transferred: false };
-
-const scenarios: Scenario[] = [
-  {
-    id: 'basic_write',
-    name: 'Basic Write',
-    description: 'A single write transaction across AW, W, and B channels.',
-    cycles: [
-      { aw: { ...defaultChannel }, w: { ...defaultChannel }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'IDLE — Bus quiet' },
-      { aw: { valid: true, ready: true, data: '0x1000', transferred: true }, w: { ...defaultChannel }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'AW handshake — address accepted' },
-      { aw: { ...defaultChannel }, w: { valid: true, ready: true, data: 'D0', transferred: true }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'W beat 0 — data sent' },
-      { aw: { ...defaultChannel }, w: { valid: true, ready: true, data: 'D1 (WLAST)', transferred: true }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'W beat 1 — final data with WLAST' },
-      { aw: { ...defaultChannel }, w: { ...defaultChannel }, b: { valid: true, ready: true, data: 'OKAY', transferred: true }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'B response — write acknowledged' },
-    ],
-  },
-  {
-    id: 'basic_read',
-    name: 'Basic Read',
-    description: 'A single read transaction across AR and R channels.',
-    cycles: [
-      { aw: { ...defaultChannel }, w: { ...defaultChannel }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'IDLE — Bus quiet' },
-      { aw: { ...defaultChannel }, w: { ...defaultChannel }, b: { ...defaultChannel }, ar: { valid: true, ready: true, data: '0x2000', transferred: true }, r: { ...defaultChannel }, label: 'AR handshake — read address accepted' },
-      { aw: { ...defaultChannel }, w: { ...defaultChannel }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { valid: true, ready: true, data: 'D0', transferred: true }, label: 'R beat 0 — data returned' },
-      { aw: { ...defaultChannel }, w: { ...defaultChannel }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { valid: true, ready: true, data: 'D1 (RLAST)', transferred: true }, label: 'R beat 1 — final data with RLAST' },
-    ],
-  },
-  {
-    id: 'backpressure',
-    name: 'Backpressure',
-    description: 'The slave stalls the W channel while the read path proceeds independently.',
-    cycles: [
-      { aw: { ...defaultChannel }, w: { ...defaultChannel }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'IDLE' },
-      { aw: { valid: true, ready: true, data: '0x1000', transferred: true }, w: { ...defaultChannel }, b: { ...defaultChannel }, ar: { valid: true, ready: true, data: '0x2000', transferred: true }, r: { ...defaultChannel }, label: 'AW + AR — both accepted simultaneously' },
-      { aw: { ...defaultChannel }, w: { valid: true, ready: false, data: 'D0', transferred: false }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { valid: true, ready: true, data: 'R0', transferred: true }, label: 'W stalled (WREADY=0) — R proceeds independently!' },
-      { aw: { ...defaultChannel }, w: { valid: true, ready: false, data: 'D0', transferred: false }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { valid: true, ready: true, data: 'R1 (RLAST)', transferred: true }, label: 'W still stalled — R completes with RLAST' },
-      { aw: { ...defaultChannel }, w: { valid: true, ready: true, data: 'D0', transferred: true }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'W resumes — slave buffer freed' },
-      { aw: { ...defaultChannel }, w: { valid: true, ready: true, data: 'D1 (WLAST)', transferred: true }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'W final beat with WLAST' },
-      { aw: { ...defaultChannel }, w: { ...defaultChannel }, b: { valid: true, ready: true, data: 'OKAY', transferred: true }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'B response — write acknowledged' },
-    ],
-  },
-  {
-    id: 'valid_before_ready',
-    name: 'VALID before READY',
-    description: 'Demonstrates VALID assertion before READY — the sender must hold VALID and data stable.',
-    cycles: [
-      { aw: { ...defaultChannel }, w: { ...defaultChannel }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'IDLE' },
-      { aw: { valid: true, ready: false, data: '0x3000', transferred: false }, w: { ...defaultChannel }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'AWVALID asserted — slave not ready yet' },
-      { aw: { valid: true, ready: false, data: '0x3000', transferred: false }, w: { ...defaultChannel }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'Master holds AWVALID + AWADDR stable (required!)' },
-      { aw: { valid: true, ready: true, data: '0x3000', transferred: true }, w: { ...defaultChannel }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'AWREADY rises — handshake completes!' },
-      { aw: { ...defaultChannel }, w: { valid: true, ready: true, data: 'D0 (WLAST)', transferred: true }, b: { ...defaultChannel }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'W data follows' },
-      { aw: { ...defaultChannel }, w: { ...defaultChannel }, b: { valid: true, ready: true, data: 'OKAY', transferred: true }, ar: { ...defaultChannel }, r: { ...defaultChannel }, label: 'B response' },
-    ],
-  },
+export const AXI_CHANNEL_ASSUMPTIONS = [
+  "Edge k is the k-th rising ACLK edge; a value at edge k is what the receiver samples there (it changed just after edge k-1).",
+  "Rules: handshake and stability (IHI0022E A3.2.1); W may precede AW (A3.3); RVALID after the AR handshake and, in AXI4, BVALID after the AW and WLAST handshakes (A3.3.1).",
+  "Sources only wait for data to be available and for A3.3.1 dependencies; they never wait for READY. Reset is not modelled.",
+  "READY patterns are free choices of the receiver; editing them never makes a trace illegal.",
 ];
 
-// ── Channel colors ──
-const channelConfig = {
-  aw: { label: 'AW', color: 'from-blue-500 to-blue-600', bg: 'bg-blue-500/10', border: 'border-blue-500/30', text: 'text-blue-400', dir: 'M → S' },
-  w:  { label: 'W',  color: 'from-indigo-500 to-indigo-600', bg: 'bg-indigo-500/10', border: 'border-indigo-500/30', text: 'text-indigo-400', dir: 'M → S' },
-  b:  { label: 'B',  color: 'from-emerald-500 to-emerald-600', bg: 'bg-emerald-500/10', border: 'border-emerald-500/30', text: 'text-emerald-400', dir: 'S → M' },
-  ar: { label: 'AR', color: 'from-amber-500 to-amber-600', bg: 'bg-amber-500/10', border: 'border-amber-500/30', text: 'text-amber-400', dir: 'M → S' },
-  r:  { label: 'R',  color: 'from-rose-500 to-rose-600', bg: 'bg-rose-500/10', border: 'border-rose-500/30', text: 'text-rose-400', dir: 'S → M' },
+const HINTS: Record<ProtocolRule, string[]> = {
+  "valid-held": [
+    "Find an edge where VALID is 1 and READY is 0.",
+    "What must VALID be at the very next edge after such a stall?",
+    "A3.2.1: once VALID is asserted it must remain asserted until the handshake.",
+  ],
+  "payload-stable": ["Find a stall (VALID 1, READY 0).", "Compare the payload before and after the stall.", "A3.2.1: the source keeps its information stable until the transfer."],
+  "b-after-aw-and-wlast": [
+    "List the edges where the AW handshake and the WLAST handshake happen.",
+    "Now find the first edge where BVALID is 1.",
+    "AXI4 (A3.3.1): BVALID needs both handshakes at earlier edges, not just WLAST.",
+  ],
+  "r-after-ar": ["Where is the AR handshake?", "Where does RVALID first rise?", "A3.3.1: RVALID only after ARVALID and ARREADY."],
 };
 
-type ChannelKey = keyof typeof channelConfig;
+/** Mounted only inside the revealed part of the prompt, so the parent knows when to show answers. */
+function RevealSignal({ onChange }: { onChange: (revealed: boolean) => void }) {
+  useEffect(() => {
+    onChange(true);
+    return () => onChange(false);
+  }, [onChange]);
+  return null;
+}
 
-// ── Component ──
+function withReady(base: ChannelScenario, overrides: Partial<Record<ChannelName, number[]>>): ChannelScenario {
+  const channels = { ...base.channels };
+  for (const [c, bits] of Object.entries(overrides) as [ChannelName, number[]][]) {
+    const plan = channels[c];
+    if (plan) channels[c] = { ...plan, ready: { kind: "pattern", bits } };
+  }
+  return { ...base, channels };
+}
 
-export default function AxiChannelHandshakeVisualizer() {
-  const [scenarioId, setScenarioId] = useState(scenarios[0].id);
-  const [cycle, setCycle] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
+function waveSignals(trace: ChannelTrace, hidden: ChannelName | null): CycleSignal[] {
+  const out: CycleSignal[] = [{ name: "ACLK", kind: "clock" }];
+  for (const c of trace.channels) {
+    const s = trace.signals[c];
+    if (!s) continue;
+    const info = CHANNEL_INFO[c];
+    if (c !== hidden) out.push({ name: `${c}VALID`, kind: "bit", values: s.valid });
+    out.push({ name: `${c}READY`, kind: "bit", values: s.ready, editable: true });
+    if (c !== hidden) {
+      out.push({ name: info.payload, kind: "bus", values: s.payload });
+      if (info.last && s.last) out.push({ name: info.last, kind: "bit", values: s.last });
+    }
+  }
+  return out;
+}
 
-  const scenario = scenarios.find(s => s.id === scenarioId) ?? scenarios[0];
-  const maxCycle = scenario.cycles.length - 1;
-  const currentState = scenario.cycles[cycle];
+function markersFor(trace: ChannelTrace): CycleMarker[] {
+  const out: CycleMarker[] = [];
+  for (let edge = 0; edge < trace.edges; edge += 1) {
+    const bad = trace.violations.filter((v) => v.edge === edge);
+    const hs = trace.handshakes.filter((h) => h.edge === edge);
+    if (bad.length) out.push({ edge, tone: "fail", label: `Edge ${edge}: ${bad.map((b) => b.message).join(" ")}`, short: bad.map((b) => b.channel).join("+") });
+    else if (hs.length)
+      out.push({ edge, tone: "pass", label: `Edge ${edge}: handshake on ${hs.map((h) => `${h.channel} (${h.item.label})`).join(", ")}`, short: hs.map((h) => h.channel).join("+") });
+  }
+  return out;
+}
 
-  const stepForward = useCallback(() => {
-    setCycle(c => Math.min(c + 1, maxCycle));
-  }, [maxCycle]);
+function EdgeNarration({ trace, edge }: { trace: ChannelTrace; edge: number }) {
+  const events = trace.events.filter((e) => e.edge === edge);
+  const bad = trace.violations.filter((v) => v.edge === edge);
+  return (
+    <div aria-live="polite" className="rounded-lg border border-border/60 bg-background/50 p-3 text-sm">
+      <p className="mb-1 font-semibold text-foreground">Edge {edge}</p>
+      {events.length === 0 && bad.length === 0 ? <p className="text-muted-foreground">Nothing happens on any channel.</p> : null}
+      <ul className="space-y-1">
+        {events.map((e, i) => (
+          <li key={i} className={cn(e.kind === "handshake" ? "text-emerald-800 dark:text-emerald-200" : e.kind === "fault" ? "text-rose-800 dark:text-rose-200" : "text-foreground/90")}>
+            <span aria-hidden>{e.kind === "handshake" ? "✓ " : e.kind === "stall" ? "⏸ " : e.kind === "dependency-wait" ? "… " : "✕ "}</span>
+            <strong className="font-mono">{e.channel}</strong> {e.text} {e.clause ? <span className="text-xs text-muted-foreground">({e.clause})</span> : null}
+          </li>
+        ))}
+        {bad.map((v, i) => (
+          <li key={`v${i}`} className="text-rose-800 dark:text-rose-200">
+            ✕ <strong>Violation</strong> ({v.clause}): {v.message}
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
 
-  const stepBackward = useCallback(() => {
-    setCycle(c => Math.max(c - 1, 0));
-  }, []);
+interface Props {
+  /** "handshake": one channel, basic VALID/READY timing. "channels": cross-channel rules. */
+  focus?: "handshake" | "channels";
+}
 
-  const reset = useCallback(() => {
-    setCycle(0);
-    setIsPlaying(false);
-  }, []);
+export default function AxiChannelHandshakeVisualizer({ focus = "channels" }: Props) {
+  const specs: HandshakeScenarioSpec[] = focus === "handshake" ? HANDSHAKE_BASICS : CHANNEL_SCENARIOS;
+  const [specId, setSpecId] = useState(specs[0].id);
+  const [overrides, setOverrides] = useState<Partial<Record<ChannelName, number[]>>>({});
+  const [revealed, setRevealed] = useState(false);
+  const [cursor, setCursor] = useState<number | undefined>(undefined);
+  const [checked, setChecked] = useState<number | null>(null);
+  const [gaveUp, setGaveUp] = useState(false);
+  const onReveal = useCallback((v: boolean) => setRevealed(v), []);
 
-  // Auto-play
-  React.useEffect(() => {
-    if (!isPlaying) return;
-    if (cycle >= maxCycle) { setIsPlaying(false); return; }
-    const timer = setTimeout(stepForward, 1200);
-    return () => clearTimeout(timer);
-  }, [isPlaying, cycle, maxCycle, stepForward]);
+  const spec = specs.find((s) => s.id === specId) ?? specs[0];
+  const scenario = useMemo(() => withReady(spec.scenario, overrides), [spec, overrides]);
+  const trace = useMemo(() => simulateChannels(scenario), [scenario]);
+  const key = `${spec.id}|${JSON.stringify(overrides)}`;
+  const spot = spec.question.kind === "spot-violation";
+  const question = spec.question.kind === "spot-violation" ? null : (spec.question as EdgeQuestion);
+  const answer = question ? answerEdge(trace, question) : null;
+  const firstViolation = trace.violations[0] ?? null;
+  const found = spot && checked !== null && firstViolation !== null && checked === firstViolation.edge;
+  const showAnswers = spot ? found || gaveUp || firstViolation === null : revealed;
+  const hidden = question && question.kind === "first-valid" && !revealed ? question.channel : null;
 
-  const handleScenarioChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    setScenarioId(e.target.value);
-    setCycle(0);
-    setIsPlaying(false);
+  const reset = (id: string) => {
+    setSpecId(id);
+    setOverrides({});
+    setCursor(undefined);
+    setChecked(null);
+    setGaveUp(false);
   };
 
-  const renderChannelRow = (key: ChannelKey) => {
-    const conf = channelConfig[key];
-    const ch = currentState[key];
-
-    return (
-      <div key={key} className={`flex items-center gap-3 p-3 rounded-lg border ${conf.border} ${conf.bg} transition-all duration-300`}>
-        {/* Channel label */}
-        <div className="w-16 flex-shrink-0 text-center">
-          <span className={`font-mono font-bold text-lg ${conf.text}`}>{conf.label}</span>
-          <div className="text-[10px] text-slate-500 dark:text-slate-400">{conf.dir}</div>
-        </div>
-
-        {/* VALID indicator */}
-        <div className="flex flex-col items-center w-16 flex-shrink-0">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">VALID</span>
-          <motion.div
-            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
-              ch.valid ? 'bg-green-500 text-white shadow-lg shadow-green-500/30' : 'bg-slate-700 text-slate-500'
-            }`}
-            animate={{ scale: ch.valid ? [1, 1.15, 1] : 1 }}
-            transition={{ duration: 0.3 }}
-          >
-            {ch.valid ? '1' : '0'}
-          </motion.div>
-        </div>
-
-        {/* READY indicator */}
-        <div className="flex flex-col items-center w-16 flex-shrink-0">
-          <span className="text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 mb-1">READY</span>
-          <motion.div
-            className={`w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold ${
-              ch.ready ? 'bg-green-500 text-white shadow-lg shadow-green-500/30' : 'bg-slate-700 text-slate-500'
-            }`}
-            animate={{ scale: ch.ready ? [1, 1.15, 1] : 1 }}
-            transition={{ duration: 0.3 }}
-          >
-            {ch.ready ? '1' : '0'}
-          </motion.div>
-        </div>
-
-        {/* Data / Payload */}
-        <div className="flex-1 min-w-0">
-          <AnimatePresence mode="wait">
-            {ch.data ? (
-              <motion.div
-                key={`${key}-${cycle}-${ch.data}`}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: 10 }}
-                className={`px-3 py-1.5 rounded font-mono text-sm truncate ${
-                  ch.transferred
-                    ? `bg-gradient-to-r ${conf.color} text-white shadow-md`
-                    : `border ${conf.border} ${conf.text}`
-                }`}
-              >
-                {ch.data}
-              </motion.div>
-            ) : (
-              <motion.div
-                key={`${key}-${cycle}-idle`}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 0.4 }}
-                className="px-3 py-1.5 text-slate-600 dark:text-slate-500 text-sm italic"
-              >
-                —
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-
-        {/* Transfer status */}
-        <div className="w-20 flex-shrink-0 text-center">
-          {ch.valid && ch.ready && ch.transferred ? (
-            <motion.span
-              initial={{ scale: 0 }}
-              animate={{ scale: 1 }}
-              className="inline-block px-2 py-0.5 rounded-full bg-green-500/20 text-green-400 text-xs font-bold"
-            >
-              ✓ XFER
-            </motion.span>
-          ) : ch.valid && !ch.ready ? (
-            <motion.span
-              animate={{ opacity: [0.5, 1, 0.5] }}
-              transition={{ repeat: Infinity, duration: 1.5 }}
-              className="inline-block px-2 py-0.5 rounded-full bg-yellow-500/20 text-yellow-400 text-xs font-bold"
-            >
-              WAIT
-            </motion.span>
-          ) : null}
-        </div>
-      </div>
-    );
+  const toggle = (signal: string, edge: number) => {
+    const c = signal.replace(/READY$/, "") as ChannelName;
+    const current = trace.signals[c]?.ready ?? [];
+    setOverrides((o) => ({ ...o, [c]: current.map((b, k) => (k === edge ? (b ? 0 : 1) : b)) }));
+    setChecked(null);
+    setGaveUp(false);
   };
+
+  const options: PredictionOption[] = useMemo(() => {
+    if (!question) return [];
+    const edges = Array.from(new Set([...(answer === null ? [] : [answer]), ...(spec.distractors ?? [])]))
+      .filter((e) => e >= 0 && e < trace.edges)
+      .sort((a, b) => a - b);
+    const opts: PredictionOption[] = edges.map((e) => {
+      const { correct, feedback } = explainEdgeChoice(trace, question, e);
+      return { id: String(e), label: `Edge ${e}`, correct, feedback };
+    });
+    if (answer === null) opts.push({ id: "none", label: `Not within these ${trace.edges} edges`, correct: true, feedback: "With these READY values the transfer never completes inside the window." });
+    return opts;
+  }, [question, answer, spec, trace]);
+
+  const rules = focus === "handshake" ? CHANNEL_SVA.filter((r) => r.key === "valid-held" || r.key === "payload-stable") : CHANNEL_SVA;
+  const codeLines: CodeTraceLine[] = rules.flatMap((r) => [...r.lines.map((text) => ({ text, key: r.key, owner: "testbench" as const })), { text: "" }]);
+  const violatedRule = showAnswers ? firstViolation?.rule : undefined;
+  const narrationEdge = cursor ?? (spot ? firstViolation?.edge : answer) ?? 0;
 
   return (
-    <div className="bg-slate-900 rounded-xl border border-slate-700 overflow-hidden" data-testid="axi-channel-handshake-visualizer">
-      {/* Header */}
-      <div className="px-4 py-3 bg-slate-800/50 border-b border-slate-700 flex flex-wrap items-center justify-between gap-3">
-        <h3 className="text-base font-semibold text-white">AXI Channel Handshake Visualizer</h3>
-        <select
-          value={scenarioId}
-          onChange={handleScenarioChange}
-          className="bg-slate-700 text-slate-200 text-sm rounded px-3 py-1.5 border border-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
-        >
-          {scenarios.map(s => (
-            <option key={s.id} value={s.id}>{s.name}</option>
-          ))}
-        </select>
-      </div>
+    <div data-testid={focus === "handshake" ? "axi-handshake-basics" : "axi-channel-handshake-visualizer"}>
+      <VisualFrame
+        label={focus === "handshake" ? "AXI VALID/READY handshake explorer" : "AXI five-channel dependency explorer"}
+        eyebrow={spot ? "Debug it" : "Predict, then experiment"}
+        title={focus === "handshake" ? "Which edge completes the handshake?" : "What may happen before what across the five channels?"}
+        summary={
+          <>
+            {spec.summary} Click any <span className="font-mono">READY</span> cell to change the receiver&apos;s choice; the model re-runs.
+          </>
+        }
+        fidelity="model"
+        assumptions={AXI_CHANNEL_ASSUMPTIONS}
+      >
+        <SegmentedControl label="Scenario" options={specs.map((s) => ({ value: s.id, label: s.title }))} value={spec.id} onChange={reset} />
 
-      {/* Description */}
-      <div className="px-4 py-2 text-sm text-slate-400 bg-slate-800/30 border-b border-slate-700/50">
-        {scenario.description}
-      </div>
+        <CycleWaveform
+          title={`${spec.title} waveform`}
+          signals={waveSignals(trace, hidden)}
+          edges={trace.edges}
+          markers={showAnswers ? markersFor(trace) : []}
+          cursor={showAnswers || spot ? cursor : undefined}
+          onToggle={toggle}
+          onSelectEdge={showAnswers || spot ? (e) => setCursor(e) : undefined}
+          caption={`x-axis: ACLK rising edges 0 to ${trace.edges - 1}. Each value is the one sampled at that edge. ✓ marks a handshake, ✕ a protocol violation.${
+            hidden ? ` ${hidden}VALID and its payload are hidden until you predict.` : ""
+          }`}
+        />
 
-      {/* Channel rows */}
-      <div className="p-4 space-y-2">
-        <div className="text-xs uppercase tracking-wider text-slate-500 mb-2 font-semibold">Write Path</div>
-        {renderChannelRow('aw')}
-        {renderChannelRow('w')}
-        {renderChannelRow('b')}
-        <div className="text-xs uppercase tracking-wider text-slate-500 mb-2 mt-4 font-semibold">Read Path</div>
-        {renderChannelRow('ar')}
-        {renderChannelRow('r')}
-      </div>
-
-      {/* Status bar */}
-      <div className="px-4 py-3 bg-slate-800/50 border-t border-slate-700">
-        <div className="flex items-center gap-2 mb-2">
-          <span className="text-xs font-mono text-slate-500">Cycle {cycle}</span>
-          <div className="flex-1 h-1 bg-slate-700 rounded-full overflow-hidden">
-            <motion.div
-              className="h-full bg-gradient-to-r from-blue-500 to-purple-500 rounded-full"
-              animate={{ width: `${maxCycle > 0 ? (cycle / maxCycle) * 100 : 0}%` }}
-              transition={{ duration: 0.3 }}
-            />
+        {question ? (
+          <PredictionPrompt question={spec.prompt} options={options} resetKey={key}>
+            <RevealSignal onChange={onReveal} />
+            <div className="space-y-2">
+              <p className="text-sm text-muted-foreground">Select any edge on the axis to read what happens there and why.</p>
+              <EdgeNarration trace={trace} edge={narrationEdge} />
+            </div>
+          </PredictionPrompt>
+        ) : (
+          <div className="space-y-3 rounded-xl border border-rose-500/40 bg-rose-500/[0.05] p-4">
+            <p className="text-sm font-semibold text-foreground">{spec.prompt}</p>
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-sm text-muted-foreground">Selected: {cursor === undefined ? "none (use the edge numbers under the waveform)" : `edge ${cursor}`}</span>
+              <button
+                type="button"
+                disabled={cursor === undefined}
+                onClick={() => setChecked(cursor ?? null)}
+                className="inline-flex h-10 items-center rounded-lg bg-rose-500 px-4 text-sm font-semibold text-white disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Check this edge
+              </button>
+              {!found && !gaveUp ? (
+                <button type="button" onClick={() => setGaveUp(true)} className="text-xs text-muted-foreground underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  Show the answer
+                </button>
+              ) : null}
+            </div>
+            <div aria-live="polite" className="text-sm">
+              {firstViolation === null ? (
+                <p className="text-emerald-700 dark:text-emerald-300">✓ With your READY changes this trace is legal: the model finds no violation.</p>
+              ) : found || gaveUp ? (
+                <p className={found ? "text-emerald-700 dark:text-emerald-300" : "text-foreground"}>
+                  <strong>{found ? "Found it. " : `The first violation is at edge ${firstViolation.edge}. `}</strong>
+                  {firstViolation.message} ({firstViolation.clause})
+                </p>
+              ) : checked !== null ? (
+                <p className="text-rose-700 dark:text-rose-300">
+                  <strong>Edge {checked} is legal. </strong>
+                  {trace.events
+                    .filter((e) => e.edge === checked)
+                    .map((e) => e.text)
+                    .join(" ") || "Nothing happens there."}
+                </p>
+              ) : null}
+            </div>
+            {firstViolation && !found && !gaveUp ? <HintLadder hints={HINTS[firstViolation.rule]} resetKey={key} /> : null}
+            {showAnswers && firstViolation ? <EdgeNarration trace={trace} edge={narrationEdge} /> : null}
           </div>
-          <span className="text-xs font-mono text-slate-500">Cycle {maxCycle}</span>
-        </div>
-        <p className="text-sm text-slate-300 font-medium">{currentState.label}</p>
-      </div>
+        )}
 
-      {/* Controls */}
-      <div className="px-4 py-3 bg-slate-800/30 border-t border-slate-700 flex items-center justify-center gap-2">
-        <button onClick={reset} title="Reset" aria-label="Reset simulation" className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors">
-          <RotateCcw size={16} />
-        </button>
-        <button onClick={stepBackward} title="Step Backward" aria-label="Step Backward" disabled={cycle <= 0} className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
-          <SkipBack size={16} />
-        </button>
-        <button
-          onClick={() => setIsPlaying(!isPlaying)}
-          disabled={cycle >= maxCycle}
-          title={isPlaying ? "Pause" : "Play"}
-          aria-label={isPlaying ? "Pause simulation" : "Play simulation"}
-          className="px-6 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:bg-slate-600 disabled:text-slate-400 text-white font-bold flex items-center justify-center gap-2 transition-colors w-32"
-        >
-          {isPlaying ? <Pause size={18} /> : <Play size={18} />}
-        </button>
-        <button onClick={stepForward} title="Step Forward" aria-label="Step Forward" disabled={cycle >= maxCycle} className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed transition-colors">
-          <SkipForward size={16} />
-        </button>
-      </div>
+        <CodeTrace label="SVA that checks these rules (violated property highlighted)" lines={codeLines} activeKey={violatedRule} />
+        {focus === "channels" ? (
+          <p className="text-xs text-muted-foreground">
+            The counters <span className="font-mono">aw_done</span>, <span className="font-mono">wlast_done</span>, <span className="font-mono">b_done</span>,{" "}
+            <span className="font-mono">ar_done</span> and <span className="font-mono">rlast_done</span> each add 1 at every edge where their handshake happens.
+          </p>
+        ) : null}
+        {revealed && !spot && question ? (
+          <p className="text-xs text-muted-foreground">
+            Rule in play: {question.kind === "first-valid" ? "A3.3.1 dependencies between channels" : "A3.2.1 handshake"}; the {CHANNEL_INFO[question.channel].title.toLowerCase()} channel is driven by the{" "}
+            {CHANNEL_INFO[question.channel].source}.
+          </p>
+        ) : null}
+      </VisualFrame>
     </div>
   );
 }

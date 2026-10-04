@@ -4,130 +4,239 @@ description: "Explore delta cycles, race conditions, and the critical difference
 flashcards: "F3C_Delta_Cycles"
 ---
 
-import { InteractiveCode, Quiz, Card, CardContent, CardHeader, CardTitle, Alert } from '@/components/ui';
-
 ## Quick Take
-- **What it is:** Delta cycles are zero-time steps used to resolve event ordering locally. Race conditions occur when the order of execution between parallel blocks is non-deterministic.
-- **Why it matters:** Improper use of blocking vs. non-blocking assignments is the #1 cause of simulation mismatches compared to synthesized hardware.
-- **The Golden Rule:** Always use non-blocking (`<=`) for sequential logic (flip-flops) and blocking (`=`) for combinational logic.
+
+- **What it is:** A **time slot** is everything the simulator does at one simulation time. Inside it, the scheduler works through ordered **regions**, looping back whenever new events appear. Each loop back is a **delta cycle**: more work, zero simulated time.
+- **Why it matters:** When two processes wake on the same event, IEEE 1800 lets the simulator run them in **any order** (§4.7). If your result depends on that order, you have a **race condition**. It may pass on one simulator and fail on the next, or after a harmless-looking file reorder.
+- **The rule you will apply all career:** A flop reads in **Active** and writes in **NBA** (`<=`). A testbench drives through a **clocking block**, so its writes land in **Re-NBA** and its reads come from **Preponed** samples.
+- **The Analogy:** A time slot is a stage play with a strict act order. Actors who enter in the same act may speak in any order. If the plot depends on who speaks first, the script is broken.
 
 ## Build Your Mental Model
 
-### Delta Cycles Explained
-When multiple events trigger simultaneously (at the exact same simulation time step), the simulator uses delta cycles to process them sequentially. If signal `A` updates, triggering an `always` block that updates `B`, these happen in the same time step but separate delta cycles.
+### Picture a ladder, not an instant
 
-### The Race Condition Trap
-A race condition happens when two `always` blocks read and write to the same variable at the same time using blocking assignments (`=`).
+When you read `@(posedge clk)`, do not picture one moment. Picture this ladder. The clock edge drops an event into **Active**. The scheduler drains Active, then promotes the next non-empty region and loops, all at the same simulation time. Select each rung and ask yourself: *which of my statements land here?*
+
+<TimeSlotRegionMap />
+
+Three things to burn in:
+
+1. **Preponed** and **Postponed** are read-only. Preponed holds the "before" photo of every value. Assertions and clocking-block inputs read that photo (§4.4.2.1, §16.5.1).
+2. Blocking assignments (`=`) write **immediately, in Active**. Nonblocking assignments (`<=`) read their right side in Active but write in **NBA** (§10.4.1, §10.4.2).
+3. Ready processes in one region run in **any order** (§4.7). Statements *inside* one `begin…end` always run in source order (§4.6).
+
+### Watch one clock edge, step by step
+
+Step through the scheduler below. Watch three things move together: the highlighted line of code, the ▶ marker on the ladder, and the waveform cursor. The waveform's horizontal axis is **scheduler steps**, not time. A real waveform viewer would draw all of it at `t = 10 ns`.
+
+Try this order:
+
+1. **Shift register · `=`** with *Stage A → Stage B*.
+2. The same scenario with *Stage B → Stage A*. Same code, different q2.
+3. **Shift register · `<=`**. Both orders now agree.
+4. **$display vs $strobe**. One process prints two different values of `q` in one time slot.
+
+<TimeSlotTraceVisualizer scenario="shift-blocking" scenarios={["shift-blocking", "shift-nba", "display-vs-strobe", "tb-blocking-drive", "tb-clocking-block"]} />
+
+What you just saw, in words:
+
+- With `=`, Stage A's write to `q1` is visible the instant it happens. Whether Stage B sees it depends only on who ran first.
+- With `<=`, both stages read in Active **before** either write lands in NBA. Order cannot leak into the result, which is exactly how two physical flip-flops behave.
+- `$display` prints during Active, before NBA updates land. `$strobe` waits for Postponed and prints the settled value (§21.2.2).
+
+### Experiment: make and break the race yourself
+
+Flip any assignment between `=` and `<=`, predict, then let the model run **every** legal order. Open *advanced experiment* to see why `#0` is not a fix: it only moves a process to the Inactive region, where the next `#0` process races it again.
+
+<RaceConditionDebugger />
+
+### The race that bites testbenches
+
+Design engineers learn "use `<=` in flops". Verification engineers have a second problem. **The testbench and the DUT wake on the same clock edge.** If the testbench drives a DUT input with `=`, the DUT's flop may sample the *new* value. That is a race even though the DUT code is perfect.
+
+<TestbenchDriveComparison />
+
+This is why every reusable UVM interface declares a **clocking block** for its driver and monitor:
 
 ```systemverilog
-module race_condition_demo;
-  logic clk = 0;
-  logic q1, q2, d;
+interface fifo_if (input logic clk);
+  logic [7:0] din;
+  logic [7:0] q;
+  logic       push;
 
-  always #5 clk = ~clk;
+  // Driver: outputs land in Re-NBA (#0 output skew, §14.16).
+  // Monitor: inputs are the Preponed sample (#1step input skew, §14.13).
+  clocking drv_cb @(posedge clk);
+    default input #1step output #0;
+    output din, push;
+    input  q;
+  endclocking
 
-  // BAD: Race Condition!
-  always @(posedge clk) q1 = d;
-  always @(posedge clk) q2 = q1;
-  
-  // Depending on which block evaluates first in the Active region,
-  // q2 might get the OLD value of q1, or the NEW value of q1.
-  // This is non-deterministic!
-endmodule
+  clocking mon_cb @(posedge clk);
+    default input #1step;
+    input din, push, q;
+  endclocking
+endinterface
 ```
 
-### Blocking vs. Non-Blocking Assignments
-To solve this, SystemVerilog provides non-blocking assignments (`<=`) for sequential logic (IEEE 1800-2023 §10.4).
-
-```systemverilog
-module safe_assignments_demo;
-  logic clk = 0;
-  logic q1, q2, d;
-
-  always #5 clk = ~clk;
-
-  // GOOD: Deterministic behavior
-  always @(posedge clk) begin
-    q1 <= d;  // Evaluates RHS now, updates LHS in NBA region
-  end
-  
-  always @(posedge clk) begin
-    q2 <= q1; // Evaluates RHS now (gets OLD q1), updates LHS in NBA region
-  end
-endmodule
-```
-
-<Alert variant="destructive">
-**Common Bug:** Using blocking assignments (`=`) in sequential (clocked) `always_ff` blocks creates simulation race conditions that will NOT match the synthesized hardware. Always use `<=`.
-</Alert>
+<VisualRecap
+  title="Read in Active, write later"
+  rule="Anything another process reads on this edge must be written with <= (design) or through a clocking block (testbench). Same region plus a blocking write means order decides."
+  code={`always_ff @(posedge clk) q <= din;      // DUT: reads Active, writes NBA
+@(vif.drv_cb) vif.drv_cb.din <= 8'h07;  // TB: writes Re-NBA
+@(vif.mon_cb) seen = vif.mon_cb.q;      // TB: reads Preponed sample`}
+  mistake="Driving DUT inputs with = right after @(posedge clk). It passes on one simulator and fails on another, and the waveform looks innocent because everything happens at one timestamp."
+  inTestbench="Every UVM driver and monitor touches the DUT through vif.<clocking_block>. Code review rule: no raw vif.signal = value in run_phase."
+>
+  <svg viewBox="0 0 320 150" role="img" aria-label="Within one time slot: Preponed sample, Active reads, NBA design writes, Re-NBA testbench drives." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="8" y="10" width="300" height="24" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="4 3" />
+    <text x="16" y="27" fontSize="11" fill="currentColor">Preponed · monitors read cb inputs</text>
+    <rect x="8" y="40" width="300" height="24" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="16" y="57" fontSize="11" fill="currentColor">▼ Active · every flop reads din</text>
+    <rect x="8" y="70" width="300" height="24" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="16" y="87" fontSize="11" fill="currentColor">◆ NBA · design writes q</text>
+    <rect x="8" y="100" width="300" height="24" rx="8" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+    <text x="16" y="117" fontSize="11" fill="currentColor">◆ Re-NBA · testbench drives din</text>
+    <text x="16" y="143" fontSize="10" fill="currentColor" fillOpacity="0.7">Reads always finish before writes land → no race</text>
+  </svg>
+</VisualRecap>
 
 ## Make It Work
-- **Strict Separation:** Never mix `=` and `<=` assignments to the same variable. It is illegal in many synthesis tools and causes unpredictable simulation behavior.
-- **Testbench Synchronization:** When driving synchronous DUT signals from a testbench `initial` block, use non-blocking assignments (`<=`) synchronized to the clock edge, or use clocking blocks to completely abstract the race conditions away.
+
+### Debug a real-looking failure
+
+You will meet this race as a scoreboard error that only some runs show. Find the culprit line, then choose a fix. The model reruns every legal order and grades the fix twice: is it deterministic, and does it behave like real hardware?
+
+<RaceDebugChallenge />
+
+### A race-free checklist for every testbench you write
+
+1. **Design flops:** `always_ff` with `<=` only. Combinational logic: `always_comb` with `=`.
+2. **One writer per variable.** Two processes writing the same variable on the same edge is a race, even with `<=`: the last NBA executed wins (§4.6).
+3. **Testbench drives** go through a clocking block (`vif.cb.sig <= v`). As a stopgap, use `<=`. Never use `=`.
+4. **Testbench samples** come from a clocking block input (`vif.cb.sig`), which returns the Preponed value.
+5. **Never "fix" ordering with `#0`.** It only moves the race to the Inactive region.
+6. **Prove it:** run the same seed on two simulators, or reorder files. Results that change point to a race.
 
 ## Push Further
-- Analyze what happens when you write to a variable from two different `always` blocks at the same time (even with non-blocking assignments). This is a multiple-driver conflict.
-- Look into how `force` and `release` statements override values, and how they interact with standard assignments during delta cycles.
+
+- **Delta cycles you can count:** When an NBA update changes a value that a combinational `always_comb` reads, the scheduler moves back to Active. Each move is one more Δ in the visualizer. Long Δ chains are a debugging clue for zero-delay feedback loops.
+- **Program blocks and the reactive set:** Code in `program` blocks runs in the Reactive region set (§4.4.2.6), another way to separate testbench and design. UVM classes are not program blocks: they execute in the active set, which is why clocking blocks carry the race-avoidance burden in UVM benches.
+- **`@(cb)` is later than `@(posedge clk)`:** A clocking-block event is triggered in the Observed region (§14.10). A driver that waits on `@(vif.drv_cb)` therefore wakes after the design's NBA updates for that edge, never in competition with the flops. Switch the trace above to **TB · clocking block** and watch for the `@(cb) event` in the Observed queue.
+- **Assertions see the past:** A concurrent assertion clocked on `posedge clk` evaluates in Observed, but on values sampled in Preponed (§16.5.1). In the shift-register scenario it would see `q1 = 0` even after NBA has written 1.
+- **What the model does not cover:** It does not model nets with multiple drivers, `force`/`release`, nonzero skews, or interleaving inside a process (§4.7 permits it; it only adds orders). Use a real simulator for those. The katas below require one.
 
 ## Practice & Reinforce
-- Flashcards – Review definitions of delta cycles and race conditions.
-- Quiz – Test your knowledge below.
 
-## Interview Questions
+### Retrieval check: no animation allowed
 
-<Card className="mt-8 border-slate-700 bg-slate-900">
+<Quiz
+  questions={[
+    {
+      question: "Two always @(posedge clk) blocks: A does q1 = d; B does q2 = q1. Before the edge d=1, q1=0, q2=0. Which final values of q2 are possible?",
+      answers: [
+        { text: "Only 0", correct: false },
+        { text: "Only 1", correct: false },
+        { text: "Either 0 or 1, depending on which block runs first", correct: true },
+        { text: "X, because both blocks run at the same time", correct: false }
+      ],
+      explanation: "Both blocks are ready in Active together and §4.7 allows either order. A first means B reads the new q1 (1); B first means B reads the old q1 (0). Simulators do not produce X here: they pick an order."
+    },
+    {
+      question: "Inside one block: begin q <= d; $display(q); $strobe(q); end with q=0, d=5 before the edge. What prints?",
+      answers: [
+        { text: "$display 5, $strobe 5", correct: false },
+        { text: "$display 0, $strobe 5", correct: true },
+        { text: "$display 0, $strobe 0", correct: false },
+        { text: "$display 5, $strobe 0", correct: false }
+      ],
+      explanation: "$display runs in Active, before the NBA update. $strobe runs in Postponed, after the time slot settles."
+    },
+    {
+      question: "A UVM driver does @(posedge vif.clk); vif.din = 7; and the DUT has always_ff @(posedge clk) q <= din. Which change removes the race without changing the DUT?",
+      answers: [
+        { text: "Add #0 before the DUT's assignment", correct: false },
+        { text: "Drive vif.drv_cb.din <= 7 after @(vif.drv_cb)", correct: true },
+        { text: "Change the DUT to q = din", correct: false },
+        { text: "Use $strobe in the driver", correct: false }
+      ],
+      explanation: "The clocking-block drive lands in Re-NBA, after the flop has read din in Active. Editing the DUT is the wrong fix, and #0 moves the race instead of removing it."
+    },
+    {
+      question: "Why does a monitor reading vif.mon_cb.q never see a value the DUT changed on the same edge?",
+      answers: [
+        { text: "Clocking-block inputs are sampled in Preponed (#1step), before anything in the slot changes", correct: true },
+        { text: "Monitors always run after NBA", correct: false },
+        { text: "Clocking blocks add a 1 ns delay", correct: false },
+        { text: "The DUT updates q in Postponed", correct: false }
+      ],
+      explanation: "The default #1step input skew returns the value sampled in the Preponed region (§14.13). #1step is not a 1 ns delay."
+    }
+  ]}
+/>
+
+### Kata 1 (guided): reproduce the race on a real simulator
+
+**Objective:** Make a race visible in a real tool, then remove it.
+
+**Requirements:**
+- Write `tb_race.sv` with a free-running clock and a DUT flop `always_ff @(posedge clk) q <= din;`.
+- In a testbench `initial` block, drive `din` with `=` immediately after `@(posedge clk)`, for 4 cycles of distinct values.
+- Log `$display("%0t din=%0d q=%0d", $time, din, q)` with `$strobe` on the same line set.
+- Run it on two simulators (for example on EDA Playground), or swap the textual order of the DUT and testbench processes.
+- **Observable artifact:** a log in which `q` sometimes equals the value driven on the *same* edge.
+- Change the drive to a clocking block (`drv_cb.din <= v`). Show that the logs now agree across simulators and orders.
+
+**What to Reflect On:**
+- Which region did the original drive land in, and which region did the flop read in?
+- Why does the waveform viewer show nothing suspicious at the failing timestamp?
+- How would you explain this bug to a designer who says "the DUT is fine"? (They are right.)
+
+### Kata 2 (independent): race-proof a monitor
+
+**Objective:** Build an interface and monitor that sample correctly even when the design is badly written.
+
+**Requirements:**
+- Write a DUT that uses `=` inside its clocked block (deliberately bad).
+- Write an interface with a `mon_cb` clocking block and a monitor that collects `{din, q}` pairs every cycle.
+- Prove with logs that the monitor's samples are identical whichever process runs first. Change the source order of the DUT's processes to test this.
+- No hints this time. Decide which clocking-block defaults you need and justify them in a comment that cites the clause.
+
+**What to Reflect On:**
+- What does the monitor observe for `q` on the edge where `q` changes, and why is that the right answer for a scoreboard?
+- Which part of your solution would move unchanged into a UVM agent?
+
+### Interview questions
+
+<Card className="mt-6">
   <CardHeader>
     <CardTitle>Ready for the Interview?</CardTitle>
   </CardHeader>
   <CardContent className="space-y-4">
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        How do non-blocking assignments prevent race conditions?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
-      </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p>They split the execution into two steps: First, the Right-Hand Side (RHS) of all non-blocking assignments are evaluated in the Active region using the "old" values of the variables. Then, the Left-Hand Side (LHS) variables are updated in the NBA region. This ensures every concurrent block reads the same initial state before any variables change.</p>
-      </div>
+    <details>
+      <summary>How do nonblocking assignments prevent races between flops?</summary>
+      <p>Every flop triggered by the edge evaluates its right-hand side in the Active region, reading the old values. The updates are deferred to the NBA region, which only runs after Active is empty. No order of the ready processes can let one flop see another's new value on the same edge (§10.4.2, §4.4.2.4).</p>
     </details>
-
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        What is a "simulation vs. synthesis mismatch"? Give an example caused by a race condition.
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
-      </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p>A mismatch occurs when the RTL behaves one way in simulation and differently when compiled into physical logic gates. Using blocking assignments (`=`) in a shift register (`always @(posedge clk) begin q1=d; q2=q1; end`) might simulate as a single flop (if the first line executes before the second) or two flops (if execution order is reversed). However, synthesis tools typically infer a single flop or direct wire connection based on dataflow, leading to hardware that behaves differently from the simulation.</p>
-      </div>
+    <details>
+      <summary>Is `begin q1 = d; q2 = q1; end` inside one always block a race?</summary>
+      <p>No. Statements inside one begin-end execute in source order (§4.6), so `q2` always receives the new `q1`. Simulation behaves like one flop whose output feeds a wire, and synthesis infers the same. It is a design bug if you wanted a two-stage shift register, but it is deterministic. The race only appears when the two assignments sit in **different** processes woken by the same edge.</p>
+    </details>
+    <details>
+      <summary>Your test passes on simulator A and fails on simulator B with the same seed. What is your first hypothesis, and how do you confirm it?</summary>
+      <p>A scheduling race: the result depends on an order that IEEE 1800 leaves to the tool (§4.7). Confirm it by reordering source files or processes on a single simulator. Then look for a variable that one process writes with `=` while another process reads it on the same event. In testbenches, look first at any raw `vif.signal = value` in drivers and any raw `vif.signal` reads in monitors.</p>
+    </details>
+    <details>
+      <summary>Why is `#0` a bad fix for a race?</summary>
+      <p>It moves the delayed process to the Inactive region. It only works until a second process also uses `#0`, and then the two race again in Inactive. It hides the ordering assumption instead of removing it, and reviewers cannot see the intended timing. Use `<=` or clocking blocks to state the intent.</p>
     </details>
   </CardContent>
 </Card>
 
 ## References & Next Topics
-- IEEE 1800-2023 §10.4.1 (Blocking assignments)
-- IEEE 1800-2023 §10.4.2 (Nonblocking assignments)
-- Next: [Modules and Packages](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index)
 
-<Quiz
-  questions={[
-    {
-      question: "Which operator should be used for assignments inside an `always_ff` block?",
-      answers: [
-        { text: "=", correct: false },
-        { text: "<=", correct: true },
-        { text: "==", correct: false },
-        { text: ":=", correct: false }
-      ],
-      explanation: "Sequential logic requires non-blocking assignments (<=) to prevent simulation race conditions and properly model hardware flip-flops."
-    },
-    {
-      question: "What is a delta cycle?",
-      answers: [
-        { text: "The time between two clock edges.", correct: false },
-        { text: "The delay introduced by a physical logic gate.", correct: false },
-        { text: "A zero-time iteration within the simulator to resolve event propagation.", correct: true },
-        { text: "A synthesis optimization step.", correct: false }
-      ],
-      explanation: "Delta cycles allow the simulator to evaluate sequential logic events that occur 'instantaneously' at the same simulation time step."
-    }
-  ]}
-/>
+- IEEE 1800-2023 §4.4.2 (event regions), §4.5 (reference scheduling algorithm), §4.6 (determinism), §4.7 (nondeterminism)
+- IEEE 1800-2023 §10.4.1 (blocking) and §10.4.2 (nonblocking procedural assignments)
+- IEEE 1800-2023 §14.4 (input and output skews), §14.13 (input sampling), §14.16 (synchronous drives)
+- IEEE 1800-2023 §16.5.1 (sampling for concurrent assertions), §21.2.2 (strobed monitoring)
+- Previous: [Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)
+- Next: [Modules and Packages](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index)

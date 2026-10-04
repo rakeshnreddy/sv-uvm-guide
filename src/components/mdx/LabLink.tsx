@@ -31,7 +31,7 @@ export const LabLink = ({ labId }: LabLinkProps) => {
           </p>
           <Link
             href={`/practice/lab/${labId}`}
-            className="inline-flex items-center justify-center px-4 py-2 bg-[color:var(--blueprint-accent)] text-white font-medium rounded hover:bg-opacity-90 transition-colors"
+            className="inline-flex items-center justify-center px-4 py-2 bg-[color:var(--blueprint-accent)] text-slate-950 font-medium rounded hover:bg-opacity-90 transition-colors"
           >
             Launch Lab
           </Link>

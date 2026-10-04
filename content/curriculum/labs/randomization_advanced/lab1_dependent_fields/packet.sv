@@ -1,6 +1,12 @@
+// Packet model for the Ethernet MAC receive path.
+// Spec excerpt:
+//   - IPV4 packets carry 20 to 60 bytes.
+//   - IPV6 packets carry exactly 40 bytes.
+//   - The receive FIFO stores whole 8-byte words: a payload is a multiple
+//     of 8 bytes, from 8 to 256 bytes.
 class packet;
   typedef enum { IPV4=0, IPV6=1, RAW=2 } protocol_t;
-  
+
   rand protocol_t proto;
   rand int unsigned length;
   rand bit [7:0] payload[];
@@ -18,17 +24,7 @@ class packet;
   }
 
   constraint c_hardware_limit {
-    // The hardware FIFO can only accept payloads that are powers of 2 (max 256)
-    // There is a subtle bug here!
+    // The receive FIFO limit. Compare this with the spec excerpt above.
     payload.size() inside { 16, 32, 64, 128, 256 };
   }
-  
-  // --------------------------------------------------------------------------
-  // HINT FOR TRIAGE: 
-  // 1. Look at c_proto_len for IPV6
-  // 2. Look at c_payload_size
-  // 3. Look at c_hardware_limit
-  // Can all three be true at the same time if proto == IPV6?
-  // --------------------------------------------------------------------------
-
 endclass

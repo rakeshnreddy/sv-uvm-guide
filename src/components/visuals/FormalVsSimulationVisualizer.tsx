@@ -1,419 +1,325 @@
 "use client";
 
-import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { Play, RotateCcw, Shield, ShieldOff, ArrowRight, CheckCircle2, XCircle, AlertTriangle } from 'lucide-react';
+import React, { useMemo, useState } from "react";
 
-/* ------------------------------------------------------------------ */
-/*  Data model                                                         */
-/* ------------------------------------------------------------------ */
+import {
+  CodeTrace,
+  CycleWaveform,
+  PredictionPrompt,
+  SegmentedControl,
+  VisualFrame,
+  type CodeTraceLine,
+  type CycleMarker,
+  type CycleSignal,
+  type PredictionOption,
+} from "@/components/visual-system";
+import {
+  ASSERTION_IDS,
+  ASSUMPTION_IDS,
+  CONTRACT_ASSUMPTIONS,
+  DUT_LABELS,
+  SIM_CYCLES,
+  classifyReplay,
+  dutLines,
+  propertyModuleLines,
+  replaySequenceLines,
+  replayTrace,
+  runFormal,
+  simulateRandom,
+  type AssertionId,
+  type AssumptionId,
+  type DutVariant,
+  type FormalReport,
+  type SimRun,
+  type TraceCycle,
+} from "@/lib/formal-fifo-model";
+import { cn } from "@/lib/utils";
 
-type Property = {
-  id: string;
-  name: string;
-  svCode: string;
-  kind: 'assert' | 'assume' | 'cover';
-  description: string;
-};
-
-type SimCycle = {
-  cycle: number;
-  push: boolean;
-  pop: boolean;
-  count: number;
-  full: boolean;
-  empty: boolean;
-  assertPass: boolean;
-};
-
-const PROPERTIES: Property[] = [
-  {
-    id: 'p_full',
-    name: 'p_full_is_correct',
-    svCode: '(count == DEPTH) |-> full',
-    kind: 'assert',
-    description: 'Safety: when the count reaches DEPTH, the full flag must be asserted.',
-  },
-  {
-    id: 'p_no_overflow',
-    name: 'p_no_overflow',
-    svCode: '!(push && full)',
-    kind: 'assume',
-    description: 'Assumption: the environment never pushes when the FIFO is full.',
-  },
-  {
-    id: 'p_no_underflow',
-    name: 'p_no_underflow',
-    svCode: '!(pop && empty)',
-    kind: 'assume',
-    description: 'Assumption: the environment never pops when the FIFO is empty.',
-  },
-  {
-    id: 'p_fill_drain',
-    name: 'p_cover_fill_drain',
-    svCode: '(count==0) ##[1:$] (count==DEPTH) ##[1:$] (count==0)',
-    kind: 'cover',
-    description: 'Reachability: the FIFO can be filled to capacity and drained back to empty.',
-  },
+const ASSUMPTIONS_TEXT = [
+  "Only the FIFO occupancy counter is modelled (DEPTH = 4, 3-bit count). Data storage is not.",
+  "Formal = exhaustive breadth-first search over every input sequence the enabled assumptions allow. The state space is tiny, so this is a full proof, and each counterexample is a shortest one.",
+  "Simulation = one constrained-random run of 16 clock edges from a seeded generator. The driver's c_legal constraint obeys the interface contract.",
+  "Properties use the values sampled at each rising edge (IEEE 1800-2023 §16.5.1). Reset is applied before edge 0, so disable iff never triggers.",
+  "Real formal tools give the same verdicts on this design, but their engines, traces and reports differ.",
 ];
 
-const DEPTH = 4;
+type Outcome = "both_proven" | "range_fails" | "full_fails" | "both_fail";
 
-function generateSimCycles(): SimCycle[] {
-  const cycles: SimCycle[] = [];
-  let count = 0;
-  // Simple deterministic pattern: fill then drain
-  const actions: [boolean, boolean][] = [
-    [true, false], [true, false], [true, false], [true, false],  // fill 0→4
-    [false, true], [false, true], [false, false], [true, false], // drain then push
-    [false, true], [false, true], [false, true], [false, false], // drain to 0
+function outcomeOf(report: FormalReport): Outcome {
+  const range = report.assertions.p_count_in_range.status === "cex";
+  const full = report.assertions.p_full_is_correct.status === "cex";
+  if (range && full) return "both_fail";
+  if (range) return "range_fails";
+  if (full) return "full_fails";
+  return "both_proven";
+}
+
+const OUTCOME_CLAIMS: Record<Outcome, Record<AssertionId, "proven" | "cex">> = {
+  both_proven: { p_count_in_range: "proven", p_full_is_correct: "proven" },
+  range_fails: { p_count_in_range: "cex", p_full_is_correct: "proven" },
+  full_fails: { p_count_in_range: "proven", p_full_is_correct: "cex" },
+  both_fail: { p_count_in_range: "cex", p_full_is_correct: "cex" },
+};
+
+const OUTCOME_LABELS: Record<Outcome, string> = {
+  both_proven: "Both assertions are proven.",
+  range_fails: "p_count_in_range gets a counterexample; p_full_is_correct is proven.",
+  full_fails: "p_full_is_correct gets a counterexample; p_count_in_range is proven.",
+  both_fail: "Both assertions get counterexamples.",
+};
+
+function predictionOptions(report: FormalReport): PredictionOption[] {
+  const actual = outcomeOf(report);
+  return (Object.keys(OUTCOME_LABELS) as Outcome[]).map((id) => {
+    const claims = OUTCOME_CLAIMS[id];
+    const correct = id === actual;
+    const sentences = ASSERTION_IDS.map((a) => {
+      const v = report.assertions[a];
+      if (correct || claims[a] !== v.status) {
+        return `${a} ${v.status === "cex" ? `has a counterexample at edge ${v.failCycle}` : v.vacuous ? "is proven, but only vacuously" : "is proven"}: ${v.why}`;
+      }
+      return null;
+    }).filter(Boolean);
+    return { id, label: OUTCOME_LABELS[id], correct, feedback: sentences.join(" ") };
+  });
+}
+
+const statusGlyph = (status: string, vacuous = false) =>
+  status === "cex" ? "✕" : status === "unreachable" ? "∅" : vacuous ? "○" : "✓";
+
+function traceSignals(cycles: TraceCycle[]): CycleSignal[] {
+  return [
+    { name: "clk", kind: "clock" },
+    { name: "push", kind: "bit", values: cycles.map((c) => c.push) },
+    { name: "pop", kind: "bit", values: cycles.map((c) => c.pop) },
+    { name: "count", kind: "bus", values: cycles.map((c) => c.count) },
+    { name: "full", kind: "bit", values: cycles.map((c) => c.full) },
+    { name: "empty", kind: "bit", values: cycles.map((c) => c.empty) },
   ];
-  for (let i = 0; i < actions.length; i++) {
-    const [push, pop] = actions[i];
-    if (push && count < DEPTH) count++;
-    if (pop && count > 0) count--;
-    const full = count === DEPTH;
-    const empty = count === 0;
-    const assertPass = full ? true : true; // p_full_is_correct: vacuously true when !full, true when full&&full
-    cycles.push({ cycle: i + 1, push, pop, count, full, empty, assertPass });
+}
+
+function simMarkers(run: SimRun): CycleMarker[] {
+  const markers: CycleMarker[] = [];
+  for (const c of run.cycles) {
+    const fails = ASSERTION_IDS.filter((a) => c.assertions[a] === "fail");
+    if (fails.length) markers.push({ edge: c.cycle, tone: "fail", label: `edge ${c.cycle}: ${fails.join(", ")} fails` });
+    else if (c.assumptionFails.length) markers.push({ edge: c.cycle, tone: "fail", glyph: "!", label: `edge ${c.cycle}: assumption ${c.assumptionFails.join(", ")} fails` });
+    else if (c.covers.length) markers.push({ edge: c.cycle, tone: "info", label: `edge ${c.cycle}: c_reach_depth hit` });
   }
-  return cycles;
+  return markers;
 }
 
-const SIM_CYCLES = generateSimCycles();
-
-/* ------------------------------------------------------------------ */
-/*  Sub-components                                                     */
-/* ------------------------------------------------------------------ */
-
-function PropertyCard({ prop, isDisabled, onToggle, proofStatus }: {
-  prop: Property;
-  isDisabled?: boolean;
-  onToggle?: () => void;
-  proofStatus?: 'proven' | 'cex' | 'covered' | 'pending';
-}) {
-  const kindColors: Record<string, { bg: string; border: string; text: string; badge: string }> = {
-    assert: { bg: 'bg-emerald-900/30', border: 'border-emerald-500/40', text: 'text-emerald-300', badge: 'bg-emerald-800 text-emerald-200' },
-    assume: { bg: 'bg-sky-900/30', border: 'border-sky-500/40', text: 'text-sky-300', badge: 'bg-sky-800 text-sky-200' },
-    cover:  { bg: 'bg-amber-900/30', border: 'border-amber-500/40', text: 'text-amber-300', badge: 'bg-amber-800 text-amber-200' },
-  };
-  const colors = kindColors[prop.kind];
-  const statusIcons: Record<string, React.ReactNode> = {
-    proven:  <CheckCircle2 className="w-4 h-4 text-emerald-400" />,
-    cex:     <XCircle className="w-4 h-4 text-red-400" />,
-    covered: <CheckCircle2 className="w-4 h-4 text-amber-400" />,
-    pending: <div className="w-4 h-4 rounded-full border-2 border-slate-600 border-t-slate-400 animate-spin" />,
-  };
-  const statusLabels: Record<string, string> = {
-    proven: 'Proven ✓',
-    cex: 'CEX Found',
-    covered: 'Covered ✓',
-    pending: 'Pending',
-  };
-
-  return (
-    <div className={`rounded-lg border px-3 py-2.5 transition-all ${isDisabled ? 'opacity-40 bg-slate-900/50 border-slate-700/30' : `${colors.bg} ${colors.border}`}`}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2 min-w-0">
-          <span className={`text-[10px] px-1.5 py-0.5 rounded font-semibold uppercase ${isDisabled ? 'bg-slate-800 text-slate-500' : colors.badge}`}>{prop.kind}</span>
-          <code className={`text-xs font-mono truncate ${isDisabled ? 'text-slate-500' : colors.text}`}>{prop.name}</code>
-        </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          {proofStatus && (
-            <span className="flex items-center gap-1 text-[10px] text-slate-400">
-              {statusIcons[proofStatus]}
-              <span className="hidden sm:inline">{statusLabels[proofStatus]}</span>
-            </span>
-          )}
-          {prop.kind === 'assume' && onToggle && (
-            <button
-              onClick={onToggle}
-              className={`p-1 rounded transition-colors ${isDisabled ? 'hover:bg-slate-800' : 'hover:bg-slate-700'}`}
-              title={isDisabled ? 'Enable assumption' : 'Disable assumption'}
-            >
-              {isDisabled ? <ShieldOff className="w-3.5 h-3.5 text-slate-500" /> : <Shield className="w-3.5 h-3.5 text-sky-400" />}
-            </button>
-          )}
-        </div>
-      </div>
-      <p className={`text-[11px] mt-1 ${isDisabled ? 'text-slate-600' : 'text-slate-400'}`}>{prop.description}</p>
-      <code className={`text-[10px] font-mono block mt-1 ${isDisabled ? 'text-slate-600' : 'text-slate-500'}`}>{prop.svCode}</code>
-    </div>
-  );
-}
-
-/* ------------------------------------------------------------------ */
-/*  Main component                                                     */
-/* ------------------------------------------------------------------ */
+const SEEDS = ["1", "2", "3", "4", "5"] as const;
+type Seed = (typeof SEEDS)[number];
 
 export default function FormalVsSimulationVisualizer() {
-  const [simStep, setSimStep] = useState(0);
-  const [isSimRunning, setIsSimRunning] = useState(false);
-  const [disabledAssumptions, setDisabledAssumptions] = useState<Set<string>>(new Set());
-  const [formalRan, setFormalRan] = useState(false);
-  const [cexReplay, setCexReplay] = useState(false);
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [dut, setDut] = useState<DutVariant>("correct");
+  const [enabled, setEnabled] = useState<AssumptionId[]>([...CONTRACT_ASSUMPTIONS]);
+  const [selectedCex, setSelectedCex] = useState<AssertionId | null>(null);
+  const [seed, setSeed] = useState<Seed>("1");
 
-  // Derive formal proof results from assumptions
-  const noOverflowDisabled = disabledAssumptions.has('p_no_overflow');
-  const noUnderflowDisabled = disabledAssumptions.has('p_no_underflow');
-  const hasCex = noOverflowDisabled || noUnderflowDisabled;
+  const report = useMemo(() => runFormal({ dut, assumptions: enabled }), [dut, enabled]);
+  const configKey = `${dut}|${enabled.join(",")}`;
+  const options = useMemo(() => predictionOptions(report), [report]);
+  const cexIds = ASSERTION_IDS.filter((a) => report.assertions[a].status === "cex");
+  const shownCex = selectedCex && cexIds.includes(selectedCex) ? selectedCex : cexIds[0] ?? null;
+  const cexVerdict = shownCex ? report.assertions[shownCex] : null;
+  const replay = useMemo(() => (cexVerdict?.trace ? classifyReplay(replayTrace(dut, cexVerdict.trace, enabled)) : null), [cexVerdict, dut, enabled]);
+  const sim = useMemo(() => simulateRandom(dut, Number(seed), enabled), [dut, seed, enabled]);
 
-  const getProofStatus = useCallback((propId: string): 'proven' | 'cex' | 'covered' | 'pending' => {
-    if (!formalRan) return 'pending';
-    if (propId === 'p_full') return hasCex ? 'cex' : 'proven';
-    if (propId === 'p_fill_drain') return 'covered';
-    return 'proven';
-  }, [formalRan, hasCex]);
+  const toggle = (id: AssumptionId) => {
+    setEnabled((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : ASSUMPTION_IDS.filter((x) => x === id || prev.includes(x))));
+    setSelectedCex(null);
+  };
 
-  // Simulation animation
-  useEffect(() => {
-    if (isSimRunning && simStep < SIM_CYCLES.length) {
-      intervalRef.current = setInterval(() => {
-        setSimStep(prev => {
-          if (prev >= SIM_CYCLES.length - 1) {
-            setIsSimRunning(false);
-            return prev;
-          }
-          return prev + 1;
-        });
-      }, 400);
-    }
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
-  }, [isSimRunning, simStep]);
-
-  const handleRunSim = useCallback(() => {
-    setSimStep(0);
-    setIsSimRunning(true);
-  }, []);
-
-  const handleRunFormal = useCallback(() => {
-    setFormalRan(true);
-  }, []);
-
-  const handleReplayCex = useCallback(() => {
-    setCexReplay(true);
-    setSimStep(0);
-    // Show a CEX-driven scenario: push when full
-    setIsSimRunning(true);
-  }, []);
-
-  const handleToggleAssumption = useCallback((id: string) => {
-    setDisabledAssumptions(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-    setFormalRan(false);
-    setCexReplay(false);
-  }, []);
-
-  const handleReset = useCallback(() => {
-    setSimStep(0);
-    setIsSimRunning(false);
-    setDisabledAssumptions(new Set());
-    setFormalRan(false);
-    setCexReplay(false);
-    if (intervalRef.current) clearInterval(intervalRef.current);
-  }, []);
-
-  const currentCycle = simStep < SIM_CYCLES.length ? SIM_CYCLES[simStep] : null;
-  const visibleCycles = SIM_CYCLES.slice(0, simStep + 1);
+  const propertyLines: CodeTraceLine[] = propertyModuleLines(enabled).map((l) => ({ ...l, owner: "testbench" }));
+  const rtlLines: CodeTraceLine[] = dutLines(dut).map((l) => ({ ...l, owner: "design" }));
 
   return (
-    <div className="flex flex-col gap-5 p-6 bg-slate-900 rounded-xl border border-slate-800 text-slate-200 font-sans my-8">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800 pb-4">
-        <div>
-          <h3 className="text-xl font-bold font-display text-white m-0">Formal vs Simulation Explorer</h3>
-          <p className="text-sm text-slate-400 mt-1">Compare how the same FIFO properties behave under simulation and formal proof.</p>
+    <VisualFrame
+      label="Formal vs simulation explorer"
+      eyebrow="Experiment"
+      title="One property library, two engines"
+      summary={
+        <>
+          The same <code>assume</code>/<code>assert</code>/<code>cover</code> lines are bound into simulation and formal. Change the RTL or the assumptions, predict what formal reports, then replay its counterexample in UVM.
+        </>
+      }
+      fidelity="model"
+      assumptions={ASSUMPTIONS_TEXT}
+    >
+      <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,300px),1fr))]">
+        <div className="min-w-0 space-y-2">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">RTL under test</p>
+          <SegmentedControl
+            label="RTL under test"
+            value={dut}
+            onChange={(v) => {
+              setDut(v);
+              setSelectedCex(null);
+            }}
+            options={(Object.keys(DUT_LABELS) as DutVariant[]).map((v) => ({ value: v, label: DUT_LABELS[v] }))}
+          />
+          <CodeTrace label="fifo.sv (occupancy logic)" lines={rtlLines} activeKey={dut === "late_full" ? "full" : undefined} />
         </div>
-        <button
-          onClick={handleReset}
-          className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-sm font-medium rounded-lg transition-colors border border-slate-700 flex items-center gap-1.5"
-        >
-          <RotateCcw className="w-3.5 h-3.5" /> Reset
-        </button>
+        <div className="min-w-0 space-y-2">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Shared property library: toggle assumptions</p>
+          <CodeTrace
+            label="fifo_props.sv"
+            lines={propertyLines}
+            renderLineControl={(line) =>
+              line.key && (ASSUMPTION_IDS as readonly string[]).includes(line.key) ? (
+                <button
+                  type="button"
+                  aria-pressed={enabled.includes(line.key as AssumptionId)}
+                  aria-label={`${line.key}: ${enabled.includes(line.key as AssumptionId) ? "enabled" : "disabled"}. Toggle assumption`}
+                  onClick={() => toggle(line.key as AssumptionId)}
+                  className={cn(
+                    "min-h-7 rounded-md border px-2 py-0.5 text-[11px] font-semibold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300",
+                    enabled.includes(line.key as AssumptionId) ? "border-sky-400 bg-sky-400/20 text-sky-100" : "border-slate-500 text-slate-400 hover:bg-white/10",
+                  )}
+                >
+                  {enabled.includes(line.key as AssumptionId) ? "on" : "off"}
+                </button>
+              ) : null
+            }
+          />
+          <p className="text-xs text-muted-foreground">
+            Try: turn off <code>a_no_push_when_full</code>; switch to the late-flag RTL; then turn on <code>a_never_fill</code> with the buggy RTL.
+          </p>
+        </div>
       </div>
 
-      {/* Two-panel layout */}
-      <div className="grid md:grid-cols-2 gap-5">
-        {/* Simulation Panel */}
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-sm font-semibold uppercase tracking-wider text-emerald-400 m-0">Simulation</h4>
-            <button
-              onClick={handleRunSim}
-              disabled={isSimRunning}
-              className="px-3 py-1 bg-emerald-800 hover:bg-emerald-700 disabled:opacity-50 text-xs font-medium rounded-lg transition-colors border border-emerald-700 flex items-center gap-1.5"
-            >
-              <Play className="w-3 h-3" /> Run UVM Test
-            </button>
-          </div>
+      <PredictionPrompt resetKey={configKey} question="Run formal on this setup. What does it report for the two assertions?" options={options}>
+        <div className="space-y-5">
+          <section aria-label="Formal results" className="space-y-2">
+            <h4 className="text-sm font-semibold text-foreground">
+              Formal: {report.reachableStates} reachable states explored, every allowed input sequence
+            </h4>
+            <ul className="space-y-2" aria-live="polite">
+              {ASSERTION_IDS.map((id) => {
+                const v = report.assertions[id];
+                return (
+                  <li key={id} className={cn("rounded-lg border p-3 text-sm", v.status === "cex" ? "border-rose-500/50 bg-rose-500/5" : v.vacuous ? "border-amber-500/50 bg-amber-500/5" : "border-emerald-500/40 bg-emerald-500/5")}>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span aria-hidden className="font-bold">{statusGlyph(v.status, v.vacuous)}</span>
+                      <code className="font-mono [font-variant-ligatures:none]">{id}</code>
+                      <span className="font-semibold">{v.status === "cex" ? `counterexample at edge ${v.failCycle}` : v.vacuous ? "proven (vacuous)" : "proven"}</span>
+                      {v.status === "cex" ? (
+                        <button
+                          type="button"
+                          aria-pressed={shownCex === id}
+                          onClick={() => setSelectedCex(id)}
+                          className="ml-auto min-h-8 rounded-md border border-border/70 px-2 text-xs font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          Show CEX trace for {id}
+                        </button>
+                      ) : null}
+                    </div>
+                    <p className="mt-1 text-muted-foreground">{v.why}</p>
+                  </li>
+                );
+              })}
+              <li className={cn("rounded-lg border p-3 text-sm", report.covers.c_reach_depth.status === "covered" ? "border-emerald-500/40" : "border-amber-500/50 bg-amber-500/5")}>
+                <span aria-hidden className="mr-2 font-bold">{statusGlyph(report.covers.c_reach_depth.status)}</span>
+                <code className="font-mono [font-variant-ligatures:none]">c_reach_depth</code>{" "}
+                <span className="font-semibold">{report.covers.c_reach_depth.status}</span>
+                <p className="mt-1 text-muted-foreground">{report.covers.c_reach_depth.why}</p>
+              </li>
+              <li className="rounded-lg border border-sky-500/40 p-3 text-sm text-muted-foreground">
+                Assumptions ({enabled.length ? enabled.join(", ") : "none"}) only restrict the inputs formal explores. Formal never checks them (IEEE 1800-2023 §16.14.2), so a missing or wrong assumption changes what &quot;proven&quot; means.
+              </li>
+            </ul>
+          </section>
 
-          {/* FIFO state bar */}
-          <div className="bg-slate-800/60 rounded-lg border border-slate-700 p-3">
-            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">FIFO State (Depth {DEPTH})</div>
-            <div className="flex gap-1">
-              {Array.from({ length: DEPTH }).map((_, i) => (
-                <div
-                  key={i}
-                  className={`flex-1 h-6 rounded transition-all duration-300 ${
-                    currentCycle && i < currentCycle.count
-                      ? 'bg-emerald-500/70 border border-emerald-400/50'
-                      : 'bg-slate-700/50 border border-slate-600/30'
-                  }`}
-                />
-              ))}
-            </div>
-            <div className="flex justify-between mt-1.5 text-[10px] text-slate-500">
-              <span>{currentCycle?.empty ? '⚑ empty' : ''}</span>
-              <span>count: {currentCycle?.count ?? 0}</span>
-              <span>{currentCycle?.full ? '⚑ full' : ''}</span>
-            </div>
-          </div>
-
-          {/* Waveform-style timeline */}
-          <div className="bg-black/40 rounded-lg border border-slate-800 p-3 overflow-x-auto">
-            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">
-              Cycle Log {cexReplay && <span className="text-red-400 font-bold ml-2">▸ CEX Replay</span>}
-            </div>
-            <div className="flex flex-col gap-0.5 font-mono text-[10px]">
-              <div className="flex gap-2 text-slate-600 border-b border-slate-800 pb-1 mb-1">
-                <span className="w-8 text-right">#</span>
-                <span className="w-10 text-center">push</span>
-                <span className="w-10 text-center">pop</span>
-                <span className="w-10 text-center">cnt</span>
-                <span className="w-12 text-center">assert</span>
-              </div>
-              {visibleCycles.map((c, i) => (
-                <div key={i} className={`flex gap-2 ${i === simStep ? 'text-emerald-300 bg-emerald-900/20 rounded' : 'text-slate-400'}`}>
-                  <span className="w-8 text-right text-slate-600">{c.cycle}</span>
-                  <span className={`w-10 text-center ${c.push ? 'text-cyan-400' : ''}`}>{c.push ? '↑' : '·'}</span>
-                  <span className={`w-10 text-center ${c.pop ? 'text-orange-400' : ''}`}>{c.pop ? '↓' : '·'}</span>
-                  <span className="w-10 text-center">{c.count}</span>
-                  <span className="w-12 text-center text-emerald-500">✓</span>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Coverage bins */}
-          <div className="bg-slate-800/40 rounded-lg border border-slate-700 p-3">
-            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Coverage Progress</div>
-            <div className="flex items-center gap-2">
-              <div className="flex-1 bg-slate-700 rounded-full h-2 overflow-hidden">
-                <div
-                  className="bg-amber-500 h-full rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(100, (simStep / SIM_CYCLES.length) * 100)}%` }}
-                />
-              </div>
-              <span className="text-xs text-slate-400">{Math.round(Math.min(100, (simStep / SIM_CYCLES.length) * 100))}%</span>
-            </div>
-            <p className="text-[10px] text-slate-500 mt-1">
-              {simStep >= SIM_CYCLES.length - 1 ? 'Fill-and-drain sequence covered ✓' : 'Running stimulus to hit cover properties...'}
-            </p>
-          </div>
-        </div>
-
-        {/* Formal Panel */}
-        <div className="flex flex-col gap-3">
-          <div className="flex items-center justify-between">
-            <h4 className="text-sm font-semibold uppercase tracking-wider text-violet-400 m-0">Formal Proof</h4>
-            <button
-              onClick={handleRunFormal}
-              className="px-3 py-1 bg-violet-800 hover:bg-violet-700 text-xs font-medium rounded-lg transition-colors border border-violet-700 flex items-center gap-1.5"
-            >
-              <Shield className="w-3 h-3" /> Run Proofs
-            </button>
-          </div>
-
-          {/* Property list */}
-          <div className="flex flex-col gap-2">
-            {PROPERTIES.map(prop => (
-              <PropertyCard
-                key={prop.id}
-                prop={prop}
-                isDisabled={disabledAssumptions.has(prop.id)}
-                onToggle={prop.kind === 'assume' ? () => handleToggleAssumption(prop.id) : undefined}
-                proofStatus={formalRan ? getProofStatus(prop.id) : undefined}
+          {cexVerdict?.trace && shownCex ? (
+            <section aria-label="Counterexample trace" className="space-y-2">
+              <h4 className="text-sm font-semibold text-foreground">Counterexample for {shownCex}</h4>
+              <CycleWaveform
+                title={`Counterexample for ${shownCex}`}
+                caption="x-axis: clock edges after reset. Each column shows the values sampled at that edge; push/pop at edge k change count at edge k+1."
+                signals={traceSignals(cexVerdict.trace)}
+                edges={cexVerdict.trace.length}
+                markers={[{ edge: cexVerdict.failCycle as number, tone: "fail", label: `${shownCex} fails at edge ${cexVerdict.failCycle}` }]}
+                highlights={[{ from: cexVerdict.failCycle as number, to: cexVerdict.failCycle as number, tone: "fail", label: "failing edge" }]}
               />
-            ))}
-          </div>
+              <PredictionPrompt
+                resetKey={`${configKey}|${shownCex}`}
+                question="Before you replay it in UVM: is this counterexample a design bug?"
+                options={[
+                  {
+                    id: "bug",
+                    label: "Yes. The RTL is wrong; file a bug.",
+                    correct: replay?.kind === "dut_bug",
+                    feedback:
+                      replay?.kind === "dut_bug"
+                        ? "Right. The trace only uses stimulus the contract allows, so the failure belongs to the RTL."
+                        : "A counterexample is only a witness relative to the assumptions. This one uses stimulus the real environment never produces.",
+                  },
+                  {
+                    id: "env",
+                    label: "No. Formal used stimulus the real environment never produces.",
+                    correct: replay?.kind === "spurious",
+                    feedback:
+                      replay?.kind === "spurious"
+                        ? "Right. The trace breaks the interface contract, so the fix is the missing assumption, not the RTL."
+                        : "Every input in this trace obeys the contract (no push while full, no pop while empty), so the environment is not to blame.",
+                  },
+                ]}
+              >
+                {replay ? (
+                  <div className="space-y-2">
+                    <p className={cn("text-sm font-medium", replay.kind === "dut_bug" ? "text-rose-700 dark:text-rose-300" : "text-amber-700 dark:text-amber-300")}>
+                      Replay verdict: {replay.kind === "dut_bug" ? "✕ real DUT bug" : replay.kind === "spurious" ? "! spurious counterexample" : "no failure"}. {replay.why}
+                    </p>
+                    <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]" aria-label="Generated replay sequence">
+                      <code>{replaySequenceLines(cexVerdict.trace).join("\n")}</code>
+                    </pre>
+                  </div>
+                ) : null}
+              </PredictionPrompt>
+            </section>
+          ) : null}
 
-          {/* Counterexample panel */}
-          {formalRan && hasCex && (
-            <div className="bg-red-950/40 border border-red-800/50 rounded-lg p-3">
-              <div className="flex items-start gap-2">
-                <AlertTriangle className="w-4 h-4 text-red-400 mt-0.5 flex-shrink-0" />
-                <div>
-                  <div className="text-sm font-semibold text-red-300">Counterexample Found</div>
-                  <p className="text-[11px] text-red-400/80 mt-1">
-                    {noOverflowDisabled
-                      ? 'With p_no_overflow disabled, the formal engine found a trace where push fires while full=1. The FIFO overflows and count wraps, violating p_full_is_correct.'
-                      : 'With p_no_underflow disabled, the formal engine found a trace where pop fires while empty=1. The count underflows.'}
-                  </p>
-                  <button
-                    onClick={handleReplayCex}
-                    className="mt-2 px-3 py-1 bg-red-900/60 hover:bg-red-800/60 text-[11px] font-medium rounded-lg transition-colors border border-red-700/50 flex items-center gap-1.5 text-red-200"
-                  >
-                    <ArrowRight className="w-3 h-3" /> Replay as UVM Seed
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {formalRan && !hasCex && (
-            <div className="bg-emerald-950/40 border border-emerald-800/50 rounded-lg p-3">
-              <div className="flex items-start gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 mt-0.5 flex-shrink-0" />
-                <div>
-                  <div className="text-sm font-semibold text-emerald-300">All Properties Proven</div>
-                  <p className="text-[11px] text-emerald-400/80 mt-1">
-                    Under the given assumptions, the safety assertion holds for all reachable states. The cover property is reachable within bounded depth.
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* Insight box */}
-          <div className="bg-slate-800/40 rounded-lg border border-slate-700 p-3">
-            <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Key Insight</div>
-            <p className="text-[11px] text-slate-400">
-              Toggle assumptions with the <Shield className="w-3 h-3 inline text-sky-400" /> icon to see how removing a constraint exposes real bugs. In production, this workflow converts counterexamples into directed UVM regression seeds.
-            </p>
-          </div>
+          <section aria-label="Constrained-random simulation" className="space-y-2">
+            <h4 className="text-sm font-semibold text-foreground">Simulation: one constrained-random UVM run ({SIM_CYCLES} edges)</h4>
+            <SegmentedControl label="Random seed" value={seed} onChange={setSeed} options={SEEDS.map((s) => ({ value: s, label: `seed ${s}` }))} />
+            <ul className="space-y-1 text-sm" aria-live="polite">
+              {ASSERTION_IDS.map((id) => {
+                const fail = sim.firstAssertionFail[id];
+                const matched = sim.cycles.filter((c) => c.assertions[id] !== "vacuous").length;
+                return (
+                  <li key={id}>
+                    <span aria-hidden className="mr-1 font-bold">{fail === undefined ? "✓" : "✕"}</span>
+                    <code className="font-mono [font-variant-ligatures:none]">{id}</code>:{" "}
+                    {fail === undefined ? `no failure in ${SIM_CYCLES} edges` : `fails at edge ${fail}`}
+                    {id === "p_full_is_correct" ? ` (antecedent matched at ${matched} edge${matched === 1 ? "" : "s"})` : ""}
+                    {fail === undefined && report.assertions[id].status === "cex" ? " — formal found a counterexample this seed never exercised." : ""}
+                  </li>
+                );
+              })}
+              <li>
+                <span aria-hidden className="mr-1 font-bold">{sim.coverHit.c_reach_depth === undefined ? "∅" : "✓"}</span>
+                <code className="font-mono">c_reach_depth</code>: {sim.coverHit.c_reach_depth === undefined ? "never hit by this seed" : `hit at edge ${sim.coverHit.c_reach_depth}`}
+              </li>
+              {Object.entries(sim.firstAssumptionFail).map(([id, edge]) => (
+                <li key={id} className="text-amber-700 dark:text-amber-300">
+                  <span aria-hidden className="mr-1 font-bold">!</span>
+                  Simulation checks assumptions too: <code className="font-mono">{id}</code> fails at edge {edge}. The legal environment does what this assumption forbids, so formal is over-constrained.
+                </li>
+              ))}
+            </ul>
+            <CycleWaveform
+              title={`Constrained-random run, seed ${seed}`}
+              caption="x-axis: clock edges after reset (one UVM item per edge). ✕ assertion fails, ! assumption fails, ● cover hit."
+              signals={traceSignals(sim.cycles)}
+              edges={sim.cycles.length}
+              markers={simMarkers(sim)}
+              cycleWidth={36}
+            />
+          </section>
         </div>
-      </div>
-
-      {/* Code hint */}
-      <div className="bg-black/40 rounded-lg border border-slate-800 p-4">
-        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Shared Property Library Pattern</div>
-        <pre className="text-xs font-mono text-slate-300 overflow-x-auto whitespace-pre">
-{`// fifo_props.sv — consumed by both simulation and formal
-module fifo_properties #(parameter DEPTH = ${DEPTH})
-  (input logic clk, rst_n, push, pop,
-   input logic [$clog2(DEPTH):0] count,
-   input logic full, empty);
-
-  assert property (@(posedge clk) disable iff (!rst_n)
-    (count == DEPTH) |-> full);           // ← assert in sim, prove in formal
-
-  assume property (@(posedge clk) disable iff (!rst_n)
-    !(push && full));                     // ← constrain formal, mirror UVM constraints
-
-  cover property (@(posedge clk) disable iff (!rst_n)
-    (count == 0) ##[1:$] (count == DEPTH) ##[1:$] (count == 0));
-endmodule
-
-// Bind once — both flows see the same checkers
-bind fifo fifo_properties #(.DEPTH(DEPTH)) props (.*);`}
-        </pre>
-      </div>
-    </div>
+      </PredictionPrompt>
+    </VisualFrame>
   );
 }

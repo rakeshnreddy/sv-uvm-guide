@@ -10,107 +10,190 @@ export const metadata = {
   uvm_concept_tags={["layered sequences", "p_sequencer", "virtual sequence"]}
 >
 
+  *Page 5 of 8 in I-UVM-3B. Read [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) first.*
+
   ## Elevator Pitch
 
-  Layered sequencing keeps stimulus maintainable: atomic sequences capture protocol verbs, scenario sequences compose them, and virtual sequences (via `p_sequencer`) synchronize agents. With clear layers, you can swap drivers or rebuild corner-case stimulus without rewriting the whole flow.
+  "Layering" means two different things in UVM, and you need both:
+  - **Sequence layers** organise stimulus: atomic sequences capture protocol verbs, scenario sequences compose them, and virtual sequences coordinate agents.
+  - **Protocol layers** translate one protocol into another: IP packets carried inside Ethernet frames, for example. A translation sequence turns each upper-layer item into lower-layer items.
 
   ## Stack Your Stimulus
 
-  1. **Atomic layer:** Minimal sequences that drive a single transaction type (`write_reg_seq`, `send_token_seq`).
-  2. **Scenario layer:** Compositions that stitch atomic pieces with timing, coverage hooks, or error injection.
-  3. **Virtual/test layer:** Sequencer-agnostic coordinators that start scenarios across agents using typed `p_sequencer` handles.
+  1. **Atomic layer:** minimal sequences that drive one transaction type (`write_reg_seq`, `send_token_seq`).
+  2. **Scenario layer:** compositions that stitch atomic pieces together with timing or error injection.
+  3. **Virtual/test layer:** coordinators that start scenarios across agents through `p_sequencer` handles.
 
   Benefits:
-  - Swap atomic sequences as protocol revisions land—scenarios stay intact.
-  - Allow teams to own separate layers (VIP vendor supplies atomics; you supply scenarios).
-  - Make debugging easier: failures surface at the highest layer that changed.
+  - Swap atomic sequences as protocol revisions land; scenarios stay intact.
+  - Separate ownership: a VIP vendor supplies atomics, you supply scenarios.
+  - Easier debugging: a failure points at the highest layer that changed.
 
-  ## p_sequencer in Practice
+  ## The Three Layers in Code
 
   ```systemverilog
-  typedef uvm_sequencer#(mem_item) mem_sqr_t;
-
-  class mem_atomic_write extends uvm_sequence#(mem_item);
+  // Atomic layer: one protocol verb
+  class mem_atomic_write extends uvm_sequence #(mem_item);
     `uvm_object_utils(mem_atomic_write)
 
     rand bit [31:0] addr;
     rand bit [63:0] data;
 
+    function new(string name = "mem_atomic_write");
+      super.new(name);
+    endfunction
+
     virtual task body();
+      req = mem_item::type_id::create("req");       // create before start_item
       start_item(req);
-      assert(req.randomize() with { rw == WRITE; this.addr == addr; this.data == data; });
+      if (!req.randomize() with { rw == WRITE; addr == local::addr; data == local::data; })
+        `uvm_error("RAND", "mem_item randomization failed")
       finish_item(req);
     endtask
   endclass
 
-  class mem_burst_program extends uvm_sequence#(mem_item);
+  // Scenario layer: eight atomic writes at consecutive addresses
+  class mem_burst_program extends uvm_sequence #(mem_item);
     `uvm_object_utils(mem_burst_program)
 
     rand bit [31:0] base_addr;
+    constraint c_align { base_addr[2:0] == 0; }
+
+    function new(string name = "mem_burst_program");
+      super.new(name);
+    endfunction
 
     virtual task body();
-      repeat (8) begin
-        `uvm_do_with(req, { rw == WRITE; addr == base_addr + idx * 8; })
+      mem_atomic_write wr;
+      for (int idx = 0; idx < 8; idx++) begin
+        wr = mem_atomic_write::type_id::create("wr");
+        if (!wr.randomize() with { addr == local::base_addr + idx * 8; })
+          `uvm_error("RAND", "write randomization failed")
+        wr.start(m_sequencer, this);                 // child runs on this sequence's sequencer
       end
     endtask
   endclass
 
+  // Virtual layer: configure, then load
   class soc_init_vseq extends uvm_sequence;
     `uvm_object_utils(soc_init_vseq)
+    `uvm_declare_p_sequencer(soc_vsqr)
 
-    typedef virtual_sequencer pseq_t;
-    pseq_t p_sequencer;
+    function new(string name = "soc_init_vseq");
+      super.new(name);
+    endfunction
 
     virtual task body();
-      if (!$cast(p_sequencer, m_sequencer))
-        `uvm_fatal("VSEQ", "Unable to cast m_sequencer to virtual_sequencer")
-
-      mem_atomic_write   csr_seq;
-      mem_burst_program  boot_seq;
+      mem_atomic_write  csr_seq;
+      mem_burst_program boot_seq;
 
       csr_seq  = mem_atomic_write::type_id::create("csr_seq");
       boot_seq = mem_burst_program::type_id::create("boot_seq");
+      if (!csr_seq.randomize() with { addr == 32'hFF00_0000; data == 64'h1; })
+        `uvm_error("RAND", "csr_seq randomization failed")
+      if (!boot_seq.randomize())
+        `uvm_error("RAND", "boot_seq randomization failed")
 
-      csr_seq.addr = 'hFF00_0000;
-      csr_seq.data = 64'h1;
-
-      csr_seq.start(p_sequencer.cfg_sqr);
-      boot_seq.start(p_sequencer.mem_sqr);
+      csr_seq.start(p_sequencer.cfg_sqr);            // configure first...
+      boot_seq.start(p_sequencer.mem_sqr);           // ...then load
     endtask
   endclass
   ```
 
   **Walkthrough highlights**
-  - Lines 1-20 form the atomic layer: `mem_atomic_write` owns the minimal transaction logic and can be reused across scenarios.
-  - Lines 22-31 compose a scenario layer that repeats the atomic write pattern—easy to swap for error injection or coverage sampling.
-  - Lines 33-54 showcase the virtual layer that casts `m_sequencer` into a typed handle and routes work to individual agent sequencers.
+  - **`local::` in inline constraints.** Inside `req.randomize() with { … }`, an unqualified name is looked up in the *item* first. Writing `addr == addr` (or `this.addr == addr`) compares the item's field with itself, which is always true, so the sequence's `addr` is silently ignored. `local::addr` means "the `addr` of the scope that called `randomize()`", here the sequence.
+  - **Create before `start_item()`.** `req` is a handle that starts as `null`; `start_item(null)` is `UVM_FATAL [NULLITM]`.
+  - **Declarations first.** Variables are declared at the top of `body()`, before any statement, as SystemVerilog requires.
+  - **Children inherit context.** `wr.start(m_sequencer, this)` runs the child on the same sequencer, with this sequence as its parent (so it inherits the priority and is covered by a parent's `lock()`).
+  - **`` `uvm_declare_p_sequencer(soc_vsqr) ``** declares a typed `p_sequencer` and checks the type when the sequence starts, instead of a hand-written `$cast`.
 
-  **Tip:** Give each layer a naming convention (`*_atomic_seq`, `*_scenario_seq`, `*_vseq`) so it is obvious which level to modify.
+  **Tip:** give each layer a naming convention (`*_atomic_seq`, `*_scenario_seq`, `*_vseq`) so it is obvious which level to modify.
+
+  ## Protocol Layering: One Protocol Inside Another
+
+  A layered agent turns upper-layer items into lower-layer items. The usual pattern needs no new driver:
+
+  - The **upper layer** is a sequencer with no driver, `uvm_sequencer #(ip_packet)`. Ordinary IP sequences run on it.
+  - A **translation sequence** runs on the lower (Ethernet) agent's sequencer. It plays the role of the upper layer's driver: it calls `get_next_item()` on the upper sequencer, builds Ethernet frames, sends them with `start_item()`/`finish_item()`, then calls `item_done()` on the upper sequencer.
+
+  ```systemverilog
+  typedef uvm_sequencer #(ip_packet) ip_sequencer;     // upper layer: no driver
+
+  class ip_to_eth_seq extends uvm_sequence #(eth_frame);
+    `uvm_object_utils(ip_to_eth_seq)
+
+    ip_sequencer ip_sqr;                               // set by the env or test
+
+    function new(string name = "ip_to_eth_seq");
+      super.new(name);
+    endfunction
+
+    virtual task body();
+      ip_packet pkt;
+      eth_frame frm;
+      forever begin
+        ip_sqr.get_next_item(pkt);                     // pull, like a driver would
+        frm = eth_frame::type_id::create("frm");
+        start_item(frm);
+        frm.ethertype = 16'h0800;                      // IPv4
+        frm.payload   = pkt.to_bytes();                // your packing function
+        finish_item(frm);                              // waits for the Ethernet driver
+        ip_sqr.item_done();                            // now the IP sequence's finish_item() returns
+      end
+    endtask
+  endclass
+  ```
+
+  Because the translation sequence calls `item_done()` only after the frame is driven, an IP sequence's `finish_item()` still means "this packet is on the wire". Start the translation sequence in the background (`fork … join_none`, it never ends) and let the IP sequences, started inside the test's objection, decide when the test is done. Monitors are layered the other way: an IP monitor subscribes to the Ethernet monitor and reassembles packets.
 
   ## Governance & Maintenance
 
-  - **Configuration:** Pass knobs through sequence constructors or a dedicated configuration object instead of hard-coded globals. Scenario sequences can aggregate knobs and relay them to atomics.
-  - **Coverage:** Keep coverage sampling in scenario sequences—they know which combination is under test, while atomics stay protocol-agnostic.
-  - **Reusability:** Publish scenario sequences via `uvm_sequence_library` so tests pick them by name or weight.
+  - **Configuration:** pass knobs as sequence fields set before `start()`, or through a configuration object. Configuration flows downward: test → virtual sequence → scenarios → atomics.
+  - **Coverage:** functional coverage belongs in a subscriber fed by the **monitor**, so it measures what the DUT actually saw. A sequence knows what it *tried*, which can differ from what happened (dropped, reordered or rejected traffic).
+  - **Reuse:** register scenario sequences in a `uvm_sequence_library` when tests should run a random selection of them (page 6).
 
   ## Checklist
 
   - [ ] Atomic, scenario, and virtual layers have clear responsibilities.
-  - [ ] `p_sequencer` casts succeed and are guarded by fatal messages.
-  - [ ] Configuration flows downward (tests → virtual sequences → scenarios → atomics).
+  - [ ] Every inline constraint that refers to a sequence field uses `local::`.
+  - [ ] `p_sequencer` comes from `` `uvm_declare_p_sequencer `` (or a `$cast` guarded by a fatal).
+  - [ ] Coverage is sampled from monitors, not from sequences.
 
   ## Quiz Yourself
 
-  **Where should coverage bins that span multiple transactions live?**
-  - Inside each atomic sequence
-  - Inside the scenario sequence that composes the traffic *(correct)*
-  - Inside the driver
-  - In the monitor only
+  <Quiz
+    questions={[
+      {
+        question: "Inside a sequence: req.randomize() with { addr == addr; }. The sequence's addr is 'h100. What address does the item get?",
+        answers: [
+          { text: "'h100", correct: false },
+          { text: "Any legal random address: both names refer to the item's own addr, so the constraint is always true", correct: true },
+          { text: "0, because the constraint conflicts", correct: false },
+        ],
+        explanation: "Unqualified names in an inline constraint resolve in the randomized object first. Use local::addr to mean the sequence's field.",
+      },
+      {
+        question: "Where should coverage bins that span multiple transactions live?",
+        answers: [
+          { text: "Inside each atomic sequence", correct: false },
+          { text: "Inside the scenario sequence that composes the traffic", correct: false },
+          { text: "In a coverage subscriber fed by the monitor", correct: true },
+          { text: "Inside the driver", correct: false },
+        ],
+        explanation: "Coverage should measure observed behaviour. Sequences only know what they attempted.",
+      },
+      {
+        question: "In protocol layering, what plays the role of the upper layer's driver?",
+        answers: [
+          { text: "A new driver class connected to the upper sequencer", correct: false },
+          { text: "A translation sequence on the lower agent's sequencer that calls get_next_item()/item_done() on the upper sequencer", correct: true },
+          { text: "The lower agent's monitor", correct: false },
+        ],
+        explanation: "The translation sequence pulls upper items and sends lower items, so no extra driver is needed.",
+      },
+    ]}
+  />
 
-  **What does `p_sequencer` provide in a virtual sequence?**
-  - A handle to the driver
-  - A typed handle to the virtual sequencer so you can reach agent sequencers *(correct)*
-  - A shortcut to the monitor
-  - Nothing—it is optional sugar
+  Next: [Sequence Libraries](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-libraries).
 
 </InfoPage>

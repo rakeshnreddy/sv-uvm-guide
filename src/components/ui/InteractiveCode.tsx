@@ -9,6 +9,7 @@ import { ArrowLeft, ArrowRight } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { EditorProps, OnMount } from '@monaco-editor/react';
 import type * as monacoEditor from 'monaco-editor';
+import { SITE_MONACO_THEME, defineSiteMonacoThemes } from '@/lib/monaco-themes';
 import { select } from 'd3-selection';
 import { scaleBand, scaleLinear } from 'd3-scale';
 import { max } from 'd3-array';
@@ -120,7 +121,9 @@ export interface ExplanationStep {
 }
 
 interface InteractiveCodeProps {
-  children: React.ReactNode;
+  children?: React.ReactNode;
+  /** Source passed directly (several lessons use `code={...}` instead of a fenced block). */
+  code?: string;
   language?: string;
   fileName?: string;
   explanationSteps?: ExplanationStep[];
@@ -128,7 +131,27 @@ interface InteractiveCodeProps {
   isEditable?: boolean;
   collabUrl?: string;
   userId?: string;
+  /**
+   * Heuristic token metrics. Off by default: they are not simulator or lint
+   * results and must not be presented to learners as such.
+   */
+  showHeuristicAnalysis?: boolean;
 }
+
+/**
+ * Collects the text of an MDX fenced block. MDX v2 renders ```lang blocks as
+ * <pre><code>text</code></pre> (possibly through mapped components), so the
+ * text sits one or more element levels below `children`.
+ */
+export const extractCodeText = (node: React.ReactNode): string => {
+  if (node === null || node === undefined || typeof node === 'boolean') return '';
+  if (typeof node === 'string' || typeof node === 'number') return String(node);
+  if (Array.isArray(node)) return node.map(extractCodeText).join('');
+  if (React.isValidElement(node)) {
+    return extractCodeText((node.props as { children?: React.ReactNode }).children);
+  }
+  return '';
+};
 
 const parseTargetLines = (target: string, monacoInstance: Monaco | null): MonacoRange[] => {
   if (!target || target.toLowerCase() === 'all' || !monacoInstance) {
@@ -297,6 +320,7 @@ const analyzeSystemVerilog = (input: string): AnalysisResult => {
 
 export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   children,
+  code: codeProp,
   language = "systemverilog",
   fileName,
   explanationSteps = [],
@@ -304,35 +328,23 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
   isEditable = false,
   collabUrl,
   userId = 'local',
+  showHeuristicAnalysis = false,
 }) => {
   const [currentStepIndex, setCurrentStepIndex] = useState(initialStep);
   const { theme, resolvedTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   const effectiveTheme = mounted ? ((theme === 'system' ? resolvedTheme : theme) ?? 'dark') : 'dark';
-  const isDarkMode = effectiveTheme === 'dark';
+  // Site themes are named like "default-dark"; "system" resolves to "dark"/"light".
+  const isDarkMode = effectiveTheme === 'dark' || effectiveTheme.endsWith('-dark');
   const editorRef = useRef<MonacoEditorInstance | null>(null);
   const monacoRef = useRef<Monaco | null>(null);
   const decorationsRef = useRef<string[]>([]);
 
-  const code = useMemo(() => {
-    let codeString = '';
-    React.Children.forEach(children, (child) => {
-      if (typeof child === 'string') {
-        codeString += child;
-      } else if (React.isValidElement(child) && child.props.children) {
-        if (child.props.mdxType === 'pre') {
-          const codeChild = React.Children.toArray(child.props.children).find(c => React.isValidElement(c) && c.props.mdxType === 'code');
-          if (codeChild && React.isValidElement(codeChild)) {
-            codeString += React.Children.toArray(codeChild.props.children).join('');
-          }
-        } else {
-          codeString += React.Children.toArray(child.props.children).join('');
-        }
-      }
-    });
-    return codeString.trim();
-  }, [children]);
+  const code = useMemo(
+    () => (codeProp ?? extractCodeText(children)).replace(/^\n+|\s+$/g, ''),
+    [children, codeProp],
+  );
 
   const [codeContent, setCodeContent] = useState(code);
   useEffect(() => setCodeContent(code), [code]);
@@ -547,7 +559,8 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
               broadcastEdit(socketRef.current, edit);
             }
           }}
-          theme={theme === 'dark' ? 'vs-dark' : 'light'}
+          beforeMount={defineSiteMonacoThemes}
+          theme={isDarkMode ? SITE_MONACO_THEME.dark : SITE_MONACO_THEME.light}
           options={{
             readOnly: !isEditable,
             domReadOnly: !isEditable,
@@ -557,9 +570,12 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
             wordWrap: 'on',
             automaticLayout: true,
             glyphMargin: true,
+            // Bracket-pair colours mis-pair begin/end/task keywords and fail contrast.
+            bracketPairColorization: { enabled: false },
           }}
         />
       </div>
+      {showHeuristicAnalysis ? (
       <div className="analysis-section grid grid-cols-1 gap-4 md:grid-cols-2">
         <div className="text-sm">
           <h4 className="font-semibold mb-2">Metrics</h4>
@@ -604,6 +620,7 @@ export const InteractiveCode: React.FC<InteractiveCodeProps> = ({
           <svg ref={flowRef} width="300" height="200"></svg>
         </div>
       </div>
+      ) : null}
 
       {hasExplanations && (
         <>

@@ -1,404 +1,484 @@
 "use client";
 
-import React, { useState } from 'react';
-import { Printer, GitCompare, Binary, Database, Copy, ChevronRight } from 'lucide-react';
+import React, { useMemo, useState } from "react";
 
-/* ------------------------------------------------------------------ */
-/* Data model: a mock UVM packet with fields                          */
-/* ------------------------------------------------------------------ */
+import { CodeTrace, type CodeTraceLine } from "@/components/visual-system/CodeTrace";
+import { PredictionPrompt } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  compareObjects,
+  comparePredictionOptions,
+  compareScenarios,
+  COPY_TEST_LINES,
+  copyImplLines,
+  defaultFields,
+  fieldMacroLine,
+  flagText,
+  hex,
+  INT_FIELDS,
+  noFlagWarning,
+  printerDefaultCall,
+  printObject,
+  runCopy,
+  type CompareSetup,
+  type CompareStatus,
+  type CopyImpl,
+  type FieldFlags,
+  type FieldSpec,
+  type PrinterKind,
+} from "@/lib/uvm-policy-model";
+import { cn } from "@/lib/utils";
 
-interface PacketField {
-  name: string;
-  bits: number;
-  valueA: number;
-  valueB: number;      // second object for compare
-}
-
-const FIELDS: PacketField[] = [
-  { name: 'addr',   bits: 32, valueA: 0x1000_CAFE, valueB: 0x1000_CAFE },
-  { name: 'data',   bits: 32, valueA: 0xDEAD_BEEF, valueB: 0xBADC_0FFE },
-  { name: 'parity', bits: 1,  valueA: 1,           valueB: 0 },
-  { name: 'id',     bits: 8,  valueA: 42,          valueB: 42 },
+export const POLICY_MODEL_ASSUMPTIONS = [
+  "Field-macro semantics follow uvm-core 2020.3.1 (IEEE 1800.2-2020 Annex B): an operation runs only when the flag includes it (UVM_ALL_ON) and not its UVM_NO* bit. A UVM_NO* flag without UVM_ALL_ON enables nothing and warns UVM/FIELDS/NO_FLAG.",
+  "compare() (uvm_comparer, 16.3): field macros run first, then do_compare(); default threshold 1 and show_max 1; MISCMP messages are UVM_INFO at UVM_LOW.",
+  "copy() (16.6): UVM_REFERENCE copies the handle; otherwise the nested object is created and copied. A hand-written do_copy copies only what it says.",
+  "print() (16.2): uvm_printer::set_default() picks the printer. Column widths are simplified.",
+  "Object ids such as @12 are invented; simulators number objects differently.",
 ];
 
-const TABS = [
-  { key: 'print',   label: 'Print',   icon: Printer },
-  { key: 'compare', label: 'Compare', icon: GitCompare },
-  { key: 'pack',    label: 'Pack',    icon: Binary },
-  { key: 'record',  label: 'Record',  icon: Database },
-  { key: 'copy',    label: 'Copy',    icon: Copy },
-] as const;
+type Mode = "compare" | "copy" | "print";
 
-type TabKey = (typeof TABS)[number]['key'];
+const statusCue: Record<CompareStatus, { glyph: string; label: string; className: string }> = {
+  equal: { glyph: "✓", label: "equal", className: "text-emerald-700 dark:text-emerald-300" },
+  miscompare: { glyph: "✕", label: "miscompare", className: "text-rose-700 dark:text-rose-300" },
+  "skipped-flag": { glyph: "⊘", label: "not compared (flag)", className: "text-muted-foreground" },
+  "skipped-threshold": { glyph: "⏹", label: "not compared (threshold)", className: "text-amber-700 dark:text-amber-300" },
+  "same-handle": { glyph: "≡", label: "same handle", className: "text-emerald-700 dark:text-emerald-300" },
+};
 
-/* ------------------------------------------------------------------ */
-/* Helpers                                                            */
-/* ------------------------------------------------------------------ */
+const INT_FLAG_CHOICES: { id: string; flags: FieldFlags }[] = [
+  { id: "on", flags: { allOn: true } },
+  { id: "nocompare", flags: { allOn: true, noCompare: true } },
+  { id: "nocompare-only", flags: { allOn: false, noCompare: true } },
+];
+const OBJ_FLAG_CHOICES: { id: string; flags: FieldFlags }[] = [
+  { id: "on", flags: { allOn: true } },
+  { id: "reference", flags: { allOn: true, reference: true } },
+];
+const PRINT_TAG_CHOICES: { id: string; flags: FieldFlags }[] = [
+  { id: "on", flags: { allOn: true } },
+  { id: "noprint", flags: { allOn: true, noPrint: true } },
+  { id: "nocompare-only", flags: { allOn: false, noCompare: true } },
+];
 
-function hex(v: number, bits: number): string {
-  const nibbles = Math.ceil(bits / 4);
-  return '0x' + v.toString(16).toUpperCase().padStart(nibbles, '0');
+function choiceId(choices: { id: string; flags: FieldFlags }[], flags: FieldFlags): string {
+  return choices.find((c) => flagText(c.flags) === flagText(flags))?.id ?? choices[0].id;
 }
 
-function bin(v: number, bits: number): string {
-  return v.toString(2).padStart(bits, '0');
+function FlagSelect({
+  field,
+  choices,
+  onChange,
+}: {
+  field: FieldSpec;
+  choices: { id: string; flags: FieldFlags }[];
+  onChange: (flags: FieldFlags) => void;
+}) {
+  return (
+    <select
+      aria-label={`Flag for ${field.name}`}
+      value={choiceId(choices, field.flags)}
+      onChange={(e) => onChange((choices.find((c) => c.id === e.target.value) ?? choices[0]).flags)}
+      className="h-10 max-w-[11rem] rounded border border-slate-600 bg-slate-900 px-1 font-mono text-[11px] text-slate-100"
+    >
+      {choices.map((c) => (
+        <option key={c.id} value={c.id}>
+          {flagText(c.flags)}
+        </option>
+      ))}
+    </select>
+  );
 }
 
-/* ------------------------------------------------------------------ */
-/* Sub-views                                                          */
-/* ------------------------------------------------------------------ */
+function classLines(fields: FieldSpec[], userDoCompare?: string[]): CodeTraceLine[] {
+  const lines: CodeTraceLine[] = [
+    { text: "class packet extends uvm_sequence_item;", owner: "testbench" },
+    { text: "  `uvm_object_utils_begin(packet)", owner: "testbench" },
+    ...fields.map((f) => ({ text: `    ${fieldMacroLine(f)}`, owner: "testbench" as const, key: `field:${f.name}` })),
+    { text: "  `uvm_object_utils_end", owner: "testbench" },
+  ];
+  if (userDoCompare) {
+    lines.push(
+      { text: "  virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);", owner: "testbench" },
+      { text: "    packet rhs_;", owner: "testbench" },
+      { text: "    if (!$cast(rhs_, rhs)) return 0;", owner: "testbench" },
+      { text: `    return ${userDoCompare.map((f) => `(${f} == rhs_.${f})`).join(" && ")};`, owner: "testbench" },
+      { text: "  endfunction", owner: "testbench" },
+    );
+  }
+  lines.push({ text: "endclass", owner: "testbench" });
+  return lines;
+}
 
-type PrintFormat = 'table' | 'tree' | 'line';
-
-function PrintTab() {
-  const [fmt, setFmt] = useState<PrintFormat>('table');
-
-  const renderTable = () => (
-    <div className="overflow-x-auto">
-      <table className="w-full text-xs font-mono">
-        <thead>
-          <tr className="text-slate-400 border-b border-slate-700">
-            <th className="text-left py-1.5 px-2">Field</th>
-            <th className="text-left py-1.5 px-2">Size</th>
-            <th className="text-left py-1.5 px-2">Value</th>
-          </tr>
-        </thead>
-        <tbody>
-          {FIELDS.map(f => (
-            <tr key={f.name} className="border-b border-slate-800/50">
-              <td className="py-1.5 px-2 text-blue-300">{f.name}</td>
-              <td className="py-1.5 px-2 text-slate-400">{f.bits}b</td>
-              <td className="py-1.5 px-2 text-emerald-300">{hex(f.valueA, f.bits)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+function CodePanel({ label, lines }: { label: string; lines: string[] }) {
+  return (
+    <figure aria-label={label} className="min-w-0 overflow-hidden rounded-xl border border-border/70 bg-slate-950/90 text-slate-100">
+      <figcaption className="border-b border-white/10 px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">{label}</figcaption>
+      <pre className="overflow-x-auto p-3 font-mono text-[12px] leading-5 [font-variant-ligatures:none]">{lines.join("\n")}</pre>
+    </figure>
   );
+}
 
-  const renderTree = () => (
-    <pre className="text-xs font-mono text-slate-300 leading-relaxed whitespace-pre">
-{`my_packet (my_packet@0)
-${FIELDS.map((f, i) => {
-  const prefix = i === FIELDS.length - 1 ? '└──' : '├──';
-  return `  ${prefix} ${f.name.padEnd(8)} ${hex(f.valueA, f.bits)}`;
-}).join('\n')}`}
-    </pre>
-  );
+function CompareMode() {
+  const [scenarioId, setScenarioId] = useState(compareScenarios[0].id);
+  const base = compareScenarios.find((s) => s.id === scenarioId) ?? compareScenarios[0];
+  const [fields, setFields] = useState<FieldSpec[]>(base.setup.fields);
+  const [threshold, setThreshold] = useState(1);
+  const [showMax, setShowMax] = useState(1);
 
-  const renderLine = () => (
-    <pre className="text-xs font-mono text-slate-300 leading-relaxed whitespace-pre">
-{`my_packet: { ${FIELDS.map(f => `${f.name}=${hex(f.valueA, f.bits)}`).join(', ')} }`}
-    </pre>
-  );
+  const pick = (id: string) => {
+    const s = compareScenarios.find((x) => x.id === id) ?? compareScenarios[0];
+    setScenarioId(id);
+    setFields(s.setup.fields);
+    setThreshold(s.setup.threshold);
+    setShowMax(s.setup.showMax);
+  };
+
+  const setup: CompareSetup = useMemo(() => ({ ...base.setup, fields, threshold, showMax }), [base, fields, threshold, showMax]);
+  const result = useMemo(() => compareObjects(setup), [setup]);
+  const options = useMemo(() => comparePredictionOptions(setup), [setup]);
+  const resetKey = JSON.stringify({ scenarioId, f: fields.map((f) => flagText(f.flags)), threshold, showMax });
+  const { lhs, rhs, heap } = setup;
+  const warnings = fields.map(noFlagWarning).filter(Boolean) as string[];
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-2">
-        <p className="text-xs text-slate-400">
-          <code className="text-purple-300">uvm_printer</code> formats an object&apos;s fields
-          for debug output. UVM ships three built-in formats — switch between them below.
-        </p>
-        <div className="flex items-center gap-1 bg-slate-800/60 p-1 rounded-lg border border-slate-700 w-fit text-xs">
-          {(['table', 'tree', 'line'] as PrintFormat[]).map(f => (
-            <button
-              key={f}
-              onClick={() => setFmt(f)}
-              className={`px-3 py-1 rounded-md transition-all capitalize ${
-                fmt === f ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300'
-              }`}
-            >
-              {f}
-            </button>
-          ))}
-        </div>
-      </div>
+    <div className="space-y-4">
+      <SegmentedControl label="Compare scenario" options={compareScenarios.map((s) => ({ value: s.id, label: s.title }))} value={scenarioId} onChange={pick} />
+      <p className="text-sm text-muted-foreground">{base.summary} Change a flag or a comparer knob to predict again.</p>
 
-      <div className="bg-black/40 rounded-lg p-4 border border-slate-800">
-        <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2 font-semibold">
-          uvm_default_printer = uvm_{fmt}_printer
-        </div>
-        {fmt === 'table' && renderTable()}
-        {fmt === 'tree' && renderTree()}
-        {fmt === 'line' && renderLine()}
-      </div>
-
-      <div className="text-[10px] text-slate-500 flex items-start gap-1.5 bg-slate-800/30 rounded p-2">
-        <ChevronRight className="w-3 h-3 mt-0.5 shrink-0 text-emerald-500" />
-        <span>Override <code className="text-slate-400">do_print()</code> in your class
-        to customize output beyond what <code className="text-slate-400">`uvm_field_*</code> macros produce.</span>
-      </div>
-    </div>
-  );
-}
-
-function CompareTab() {
-  const [ran, setRan] = useState(false);
-
-  return (
-    <div className="flex flex-col gap-4">
-      <p className="text-xs text-slate-400">
-        <code className="text-purple-300">uvm_comparer</code> walks two objects field-by-field
-        and reports mismatches. Click <strong>Compare</strong> to see the diff.
-      </p>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {['A', 'B'].map((label, idx) => (
-          <div key={label} className="bg-black/40 rounded-lg p-3 border border-slate-800">
-            <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2 font-semibold">
-              Object {label}
-            </div>
-            {FIELDS.map(f => {
-              const val = idx === 0 ? f.valueA : f.valueB;
-              const mismatch = ran && f.valueA !== f.valueB;
-              return (
-                <div key={f.name} className={`flex justify-between text-xs font-mono py-0.5 px-1 rounded ${
-                  mismatch
-                    ? idx === 0
-                      ? 'bg-rose-900/30 text-rose-300'
-                      : 'bg-amber-900/30 text-amber-300'
-                    : 'text-slate-300'
-                }`}>
-                  <span className="text-blue-300">{f.name}</span>
-                  <span>{hex(val, f.bits)}</span>
-                </div>
-              );
-            })}
-          </div>
-        ))}
-      </div>
-
-      <button
-        onClick={() => setRan(true)}
-        className="self-start px-4 py-2 text-xs font-medium rounded-lg bg-emerald-600 text-white border border-emerald-500 hover:bg-emerald-500 transition-all"
-      >
-        {ran ? '✓ Compared' : 'Compare'}
-      </button>
-
-      {ran && (
-        <div className="bg-black/40 rounded-lg p-3 border border-slate-800 text-xs font-mono">
-          <div className="text-rose-400 font-semibold mb-1">Result: MISMATCH (2 field(s) differ)</div>
-          {FIELDS.filter(f => f.valueA !== f.valueB).map(f => (
-            <div key={f.name} className="text-slate-400 ml-2">
-              <span className="text-blue-300">{f.name}</span>: {hex(f.valueA, f.bits)} ≠ {hex(f.valueB, f.bits)}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PackTab() {
-  return (
-    <div className="flex flex-col gap-4">
-      <p className="text-xs text-slate-400">
-        <code className="text-purple-300">uvm_packer</code> serializes an object&apos;s fields
-        into a flat bitstream for transport across language boundaries or network sockets.
-      </p>
-
-      <div className="bg-black/40 rounded-lg p-4 border border-slate-800 overflow-x-auto">
-        <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-3 font-semibold">
-          Bitstream Layout (MSB → LSB)
-        </div>
-        <div className="flex flex-wrap gap-1">
-          {FIELDS.map(f => {
-            const bits = bin(f.valueA, f.bits);
-            const colors = ['text-emerald-300', 'text-blue-300', 'text-purple-300', 'text-amber-300'];
-            const bgs = ['bg-emerald-900/20', 'bg-blue-900/20', 'bg-purple-900/20', 'bg-amber-900/20'];
-            const idx = FIELDS.indexOf(f);
+      <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]">
+        <CodeTrace
+          label="packet: field macros (flags are editable)"
+          lines={classLines(fields, setup.userDoCompare)}
+          renderLineControl={(line) => {
+            if (!line.key?.startsWith("field:")) return null;
+            const name = line.key.slice(6);
+            const field = fields.find((f) => f.name === name);
+            if (!field) return null;
             return (
-              <div key={f.name} className={`flex flex-col items-center ${bgs[idx]} rounded p-2 border border-slate-700`}>
-                <span className={`text-[10px] font-semibold ${colors[idx]} mb-1`}>{f.name}</span>
-                <span className="text-[9px] font-mono text-slate-400 break-all max-w-[140px]">{bits}</span>
-                <span className="text-[9px] text-slate-500 mt-0.5">{f.bits} bits</span>
-              </div>
+              <FlagSelect
+                field={field}
+                choices={field.kind === "int" ? INT_FLAG_CHOICES : OBJ_FLAG_CHOICES}
+                onChange={(flags) => setFields((cur) => cur.map((f) => (f.name === name ? { ...f, flags } : f)))}
+              />
             );
-          })}
-        </div>
-        <div className="mt-3 text-xs text-slate-400 font-mono">
-          Total: {FIELDS.reduce((sum, f) => sum + f.bits, 0)} bits
-          → {Math.ceil(FIELDS.reduce((sum, f) => sum + f.bits, 0) / 8)} bytes
-        </div>
-      </div>
-
-      <div className="text-[10px] text-slate-500 flex items-start gap-1.5 bg-slate-800/30 rounded p-2">
-        <ChevronRight className="w-3 h-3 mt-0.5 shrink-0 text-emerald-500" />
-        <span>Override <code className="text-slate-400">do_pack()</code> / <code className="text-slate-400">do_unpack()</code> to
-        control field order, add headers, or skip fields the receiver doesn&apos;t need.</span>
-      </div>
-    </div>
-  );
-}
-
-function RecordTab() {
-  return (
-    <div className="flex flex-col gap-4">
-      <p className="text-xs text-slate-400">
-        <code className="text-purple-300">uvm_recorder</code> logs structured transaction
-        metadata into a database that waveform viewers (DVE, Verdi, SimVision) can display as protocol-level signal groups.
-      </p>
-
-      <div className="bg-black/40 rounded-lg p-4 border border-slate-800 overflow-x-auto">
-        <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-3 font-semibold">
-          Transaction Database Entry
-        </div>
-        <table className="w-full text-xs font-mono">
-          <thead>
-            <tr className="text-slate-400 border-b border-slate-700">
-              <th className="text-left py-1.5 px-2">Attribute</th>
-              <th className="text-left py-1.5 px-2">Value</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr className="border-b border-slate-800/50">
-              <td className="py-1.5 px-2 text-purple-300">stream</td>
-              <td className="py-1.5 px-2 text-slate-300">driver.req</td>
-            </tr>
-            <tr className="border-b border-slate-800/50">
-              <td className="py-1.5 px-2 text-purple-300">type</td>
-              <td className="py-1.5 px-2 text-slate-300">my_packet</td>
-            </tr>
-            <tr className="border-b border-slate-800/50">
-              <td className="py-1.5 px-2 text-purple-300">begin_time</td>
-              <td className="py-1.5 px-2 text-emerald-300">1200 ns</td>
-            </tr>
-            <tr className="border-b border-slate-800/50">
-              <td className="py-1.5 px-2 text-purple-300">end_time</td>
-              <td className="py-1.5 px-2 text-emerald-300">1350 ns</td>
-            </tr>
-            {FIELDS.map(f => (
-              <tr key={f.name} className="border-b border-slate-800/50">
-                <td className="py-1.5 px-2 text-blue-300">{f.name}</td>
-                <td className="py-1.5 px-2 text-slate-300">{hex(f.valueA, f.bits)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="text-[10px] text-slate-500 flex items-start gap-1.5 bg-slate-800/30 rounded p-2">
-        <ChevronRight className="w-3 h-3 mt-0.5 shrink-0 text-emerald-500" />
-        <span>Override <code className="text-slate-400">do_record()</code> to add custom attributes
-        (latency, error codes) that appear in waveform transaction views.</span>
-      </div>
-    </div>
-  );
-}
-
-function CopyTab() {
-  const [copied, setCopied] = useState(false);
-
-  return (
-    <div className="flex flex-col gap-4">
-      <p className="text-xs text-slate-400">
-        <code className="text-purple-300">uvm_copier</code> deep-copies an object&apos;s fields.
-        For nested objects (handles), it recursively clones rather than aliasing the original reference.
-      </p>
-
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        <div className="bg-black/40 rounded-lg p-3 border border-slate-800">
-          <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2 font-semibold">
-            Original (pkt)
+          }}
+        />
+        <div className="min-w-0 space-y-3">
+          <div className="overflow-x-auto rounded-xl border border-border/70">
+            <table className="w-full min-w-[260px] text-left font-mono text-xs [font-variant-ligatures:none]">
+              <caption className="sr-only">Expected and actual packet values</caption>
+              <thead className="bg-muted/40 text-[10px] uppercase tracking-wider text-muted-foreground">
+                <tr>
+                  <th scope="col" className="px-2 py-1.5">field</th>
+                  <th scope="col" className="px-2 py-1.5">EXP (lhs)</th>
+                  <th scope="col" className="px-2 py-1.5">ACT (rhs)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {INT_FIELDS.map((f) => (
+                  <tr key={f} className="border-t border-border/50">
+                    <td className="px-2 py-1">{f}</td>
+                    <td className="px-2 py-1">{hex(lhs[f])}</td>
+                    <td className="px-2 py-1">
+                      {hex(rhs[f])}
+                      {lhs[f] !== rhs[f] ? <span className="ml-1 text-rose-700 dark:text-rose-300">≠</span> : null}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="border-t border-border/50">
+                  <td className="px-2 py-1">cfg</td>
+                  <td className="px-2 py-1">@{lhs.cfg} {"{"}burst_len {heap[lhs.cfg as number].burst_len}{"}"}</td>
+                  <td className="px-2 py-1">
+                    @{rhs.cfg} {"{"}burst_len {heap[rhs.cfg as number].burst_len}{"}"}
+                    {lhs.cfg !== rhs.cfg ? <span className="ml-1 text-muted-foreground">(other object)</span> : null}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
-          {FIELDS.map(f => (
-            <div key={f.name} className="flex justify-between text-xs font-mono py-0.5 px-1 text-slate-300">
-              <span className="text-blue-300">{f.name}</span>
-              <span>{hex(f.valueA, f.bits)}</span>
+          <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,150px),1fr))]">
+            <div>
+              <p className="mb-1 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">set_threshold()</p>
+              <SegmentedControl
+                label="Comparer threshold"
+                mono
+                value={String(threshold)}
+                onChange={(v) => setThreshold(Number(v))}
+                options={[
+                  { value: "1", label: "1 (default)" },
+                  { value: "0", label: "0 (no limit)" },
+                ]}
+              />
             </div>
-          ))}
-          <div className="mt-2 text-xs font-mono py-0.5 px-1 text-slate-300">
-            <span className="text-purple-300">cfg</span>
-            <span className="text-slate-500"> → @handle(0x3F)</span>
+            <div>
+              <p className="mb-1 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">set_show_max()</p>
+              <SegmentedControl
+                label="Comparer show_max"
+                mono
+                value={String(showMax)}
+                onChange={(v) => setShowMax(Number(v))}
+                options={[
+                  { value: "1", label: "1 (default)" },
+                  { value: "10", label: "10" },
+                ]}
+              />
+            </div>
           </div>
-        </div>
-
-        <div className={`bg-black/40 rounded-lg p-3 border transition-all duration-500 ${
-          copied ? 'border-emerald-700/50' : 'border-slate-800 opacity-40'
-        }`}>
-          <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2 font-semibold">
-            {copied ? 'Deep Copy (pkt_copy)' : 'No copy yet'}
-          </div>
-          {copied && (
-            <>
-              {FIELDS.map(f => (
-                <div key={f.name} className="flex justify-between text-xs font-mono py-0.5 px-1 text-emerald-300">
-                  <span className="text-blue-300">{f.name}</span>
-                  <span>{hex(f.valueA, f.bits)}</span>
-                </div>
-              ))}
-              <div className="mt-2 text-xs font-mono py-0.5 px-1 text-emerald-300">
-                <span className="text-purple-300">cfg</span>
-                <span className="text-slate-500"> → @handle(0x7A)</span>
-                <span className="text-emerald-500 text-[10px] ml-1">(new clone)</span>
-              </div>
-            </>
-          )}
         </div>
       </div>
 
-      <button
-        onClick={() => setCopied(true)}
-        className="self-start px-4 py-2 text-xs font-medium rounded-lg bg-emerald-600 text-white border border-emerald-500 hover:bg-emerald-500 transition-all"
+      <PredictionPrompt
+        question={<>What does <code className="font-mono [font-variant-ligatures:none]">exp.compare(act, cmp)</code> return, and what does <code className="font-mono [font-variant-ligatures:none]">cmp.get_result()</code> count?</>}
+        resetKey={resetKey}
+        options={options.map((o) => ({ id: o.id, label: `returns ${o.returned}, get_result() = ${o.result}`, correct: o.correct, feedback: o.feedback }))}
       >
-        {copied ? '✓ Copied' : 'pkt_copy.copy(pkt)'}
-      </button>
-
-      {copied && (
-        <div className="text-[10px] text-slate-500 flex items-start gap-1.5 bg-slate-800/30 rounded p-2">
-          <ChevronRight className="w-3 h-3 mt-0.5 shrink-0 text-emerald-500" />
-          <span>The nested <code className="text-slate-400">cfg</code> handle points to a
-          <strong className="text-emerald-400"> new clone</strong> (0x7A), not the original (0x3F).
-          Override <code className="text-slate-400">do_copy()</code> to skip, shallow-copy, or transform fields.</span>
+        <div className="space-y-3">
+          <div className="overflow-x-auto rounded-xl border border-border/70">
+            <table className="w-full min-w-[300px] text-left text-xs">
+              <caption className="sr-only">How the comparer walked the fields</caption>
+              <thead className="bg-muted/40 text-[10px] uppercase tracking-wider text-muted-foreground">
+                <tr>
+                  <th scope="col" className="px-2 py-1.5">Field (declaration order)</th>
+                  <th scope="col" className="px-2 py-1.5">Outcome</th>
+                  <th scope="col" className="px-2 py-1.5">Why</th>
+                </tr>
+              </thead>
+              <tbody>
+                {result.steps.map((s) => (
+                  <tr key={s.field} className="border-t border-border/50 align-top">
+                    <td className="px-2 py-1.5 font-mono [font-variant-ligatures:none]">{s.field}</td>
+                    <td className={cn("whitespace-nowrap px-2 py-1.5 font-semibold", statusCue[s.status].className)}>
+                      <span aria-hidden>{statusCue[s.status].glyph} </span>
+                      {statusCue[s.status].label}
+                    </td>
+                    <td className="px-2 py-1.5">{s.why}</td>
+                  </tr>
+                ))}
+                {result.doCompareReturned !== undefined ? (
+                  <tr className="border-t border-border/50">
+                    <td className="px-2 py-1.5 font-mono">do_compare()</td>
+                    <td className="px-2 py-1.5 font-semibold">returns {result.doCompareReturned}</td>
+                    <td className="px-2 py-1.5">Runs after the field macros; both results count.</td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+          <CodePanel label="Log" lines={[...warnings, ...result.printed].length ? [...warnings, ...result.printed] : ["(no MISCMP messages)"]} />
+          <p aria-live="polite" className="rounded-xl border border-border/70 bg-background/50 p-3 text-sm">
+            <strong>compare() returned {result.returned}</strong>, get_result() = {result.result}
+            {result.miscompares.length > result.printed.filter((p) => p.includes("Miscompare for")).length
+              ? `; get_miscompares() holds all ${result.miscompares.length}, but show_max limits what is printed.`
+              : "."}{" "}
+            MISCMP messages are <strong>UVM_INFO</strong> at UVM_LOW, so a scoreboard must check the return value and raise its own `uvm_error.
+          </p>
+          <CodePanel
+            label="In the scoreboard"
+            lines={[
+              'uvm_comparer cmp = new("cmp");',
+              ...(threshold !== 1 ? [`cmp.set_threshold(${threshold});`] : []),
+              ...(showMax !== 1 ? [`cmp.set_show_max(${showMax});`] : []),
+              "if (!exp.compare(act, cmp))",
+              '  `uvm_error("SCB", $sformatf("mismatch:\\n%s", cmp.get_miscompares()))',
+            ]}
+          />
         </div>
-      )}
+      </PredictionPrompt>
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Main component                                                     */
-/* ------------------------------------------------------------------ */
+const copyChoices: { value: CopyImpl; label: string }[] = [
+  { value: "macro-deep", label: "macro, UVM_ALL_ON" },
+  { value: "macro-reference", label: "macro, UVM_REFERENCE" },
+  { value: "manual-alias", label: "do_copy: cfg = rhs_.cfg" },
+  { value: "manual-clone", label: "do_copy: clone()" },
+];
 
-export default function UvmPolicyVisualizer() {
-  const [tab, setTab] = useState<TabKey>('print');
+function HeapPicture({ impl }: { impl: CopyImpl }) {
+  const r = runCopy(impl);
+  const row = (name: string, packetId: number, cfg: number | null) => (
+    <li className="flex flex-wrap items-center gap-1.5 font-mono text-xs [font-variant-ligatures:none]">
+      <span className="rounded-full border border-amber-500/60 bg-amber-500/10 px-2 py-0.5">{name}</span>
+      <span aria-hidden>─▶</span>
+      <span className="rounded border border-border/80 px-2 py-0.5">packet@{packetId}</span>
+      <span aria-hidden>─cfg▶</span>
+      <span className={cn("rounded border px-2 py-0.5", r.shared ? "border-rose-500/70 bg-rose-500/10" : "border-border/80")}>
+        pkt_cfg@{cfg} {"{"}burst_len = {cfg !== null ? r.heap[cfg].burst_len : "—"}
+        {"}"}
+      </span>
+    </li>
+  );
+  return (
+    <div className="space-y-2 rounded-xl border border-border/70 bg-background/50 p-3">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Heap after the last line</p>
+      <ul className="space-y-1.5" aria-label="Handles and objects after p2.cfg.burst_len = 8">
+        {row("p1", r.p1.id, r.p1.cfg)}
+        {row("p2", r.p2.id, r.p2.cfg)}
+      </ul>
+      <p className={cn("text-sm", r.shared ? "text-rose-700 dark:text-rose-300" : "text-emerald-700 dark:text-emerald-300")}>
+        <span aria-hidden>{r.shared ? "⚠ " : "✓ "}</span>
+        {r.shared ? "One pkt_cfg is shared by both packets." : "Each packet owns its pkt_cfg."} {r.why}
+      </p>
+    </div>
+  );
+}
+
+function CopyMode() {
+  const [impl, setImpl] = useState<CopyImpl>("manual-alias");
+  const r = runCopy(impl);
+  return (
+    <div className="space-y-4">
+      <SegmentedControl label="How packet copies cfg" mono options={copyChoices} value={impl} onChange={setImpl} />
+      <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]">
+        <CodePanel label="packet (copy implementation)" lines={copyImplLines(impl)} />
+        <CodePanel label="Test code" lines={COPY_TEST_LINES} />
+      </div>
+      <PredictionPrompt
+        question="What does the last line print?"
+        resetKey={impl}
+        options={[
+          {
+            id: "4",
+            label: "p1 burst_len = 4",
+            correct: r.p1BurstAfter === 4,
+            feedback: r.p1BurstAfter === 4 ? r.why : "That assumes copy() always duplicates nested objects. Here the copy shares the handle, so the write through p2 is visible through p1.",
+          },
+          {
+            id: "8",
+            label: "p1 burst_len = 8",
+            correct: r.p1BurstAfter === 8,
+            feedback: r.p1BurstAfter === 8 ? r.why : "That assumes the nested object is shared. This implementation gives p2 its own pkt_cfg, so p1 keeps 4.",
+          },
+          {
+            id: "null",
+            label: "A null-handle error: p2.cfg was never created",
+            correct: false,
+            feedback: "Every implementation here assigns p2.cfg — either a new object or p1's handle — so p2.cfg is not null.",
+          },
+        ]}
+      >
+        <HeapPicture impl={impl} />
+      </PredictionPrompt>
+    </div>
+  );
+}
+
+function PrintMode() {
+  const [printer, setPrinter] = useState<PrinterKind>("table");
+  const [fields, setFields] = useState<FieldSpec[]>(() => defaultFields().map((f) => (f.name === "tag" ? { ...f, flags: { allOn: false, noCompare: true } } : f)));
+  const sample = compareScenarios[0].setup;
+  const p1 = { ...sample.lhs, name: "p1" };
+  const output = printObject(printer, fields, p1, sample.heap);
+  const warnings = fields.map(noFlagWarning).filter(Boolean) as string[];
+  const update = (name: string, flags: FieldFlags) => setFields((cur) => cur.map((f) => (f.name === name ? { ...f, flags } : f)));
+  const tag = fields.find((f) => f.name === "tag") as FieldSpec;
+  const cfg = fields.find((f) => f.name === "cfg") as FieldSpec;
 
   return (
-    <div className="flex flex-col gap-5 p-6 bg-slate-900 rounded-xl border border-slate-800 text-slate-200 font-sans my-8">
-      {/* Header */}
-      <div className="border-b border-slate-800 pb-4">
-        <h3 className="text-xl font-bold font-display text-white m-0">UVM Policy Classes</h3>
-        <p className="text-sm text-slate-400 mt-1">
-          Explore how the same <code className="text-blue-300">my_packet</code> object looks through five different policy lenses.
-        </p>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex flex-wrap items-center gap-1 bg-slate-800/60 p-1 rounded-lg border border-slate-700 text-xs w-fit">
-        {TABS.map(({ key, label, icon: Icon }) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all ${
-              tab === key
-                ? 'bg-slate-700 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-300'
-            }`}
-          >
-            <Icon className="w-3.5 h-3.5" />
-            {label}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab content */}
-      <div className="min-h-[200px]">
-        {tab === 'print' && <PrintTab />}
-        {tab === 'compare' && <CompareTab />}
-        {tab === 'pack' && <PackTab />}
-        {tab === 'record' && <RecordTab />}
-        {tab === 'copy' && <CopyTab />}
-      </div>
+    <div className="space-y-4">
+      <PredictionPrompt
+        question={<>The class declares <code className="font-mono [font-variant-ligatures:none]">`uvm_field_int(tag, UVM_NOCOMPARE)</code> — no UVM_ALL_ON. Which is true?</>}
+        options={[
+          {
+            id: "gone",
+            label: "tag is missing from print(), copy() and compare(), and a UVM/FIELDS/NO_FLAG warning appears",
+            correct: true,
+            feedback: "In IEEE 1800.2-2020 a flag enables an operation only if it includes it. UVM_NOCOMPARE alone enables nothing, so the macro is a no-op (UVM 1.2 treated it as UVM_ALL_ON | UVM_NOCOMPARE). Write UVM_ALL_ON | UVM_NOCOMPARE.",
+          },
+          {
+            id: "printed",
+            label: "tag is printed and copied; only compare skips it",
+            correct: false,
+            feedback: "That was UVM 1.2 behaviour. Under 1800.2 the macro needs an explicit positive operation such as UVM_ALL_ON.",
+          },
+          {
+            id: "compile",
+            label: "A compile error: UVM_NOCOMPARE needs UVM_ALL_ON",
+            correct: false,
+            feedback: "It compiles; the library warns at run time and ignores the field.",
+          },
+        ]}
+      >
+        <div className="space-y-3">
+          <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))]">
+            <div>
+              <p className="mb-1 text-[11px] text-muted-foreground">Default printer</p>
+              <SegmentedControl
+                label="Default printer"
+                mono
+                value={printer}
+                onChange={setPrinter}
+                options={[
+                  { value: "table", label: "table" },
+                  { value: "tree", label: "tree" },
+                  { value: "line", label: "line" },
+                ]}
+              />
+            </div>
+            <label className="text-[11px] text-muted-foreground">
+              tag flag
+              <span className="mt-1 block">
+                <FlagSelect field={tag} choices={PRINT_TAG_CHOICES} onChange={(f) => update("tag", f)} />
+              </span>
+            </label>
+            <label className="text-[11px] text-muted-foreground">
+              cfg flag
+              <span className="mt-1 block">
+                <FlagSelect field={cfg} choices={OBJ_FLAG_CHOICES} onChange={(f) => update("cfg", f)} />
+              </span>
+            </label>
+          </div>
+          <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]">
+            <CodePanel
+              label="Test code (IEEE 1800.2)"
+              lines={[printerDefaultCall[printer], "p1.print();   // printer == null → uvm_printer::get_default()", "", "// UVM 1.2 only, not in 1800.2:", "// uvm_default_printer = uvm_default_tree_printer;"]}
+            />
+            <CodePanel label="Output" lines={[...warnings, ...output]} />
+          </div>
+          <p className="text-sm text-muted-foreground" aria-live="polite">
+            {cfg.flags.reference ? "UVM_REFERENCE prints only cfg's handle, not its fields. " : "cfg is printed recursively. "}
+            {opEnabledText(tag)}
+          </p>
+        </div>
+      </PredictionPrompt>
     </div>
+  );
+}
+
+function opEnabledText(tag: FieldSpec): string {
+  if (!tag.flags.allOn) return "tag has no positive operation, so it is skipped everywhere.";
+  if (tag.flags.noPrint) return "UVM_NOPRINT hides tag from print() only.";
+  return "tag is printed.";
+}
+
+/** Policy-class explorer: compare(), copy() and print() driven by field flags and policy knobs. */
+export default function UvmPolicyVisualizer() {
+  const [mode, setMode] = useState<Mode>("compare");
+  return (
+    <VisualFrame
+      label="UVM policy explorer"
+      eyebrow="Experiment"
+      title="What do compare(), copy() and print() really do?"
+      summary="The same packet class, three policy operations. Change the field flags and the policy knobs, predict, then check how UVM walked the fields."
+      fidelity="model"
+      assumptions={POLICY_MODEL_ASSUMPTIONS}
+    >
+      <SegmentedControl
+        label="Policy operation"
+        mono
+        value={mode}
+        onChange={setMode}
+        options={[
+          { value: "compare", label: "compare()" },
+          { value: "copy", label: "copy()" },
+          { value: "print", label: "print()" },
+        ]}
+      />
+      {mode === "compare" ? <CompareMode /> : mode === "copy" ? <CopyMode /> : <PrintMode />}
+    </VisualFrame>
   );
 }

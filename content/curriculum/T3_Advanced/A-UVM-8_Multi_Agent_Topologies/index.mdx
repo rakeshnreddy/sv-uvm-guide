@@ -84,6 +84,10 @@ class soc_env extends uvm_env;
   soc_virtual_sequencer v_sqr;
   soc_scoreboard     scoreboard;
 
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
     axi_agt  = axi_agent::type_id::create("axi_agt", this);
@@ -96,7 +100,9 @@ class soc_env extends uvm_env;
 
   function void connect_phase(uvm_phase phase);
     super.connect_phase(phase);
-    // Wire virtual sequencer handles to actual sub-sequencers
+    // Wire virtual sequencer handles to actual sub-sequencers.
+    // irq_agt is PASSIVE in this test, so irq_agt.sequencer is null:
+    // the irq handle stays null and nothing may start a sequence on it.
     v_sqr.axi_sqr = axi_agt.sequencer;
     v_sqr.apb_sqr = apb_agt.sequencer;
     v_sqr.irq_sqr = irq_agt.sequencer;
@@ -125,41 +131,50 @@ class dma_transfer_with_irq_vseq extends uvm_sequence;
   task body();
     apb_config_dma_seq  cfg_seq;
     dma_transfer_seq    xfer_seq;
-    irq_wait_seq        irq_seq;
     axi_read_verify_seq verify_seq;
+    uvm_event           dma_done;
 
     // Step 1: Configure DMA via APB registers
     cfg_seq = apb_config_dma_seq::type_id::create("cfg_seq");
     cfg_seq.src_addr  = 32'h1000_0000;
     cfg_seq.dst_addr  = 32'h2000_0000;
     cfg_seq.length    = 256;
-    cfg_seq.start(p_sequencer.apb_sqr);
+    cfg_seq.start(p_sequencer.apb_sqr, this);
 
     // Step 2: Trigger DMA transfer
     xfer_seq = dma_transfer_seq::type_id::create("xfer_seq");
-    xfer_seq.start(p_sequencer.dma_sqr);
+    xfer_seq.start(p_sequencer.dma_sqr, this);
 
-    // Step 3: Wait for completion interrupt
-    irq_seq = irq_wait_seq::type_id::create("irq_seq");
-    irq_seq.expected_irq = DMA_DONE_IRQ;
-    irq_seq.start(p_sequencer.irq_sqr);
+    // Step 3: Wait for the completion interrupt. irq_agt is PASSIVE (the DUT
+    // drives the interrupt line), so it has no sequencer. Its monitor triggers
+    // a named event instead; wait_on() returns at once if it already fired.
+    dma_done = uvm_event_pool::get_global("dma_done_irq");
+    dma_done.wait_on();
 
     // Step 4: Verify data via AXI reads
     verify_seq = axi_read_verify_seq::type_id::create("verify_seq");
     verify_seq.addr   = 32'h2000_0000;
     verify_seq.length = 256;
-    verify_seq.start(p_sequencer.axi_sqr);
+    verify_seq.start(p_sequencer.axi_sqr, this);
   endtask
 endclass
 ```
 
-**Key pattern:** Each `start()` call targets a **specific sub-sequencer** via the virtual sequencer's handle. The virtual sequence orchestrates the cross-protocol scenario; each child sequence only knows about its own protocol.
+**Key pattern:** Each `start()` call targets a **specific sub-sequencer** via the virtual sequencer's handle, and passes `this` as the parent so the child inherits the virtual sequence's context. The virtual sequence orchestrates the cross-protocol scenario; each child sequence only knows about its own protocol.
+
+**Never start a sequence on a passive agent.** A passive agent never builds its sequencer, so `p_sequencer.irq_sqr` is null. `irq_wait_seq.start(null)` runs its `body()`, and the first `start_item()` stops the test with `UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied…` (uvm-core `uvm_sequence_base.svh`). Wait through the passive agent's monitor: an event it triggers, or an analysis subscriber.
+
+The order of the steps is the virtual sequence's job: the DUT drops data that arrives before it is configured. Pick a `body()` structure, predict what the run reports, then read the timeline cycle by cycle. The last two structures reproduce bugs this lesson used to contain.
+
+<MultiAgentCoordinationVisualizer />
 
 ## Cross-Agent Synchronization
 
 ### Using Events
 
-When sequences on different agents must synchronize without a full handshake:
+When sequences on different agents must synchronize without a full handshake, one thread triggers a `uvm_event` and another waits for it. Keep two rules in mind:
+- `wait_trigger()` waits for the **next** trigger. If the trigger already happened, it waits forever. `wait_on()` returns at once when the event is already on (IEEE 1800.2-2020 §10.1.1.2.2), and `wait_ptrigger()` covers a trigger earlier in the same time step.
+- `fork…join` waits for **every** branch. A background branch that never ends, such as a responder sequence, keeps `body()` from returning, so the test never drops its objection.
 
 ```systemverilog
 class synchronized_vseq extends uvm_sequence;
@@ -174,33 +189,38 @@ class synchronized_vseq extends uvm_sequence;
   endfunction
 
   task body();
+    apb_config_dma_seq cfg_seq;
+    dma_transfer_seq   xfer_seq;
+    irq_responder_seq  irq_seq;   // irq_agt is ACTIVE here: it answers interrupts
+
+    cfg_seq  = apb_config_dma_seq::type_id::create("cfg_seq");
+    xfer_seq = dma_transfer_seq::type_id::create("xfer_seq");
+    irq_seq  = irq_responder_seq::type_id::create("irq_seq");
+
+    // Background: runs for the whole test, so it must not be part of the join
     fork
-      // Thread 1: Configure DMA then signal
-      begin
-        apb_config_dma_seq cfg_seq;
-        cfg_seq = apb_config_dma_seq::type_id::create("cfg_seq");
-        cfg_seq.start(p_sequencer.apb_sqr);
-        dma_config_done.trigger(); // Signal completion
-      end
+      irq_seq.start(p_sequencer.irq_sqr, this);
+    join_none
 
-      // Thread 2: Wait for config, then start transfer
+    // Foreground: configure, then transfer; body() returns when both are done
+    fork
       begin
-        dma_config_done.wait_trigger(); // Wait for signal
-        dma_transfer_seq xfer_seq;
-        xfer_seq = dma_transfer_seq::type_id::create("xfer_seq");
-        xfer_seq.start(p_sequencer.dma_sqr);
+        cfg_seq.start(p_sequencer.apb_sqr, this);
+        dma_config_done.trigger();
       end
-
-      // Thread 3: Background interrupt monitoring (always running)
       begin
-        irq_monitor_seq irq_seq;
-        irq_seq = irq_monitor_seq::type_id::create("irq_seq");
-        irq_seq.start(p_sequencer.irq_sqr);
+        dma_config_done.wait_on();
+        xfer_seq.start(p_sequencer.dma_sqr, this);
       end
     join
+    // irq_seq keeps running until the run phase ends and kills it
   endtask
 endclass
 ```
+
+An earlier version of this example put the background responder inside the same `fork…join`. Every data item matched, and the test still never ended. Find the line, then try the fixes; `join_any` and `join_none` look plausible and fail differently.
+
+<MultiAgentCoordinationVisualizer mode="debug" />
 
 ### Using Semaphores for Resource Arbitration
 
@@ -226,28 +246,32 @@ class arbitrated_vseq extends uvm_sequence;
   endtask
 
   task run_axi_traffic();
+    axi_write_seq wr;  // declarations first: SV does not allow them after statements
     repeat (10) begin
       bus_lock.get(1); // Acquire bus
-      axi_write_seq wr = axi_write_seq::type_id::create("aw");
-      wr.start(p_sequencer.axi_sqr);
+      wr = axi_write_seq::type_id::create("aw");
+      wr.start(p_sequencer.axi_sqr, this);
       bus_lock.put(1); // Release bus
     end
   endtask
 
   task run_dma_traffic();
+    dma_transfer_seq xfer;
     repeat (5) begin
       bus_lock.get(1); // Acquire bus
-      dma_transfer_seq xfer = dma_transfer_seq::type_id::create("dx");
-      xfer.start(p_sequencer.dma_sqr);
+      xfer = dma_transfer_seq::type_id::create("dx");
+      xfer.start(p_sequencer.dma_sqr, this);
       bus_lock.put(1); // Release bus
     end
   endtask
 endclass
 ```
 
+The semaphore only serializes these two threads of this one virtual sequence. It does nothing about other sequences running on the same sequencers; inside one sequencer that is the job of the arbitration mode and of `lock()`/`grab()` ([Sequencer Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration)).
+
 ## Topology Configuration with `uvm_config_db`
 
-Use `uvm_config_db` to configure multi-agent topologies from the test level:
+Configure multi-agent topologies from the test level. The agents here follow the A-UVM-7 VIP pattern: each reads a config object, copies `cfg.is_active` into its `is_active` field, and builds its driver and sequencer only when `get_is_active() == UVM_ACTIVE`. (A VIP without a config object takes the mode from a `uvm_config_db#(uvm_active_passive_enum)` entry named `"is_active"` instead, which `uvm_agent::build_phase` reads.)
 
 ```systemverilog
 class dma_stress_test extends uvm_test;
@@ -255,20 +279,24 @@ class dma_stress_test extends uvm_test;
 
   soc_env env;
 
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
   function void build_phase(uvm_phase phase);
+    axi_agent_config axi_cfg = axi_agent_config::type_id::create("axi_cfg");
+    apb_agent_config apb_cfg = apb_agent_config::type_id::create("apb_cfg");
+    irq_agent_config irq_cfg = irq_agent_config::type_id::create("irq_cfg");
     super.build_phase(phase);
 
-    // Configure AXI agent as ACTIVE (bus master)
-    uvm_config_db#(uvm_active_passive_enum)::set(
-      this, "env.axi_agt", "is_active", UVM_ACTIVE);
+    axi_cfg.is_active = UVM_ACTIVE;   // bus master
+    apb_cfg.is_active = UVM_ACTIVE;   // register access
+    irq_cfg.is_active = UVM_PASSIVE;  // the DUT drives the interrupt lines
+    // (virtual interfaces are set in the same objects by tb_top / the base test)
 
-    // Configure APB agent as ACTIVE (register access)
-    uvm_config_db#(uvm_active_passive_enum)::set(
-      this, "env.apb_agt", "is_active", UVM_ACTIVE);
-
-    // Configure IRQ agent as PASSIVE (monitoring only)
-    uvm_config_db#(uvm_active_passive_enum)::set(
-      this, "env.irq_agt", "is_active", UVM_PASSIVE);
+    uvm_config_db#(axi_agent_config)::set(this, "env.axi_agt", "cfg", axi_cfg);
+    uvm_config_db#(apb_agent_config)::set(this, "env.apb_agt", "cfg", apb_cfg);
+    uvm_config_db#(irq_agent_config)::set(this, "env.irq_agt", "cfg", irq_cfg);
 
     env = soc_env::type_id::create("env", this);
   endfunction
@@ -287,7 +315,7 @@ endclass
 
 ## Worked Example: 2-Agent AXI+APB Environment
 
-Here is a minimal but complete SoC environment with two agents:
+Here is a minimal SoC environment with two agents (agent, sequencer and scoreboard classes as in the earlier modules):
 
 ```systemverilog
 // Minimal SoC environment: AXI master + APB slave
@@ -377,6 +405,7 @@ endclass
 
 - **Prerequisite:** [A-UVM-7: VIP Construction](/curriculum/t3-advanced/a-uvm-7-vip-construction) — single-agent VIP architecture before multi-agent coordination.
 - **Prerequisite:** [I-UVM-3A: Sequence Fundamentals](/curriculum/t2-intermediate/i-uvm-3a-fundamentals) — sequence `start()` and `body()` before virtual sequences.
+- **Prerequisite:** [I-UVM-3B: Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) — `p_sequencer`, dispatch to sub-sequencers, and [sequencer arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration).
 - **Prerequisite:** [I-SV-5: Synchronization and IPC](/curriculum/t2-intermediate/i-sv-5-synchronization-and-ipc) — events and semaphores.
 - **Next:** [E-SOC-1: SoC-Level Verification Strategies](/curriculum/t4-expert/e-soc-1-soc-level-verification-strategies) — scaling multi-agent environments to full SoC verification.
 - **Related:** [A-UVM-6: Scoreboards](/curriculum/t3-advanced/a-uvm-6-scoreboards-and-reference-models) — scoreboards consuming transactions from multiple agents.

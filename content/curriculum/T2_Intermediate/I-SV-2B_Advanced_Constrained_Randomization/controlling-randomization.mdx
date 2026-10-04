@@ -14,25 +14,29 @@ export const metadata = {
 >
 
 ## Level 1: Hooking the Solver
-*IEEE 1800-2023, Clause 18.11: pre_randomize() and post_randomize()*
+*IEEE 1800-2023, §18.6.2: pre_randomize() and post_randomize() · §18.6.3: behavior of randomization methods*
 
-**The Analogy:** `pre_randomize` sets the table before guests arrive; `post_randomize` checks the dishes after the meal.
+**The Analogy:** `pre_randomize` sets the table before guests arrive; `post_randomize` writes the bill after the meal. Neither one cooks: the solver does.
 
 ## Level 2: Core Mechanics
 
 <InteractiveCode language="systemverilog" code={`class frame;
   rand bit [7:0] len;
   rand bit [7:0] payload[];
+  bit      [7:0] crc;                           // derived, so not rand
+
+  constraint c_len  { len inside {[1:32]}; }
+  constraint c_size { payload.size() == len; }  // the solver sizes AND fills payload
 
   function void pre_randomize();
-    // Clear existing payload before generating new values
-    payload.delete();
+    // Runs before solving: set non-random knobs or switch constraints
+    // with constraint_mode() for this call.
   endfunction
 
   function void post_randomize();
-    // Allocate payload after len is known
-    payload = new[len];
-    foreach (payload[i]) payload[i] = i;
+    // Runs only after a successful solve: compute derived fields.
+    crc = 0;
+    foreach (payload[i]) crc ^= payload[i];
   endfunction
 endclass
 
@@ -40,16 +44,20 @@ program test;
   frame f = new();
   initial begin
     repeat (2) begin
-      assert(f.randomize());
-      $display("len=%0d payload=%p", f.len, f.payload);
+      if (!f.randomize()) $fatal(1, "frame randomize() failed");
+      $display("len=%0d crc=%02h payload=%p", f.len, f.crc, f.payload);
     end
   end
 endprogram`} />
 
+**Anti-pattern to avoid:** deleting `payload` in `pre_randomize()` and refilling it in `post_randomize()` with fixed values such as `payload[i] = i`. That throws away the randomization, ignores every constraint on the elements, and leaves your payload coverage stuck on one pattern. Let the constraints size and fill the array; keep the hooks for what the solver cannot do.
+
 ## Level 3: Expert Tips
 
-- Use `pre_randomize` to enable/disable constraints with `constraint_mode(0)` or to set up dynamic arrays.
-- Keep work in `post_randomize` lightweight; heavy processing can impact simulation time.
+- Use `pre_randomize` to set non-random knobs or to switch constraints with `constraint_mode()` before solving.
+- `post_randomize` runs only when `randomize()` succeeds. If the solve fails, it is not called and the random variables keep their previous values (§18.6.3).
+- If a derived class overrides either hook, it must call `super.pre_randomize()` or `super.post_randomize()`. Otherwise the base class's steps are skipped (§18.6.2).
+- Keep `post_randomize` for derived, non-random fields such as a CRC or parity, and keep it light.
 
 <Quiz questions={[
   {
@@ -68,7 +76,7 @@ endprogram`} />
     question="You need to calculate a CRC parity bit that depends on a randomly generated payload. In which method should you compute this CRC?"
     options={[
       { text: "pre_randomize()", isCorrect: false, feedback: "The payload isn't randomized yet!" },
-      { text: "Inside a constraint block", isCorrect: false, feedback: "Constraints are for solving, not for calculating procedural algorithms like CRC." },
+      { text: "Inside a constraint block", isCorrect: false, feedback: "A simple XOR check could be a constraint (`crc == payload.xor()`, §18.5.7.2), but a real CRC is clearer and much cheaper to compute after the solver has chosen the payload." },
       { text: "post_randomize()", isCorrect: true, feedback: "Correct! `post_randomize()` runs immediately after the solver succeeds, making it the perfect place to calculate parity, CRCs, or other dependent fields that don't need to be solved by the solver." },
       { text: "In the constructor (new)", isCorrect: false, feedback: "The constructor runs exactly once, but the object might be randomized multiple times." }
     ]}

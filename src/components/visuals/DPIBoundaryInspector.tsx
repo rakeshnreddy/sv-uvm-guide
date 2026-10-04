@@ -1,227 +1,210 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import { ArrowLeftRight, Clock, AlertCircle, FileCode, CheckCircle2 } from 'lucide-react';
+import React, { useMemo, useState } from "react";
 
-type FlowState = 'idle' | 'sv_call' | 'marshal_in' | 'c_exec' | 'marshal_out' | 'sv_resume';
+import { CodeTrace } from "@/components/visual-system/CodeTrace";
+import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  DPI_SCENARIOS,
+  DPI_TYPES,
+  cParameter,
+  cPrototype,
+  checkDpi,
+  findType,
+  svImport,
+  type Direction,
+  type DpiVerdict,
+} from "@/lib/sv-dpi-model";
+import { cn } from "@/lib/utils";
+
+const ASSUMPTIONS = [
+  "Type mapping follows Table H.1 and Annex H.7, H.8 and H.12 of IEEE 1800-2023.",
+  "Legality follows §35.5 (pure, context, time), §35.7 and §35.8 (exports).",
+  "The SV compiler cannot see C code: rules about what the C body does are checked by nobody, so breaking them is undefined behaviour, not a compile error.",
+  "Deterministic: no random hazards. Timing claims describe a single-threaded simulator.",
+];
+
+const VERDICT_TEXT: Record<DpiVerdict, { label: string; glyph: string; className: string }> = {
+  legal: { label: "Legal", glyph: "✓", className: "border-emerald-500/50 bg-emerald-500/10 text-emerald-900 dark:text-emerald-100" },
+  "compile-error": { label: "Compile error", glyph: "✕", className: "border-rose-500/50 bg-rose-500/10 text-rose-900 dark:text-rose-100" },
+  "runtime-undefined": {
+    label: "Compiles, but illegal or undefined at run time",
+    glyph: "⚠",
+    className: "border-amber-500/60 bg-amber-500/10 text-amber-900 dark:text-amber-100",
+  },
+};
+
+const mono = "font-mono [font-variant-ligatures:none]";
+
+function TypeCrossing() {
+  const [typeId, setTypeId] = useState("int");
+  const [dir, setDir] = useState<Direction>("input");
+  const type = findType(typeId);
+  const answer = cParameter(type, dir);
+
+  const options: PredictionOption[] = useMemo(() => {
+    const wrong = type.misconceptions.filter((m) => m.c !== answer);
+    const list = [
+      { id: answer, c: answer, correct: true, why: `${type.note} (${type.clause})` },
+      ...wrong.map((m) => ({ id: m.c, c: m.c, correct: false, why: m.why })),
+    ];
+    // Deterministic order: alphabetical, so the right answer is not always first.
+    return list
+      .sort((a, b) => a.c.localeCompare(b.c))
+      .map((o) => ({ id: o.id, label: <code className={cn(mono, "text-xs")}>{o.c}</code>, correct: o.correct, feedback: o.why }));
+  }, [answer, type]);
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm font-semibold text-foreground">1. Crossing the border: which C type arrives?</p>
+      <div className="space-y-2">
+        <SegmentedControl label="SystemVerilog formal type" mono options={DPI_TYPES.map((t) => ({ value: t.id, label: t.sv.replace(/ x$/, "") }))} value={typeId} onChange={setTypeId} />
+        <SegmentedControl
+          label="Argument direction"
+          options={[
+            { value: "input", label: "input" },
+            { value: "output", label: "output / inout" },
+          ]}
+          value={dir}
+          onChange={setDir}
+        />
+      </div>
+      <CodeTrace label="SystemVerilog import" lines={[{ text: svImport(type, dir), owner: "testbench" }]} />
+      <PredictionPrompt
+        resetKey={`${typeId}:${dir}`}
+        question={
+          <>
+            What is the C parameter in <code className={mono}>c_use</code> for <code className={mono}>{`${dir} ${type.sv}`}</code>?
+          </>
+        }
+        options={options}
+      >
+        <div className="space-y-2" aria-live="polite">
+          <CodeTrace label="Matching C prototype" lines={[{ text: '#include "svdpi.h"' }, { text: cPrototype(type, dir) }]} />
+          <p className="text-sm text-muted-foreground">
+            <strong className="text-foreground">Reading it in C: </strong>
+            <code className={cn(mono, "break-words text-xs text-foreground")}>{type.access}</code>
+          </p>
+          <p className="text-sm text-muted-foreground">
+            {type.small ? "Small type: passed by value as an input, and allowed as a function result." : "Not a small type: passed by reference (or handle), and not allowed as a function result."}{" "}
+            <span className="text-xs">({type.clause})</span>
+          </p>
+        </div>
+      </PredictionPrompt>
+      <details className="rounded-lg border border-border/70 bg-background/40 px-3 py-2 text-sm">
+        <summary className="cursor-pointer font-medium text-foreground">Full mapping table (reference)</summary>
+        <div className="mt-2 overflow-x-auto">
+          <table className="w-full min-w-[300px] text-left text-xs">
+            <caption className="sr-only">SystemVerilog type to C type for DPI arguments</caption>
+            <thead>
+              <tr className="border-b border-border/70 text-muted-foreground">
+                <th scope="col" className="py-1 pr-2">SystemVerilog</th>
+                <th scope="col" className="py-1 pr-2">C input</th>
+                <th scope="col" className="py-1 pr-2">C output / inout</th>
+                <th scope="col" className="py-1 pr-2">Result?</th>
+              </tr>
+            </thead>
+            <tbody>
+              {DPI_TYPES.map((t) => (
+                <tr key={t.id} className="border-b border-border/40">
+                  <th scope="row" className={cn(mono, "py-1 pr-2 font-normal")}>{t.sv}</th>
+                  <td className={cn(mono, "py-1 pr-2")}>{t.cInput}</td>
+                  <td className={cn(mono, "py-1 pr-2")}>{t.cOutput}</td>
+                  <td className="py-1 pr-2">{t.small ? "✓ yes" : "✕ no"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </div>
+  );
+}
+
+function Legality() {
+  const [scenarioId, setScenarioId] = useState(DPI_SCENARIOS[0].id);
+  const scenario = DPI_SCENARIOS.find((s) => s.id === scenarioId) ?? DPI_SCENARIOS[0];
+  const result = checkDpi(scenario.decl);
+  const v = VERDICT_TEXT[result.verdict];
+  const reasonText = result.reasons.map((r) => `${r.text} (${r.clause})`).join(" ");
+
+  const feedbackFor = (id: DpiVerdict): string => {
+    if (id === result.verdict) return reasonText || result.time;
+    if (result.verdict === "compile-error") {
+      return id === "legal" ? `The declaration itself breaks a rule: ${reasonText}` : `It never gets that far: ${reasonText}`;
+    }
+    if (result.verdict === "runtime-undefined") {
+      return id === "legal"
+        ? `The declaration compiles, but the C body breaks a rule nobody checks: ${reasonText}`
+        : "The SV compiler only checks the declaration, which is fine here. It cannot see what the C body does, so rules about the C code are never compile errors.";
+    }
+    return `Nothing here breaks a DPI rule. ${result.time}`;
+  };
+
+  const options: PredictionOption[] = (["legal", "compile-error", "runtime-undefined"] as DpiVerdict[]).map((id) => ({
+    id,
+    label:
+      id === "legal"
+        ? "Legal: it compiles and behaves as written."
+        : id === "compile-error"
+          ? "Compile error: the SystemVerilog declaration itself is rejected."
+          : "It compiles, but the call is illegal or undefined when it runs.",
+    correct: id === result.verdict,
+    feedback: feedbackFor(id),
+  }));
+
+  return (
+    <div className="space-y-3">
+      <p className="text-sm font-semibold text-foreground">2. pure, context, tasks and time: legal or not?</p>
+      <SegmentedControl label="DPI scenario" options={DPI_SCENARIOS.map((s) => ({ value: s.id, label: s.title }))} value={scenarioId} onChange={setScenarioId} />
+      <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]">
+        <CodeTrace label="SystemVerilog side" lines={scenario.sv.map((text) => ({ text, owner: "testbench" as const }))} />
+        <CodeTrace label="C side" lines={scenario.c.map((text) => ({ text }))} />
+      </div>
+      <PredictionPrompt resetKey={scenarioId} question="What happens with this pair?" options={options}>
+        <div className={cn("space-y-1 rounded-lg border px-3 py-2 text-sm", v.className)} aria-live="polite">
+          <p className="font-semibold">
+            {v.glyph} {v.label}
+          </p>
+          {result.reasons.length > 0 ? (
+            <ul className="list-disc space-y-1 pl-5">
+              {result.reasons.map((r) => (
+                <li key={r.text}>
+                  {r.text} <span className="text-xs opacity-80">({r.clause})</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          <p>
+            <strong>Simulation time: </strong>
+            {result.time}
+          </p>
+        </div>
+      </PredictionPrompt>
+    </div>
+  );
+}
 
 export default function DPIBoundaryInspector() {
-    const [flowState, setFlowState] = useState<FlowState>('idle');
-    const [functionType, setFunctionType] = useState<'pure' | 'context' | 'standard'>('standard');
-    const [showHazard, setShowHazard] = useState(false);
-
-    const runFlow = () => {
-        setShowHazard(false);
-        setFlowState('sv_call');
-
-        setTimeout(() => {
-            setFlowState('marshal_in');
-            setTimeout(() => {
-                setFlowState('c_exec');
-                setTimeout(() => {
-                    if (showHazard || (functionType !== 'pure' && Math.random() > 0.7)) {
-                        setShowHazard(true);
-                        return; // Halt flow to show hazard
-                    }
-                    setFlowState('marshal_out');
-                    setTimeout(() => setFlowState('sv_resume'), 1200);
-                }, 1500);
-            }, 1200);
-        }, 1000);
-    };
-
-    const getSvBoxStyle = () => {
-        switch (flowState) {
-            case 'idle': return 'border-slate-300 bg-white text-slate-700';
-            case 'sv_call': return 'border-blue-500 bg-blue-50 text-blue-800 ring-2 ring-blue-200';
-            case 'marshal_in': return 'border-slate-300 bg-slate-50 text-slate-400'; // Waiting
-            case 'c_exec': return 'border-slate-300 bg-slate-50 text-slate-400'; // Waiting
-            case 'marshal_out': return 'border-blue-300 bg-white text-blue-600';
-            case 'sv_resume': return 'border-green-500 bg-green-50 text-green-800 ring-2 ring-green-200';
-            default: return '';
-        }
-    };
-
-    const getCBoxStyle = () => {
-        switch (flowState) {
-            case 'idle': return 'border-slate-300 bg-white text-slate-700';
-            case 'sv_call': return 'border-slate-300 bg-white text-slate-500';
-            case 'marshal_in': return 'border-purple-300 bg-white text-purple-600';
-            case 'c_exec': return 'border-purple-500 bg-purple-50 text-purple-800 ring-2 ring-purple-200';
-            case 'marshal_out': return 'border-slate-300 bg-slate-50 text-slate-400';
-            case 'sv_resume': return 'border-slate-300 bg-white text-slate-700';
-            default: return '';
-        }
-    };
-
-    const getBoundaryStyle = () => {
-        if (flowState === 'marshal_in') return 'bg-gradient-to-r from-blue-400 to-purple-400 opacity-100 scale-105';
-        if (flowState === 'marshal_out') return 'bg-gradient-to-l from-purple-400 to-green-400 opacity-100 scale-105';
-        return 'bg-slate-200 opacity-50';
-    };
-
-    return (
-        <div className="flex flex-col border border-slate-200 rounded-lg p-6 bg-slate-50 my-8 shadow-sm font-sans w-full">
-            <div className="flex justify-between items-center mb-6 border-b border-slate-200 pb-4">
-                <div>
-                    <h3 className="text-xl font-bold text-slate-800 m-0">DPI Boundary Inspector</h3>
-                    <p className="text-sm text-slate-500 mt-1 mb-0">
-                        SystemVerilog ↔ C Call Flow & Type Marshaling
-                    </p>
-                </div>
-
-                <div className="flex bg-slate-200 p-1 rounded-md">
-                    <button
-                        onClick={() => setFunctionType('pure')}
-                        className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${functionType === 'pure' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}
-                    >
-                        pure function
-                    </button>
-                    <button
-                        onClick={() => setFunctionType('context')}
-                        className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${functionType === 'context' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}
-                    >
-                        context function
-                    </button>
-                    <button
-                        onClick={() => setFunctionType('standard')}
-                        className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${functionType === 'standard' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-600 hover:text-slate-800'}`}
-                    >
-                        standard function
-                    </button>
-                </div>
-            </div>
-
-            <div className="relative flex items-center justify-between w-full mt-4 mb-12 px-8">
-
-                {/* SystemVerilog Side */}
-                <div className={`w-1/3 flex flex-col items-center p-6 border-2 rounded-xl transition-all duration-300 ${getSvBoxStyle()}`}>
-                    <FileCode size={32} className="mb-3" />
-                    <h4 className="font-bold text-lg m-0">SystemVerilog</h4>
-                    <div className="text-xs font-mono mt-3 text-center bg-white/50 px-2 py-1 rounded">
-                        {flowState === 'idle' && 'ready'}
-                        {flowState === 'sv_call' && 'c_add(a, b);'}
-                        {flowState === 'marshal_in' && '// Thread blocked'}
-                        {flowState === 'c_exec' && '// Waiting on C...'}
-                        {flowState === 'marshal_out' && 'int result = ...'}
-                        {flowState === 'sv_resume' && 'result received'}
-                    </div>
-                </div>
-
-                {/* The DPI Boundary */}
-                <div className="w-1/3 flex flex-col items-center justify-center relative h-32">
-
-                    <div className="absolute inset-0 flex items-center justify-center">
-                        <div className={`w-full h-8 transition-all duration-500 rounded-full flex items-center justify-center text-white font-bold text-xs tracking-wider ${getBoundaryStyle()}`}>
-                            DPI BOUNDARY
-                        </div>
-                    </div>
-
-                    {/* Animating Data Package -> */}
-                    <div className={`absolute top-4 bg-blue-100 text-blue-800 border border-blue-300 text-[10px] font-mono px-2 py-1 rounded transition-all duration-1000 ease-in-out z-10 
-            ${flowState === 'idle' ? 'opacity-0 left-0' : ''}
-            ${flowState === 'sv_call' ? 'opacity-100 left-0' : ''}
-            ${flowState === 'marshal_in' ? 'opacity-100 left-1/2 -translate-x-1/2 scale-110 shadow-md' : ''}
-            ${flowState === 'c_exec' || flowState === 'marshal_out' || flowState === 'sv_resume' ? 'opacity-0 left-full -translate-x-full' : ''}
-          `}>
-                        svLogicVecVal a, b
-                    </div>
-
-                    {/* Animating Data Package <- */}
-                    <div className={`absolute bottom-4 bg-green-100 text-green-800 border border-green-300 text-[10px] font-mono px-2 py-1 rounded transition-all duration-1000 ease-in-out z-10 
-            ${flowState !== 'marshal_out' && flowState !== 'sv_resume' ? 'opacity-0 right-0' : ''}
-            ${flowState === 'marshal_out' ? 'opacity-100 left-1/2 -translate-x-1/2 scale-110 shadow-md' : ''}
-            ${flowState === 'sv_resume' ? 'opacity-100 left-0' : ''}
-          `}>
-                        return int
-                    </div>
-                </div>
-
-                {/* C Side */}
-                <div className={`w-1/3 flex flex-col items-center p-6 border-2 rounded-xl transition-all duration-300 ${getCBoxStyle()}`}>
-                    <FileCode size={32} className="mb-3" />
-                    <h4 className="font-bold text-lg m-0">C / C++</h4>
-                    <div className="text-xs font-mono mt-3 text-center bg-white/50 px-2 py-1 rounded">
-                        {flowState === 'idle' || flowState === 'sv_call' ? 'ready' : ''}
-                        {flowState === 'marshal_in' ? 'allocating stack...' : ''}
-                        {flowState === 'c_exec' ? 'return a + b;' : ''}
-                        {flowState === 'marshal_out' || flowState === 'sv_resume' ? 'completed' : ''}
-                    </div>
-                </div>
-
-            </div>
-
-            {/* Hazard Warning Overlay */}
-            {showHazard && (
-                <div className="absolute inset-0 bg-red-500/10 backdrop-blur-[1px] rounded-lg flex items-center justify-center z-20">
-                    <div className="bg-white p-6 rounded-xl shadow-xl flex flex-col items-center max-w-sm border-2 border-red-500 text-center animate-in zoom-in duration-200">
-                        <AlertCircle size={40} className="text-red-500 mb-3" />
-                        <h4 className="font-bold text-red-700 m-0 mb-2">Simulation Blocked!</h4>
-                        <p className="text-sm text-slate-600 m-0">
-                            The C function is taking too long to return. Because it is <strong>not</strong> exported as an SV task, it executes in 0 simulation time but blocks the entire simulator thread. No other SV processes can evaluate!
-                        </p>
-                        <div className="mt-4 flex gap-3">
-                            <button onClick={() => { setShowHazard(false); setFlowState('idle'); }} className="px-4 py-2 bg-slate-200 text-slate-700 font-medium text-sm rounded hover:bg-slate-300 transition-colors">Abort Test</button>
-                            <button onClick={() => { setShowHazard(false); setFlowState('marshal_out'); setTimeout(() => setFlowState('sv_resume'), 1200); }} className="px-4 py-2 bg-red-600 text-white font-medium text-sm rounded hover:bg-red-700 transition-colors">Force Return</button>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Status & Explanation */}
-            <div className="bg-slate-100 rounded-md p-4 min-h-[100px] flex gap-4 items-start border border-slate-200">
-                <div className="bg-indigo-100 p-2 rounded-full text-indigo-600 mt-1 shrink-0">
-                    <Clock size={18} />
-                </div>
-                <div>
-                    <h5 className="font-bold text-slate-700 text-sm m-0 mb-1">
-                        {flowState === 'idle' && 'Ready to Execute'}
-                        {flowState === 'sv_call' && '1. SystemVerilog Call'}
-                        {flowState === 'marshal_in' && '2. Type Marshaling (Inbound)'}
-                        {flowState === 'c_exec' && '3. C Function Execution'}
-                        {flowState === 'marshal_out' && '4. Type Marshaling (Outbound)'}
-                        {flowState === 'sv_resume' && '5. SV Simulation Resumes'}
-                    </h5>
-                    <p className="text-sm text-slate-600 m-0 leading-relaxed">
-                        {flowState === 'idle' && 'Click "Run DPI Call" to visualize the flow.'}
-                        {flowState === 'sv_call' && 'SV suspends process execution and prepares arguments for the C domain.'}
-                        {flowState === 'marshal_in' && 'The simulator translates SV types (like 4-state logic) into C-compatible types (like svLogicVecVal).'}
-                        {flowState === 'c_exec' &&
-                            <span className="flex flex-col gap-1">
-                                <span>The C function executes. SV simulator time is frozen.</span>
-                                {functionType === 'pure' && <span className="text-green-600 text-xs font-semibold">✓ Pure function: guarantees no side-effects or SV state reads. Highly optimized.</span>}
-                                {functionType === 'context' && <span className="text-orange-600 text-xs font-semibold">! Context function: C code can call back into SV tasks/functions and read simulation state. Slower.</span>}
-                            </span>
-                        }
-                        {flowState === 'marshal_out' && 'The return value is packed back into an SV-compatible memory layout.'}
-                        {flowState === 'sv_resume' && 'The SV process unblocks and continues execution with the new result.'}
-                    </p>
-                </div>
-            </div>
-
-            <div className="mt-6 flex justify-center gap-4">
-                <button
-                    onClick={() => { setFlowState('idle'); setShowHazard(false); }}
-                    className="px-4 py-2 rounded bg-slate-200 text-slate-700 hover:bg-slate-300 font-medium text-sm transition-colors"
-                >
-                    Reset
-                </button>
-                <button
-                    onClick={runFlow}
-                    disabled={flowState !== 'idle' && flowState !== 'sv_resume'}
-                    className="px-6 py-2 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed font-medium text-sm transition-colors flex items-center gap-2"
-                >
-                    {flowState !== 'idle' && flowState !== 'sv_resume' ? 'Executing...' : 'Run DPI Call'}
-                    <ArrowLeftRight size={16} />
-                </button>
-                <button
-                    onClick={() => setShowHazard(true)}
-                    className="px-4 py-2 rounded border border-red-200 bg-red-50 text-red-600 hover:bg-red-100 font-medium text-sm transition-colors flex items-center gap-2"
-                >
-                    Force Hazard Demo
-                    <AlertCircle size={16} />
-                </button>
-            </div>
-        </div>
-    );
+  return (
+    <VisualFrame
+      label="DPI boundary explorer"
+      eyebrow="Experiment"
+      title="DPI boundary: types, qualifiers and time"
+      summary={
+        <>
+          Every value that crosses into C needs a matching C type, and every import makes promises (<code className={mono}>pure</code>,{" "}
+          <code className={mono}>context</code>) that the SystemVerilog compiler cannot check against your C code. Predict each crossing before you reveal it.
+        </>
+      }
+      fidelity="model"
+      assumptions={ASSUMPTIONS}
+    >
+      <TypeCrossing />
+      <hr className="border-border/60" />
+      <Legality />
+    </VisualFrame>
+  );
 }

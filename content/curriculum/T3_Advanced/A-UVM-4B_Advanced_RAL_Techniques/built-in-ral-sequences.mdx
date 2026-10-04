@@ -12,87 +12,104 @@ export const metadata = {
 
   ## Elevator Pitch
 
-  RAL ships with powerful sequences—`uvm_reg_hw_reset_seq`, `uvm_reg_bit_bash_seq`, `uvm_mem_walk_seq`. Use them to prove the model and silicon (or emulation) agree, then extend them to fit your access rules.
+  RAL ships with ready-made test sequences (IEEE 1800.2-2020 Annex E): `uvm_reg_hw_reset_seq`, `uvm_reg_bit_bash_seq`, `uvm_reg_access_seq`, `uvm_mem_walk_seq` and more. Use them to prove the model and the silicon (or emulation) agree. You control them with **resource attributes**, not by overriding methods: each sequence skips any block, register or memory that has a `NO_REG_*` / `NO_MEM_*` bit resource in the `"REG::"` scope.
 
   ## Reset & Mirror Validation
 
   ```systemverilog
-  class soc_reset_seq extends uvm_reg_hw_reset_seq;
-    `uvm_object_utils(soc_reset_seq)
+  class soc_reset_test extends base_test;
+    `uvm_component_utils(soc_reset_test)
 
-    constraint c_paths {
-      register_sequences == {"cfg_map"};
-    }
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
 
-    virtual task body();
-      uvm_status_e status;
-      super.body();
-      foreach (model.default_map.regs[i]) begin
-        uvm_reg rg = model.default_map.regs[i];
-        if (!rg.has_hdl_path("CFG")) continue;
-        rg.mirror(status, UVM_CHECK);
-      end
+    task run_phase(uvm_phase phase);
+      uvm_reg_hw_reset_seq reset_seq;
+      phase.raise_objection(this);
+
+      // STRAP_CFG resets to a pin-strapped value: skip it in the reset check.
+      uvm_resource_db#(bit)::set({"REG::", env.ral.STRAP_CFG.get_full_name()},
+                                 "NO_REG_HW_RESET_TEST", 1, this);
+
+      reset_seq       = uvm_reg_hw_reset_seq::type_id::create("reset_seq");
+      reset_seq.model = env.ral;
+      reset_seq.start(null);   // register sequences run their items on each map's sequencer
+      phase.drop_objection(this);
     endtask
   endclass
   ```
 
-  **How to extend it**
-  - Lines 2-8 show how to constrain which address maps the built-in reset sequence touches.
-  - Lines 10-17 add a post-reset mirror sweep so you catch registers that drift from their reset values immediately.
+  **What it does**
+  - `uvm_reg_hw_reset_seq` resets the model, then reads every register that has a reset value through **every map** it is in, with `mirror(status, UVM_CHECK, UVM_FRONTDOOR, map)`. Fields with no reset or with `UVM_NO_CHECK` (volatile fields by default) are not compared.
+  - `NO_REG_HW_RESET_TEST` (or the catch-all `NO_REG_TESTS`) can name a block, a register, or for this sequence a single field.
 
-  ## Bit-Bash & Field Policies
+  ## Bit-Bash, Access and Memory Walk
 
-  - `uvm_reg_bit_bash_seq`: toggles W/R bits to validate access types. Override `is_legal` to skip write-one-to-clear (W1C) or reserved bits.
-  - `uvm_reg_access_seq`: simple sweeping read/write; great smoke test for new adapters.
-  - `uvm_mem_walk_seq`: diag for memories; ensure the adapter handles bursts correctly.
+  - `uvm_reg_bit_bash_seq`: for every register and map, inverts each bit through a frontdoor write, reads it back and compares with `get()`, then inverts it again and repeats the check. It skips WO, WOC, WOS, WO1 and NOACCESS fields and fields set to `UVM_NO_CHECK`. Exclude whole registers that have side effects (W1C interrupt status, GO bits, FIFOs) with `NO_REG_BIT_BASH_TEST`.
+  - `uvm_reg_access_seq`: for each register, writes through the frontdoor and checks through the **backdoor**, then writes through the backdoor and checks through the frontdoor. It needs HDL paths and a working prediction path, and it skips registers whose fields are all RO. Exclude with `NO_REG_ACCESS_TEST`.
+  - `uvm_mem_walk_seq`: a walking pattern over every memory, through each map (write `~k` at address k, read it back on the next step). Exclude with `NO_MEM_WALK_TEST` or `NO_MEM_TESTS`.
 
-  <figure className="my-8 flex flex-col items-center space-y-4">
-    <Image
-      src="/visuals/tier-4/mirror-health-heatmap.svg"
-      alt="Heatmap illustrating register mirror delta severity"
-      width={320}
-      height={320}
-      sizes="(min-width: 768px) 320px, 100vw"
-      className="w-full max-w-sm rounded-2xl border border-white/10 bg-white/5 p-4"
-    />
-    <figcaption className="text-sm text-muted-foreground">
-      Mirror health dashboards flag registers whose observed values drift from the model—use them after bit-bash to focus follow-up investigations.
-    </figcaption>
-  </figure>
 
   ```systemverilog
-  class filtered_bit_bash_seq extends uvm_reg_bit_bash_seq;
-    `uvm_object_utils(filtered_bit_bash_seq)
+  // In the test, before starting the sequence:
+  // never bit-bash the interrupt status (W1C) register
+  uvm_resource_db#(bit)::set({"REG::", env.ral.INT_STATUS.get_full_name()},
+                             "NO_REG_BIT_BASH_TEST", 1, this);
+  // skip every register of the DMA sub-block in all built-in tests
+  uvm_resource_db#(bit)::set({"REG::", env.ral.dma.get_full_name(), ".*"},
+                             "NO_REG_TESTS", 1, this);
 
-    virtual function bit is_legal(uvm_reg_field field);
-      if (field.get_access() inside {"WO", "W1C"})
-        return 0;
-      return super.is_legal(field);
-    endfunction
-  endclass
+  bash_seq       = uvm_reg_bit_bash_seq::type_id::create("bash_seq");
+  bash_seq.model = env.ral;
+  bash_seq.start(null);
   ```
 
-  **Why override legality**
-  - Lines 2-8 demonstrate skipping fields that could corrupt DUT state while still reusing the robust bit-bash engine.
+  **Why attributes and not overrides**
+  - The sequences look up these resources for each block and register (`uvm_resource_db#(bit)::get_by_name({"REG::", rg.get_full_name()}, "NO_REG_BIT_BASH_TEST")`), so exclusions live with the test, and the library code stays untouched.
+  - The scope is a glob, so `".*"` after a block name covers everything below it.
 
   ## Checklist
 
-  - [ ] Built-in sequences are subclassed to respect DUT-specific access restrictions.
+  - [ ] Registers with side effects or unpredictable resets carry the matching `NO_REG_*` attribute.
+  - [ ] HDL paths exist before running `uvm_reg_access_seq`.
   - [ ] Coverage/scoreboards observe these sequences to collect reset/bit coverage metrics.
   - [ ] Register model and adapters are synchronized before running memory walk tests.
 
   ## Quiz Yourself
 
-  **What does `uvm_reg_bit_bash_seq` primarily validate?**
-  - Adapters convert opcodes correctly
-  - Register fields honor their access policies (RW/RO/etc.) *(correct)*
-  - The DUT boots correctly
-  - Scoreboards are connected
-
-  **How do you prevent a built-in sequence from corrupting W1C fields?**
-  - Disable mirroring
-  - Override `is_legal()` and return 0 for those fields *(correct)*
-  - Switch to backdoor
-  - Use `set_sequencer(null)`
+  <Quiz
+    questions={[
+      {
+        question: "What does uvm_reg_bit_bash_seq primarily validate?",
+        answers: [
+          { text: "Adapters convert opcodes correctly", correct: false },
+          { text: "Every bit of every register behaves as its field's access policy says", correct: true },
+          { text: "The DUT boots correctly", correct: false },
+          { text: "Scoreboards are connected", correct: false }
+        ],
+        explanation: "It flips each bit through the frontdoor, reads it back and compares with the model's desired value, then flips it back and checks again."
+      },
+      {
+        question: "How do you keep uvm_reg_bit_bash_seq away from a W1C interrupt status register?",
+        answers: [
+          { text: "Disable mirroring", correct: false },
+          { text: "Set the NO_REG_BIT_BASH_TEST bit resource for that register in the \"REG::\" scope", correct: true },
+          { text: "Override is_legal() in a subclass", correct: false },
+          { text: "Use set_sequencer(null)", correct: false }
+        ],
+        explanation: "The built-in sequences have no is_legal() hook; they check NO_REG_* resources for each block and register."
+      },
+      {
+        question: "uvm_reg_access_seq fails immediately on a register. What is the most likely missing piece?",
+        answers: [
+          { text: "A covergroup", correct: false },
+          { text: "An HDL path for the backdoor", correct: true },
+          { text: "A factory override", correct: false }
+        ],
+        explanation: "The access sequence compares frontdoor and backdoor views of each register, so it needs a backdoor."
+      }
+    ]}
+  />
 
 </InfoPage>

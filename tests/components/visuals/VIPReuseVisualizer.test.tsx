@@ -1,55 +1,48 @@
-import React from 'react';
-import { describe, it, expect } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
-import VIPReuseVisualizer from '@/components/visuals/VIPReuseVisualizer';
+import React from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-describe('VIPReuseVisualizer', () => {
-  it('renders default visualizer in active mode', () => {
+import VIPReuseVisualizer from "@/components/visuals/VIPReuseVisualizer";
+
+const lockIn = (label: string | RegExp) => {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+};
+
+describe("VIPReuseVisualizer", () => {
+  it("asks which components exist in passive mode before showing the agent", () => {
     render(<VIPReuseVisualizer />);
-    
-    expect(screen.getByText('UVM VIP Re-use Topology')).toBeInTheDocument();
-    
-    // In active mode, Driver and Sequencer names should be visible
-    expect(screen.getAllByText('Driver').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText('Sequencer')).toBeInTheDocument();
-    expect(screen.getByText('Monitor')).toBeInTheDocument();
-    
-    // Check config DB code hint for UVM_ACTIVE
-    expect(screen.getByText('UVM_ACTIVE')).toBeInTheDocument();
+    expect(screen.queryByRole("radiogroup", { name: "Integration level" })).not.toBeInTheDocument();
+    lockIn("All four are built; the driver is just switched off");
+    expect(screen.getByText(/^Not quite\./)).toBeInTheDocument();
+    expect(screen.getByText(/Passive does not mean built-but-idle/)).toBeInTheDocument();
+
+    const parts = screen.getByRole("list", { name: "Components after build_phase" });
+    expect(within(parts).getByText("driver").closest("li")).toHaveTextContent("null.");
+    expect(within(parts).getByText("monitor").closest("li")).toHaveTextContent("exists.");
+    expect(screen.getByText(/UVM_PASSIVE\);/)).toBeInTheDocument();
   });
 
-  it('toggles to passive SoC mode correctly', () => {
+  it("switches to block level from the keyboard: driver and sequencer exist", () => {
     render(<VIPReuseVisualizer />);
-    
-    // Click SoC passive button
-    const passiveBtn = screen.getByRole('button', { name: /SoC Level \(Passive\)/i });
-    fireEvent.click(passiveBtn);
-
-    // Config DB code hint should shift to UVM_PASSIVE
-    expect(screen.getByText('UVM_PASSIVE')).toBeInTheDocument();
-
-    // Look for the "Disabled" badge on the driver area
-    expect(screen.getByText('Disabled')).toBeInTheDocument();
-
-    // Firmware processor should be visible traversing APB Bus
-    expect(screen.getByText('RISC-V Core')).toBeInTheDocument();
-    expect(screen.getByText('Processor')).toBeInTheDocument(); // Bus driver changes from UVM Driver to Processor
+    lockIn("Monitor and coverage only; driver and sequencer are never created");
+    expect(screen.getByText(/^Correct\./)).toBeInTheDocument();
+    const level = screen.getByRole("radiogroup", { name: "Integration level" });
+    fireEvent.keyDown(within(level).getByRole("radio", { name: /SoC level/ }), { key: "ArrowLeft" });
+    expect(within(level).getByRole("radio", { name: /Block level/ })).toHaveAttribute("aria-checked", "true");
+    const parts = screen.getByRole("list", { name: "Components after build_phase" });
+    expect(within(parts).getByText("driver").closest("li")).toHaveTextContent("exists.");
+    expect(screen.getByText(/UVM_ACTIVE\);/)).toBeInTheDocument();
   });
 
-  it('toggles back to active mode correctly', () => {
+  it("break it: without super.build_phase the SoC agent stays active and fights the CPU", () => {
     render(<VIPReuseVisualizer />);
-    
-    // Go passive first
-    const passiveBtn = screen.getByRole('button', { name: /SoC Level \(Passive\)/i });
-    fireEvent.click(passiveBtn);
-    
-    // Toggle back to active
-    const activeBtn = screen.getByRole('button', { name: /Block Level \(Active\)/i });
-    fireEvent.click(activeBtn);
-
-    expect(screen.getByText('UVM_ACTIVE')).toBeInTheDocument();
-    
-    // Check if "Disabled" badge is gone
-    expect(screen.queryByText('Disabled')).not.toBeInTheDocument();
+    lockIn("Monitor and coverage only; driver and sequencer are never created");
+    fireEvent.click(screen.getByRole("button", { name: /break the agent/ }));
+    fireEvent.click(screen.getByLabelText("Forget super.build_phase(phase)"));
+    expect(screen.getByText(/both the UVM driver and the CPU \(contention\)/)).toBeInTheDocument();
+    fireEvent.click(screen.getByLabelText("Forget super.build_phase(phase)"));
+    fireEvent.click(screen.getByLabelText("Drop the is_active guard in connect_phase"));
+    expect(screen.getByText(/Null object access in connect_phase/)).toBeInTheDocument();
   });
 });

@@ -8,7 +8,7 @@ interface PracticeItem {
   title: string;
   description: string;
   status: 'completed' | 'wip' | 'planned';
-  type: 'Exercise' | 'Animation' | 'Diagram' | 'Chart' | 'Tool';
+  type: 'Exercise' | 'Interactive model' | 'Diagram' | 'Chart' | 'Tool';
 }
 
 const practiceItems: PracticeItem[] = [
@@ -23,14 +23,14 @@ const practiceItems: PracticeItem[] = [
   {
     href: '/exercises/uvm-phase-sorter',
     title: 'UVM Phase Sorter',
-    description: 'Correctly order the UVM runtime phases.',
+    description: 'Two lanes: run_phase beside the 12 runtime phases, plus top-down vs bottom-up function phases.',
     status: 'completed',
     type: 'Exercise',
   },
   {
     href: '/exercises/scoreboard-connector',
     title: 'Scoreboard Connector',
-    description: 'Visually connect monitor analysis ports to scoreboards.',
+    description: 'Wire a monitor, predictor, scoreboard FIFOs and coverage in an env\'s connect_phase, graded by uvm-core\'s connection rules.',
     status: 'completed',
     type: 'Exercise',
   },
@@ -38,58 +38,58 @@ const practiceItems: PracticeItem[] = [
   {
     href: '/practice/visualizations/systemverilog-data-types',
     title: 'SystemVerilog Data Types',
-    description: 'Visualize the difference between 2-state and 4-state data types.',
+    description: 'Compare 2-state and 4-state types and see what new[N] really does to a dynamic array.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   {
     href: '/practice/visualizations/procedural-blocks',
-    title: 'Procedural Blocks Simulator',
-    description: 'See how initial, always, and final blocks execute.',
+    title: 'Procedural Blocks',
+    description: 'Predict when initial, always and final blocks run, and where <= updates land, on a tested process model.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   {
     href: '/practice/visualizations/concurrency',
-    title: 'Concurrency Visualizer',
-    description: 'Understand how concurrent processes execute in simulation.',
+    title: 'Fork/Join Lab',
+    description: 'One lane per process for join, join_any, join_none, disable fork and wait fork. Predict when the parent resumes.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   {
     href: '/practice/visualizations/state-machine-designer',
     title: 'State Machine Designer',
     description: 'Design and simulate a simple finite state machine.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   {
     href: '/practice/visualizations/randomization-explorer',
-    title: 'Randomization Explorer',
-    description: 'Explore the effects of constraints on randomization.',
+    title: 'Constraint Solution Space',
+    description: 'Exact probabilities for dist, soft and solve…before, plus the minimal conflicting set when randomize() fails.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   {
     href: '/practice/visualizations/assertion-builder',
-    title: 'SVA Assertion Builder',
-    description: 'Build SystemVerilog Assertions (SVA) with a guided interface.',
+    title: 'SVA Trace Lab',
+    description: 'Edit a trace, predict each attempt (pass, fail, vacuous), then evaluate with Preponed sampling.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   {
     href: '/practice/visualizations/coverage-analyzer',
-    title: 'Coverage Analyzer',
-    description: 'See how functional coverage is collected and reported.',
+    title: 'Coverage Closure Lab',
+    description: 'Build bins and crosses with ignore and illegal bins, predict samples to closure, and hunt the holes.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   {
     href: '/practice/visualizations/interface-signal-flow',
     title: 'Interface Signal Flow',
     description: 'Visualize how signals flow through an interface with modports.',
     status: 'completed',
-    type: 'Animation',
+    type: 'Interactive model',
   },
   // Diagrams
   {
@@ -117,7 +117,7 @@ const practiceItems: PracticeItem[] = [
   {
     href: '/practice/visualizations/data-type-comparison',
     title: 'Data Type Comparison',
-    description: 'Compare memory usage and features of different data types.',
+    description: 'Compare 2-state and 4-state types, widths, signedness and default values, then predict what each declaration holds.',
     status: 'completed',
     type: 'Chart',
   },
@@ -125,7 +125,7 @@ const practiceItems: PracticeItem[] = [
   {
     href: '/practice/waveform-studio',
     title: 'Waveform Studio',
-    description: 'A tool for viewing and analyzing waveform diagrams.',
+    description: 'Edit AXI and AHB timing diagrams and get AXI handshake violations, with spec clauses, as you type. Includes two debug samples.',
     status: 'completed',
     type: 'Tool',
   }
@@ -140,7 +140,15 @@ const PracticeHub = () => {
     return acc;
   }, {} as Record<PracticeItem['type'], PracticeItem[]>);
 
-  const labs = getAllLabs();
+  // Available labs first, then curriculum order (T1 → T4) by owning module.
+  const tierRank = (module: string) =>
+    module.startsWith('F') ? 1 : module.startsWith('I-SV') ? 2 : module.startsWith('I-UVM') ? 3 : module.startsWith('A-') ? 4 : module.startsWith('B-') ? 5 : 6;
+  const labs = [...getAllLabs()].sort(
+    (a, b) =>
+      Number(b.status === 'available') - Number(a.status === 'available') ||
+      tierRank(a.owningModule) - tierRank(b.owningModule) ||
+      a.owningModule.localeCompare(b.owningModule),
+  );
 
   return (
     <div className="relative w-full bg-[color:var(--blueprint-bg)] text-[color:var(--blueprint-foreground)] overflow-hidden">
@@ -162,26 +170,37 @@ const PracticeHub = () => {
             <div className="neon-divider w-40" />
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {labs.map((lab) => (
-              <Link href={`/practice/lab/${lab.id}`} key={lab.id} className="group">
-                <Card className="h-full px-6 py-8 transition-transform duration-300 group-hover:-translate-y-1">
+            {labs.map((lab) => {
+              const available = lab.status === 'available';
+              const card = (
+                <Card className={`h-full px-6 py-8 transition-transform duration-300 motion-reduce:transition-none ${available ? 'group-hover:-translate-y-1' : 'opacity-60'}`}>
                   <CardHeader className="p-0 mb-4">
-                    <div className="flex justify-between items-start">
-                      <CardTitle className="text-[color:var(--blueprint-foreground)] group-hover:text-[color:var(--blueprint-accent)]">{lab.title}</CardTitle>
-                      <span className={`text-xs uppercase tracking-widest ${lab.status === 'available' ? 'text-[color:var(--blueprint-success)] font-bold' : 'text-[color:var(--blueprint-foreground)]/50'}`}>
-                        {lab.status === 'available' ? 'Available' : 'Coming Soon'}
+                    <div className="flex justify-between items-start gap-3">
+                      <CardTitle className={`text-[color:var(--blueprint-foreground)] ${available ? 'group-hover:text-[color:var(--blueprint-accent)]' : ''}`}>{lab.title}</CardTitle>
+                      <span className={`shrink-0 text-xs uppercase tracking-widest ${available ? 'text-[color:var(--blueprint-success)] font-bold' : 'text-[color:var(--blueprint-foreground)]/60'}`}>
+                        {available ? 'Available' : 'Coming soon'}
                       </span>
                     </div>
                   </CardHeader>
                   <CardContent className="p-0">
                     <p className="text-sm text-[color:var(--blueprint-foreground)]/70">{lab.description}</p>
-                    <div className="mt-4 flex flex-col gap-2">
-                       <span className="text-xs text-[color:var(--blueprint-foreground)]/60 font-mono flex items-center gap-2">📍 Module: {lab.owningModule}</span>
-                    </div>
+                    <p className="mt-4 text-xs text-[color:var(--blueprint-foreground)]/60 font-mono">Module: {lab.owningModule}</p>
+                    {available ? (
+                      <p className="mt-2 text-xs text-[color:var(--blueprint-foreground)]/60">Self-checked: you mark steps complete. Sign in to open.</p>
+                    ) : null}
                   </CardContent>
                 </Card>
-              </Link>
-            ))}
+              );
+              return available ? (
+                <Link href={`/practice/lab/${lab.id}`} key={lab.id} className="group">
+                  {card}
+                </Link>
+              ) : (
+                <div key={lab.id} aria-disabled="true">
+                  {card}
+                </div>
+              );
+            })}
           </div>
         </section>
 

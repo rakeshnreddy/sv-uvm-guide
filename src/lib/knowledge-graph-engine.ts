@@ -36,7 +36,6 @@ export interface KnowledgeGraphData {
  * In a real implementation, this would query a graph database.
  */
 export const getFullKnowledgeGraph = async (): Promise<KnowledgeGraphData> => {
-  console.log('Fetching full knowledge graph...');
   // Expanded placeholder data
   const nodes: ConceptNode[] = [
     // Foundational
@@ -244,4 +243,3 @@ export const wrapConceptsInText = (text: string, nodes: ConceptNode[]): string =
   );
 };
 
-console.log('Knowledge graph engine loaded.');

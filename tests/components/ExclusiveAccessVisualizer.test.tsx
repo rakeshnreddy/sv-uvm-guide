@@ -1,67 +1,71 @@
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
-import ExclusiveAccessVisualizer from '../../src/components/visualizers/ExclusiveAccessVisualizer';
+import React from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-vi.mock('lucide-react', () => ({
-  Play: () => <div data-testid="icon-play" />,
-  Pause: () => <div data-testid="icon-pause" />,
-  SkipBack: () => <div data-testid="icon-skip-back" />,
-  SkipForward: () => <div data-testid="icon-skip-forward" />,
-  RotateCcw: () => <div data-testid="icon-rotate-ccw" />
-}));
+import ExclusiveAccessVisualizer from "@/components/visualizers/ExclusiveAccessVisualizer";
 
-describe('ExclusiveAccessVisualizer', () => {
-  it('renders without crashing', () => {
+const lockIn = (label: RegExp) => {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+};
+const situation = (name: string) => fireEvent.click(within(screen.getByRole("radiogroup", { name: "Exclusive access situation" })).getByRole("radio", { name }));
+const monitor = (name: string) => fireEvent.click(within(screen.getByRole("radiogroup", { name: "Monitor implementation" })).getByRole("radio", { name }));
+
+describe("ExclusiveAccessVisualizer", () => {
+  it("hides responses until the learner predicts, then shows the monitor trace", () => {
     render(<ExclusiveAccessVisualizer />);
-    expect(screen.getByText('AXI Exclusive Access Monitor')).toBeInTheDocument();
+    expect(screen.getByTestId("exclusive-access-visualizer")).toBeInTheDocument();
+    expect(screen.queryByRole("table")).not.toBeInTheDocument();
+    lockIn(/^EXOKAY: the write is performed/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    const responses = within(screen.getByRole("table"))
+      .getAllByRole("row")
+      .slice(1)
+      .map((r) => within(r).getAllByRole("cell")[1].textContent);
+    expect(responses).toEqual(["✓ EXOKAY", "✓ EXOKAY"]);
   });
 
-  it('shows default scenario selected', () => {
+  it("an intervening normal write makes the exclusive write fail; EXOKAY is diagnosed as a misconception", () => {
     render(<ExclusiveAccessVisualizer />);
-    const select = screen.getByRole('combobox');
-    expect(select).toHaveValue('success');
+    situation("Intervening normal write");
+    lockIn(/^EXOKAY: the write is performed/);
+    expect(screen.getByText(/Not quite/)).toBeInTheDocument();
+    expect(screen.getAllByText(/no longer monitored for ID 0/).length).toBeGreaterThan(0);
   });
 
-  it('displays the monitor state', () => {
+  it("the race outcome depends on the monitor implementation", () => {
     render(<ExclusiveAccessVisualizer />);
-    expect(screen.getByText('Global Exclusive Monitor')).toBeInTheDocument();
-    expect(screen.getByText('OPEN')).toBeInTheDocument();
+    situation("Two masters race");
+    lockIn(/^EXOKAY: the write is performed/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    monitor("One shared monitor");
+    expect(screen.getByRole("button", { name: /lock in prediction/i })).toBeDisabled();
+    lockIn(/^OKAY: the exclusive failed/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getByText(/Implementation choice: a single shared monitor/)).toBeInTheDocument();
   });
 
-  it('steps forward to show events and updates monitor', () => {
+  it("a slave without exclusive support answers OKAY and still writes (A7.2.5)", () => {
     render(<ExclusiveAccessVisualizer />);
-    const stepForward = screen.getByTitle('Step Forward');
-    fireEvent.click(stepForward);
-    expect(screen.getByText(/ARLOCK=1/)).toBeInTheDocument();
-    expect(screen.getByText('RESERVED')).toBeInTheDocument();
-    expect(screen.getByText('0x1000')).toBeInTheDocument();
+    monitor("No exclusive support");
+    lockIn(/^OKAY: memory is written anyway/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/A7\.2\.5/).length).toBeGreaterThan(0);
   });
 
-  it('changes scenario when dropdown is used', () => {
+  it("a 3 x 4-byte exclusive at 0x1004 breaks A7.2.4 and is UNPREDICTABLE", () => {
     render(<ExclusiveAccessVisualizer />);
-    const select = screen.getByRole('combobox');
-    fireEvent.change(select, { target: { value: 'failed_normal_write' } });
-    expect(screen.getByText(/Failed by Normal Write/)).toBeInTheDocument();
+    situation("Debug: bad exclusive");
+    lockIn(/^UNPREDICTABLE/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/12 bytes is not a power of 2/).length).toBeGreaterThan(0);
   });
 
-  it('shows write failing in failed scenario', () => {
+  it("supports keyboard selection of the situation", () => {
     render(<ExclusiveAccessVisualizer />);
-    const select = screen.getByRole('combobox');
-    fireEvent.change(select, { target: { value: 'failed_normal_write' } });
-
-    const stepForward = screen.getByTitle('Step Forward');
-    // Step through to failure
-    for (let i = 0; i < 7; i++) fireEvent.click(stepForward);
-    expect(screen.getByText(/Write Response B returns OKAY/)).toBeInTheDocument();
-  });
-
-  it('resets to cycle 0', () => {
-    render(<ExclusiveAccessVisualizer />);
-    const stepForward = screen.getByTitle('Step Forward');
-    const resetBtn = screen.getByTitle('Reset');
-    fireEvent.click(stepForward);
-    fireEvent.click(resetBtn);
-    expect(screen.getByText(/Press Play/)).toBeInTheDocument();
+    const first = within(screen.getByRole("radiogroup", { name: "Exclusive access situation" })).getByRole("radio", { name: "Uncontended" });
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowRight" });
+    expect(within(screen.getByRole("radiogroup", { name: "Exclusive access situation" })).getByRole("radio", { name: "Intervening normal write" })).toHaveAttribute("aria-checked", "true");
   });
 });

@@ -12,30 +12,31 @@ export const metadata = {
 >
 
   ## Multi-Clocking and disable-iff
-  *IEEE 1800-2023, Clause 16.13: Multiclock support, and Clause 16.12: Disable iff*
+  *IEEE 1800-2023, Clause 16.13: Multiclock support, and Clause 16.12: Declaring properties (disable iff)*
 
   Designs often cross clock domains. SVA lets you relate events on different clocks within one property.
 
   <InteractiveCode>
   ```systemverilog
-  // Write on wr_clk must be followed by a read on rd_clk
-  sequence s_wr_then_rd;
-    @(posedge wr_clk) wr_en ##1 @(posedge rd_clk) rd_en;
-  endsequence
-
+  // Every write on wr_clk must be followed by a read on rd_clk
   property p_wr_followed_by_rd;
-    disable iff (!rst_n)
-      s_wr_then_rd;
+    @(posedge wr_clk) disable iff (!rst_n)
+      wr_en |=> @(posedge rd_clk) rd_en;
   endproperty
 
-  assert property (p_wr_followed_by_rd)
+  a_wr_then_rd: assert property (p_wr_followed_by_rd)
     else $error("Read did not follow write across clocks");
   ```
   </InteractiveCode>
 
+  For each `wr_clk` edge where `wr_en` is sampled high, `|=>` advances to the nearest strictly later `posedge rd_clk` and checks `rd_en` there (§16.13.2). Edges where `wr_en` is low are vacuous. Asserting the multiclock *sequence* `@(posedge wr_clk) wr_en ##1 @(posedge rd_clk) rd_en` directly would be a bug: a sequence used as a property has no antecedent, so it fails on every `wr_clk` edge where `wr_en` is 0 (§16.12.2).
+
   ### Understanding `disable iff`
 
-  `disable iff` temporarily turns off an assertion when its expression is true, typically during reset.
+  `disable iff (expr)` gives a property a reset condition (§16.12):
+  - If the condition is true at any time between the start of an attempt and its end, the attempt is **disabled**: it reports neither a pass nor a failure, and no action block runs. Attempts already in flight are aborted, not just new ones.
+  - The condition uses **current** values, not sampled values, so an asynchronous reset takes effect as soon as it changes. Use `$sampled(rst)` if you want the sampled value (§16.9.3).
+  - Do not put `$past`, `$rose` or other sampled-value functions in the condition without an explicit clocking event, and do not nest `disable iff` (§16.12). A guard such as "skip the first cycle after reset" belongs in the antecedent: `!$past(rst) |-> ...`.
 
   <InteractiveCode>
   ```systemverilog
@@ -48,8 +49,8 @@ export const metadata = {
 
   ### Tips
 
-  - Use multiple `@` event controls in a sequence to hop between clocks.
-  - A `##0` delay switches clocks without advancing time.
+  - Use an `@` clocking event inside a sequence or property to hop to another clock. The clock flows left to right until a new clocking event replaces it (§16.13.3).
+  - In a multiclock concatenation, `##1` moves to the nearest tick of the new clock *strictly after* the current tick. `##0` moves to the nearest tick *at or after* it: time stays put only when both clocks tick in the same time step; otherwise `##0` behaves like `##1` (§16.13.1).
   - Always guard cross-domain assertions with `disable iff` for asynchronous resets.
 
   ## Check Your Understanding
@@ -58,22 +59,22 @@ export const metadata = {
     {
       question: "What does `disable iff (!rst_n)` do in an assertion?",
       answers: [
-        { text: "Pauses the assertion when reset is asserted", correct: true },
+        { text: "Discards every attempt that is in flight, or starts, while rst_n is low; those attempts report neither pass nor fail", correct: true },
         { text: "Delays the assertion by one cycle", correct: false },
         { text: "Changes the clock", correct: false },
         { text: "Makes the assertion immediate", correct: false }
       ],
-      explanation: "`disable iff` disables the assertion when its expression evaluates to true."
+      explanation: "An attempt during which the disable condition is true has a disabled evaluation: no success, no failure, no action block (§16.12, §16.14.1). The condition uses current values, so it acts asynchronously."
     }
   ]} />
 
   <div className="mt-8">
     <InterviewQuestionPlayground
-      question="A multi-clock assertion uses `##1` to transition from checking a trigger on `clkA` to checking a response on `clkB`. An engineer complains that the assertion sometimes misses the very first `clkB` edge that happens immediately after `clkA`. Why?"
+      question="A multi-clock assertion uses `##1` to transition from checking a trigger on `clkA` to checking a response on `clkB`. An engineer complains that the assertion sometimes misses the `clkB` edge that happens at the same moment as the `clkA` edge. Why?"
       options={[
-        { text: "Multi-clock assertions are not supported in SystemVerilog.", isCorrect: false, feedback: "They absolutely are." },
-        { text: "The `##1` operator in a multi-clock context waits for the next occurrence of the *target* clock (`clkB`). If `clkB` ticks at exactly the same time as `clkA`, or extremely close to it, that edge might be missed depending on alignment. `##0` should be used to allow synchronization on the *current* tick if clocks overlap.", isCorrect: true, feedback: "Correct! In multi-clock SVA, `##1` means 'move to the strictly subsequent tick of the new clock'. If you want to allow the new clock to match coincidentally with the first clock, you must use `##0` as the clock-crossing operator." },
-        { text: "The assertion needs `disable iff`.", isCorrect: false, feedback: "`disable iff` handles asynchronous resets, not clock alignment." },
+        { text: "Multi-clock assertions are not supported in SystemVerilog.", isCorrect: false, feedback: "They absolutely are (§16.13)." },
+        { text: "In a clock-crossing concatenation, `##1` waits for the nearest `clkB` tick strictly after the `clkA` tick, so a `clkB` tick in the same time step is skipped. `##0` accepts that coincident tick.", isCorrect: true, feedback: "Correct! §16.13.1: `##1` moves to the nearest strictly subsequent tick of the new clock; `##0` moves to the nearest possibly overlapping tick, and behaves like `##1` when the ticks do not coincide. A `clkB` edge that is merely close to, but later than, the `clkA` edge is still the target of `##1`." },
+        { text: "The assertion needs `disable iff`.", isCorrect: false, feedback: "`disable iff` handles resets, not clock alignment." },
         { text: "`clkA` and `clkB` must be defined as integer multiples of each other.", isCorrect: false, feedback: "SVA multiclock handles fully asynchronous clocks." }
       ]}
     />

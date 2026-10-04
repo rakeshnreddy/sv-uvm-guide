@@ -4,28 +4,27 @@ description: "Discover why SystemVerilog replaced Verilog as the industry standa
 flashcards: "F1C_Why_SystemVerilog"
 ---
 
-import VerilogVsSystemVerilog from '@/components/visuals/VerilogVsSystemVerilog';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-
 ## Quick Take
-- **What it is:** SystemVerilog (IEEE 1800) is the industry-standard Hardware Design and Verification Language (HDVL) that unified Verilog's RTL capabilities with verification features from Vera and e.
+- **What it is:** SystemVerilog (IEEE 1800) is the industry-standard hardware design and verification language. It extended Verilog's RTL capabilities with design features from Co-Design Automation's Superlog and verification features largely from Synopsys's OpenVera (Vera) donation.
 - **Why it matters:** Before SystemVerilog, designers and verifiers spoke different languages. SV eliminated the language gap and enabled reusable, scalable verification methodologies like UVM.
-- **The Standard:** IEEE 1800-2023 is the current revision. It is a superset of Verilog-2005 (IEEE 1364-2005).
+- **The Standard:** IEEE 1800-2023 is the current revision. Since IEEE 1800-2009, the Verilog standard (IEEE 1364-2005) has been merged into it, so SystemVerilog contains all of Verilog. It also reserves new keywords, so a few legacy files need `` `begin_keywords `` to compile (§22.14).
 
 ## The Evolution of a Language
 
-In the 1990s, Verilog was king. It was great for describing hardware (RTL) but terrible for verifying it. Verification engineers had to use separate languages like **e** (Specman) or **Vera** to write complex testbenches. This created a "language gap"—designers spoke Verilog, verifiers spoke something else.
+In the 1990s, Verilog was king. It was great for describing hardware (RTL) but weak for verifying it. Verification engineers often used separate hardware verification languages such as **e** (Specman) or **Vera** for complex testbenches. This created a "language gap": designers spoke Verilog, verifiers spoke something else.
 
-**SystemVerilog (IEEE 1800)** changed everything. It combined:
-1.  **Hardware Description:** Everything from Verilog.
-2.  **Verification Features:** Classes, Assertions, Coverage (from Vera).
-3.  **C-like Syntax:** Types, Structs, Enums.
+**SystemVerilog** closed that gap. Accellera built it from donations, and IEEE standardized it as IEEE 1800-2005. It combined:
+1.  **Hardware description:** All of Verilog, plus design extensions from Co-Design Automation's **Superlog** donation.
+2.  **Verification features:** Classes, constrained randomization and functional coverage, largely based on Synopsys's **OpenVera** (Vera) donation. Assertions (SVA) grew from the **OpenVera Assertions** donation.
+3.  **C-like types:** `typedef`, structs, enums, 2-state `int` and `bit`.
 
-It became the first true **Hardware Design and Verification Language (HDVL)**.
+The **e** language was not merged into SystemVerilog. It was standardized separately as IEEE 1647.
+
+The result is one language for both design and verification.
 
 ## Verilog vs. SystemVerilog
 
-Why did we switch? Compare them yourself.
+Why did we switch? Compare the two side by side, then test the claim that every Verilog file compiles unchanged as SystemVerilog.
 
 <VerilogVsSystemVerilog />
 
@@ -45,15 +44,28 @@ endclass
 The solver does the hard work for you.
 
 ### 3. Functional Coverage
-You can define "Covergroups" to track what values a variable has taken (IEEE 1800-2023 §19).
+You can define "Covergroups" to track what values a variable has taken (IEEE 1800-2023 §19). A covergroup embedded in a class can see the class's fields and is created in `new()` (§19.4):
 ```systemverilog
-covergroup cg_len;
-  coverpoint length {
-    bins low = {[1:32]};
-    bins high = {[33:100]};
-  }
-endgroup
+class Packet;
+  rand bit [7:0] length;
+  constraint c_len { length > 0; length < 100; }
+
+  covergroup cg_len;          // embedded covergroup: sees length
+    coverpoint length {
+      bins low  = {[1:32]};
+      bins high = {[33:99]};  // length < 100, so 100 is never legal
+    }
+  endgroup
+
+  function new();
+    cg_len = new();           // embedded covergroups are created in new()
+  endfunction
+endclass
+
+// After each p.randomize(), record the value:
+// p.cg_len.sample();
 ```
+This covergroup has no clocking event, so the testbench calls `sample()` explicitly after each randomization.
 
 ### 4. Assertions (SVA)
 A concise way to specify temporal behavior (IEEE 1800-2023 §16).
@@ -62,38 +74,38 @@ A concise way to specify temporal behavior (IEEE 1800-2023 §16).
 
 ## Interview Questions
 
-<Card className="mt-8 border-slate-700 bg-slate-900">
+<Card className="mt-8">
   <CardHeader>
     <CardTitle>Ready for the Interview?</CardTitle>
   </CardHeader>
   <CardContent className="space-y-4">
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        Is SystemVerilog backward compatible with Verilog?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">Is SystemVerilog backward compatible with Verilog?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p>Yes. SystemVerilog is a superset of Verilog-2005 (IEEE 1364-2005). Almost all legacy Verilog code will compile as SystemVerilog. However, SystemVerilog introduces new keywords (like <code>class</code>, <code>bit</code>, <code>logic</code>), so if your legacy code used these as variable names, you might have conflicts.</p>
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
+        <p>Mostly. IEEE 1364-2005 Verilog was merged into IEEE 1800-2009, so every Verilog construct is part of SystemVerilog. But SystemVerilog reserves new keywords (such as <code>logic</code>, <code>bit</code>, <code>int</code>, <code>class</code>), and a keyword cannot be used as an identifier. Legacy code such as <code>reg [7:0] logic;</code> fails to compile with a SystemVerilog keyword set. Wrap such files in <code>&#96;begin_keywords "1364-2005"</code> … <code>&#96;end_keywords</code> (IEEE 1800-2023 §22.14), or rename the signals.</p>
       </div>
     </details>
 
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        What is the difference between `reg`, `wire`, and `logic`?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">What is the difference between `reg`, `wire`, and `logic`?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
         <p>In Verilog, <code>wire</code> is for connections (driven by assign/gates) and <code>reg</code> is for storage (driven by procedural blocks). This was confusing because <code>reg</code> doesn't always imply a register.</p>
-        <p>SystemVerilog introduced <strong><code>logic</code></strong> (IEEE 1800-2023 §6.11.2), which can be used for <em>both</em> (when there is a single driver). It eliminates the need to constantly switch types when refactoring logic. Note: <code>logic</code> is 4-state (0, 1, X, Z), just like <code>reg</code> and <code>wire</code>. The key limitation: <code>logic</code> cannot have multiple drivers — use <code>wire</code> for that.</p>
+        <p>SystemVerilog introduced <strong><code>logic</code></strong> as a clearer name for the same 4-state type as <code>reg</code> (IEEE 1800-2023 §6.11.2). A <code>logic</code> variable can be written by procedural code <em>or</em> driven by a continuous assignment or port, so you rarely need to switch types when refactoring. The precise rule (§6.5): a variable can be written by any number of procedural statements (the last write wins), <em>or</em> by exactly one continuous assignment or one port. It is an error to have two continuous drivers, or to mix continuous and procedural writes. When a signal truly needs several continuous drivers (a tri-state bus, for example), use a net such as <code>wire</code>, whose resolution function combines them.</p>
       </div>
     </details>
 
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        Name the four key verification features SystemVerilog adds over Verilog.
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">Name the four key verification features SystemVerilog adds over Verilog.</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
         <p><strong>1. OOP</strong> — classes with inheritance and polymorphism for reusable testbench components.</p>
         <p><strong>2. Constrained Randomization</strong> — solver-driven stimulus generation with declarative constraints.</p>
         <p><strong>3. Functional Coverage</strong> — covergroups and coverpoints to measure verification completeness.</p>
@@ -106,5 +118,6 @@ A concise way to specify temporal behavior (IEEE 1800-2023 §16).
 
 ## References & Next Topics
 - IEEE 1800-2023 SystemVerilog Language Reference Manual
-- IEEE 1364-2005 Verilog (predecessor standard, now incorporated into IEEE 1800)
+- IEEE 1364-2005 Verilog (predecessor standard, merged into IEEE 1800 in 2009)
+- IEEE 1647 (the *e* verification language, standardized separately from SystemVerilog)
 - Next: [Core Data Types](../F2A_Core_Data_Types/)

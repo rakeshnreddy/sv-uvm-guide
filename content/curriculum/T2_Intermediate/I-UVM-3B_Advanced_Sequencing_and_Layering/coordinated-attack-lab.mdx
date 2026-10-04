@@ -11,58 +11,130 @@ export const metadata = {
   uvm_concept_tags={["virtual sequence", "coordination", "sequencer"]}
 >
 
+  *Page 8 of 8 in I-UVM-3B. You need [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) and [UVM Virtual Sequencer: Dispatch Order](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer).*
+
   ## Introduction
 
-  In this lab, you will write a virtual sequence that coordinates two separate agents: a \`cfg_agent\` and a \`data_agent\`. You must ensure that the configuration is written via the \`cfg_agent\` *before* the data packets are sent via the \`data_agent\`.
+  The DUT has a slow configuration interface (`cfg_agent`) and a fast data interface (`data_agent`). It silently drops any data that arrives before configuration is complete. You will write the virtual sequence, wire its sequencer handles, and start it from the test so that **no data item is driven before the last configuration item has completed**.
 
   ## Objectives
 
-  1. Create a virtual sequence class.
-  2. Obtain handles to the target sequencers.
-  3. Link the virtual sequencer with the individual agent sequencers in the environment's connect phase.
-  4. Use a \`fork...join\` or sequential steps to correctly order the configuration and data sequences.
+  1. Declare a typed `p_sequencer` for the virtual sequencer.
+  2. Create the configuration and data sequences.
+  3. Start them so the order requirement holds, and justify the choice of sequential calls over `fork … join`.
+  4. Assign the virtual sequencer's handles in the env's `connect_phase`.
+  5. Start the virtual sequence from the test inside an objection.
 
-  ## Lab Task: Write the Virtual Sequence Body
+  ## Lab Task: Complete the Starter Code
 
-  Examine the solution below to see how a \`coordinated_vseq\` manages its subordinate sequences.
+  Fill in the five `TODO`s. Write your answer before opening the solution.
+
+  ```systemverilog
+  class lab_vsqr extends uvm_sequencer;
+    `uvm_component_utils(lab_vsqr)
+    cfg_sequencer  cfg_sqr;
+    data_sequencer data_sqr;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+  endclass
+
+  class coordinated_vseq extends uvm_sequence;
+    `uvm_object_utils(coordinated_vseq)
+    // TODO 1: give this sequence a typed p_sequencer for lab_vsqr
+
+    function new(string name = "coordinated_vseq");
+      super.new(name);
+    endfunction
+
+    virtual task body();
+      cfg_seq  c_seq;
+      data_seq d_seq;
+      // TODO 2: create c_seq and d_seq with the factory
+      // TODO 3: start them so that no data item is driven before
+      //         the last configuration item has completed
+    endtask
+  endclass
+
+  // TODO 4: in lab_env::connect_phase, point vsqr.cfg_sqr and vsqr.data_sqr
+  //         at cfg_agt.sqr and data_agt.sqr
+  // TODO 5: in lab_test::run_phase, start a coordinated_vseq on env.vsqr
+  //         so that run_phase stays alive until it finishes
+  ```
+
+  ## Check Your Work
+
+  Answer these before you look at the solution. Each one has a model-checked answer in the [dispatch explorer](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer).
+
+  1. With config items taking 20 ns each (2 items) and data items 10 ns each (3 items), at what time does your first data item reach the data driver? (Set the explorer to *one after another* and compare.)
+  2. If you had written `fork c_seq.start(...); d_seq.start(...); join`, when would the first data item be driven, and would the test notice?
+  3. You skip TODO 4 for `data_sqr`. What does the log show, and at what time?
+  4. You start the sequence without raising an objection. When does `run_phase` end?
+
+  <details className="my-4 rounded-xl border border-border/70 p-3">
+  <summary className="cursor-pointer font-semibold">Show the answers to the questions</summary>
+
+  1. At 40 ns: `c_seq.start()` returns after its last `item_done()`, and only then does `d_seq.start()` run.
+  2. At 0 ns, in parallel with the first configuration item. The DUT drops that data silently, so only a scoreboard that expects it would notice.
+  3. `UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied to start item in …`, at 40 ns, when `d_seq`'s first `start_item()` runs with a null sequencer.
+  4. At 0 ns, before any item is driven: nothing holds the phase open.
+
+  </details>
+
+  <details className="my-4 rounded-xl border border-border/70 p-3">
+  <summary className="cursor-pointer font-semibold">Show a reference solution</summary>
 
   <InteractiveCode
     language="systemverilog"
     fileName="coordinated_vseq.sv"
     code={`class coordinated_vseq extends uvm_sequence;
   \`uvm_object_utils(coordinated_vseq)
+  \`uvm_declare_p_sequencer(lab_vsqr)
 
-  // Target sequencer handles (usually set by the virtual sequencer)
-  cfg_sequencer  p_cfg_sqr;
-  data_sequencer p_data_sqr;
-
-  function new(string name="coordinated_vseq");
+  function new(string name = "coordinated_vseq");
     super.new(name);
   endfunction
 
   virtual task body();
-    cfg_seq c_seq;
+    cfg_seq  c_seq;
     data_seq d_seq;
-
     c_seq = cfg_seq::type_id::create("c_seq");
     d_seq = data_seq::type_id::create("d_seq");
 
-    // Start Configuration First
-    c_seq.start(p_cfg_sqr);
-
-    // After Config is done, Start Data
-    d_seq.start(p_data_sqr);
+    c_seq.start(p_sequencer.cfg_sqr);   // returns after the last config item_done()
+    d_seq.start(p_sequencer.data_sqr);  // only then does data start
   endtask
-endclass`}
+endclass
+
+// lab_env
+function void connect_phase(uvm_phase phase);
+  vsqr.cfg_sqr  = cfg_agt.sqr;
+  vsqr.data_sqr = data_agt.sqr;
+endfunction
+
+// lab_test
+task run_phase(uvm_phase phase);
+  coordinated_vseq vseq = coordinated_vseq::type_id::create("vseq");
+  phase.raise_objection(this);
+  vseq.start(env.vsqr);
+  phase.drop_objection(this);
+endtask`}
     explanationSteps={[
-      { target: "5-6", title: "Target Handles", explanation: "Handles to the config and data sequencers." },
-      { target: "21", title: "First Step", explanation: "The configuration sequence is started on the config sequencer." },
-      { target: "24", title: "Second Step", explanation: "Because there is no fork...join, the data sequence waits for cfg_seq to finish before it starts." }
+      { target: "3", title: "TODO 1: typed p_sequencer", explanation: "`uvm_declare_p_sequencer declares p_sequencer as lab_vsqr and casts m_sequencer when the sequence starts." },
+      { target: "12-13", title: "TODO 2: create", explanation: "Declarations come first, then the factory calls." },
+      { target: "15-16", title: "TODO 3: order", explanation: "start() blocks until the child's body() returns, so two sequential calls order configuration before data. fork...join would run them in parallel." },
+      { target: "21-24", title: "TODO 4: wiring", explanation: "connect_phase runs after every component is built, so the agent sequencers exist." },
+      { target: "27-32", title: "TODO 5: start inside an objection", explanation: "vseq.start() returns when body() is done, so the objection covers the whole scenario." }
     ]}
   />
 
+  </details>
+
   ## Conclusion
 
-  By successfully coordinating these two interfaces, you've demonstrated a core use-case of Virtual Sequences: orchestra-level control over multiple independent agents within the DUT environment.
+  The virtual sequencer only gives the sequence handles. The order of traffic across agents comes entirely from how `body()` calls `start()`. Sequential calls order; `fork … join` overlaps; `fork … join_none` needs a later `wait fork`.
+
+  Back to the [I-UVM-3B overview](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index), or continue to [I-UVM-4: Policy Classes](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index).
 
 </InfoPage>

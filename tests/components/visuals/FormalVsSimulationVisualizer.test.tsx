@@ -1,92 +1,73 @@
-import React from 'react';
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, act } from '@testing-library/react';
-import FormalVsSimulationVisualizer from '@/components/visuals/FormalVsSimulationVisualizer';
+import React from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-describe('FormalVsSimulationVisualizer', () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-  });
+import FormalVsSimulationVisualizer from "@/components/visuals/FormalVsSimulationVisualizer";
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
+const commit = (label: RegExp) => {
+  fireEvent.click(screen.getAllByLabelText(label)[0]);
+  fireEvent.click(screen.getAllByRole("button", { name: /lock in prediction/i })[0]);
+};
 
-  it('renders with both panels visible', () => {
+describe("FormalVsSimulationVisualizer", () => {
+  it("hides formal results until the learner commits a prediction", () => {
     render(<FormalVsSimulationVisualizer />);
-    expect(screen.getByText('Formal vs Simulation Explorer')).toBeInTheDocument();
-    expect(screen.getByText('Simulation')).toBeInTheDocument();
-    expect(screen.getByText('Formal Proof')).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Formal vs simulation explorer" })).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Formal results" })).not.toBeInTheDocument();
+    commit(/^Both assertions are proven\.$/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    const results = screen.getByRole("region", { name: "Formal results" });
+    expect(within(results).getAllByText("proven")).toHaveLength(2);
+    expect(within(results).getByText(/It depends on a_no_push_when_full and a_no_pop_when_empty/)).toBeInTheDocument();
   });
 
-  it('displays the property list', () => {
+  it("dropping a_no_push_when_full fails p_count_in_range (not p_full_is_correct) and the replay flags it as spurious", () => {
     render(<FormalVsSimulationVisualizer />);
-    expect(screen.getByText('p_full_is_correct')).toBeInTheDocument();
-    expect(screen.getByText('p_no_overflow')).toBeInTheDocument();
-    expect(screen.getByText('p_no_underflow')).toBeInTheDocument();
-    expect(screen.getByText('p_cover_fill_drain')).toBeInTheDocument();
+    const toggle = screen.getByRole("button", { name: /^a_no_push_when_full: enabled\. Toggle assumption/ });
+    fireEvent.click(toggle);
+    expect(screen.getByRole("button", { name: /^a_no_push_when_full: disabled/ })).toHaveAttribute("aria-pressed", "false");
+
+    // Wrong prediction gets a diagnosis that names the assertion that really fails.
+    commit(/^p_full_is_correct gets a counterexample; p_count_in_range is proven\.$/);
+    expect(screen.getByText(/Not quite\./)).toBeInTheDocument();
+    expect(screen.getAllByText(/p_count_in_range has a counterexample at edge 5/).length).toBeGreaterThan(0);
+
+    const trace = screen.getByRole("region", { name: "Counterexample trace" });
+    expect(within(trace).getByRole("group", { name: /Counterexample for p_count_in_range/ })).toBeInTheDocument();
+    expect(within(trace).queryByText(/Replay verdict/)).not.toBeInTheDocument();
+    fireEvent.click(within(trace).getByLabelText(/No\. Formal used stimulus/));
+    fireEvent.click(within(trace).getByRole("button", { name: /lock in prediction/i }));
+    expect(within(trace).getByText(/spurious counterexample/)).toBeInTheDocument();
+    expect(within(trace).getByText(/a_no_push_when_full is checked, and it fails at edge 4/)).toBeInTheDocument();
+    expect(within(trace).getByLabelText("Generated replay sequence").textContent).toContain("bit push_v[5] = '{1, 1, 1, 1, 1};");
   });
 
-  it('shows "All Properties Proven" when formal runs with all assumptions', () => {
+  it("the late-flag RTL produces a genuine counterexample that simulation only catches with some seeds", () => {
     render(<FormalVsSimulationVisualizer />);
-    const runFormalBtn = screen.getByRole('button', { name: /Run Proofs/i });
-    fireEvent.click(runFormalBtn);
-    expect(screen.getByText('All Properties Proven')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /Bug: full flag is registered/ }));
+    commit(/^Both assertions get counterexamples\.$/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Show CEX trace for p_full_is_correct" }));
+    const trace = screen.getByRole("region", { name: "Counterexample trace" });
+    fireEvent.click(within(trace).getByRole("button", { name: /Reveal without predicting/ }));
+    expect(within(trace).getByText(/real DUT bug/)).toBeInTheDocument();
+
+    const sim = screen.getByRole("region", { name: "Constrained-random simulation" });
+    expect(within(sim).getByText(/fails at edge 15/)).toBeInTheDocument();
+    const seeds = within(sim).getByRole("radiogroup", { name: "Random seed" });
+    fireEvent.keyDown(within(seeds).getByRole("radio", { checked: true }), { key: "ArrowRight" });
+    expect(within(seeds).getByRole("radio", { checked: true })).toHaveTextContent("seed 2");
+    expect(within(sim).getAllByText(/formal found a counterexample this seed never exercised/).length).toBeGreaterThan(0);
   });
 
-  it('shows counterexample when an assumption is disabled and formal runs', () => {
+  it("over-constraining shows a vacuous proof, an unreachable cover, and a simulation assumption failure", () => {
     render(<FormalVsSimulationVisualizer />);
-    // Disable p_no_overflow assumption — the shield toggle buttons
-    const toggleButtons = screen.getAllByTitle(/Disable assumption/i);
-    fireEvent.click(toggleButtons[0]); // disable p_no_overflow
-
-    const runFormalBtn = screen.getByRole('button', { name: /Run Proofs/i });
-    fireEvent.click(runFormalBtn);
-
-    expect(screen.getByText('Counterexample Found')).toBeInTheDocument();
-    expect(screen.getByText(/push fires while full/i)).toBeInTheDocument();
-  });
-
-  it('shows "Replay as UVM Seed" button when counterexample is found', () => {
-    render(<FormalVsSimulationVisualizer />);
-    const toggleButtons = screen.getAllByTitle(/Disable assumption/i);
-    fireEvent.click(toggleButtons[0]);
-
-    const runFormalBtn = screen.getByRole('button', { name: /Run Proofs/i });
-    fireEvent.click(runFormalBtn);
-
-    expect(screen.getByRole('button', { name: /Replay as UVM Seed/i })).toBeInTheDocument();
-  });
-
-  it('resets to initial state on Reset click', () => {
-    render(<FormalVsSimulationVisualizer />);
-
-    // Run formal
-    const runFormalBtn = screen.getByRole('button', { name: /Run Proofs/i });
-    fireEvent.click(runFormalBtn);
-    expect(screen.getByText('All Properties Proven')).toBeInTheDocument();
-
-    // Reset
-    const resetBtn = screen.getByRole('button', { name: /Reset/i });
-    fireEvent.click(resetBtn);
-
-    // "All Properties Proven" should be gone
-    expect(screen.queryByText('All Properties Proven')).not.toBeInTheDocument();
-    expect(screen.queryByText('Counterexample Found')).not.toBeInTheDocument();
-  });
-
-  it('starts simulation on Run UVM Test click', () => {
-    render(<FormalVsSimulationVisualizer />);
-    const runSimBtn = screen.getByRole('button', { name: /Run UVM Test/i });
-    fireEvent.click(runSimBtn);
-
-    // Advance timers to see cycles progress
-    act(() => {
-      vi.advanceTimersByTime(1600); // 4 cycles at 400ms each
-    });
-
-    // Count should show progress
-    const countElements = screen.getAllByText('4');
-    expect(countElements.length).toBeGreaterThanOrEqual(1);
+    fireEvent.click(screen.getByRole("radio", { name: /Bug: full flag is registered/ }));
+    fireEvent.click(screen.getByRole("button", { name: /^a_never_fill: disabled/ }));
+    fireEvent.click(screen.getByRole("button", { name: /Reveal without predicting/ }));
+    const results = screen.getByRole("region", { name: "Formal results" });
+    expect(within(results).getByText("proven (vacuous)")).toBeInTheDocument();
+    expect(within(results).getByText("unreachable")).toBeInTheDocument();
+    expect(screen.getByText(/fails at edge 14\. The legal environment does what this assumption forbids/)).toBeInTheDocument();
   });
 });

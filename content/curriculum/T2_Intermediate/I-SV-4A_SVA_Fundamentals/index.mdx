@@ -7,68 +7,164 @@ flashcards: "I-SV-4A_Assertions_SVA_Fundamentals"
 import { InteractiveCode, Quiz, InterviewQuestionPlayground } from '@/components/ui';
 
 ## Quick Take
-- **What it is:** SystemVerilog Assertions let you describe how signals should behave over time and automatically flag violations.
-- **Why it matters:** Assertions catch protocol bugs the instant they occur, shrink debug time, and document the contract between blocks.
-- **The Analogy:** Think of SVA as highway patrol. Sequences spot patterns like “car stops at red”; properties turn them into laws; an `assert` issues a ticket when a driver misbehaves.
+- **What it is:** SystemVerilog Assertions (SVA) describe how signals must behave over clock cycles. A simulator or a formal tool checks the description on every cycle and flags violations.
+- **Why it matters:** Assertions catch protocol bugs on the cycle they happen, shrink debug time, and document the contract between blocks.
+- **The rule you will use every day:** a concurrent assertion starts a new **attempt** at every tick of its clock (§16.14.5). Each attempt reads values **sampled just before the edge** (§16.5.1) and ends as a pass, a fail, a vacuous success, or a disabled attempt.
+- **The Analogy:** Think of SVA as highway patrol. Sequences spot patterns like "car stops at red"; properties turn them into laws; an `assert` issues a ticket when a driver misbehaves; a `cover` proves the patrol ever saw a car.
 
-> **Retention Hook:** Repeat “Sequence = pattern, Property = rule, Assert = enforcement” before you leave this page.
+> **Retention Hook:** "Sequence = pattern, Property = rule, Assert = enforce, Cover = evidence."
 > *SystemVerilog Assertions are formally defined in **IEEE 1800-2023, Clause 16**.*
 
 ## Build Your Mental Model
 ### Traffic Rules for Signals
-How do you guarantee an `ack` follows a `req` within three cycles? Assertions codify those timing rules. Immediate assertions are quick checkpoints inside procedural code; concurrent assertions sit alongside the design watching every clock tick.
+How do you guarantee that an `ack` follows a `req` within three cycles? Assertions turn such timing rules into executable checks. Immediate assertions are quick checkpoints inside procedural code; concurrent assertions sit beside the design and check every clock tick.
 
 ### Immediate vs. Concurrent Assertions
-Immediate assertions execute once, exactly where they are written. Concurrent assertions evaluate on a clock edge and observe time windows. Use concurrent assertions for protocol rules.
+Immediate assertions execute once, exactly where they are written, on the current values. Concurrent assertions are evaluated at each tick of their clock, in the Observed region, on sampled values (§16.5). Use concurrent assertions for protocol rules.
+
+### Assertions read the past
+At each clock edge, a concurrent assertion uses the value every signal had **just before** the edge: its Preponed sample (§16.5.1). A flop output that changes on edge 2 is still 0 when the assertion samples it at edge 2, and is first seen as 1 at edge 3. This is the same time-slot ladder you met in [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions): the assertion samples in Preponed, evaluates in Observed, and runs its action block in Reactive. Because it never reads values written on the same edge, it is immune to the Active-region races from that lesson.
+
+Keep this picture in mind for everything below: the triangle marks the value the assertion uses at each edge.
+
+<VisualRecap
+  title="Assertions read the past"
+  rule="At each tick, a concurrent assertion uses the values sampled just before the edge (Preponed, §16.5.1). A value written on edge k is first seen at edge k+1."
+  code={`// req is a flop output that rises on edge 2 (NBA region)
+a_rise: assert property (@(posedge clk) $rose(req) |=> ack);
+// edge 2 samples req = 0, edge 3 samples req = 1:
+// $rose(req) is true at edge 3, so ack is checked at edge 4`}
+  mistake="Expecting an assertion at edge 2 to see the value the design wrote on edge 2. It sees the old value, so $rose fires one edge later than the waveform seems to suggest."
+  inTestbench="Interface and bind-file assertions on DUT ports. A UVM monitor that samples through a clocking block reads the same Preponed values, so the assertion and the scoreboard agree on what happened at each edge."
+>
+  <svg viewBox="0 0 320 186" role="img" aria-label="req changes just after edge 2. The assertion samples req = 0 at edges 1 and 2 and req = 1 at edge 3, so $rose(req) is true at edge 3." style={{ width: "100%", maxWidth: 360 }}>
+    <text x="4" y="34" fontSize="11" fill="currentColor">clk</text>
+    <path d="M40,40 L70,40 L70,20 L110,20 L110,40 L150,40 L150,20 L190,20 L190,40 L230,40 L230,20 L270,20 L270,40 L300,40" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="4" y="94" fontSize="11" fill="currentColor">req</text>
+    <path d="M40,100 L162,100 L162,76 L300,76" fill="none" stroke="rgb(6,182,212)" strokeWidth="2" />
+    <line x1="70" y1="14" x2="70" y2="112" stroke="currentColor" strokeOpacity="0.35" strokeDasharray="3 3" />
+    <line x1="150" y1="14" x2="150" y2="112" stroke="currentColor" strokeOpacity="0.35" strokeDasharray="3 3" />
+    <line x1="230" y1="14" x2="230" y2="112" stroke="currentColor" strokeOpacity="0.35" strokeDasharray="3 3" />
+    <text x="70" y="66" fontSize="11" textAnchor="middle" fill="rgb(139,92,246)">▼0</text>
+    <text x="150" y="66" fontSize="11" textAnchor="middle" fill="rgb(139,92,246)">▼0</text>
+    <text x="230" y="66" fontSize="11" textAnchor="middle" fill="rgb(139,92,246)">▼1</text>
+    <text x="162" y="72" fontSize="10" textAnchor="middle" fill="rgb(245,158,11)">◆</text>
+    <text x="70" y="126" fontSize="10" textAnchor="middle" fill="currentColor">edge 1</text>
+    <text x="150" y="126" fontSize="10" textAnchor="middle" fill="currentColor">edge 2</text>
+    <text x="230" y="126" fontSize="10" textAnchor="middle" fill="currentColor">edge 3</text>
+    <text x="230" y="144" fontSize="10" textAnchor="middle" fill="rgb(16,185,129)">$rose(req) true</text>
+    <text x="8" y="164" fontSize="10" fill="currentColor" fillOpacity="0.75">▼ value sampled just before the edge (Preponed)</text>
+    <text x="8" y="180" fontSize="10" fill="currentColor" fillOpacity="0.75">◆ req written on edge 2 (NBA), first sampled at edge 3</text>
+  </svg>
+</VisualRecap>
+
+### From sequence to assertion
+A `sequence` names a pattern, a `property` turns it into a rule with a clock, and `assert` or `cover` puts the rule to work. Note which statement covers what: the cover statement watches the *sequence*, not the implication.
 
 <InteractiveCode>
 ```systemverilog
-// Sequence: request followed by acknowledge one cycle later
+// Sequence: the pattern (req, then ack on the next tick)
 sequence s_req_then_ack;
   req ##1 ack;
 endsequence
 
+// Property: the rule. Only attempts that see req are checked.
 property p_req_implies_ack;
-  @(posedge clk)
-  req |-> s_req_then_ack;
+  @(posedge clk) disable iff (!rst_n)
+    req |-> s_req_then_ack;   // equivalent to: req |=> ack
 endproperty
 
-// Assertions and coverage derived from the property
-assert_req_ack: assert property (p_req_implies_ack)
+a_req_ack: assert property (p_req_implies_ack)
   else $error("Request not acknowledged in one cycle");
 
-cover_req_ack: cover property (p_req_implies_ack);
+// Coverage evidence: cover the sequence itself, not the implication
+c_req_ack: cover property (@(posedge clk) disable iff (!rst_n) s_req_then_ack);
 ```
 </InteractiveCode>
 
 ### Temporal Operators at a Glance
-- `##1` — delay by one cycle; `##[1:3]` — permit a range.
-- `|->` — overlapping implication (consequent can happen now); `|=>` — non-overlapping (consequent must happen on the next sample).
-- `throughout`, `until`, `s_eventually` — express “holds while” and liveness expectations.
+- `##1` delays by exactly one tick; `##[1:3]` accepts any delay from one to three ticks; `##[1:$]` has no upper bound.
+- `|->` (overlapping implication) starts the consequent on the edge where the antecedent matched. `|=>` (non-overlapping) starts it on the next edge. `a |=> b` means the same as `a |-> ##1 b` (§16.12.7).
+- Repetition (`[*N]`, `[->N]`, `[=N]`) and the conditions `throughout` and `within` are covered in [I-SV-4B](../I-SV-4B_Advanced_Temporal_Logic/).
+
+### Every edge starts an attempt
+Each attempt is evaluated on its own, and each one ends in one of five ways:
+
+| Result | When | What the tool does |
+|---|---|---|
+| Pass ✓ | The property held from this start edge | Runs the pass action, counts a real success |
+| Fail ✕ | A finite prefix proved it cannot hold | Runs the fail action (`$error` by default) |
+| Vacuous success ○ | An implication whose antecedent did not match | Not considered a pass or a failure (§16.14.8) |
+| Pending … | Still running when the simulation stops | In `assert property` a sequence is weak, so this is not a failure (§16.12.2) |
+| Disabled ⊘ | `disable iff` was true while the attempt was in flight | Neither pass nor fail; no action block runs (§16.12, §16.14.1) |
+
+The most common beginner bug follows directly from this table. A property that is just a sequence, such as `req ##2 ack`, has no antecedent, so every attempt must match `req` at its own start edge. It **fails on every idle edge** where `req` is 0. It is never vacuous (§16.14.8 a). Write `req |-> ##2 ack` when the check should start only after a request.
+
+In the lab below, mark what you expect each attempt to report before you press Evaluate. Then switch to **Debug** and work through the four classic mistakes: a bare sequence, `|->` where `|=>` was meant, `$past` across reset, and a vacuous pass that hides a dead antecedent.
 
 <SvaSequenceWaveformVisualizer />
 
+### Sampled-value functions
+These functions compare **sampled** values at consecutive ticks of the assertion clock (§16.9.3):
+
+| Function | True when |
+|---|---|
+| `$rose(e)` | the LSB of `e` changed to 1 since the previous tick |
+| `$fell(e)` | the LSB of `e` changed to 0 since the previous tick |
+| `$stable(e)` | `e` did not change since the previous tick |
+| `$changed(e)` | `e` changed since the previous tick |
+| `$past(e, N)` | returns `e` as sampled N ticks earlier (N defaults to 1 and must be at least 1) |
+| `$sampled(e)` | returns the sampled value of `e` (redundant inside an assertion) |
+
+Two corner cases matter in real benches:
+- **The first tick.** At or before the first clock tick there is no previous sample, so these functions compare against the *default sampled value*: X for a `logic` signal (§16.5.1, §16.9.3). A `req` that starts at 1 therefore gives `$rose(req)` true at the first tick, and an active-low `rst_n` that starts at 0 gives `$fell(rst_n)` true there.
+- **Too few ticks for `$past`.** If fewer than N ticks have happened, `$past(e, N)` returns the default sampled value (§16.9.3), X for `logic`. A check like `q == $past(d)` then sees an unknown at the first tick, and an unknown condition counts as false (§16.6). The same function looks straight back into the reset period on the first edge after reset. Guard it with `!$past(rst) |-> ...` (the lab's third debug case).
+
+### Vacuity
+An implication `a |-> b` whose antecedent `a` does not match succeeds **vacuously**: nothing about `b` was checked. The standard calls it a success, but says an assertion with a vacuous success "is not considered a pass or a failure" (§16.14.8). A sequence used as a property is never vacuous (§16.14.8 a).
+
+Vacuity hides bugs. An antecedent with the wrong polarity, or one that the stimulus never produces, makes an assertion that can never fail. Three habits catch this:
+- Read the vacuous count in the assertion report, not just the failure count.
+- Cover the trigger: `cover property (@(posedge clk) req && rst_n);` stays at zero if the antecedent never happens.
+- Cover sequences, not implications. For `cover property`, tools report attempts, successes and vacuous successes separately (§16.14.3), and an implication can be "covered" without its trigger ever firing.
+
+### disable iff
+`disable iff (expr)` attaches a reset condition to a property (§16.12):
+- If the condition is true at any time between the start of an attempt and its end, that attempt is **disabled**. It reports neither a pass nor a failure, and its action block does not run (§16.14.1). Attempts that start while the condition is true are disabled too.
+- The condition uses **current** values, not sampled values (§16.12), so an asynchronous reset aborts attempts in flight as soon as it changes. Write `disable iff ($sampled(rst))` if you want the sampled value (§16.9.3).
+- A sampled-value function such as `$past` inside the condition needs an explicit clocking event, and `disable iff` cannot be nested (§16.12).
+- `default disable iff !rst_n;` in a module, interface or program applies one condition to every concurrent assertion in that scope (§16.15).
+
+### assume and cover
+The same property can be used three ways (§16.2):
+- `assert property (p)` states an obligation on the design. A failure is reported.
+- `assume property (p)` states an assumption about the environment. Formal tools use it to constrain inputs; simulators check it and report a failure like an assertion (§16.14.2). Put protocol rules for DUT *inputs* here.
+- `cover property (p)` and `cover sequence (s)` collect evidence that a behavior happened. `cover property` counts at most one success per attempt; `cover sequence` counts every match (§16.14.3).
+
 ## Make It Work
-1. **Identify intent:** Translate protocol rules or handshake timing into short English statements.
-2. **Capture the pattern:** Write a `sequence` that names the events and timing separation.
-3. **Promote to a rule:** Wrap the sequence inside a `property`, add clocking, and select `|->` or `|=>` based on the required alignment.
-4. **Enforce & observe:** Instantiate the property with `assert` (and optionally `cover`) in an interface, bind file, or checker class.
+1. **Identify intent:** Translate protocol rules or handshake timing into short English statements ("after a request, ack within three cycles").
+2. **Name the trigger:** The condition that starts the check becomes the antecedent. Never assert a bare sequence for a conditional rule.
+3. **Pick the timing:** Use `|->` when the consequent starts on the trigger's edge and `|=>` when it starts on the next edge.
+4. **Handle reset:** Add `disable iff (!rst_n)` (or a `default disable iff`), and guard `$past` after reset.
+5. **Prove it can fire:** Add a `cover` on the antecedent or on the full sequence, and check the vacuous count.
+6. **Enforce and observe:** Place the assertion in an interface, a bind file, or a checker so the DUT source stays untouched.
 
 **Checklist before moving on:**
-- [ ] You can write a sequence that mirrors a verbal spec.
-- [ ] You know when to use immediate versus concurrent assertions.
+- [ ] You can predict, for any edge, whether an attempt passes, fails, is vacuous, pending or disabled.
+- [ ] You can explain why `req ##2 ack` fails on idle cycles and `req |-> ##2 ack` does not.
 - [ ] You can choose `|->` or `|=>` to express timing intent.
+- [ ] You can explain why `$rose` fires one edge after a flop output changes.
 
 ## Push Further
-- **Layered checking:** Combine assertions with functional coverage—every property can double as a coverage point.
-- **Formal verification:** The same SVA feeds formal tools; they prove whether a property *can ever* fail.
-- **Reusable checkers:** Package assertions in interfaces or bind files so DUT code stays untouched.
-- **Memory trick:** Sequence = pattern, Property = rule, Assert/Cover = enforce/measure.
+- **Coverage evidence:** Pair every important assertion with a `cover` of its trigger or of the full sequence. A green assertion with zero real passes is a hole, not a success.
+- **Formal verification:** The same SVA feeds formal tools. They try to prove that a property can never fail, using `assume` properties as constraints on the inputs.
+- **Reusable checkers:** Named sequences and properties can be declared in packages (§16.12). The `assert property` statements themselves go in modules, interfaces, programs, generate blocks, checkers or procedures (§16.14). Bind them to the DUT so its source stays untouched (I-SV-4C).
+- **Memory trick:** Sequence = pattern, Property = rule, Assert = enforce, Assume = constrain, Cover = evidence.
 
 ## Practice & Reinforce
-- Flashcards – Drill the core vocabulary (`sequence`, `property`, `bind`, temporal operators).
-- Micro-lab – Write a property enforcing “burst writes must stay aligned” and bind it to a virtual interface.
-- Quiz – Confirm you understand assertions below.
+- Flashcards: drill the core vocabulary (`sequence`, `property`, `disable iff`, vacuity, temporal operators).
+- Micro-lab: write a property enforcing "burst writes must stay aligned", cover its trigger, and bind it to a virtual interface.
+- Quiz: confirm you understand assertions below.
 
   <Quiz
     questions={[
@@ -76,11 +172,11 @@ cover_req_ack: cover property (p_req_implies_ack);
         question: `What is the primary difference between an immediate and a concurrent assertion?`,
         answers: [
           { text: `Immediate assertions can only be used in modules.`, correct: false },
-          { text: `Concurrent assertions are checked on every clock cycle over time; immediate assertions are checked once when the statement executes.`, correct: true },
+          { text: `Concurrent assertions start an attempt at every tick of their clock and use sampled values; immediate assertions check once, when the statement executes.`, correct: true },
           { text: `Immediate assertions cannot have a failure message.`, correct: false },
           { text: `Concurrent assertions do not require a clock.`, correct: false }
         ],
-        explanation: `Concurrent assertions run alongside the design and evaluate every sampling event, whereas immediate assertions are single-point checks.`
+        explanation: `Concurrent assertions are evaluated at every clock tick on Preponed-sampled values (§16.5, §16.5.1). Immediate assertions are procedural statements that check current values when they execute.`
       },
       {
         question: `In the property \`req |-> ##[1:5] gnt;\`, what does it specify?`,
@@ -90,7 +186,27 @@ cover_req_ack: cover property (p_req_implies_ack);
           { text: `req and gnt must both be high for 5 cycles.`, correct: false },
           { text: `gnt must be high one cycle before req.`, correct: false }
         ],
-        explanation: `The delay \`##[1:5]\` widens the acceptance window so the acknowledgement may arrive in any of the next five samples.`
+        explanation: `The delay \`##[1:5]\` widens the acceptance window so the acknowledgement may arrive at any of the next five ticks.`
+      },
+      {
+        question: `\`assert property (@(posedge clk) req ##2 ack);\` runs on a waveform where req is high only at edge 4. What does the attempt that starts at edge 0 report?`,
+        answers: [
+          { text: `A vacuous success, because req is low.`, correct: false },
+          { text: `A failure at edge 0, because a sequence used as a property must match from its start edge.`, correct: true },
+          { text: `Nothing; attempts only start when req rises.`, correct: false },
+          { text: `A pass at edge 6.`, correct: false }
+        ],
+        explanation: `A bare sequence has no antecedent, so it is never vacuous (§16.12.2, §16.14.8). Every edge starts an attempt (§16.14.5), and every idle edge fails. Use \`req |-> ##2 ack\`.`
+      },
+      {
+        question: `\`a_ok: assert property (@(posedge clk) req && !rst_n |=> ack);\` with active-low rst_n reports 0 failures over a long regression. What should you check first?`,
+        answers: [
+          { text: `Nothing; 0 failures means the DUT is correct.`, correct: false },
+          { text: `The vacuous count and a cover on the antecedent: req && !rst_n is only true during reset, so the check may never run.`, correct: true },
+          { text: `Whether |=> should be |->.`, correct: false },
+          { text: `Whether ack needs $rose.`, correct: false }
+        ],
+        explanation: `An antecedent that never matches makes every attempt a vacuous success (§16.14.8). Cover the trigger to prove the check fires.`
       }
     ]}
   />
@@ -100,7 +216,7 @@ cover_req_ack: cover property (p_req_implies_ack);
       question={`An interviewer points to a block of code containing assertions and asks: 'We have 50 instances of this module. How do we cleanly enable or disable all these assertions grouped inside a specific logical block without editing the source code?'`}
       options={[
         { text: `Pass a parameter into the module and wrap every assert inside an 'if (param)'.`, isCorrect: false, feedback: `While this works, it requires modifying the source code, which the prompt forbade.` },
-        { text: `Use system tasks like $assertoff and $asserton targeting the specific instance hierarchy.`, isCorrect: true, feedback: `Correct! The \`$assertcontrol\`, \`$assertoff\`, \`$asserton\`, and \`$assertkill\` system tasks allow testbenches to dynamically manage assertions across hierarchies without touching DUT code. This is a classic SVA management technique.` },
+        { text: `Use system tasks like $assertoff and $asserton targeting the specific instance hierarchy.`, isCorrect: true, feedback: `Correct! The \`$assertcontrol\`, \`$assertoff\`, \`$asserton\`, and \`$assertkill\` system tasks (§20.11) let testbenches manage assertions across hierarchies without touching DUT code.` },
         { text: `Add an 'ignore_bins' command to the covergroups inside the module.`, isCorrect: false, feedback: `That applies to functional coverage, not assertions.` },
         { text: `Set 'type_option.weight = 0' on the properties.`, isCorrect: false, feedback: `That's also functional coverage, not an assertion construct.` }
       ]}
@@ -111,5 +227,5 @@ cover_req_ack: cover property (p_req_implies_ack);
 - [Immediate vs. Concurrent Assertions](./immediate-vs-concurrent)
 
 ## References & Next Topics
-- **IEEE 1800-2023, Clause 16:** Assertions.
+- **IEEE 1800-2023, Clause 16:** Assertions. Key subclauses: 16.5 and 16.5.1 (sampling), 16.9.3 (sampled-value functions), 16.12 (`disable iff`), 16.12.2 (sequence properties), 16.12.7 (implication), 16.14 (assert, assume, cover), 16.14.8 (vacuity), 16.15 (default disable iff).
 - Next: [`/curriculum/T2_Intermediate/I-SV-4B_Advanced_Temporal_Logic`](../I-SV-4B_Advanced_Temporal_Logic/).

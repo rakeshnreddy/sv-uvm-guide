@@ -4,33 +4,35 @@ import {
   Item,
 } from '@/components/exercises/UvmAgentBuilderExercise';
 
-describe('checkAgentComponents', () => {
+const seq = { id: 'sequencer', name: 'Sequencer' };
+const drv = { id: 'driver', name: 'Driver' };
+const mon = { id: 'monitor', name: 'Monitor' };
+
+describe('checkAgentComponents (membership + active/passive, never order)', () => {
   it('warns and lowers score when required components are missing', () => {
-    const agent: Item[] = [{ id: 'sequencer', name: 'Sequencer' }];
+    const agent: Item[] = [seq];
     const result = checkAgentComponents(agent);
     expect(result.warnings).toContain('Missing components: Driver, Monitor');
-    expect(result.score).toBe(33);
+    expect(result.score).toBeLessThan(100);
   });
 
-  it('warns and lowers score when components are out of order', () => {
-    const agent: Item[] = [
-      { id: 'driver', name: 'Driver' },
-      { id: 'sequencer', name: 'Sequencer' },
-      { id: 'monitor', name: 'Monitor' },
-    ];
-    const result = checkAgentComponents(agent);
-    expect(result.warnings).toContain('Components are not in the correct order.');
-    expect(result.score).toBe(33);
+  it('accepts the three active-agent components in any order', () => {
+    expect(checkAgentComponents([drv, seq, mon]).score).toBe(100);
+    expect(checkAgentComponents([mon, drv, seq]).warnings).toHaveLength(0);
   });
 
-  it('returns full score with no warnings when agent is correct', () => {
-    const agent: Item[] = [
-      { id: 'sequencer', name: 'Sequencer' },
-      { id: 'driver', name: 'Driver' },
-      { id: 'monitor', name: 'Monitor' },
-    ];
-    const result = checkAgentComponents(agent);
-    expect(result.warnings).toHaveLength(0);
-    expect(result.score).toBe(100);
+  it('rejects a driver and sequencer inside a passive agent', () => {
+    const result = checkAgentComponents([seq, drv, mon], 'UVM_PASSIVE');
+    expect(result.warnings).toContain('Does not belong in this agent: Sequencer, Driver');
+    expect(checkAgentComponents([mon], 'UVM_PASSIVE').score).toBe(100);
+  });
+
+  it('treats a scoreboard as env-level, not an agent child', () => {
+    const result = checkAgentComponents([seq, drv, mon, { id: 'scoreboard', name: 'Scoreboard' }]);
+    expect(result.warnings).toContain('Does not belong in this agent: Scoreboard');
+  });
+
+  it('accepts the optional config object', () => {
+    expect(checkAgentComponents([seq, drv, mon, { id: 'config', name: 'Agent config object' }]).score).toBe(100);
   });
 });

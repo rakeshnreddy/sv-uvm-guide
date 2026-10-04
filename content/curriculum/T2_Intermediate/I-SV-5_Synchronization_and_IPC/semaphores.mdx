@@ -21,15 +21,17 @@ export const metadata = {
   ### Getting and Putting Keys
 
   -   `semaphore sem = new(1);` creates a semaphore with one key.
-  -   `sem.get(1);` acquires a key (blocks if none are free).
-  -   `sem.put(1);` releases a key.
-  -   `sem.try_get(1);` attempts to get a key without blocking.
+  -   `sem.get(n);` acquires `n` keys, blocking until `n` are free at once. Waiters are queued first-in first-out and resume by themselves (IEEE 1800-2023 §15.3.3).
+  -   `sem.put(n);` releases keys. It never checks who took them, and it can raise the count above the initial value (§15.3.1).
+  -   `sem.try_get(n);` attempts to get keys without blocking: positive if it got them, 0 otherwise (§15.3.4).
 
   <InteractiveCode>
   ```systemverilog
   semaphore bus_sem = new(1);
 
-  task master(string name);
+  // automatic: each concurrent call gets its own copy of name.
+  // A static task (the module default) would share one `name` between both calls.
+  task automatic master(string name);
     bus_sem.get(1);        // wait for access
     $display("%s using bus at %0t", name, $time);
     #10;
@@ -48,7 +50,11 @@ export const metadata = {
   ## Failure Modes: Key Leaks and Deadlock
 
   **The Lost Key / Leak:** 
-  The most common semaphore bug is acquiring a key and failing to return it. If a thread hits an `early return`, throws a fatal exception, or gets killed via `disable fork` before it calls `sem.put(...)`, that key is gone forever. Subsequent threads calling `get()` will hang, starving the system. To avoid this, always structure your loops so `put()` is guaranteed, or wrap critical sections carefully.
+  The most common semaphore bug is acquiring a key and failing to return it. If a thread takes an early `return`, or is killed by `disable fork` or `process::kill()` before it calls `sem.put(...)`, that key is gone forever. SystemVerilog has no exceptions and no automatic cleanup: nothing returns the key for you. Subsequent threads calling `get()` will hang, starving the system. To avoid this, make every exit path of the critical section call `put()`.
+
+  Find the line that loses the key, then choose a fix. The model reruns the whole test and checks three things: nobody is left blocked, two senders never share the bus, and the bus ends with all its keys.
+
+  <MailboxSemaphoreGame mode="debug" />
 
   **Deadlock (Circular Wait):**
   If Thread A holds Semaphore 1 and waits for Semaphore 2, while Thread B holds Semaphore 2 and waits for Semaphore 1, the simulation halts indefinitely. 
@@ -79,7 +85,7 @@ export const metadata = {
         { text: "There is no issue; `get()` and `put()` handles queuing automatically.", isCorrect: false, feedback: "Under normal conditions, yes, but what if something interrupts the flow between the get and the put?" },
         { text: "The `write_to_bus()` task threw a fatal error, crashing the simulator.", isCorrect: false, feedback: "A fatal error stops simulation, it doesn't cause a hang/deadlock." },
         { text: "SystemVerilog semaphores are not thread-safe.", isCorrect: false, feedback: "They are specifically designed to be thread-safe built-in primitives." },
-        { text: "The `write_to_bus()` task contains a thread-killing statement (like `disable`) or throws an unhandled exception before reaching the `put(1)` statement.", isCorrect: true, feedback: "Correct! The 'lost key' problem. If a thread dies, errors out, or is explicitly disabled via `disable fork` while holding a semaphore key, the key is never returned. All other threads waiting for that bus will hang forever." }
+        { text: "The thread leaves before reaching `put(1)`: an early `return` on an error path, or a `disable fork` (or `disable` of its block) that kills it while it holds the key.", isCorrect: true, feedback: "Correct! The 'lost key' problem. SystemVerilog has no exceptions or automatic cleanup, so a thread that returns early or is killed while holding a semaphore key never returns it. All other threads waiting for that bus will hang forever." }
       ]}
     />
   </div>

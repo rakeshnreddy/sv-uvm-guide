@@ -65,8 +65,8 @@ Draw five parallel channel planes through the crossbar: `AW`, `W`, `B`, `AR`, an
 2. AXI side is a master interface emitting `AW`, `W`, and consuming `B`.
 3. Add a write data buffer because AHB's address/data phases are pipelined while AXI write address/data are decoupled.
 4. Translate AHB burst type and size into `AWLEN`, `AWSIZE`, and `AWBURST`.
-5. Split bursts at AXI 4KB boundaries.
-6. Map `BRESP` back to `HRESP`.
+5. Split only where AXI needs it: an undefined-length INCR longer than 256 transfers (the AXI4 INCR limit, IHI0022E A3.4.1), and width conversion. No 4KB split is needed, because a legal AHB incrementing burst never crosses 1KB (IHI0033B.b 3.5) and every 4KB boundary is also a 1KB boundary.
+6. Map `BRESP` back to `HRESP`, and decide whether writes are posted or non-posted.
 7. Hold or stretch `HREADY` when bridge buffers are full.
 
 **Architecture diagram described in prose:**
@@ -75,10 +75,10 @@ Draw an AHB slave port feeding a "phase aligner" block. From there, draw arrows 
 
 **Edge cases to mention without prompting:**
 
-- AHB burst exactly ending at 4KB is legal as one AXI burst.
-- AHB burst crossing 4KB must split before the first byte in the next 4KB region.
-- AXI `AWLEN` is beats minus one.
-- If the second split burst returns `SLVERR`, the AHB master must see an error even if the first split was OKAY.
+- An AHB burst that ends exactly at a 1KB boundary is legal and maps to one AXI burst.
+- An AHB incrementing burst that crosses 1KB is illegal AHB stimulus. Flag it with an AHB-side checker; do not design the bridge to split it.
+- AXI `AWLEN` is beats minus one, and each split burst needs its own `WLAST`.
+- If the second split burst returns `SLVERR`, a non-posted bridge must report ERROR to the AHB master even if the first split was OKAY. A posted bridge has already completed the AHB write and must report the error some other way.
 
 ### Prompt C: Verify an AHB-Lite Slave
 
@@ -114,14 +114,19 @@ Use these as interview drills or team debug exercises. For each waveform, answer
 | 12 | 0 | SEQ | `0x4000_0008` | 1 | word |
 | 13 | 1 | SEQ | `0x4000_0008` | 1 | word |
 
-**Diagnosis:** Suspicious. During wait states, address/control must remain stable for the transfer being extended. If `HREADY` is low, the master cannot advance the address phase as though the transfer completed.
+**Diagnosis:** Master bug, unless the slave signalled ERROR (`HRESP` is not shown, so check it first). The SEQ to `0x4000_0004` is waited in cycle 11, so it must hold its address until `HREADY` is high (IHI0033B.b 3.6.2). Instead the master moves on to `0x4000_0008`, and the beat at `0x4000_0004` is never transferred.
 
-**Assertion sketch:**
+**Assertion sketch:** a plain `!HREADY |=> $stable({HADDR, HTRANS, ...})` would also fire on legal behaviour. While the slave waits, a master may change a waited IDLE to NONSEQ and change its address, change a waited BUSY to SEQ (or, in an undefined-length INCR, to IDLE or NONSEQ), and cancel after the first ERROR cycle by driving IDLE with a new address (IHI0033B.b 3.6.1, 3.6.2, 3.5.2). Start the check on NONSEQ and SEQ only, and allow the cancel:
 
 ```systemverilog
-property p_ahb_ctrl_stable_during_wait;
+// [Protocol IHI0033B.b 3.6.1, 3.6.2, 3.5.2] a waited NONSEQ/SEQ holds its
+// address and control, unless the master cancels after the first ERROR cycle.
+// Waited IDLE and BUSY have their own rules (see p_busy_in_wait in B-AHB-3).
+property p_ahb_hold_in_wait;
   @(posedge HCLK) disable iff (!HRESETn)
-    !HREADY |=> $stable({HADDR, HTRANS, HWRITE, HSIZE, HBURST});
+    (!HREADY && HTRANS inside {NONSEQ, SEQ}) |=>
+        ($stable(HTRANS) && $stable(HADDR) && $stable({HWRITE, HSIZE, HBURST}))
+     || ($past(HRESP) && HTRANS == IDLE);
 endproperty
 ```
 
@@ -157,10 +162,13 @@ endproperty
 **Assertion sketch:**
 
 ```systemverilog
+// [Protocol IHI0022E A3.4.1] Only INCR can cross: a legal WRAP stays inside its
+// wrap region and FIXED repeats one address. Measure from the aligned address,
+// because an unaligned first transfer does not use the bytes below AWADDR.
 property p_axi_no_4kb_cross;
   @(posedge ACLK) disable iff (!ARESETn)
-    (AWVALID && AWREADY) |->
-      (AWADDR[11:0] + ((AWLEN + 1) << AWSIZE) <= 4096);
+    (AWVALID && AWREADY && AWBURST == 2'b01) |->
+      ((((AWADDR >> AWSIZE) << AWSIZE) & 32'hFFF) + ((AWLEN + 1) << AWSIZE)) <= 32'h1000;
 endproperty
 ```
 
@@ -195,7 +203,8 @@ endproperty
 | Area | Required tests |
 |------|----------------|
 | Burst translation | SINGLE, INCR4, INCR8, INCR16, undefined INCR |
-| Boundary splitting | No crossing, exactly ends at 4KB, crosses by one beat, crosses by many beats |
+| Burst splitting | Undefined INCR of exactly 256 and of 257+ transfers (AXI4 limit), INCR ending exactly at a 1KB boundary, width conversion if supported |
+| Illegal stimulus | AHB INCR crossing 1KB: the AHB-side checker fires; the bridge is not expected to split it |
 | Data integrity | Byte lanes, unaligned starts where supported, WSTRB correctness |
 | Response mapping | OKAY, SLVERR, DECERR to AHB OKAY/ERROR |
 | Flow control | AHB wait states when AXI stalls AW/W/B |
@@ -220,7 +229,7 @@ endproperty
 
 ### "Can an AXI master wait for `AWREADY` before asserting `WVALID`?"
 
-Careful answer: It depends on the full dependency graph. AXI allows write address and write data channels to be independent, but designs must avoid circular waits. A robust master should not create a dependency that can deadlock with a legal slave. In verification, assert forward progress and test both AW-before-W and W-before-AW timing.
+No. IHI0022E A3.3.1 forbids it: a master must not wait for `AWREADY` or `WREADY` before asserting `AWVALID` or `WVALID`. The slave, by contrast, may wait for `AWVALID`, `WVALID`, or both before asserting `AWREADY`. A master that holds `WVALID` until it sees `AWREADY` can therefore deadlock against a legal slave that waits for write data first. The master may still choose to send AW first; what it must not do is make `WVALID` depend on `AWREADY`. Write data may even reach the slave before its address (A3.3), so in verification test W-before-AW, same-cycle, and AW-before-W timing.
 
 ### "What does `AWLEN = 0` mean?"
 
@@ -228,15 +237,15 @@ One beat. AXI encodes burst length as beats minus one. `AWLEN = 15` means 16 bea
 
 ### "Does an AHB address phase complete when `HTRANS` is NONSEQ?"
 
-No. It completes when the transfer is accepted with `HREADY` high. If `HREADY` is low, address/control must remain stable.
+No. It completes when the transfer is accepted with `HREADY` high. If `HREADY` is low, a NONSEQ or SEQ must keep its address and control stable, unless the master cancels after the first ERROR cycle by driving IDLE (IHI0033B.b 3.6, 3.5.2).
 
 ### "Can an AXI burst end exactly at a 4KB boundary?"
 
-Yes. It is illegal to cross into the next 4KB region, not to end at the last byte of the current region. The check is `start_offset + bytes <= 4096`.
+Yes. It is illegal to cross into the next 4KB region, not to end at the last byte of the current region. For an INCR burst the check is `start_offset + bytes <= 4096`, with the offset taken from the aligned start address.
 
 ### "Can `BVALID` arrive before all W beats?"
 
-No. A write response is for the whole write transaction. The slave must receive the final write data beat before completing the write response.
+No. A write response is for the whole write transaction (IHI0022E A3.4.4). The slave must wait for the handshake of the final write data beat, with `WLAST`, before asserting `BVALID`. In AXI4 it must also wait for the AW handshake (A3.3.1), so `BVALID` cannot come first even if all the W beats arrived before the address.
 
 ### "Can an AXI4-Lite slave accept bursts?"
 
@@ -253,7 +262,7 @@ The monitor probably forgot that AHB is pipelined. Data for address phase N appe
 | Weak answer | Strong answer |
 |-------------|---------------|
 | "I would use a scoreboard." | "I would reconstruct transactions per channel, key expected queues by ID, and compare only after B/RLAST completion." |
-| "The bridge splits bursts." | "The bridge computes beats to 4KB boundary, clamps AXI length, preserves byte count, and waits for all split responses." |
+| "The bridge splits bursts." | "A legal AHB burst never crosses 1KB, so the AHB-to-AXI bridge never splits at 4KB. It clamps undefined-length INCR to 256 AXI transfers, reshapes for width conversion, preserves byte count, and waits for all split responses. The AXI-to-AHB direction splits at 1KB." |
 | "I would add assertions." | "I would assert VALID stability, no 4KB crossing, WLAST timing, response-after-data, and liveness under bounded backpressure." |
 | "AXI is faster than AHB." | "AXI allows multiple outstanding decoupled channel transactions; AHB is simpler but has a fixed address/data pipeline." |
 
@@ -307,6 +316,6 @@ Use these prompts out loud:
       "Only HWRITE must remain stable; HADDR may change."
     ]}
     correctAnswer="They must remain stable until HREADY returns high."
-    explanation="AHB wait states extend the current transfer. The master cannot advance address/control for that transfer while HREADY is low."
+    explanation="AHB wait states extend the current transfer, so a waited NONSEQ or SEQ keeps its address and control until HREADY is high. The spec lists the exceptions (IHI0033B.b 3.6.1, 3.6.2, 3.5.2): a waited IDLE may change address or become NONSEQ, a waited BUSY may become SEQ, and after the first ERROR cycle a master that cancels drives IDLE and may change the address. A checker that ignores these exceptions fires on legal traffic."
   />
 </Quiz>

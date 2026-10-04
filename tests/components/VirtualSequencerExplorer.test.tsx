@@ -1,56 +1,61 @@
-import React from 'react';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import React from "react";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-import VirtualSequencerExplorer from '@/components/curriculum/interactives/VirtualSequencerExplorer';
+import VirtualSequencerExplorer from "@/components/curriculum/interactives/VirtualSequencerExplorer";
 
-describe('VirtualSequencerExplorer', () => {
-  it('starts idle and advances through coordination steps', () => {
+function predict(label: RegExp) {
+  fireEvent.click(screen.getByLabelText(label));
+  fireEvent.click(screen.getByRole("button", { name: "Lock in prediction" }));
+}
+
+describe("VirtualSequencerExplorer", () => {
+  it("shows the p_sequencer code and hides the timeline until a prediction is made", () => {
     render(<VirtualSequencerExplorer />);
-
-    expect(screen.getByRole('heading', { name: 'Virtual Sequencer Explorer' })).toBeVisible();
-    expect(screen.getByText(/Step 1 of 5:/)).toBeVisible();
-    expect(screen.getByText('Step 1 of 5:')).toHaveTextContent('Idle');
-    expect(screen.queryByText('Running pci_seq')).not.toBeInTheDocument();
-    expect(screen.queryByText('Running eth_seq')).not.toBeInTheDocument();
-
-    const nextButton = screen.getByRole('button', { name: 'Next Step' });
-
-    fireEvent.click(nextButton);
-    expect(screen.getByText(/Step 2 of 5:/)).toBeVisible();
-    expect(screen.getByText('Step 2 of 5:')).toHaveTextContent('Start Virtual Sequence');
-    expect(screen.getByText('Running body()')).toBeVisible();
-
-    fireEvent.click(nextButton);
-    expect(screen.getByText(/Step 3 of 5:/)).toBeVisible();
-    expect(screen.getByText('Step 3 of 5:')).toHaveTextContent('Dispatch PCIe');
-    expect(screen.getByText('Running pci_seq')).toBeVisible();
-    expect(screen.queryByText('Running eth_seq')).not.toBeInTheDocument();
-
-    fireEvent.click(nextButton);
-    expect(screen.getByText(/Step 4 of 5:/)).toBeVisible();
-    expect(screen.getByText('Step 4 of 5:')).toHaveTextContent('Dispatch Ethernet');
-    expect(screen.getByText('Running eth_seq')).toBeVisible();
+    expect(screen.getByText(/`uvm_declare_p_sequencer\(soc_vsqr\)/)).toBeInTheDocument();
+    expect(screen.getByText(/d.start\(p_sequencer.data_sqr\);/)).toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /Timeline/ })).not.toBeInTheDocument();
   });
 
-  it('switches the CTA to Restart at the final step and loops back to idle', () => {
+  it("fork…join: D1 starts at 0 ns, before configuration finishes", () => {
     render(<VirtualSequencerExplorer />);
+    predict(/t = 40 ns, right after cfg_seq returns/);
+    expect(screen.getByText(/fork does not order its branches/)).toBeInTheDocument();
+    expect(screen.getByText(/Data item D1 reaches the data driver at t = 0 ns, before configuration completes at t = 40 ns/)).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: /Timeline/ })).toBeInTheDocument();
+  });
 
-    const nextButton = screen.getByRole('button', { name: 'Next Step' });
+  it("ordered dispatch: data starts after cfg_seq returns", () => {
+    render(<VirtualSequencerExplorer />);
+    fireEvent.click(screen.getByRole("radio", { name: "one after another" }));
+    predict(/t = 40 ns, right after cfg_seq returns/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getByText(/Configuration completes at t = 40 ns; the first data item starts at t = 40 ns/)).toBeInTheDocument();
+  });
 
-    fireEvent.click(nextButton);
-    fireEvent.click(nextButton);
-    fireEvent.click(nextButton);
-    fireEvent.click(nextButton);
+  it("join_none: the test ends at 0 ns", () => {
+    render(<VirtualSequencerExplorer />);
+    fireEvent.click(screen.getByRole("radio", { name: "fork … join_none" }));
+    predict(/Never: the test ends before any data item is driven/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getByText(/vseq.start\(\) returned at 0 ns/)).toBeInTheDocument();
+  });
 
-    const restartButton = screen.getByRole('button', { name: 'Restart' });
-    expect(screen.getByText(/Step 5 of 5:/)).toBeVisible();
-    expect(screen.getByText('Step 5 of 5:')).toHaveTextContent('Coordination Complete');
+  it("debug: a forgotten handle assignment is a UVM_FATAL from start_item", () => {
+    render(<VirtualSequencerExplorer />);
+    fireEvent.click(screen.getByRole("radio", { name: "one after another" }));
+    fireEvent.click(screen.getByRole("checkbox", { name: /env.connect_phase assigns/ }));
+    expect(screen.getByText(/<- forgotten/)).toBeInTheDocument();
+    predict(/Never: data_seq hits a UVM_FATAL/);
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getByText(/UVM_FATAL @ 40 ns \[SEQ\]/)).toBeInTheDocument();
+  });
 
-    fireEvent.click(restartButton);
-    expect(screen.getByText(/Step 1 of 5:/)).toBeVisible();
-    expect(screen.getByText('Step 1 of 5:')).toHaveTextContent('Idle');
-    expect(screen.queryByText('Running pci_seq')).not.toBeInTheDocument();
-    expect(screen.queryByText('Running eth_seq')).not.toBeInTheDocument();
+  it("dispatch picker is keyboard operable", () => {
+    render(<VirtualSequencerExplorer />);
+    const current = screen.getByRole("radio", { name: "fork … join" });
+    current.focus();
+    fireEvent.keyDown(current, { key: "ArrowRight" });
+    expect(screen.getByRole("radio", { name: "fork … join_none" })).toHaveAttribute("aria-checked", "true");
   });
 });

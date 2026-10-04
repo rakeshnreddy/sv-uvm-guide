@@ -6,7 +6,7 @@ import SystemVerilog3DVisualizer from "@/components/curriculum/f2/SystemVerilog3
 export const metadata: Metadata = {
   title: "SystemVerilog 3D Data Structure Explorer",
   description:
-    "Interactive 3D visualization of SystemVerilog data structures including dynamic arrays, queues, associative arrays, and packed/unpacked memory layouts.",
+    "Model-driven sandbox for SystemVerilog dynamic arrays, queues, associative arrays and packed/unpacked index order, in 3D with an equivalent 2D view.",
 };
 
 export default function SystemVerilog3DVisualizationPage() {
@@ -23,7 +23,13 @@ export default function SystemVerilog3DVisualizationPage() {
           </div>
         }
       >
-        <SystemVerilog3DVisualizer height="calc(100vh - 6rem)" />
+        <div className="container mx-auto px-4 pt-6">
+          <h1 className="text-2xl font-semibold text-slate-100">SystemVerilog array sandbox</h1>
+          <p className="mt-1 max-w-2xl text-sm text-slate-400">
+            Run real array, queue and associative-array operations and see the resulting state in 3D or as text.
+          </p>
+        </div>
+        <SystemVerilog3DVisualizer height="calc(100vh - 10rem)" />
       </Suspense>
     </div>
   );

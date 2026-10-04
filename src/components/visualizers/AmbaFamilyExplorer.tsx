@@ -1,334 +1,283 @@
-'use client';
+"use client";
 
-import React, { useState } from 'react';
-import { cn } from '@/lib/utils';
-import { motion, AnimatePresence } from 'framer-motion';
-import { CheckCircle2, XCircle, Settings2, Cpu, Database, Network, ArrowRight } from 'lucide-react';
+import React, { useState } from "react";
 
-type ProtocolFamily = 'AHB' | 'AHB-Lite' | 'AXI4' | 'AXI4-Lite' | 'AXI4-Stream';
+import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  AMBA_PROTOCOLS,
+  CAPABILITY_LABELS,
+  FACT_KEYS,
+  FACT_LABELS,
+  FIT_SCENARIOS,
+  SUPPORT_CUES,
+  assessFit,
+  bestFit,
+  getFitScenario,
+  getProtocol,
+  type AmbaProtocol,
+  type AmbaProtocolId,
+  type Capability,
+  type FitScenario,
+  type Support,
+} from "@/lib/amba-family-model";
+import { cn } from "@/lib/utils";
 
-interface ProtocolInfo {
-  id: ProtocolFamily;
-  name: string;
-  subtitle: string;
-  topology: string;
-  useCase: string;
-  complexity: 'Low' | 'Medium' | 'High';
-  features: {
-    multiMaster: boolean;
-    bursts: boolean;
-    independentChannels: boolean;
-    outOfOrder: boolean;
-    addressPhase: boolean;
-  };
-  description: string;
-}
-
-const PROTOCOLS: ProtocolInfo[] = [
-  {
-    id: 'AHB',
-    name: 'AHB',
-    subtitle: 'Advanced High-performance Bus',
-    topology: 'Shared Bus (Multi-Master with Arbiter)',
-    useCase: 'Legacy SoCs or specific multi-master, low-latency subsystems.',
-    complexity: 'Medium',
-    features: {
-      multiMaster: true,
-      bursts: true,
-      independentChannels: false,
-      outOfOrder: false,
-      addressPhase: true,
-    },
-    description: 'The original high-performance bus. Uses a shared bus topology requiring an arbiter to grant bus access to multiple masters. Address and data phases are pipelined, but responses must return in order.',
-  },
-  {
-    id: 'AHB-Lite',
-    name: 'AHB-Lite',
-    subtitle: 'Simplified AHB for single masters',
-    topology: 'Shared Bus (Single-Master)',
-    useCase: 'Cortex-M microcontrollers, simple peripheral buses.',
-    complexity: 'Low',
-    features: {
-      multiMaster: false,
-      bursts: true,
-      independentChannels: false,
-      outOfOrder: false,
-      addressPhase: true,
-    },
-    description: 'A streamlined version of AHB supporting only a single master, eliminating the need for an arbiter or request/grant signals. Extremely common in modern microcontroller designs for connecting the CPU to memory and peripherals.',
-  },
-  {
-    id: 'AXI4',
-    name: 'AXI4',
-    subtitle: 'Advanced eXtensible Interface',
-    topology: 'Point-to-point / Interconnect',
-    useCase: 'High-bandwidth memory controllers, multi-core SoCs, GPU/NPU interfaces.',
-    complexity: 'High',
-    features: {
-      multiMaster: true,
-      bursts: true,
-      independentChannels: true,
-      outOfOrder: true,
-      addressPhase: true,
-    },
-    description: 'The dominant high-performance protocol. Uses five independent channels (Write Address, Write Data, Write Response, Read Address, Read Data). Supports multiple outstanding transactions and out-of-order completion, relying on an interconnect fabric rather than a shared bus.',
-  },
-  {
-    id: 'AXI4-Lite',
-    name: 'AXI4-Lite',
-    subtitle: 'Simplified AXI for control registers',
-    topology: 'Point-to-point / Interconnect',
-    useCase: 'Peripheral configuration, CSRs (Control and Status Registers).',
-    complexity: 'Medium',
-    features: {
-      multiMaster: true,
-      bursts: false,
-      independentChannels: true,
-      outOfOrder: false,
-      addressPhase: true,
-    },
-    description: 'A lightweight subset of AXI4. It maintains the five-channel architecture but removes support for bursts, making all transactions exactly one beat long. Perfect for simple control register access where AXI4\'s full complexity is unnecessary.',
-  },
-  {
-    id: 'AXI4-Stream',
-    name: 'AXI4-Stream',
-    subtitle: 'High-speed unidirectional data streaming',
-    topology: 'Point-to-point (Unidirectional)',
-    useCase: 'Video processing, DSP, network packet routing, PCIe payloads.',
-    complexity: 'Low',
-    features: {
-      multiMaster: false,
-      bursts: false,
-      independentChannels: false,
-      outOfOrder: false,
-      addressPhase: false,
-    },
-    description: 'Designed purely for moving streams of data without addresses. It uses a simple VALID/READY handshake to transfer data in one direction. It has no concept of reads, writes, or memory addresses—just a continuous flow of payload.',
-  },
+export const AMBA_FAMILY_ASSUMPTIONS = [
+  "Facts are checked against Arm IHI0024D (APB), IHI0033B.b (AHB-Lite and AHB5), IHI0022E (AXI3, AXI4, AXI4-Lite, ACE, ACE-Lite), IHI0051A (AXI4-Stream) and IHI0050E.b (CHI). Each row cites its section.",
+  "Later issues add features not covered here (for example AXI5 atomics and newer CHI revisions).",
+  "The fit check compares what a block needs with what each protocol offers. Real choices also weigh existing IP, the interconnect, clocking and verification effort.",
+  "'Typical use' lines are engineering practice, not specification text. Older issues say master/slave; newer Arm issues say manager/subordinate or requester/completer.",
 ];
 
-export function AmbaFamilyExplorer() {
-  const [activeTab, setActiveTab] = useState<ProtocolFamily>('AHB-Lite');
+const supportTone: Record<Support, string> = {
+  yes: "border-emerald-500/60 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200",
+  no: "border-slate-400/60 bg-slate-500/10 text-slate-700 dark:text-slate-200",
+  optional: "border-amber-500/60 bg-amber-500/10 text-amber-900 dark:text-amber-100",
+  limited: "border-amber-500/60 bg-amber-500/10 text-amber-900 dark:text-amber-100",
+  "n/a": "border-dashed border-slate-400/60 text-muted-foreground",
+};
 
-  const activeInfo = PROTOCOLS.find((p) => p.id === activeTab)!;
-
-  const renderTopologyDiagram = (id: ProtocolFamily) => {
-    switch (id) {
-      case 'AHB':
-        return (
-          <div className="flex flex-col items-center gap-4 py-6">
-            <div className="flex w-full justify-around gap-4">
-              <div className="flex flex-col items-center gap-2">
-                <div className="flex h-12 w-24 items-center justify-center rounded-lg border-2 border-blue-500 bg-blue-100 font-semibold text-blue-900">Master 1</div>
-              </div>
-              <div className="flex flex-col items-center gap-2">
-                <div className="flex h-12 w-24 items-center justify-center rounded-lg border-2 border-blue-500 bg-blue-100 font-semibold text-blue-900">Master 2</div>
-              </div>
-            </div>
-            <div className="flex w-full justify-around px-12">
-              <div className="h-6 border-l-2 border-slate-400"></div>
-              <div className="h-6 border-l-2 border-slate-400"></div>
-            </div>
-            <div className="flex w-3/4 items-center justify-center rounded-md border-2 border-slate-400 bg-slate-100 py-3 text-sm font-bold text-slate-700">
-              Shared Bus & Arbiter
-            </div>
-            <div className="flex w-full justify-around px-12">
-              <div className="h-6 border-l-2 border-slate-400"></div>
-              <div className="h-6 border-l-2 border-slate-400"></div>
-            </div>
-            <div className="flex w-full justify-around gap-4">
-              <div className="flex h-12 w-24 items-center justify-center rounded-lg border-2 border-green-500 bg-green-100 font-semibold text-green-900">Slave 1</div>
-              <div className="flex h-12 w-24 items-center justify-center rounded-lg border-2 border-green-500 bg-green-100 font-semibold text-green-900">Slave 2</div>
-            </div>
-          </div>
-        );
-      case 'AHB-Lite':
-        return (
-          <div className="flex flex-col items-center gap-4 py-6">
-            <div className="flex h-12 w-32 items-center justify-center rounded-lg border-2 border-blue-500 bg-blue-100 font-semibold text-blue-900">Single Master</div>
-            <div className="h-6 border-l-2 border-slate-400"></div>
-            <div className="flex w-2/3 items-center justify-center rounded-md border-2 border-slate-400 bg-slate-100 py-2 text-sm font-bold text-slate-700">Decoder</div>
-            <div className="flex w-full justify-around px-8">
-              <div className="h-6 border-l-2 border-slate-400"></div>
-              <div className="h-6 border-l-2 border-slate-400"></div>
-            </div>
-            <div className="flex w-full justify-around gap-4 px-4">
-              <div className="flex h-12 w-24 items-center justify-center rounded-lg border-2 border-green-500 bg-green-100 font-semibold text-green-900">Slave 1</div>
-              <div className="flex h-12 w-24 items-center justify-center rounded-lg border-2 border-green-500 bg-green-100 font-semibold text-green-900">Slave 2</div>
-            </div>
-          </div>
-        );
-      case 'AXI4':
-      case 'AXI4-Lite':
-        return (
-          <div className="flex flex-col items-center gap-4 py-6">
-            <div className="flex w-full justify-between px-4">
-              <div className="flex h-16 w-24 flex-col items-center justify-center rounded-lg border-2 border-blue-500 bg-blue-100 font-semibold text-blue-900">
-                <span>Master 1</span>
-              </div>
-              <div className="flex h-16 w-24 flex-col items-center justify-center rounded-lg border-2 border-blue-500 bg-blue-100 font-semibold text-blue-900">
-                <span>Master 2</span>
-              </div>
-            </div>
-            <div className="flex w-full items-center justify-between px-12">
-              <div className="flex gap-1">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <div key={i} className="h-8 border-l-[3px] border-indigo-400/70"></div>
-                ))}
-              </div>
-              <div className="flex gap-1">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <div key={i} className="h-8 border-l-[3px] border-indigo-400/70"></div>
-                ))}
-              </div>
-            </div>
-            <div className="flex w-[90%] flex-col items-center justify-center rounded-xl border-2 border-indigo-400 bg-indigo-50 py-3 text-sm font-bold text-indigo-900">
-              AXI Interconnect Fabric
-              <span className="text-xs font-normal opacity-80">(5 Independent Channels)</span>
-            </div>
-            <div className="flex w-full items-center justify-between px-12">
-              <div className="flex gap-1">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <div key={i} className="h-8 border-l-[3px] border-indigo-400/70"></div>
-                ))}
-              </div>
-              <div className="flex gap-1">
-                {[1, 2, 3, 4, 5].map((i) => (
-                  <div key={i} className="h-8 border-l-[3px] border-indigo-400/70"></div>
-                ))}
-              </div>
-            </div>
-            <div className="flex w-full justify-between px-4">
-              <div className="flex h-16 w-24 flex-col items-center justify-center rounded-lg border-2 border-green-500 bg-green-100 font-semibold text-green-900">
-                <span>Slave 1</span>
-              </div>
-              <div className="flex h-16 w-24 flex-col items-center justify-center rounded-lg border-2 border-green-500 bg-green-100 font-semibold text-green-900">
-                <span>Slave 2</span>
-              </div>
-            </div>
-          </div>
-        );
-      case 'AXI4-Stream':
-        return (
-          <div className="flex flex-col items-center justify-center gap-6 py-12">
-            <div className="flex w-full items-center justify-center gap-2">
-              <div className="flex h-16 w-32 items-center justify-center rounded-lg border-2 border-blue-500 bg-blue-100 font-semibold text-blue-900">Source</div>
-              <div className="flex flex-col items-center justify-center">
-                <span className="text-xs font-semibold text-indigo-600">TDATA, TVALID</span>
-                <ArrowRight className="h-6 w-24 text-indigo-500" strokeWidth={3} />
-                <div className="flex items-center gap-1">
-                  <ArrowRight className="h-4 w-20 rotate-180 text-rose-500" strokeWidth={2} />
-                  <span className="text-xs font-semibold text-rose-600">TREADY</span>
-                </div>
-              </div>
-              <div className="flex h-16 w-32 items-center justify-center rounded-lg border-2 border-green-500 bg-green-100 font-semibold text-green-900">Destination</div>
-            </div>
-            <div className="text-center text-sm text-slate-500">Unidirectional Data Flow. No Addresses.</div>
-          </div>
-        );
-    }
-  };
-
-  const FeatureRow = ({ label, value }: { label: string; value: boolean }) => (
-    <div className="flex items-center justify-between border-b border-slate-200 py-3 last:border-0">
-      <span className="text-sm font-medium text-slate-700">{label}</span>
-      {value ? (
-        <CheckCircle2 className="h-5 w-5 text-emerald-500" />
-      ) : (
-        <XCircle className="h-5 w-5 text-slate-300" />
-      )}
-    </div>
-  );
-
+function SupportBadge({ support, compact = false }: { support: Support; compact?: boolean }) {
+  const cue = SUPPORT_CUES[support];
   return (
-    <div className="my-8 flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm" data-testid="amba-family-explorer">
-      {/* Header Tabs */}
-      <div className="flex flex-wrap border-b border-slate-200 bg-slate-50">
-        {PROTOCOLS.map((protocol) => (
-          <button
-            key={protocol.id}
-            onClick={() => setActiveTab(protocol.id)}
+    <span className={cn("inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold", supportTone[support])}>
+      <span aria-hidden>{cue.glyph}</span>
+      {compact ? <span>{support === "n/a" ? "n/a" : cue.word.toLowerCase()}</span> : cue.word}
+    </span>
+  );
+}
+
+function LaneStrip({ protocol }: { protocol: AmbaProtocol }) {
+  return (
+    <div>
+      <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Channels and phases, initiator view</p>
+      <ul className="mt-2 flex flex-wrap gap-2" aria-label={`${protocol.name} channels and phases`}>
+        {protocol.lanes.map((lane) => (
+          <li
+            key={lane.name}
             className={cn(
-              'flex-1 border-b-2 px-4 py-3 text-sm font-semibold transition-colors min-w-[120px]',
-              activeTab === protocol.id
-                ? 'border-primary text-primary bg-white'
-                : 'border-transparent text-slate-500 hover:bg-slate-100 hover:text-slate-700'
+              "min-w-0 rounded-lg border px-2.5 py-1.5 text-xs",
+              lane.dir === "out"
+                ? "border-sky-500/60 bg-sky-500/10 text-sky-900 dark:text-sky-100"
+                : "border-dashed border-violet-500/60 bg-violet-500/10 text-violet-900 dark:text-violet-100",
             )}
           >
-            {protocol.name}
-          </button>
-        ))}
-      </div>
-
-      <div className="grid md:grid-cols-2">
-        {/* Left column: Diagram & Use case */}
-        <div className="flex flex-col border-b border-slate-200 bg-slate-50/50 p-6 md:border-b-0 md:border-r">
-          <div className="mb-4">
-            <h3 className="text-lg font-bold text-slate-900">{activeInfo.name}</h3>
-            <p className="text-sm font-medium text-slate-500">{activeInfo.subtitle}</p>
-          </div>
-          
-          <div className="mb-6 flex-1 rounded-xl border border-slate-200 bg-white shadow-inner">
-            <AnimatePresence mode="wait">
-              <motion.div
-                key={activeInfo.id}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -10 }}
-                transition={{ duration: 0.2 }}
-                className="h-full w-full"
-              >
-                {renderTopologyDiagram(activeInfo.id)}
-              </motion.div>
-            </AnimatePresence>
-          </div>
-
-          <div className="space-y-4">
-            <div>
-              <h4 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                <Settings2 className="h-4 w-4" /> Topology
-              </h4>
-              <p className="mt-1 text-sm font-medium text-slate-800">{activeInfo.topology}</p>
-            </div>
-            <div>
-              <h4 className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-slate-500">
-                <Cpu className="h-4 w-4" /> Ideal Use Case
-              </h4>
-              <p className="mt-1 text-sm text-slate-700">{activeInfo.useCase}</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Right column: Details and Features */}
-        <div className="flex flex-col p-6">
-          <div className="mb-6 rounded-lg bg-blue-50 p-4 text-sm leading-relaxed text-blue-900 border border-blue-100">
-            {activeInfo.description}
-          </div>
-
-          <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Protocol Capabilities
-          </h4>
-          <div className="rounded-lg border border-slate-200 bg-white px-4">
-            <FeatureRow label="Addresses Support" value={activeInfo.features.addressPhase} />
-            <FeatureRow label="Multi-Master Native" value={activeInfo.features.multiMaster} />
-            <FeatureRow label="Burst Transfers" value={activeInfo.features.bursts} />
-            <FeatureRow label="Independent Read/Write Channels" value={activeInfo.features.independentChannels} />
-            <FeatureRow label="Out-of-Order Completion" value={activeInfo.features.outOfOrder} />
-          </div>
-
-          <div className="mt-auto pt-6 flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">Complexity</span>
-            <span className={cn(
-              "rounded-full px-3 py-1 text-xs font-bold",
-              activeInfo.complexity === 'Low' && 'bg-green-100 text-green-700',
-              activeInfo.complexity === 'Medium' && 'bg-yellow-100 text-yellow-700',
-              activeInfo.complexity === 'High' && 'bg-red-100 text-red-700'
-            )}>
-              {activeInfo.complexity}
+            <span className="font-mono font-semibold [font-variant-ligatures:none]">
+              {lane.dir === "out" ? `${lane.name} →` : `← ${lane.name}`}
             </span>
-          </div>
-        </div>
+            <span className="sr-only">{lane.dir === "out" ? ", initiator to completer: " : ", towards the initiator: "}</span>
+            <span className="ml-1.5 text-muted-foreground">{lane.carries}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ProtocolCard({ protocol }: { protocol: AmbaProtocol }) {
+  return (
+    <article className="space-y-4 rounded-xl border border-border/70 bg-background/60 p-3 sm:p-4" aria-label={`${protocol.name} profile`}>
+      <header>
+        <h4 className="text-base font-semibold text-foreground">
+          {protocol.name} <span className="font-normal text-muted-foreground">· {protocol.fullName}</span>
+        </h4>
+        <p className="font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">{protocol.spec}</p>
+        <p className="mt-2 text-sm text-foreground">{protocol.summary}</p>
+      </header>
+
+      <LaneStrip protocol={protocol} />
+
+      <dl className="divide-y divide-border/60 rounded-lg border border-border/60">
+        {FACT_KEYS.map((key) => {
+          const fact = protocol.facts[key];
+          return (
+            <div key={key} className="flex flex-wrap gap-x-4 gap-y-1 p-3">
+              <dt className="w-44 shrink-0 text-xs font-semibold text-foreground">{FACT_LABELS[key]}</dt>
+              <dd className="min-w-0 flex-1 basis-56 text-sm text-foreground">
+                <div className="flex flex-wrap items-start gap-2">
+                  {fact.support ? <SupportBadge support={fact.support} /> : null}
+                  <span className="min-w-0 flex-1">{fact.text}</span>
+                </div>
+                <p className="mt-1 font-mono text-[11px] text-muted-foreground [font-variant-ligatures:none]">{fact.source}</p>
+              </dd>
+            </div>
+          );
+        })}
+      </dl>
+
+      <p className="text-sm text-foreground">
+        <span className="font-semibold">Typical use</span> <span className="text-xs text-muted-foreground">(engineering practice, not spec text)</span>: {protocol.typicalUse}
+      </p>
+      {protocol.caveat ? (
+        <p className="rounded-lg border border-amber-500/40 bg-amber-500/[0.06] p-3 text-sm text-foreground">
+          <span className="font-semibold">Note: </span>
+          {protocol.caveat}
+        </p>
+      ) : null}
+    </article>
+  );
+}
+
+function CompareTable() {
+  const keys = FACT_KEYS.filter((k) => k !== "channels");
+  return (
+    <details className="rounded-xl border border-border/70 bg-background/40 p-3">
+      <summary className="cursor-pointer text-sm font-semibold text-foreground">Compare all {AMBA_PROTOCOLS.length} protocols side by side</summary>
+      <div className="mt-3 overflow-x-auto">
+        <table className="w-full min-w-[760px] border-collapse text-xs">
+          <caption className="sr-only">Capability comparison of AMBA protocols</caption>
+          <thead>
+            <tr>
+              <th scope="col" className="p-2 text-left font-semibold text-muted-foreground">
+                Capability
+              </th>
+              {AMBA_PROTOCOLS.map((p) => (
+                <th key={p.id} scope="col" className="p-2 text-left font-semibold text-foreground">
+                  {p.name}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {keys.map((key) => (
+              <tr key={key} className="border-t border-border/60">
+                <th scope="row" className="p-2 text-left font-medium text-foreground">
+                  {FACT_LABELS[key]}
+                </th>
+                {AMBA_PROTOCOLS.map((p) => {
+                  const support = p.facts[key].support;
+                  return <td key={p.id} className="p-2">{support ? <SupportBadge support={support} compact /> : null}</td>;
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
+    </details>
+  );
+}
+
+function capabilityList(items: Capability[]): string {
+  return items.map((c) => CAPABILITY_LABELS[c]).join("; ");
+}
+
+function FitResults({ scenario, onOpen }: { scenario: FitScenario; onOpen: (id: AmbaProtocolId) => void }) {
+  const best = bestFit(scenario);
+  return (
+    <div className="space-y-3" aria-live="polite">
+      <p className="text-sm text-foreground">
+        <span className="font-semibold">Why: </span>
+        {scenario.why}
+      </p>
+      <p className="text-xs text-muted-foreground">
+        <span className="font-semibold text-foreground">The block needs: </span>
+        {capabilityList(scenario.needs)}.
+      </p>
+      <ul className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,240px),1fr))]" aria-label="Fit check for each option">
+        {scenario.options.map((option) => {
+          const protocol = getProtocol(option.protocol);
+          const fit = assessFit(option.protocol, scenario);
+          const isBest = option.protocol === best;
+          return (
+            <li
+              key={option.protocol}
+              className={cn(
+                "flex min-w-0 flex-col gap-2 rounded-lg border p-3 text-sm",
+                isBest ? "border-emerald-500/60 bg-emerald-500/10" : fit.missing.length > 0 ? "border-rose-500/50 bg-rose-500/[0.06]" : "border-amber-500/50 bg-amber-500/[0.06]",
+              )}
+            >
+              <p className="font-semibold text-foreground">{protocol.name}</p>
+              {isBest ? (
+                <p className="text-emerald-800 dark:text-emerald-200">
+                  <span aria-hidden>✓ </span>Best fit: has everything the block needs and nothing it would waste.
+                </p>
+              ) : null}
+              {fit.missing.length > 0 ? (
+                <p className="text-rose-800 dark:text-rose-200">
+                  <span aria-hidden>✕ </span>Lacks: {capabilityList(fit.missing)}.
+                </p>
+              ) : null}
+              {!isBest && fit.missing.length === 0 ? (
+                <p className="text-amber-900 dark:text-amber-100">
+                  <span aria-hidden>◐ </span>Works, but pays for: {capabilityList(fit.extras)}.
+                </p>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => onOpen(option.protocol)}
+                className="mt-auto inline-flex min-h-10 items-center self-start rounded-lg border border-border/70 px-3 text-xs font-medium text-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                Show the {protocol.name} profile
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}
+
+export function AmbaFamilyExplorer() {
+  const [protocolId, setProtocolId] = useState<AmbaProtocolId>("axi4");
+  const [scenarioId, setScenarioId] = useState(FIT_SCENARIOS[0].id);
+  const protocol = getProtocol(protocolId);
+  const scenario = getFitScenario(scenarioId);
+  const best = bestFit(scenario);
+
+  const predictionOptions: PredictionOption[] = scenario.options.map((option) => {
+    const p = getProtocol(option.protocol);
+    return {
+      id: option.protocol,
+      label: (
+        <span>
+          <strong>{p.name}</strong>: {p.tagline}
+        </span>
+      ),
+      correct: option.protocol === best,
+      feedback: option.feedback,
+    };
+  });
+
+  return (
+    <div data-testid="amba-family-explorer">
+      <VisualFrame
+        label="AMBA protocol family explorer"
+        eyebrow="Mental picture + prediction"
+        title="The AMBA family: what each protocol can and cannot do"
+        summary="Pick a protocol to see its channels and capabilities, each with the spec section it comes from. Then predict which protocol fits a real block."
+        fidelity="model"
+        assumptions={AMBA_FAMILY_ASSUMPTIONS}
+      >
+        <div className="space-y-3">
+          <SegmentedControl
+            label="Protocol"
+            options={AMBA_PROTOCOLS.map((p) => ({ value: p.id, label: p.name }))}
+            value={protocolId}
+            onChange={setProtocolId}
+          />
+          <ProtocolCard protocol={protocol} />
+          <CompareTable />
+        </div>
+
+        <div className="space-y-3 border-t border-border/60 pt-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">Transfer</p>
+            <h4 className="text-base font-semibold text-foreground">Which protocol fits this block?</h4>
+          </div>
+          <SegmentedControl
+            label="Block"
+            options={FIT_SCENARIOS.map((s) => ({ value: s.id, label: s.label }))}
+            value={scenarioId}
+            onChange={setScenarioId}
+          />
+          <p className="rounded-lg border border-border/60 bg-muted/20 p-3 text-sm text-foreground">{scenario.block}</p>
+          <PredictionPrompt question="Which protocol fits this block best?" options={predictionOptions} resetKey={scenario.id}>
+            <FitResults scenario={scenario} onOpen={setProtocolId} />
+          </PredictionPrompt>
+        </div>
+      </VisualFrame>
     </div>
   );
 }

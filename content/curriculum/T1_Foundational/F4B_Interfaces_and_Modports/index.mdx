@@ -11,16 +11,17 @@ sources:
 import { InteractiveCode, Quiz } from '@/components/ui';
 
 ## Quick Take
-- **What it is:** An **interface** is a bundle of signals that connects modules together. A **modport** (module port) defines the direction of those signals from a specific perspective (e.g., master vs. slave).
-- **Why it matters:** Interfaces replace error-prone, wire-by-wire connections with a single handle. Modports enforce directionality, preventing a monitor from accidentally driving the bus.
-- **The Analogy:** An interface is like a USB cable—it bundles power, ground, and data lines. The modport is the connector type (Type-A vs. Type-B) that ensures you plug it in correctly.
+- **What it is:** An **interface** is a bundle of signals that connects modules together. A **modport** (module port) defines the direction of those signals from one module's point of view (e.g., master vs. slave).
+- **Why it matters:** Interfaces replace error-prone, wire-by-wire connections with a single handle. Modports state what each connected module may do: a module on the `monitor` view cannot drive the bus.
+- **The Analogy:** An interface is like a USB cable: it bundles power, ground, and data lines. The modport is the connector type (Type-A vs. Type-B) that ensures you plug it in correctly.
 
 ## Build Your Mental Model
 
 ### The Connection Bundle
-<div className="my-8 rounded-3xl border border-white/10 bg-white/5 p-6 backdrop-blur shadow-2xl">
-  <ModportExplorer />
-</div>
+
+Pick each view and read the arrows from that module's side: ◀ means the signal flows *into* the module (`input`), ▶ means the module drives it (`output`). Then, in the `master` view, predict what the tool does with `bus.ready <= 1;`.
+
+<ModportExplorer />
 
 ### Interactive Example: Interface with Modports
 <InteractiveCode
@@ -53,30 +54,35 @@ interface simple_bus_if (input logic clk);
   );
 endinterface
 
-module master_driver (simple_bus_if.master bus);
-  always @(posedge bus.clk) begin
-    if (bus.ready) begin
-      bus.valid <= 1;
-      bus.addr  <= 32'h1000;
-      // bus.ready <= 0; // Error: ready is input in master modport
+module master_driver (simple_bus_if.master bus, input logic rst_n);
+  // VALID never waits for READY: offer a request, hold it until READY.
+  always_ff @(posedge bus.clk or negedge rst_n) begin
+    if (!rst_n) begin
+      bus.valid <= 1'b0;
+      bus.addr  <= 32'h0;
+    end else if (!bus.valid || bus.ready) begin
+      bus.valid <= 1'b1;            // next request (previous one handshaked)
+      bus.addr  <= bus.addr + 32'h4;
     end
+    // bus.ready <= 1'b0;  // compile error: ready is an input in modport master
   end
 endmodule
 
-module slave_dut (simple_bus_if.slave bus);
-  always @(posedge bus.clk) begin
-    if (bus.valid) begin
-      bus.ready <= 1;
-    end
-  end
+module slave_dut (simple_bus_if.slave bus, input logic rst_n);
+  // READY may depend on VALID or not; this slave accepts every other cycle.
+  always_ff @(posedge bus.clk or negedge rst_n)
+    if (!rst_n) bus.ready <= 1'b0;
+    else        bus.ready <= ~bus.ready;
 endmodule
   `}
   explanationSteps={[
-    { target: "1-8", title: "Signal Bundle", explanation: "The interface defines the wires once. No need to repeat `logic [31:0] addr` in every module." },
-    { target: "10-14", title: "Master Modport", explanation: "Defines the driver's perspective. It drives `addr` and `valid`, and reads `ready`." },
-    { target: "16-20", title: "Slave Modport", explanation: "Defines the DUT's perspective. It reads `addr` and `valid`, and drives `ready`." },
-    { target: "22-25", title: "Monitor Modport", explanation: "A passive view where everything is an input. Crucial for scoreboards to avoid interfering with the bus." },
-    { target: "28-36", title: "Enforced Direction", explanation: "The compiler enforces the modport directions. Trying to drive an input signal will result in a compilation error." }
+    { target: "1-7", title: "Signal Bundle", explanation: "The interface declares the signals once. No need to repeat `logic [31:0] addr` in every module." },
+    { target: "9-13", title: "Master Modport", explanation: "The driver's view: it drives `addr`, `data`, `rw` and `valid`, and reads `ready`." },
+    { target: "15-19", title: "Slave Modport", explanation: "The DUT's view: it reads the request signals and drives `ready`." },
+    { target: "21-24", title: "Monitor Modport", explanation: "A passive view where everything is an input, so a monitor cannot disturb the bus." },
+    { target: "27-38", title: "VALID does not wait for READY", explanation: "The master raises `valid` on its own and holds it until it sees `ready` at a clock edge. If the master waited for `ready` and the slave waited for `valid`, neither would ever move: a deadlock." },
+    { target: "37", title: "Enforced Direction", explanation: "Uncommenting this line is a compile-time error: `ready` is an input in the master modport, and assigning to a variable declared as an input port is illegal (§25.5, §23.3.3.2)." },
+    { target: "41-46", title: "Slave", explanation: "The slave drives only `ready`, the one output in its view." }
   ]}
 />
 
@@ -87,91 +93,125 @@ An `interface` is a named bundle of nets and variables. It can also contain:
 - **Tasks and Functions:** To encapsulate bus protocols (e.g., `read()`, `write()`).
 - **Assertions:** To verify protocol compliance directly on the bus.
 - **Parameters:** To make the interface reusable (e.g., `ADDR_WIDTH`).
+- **Clocking blocks:** To give testbench code race-free timing (F4C).
 
 ### Modports (LRM Clause 25.5)
-`modport` lists provide directional views of the interface signals.
-- **Safety:** Prevents accidental multiple drivers.
-- **Clarity:** Documents the intent of the connection.
-- **Synthesis:** Helps synthesis tools understand the data flow.
+`modport` lists provide directional views of the interface signals, declared "as if inside the module" that uses them (§25.5).
+- **Safety:** A module can only do what its view allows: through the `monitor` view nothing can be driven, and names not listed in a modport are not reachable through that port.
+- **Limits:** A modport does not stop two modules that both use the `master` view from driving the same signal, and a hierarchical reference such as `tb_top.bus_if.ready` bypasses modports entirely.
+- **Clocking modports:** A modport can list a clocking block, for example `modport drv (clocking cb);` (§25.5.5). A module using it can reach the signals only through `cb`, with the clocking block's sample and drive timing.
+- **Clarity:** The modport documents the intent of each connection.
 
 ## The Bridge to Classes: Virtual Interfaces
 _How dynamic objects talk to static hardware._
 
-In modern verification (UVM), your testbench drivers are **classes** (dynamic objects created at runtime). But your DUT and interfaces are **modules** (static objects created at compile time). A class cannot "contain" a module instance.
+In modern verification (UVM), your testbench drivers are **classes** (objects created at run time). Your DUT and interfaces are **modules and interface instances**, built at elaboration before time 0. A class cannot contain an interface instance.
 
-Enter the **Virtual Interface**. It is a handle (pointer) that lets a class reference a static interface instance.
+Enter the **virtual interface**: a variable that holds a handle to a real interface instance (§25.9).
 
-```mermaid
-graph LR
-    subgraph Static World [Static World (Hardware)]
-        DUT[DUT Module]
-        IF[Interface Instance]
-        DUT -- ports --> IF
-    end
+- **Static world:** `tb_top` instantiates `simple_bus_if bus_if`, and the DUT connects to it through a port.
+- **Dynamic world:** the driver object holds `virtual simple_bus_if.drv vif`, a handle that starts as `null`.
+- **The bridge:** someone must copy `bus_if` into `vif` before the driver uses it. Forget that step and the first `vif.cb...` access is a **fatal run-time error** (§25.9).
 
-    subgraph Dynamic World [Dynamic World (Classes)]
-        Driver[Driver Class]
-        VIF[Virtual Interface Handle]
-        Driver -- contains --> VIF
-    end
-
-    VIF -. points to .-> IF
-    style VIF stroke-dasharray: 5 5
-```
+First, give the interface a clocking block and a synchronous modport for the driver (F4C explains the timing):
 
 ```systemverilog
-class driver;
-  // 1. Declare the handle
-  virtual simple_bus_if.master vif;
+// Added inside simple_bus_if
+clocking cb @(posedge clk);
+  default input #1step output #0;
+  output addr, data, rw, valid;
+  input  ready;
+endclocking
 
-  task run();
-    forever begin
-      // 2. Drive signals via the handle
-      @(posedge vif.clk);
-      vif.valid <= 1;
-    end
+modport drv (clocking cb);   // the driver sees only cb (§25.5.5)
+```
+
+Then the driver class drives through the handle, and `tb_top` binds the handle to the real instance:
+
+```systemverilog
+class bus_driver;
+  virtual simple_bus_if.drv vif;     // 1. a handle: null until assigned
+
+  task drive(logic [31:0] a);
+    @(vif.cb);                       // 2. wait for the clocking event
+    vif.cb.addr  <= a;               // 3. drive through the clocking block
+    vif.cb.valid <= 1'b1;            //    (VALID does not wait for READY)
+    do @(vif.cb); while (!vif.cb.ready);  // hold VALID until READY is sampled high
+    vif.cb.valid <= 1'b0;
   endtask
 endclass
+
+module tb_top;
+  logic clk = 0, rst_n = 0;
+  always #5 clk = ~clk;
+
+  simple_bus_if bus_if (.clk(clk));                    // the real interface instance
+  slave_dut     dut    (.bus(bus_if.slave), .rst_n(rst_n));
+
+  bus_driver drv;
+  initial begin
+    drv = new();
+    drv.vif = bus_if;   // 4. bind the handle: an instance may be assigned to a modport-typed virtual interface
+    #12 rst_n = 1;
+    drv.drive(32'h1000);
+  end
+endmodule
 ```
+
+In UVM you do step 4 through the configuration database instead of a direct assignment, because the test, not `tb_top`, creates the driver. The type parameter must be identical in `set` and `get`:
+
+```systemverilog
+// tb_top
+initial uvm_config_db#(virtual simple_bus_if)::set(null, "uvm_test_top.*", "vif", bus_if);
+
+// driver's build_phase (the driver declares: virtual simple_bus_if vif;)
+if (!uvm_config_db#(virtual simple_bus_if)::get(this, "", "vif", vif))
+  `uvm_fatal("NOVIF", "virtual interface was not set for this driver")
+```
+
+The `uvm_fatal` check turns a missing `set` into a clear message at build time, instead of a null-handle fatal later in `run_phase`.
 
 ## Make It Work
 1.  **Define the Signals:** List all wires in the interface.
-2.  **Define Modports:** Create a modport for each type of component that connects to the interface (Master, Slave, Monitor).
+2.  **Define Modports:** Create a modport for each type of component that connects to the interface (Master, Slave, Monitor), plus a clocking modport for class-based drivers.
 3.  **Instantiate:** Create an instance of the interface in your top-level testbench.
 4.  **Connect:** Pass the interface instance to the module ports. Use the modport name in the module definition: `module m (my_if.master ifc);`.
+5.  **Bind the virtual interface:** Assign `vif` (or `uvm_config_db` set/get) before any class touches it. A null `vif` is a fatal run-time error.
+6.  **Never wait for READY before raising VALID.** One side must move first, and in ready/valid protocols that is always the sender.
 
 ## Push Further
-- Learn how to parameterize an interface so you can instantiate an 8-bit or 32-bit bus without duplicating code.
+- Learn how to parameterize an interface so you can instantiate an 8-bit or 32-bit bus without duplicating code. Remember that a virtual interface's type includes the parameter values.
 - Investigate what happens when you use an interface array to connect multiple identical slaves (like memory banks) to an interconnect.
 
 ## Practice & Reinforce
-- **Quiz:** Test your knowledge of interfaces and modports.
-- **Lab:** Refactor a legacy testbench to use interfaces.
+- **Modport Explorer (above):** Try every statement in every view, including the clocking modport `drv`, and predict each verdict before revealing it.
+- **Practice route:** [Interface Signal Flow](/practice/visualizations/interface-signal-flow) steps through interfaces, modports, virtual interface binding and a clocking block.
+- **Quiz:** Test your knowledge of interfaces and modports below.
 
 ## Interview Questions
 
-<Card className="mt-8 border-slate-700 bg-slate-900">
+<Card className="mt-8">
   <CardHeader>
     <CardTitle>Ready for the Interview?</CardTitle>
   </CardHeader>
   <CardContent className="space-y-4">
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        What is a Virtual Interface?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">What is a Virtual Interface?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p>A <strong>virtual interface</strong> is a variable that points to an actual interface instance. Since classes (like UVM drivers) are dynamic and cannot contain static hierarchy, they use virtual interfaces to communicate with the static DUT. You pass the handle from the `module` world to the `class` world via the `config_db`.</p>
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
+        <p>A <strong>virtual interface</strong> is a variable that holds a handle to an actual interface instance. Classes (like UVM drivers) cannot contain interface instances, so they use virtual interfaces to reach the DUT's signals. The handle is null until assigned: in UVM, `tb_top` stores the instance with `uvm_config_db#(virtual my_if)::set` and the driver retrieves it with a matching `get` in `build_phase`. Using it while it is still null is a fatal run-time error.</p>
       </div>
     </details>
 
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        Can an interface have parameters?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">Can an interface have parameters?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
-        <p>Yes. Interfaces can be parameterized just like modules. This is essential for creating reusable verification IP (VIP) that can handle different bus widths or configurations.</p>
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
+        <p>Yes. Interfaces can be parameterized just like modules. This is essential for creating reusable verification IP (VIP) that can handle different bus widths or configurations. The parameter values become part of the virtual interface type, so `virtual my_if #(.W(8))` and `virtual my_if #(.W(16))` are different types.</p>
       </div>
     </details>
   </CardContent>
@@ -179,7 +219,8 @@ endclass
 
 ## References & Next Topics
 - **IEEE 1800-2023 Standard:**
-    - Clause 25: Interfaces
+    - Clause 25: Interfaces (§25.5 Modports, §25.5.5 Clocking blocks and modports, §25.9 Virtual interfaces)
+    - §23.3.3.2: Port connection rules for variables
 - **Next:** [F4C: Synchronizing with Clocking and Program Blocks](../F4C_Clocking_Blocks)
 
 <Quiz
@@ -193,7 +234,7 @@ endclass
         { text: 'To create a new hierarchy', correct: false }
       ],
       explanation:
-        'Modports (module ports) restrict access to interface signals, defining them as inputs, outputs, or inouts for the connected module.'
+        'Modports (module ports) restrict access to interface signals, declaring them as inputs, outputs, or inouts from the point of view of the connected module.'
     },
     {
       question: 'Can an interface contain assertions?',
@@ -205,6 +246,17 @@ endclass
       ],
       explanation:
         'Interfaces are ideal for protocol assertions (SVA) because they see all the relevant signals in one place.'
+    },
+    {
+      question: 'A driver class calls vif.cb.valid <= 1 but nobody ever assigned vif. What happens?',
+      answers: [
+        { text: 'A compile error, because vif has no default value', correct: false },
+        { text: 'The drive is silently ignored', correct: false },
+        { text: 'A fatal run-time error: the virtual interface is still null', correct: true },
+        { text: 'valid goes to X', correct: false }
+      ],
+      explanation:
+        'A virtual interface is null until it is assigned. The code compiles, and the first access through the null handle is a fatal run-time error (IEEE 1800-2023 §25.9).'
     }
   ]}
 />

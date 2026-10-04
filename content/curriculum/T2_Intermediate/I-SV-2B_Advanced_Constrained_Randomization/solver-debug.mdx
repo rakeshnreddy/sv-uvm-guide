@@ -17,7 +17,7 @@ export const metadata = {
 
 When you call `obj.randomize()`, you are asking the constraint solver (often an SAT or BDD solver under the hood) to find a set of values for your random variables that satisfies ALL active constraints.
 
-If it cannot find a solution, the solver gives up and returns `0`. **This is a critical failure.** If you do not check the return value, your testbench will continue running using stale, non-randomized data!
+If no combination satisfies every active constraint, `randomize()` returns `0`, the random variables keep their previous values, and `post_randomize()` is not called (IEEE 1800-2023 §18.6.3). **This is a critical failure.** If you do not check the return value, your testbench will continue running using stale, non-randomized data! The opposite is also true: when a solution exists, `randomize()` never fails by bad luck.
 
 <InteractiveCode language="systemverilog" code={`class Packet;
   rand bit [3:0] size;
@@ -58,7 +58,7 @@ Solver failed when trying to satisfy the following constraints:
 Here, you can easily read that $c\\_size$ forces $size > 10$, but $c\\_len$ restricts $payload$ to $< 5$, and $c\\_match$ requires them to be equal.
 
 ### 2. Disable Constraints Incrementally
-If the solver output is too complex, use `constraint_mode(0)` to turn off constraints one by one until randomization succeeds. The last constraint you turned off is part of the contradiction.
+If the solver output is too complex, use `constraint_mode(0)` to turn off constraints one at a time (or half at a time) until randomization succeeds. The last constraint you turned off is part of *a* conflict, but a conflict usually needs several constraints together, a *minimal conflicting set*. Turning one member off breaks that conflict without naming its partners, and a second conflict may still remain. Use the report to see the whole set.
 
 ```systemverilog
 // Turn off the suspicious constraint
@@ -73,21 +73,25 @@ p.size.rand_mode(0); // size will retain whatever value it currently holds
 p.randomize(); 
 ```
 
-### 4. Beware of Signed Math
-A massive source of subtle solver failures is signed vs. unsigned math. Random variables are `unsigned` by default unless explicitly declared `signed`. Doing math with negative numbers in constraints when variables are unsigned will cause terrible wrap-around bugs.
+### 4. Beware of Signed Types
+A rand variable takes the signedness of its declared type (§6.11.3). `int`, `shortint`, `longint`, `byte` and `integer` are **signed**; `bit` and `logic` vectors are unsigned. So `rand int len;` can be negative, the usual source of "negative length" bugs. If any operand of an expression is unsigned, the whole expression is evaluated unsigned, and negative values wrap to huge ones. Prefer `bit [N:0]` or `int unsigned` for sizes and lengths, and bound them.
 
 ### 5. Check Active Overrides
 Are `pre_randomize` or parent class variables altering state? Check if a base class has constraints you forgot about.
 
 ## Practice: Debugging a Real Conflict
-Put these triage strategies to the test in our interactive lab! Use `constraint_mode` and your knowledge of dependencies to find the hidden contradiction in a complex bug report.
+The lab's packet has three rules: IPV6 needs `length == 40`, the payload size must equal `length`, and the hardware FIFO accepts only 16, 32, 64, 128 or 256 bytes. **Predict first:** does `randomize()` ever fail with these rules? Check your answer in the model, then force IPV6 and read the conflict.
+
+<ConstraintSolverExplorer initialMode="hole" />
+
+It never fails. The solver simply never picks IPV6, so a whole protocol mode disappears without an error message: a *coverage hole*, not a failure. Only a coverage report on `proto` would show it. Forcing `randomize() with { proto == IPV6; }` turns the hole into a real failure whose minimal conflicting set is the IPV6 length rule, the FIFO list and the inline constraint.
 
 <div className="mt-4 mb-8 p-6 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg">
   <h3 className="text-xl font-semibold mb-2 flex items-center gap-2">
-    <span>🔬</span> Lab Challenge: Silent Failures and Dependent Fields
+    <span>🔬</span> Lab Challenge: The Protocol That Never Appears
   </h3>
   <p className="mb-4 text-slate-600 dark:text-slate-400">
-    A complex packet generator is silently failing randomization, generating bogus traffic. Dive into the code, disable conflicting constraints, and fix the generator.
+    Add a check on the return value, force IPV6 with an inline constraint to expose the conflict, use constraint_mode(0) to confirm the conflicting set, then fix the rules so IPV6 packets can be generated. The lab's README still describes intermittent failures; with these constraints you will see none until you force IPV6.
   </p>
   <a 
     href="/practice/lab/randomization-advanced-1" 

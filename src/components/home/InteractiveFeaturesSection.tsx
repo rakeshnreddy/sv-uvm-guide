@@ -3,38 +3,34 @@
 import React from 'react';
 import { motion } from 'framer-motion';
 import { Button } from '@/components/ui/Button';
-import { Code, Share2, Gamepad2, Bot, ArrowRight } from 'lucide-react';
+import { Code, Share2, Gamepad2, FlaskConical, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
 
 const featureConfigs = [
   {
-    title: 'Live Code Editor',
-    description: 'Write, compile, and run SystemVerilog code directly in your browser. Get instant feedback on your solutions.',
+    title: 'Step Through the Scheduler',
+    description: 'Watch one clock edge region by region, flip = and <=, and let the model run every legal process order to expose races.',
     icon: Code,
-    href: '/practice/lab',
-    imageUrl: '/images/feature-code-editor.png'
+    href: '/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index',
   },
   {
-    title: 'UVM Diagram Explorer',
-    description: 'Visualize complex UVM hierarchies and understand component relationships with our interactive diagrams.',
+    title: 'UVM Architecture Map',
+    description: 'Explore how tests, environments, agents, drivers, monitors and scoreboards fit together, then jump to the lesson for each layer.',
     icon: Share2,
-    href: '/curriculum/T2_Intermediate/I-UVM-1A_Components/index#layered-environment-snapshot',
-    imageUrl: '/images/feature-uvm-explorer.png'
+    href: '/practice/visualizations/uvm-architecture',
   },
   {
-    title: 'Gamified Exercises',
-    description: 'Turn learning into a game. Earn points, badges, and climb the leaderboard as you master new skills.',
+    title: 'Hands-on Exercises',
+    description: 'Order the UVM phases, assemble an agent, connect a scoreboard and experiment with sequencer arbitration, all with keyboard-accessible drag and drop.',
     icon: Gamepad2,
     href: '/exercises',
-    imageUrl: '/images/feature-gamified-exercises.png'
   },
   {
-    title: 'AI Tutor Chat',
-    description: 'Stuck on a concept? Get instant, personalized help from our AI assistant, available 24/7.',
-    icon: Bot,
-    href: '#ai-tutor', // This might not have a direct link, could open a widget
-    imageUrl: '/images/feature-ai-tutor.png'
-  }
+    title: 'Guided Labs',
+    description: 'Starter code, step-by-step instructions and reference solutions for SystemVerilog and UVM testbenches. Sign in to open a lab.',
+    icon: FlaskConical,
+    href: '/practice',
+  },
 ];
 
 const features = featureConfigs.map(config => ({
@@ -50,9 +46,8 @@ const FeatureCard = ({ feature, index }: { feature: (typeof features)[0], index:
     viewport={{ once: true, amount: 0.3 }}
     transition={{ duration: 0.5, delay: index * 0.1 }}
   >
-    <div className="bg-muted h-48 flex items-center justify-center">
-      {/* Placeholder for an image */}
-      <feature.icon className="w-24 h-24 text-muted-foreground/30" />
+    <div className="bg-muted/60 h-24 flex items-center justify-center" aria-hidden>
+      <feature.icon className="w-12 h-12 text-primary/70" />
     </div>
     <div className="p-6 flex flex-col flex-grow">
       <h3 className="text-xl font-bold text-primary mb-2">{feature.title}</h3>
@@ -80,7 +75,7 @@ const InteractiveFeaturesSection = () => {
         >
           <h2 className="text-4xl md:text-5xl font-bold text-primary mb-4">Experience Interactive Learning</h2>
           <p className="text-lg text-foreground/80 max-w-3xl mx-auto">
-            Our platform is more than just text and videos. Engage with the material like never before with our hands-on tools.
+            Interactives say whether they are illustrations or tested models, and many ask you to predict an outcome before they reveal it.
           </p>
         </motion.div>
 

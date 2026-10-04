@@ -1,307 +1,324 @@
 "use client";
 
-import React, { useState } from 'react';
-import { Database, List, ArrowRightLeft, Plus, Trash2, Search, ChevronRight } from 'lucide-react';
+import React, { useMemo, useState } from "react";
 
-/* ------------------------------------------------------------------ */
-/* Types & Data                                                       */
-/* ------------------------------------------------------------------ */
+import { CodeTrace } from "@/components/visual-system/CodeTrace";
+import { PredictionPrompt } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  containerPolicySupport,
+  containerPrograms,
+  emptyWorld,
+  execStmt,
+  formatPoolValue,
+  runProgram,
+  stmtSource,
+  type ContainerMode,
+  type ContainerStmt,
+  type ProgramStep,
+  type World,
+} from "@/lib/uvm-container-model";
+import { cn } from "@/lib/utils";
 
-type ContainerType = 'uvm_pool' | 'uvm_queue' | 'sv_aa' | 'sv_queue';
-
-interface ContainerInfo {
-  key: ContainerType;
-  label: string;
-  category: 'uvm' | 'sv';
-  description: string;
-  operations: string[];
-  strengths: string[];
-  weaknesses: string[];
-}
-
-const CONTAINERS: ContainerInfo[] = [
-  {
-    key: 'uvm_pool',
-    label: 'uvm_pool',
-    category: 'uvm',
-    description: 'Global singleton associative container with string keys. Provides a shared namespace accessible from anywhere in the testbench hierarchy.',
-    operations: ['add(key, val)', 'get(key)', 'delete(key)', 'exists(key)', 'num()', 'first(key)', 'next(key)'],
-    strengths: ['Global singleton access via ::get_global_pool()', 'No need to pass handles between components', 'String-keyed — flexible and self-documenting'],
-    weaknesses: ['No type safety on values', 'Global state — hard to test in isolation', 'Singleton pattern can mask coupling'],
-  },
-  {
-    key: 'uvm_queue',
-    label: 'uvm_queue',
-    category: 'uvm',
-    description: 'A parameterized FIFO wrapper around a dynamic array, compatible with uvm_object registration and the UVM factory.',
-    operations: ['push_back(val)', 'push_front(val)', 'pop_back()', 'pop_front()', 'get(index)', 'size()', 'insert(index, val)', 'delete(index)'],
-    strengths: ['Factory-compatible (can be overridden)', 'Supports print/compare/copy via uvm_object', 'Parameterized — type-safe'],
-    weaknesses: ['Slight overhead vs native SV queue', 'Rarely needed unless factory integration matters', 'Less familiar API to SV engineers'],
-  },
-  {
-    key: 'sv_aa',
-    label: 'SV Associative Array',
-    category: 'sv',
-    description: 'Native SystemVerilog associative array. Hash-map semantics with arbitrary key types (string, int, or any type).',
-    operations: ['aa[key] = val', 'aa.exists(key)', 'aa.delete(key)', 'aa.size()', 'aa.first(key)', 'aa.next(key)', 'foreach (aa[k]) ...'],
-    strengths: ['Zero overhead — built into the language', 'Supports any key type', 'Familiar SV syntax', 'Foreach iteration'],
-    weaknesses: ['No global singleton access', 'Must pass handles explicitly', 'No UVM policy integration (print/compare)'],
-  },
-  {
-    key: 'sv_queue',
-    label: 'SV Queue ($)',
-    category: 'sv',
-    description: 'Native SystemVerilog queue with $-syntax. Ordered, double-ended, and supports array manipulation methods.',
-    operations: ['q.push_back(val)', 'q.push_front(val)', 'q.pop_back()', 'q.pop_front()', 'q[i]', 'q.size()', 'q.insert(i, val)', 'q.delete(i)'],
-    strengths: ['Zero overhead — built into the language', 'Rich array methods (sort, find, unique)', 'No registration needed', 'Familiar SV syntax'],
-    weaknesses: ['No factory override support', 'No UVM print/compare integration', 'Cannot be used as a uvm_object field without wrapper'],
-  },
+export const CONTAINER_MODEL_ASSUMPTIONS = [
+  "Follows uvm-core 2020.3.1 (IEEE 1800.2-2020 11.2 uvm_pool, 11.3 uvm_queue, 10.4.1 uvm_event_pool): uvm_pool::get inserts the default value for a missing key; uvm_event_pool::get creates the event; uvm_queue rejects out-of-range get/insert/delete with a warning.",
+  "Neither container implements do_compare, so compare() returns 1 whatever they hold; uvm_queue has no do_print.",
+  "Native SystemVerilog containers follow IEEE 1800-2023 §7.8 (associative arrays, string keys in lexicographic order) and §7.10 (queues).",
+  "Object ids (@1, @2…) are invented. A null-handle access is shown as the run-stopping error simulators report.",
 ];
 
-/* ------------------------------------------------------------------ */
-/* Interactive demo state                                             */
-/* ------------------------------------------------------------------ */
+function WorldView({ world }: { world: World }) {
+  const objects = Object.values(world.objects);
+  if (objects.length === 0) return <p className="text-sm text-muted-foreground">No container objects yet.</p>;
+  const handlesTo = (id: number) =>
+    Object.entries(world.vars)
+      .filter(([, v]) => v === id)
+      .map(([k]) => k);
+  const globalOf = (id: number) => (Object.entries(world.globals).find(([, v]) => v === id)?.[0] ?? null);
+  return (
+    <ul className="space-y-2" aria-label="Container objects">
+      {objects.map((o) => {
+        const names = handlesTo(o.objId);
+        const global = globalOf(o.objId);
+        return (
+          <li key={o.objId} className="rounded-xl border border-border/70 bg-background/50 p-3">
+            <p className="font-mono text-xs [font-variant-ligatures:none]">
+              <span className="font-semibold">{o.type}@{o.objId}</span>
+              {names.length ? <span className="text-muted-foreground"> ◀ {names.join(", ")}</span> : null}
+              {global ? <span className="ml-2 rounded border border-cyan-500/60 px-1 text-[10px] text-cyan-800 dark:text-cyan-200">global singleton</span> : null}
+            </p>
+            {o.type === "uvm_queue#(int)" ? (
+              <p className="mt-1 font-mono text-xs [font-variant-ligatures:none]">
+                queue = {"'{"}
+                {o.items.join(", ")}
+                {"}"} <span className="text-muted-foreground">size() = {o.items.length}</span>
+              </p>
+            ) : (
+              <table className="mt-1 w-full min-w-[220px] text-left font-mono text-xs [font-variant-ligatures:none]">
+                <caption className="sr-only">Entries of {o.type}@{o.objId}</caption>
+                <thead className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  <tr>
+                    <th scope="col" className="pr-3">key</th>
+                    <th scope="col">value</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {o.entries.length === 0 ? (
+                    <tr>
+                      <td colSpan={2} className="text-muted-foreground">
+                        (empty) num() = 0
+                      </td>
+                    </tr>
+                  ) : (
+                    o.entries.map(([k, v]) => (
+                      <tr key={k} className="border-t border-border/40">
+                        <td className="pr-3">&quot;{k}&quot;</td>
+                        <td className={cn(v.kind === "null" && "text-rose-700 dark:text-rose-300")}>{formatPoolValue(v)}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
 
-interface DemoEntry { key: string; value: string }
+function StepResult({ step, highlight = false }: { step: ProgramStep; highlight?: boolean }) {
+  const r = step.result;
+  return (
+    <li className={cn("rounded-lg border p-2 text-sm", highlight ? "border-amber-500/60 bg-amber-500/[0.06]" : "border-border/60")}>
+      <code className="font-mono text-xs [font-variant-ligatures:none]">{step.source}</code>
+      {r.output ? <pre className="mt-1 whitespace-pre-wrap font-mono text-xs text-foreground [font-variant-ligatures:none]">→ {r.output}</pre> : null}
+      {r.warning ? <p className="mt-1 font-mono text-xs text-amber-700 dark:text-amber-300 [font-variant-ligatures:none]">⚠ {r.warning}</p> : null}
+      {r.fatal ? <p className="mt-1 font-mono text-xs font-semibold text-rose-700 dark:text-rose-300 [font-variant-ligatures:none]">✕ {r.fatal}</p> : null}
+      <p className="mt-1 text-xs text-muted-foreground">{r.why}</p>
+    </li>
+  );
+}
 
-function ContainerDemo({ container }: { container: ContainerInfo }) {
-  const [entries, setEntries] = useState<DemoEntry[]>([
-    { key: 'status', value: 'PASS' },
-    { key: 'count', value: '42' },
-  ]);
-  const [newKey, setNewKey] = useState('');
-  const [newVal, setNewVal] = useState('');
-  const [searchKey, setSearchKey] = useState('');
-  const [searchResult, setSearchResult] = useState<string | null>(null);
+type ConsoleOp = "get" | "exists" | "add" | "delete" | "push_back" | "insert" | "qget" | "qdelete";
 
-  const addEntry = () => {
-    if (!newKey.trim()) return;
-    setEntries(prev => [...prev.filter(e => e.key !== newKey), { key: newKey, value: newVal }]);
-    setNewKey('');
-    setNewVal('');
+function TryItConsole({ mode, world, onRun }: { mode: ContainerMode; world: World; onRun: (stmt: ContainerStmt) => void }) {
+  const isQueue = mode === "queue";
+  const [op, setOp] = useState<ConsoleOp>(isQueue ? "insert" : "get");
+  const [key, setKey] = useState("parity");
+  const [num, setNum] = useState(1);
+  const [val, setVal] = useState(7);
+  const target = isQueue ? "q" : "err_pool";
+  if (world.vars[target] === undefined) return null;
+  const build = (): ContainerStmt => {
+    switch (op) {
+      case "get":
+        return { kind: "get", target, key, into: "n" };
+      case "exists":
+        return { kind: "exists", target, key };
+      case "add":
+        return { kind: "add", target, key, value: val };
+      case "delete":
+        return { kind: "delete", target, key };
+      case "push_back":
+        return { kind: "push_back", target, value: val };
+      case "insert":
+        return { kind: "insert", target, index: num, value: val };
+      case "qget":
+        return { kind: "qget", target, index: num };
+      case "qdelete":
+        return { kind: "qdelete", target, index: num };
+    }
   };
+  const ops: { value: ConsoleOp; label: string }[] = isQueue
+    ? [
+        { value: "insert", label: "insert(i, v)" },
+        { value: "push_back", label: "push_back(v)" },
+        { value: "qget", label: "get(i)" },
+        { value: "qdelete", label: "delete(i)" },
+      ]
+    : [
+        { value: "get", label: "get(key)" },
+        { value: "exists", label: "exists(key)" },
+        { value: "add", label: "add(key, v)" },
+        { value: "delete", label: "delete(key)" },
+      ];
+  const needsKey = ["get", "exists", "add", "delete"].includes(op);
+  const needsIndex = ["insert", "qget", "qdelete"].includes(op);
+  const needsValue = ["add", "push_back", "insert"].includes(op);
+  return (
+    <fieldset className="rounded-xl border border-border/70 p-3">
+      <legend className="px-1 text-sm font-semibold text-foreground">Try your own call on {target}</legend>
+      <div className="flex flex-wrap items-end gap-2 text-sm">
+        <label className="flex flex-col text-xs text-muted-foreground">
+          Method
+          <select value={op} onChange={(e) => setOp(e.target.value as ConsoleOp)} className="h-10 rounded-md border border-border/70 bg-background px-2 font-mono text-sm text-foreground">
+            {ops.map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        {needsKey ? (
+          <label className="flex flex-col text-xs text-muted-foreground">
+            key
+            <input value={key} onChange={(e) => setKey(e.target.value)} className="h-10 w-28 rounded-md border border-border/70 bg-background px-2 font-mono text-sm text-foreground" />
+          </label>
+        ) : null}
+        {needsIndex ? (
+          <label className="flex flex-col text-xs text-muted-foreground">
+            index i
+            <input type="number" value={num} onChange={(e) => setNum(Number(e.target.value))} className="h-10 w-20 rounded-md border border-border/70 bg-background px-2 font-mono text-sm text-foreground" />
+          </label>
+        ) : null}
+        {needsValue ? (
+          <label className="flex flex-col text-xs text-muted-foreground">
+            value v
+            <input type="number" value={val} onChange={(e) => setVal(Number(e.target.value))} className="h-10 w-20 rounded-md border border-border/70 bg-background px-2 font-mono text-sm text-foreground" />
+          </label>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => onRun(build())}
+          className="h-10 rounded-lg border border-cyan-500/60 bg-cyan-500/10 px-3 font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          Run <span className="font-mono [font-variant-ligatures:none]">{stmtSource(build())}</span>
+        </button>
+      </div>
+    </fieldset>
+  );
+}
 
-  const removeEntry = (key: string) => {
-    setEntries(prev => prev.filter(e => e.key !== key));
-  };
+const buttonClass =
+  "inline-flex h-10 items-center rounded-lg border border-border/70 bg-background/60 px-3 text-sm font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40 motion-reduce:transition-none";
 
-  const doSearch = () => {
-    const found = entries.find(e => e.key === searchKey);
-    setSearchResult(found ? found.value : '❌ Not found');
+function ProgramRunner({ mode }: { mode: ContainerMode }) {
+  const program = containerPrograms[mode];
+  const steps = useMemo(() => runProgram(program.stmts), [program]);
+  const [count, setCount] = useState(0);
+  const [extra, setExtra] = useState<ProgramStep[]>([]);
+  const executed = steps.slice(0, count);
+  const baseWorld = count === 0 ? emptyWorld() : steps[count - 1].result.world;
+  const world = extra.length ? extra[extra.length - 1].result.world : baseWorld;
+  const finished = count >= steps.length;
+  const gated = count === program.predictAt;
+  const lines = [
+    ...program.declarations.map((text) => ({ text, owner: "testbench" as const })),
+    ...program.stmts.map((s, i) => ({ text: stmtSource(s), key: `s${i}`, owner: "testbench" as const })),
+  ];
+  const reset = () => {
+    setCount(0);
+    setExtra([]);
   };
 
   return (
-    <div className="flex flex-col gap-3">
-      {/* Current contents */}
-      <div className="bg-black/40 rounded-lg p-3 border border-slate-800">
-        <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2 font-semibold flex items-center gap-1.5">
-          <Database className="w-3 h-3" /> Contents ({entries.length} entries)
+    <div className="space-y-3">
+      <p className="text-sm font-medium text-foreground">{program.title}</p>
+      <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]">
+        <CodeTrace label="Program" lines={lines} activeKey={finished ? undefined : `s${count}`} contextKeys={program.stmts.slice(0, count).map((_, i) => `s${i}`)} />
+        <div className="min-w-0 space-y-2">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">State after {count} statement{count === 1 ? "" : "s"}</p>
+          <WorldView world={world} />
         </div>
-        {entries.length === 0 ? (
-          <div className="text-xs text-slate-500 italic">Empty</div>
-        ) : (
-          <div className="flex flex-col gap-1">
-            {entries.map(e => (
-              <div key={e.key} className="flex items-center justify-between text-xs font-mono bg-slate-800/50 rounded px-2 py-1">
-                <span>
-                  <span className="text-blue-300">{e.key}</span>
-                  <span className="text-slate-500"> → </span>
-                  <span className="text-emerald-300">{e.value}</span>
-                </span>
-                <button onClick={() => removeEntry(e.key)} className="text-rose-400 hover:text-rose-300 ml-2">
-                  <Trash2 className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
       </div>
 
-      {/* Add + Search controls */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-        <div className="flex items-center gap-1">
-          <input value={newKey} onChange={e => setNewKey(e.target.value)} placeholder="key"
-            className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder:text-slate-500 min-w-0" />
-          <input value={newVal} onChange={e => setNewVal(e.target.value)} placeholder="value"
-            className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder:text-slate-500 min-w-0" />
-          <button onClick={addEntry} className="p-1 bg-emerald-600 text-white rounded hover:bg-emerald-500 shrink-0" title="Add entry">
-            <Plus className="w-3.5 h-3.5" />
-          </button>
-        </div>
-        <div className="flex items-center gap-1">
-          <input value={searchKey} onChange={e => { setSearchKey(e.target.value); setSearchResult(null); }} placeholder="search key"
-            className="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs text-slate-200 placeholder:text-slate-500 min-w-0" />
-          <button onClick={doSearch} className="p-1 bg-blue-600 text-white rounded hover:bg-blue-500 shrink-0" title="Search">
-            <Search className="w-3.5 h-3.5" />
-          </button>
-          {searchResult !== null && (
-            <span className={`text-xs font-mono ${searchResult.startsWith('❌') ? 'text-rose-400' : 'text-emerald-300'}`}>
-              {searchResult}
-            </span>
-          )}
-        </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <button type="button" className={cn(buttonClass, "border-cyan-500/50 bg-cyan-500/10")} disabled={finished || gated} onClick={() => setCount((c) => c + 1)}>
+          {gated ? "Predict first ↓" : finished ? "Program finished" : "Run next statement"}
+        </button>
+        <button type="button" className={buttonClass} onClick={reset} disabled={count === 0 && extra.length === 0}>
+          Reset
+        </button>
       </div>
+
+      {count >= program.predictAt ? (
+        <PredictionPrompt question={program.question} options={program.options} resetKey={`${mode}`}>
+          {count === program.predictAt ? (
+            <button type="button" className={cn(buttonClass, "border-amber-500/60 bg-amber-500/10")} onClick={() => setCount((c) => c + 1)}>
+              Run <span className="ml-1 font-mono [font-variant-ligatures:none]">{steps[program.predictAt].source}</span>
+            </button>
+          ) : (
+            <p className="text-sm text-muted-foreground">Ran it — the result is the highlighted entry under Results.</p>
+          )}
+        </PredictionPrompt>
+      ) : null}
+
+      {executed.length ? (
+        <div>
+          <p className="mb-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Results</p>
+          <ol className="space-y-2" aria-live="polite">
+            {[...executed, ...extra].map((step, i) => (
+              <StepResult key={i} step={step} highlight={i === program.predictAt} />
+            ))}
+          </ol>
+        </div>
+      ) : null}
+
+      {finished && mode !== "event" ? (
+        <TryItConsole
+          mode={mode}
+          world={world}
+          onRun={(stmt) => {
+            const result = execStmt(world, stmt);
+            setExtra((cur) => [...cur, { stmt, source: stmtSource(stmt), result }]);
+          }}
+        />
+      ) : null}
     </div>
   );
 }
 
-/* ------------------------------------------------------------------ */
-/* Main component                                                     */
-/* ------------------------------------------------------------------ */
-
+/** uvm_pool / uvm_event_pool / uvm_queue explorer: step through real calls, predict the surprising ones, then try your own. */
 export default function UvmContainerVisualizer() {
-  const [selected, setSelected] = useState<ContainerType>('uvm_pool');
-  const [showCompare, setShowCompare] = useState(false);
-
-  const current = CONTAINERS.find(c => c.key === selected)!;
-
+  const [mode, setMode] = useState<ContainerMode>("pool");
   return (
-    <div className="flex flex-col gap-5 p-6 bg-slate-900 rounded-xl border border-slate-800 text-slate-200 font-sans my-8">
-      {/* Header */}
-      <div className="border-b border-slate-800 pb-4">
-        <h3 className="text-xl font-bold font-display text-white m-0">UVM vs Native SV Containers</h3>
-        <p className="text-sm text-slate-400 mt-1">
-          Explore each container, try the operations, and compare their tradeoffs.
-        </p>
+    <VisualFrame
+      label="UVM container explorer"
+      eyebrow="Experiment"
+      title="uvm_pool and uvm_queue: what the calls really do"
+      summary="Step through each program. When a call surprises most engineers, the explorer stops and asks you first."
+      fidelity="model"
+      assumptions={CONTAINER_MODEL_ASSUMPTIONS}
+    >
+      <SegmentedControl
+        label="Container"
+        mono
+        value={mode}
+        onChange={setMode}
+        options={[
+          { value: "pool", label: "uvm_pool" },
+          { value: "event", label: "uvm_event_pool" },
+          { value: "queue", label: "uvm_queue" },
+        ]}
+      />
+      <ProgramRunner key={mode} mode={mode} />
+      <div className="overflow-x-auto rounded-xl border border-border/70">
+        <table className="w-full min-w-[300px] text-left text-xs">
+          <caption className="px-3 pt-2 text-left text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Policy support in uvm-core 2020.3.1</caption>
+          <thead className="text-[10px] uppercase tracking-wider text-muted-foreground">
+            <tr>
+              <th scope="col" className="px-3 py-1.5">Container</th>
+              <th scope="col" className="px-3 py-1.5">copy()</th>
+              <th scope="col" className="px-3 py-1.5">print()</th>
+              <th scope="col" className="px-3 py-1.5">compare()</th>
+              <th scope="col" className="px-3 py-1.5">convert2string()</th>
+            </tr>
+          </thead>
+          <tbody>
+            {containerPolicySupport.map((row) => (
+              <tr key={row.container} className="border-t border-border/50">
+                <td className="px-3 py-1.5 font-mono [font-variant-ligatures:none]">{row.container}</td>
+                <td className="px-3 py-1.5">{row.copy}</td>
+                <td className="px-3 py-1.5">{row.print}</td>
+                <td className="px-3 py-1.5">✕ {row.compare}</td>
+                <td className="px-3 py-1.5">{row.convert2string}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
-
-      {/* Container selector */}
-      <div className="flex flex-wrap items-center gap-1 bg-slate-800/60 p-1 rounded-lg border border-slate-700 text-xs w-fit">
-        {CONTAINERS.map(c => (
-          <button
-            key={c.key}
-            onClick={() => { setSelected(c.key); setShowCompare(false); }}
-            className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all ${
-              selected === c.key && !showCompare
-                ? 'bg-slate-700 text-white shadow-sm'
-                : 'text-slate-400 hover:text-slate-300'
-            }`}
-          >
-            {c.category === 'uvm' ? <Database className="w-3.5 h-3.5" /> : <List className="w-3.5 h-3.5" />}
-            {c.label}
-          </button>
-        ))}
-        <button
-          onClick={() => setShowCompare(!showCompare)}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md transition-all border-l border-slate-700 ml-1 ${
-            showCompare ? 'bg-purple-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300'
-          }`}
-        >
-          <ArrowRightLeft className="w-3.5 h-3.5" />
-          Compare All
-        </button>
-      </div>
-
-      {/* Content */}
-      {showCompare ? (
-        /* Comparison table */
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs font-mono">
-            <thead>
-              <tr className="text-slate-400 border-b border-slate-700">
-                <th className="text-left py-2 px-2">Feature</th>
-                {CONTAINERS.map(c => (
-                  <th key={c.key} className={`text-left py-2 px-2 ${c.category === 'uvm' ? 'text-purple-300' : 'text-blue-300'}`}>
-                    {c.label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-b border-slate-800/50">
-                <td className="py-1.5 px-2 text-slate-300 font-semibold">Type</td>
-                <td className="py-1.5 px-2 text-slate-400">Assoc. map</td>
-                <td className="py-1.5 px-2 text-slate-400">Ordered list</td>
-                <td className="py-1.5 px-2 text-slate-400">Assoc. map</td>
-                <td className="py-1.5 px-2 text-slate-400">Ordered list</td>
-              </tr>
-              <tr className="border-b border-slate-800/50">
-                <td className="py-1.5 px-2 text-slate-300 font-semibold">Global access</td>
-                <td className="py-1.5 px-2 text-emerald-400">✓ singleton</td>
-                <td className="py-1.5 px-2 text-rose-400">✗</td>
-                <td className="py-1.5 px-2 text-rose-400">✗</td>
-                <td className="py-1.5 px-2 text-rose-400">✗</td>
-              </tr>
-              <tr className="border-b border-slate-800/50">
-                <td className="py-1.5 px-2 text-slate-300 font-semibold">Factory support</td>
-                <td className="py-1.5 px-2 text-emerald-400">✓</td>
-                <td className="py-1.5 px-2 text-emerald-400">✓</td>
-                <td className="py-1.5 px-2 text-rose-400">✗</td>
-                <td className="py-1.5 px-2 text-rose-400">✗</td>
-              </tr>
-              <tr className="border-b border-slate-800/50">
-                <td className="py-1.5 px-2 text-slate-300 font-semibold">Print/Compare</td>
-                <td className="py-1.5 px-2 text-emerald-400">✓ via policy</td>
-                <td className="py-1.5 px-2 text-emerald-400">✓ via policy</td>
-                <td className="py-1.5 px-2 text-rose-400">✗ manual</td>
-                <td className="py-1.5 px-2 text-rose-400">✗ manual</td>
-              </tr>
-              <tr className="border-b border-slate-800/50">
-                <td className="py-1.5 px-2 text-slate-300 font-semibold">Performance</td>
-                <td className="py-1.5 px-2 text-amber-400">Overhead</td>
-                <td className="py-1.5 px-2 text-amber-400">Overhead</td>
-                <td className="py-1.5 px-2 text-emerald-400">Native</td>
-                <td className="py-1.5 px-2 text-emerald-400">Native</td>
-              </tr>
-              <tr className="border-b border-slate-800/50">
-                <td className="py-1.5 px-2 text-slate-300 font-semibold">Array methods</td>
-                <td className="py-1.5 px-2 text-rose-400">✗</td>
-                <td className="py-1.5 px-2 text-rose-400">✗</td>
-                <td className="py-1.5 px-2 text-rose-400">✗</td>
-                <td className="py-1.5 px-2 text-emerald-400">✓ sort, find, unique</td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        /* Single container detail view */
-        <div className="flex flex-col gap-4">
-          <p className="text-xs text-slate-400">{current.description}</p>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* API reference */}
-            <div className="bg-black/40 rounded-lg p-3 border border-slate-800">
-              <div className="text-[10px] text-slate-500 uppercase tracking-wider mb-2 font-semibold">API</div>
-              <div className="flex flex-col gap-1">
-                {current.operations.map(op => (
-                  <code key={op} className="text-xs font-mono text-blue-300 bg-slate-800/50 rounded px-1.5 py-0.5">
-                    {op}
-                  </code>
-                ))}
-              </div>
-            </div>
-
-            {/* Strengths / Weaknesses */}
-            <div className="flex flex-col gap-3">
-              <div>
-                <div className="text-[10px] text-emerald-500 uppercase tracking-wider mb-1 font-semibold">Strengths</div>
-                {current.strengths.map(s => (
-                  <div key={s} className="text-xs text-slate-300 flex items-start gap-1.5 mb-0.5">
-                    <span className="text-emerald-400 shrink-0">+</span> {s}
-                  </div>
-                ))}
-              </div>
-              <div>
-                <div className="text-[10px] text-rose-500 uppercase tracking-wider mb-1 font-semibold">Weaknesses</div>
-                {current.weaknesses.map(w => (
-                  <div key={w} className="text-xs text-slate-300 flex items-start gap-1.5 mb-0.5">
-                    <span className="text-rose-400 shrink-0">−</span> {w}
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* Interactive demo */}
-          <div className="border-t border-slate-800 pt-4">
-            <div className="text-xs text-slate-400 mb-2 font-semibold flex items-center gap-1.5">
-              <ChevronRight className="w-3 h-3 text-emerald-500" />
-              Try it: add, search, and remove entries
-            </div>
-            <ContainerDemo container={current} />
-          </div>
-        </div>
-      )}
-    </div>
+    </VisualFrame>
   );
 }

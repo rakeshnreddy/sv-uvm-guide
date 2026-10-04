@@ -12,58 +12,92 @@ export const metadata = {
 
   ## Elevator Pitch
 
-  Frontdoor access flows through the bus agent, exercising arbitration and verifying protocol logic. Backdoor access bypasses the bus for speed or early initialization. Most teams blend both: backdoor for bring-up, frontdoor for spot checks and coverage.
+  Frontdoor access flows through the bus agent, exercising arbitration and verifying protocol logic. Backdoor access reads or deposits the HDL storage directly, in zero time. Most teams blend both: backdoor for bring-up and fast state set-up, frontdoor for checks and coverage.
 
   ## Trade-off Table
 
   | Mode | Pros | Cons |
   | --- | --- | --- |
-  | Frontdoor | Exercises full bus stack, triggers monitors/coverage, mirrors stay accurate automatically | Slower, requires adapters, may need elaborate sequences |
-  | Backdoor  | Instant pokes for reset or patching state, great for scoreboards/formal | Skips protocol, risk of divergence unless you update the mirror manually |
+  | Frontdoor | Exercises the full bus stack, triggers monitors and coverage, honours every access policy | Slower; needs an adapter and a sequencer; the mirror follows only if a predictor or auto-predict is set up |
+  | Backdoor  | Instant `peek()`/`poke()`; each call updates the mirror itself (`do_predict()` with the `UVM_BACKDOOR` door) | Needs an HDL path; bypasses access policies (`poke()` writes RO bits) and side effects (`peek()` does not clear RC fields); monitors and monitor-fed predictors never see it |
+
+  **Backdoor set-up:** a register needs an HDL path before `peek()` or `poke()` works. Give it one with the third argument of `uvm_reg::configure()` or with `add_hdl_path_slice()`, and give the block its root with `add_hdl_path()`. Without a path, `poke()` reports "No backdoor access available to poke register" and returns `UVM_NOT_OK`.
 
   ## Hybrid Sequence Example
 
   ```systemverilog
-  class hybrid_reg_seq extends uvm_sequence#(uvm_reg_item);
+  class hybrid_reg_seq extends uvm_reg_sequence #(uvm_sequence #(uvm_reg_item));
     `uvm_object_utils(hybrid_reg_seq)
-    codec_block blk;
 
-    task body();
-      uvm_status_e s;
-      // Backdoor init for speed
-      blk.control_config.poke(s, 'h1);
-      blk.status.predict('h0);
+    function new(string name = "hybrid_reg_seq");
+      super.new(name);
+    endfunction
 
-      // Frontdoor read to confirm interconnect and mirrors are correct
+    virtual task body();
+      codec_block    blk;
+      uvm_status_e   status;
       uvm_reg_data_t data;
-      blk.status.read(s, data, UVM_FRONTDOOR);
-      `uvm_info(get_type_name(), $sformatf("Status read via frontdoor = %h", data), UVM_LOW)
+
+      if (!$cast(blk, model)) `uvm_fatal("CAST", "model is not a codec_block")
+
+      // Backdoor initialisation: zero time, and poke() updates the mirror itself.
+      blk.control.poke(status, 'h1, .parent(this));
+
+      // Frontdoor check: a real bus read, compared with the mirror.
+      blk.control.mirror(status, UVM_CHECK, UVM_FRONTDOOR, .parent(this));
+
+      blk.status.read(status, data, UVM_FRONTDOOR, .parent(this));
+      `uvm_info(get_type_name(), $sformatf("status via frontdoor = 'h%0h", data), UVM_LOW)
     endtask
   endclass
   ```
 
   **Hybrid strategy**
-  - Lines 4-9: backdoor poke + manual predict keep the mirror up to date after instantaneous writes.
-  - Lines 11-16: follow with a frontdoor read to validate the bus path and ensure monitors/predictors saw the change.
+  - Local variables are declared at the top of `body()`, before any statement, as SystemVerilog requires.
+  - `poke()` deposits the value and predicts it, so no `predict()` call follows. The monitor sees nothing, so a scoreboard fed by the monitor will not hear about this change.
+  - The frontdoor `mirror(UVM_CHECK)` then proves the bus path and the DUT agree with the model.
 
   ## Checklist
 
-  - [ ] Backdoor writes update the mirror (via `predict` or `mirror`) so scoreboards do not flag false deltas.
+  - [ ] Registers used with `peek()`/`poke()` have HDL paths, and a test of the backdoor (for example `uvm_reg_access_seq`) runs once per DUT.
+  - [ ] Scoreboards that depend on monitor traffic are told about backdoor changes, or do not need them.
   - [ ] Critical coverage goals (e.g., bus bursts) use frontdoor sequences.
   - [ ] Regression plan documents which tests run in hybrid mode versus pure frontdoor.
 
   ## Quiz Yourself
 
-  **Why combine frontdoor and backdoor access?**
-  - To get realistic bus coverage while keeping bring-up fast *(correct)*
-  - Because adapters are optional
-  - To avoid writing predictors
-  - To replace bit-bash sequences
-
-  **Backdoor writes require…**
-  - No extra steps
-  - Updating the mirror manually *(correct)*
-  - Turning off monitors
-  - Factory overrides
+  <Quiz
+    questions={[
+      {
+        question: "Why combine frontdoor and backdoor access?",
+        answers: [
+          { text: "To get realistic bus coverage while keeping set-up fast", correct: true },
+          { text: "Because adapters are optional", correct: false },
+          { text: "To avoid writing predictors", correct: false },
+          { text: "To replace bit-bash sequences", correct: false }
+        ],
+        explanation: "Backdoor saves simulation time; frontdoor is what exercises and checks the bus path."
+      },
+      {
+        question: "Backdoor accesses require…",
+        answers: [
+          { text: "An HDL path; the mirror then updates itself", correct: true },
+          { text: "A manual predict() after every poke()", correct: false },
+          { text: "Turning off monitors", correct: false },
+          { text: "Factory overrides", correct: false }
+        ],
+        explanation: "peek()/poke() fail without an HDL path or a user backdoor. When they succeed they call do_predict() themselves."
+      },
+      {
+        question: "CTRL[31:4] is RO. What does the mirror hold after ral.CTRL.poke(status, 'hFFFF_FFFF)?",
+        answers: [
+          { text: "'h0000_000F", correct: false },
+          { text: "'hFFFF_FFFF", correct: true },
+          { text: "Unchanged", correct: false }
+        ],
+        explanation: "poke() deposits the raw value, RO bits included, and predicts with the UVM_BACKDOOR door, which applies no access policy."
+      }
+    ]}
+  />
 
 </InfoPage>

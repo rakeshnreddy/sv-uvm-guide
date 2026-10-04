@@ -1,223 +1,216 @@
 "use client";
 
-import React, { useState, useCallback } from 'react';
-import { Plus, RotateCcw, AlertTriangle, ChevronDown, Play } from 'lucide-react';
+import React, { useState } from "react";
 
-type Phase = {
-  id: string;
-  name: string;
-  type: 'build' | 'run' | 'cleanup' | 'custom';
-  isTask: boolean;
-  description: string;
-};
+import { CodeTrace, type CodeTraceLine } from "@/components/visual-system/CodeTrace";
+import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  COMMON_PHASES,
+  RUNTIME_PHASE_NAMES,
+  containerNodeName,
+  customPhaseSource,
+  insertCustomPhase,
+  type CustomPhaseInsert,
+  type InsertResult,
+  type InsertTarget,
+  type ScheduleStep,
+} from "@/lib/uvm-phase-model";
+import { cn } from "@/lib/utils";
 
-const STANDARD_PHASES: Phase[] = [
-  { id: 'build', name: 'build_phase', type: 'build', isTask: false, description: 'Construct hierarchy and configure components' },
-  { id: 'connect', name: 'connect_phase', type: 'build', isTask: false, description: 'Wire TLM ports and analysis exports' },
-  { id: 'end_of_elaboration', name: 'end_of_elaboration_phase', type: 'build', isTask: false, description: 'Final topology adjustments' },
-  { id: 'start_of_simulation', name: 'start_of_simulation_phase', type: 'build', isTask: false, description: 'Print topology, banner messages' },
-  { id: 'reset', name: 'reset_phase', type: 'run', isTask: true, description: 'Assert and release DUT reset' },
-  { id: 'configure', name: 'configure_phase', type: 'run', isTask: true, description: 'Program registers and configure DUT' },
-  { id: 'main', name: 'main_phase', type: 'run', isTask: true, description: 'Primary stimulus generation and checking' },
-  { id: 'shutdown', name: 'shutdown_phase', type: 'run', isTask: true, description: 'Graceful completion and drain' },
-  { id: 'extract', name: 'extract_phase', type: 'cleanup', isTask: false, description: 'Collect results from scoreboards' },
-  { id: 'check', name: 'check_phase', type: 'cleanup', isTask: false, description: 'Compare expected vs actual' },
-  { id: 'report', name: 'report_phase', type: 'cleanup', isTask: false, description: 'Final summary and pass/fail' },
-  { id: 'final', name: 'final_phase', type: 'cleanup', isTask: false, description: 'Cleanup and teardown' },
+export const METHODOLOGY_PHASE_ASSUMPTIONS = [
+  "Model of uvm_phase::add() in uvm-core 2020.3.1 (IEEE 1800.2-2020 §9.3.1.6.1): anchors are looked up with find(..., stay_in_scope=1).",
+  "The common domain holds build … final; the uvm domain holds one schedule, uvm_sched, with the 12 runtime phases, and runs beside run_phase.",
+  "All components are in the default uvm domain. Phase jumps and user-defined domains are not modelled.",
+  "Derived from reading the library source, not from a simulator run.",
 ];
 
-const CUSTOM_PHASE_TEMPLATES = [
-  { name: 'load_fw_phase', description: 'Backdoor-load firmware images before main stimulus' },
-  { name: 'security_check_phase', description: 'Run security attestation before traffic ramp-up' },
-  { name: 'traffic_warmup_phase', description: 'Generate low-rate background traffic' },
+const PHASE_NAME = "load_fw";
+
+type PositionId = "after-reset" | "reset-to-configure" | "with-main" | "after-extract";
+
+const POSITIONS: { id: PositionId; label: string; spec: Pick<CustomPhaseInsert, "after" | "before" | "with"> }[] = [
+  { id: "after-reset", label: ".after_phase(reset)", spec: { after: "reset" } },
+  { id: "reset-to-configure", label: ".after_phase(reset), .before_phase(configure)", spec: { after: "reset", before: "configure" } },
+  { id: "with-main", label: ".with_phase(main)", spec: { with: "main" } },
+  { id: "after-extract", label: ".after_phase(extract)", spec: { after: "extract" } },
 ];
 
-const phaseTypeColors: Record<string, { bg: string; border: string; text: string; dot: string }> = {
-  build: { bg: 'bg-blue-900/30', border: 'border-blue-500/40', text: 'text-blue-300', dot: 'bg-blue-500' },
-  run: { bg: 'bg-emerald-900/30', border: 'border-emerald-500/40', text: 'text-emerald-300', dot: 'bg-emerald-500' },
-  cleanup: { bg: 'bg-amber-900/30', border: 'border-amber-500/40', text: 'text-amber-300', dot: 'bg-amber-500' },
-  custom: { bg: 'bg-purple-900/30', border: 'border-purple-500/40', text: 'text-purple-300', dot: 'bg-purple-500' },
-};
+type Answer = "fatal" | "serial" | "parallel" | "silent";
+
+const ANSWERS: { id: Answer; label: string; feedback: string }[] = [
+  {
+    id: "fatal",
+    label: "Nowhere: add() fails with UVM_FATAL [PH_BAD_ADD] during build_phase.",
+    feedback:
+      "add() looks for the anchor only inside the schedule or domain you call it on. The common domain cannot see reset or configure (they live in uvm_sched), and the uvm schedule cannot see extract.",
+  },
+  {
+    id: "serial",
+    label: "In its own slot between two neighbours, for every component.",
+    feedback: "With only after_phase (or an after/before pair that are neighbours), add() splices the phase into the chain: the next phase waits for it.",
+  },
+  {
+    id: "parallel",
+    label: "In a parallel branch, beside other phases.",
+    feedback: "with_phase, or an after/before pair with phases between them, creates a branch that runs alongside those phases and rejoins at the successor.",
+  },
+  {
+    id: "silent",
+    label: "The phase exists, but soc_env's load_fw_phase task is never called.",
+    feedback: "The phasing engine calls exec_task(comp, phase) for each component. The inherited exec_task is empty, so without an override no component code runs.",
+  },
+];
+
+export function classifyInsert(result: InsertResult): Answer {
+  if (!result.ok) return "fatal";
+  if (!result.componentMethodCalled) return "silent";
+  return result.steps.some((s) => s.kind === "parallel") ? "parallel" : "serial";
+}
+
+function ScheduleView({ title, steps, highlight }: { title: string; steps: ScheduleStep[]; highlight: boolean }) {
+  const chip = (name: string, custom: boolean) => (
+    <span
+      key={name}
+      className={cn(
+        "inline-flex min-h-7 items-center rounded-full border px-2 py-0.5 font-mono text-[11px] [font-variant-ligatures:none]",
+        custom ? "border-violet-500 bg-violet-500/15 font-semibold text-violet-900 dark:text-violet-100" : "border-border/70 bg-card text-foreground",
+      )}
+    >
+      {custom ? "✚ " : ""}
+      {name}
+    </span>
+  );
+  return (
+    <div className={cn("rounded-xl border p-3", highlight ? "border-cyan-500/60" : "border-border/70")}>
+      <p className="mb-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">{title}</p>
+      <ol className="flex flex-wrap items-center gap-1.5" aria-label={`${title} in execution order`}>
+        {steps.map((s, i) => (
+          <li key={i} className="flex items-center gap-1.5">
+            {s.kind === "phase" ? (
+              chip(s.name, Boolean(s.custom))
+            ) : (
+              <span className="inline-flex flex-col gap-1 rounded-lg border border-dashed border-violet-500/60 p-1" aria-label="parallel branch">
+                {s.lanes.map((lane, j) => (
+                  <span key={j} className="flex flex-wrap items-center gap-1">
+                    <span aria-hidden className="text-[10px] text-muted-foreground">
+                      ∥
+                    </span>
+                    {lane.map((n) => chip(n, n === s.custom))}
+                  </span>
+                ))}
+              </span>
+            )}
+            {i < steps.length - 1 ? (
+              <span aria-hidden className="text-muted-foreground">
+                →
+              </span>
+            ) : null}
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+const baseSteps = (names: string[]): ScheduleStep[] => names.map((name) => ({ kind: "phase", name }));
 
 export default function MethodologyPhaseVisualizer() {
-  const [phases, setPhases] = useState<Phase[]>(STANDARD_PHASES);
-  const [selectedInsertAfter, setSelectedInsertAfter] = useState<string>('reset');
-  const [selectedTemplate, setSelectedTemplate] = useState(0);
-  const [conflictMessage, setConflictMessage] = useState<string | null>(null);
-  const [justInserted, setJustInserted] = useState<string | null>(null);
+  const [target, setTarget] = useState<InsertTarget>("common");
+  const [positionId, setPositionId] = useState<PositionId>("after-reset");
+  const [execTask, setExecTask] = useState(true);
+  const position = POSITIONS.find((p) => p.id === positionId) ?? POSITIONS[0];
+  const spec: CustomPhaseInsert = { name: PHASE_NAME, target, implementsExecTask: execTask, ...position.spec };
+  const key = `${target}|${positionId}|${execTask}`;
+  const result = insertCustomPhase(spec);
+  const answer = classifyInsert(result);
+  const options: PredictionOption[] = ANSWERS.map((a) => ({ ...a, correct: a.id === answer }));
 
-  const handleInsert = useCallback(() => {
-    const template = CUSTOM_PHASE_TEMPLATES[selectedTemplate];
-    const customId = `custom_${Date.now()}`;
+  const sourceLines: CodeTraceLine[] = customPhaseSource(spec)
+    .split("\n")
+    .map((text) => ({ text, owner: "testbench" as const, key: text.includes("exec_task") && text.includes("virtual") ? "exec" : text.startsWith("  // no exec_task") ? "exec" : undefined }));
 
-    // Check for duplicate name
-    if (phases.some(p => p.name === template.name)) {
-      setConflictMessage(`⚠ Phase "${template.name}" already exists in the schedule. Duplicate phase names cause undefined iteration order at runtime.`);
-      return;
-    }
-
-    const insertIndex = phases.findIndex(p => p.id === selectedInsertAfter);
-    if (insertIndex < 0) return;
-
-    const newPhase: Phase = {
-      id: customId,
-      name: template.name,
-      type: 'custom',
-      isTask: true,
-      description: template.description,
-    };
-
-    // Check for suspicious ordering
-    const afterPhase = phases[insertIndex];
-    if (afterPhase.type === 'cleanup') {
-      setConflictMessage(`⚠ Inserting a task phase after "${afterPhase.name}" (cleanup) is risky. Cleanup phases are function-based and run after simulation time ends. Your custom task phase may never get simulation time.`);
-    } else {
-      setConflictMessage(null);
-    }
-
-    const newPhases = [...phases];
-    newPhases.splice(insertIndex + 1, 0, newPhase);
-    setPhases(newPhases);
-    setJustInserted(customId);
-    setTimeout(() => setJustInserted(null), 2000);
-  }, [phases, selectedInsertAfter, selectedTemplate]);
-
-  const handleReset = useCallback(() => {
-    setPhases(STANDARD_PHASES);
-    setConflictMessage(null);
-    setJustInserted(null);
-  }, []);
-
-  const customCount = phases.filter(p => p.type === 'custom').length;
+  const commonSteps = target === "common" && result.ok ? result.steps : baseSteps(COMMON_PHASES.map((p) => p.name));
+  const schedSteps = target === "uvm_sched" && result.ok ? result.steps : baseSteps([...RUNTIME_PHASE_NAMES]);
 
   return (
-    <div className="flex flex-col gap-5 p-6 bg-slate-900 rounded-xl border border-slate-800 text-slate-200 font-sans my-8">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800 pb-4">
-        <div>
-          <h3 className="text-xl font-bold font-display text-white m-0">UVM Phase Schedule Explorer</h3>
-          <p className="text-sm text-slate-400 mt-1">Insert custom phases and see how the schedule changes.</p>
+    <VisualFrame
+      label="Custom phase insertion explorer"
+      eyebrow="Experiment"
+      title="Insert a custom phase: domain, schedule and exec_task"
+      summary="A custom task phase needs the right container (the common domain or the uvm schedule), an anchor that lives in that container, and an exec_task that calls your component."
+      fidelity="model"
+      assumptions={METHODOLOGY_PHASE_ASSUMPTIONS}
+    >
+      <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
+        <div className="space-y-1">
+          <p className="text-xs font-semibold text-muted-foreground">Add to</p>
+          <SegmentedControl
+            label="Add to"
+            mono
+            value={target}
+            onChange={setTarget}
+            options={[
+              { value: "common", label: "get_common_domain()" },
+              { value: "uvm_sched", label: "get_uvm_schedule()" },
+            ]}
+          />
         </div>
-        <button
-          onClick={handleReset}
-          className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-sm font-medium rounded-lg transition-colors border border-slate-700 flex items-center gap-1.5"
-        >
-          <RotateCcw className="w-3.5 h-3.5" /> Reset
-        </button>
+        <div className="space-y-1">
+          <p className="text-xs font-semibold text-muted-foreground">Position</p>
+          <SegmentedControl label="Position" mono value={positionId} onChange={setPositionId} options={POSITIONS.map((p) => ({ value: p.id, label: p.label }))} />
+        </div>
       </div>
 
-      {/* Controls */}
-      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-end">
-        <div className="flex flex-col gap-1 flex-1 min-w-0">
-          <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Custom Phase</label>
-          <div className="relative">
-            <select
-              value={selectedTemplate}
-              onChange={e => setSelectedTemplate(Number(e.target.value))}
-              className="w-full appearance-none bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 pr-8 focus:outline-none focus:ring-1 focus:ring-purple-500"
+      <CodeTrace
+        label="Phase class and registration (generated from your choices)"
+        lines={sourceLines}
+        renderLineControl={(line) =>
+          line.key === "exec" ? (
+            <button
+              type="button"
+              onClick={() => setExecTask((v) => !v)}
+              aria-label={execTask ? "Remove the exec_task override" : "Add the exec_task override"}
+              className="min-h-7 rounded-md border border-cyan-400/50 bg-cyan-400/10 px-2 py-0.5 font-mono text-[11px] text-cyan-100 hover:bg-cyan-400/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-300 [font-variant-ligatures:none]"
             >
-              {CUSTOM_PHASE_TEMPLATES.map((t, i) => (
-                <option key={i} value={i}>{t.name}</option>
+              {execTask ? "remove exec_task" : "add exec_task"}
+            </button>
+          ) : null
+        }
+      />
+
+      <PredictionPrompt question="Run the test. Where does load_fw run, and is soc_env's load_fw_phase task called?" options={options} resetKey={key}>
+        <div className="space-y-3">
+          {result.fatal ? (
+            <p aria-live="polite" className="rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-2 font-mono text-[12px] text-rose-800 [font-variant-ligatures:none] dark:text-rose-200">
+              ✕ UVM_FATAL [{result.fatal.id}] {result.fatal.message}
+            </p>
+          ) : (
+            <p aria-live="polite" className="text-sm text-foreground">
+              <strong>{result.componentMethodCalled ? "✓ load_fw runs for every component. " : "! load_fw runs, but calls nothing. "}</strong>
+              Added to node &apos;{containerNodeName(target)}&apos;.
+            </p>
+          )}
+          <ScheduleView title="Common domain (build … final)" steps={commonSteps} highlight={target === "common"} />
+          <ScheduleView title="uvm domain · schedule uvm_sched (runs beside run_phase)" steps={schedSteps} highlight={target === "uvm_sched"} />
+          {result.notes.length ? (
+            <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
+              {result.notes.map((n) => (
+                <li key={n}>{n}</li>
               ))}
-            </select>
-            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
-          </div>
+            </ul>
+          ) : null}
+          <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+            {`// soc_env: the method exec_task calls
+task load_fw_phase(uvm_phase phase);
+  phase.raise_objection(this);
+  // backdoor-load the firmware image
+  phase.drop_objection(this);
+endtask`}
+          </pre>
         </div>
-
-        <div className="flex flex-col gap-1 flex-1 min-w-0">
-          <label className="text-xs font-semibold uppercase tracking-wider text-slate-500">Insert After</label>
-          <div className="relative">
-            <select
-              value={selectedInsertAfter}
-              onChange={e => setSelectedInsertAfter(e.target.value)}
-              className="w-full appearance-none bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-200 pr-8 focus:outline-none focus:ring-1 focus:ring-purple-500"
-            >
-              {phases.map(p => (
-                <option key={p.id} value={p.id}>{p.name}</option>
-              ))}
-            </select>
-            <ChevronDown className="absolute right-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500 pointer-events-none" />
-          </div>
-        </div>
-
-        <button
-          onClick={handleInsert}
-          className="px-4 py-2 bg-purple-700 hover:bg-purple-600 text-sm font-medium rounded-lg transition-colors border border-purple-600 flex items-center gap-1.5 whitespace-nowrap"
-        >
-          <Plus className="w-4 h-4" /> Insert Phase
-        </button>
-      </div>
-
-      {/* Conflict Warning */}
-      {conflictMessage && (
-        <div className="flex items-start gap-2 p-3 bg-amber-950/50 border border-amber-800/50 rounded-lg text-amber-200 text-sm">
-          <AlertTriangle className="w-4 h-4 mt-0.5 flex-shrink-0" />
-          <span>{conflictMessage}</span>
-        </div>
-      )}
-
-      {/* Phase Timeline */}
-      <div className="flex flex-col gap-0">
-        <div className="flex items-center gap-4 mb-3">
-          <div className="text-xs font-semibold uppercase tracking-wider text-slate-500">
-            Phase Execution Order ({phases.length} phases{customCount > 0 ? `, ${customCount} custom` : ''})
-          </div>
-          <div className="flex gap-3 text-[10px] ml-auto">
-            {Object.entries(phaseTypeColors).map(([type, colors]) => (
-              <span key={type} className="flex items-center gap-1">
-                <span className={`w-2 h-2 rounded-full ${colors.dot}`}></span>
-                <span className="text-slate-500 capitalize">{type}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-
-        {phases.map((phase, index) => {
-          const colors = phaseTypeColors[phase.type];
-          const isJustInserted = phase.id === justInserted;
-
-          return (
-            <div key={phase.id} className="flex items-stretch">
-              {/* Timeline connector */}
-              <div className="flex flex-col items-center w-6 flex-shrink-0">
-                <div className={`w-3 h-3 rounded-full ${colors.dot} flex-shrink-0 ${isJustInserted ? 'ring-2 ring-purple-400 ring-offset-1 ring-offset-slate-900 animate-pulse' : ''}`} />
-                {index < phases.length - 1 && (
-                  <div className="w-px flex-1 bg-slate-700 min-h-[8px]" />
-                )}
-              </div>
-
-              {/* Phase card */}
-              <div className={`flex-1 ml-3 mb-2 px-4 py-2.5 rounded-lg border transition-all duration-500 ${colors.bg} ${colors.border} ${isJustInserted ? 'shadow-[0_0_20px_rgba(147,51,234,0.3)]' : ''}`}>
-                <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className={`font-mono text-sm font-medium ${colors.text}`}>{phase.name}</span>
-                    {phase.isTask && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 border border-slate-700">task</span>
-                    )}
-                    {phase.type === 'custom' && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-900/60 text-purple-300 border border-purple-700/50">custom</span>
-                    )}
-                  </div>
-                  <span className="text-[11px] text-slate-500 font-mono">{index + 1}</span>
-                </div>
-                <p className="text-xs text-slate-400 mt-1">{phase.description}</p>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Code hint */}
-      <div className="bg-black/40 rounded-lg border border-slate-800 p-4">
-        <div className="text-[10px] uppercase tracking-wider text-slate-500 mb-2">Code Pattern</div>
-        <pre className="text-xs font-mono text-slate-300 overflow-x-auto whitespace-pre">
-{`// In base_test::build_phase:
-uvm_phase after = uvm_${selectedInsertAfter}_phase::get();
-uvm_domain::get_common_domain()
-  .add(${CUSTOM_PHASE_TEMPLATES[selectedTemplate].name}::get(),
-       .after_phase(after));`}
-        </pre>
-      </div>
-    </div>
+      </PredictionPrompt>
+    </VisualFrame>
   );
 }

@@ -12,13 +12,13 @@ import { InteractiveCode, Quiz, Card, CardContent, CardHeader, CardTitle } from 
 import SVSchedulerRegionVisualizer from '@/components/visualizers/SVSchedulerRegionVisualizer';
 
 ## Quick Take
-- **What it is:** The IEEE standard divides each simulation time step into multiple scheduling regions (Preponed, Active, Inactive, NBA, Observed, Reactive, Postponed).
+- **What it is:** The IEEE standard divides each simulation time step into ordered scheduling regions: Preponed, Active, Inactive, NBA, Observed, Reactive, Re-Inactive, Re-NBA and Postponed (plus PLI regions), §4.4.
 - **Why it matters:** Without these regions, RTL and Testbench code would step on each other's toes, creating non-deterministic race conditions.
 - **The Analogy:** Think of the time step as a factory assembly line. Parts are inspected (Preponed), assembled (Active), shifted down the line (NBA), QA tested (Observed), logged (Reactive), and shipped (Postponed).
 
 ## Build Your Mental Model
 
-SystemVerilog defines a strict order of execution within a single time step to prevent race conditions (IEEE 1800-2023 §4). Here are the most critical regions you must understand for interviews:
+SystemVerilog fixes the **order of the regions** within a time step (IEEE 1800-2023 §4.4–4.5). It does **not** fix the order of processes that are ready in the same region: those may run in any order (§4.7), and that freedom is exactly where races come from. The regions give you places to put work so that order stops mattering. Here are the regions you must understand for interviews:
 
 | Region | Primary Purpose | Examples |
 |---|---|---|
@@ -28,14 +28,15 @@ SystemVerilog defines a strict order of execution within a single time step to p
 | **NBA (Non-Blocking Assignment)** | Update LHS of non-blocking assignments evaluated in the Active region. | `a <= b;` |
 | **Observed** | Evaluate concurrent assertions (SVA) using values sampled in the Preponed region. | `assert property (...)` |
 | **Reactive** | Execute testbench program blocks and testbench checks. | Program block execution, action blocks of assertions |
+| **Re-NBA** | Apply clocking-block drives and nonblocking updates made by program code, after the design's NBA updates. | `vif.cb.req <= 1;` |
 | **Postponed** | Execute read-only tasks after all other regions have settled for the current time step. | `$monitor()`, `$strobe()` |
 
 > [!IMPORTANT]
-> **The Active vs. Reactive Split:** The original intent of SV scheduling was to isolate RTL (Active/NBA) from Testbench (Reactive). Testbenches driven from `program` blocks execute in the Reactive region, interacting with RTL via clocking blocks to guarantee zero race conditions. In modern UVM (which uses `module` and `class` constructs instead of `program`), this isolation is achieved purely via clocking block semantics and phasing.
+> **The Active vs. Reactive Split:** The original intent was to separate RTL (active region set) from testbench code in `program` blocks (reactive region set). That separation reduces races but does not guarantee their absence: program code can still race with other program code. UVM components are classes called from module code, so they run in the **active** region set; UVM testbenches get same-edge race safety from **clocking blocks** (Preponed sampling, Re-NBA drives), not from phasing, which orders whole phases rather than events within one time slot.
 
-### Interactive Visualizer
+### Interactive Visualizer: where each event lands
 
-See how events propagate through the regions in real-time.
+Pick a scenario, read the code and lock in a prediction before you step. Notice two things: every event is filed under the region it was *scheduled* in, and the scheduler goes back to Active (Δ increases) whenever an NBA or Re-NBA update wakes more logic in the same time slot (§4.5).
 
 <SVSchedulerRegionVisualizer />
 
@@ -44,8 +45,8 @@ See how events propagate through the regions in real-time.
 - **Use `$strobe` for debug:** If you need to print a variable's final value at the end of a time step after all NBA updates, use `$strobe` (which executes in the Postponed region) instead of `$display` (which executes in the Active region).
 
 ## Push Further
-- Investigate how clocking blocks span multiple regions: inputs are sampled in the Preponed region, and outputs are driven in the Re-NBA region (a subset of the Reactive region).
-- Read the IEEE 1800-2023 LRM Section 4.4, which details the stratified event scheduler loop. Notice that the scheduler can loop back from NBA to Active if new events are triggered.
+- Investigate how clocking blocks span multiple regions: inputs are sampled in the Preponed region (§14.13), outputs are driven in the Re-NBA region (§14.16) — a separate region in the reactive region set — and the `@(cb)` event fires in Observed (§14.10). F3C lets you step through all three.
+- Read IEEE 1800-2023 §4.4 for the regions and §4.5 for the reference scheduling algorithm that loops through them. Notice that the scheduler can loop back from NBA to Active if new events are triggered.
 
 ## Practice & Reinforce
 - Flashcards – Review the 7 primary regions and their specific roles.
@@ -53,27 +54,27 @@ See how events propagate through the regions in real-time.
 
 ## Interview Questions
 
-<Card className="mt-8 border-slate-700 bg-slate-900">
+<Card className="mt-8">
   <CardHeader>
     <CardTitle>Ready for the Interview?</CardTitle>
   </CardHeader>
   <CardContent className="space-y-4">
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        In what scheduling region is the RHS of a non-blocking assignment evaluated? In what region is the LHS updated?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">In what scheduling region is the RHS of a non-blocking assignment evaluated? In what region is the LHS updated?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
         <p>The Right-Hand Side (RHS) of a non-blocking assignment is evaluated in the <strong>Active</strong> region. The update to the Left-Hand Side (LHS) is scheduled and executed in the <strong>NBA (Non-Blocking Assignment)</strong> region.</p>
       </div>
     </details>
 
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        How do concurrent assertions avoid sampling the "new" value of a signal if they are evaluated in the same time step?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">How do concurrent assertions avoid sampling the "new" value of a signal if they are evaluated in the same time step?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
         <p>Concurrent assertions sample their variables in the <strong>Preponed</strong> region (before any Active events happen in that time step). They are then evaluated in the <strong>Observed</strong> region (after all Active and NBA events are settled). This guarantees they always see the stable values from the <em>previous</em> time step, exactly like a physical flip-flop.</p>
       </div>
     </details>

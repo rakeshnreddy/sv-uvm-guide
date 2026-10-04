@@ -37,14 +37,20 @@ const toFormatted = (qs: (FormattedQuestion | LegacyFormattedQuestion | MdxQuest
     const anyQ = q as any;
 
     if (Array.isArray(anyQ.options)) {
-      const correct =
-        typeof anyQ.correctAnswer === 'string'
+      // Several lessons store the answer as a 0-based option index.
+      const index = [anyQ.correctAnswer, anyQ.correctIndex, anyQ.answer].find(
+        (value): value is number => typeof value === 'number' && Number.isInteger(value),
+      );
+      const indexed =
+        index !== undefined && index >= 0 && index < anyQ.options.length ? String(anyQ.options[index]) : undefined;
+      const correct = indexed ??
+        (typeof anyQ.correctAnswer === 'string'
           ? anyQ.correctAnswer
           : typeof anyQ.answer === 'string'
             ? anyQ.answer
             : typeof anyQ.correct === 'string'
               ? anyQ.correct
-              : undefined;
+              : undefined);
       const options = anyQ.options.map((opt: unknown) => String(opt));
 
       return {
@@ -128,7 +134,7 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
 
   if (currentQuestionIndex >= parsedQuestions.length) {
     return (
-      <div className="p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
+      <div className="rounded-lg border border-border bg-card/60 p-4 shadow-sm">
         <h3 className="text-xl font-bold text-primary">Quiz Complete!</h3>
       </div>
     );
@@ -137,7 +143,7 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
   const { question, options, explanation } = parsedQuestions[currentQuestionIndex];
 
   return (
-    <div className="p-4 bg-white/10 backdrop-blur-lg border border-white/20 rounded-lg shadow-lg">
+    <div className="rounded-lg border border-border bg-card/60 p-4 shadow-sm">
       <h3 className="text-xl font-bold text-primary mb-4">{question}</h3>
       <div className="space-y-2">
         {options.map((option) => (
@@ -146,15 +152,17 @@ const Quiz: React.FC<QuizProps> = ({ questions }) => {
             onClick={() => handleAnswerSelection(option)}
             variant={selectedAnswer === option ? (isCorrect ? 'default' : 'destructive') : 'outline'}
             disabled={selectedAnswer !== null}
+            className="h-auto min-h-10 w-full justify-start whitespace-normal py-2 text-left [overflow-wrap:anywhere]"
           >
             {option}
           </Button>
         ))}
       </div>
       {showExplanation && (
-        <div className="mt-4">
-          <p className={`text-lg ${isCorrect ? 'text-green-400' : 'text-red-400'}`}>
-            {isCorrect ? 'Correct!' : 'Incorrect.'}
+        <div className="mt-4" role="status" aria-live="polite">
+          <p className={`text-lg font-semibold ${isCorrect ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
+            <span aria-hidden="true">{isCorrect ? '✓ ' : '✕ '}</span>
+            <span>{isCorrect ? 'Correct!' : 'Incorrect.'}</span>
           </p>
           <p className="text-sm mt-2 text-foreground/80">{explanation}</p>
           <Button onClick={handleNextQuestion} className="mt-4">

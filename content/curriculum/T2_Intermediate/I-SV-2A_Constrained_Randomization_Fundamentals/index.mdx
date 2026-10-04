@@ -61,7 +61,7 @@ program demo;
     Packet pkt = new();
     repeat (3) begin
       if (!pkt.randomize())
-        $fatal("Randomization failed");
+        $fatal(1, "Randomization failed");
     end
     // Inline constraint for targeted scenario
     void'(pkt.randomize() with { opcode == 4'hF; length == 16; });
@@ -70,34 +70,116 @@ endprogram
 ```
 </InteractiveCode>
 
-### Visual Explorer
+### Reading `dist` weights
+
+`opcode_dist` does two jobs (IEEE 1800-2023 §18.5.3). It **restricts** `opcode` to the listed values, and it **weights** them.
+
+- `:=` gives the weight to *every value* of a range. `[4'h1:4'h3] := 70` would weigh 3 × 70 = 210.
+- `:/` gives the weight to the *range as a whole*. `[4'h1:4'h3] :/ 70` weighs 70 in total, about 23.3 per value.
+- Weights are ratios. Divide by the total weight, here 10 + 70 + 20 = 100.
+
+So `opcode` is `0` on 10% of calls, each of `1`–`3` on about 23.3%, and each of `8`–`F` on 2.5%. Values `4`–`7` are not listed, so they **never** occur: `dist` is also a membership constraint. Nonzero weights never make `randomize()` fail, but the membership part can.
+
+### See the solution space
+
+Picture every combination of the random variables as a grid. Constraints cross out cells, then `randomize()` picks **one legal cell, uniformly** (§18.5.9). It does not pick each variable on its own. Before each reveal, commit to a number for `P(x == 0)`.
+
+Try the scenarios in order:
+
+1. **Coupled variables** with `c_sum` on. `x == 0` pairs with 8 legal `y` values, while `x == 7` pairs with only one. Predict, then switch on `c_order`: the legal cells stay the same and only the odds change.
+2. **Implication.** `(x == 0) -> (y == 0)` is the Boolean `!(x == 0) || (y == 0)`. Switch on `c_hi` and watch the right-hand side rule out `x == 0`.
+3. **dist := vs :/.** Flip the operator, then add `c_big` and see a `dist` membership conflict.
+4. **soft priority.** A lone `soft` constraint holds on 100% of calls, not "usually".
+5. **Debug a failure.** Find the smallest set of constraints that conflict. Is `c_odd` guilty?
+
+Then run 1,000 calls and compare the sampled bars with the exact ones. A satisfiable problem never fails; the sample only wobbles around the exact value.
+
 <ConstraintSolverHeatmapVisualizer />
+
+### Step through the solver's view
+
+The stepper shows the same idea on a 4 × 4 space. In step 2, notice that a cell disappears if it breaks *any* constraint: the solver checks all constraints together, not one after another.
 
 <ConstraintSolverVisualizer />
 
-<Constraint3D />
+<VisualRecap
+  title="Constraints draw the set; ordering and weights set the odds"
+  rule="randomize() returns one combination that satisfies every enabled hard constraint at once. With no dist or solve…before, every legal combination is equally likely. It fails only when no combination is legal."
+  code={`rand bit [2:0] x, y;
+constraint c_sum   { x + y < 8; }         // 36 legal (x, y) pairs
+constraint c_order { solve x before y; }  // same 36 pairs, new odds
+// P(x == 0): 8/36 without c_order, 1/8 with it
+constraint c_dist  { x dist { 0 := 4, [1:3] :/ 4 }; }
+// alone: 0 on 50%, each of 1..3 on 16.7%, 4..7 never`}
+  mistake="Treating each rand variable as uniform on its own, soft as 'usually', and solve…before as required for dependent variables. The solver weighs whole combinations, a soft constraint holds on 100% or 0% of calls, and solve…before only reshapes the odds."
+  inTestbench="Every uvm_sequence_item randomize() call. When a coverage bin stays empty, check whether a coupling constraint, a top-level soft default or a dist list made it rare or impossible before blaming the seed."
+>
+  <svg viewBox="0 0 320 175" role="img" aria-label="An 8 by 8 grid of (x, y) pairs. Under x + y < 8 the x = 0 column has 8 legal cells and the x = 7 column has 1, so x = 0 is picked 8 times as often as x = 7." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="30" y="30" width="120" height="120" fill="none" stroke="currentColor" strokeOpacity="0.35" strokeDasharray="3 3" />
+    <rect x="31" y="31" width="13" height="119" rx="2" fill="rgba(6,182,212,0.25)" stroke="rgb(245,158,11)" strokeWidth="2" />
+    <rect x="46" y="46" width="13" height="104" rx="2" fill="rgba(6,182,212,0.25)" stroke="rgb(6,182,212)" />
+    <rect x="61" y="61" width="13" height="89" rx="2" fill="rgba(6,182,212,0.25)" stroke="rgb(6,182,212)" />
+    <rect x="76" y="76" width="13" height="74" rx="2" fill="rgba(6,182,212,0.25)" stroke="rgb(6,182,212)" />
+    <rect x="91" y="91" width="13" height="59" rx="2" fill="rgba(6,182,212,0.25)" stroke="rgb(6,182,212)" />
+    <rect x="106" y="106" width="13" height="44" rx="2" fill="rgba(6,182,212,0.25)" stroke="rgb(6,182,212)" />
+    <rect x="121" y="121" width="13" height="29" rx="2" fill="rgba(6,182,212,0.25)" stroke="rgb(6,182,212)" />
+    <rect x="136" y="136" width="13" height="14" rx="2" fill="rgba(6,182,212,0.25)" stroke="rgb(6,182,212)" />
+    <text x="74" y="168" fontSize="11" fill="currentColor">x →</text>
+    <text x="8" y="94" fontSize="11" fill="currentColor">y ↑</text>
+    <text x="30" y="22" fontSize="10" fill="currentColor">x = 0: 8 legal cells</text>
+    <text x="164" y="52" fontSize="11" fill="currentColor">36 legal (x, y) pairs</text>
+    <text x="164" y="72" fontSize="11" fill="currentColor">x = 7 column: 1 cell</text>
+    <text x="164" y="96" fontSize="11" fill="currentColor">randomize() picks a cell,</text>
+    <text x="164" y="112" fontSize="11" fill="currentColor">not a column</text>
+    <text x="164" y="136" fontSize="11" fill="currentColor">P(x = 0) = 8/36 ≈ 22%</text>
+    <text x="164" y="152" fontSize="10" fill="currentColor" fillOpacity="0.75">with solve x before y: 1/8</text>
+  </svg>
+</VisualRecap>
 
 ### Constraint Patterns
-- **Relational:** guard dependent variables with `if...else`.
-- **Ordering:** `solve addr before data;` ensures solver picks address first.
-- **Soft defaults:** `soft length == 32;` provides gentle defaults overridden by stricter constraints.
+- **Relational:** guard dependent variables with `if...else` or `->`. Both sides constrain each other (§18.5.5).
+- **Ordering:** `solve addr before data;` changes the odds, never the legal set. `addr` is drawn uniformly over its legal values first, then `data` (§18.5.9). It is never needed for correctness.
+- **Soft defaults:** `soft length == 32;` holds on **every** call unless a hard constraint or a higher-priority soft constraint contradicts it. Then it is dropped entirely (§18.5.13). It is a priority, not a probability.
+
+**Predict before you read on:** in this class, how often is `is_secure` equal to 1?
 
 <InteractiveCode>
 ```systemverilog
 class Config;
-  rand bit is_secure;
+  rand bit       is_secure;
   rand bit [1:0] burst_len;
 
   constraint burst_rules {
     soft burst_len == 2'b10;           // default burst = 4 beats
     if (is_secure) burst_len == 2'b01; // secure mode shortens bursts
   }
-
-  // Tie-breaker: choose is_secure before burst
-  solve is_secure before burst_len;
+  constraint order { solve is_secure before burst_len; }
 endclass
 ```
 </InteractiveCode>
+
+<details>
+<summary>Reveal the answer</summary>
+
+**Never.** The pair `is_secure = 0, burst_len = 2'b10` satisfies everything, so nothing contradicts the soft default and the solver keeps it on every call. Keeping it forces `burst_len == 2'b10`, and the `if` then forces `is_secure = 0`. The `solve…before` cannot help: it reshapes the odds over the legal set, and the legal set contains only `is_secure = 0`. Scope the default to the case it belongs to:
+
+<InteractiveCode>
+```systemverilog
+class Config;
+  rand bit       is_secure;
+  rand bit [1:0] burst_len;
+
+  constraint burst_rules {
+    is_secure  -> burst_len == 2'b01;       // secure mode shortens bursts
+    !is_secure -> soft burst_len == 2'b10;  // the default applies only when not secure
+  }
+endclass
+```
+</InteractiveCode>
+
+Now `is_secure` is 1 on half the calls, with no ordering constraint needed.
+
+</details>
 
 ## Make It Work
 1. **Model legality:** Translate protocol rules into constraints—illegal stimulus wastes regression time.
@@ -111,14 +193,14 @@ endclass
 - [ ] You confirm randomize success and understand how to debug failures.
 
 ## Push Further
-- Use pre/post-randomize hooks to enforce computed constraints (e.g., dependent arrays).
+- Keep relations between random fields in constraints (for example `payload.size() == len`). Use `post_randomize()` only for derived, non-random fields such as a CRC.
 - Create constraint mode toggles (`constraint_mode(0)`) for reusable classes in different scenarios.
 - Explore `randomize() with` blocks in sequences to target coverage holes without new classes.
 
 ## Practice & Reinforce
 - Flashcards – Drill keyword meaning and solver behaviors.
 - Quiz – Complete the constrained-random knowledge check below.
-- Lab prompt – Build a transaction with soft defaults; toggle them via inline constraints and observe coverage hits.
+- Exercise – Write a transaction with soft defaults, override them with `randomize() with` in a test, and confirm in coverage which values actually appear.
 - Visual notebook – Sketch how your constraints map to testplan features and coverage bins.
 
 ## Deep Dives in this Track

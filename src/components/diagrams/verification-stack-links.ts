@@ -36,10 +36,10 @@ export const verificationStackLinkSeeds: VerificationStackLinkSeed[] = [
     focusAreas: [
       'Bootstraps configuration before build/connect phases run',
       'Chooses the top-level sequence or virtual sequencer to launch',
-      'Sets factory overrides and analysis connections for downstream components',
+      'Sets factory overrides and config_db values before the env is built; the env and agents make analysis connections in connect_phase',
     ],
     next: ['env'],
-    insight: 'Every scenario originates in a test class that wires overrides, configuration, and starting sequences.',
+    insight: 'Every scenario originates in a test class that sets overrides and configuration, then starts the top-level sequence.',
     tip: 'Keep test constructors lean—push heavy setup into build/connect and reuse shared config objects.',
   },
   {

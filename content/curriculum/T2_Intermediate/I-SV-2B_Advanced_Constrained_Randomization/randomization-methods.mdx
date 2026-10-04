@@ -14,7 +14,7 @@ export const metadata = {
 >
 
 ## Level 1: Beyond Classes
-*IEEE 1800-2023, Clause 18.12: std::randomize() and Clause 18.16: randcase/randsequence*
+*IEEE 1800-2023, §18.12: std::randomize() · §18.16: randcase · §18.17: randsequence · §18.14: random stability*
 
 While `obj.randomize()` is the most common way to generate random data, sometimes you need to randomize local variables within a function or randomly choose an execution path without defining a whole new class. SystemVerilog provides procedural randomization tools for exactly these scenarios.
 
@@ -74,12 +74,12 @@ endsequence
 A testbench that is "random" but cannot be reproduced is a liability. You must be able to reproduce failures.
 
 ### The Seed
-Every random variable stream in SV is deterministic if you start with the same initial seed. Simulators accept command-line arguments (like `+ntb_random_seed=1234` in VCS or `-sv_seed 1234` in Xcelium) to set the master seed.
+Every random stream in SV is deterministic if you start from the same seed with the same code, tool version and plusargs. Simulators take the seed on the command line: `+ntb_random_seed=1234` in VCS, `-sv_seed 1234` in Questa, `-svseed 1234` in Xcelium.
 
 ### Debugging Flaky Bugs
 1. **Always log the seed:** Ensure your testbench prints the master random seed at the very beginning of the test.
 2. **Replay the exact seed:** To debug a random failure, re-run the exact same test with the exact same seed from the log.
-3. **Beware of thread stability:** If you spawn random threads (`fork...join_none`) in a non-deterministic order (e.g., based on real-time events that change slightly), the random number generator will be drawn from in a different order, and the same global seed will produce a different scenario. Keep random generation in deterministic, strictly ordered threads!
+3. **Protect random stability:** each thread and each object has its own random number generator, seeded from its parent when it is *created* (hierarchical seeding, §18.14.1). Threads that already exist do not swap random numbers when they interleave differently (§18.14.2). What changes the numbers is a change in *creation order*: a new object or `fork` inserted early in the build, two threads calling `randomize()` on one shared object, or outside entropy such as a DPI `rand()` or wall-clock time. Add new objects and threads after the existing ones, and seed an object explicitly with `srandom()` when it must stay isolated (§18.13.3).
 
 <Quiz questions={[
   {
@@ -95,12 +95,12 @@ Every random variable stream in SV is deterministic if you start with the same i
 
 <div className="mt-8">
   <InterviewQuestionPlayground
-    question="You are debugging a test failure. You re-run the simulation with the exact same random seed, but the test passes this time. The testbench uses `std::randomize()` in several places. What is the most likely cause of this seed instability?"
+    question="A test fails with seed 1234. You add a debug monitor whose `new()` creates one helper object, then re-run with seed 1234, and now the test passes. What is the most likely cause?"
     options={[
-      { text: "std::randomize() uses a true random number generator, so it ignores the seed.", isCorrect: false, feedback: "std::randomize() is governed by the SV random stability rules and the thread's RNG state, which derives from the global seed." },
-      { text: "The testbench is using uninitialized variables in its constraints, which take different values on different runs.", isCorrect: false, feedback: "Uninitialized 2-state variables default to 0, and 4-state default to X. They are consistent from run to run." },
-      { text: "Random calls are made inside threads whose execution order depends on race conditions (like an asynchronous interface timing difference without proper synchronization).", isCorrect: true, feedback: "Correct! If the order of threads changes, the order of calls to the random number generator changes. Thread A gets the random number Thread B originally got, completely altering the sequence of events. This ruins seed stability." },
-      { text: "randcase statements do not respect the random seed.", isCorrect: false, feedback: "randcase relies on the thread's RNG, which derives from the global seed." }
+      { text: "std::randomize() uses a true random number generator, so it ignores the seed.", isCorrect: false, feedback: "std::randomize() draws from the calling thread's RNG, which is seeded deterministically from the root seed (§18.14)." },
+      { text: "The new object took the next value from its creating thread's RNG, so every object created after it received a different seed.", isCorrect: true, feedback: "Correct! Objects and threads are seeded from their parent when they are created (hierarchical seeding, §18.14.1). Inserting one creation shifts every seed handed out after it, so the same root seed now produces a different stimulus stream. Create new objects after the existing ones, or seed them with srandom()." },
+      { text: "Thread execution order changed, so threads swapped each other's random numbers.", isCorrect: false, feedback: "Each thread has its own RNG, so a different interleaving of threads that already exist does not swap their sequences (§18.14.2). Changing the order in which threads or objects are created does." },
+      { text: "randcase statements do not respect the random seed.", isCorrect: false, feedback: "randcase draws from the thread's RNG like every other random call (§18.14.2)." }
     ]}
   />
 </div>

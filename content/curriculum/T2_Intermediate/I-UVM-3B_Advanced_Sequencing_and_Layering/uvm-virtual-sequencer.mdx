@@ -5,23 +5,53 @@ description: Coordinating stimulus across multiple agents.
 
 import VirtualSequencerExplorer from '@/components/curriculum/interactives/VirtualSequencerExplorer';
 
-# UVM Virtual Sequencer
+# UVM Virtual Sequencer: Dispatch Order
 
-The UVM Virtual Sequencer is a key component for building sophisticated, multi-agent testbenches. It acts as a master controller, enabling the synchronization of stimulus across different interfaces of the DUT.
+*Page 3 of 8 in I-UVM-3B. Read [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) first.*
+
+A virtual sequencer gives a virtual sequence handles to every agent sequencer. What it does **not** do is decide *when* each agent's sequence runs. That is decided only by the statements in the virtual sequence's `body()`.
 
 ## The Concept
 
-A virtual sequencer does not connect to a driver. Instead, it contains handles to the other sequencers in the environment. A special type of sequence, a "<Link href="/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences">virtual sequence</Link>," runs on the virtual sequencer. This virtual sequence can then start sequences on the agent-specific sequencers, allowing for coordinated stimulus generation.
+`start()` is a blocking task: it returns when the child sequence's `body()` has finished. So:
 
-The diagram on the page illustrates this concept, showing a virtual sequencer controlling PCIe and Ethernet sequencers.
+- **One call after another** orders the children: the second child does not start until the first has sent its last item.
+- **`fork … join`** starts every branch at the same time and waits for all of them. It runs children in parallel; it does not order them.
+- **`fork … join_none`** starts the branches and returns at once. If nothing waits for them, `body()` returns, the test's `vseq.start()` returns, the test drops its objection, and the run ends before the children have done anything.
+
+The DUT below must be configured (two slow config items on `cfg_agt`) before it accepts data (three data items on `data_agt`). Choose a dispatch style, predict when the first data item reaches the data driver, then compare the timeline. Untick the wiring box to see what a forgotten handle assignment does.
 
 <VirtualSequencerExplorer />
 
 ## Implementation
 
-The implementation involves two main parts:
+The three patterns, as they appear in a virtual sequence `body()`:
 
-1.  **The Virtual Sequencer:** A `uvm_sequencer` that contains handles to the agent sequencers.
-2.  **The Virtual Sequence:** A `uvm_sequence` that runs on the virtual sequencer and starts sequences on the agent sequencers.
+```systemverilog
+// Ordered: configuration completes before any data is sent
+c.start(p_sequencer.cfg_sqr);
+d.start(p_sequencer.data_sqr);
 
-The interactive code block on the page provides a detailed walkthrough of a sample implementation. By studying the code and the explanations, you can understand how to implement a virtual sequencer and a virtual sequence in your own testbench.
+// Parallel: both agents active at once; body() waits for both
+fork
+  c.start(p_sequencer.cfg_sqr);
+  d.start(p_sequencer.data_sqr);
+join
+
+// Background traffic: start, do other work, then wait before returning
+fork
+  bg.start(p_sequencer.data_sqr);
+join_none
+c.start(p_sequencer.cfg_sqr);
+wait fork;               // do not let body() return while bg is still running
+```
+
+Choose by asking what the DUT needs. Ordered is right when one interface must be set up before another is used. `fork … join` is right for independent traffic that should overlap. `join_none` is only safe with a later `wait fork` (or an explicit event the sequence waits for).
+
+## Common Mistakes
+
+- **Using `fork … join` for a dependency.** The traffic overlaps and the DUT drops or mis-handles data sent before configuration. The test can still pass if nothing checks for the dropped data.
+- **`join_none` with nothing waiting.** The virtual sequence returns at once and the test ends with no traffic. Look for a `run_phase` that finishes at 0 ns.
+- **Unassigned handles.** A handle the env never assigned is `null`. The child starts with no sequencer and its first `start_item()` is `UVM_FATAL [SEQ]`.
+
+Next: [Sequencer Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration). The [Coordinated Attack lab](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab) asks you to write the ordered version yourself.

@@ -1,247 +1,224 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { Button } from "@/components/ui/Button";
-import { Badge } from "@/components/ui/Badge";
+import React, { useState } from "react";
+
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
 import { cn } from "@/lib/utils";
+
+interface Option {
+  id: string;
+  label: string;
+  correct: boolean;
+  /** Diagnoses why this choice fits or does not. */
+  feedback: string;
+}
 
 interface Challenge {
   id: string;
   prompt: string;
-  options: string[];
-  correct: string;
-  explanation: string;
+  options: Option[];
+  /** Idiomatic code for the best choice. */
+  code: string;
 }
 
-type ChallengeAnswer = {
-  challengeId: string;
-  selected: string;
-  correct: boolean;
-};
-
-const challenges: Challenge[] = [
+export const PACKET_SORTER_CHALLENGES: Challenge[] = [
   {
-    id: "queue",
-    prompt: "100 packets are arriving in order and must be processed in the same order. Choose a data structure to hold them.",
-    options: ["Dynamic Array", "Queue", "Associative Array"],
-    correct: "Queue",
-    explanation: "Queues guarantee First-In-First-Out ordering, matching packet arrival to processing order.",
+    id: "in-order",
+    prompt: "Packets arrive one at a time and must be processed in arrival order. Which structure holds them?",
+    options: [
+      { id: "queue", label: "Queue", correct: true, feedback: "push_back on arrival, pop_front to process: FIFO order with no index bookkeeping (§7.10)." },
+      { id: "dynamic-array", label: "Dynamic array", correct: false, feedback: "A dynamic array cannot grow one element at a time. You would reallocate with new[n+1](arr) per packet and track a read index yourself." },
+      { id: "associative-array", label: "Associative array", correct: false, feedback: "It works only if you invent sequence-number keys. A queue gives you arrival order for free." },
+    ],
+    code: "pkt_t pkt_q[$];\npkt_q.push_back(p);      // monitor\np = pkt_q.pop_front();   // checker",
   },
   {
-    id: "associative",
-    prompt:
-      "You need to store error packets, indexed by their unique 32-bit error ID. Very few IDs will actually have errors. Choose a structure.",
-    options: ["Dynamic Array", "Queue", "Associative Array"],
-    correct: "Associative Array",
-    explanation:
-      "Associative arrays sparsely allocate entries based on key access, so you only store the IDs that matter.",
+    id: "sparse",
+    prompt: "You store error packets indexed by their 32-bit error ID. Only a handful of IDs ever occur. Which structure?",
+    options: [
+      { id: "associative-array", label: "Associative array", correct: true, feedback: "Entries exist only for IDs you write, and exists() checks membership without a warning (§7.8, §7.9.3)." },
+      { id: "dynamic-array", label: "Dynamic array", correct: false, feedback: "Indexing by a 32-bit ID would need new[2**32] elements to hold the largest ID." },
+      { id: "queue", label: "Queue", correct: false, feedback: "Every lookup would be a linear search with find_first_index. Associative arrays look up by key." },
+    ],
+    code: "pkt_t err_pkts[bit [31:0]];\nerr_pkts[p.err_id] = p;\nif (err_pkts.exists(id)) ...",
   },
   {
-    id: "dynamic",
-    prompt: "You are collecting all packet lengths for statistical analysis later. You don't know how many packets will arrive. Choose a structure.",
-    options: ["Dynamic Array", "Queue", "Associative Array"],
-    correct: "Dynamic Array",
-    explanation:
-      "Dynamic arrays resize at runtime, giving you indexed access to however many packet lengths arrive.",
+    id: "unknown-count",
+    prompt: "You collect every packet length for statistics at the end of the test. You do not know how many packets will arrive. Which structure?",
+    options: [
+      { id: "queue", label: "Queue", correct: true, feedback: "push_back grows the queue by one each time. At the end, lens.sum() with (int'(item)) and friends work on it directly." },
+      { id: "dynamic-array", label: "Dynamic array", correct: false, feedback: "Dynamic arrays have no push_back. You would write lens = new[lens.size()+1](lens) for every packet: a reallocate-and-copy each time (§7.5.1)." },
+      { id: "associative-array", label: "Associative array", correct: false, feedback: "It works with a counter as the key, but you invent and manage an index that a queue provides for free." },
+    ],
+    code: "int lens[$];\nlens.push_back(p.len);           // per packet\ntotal = lens.sum() with (int'(item));",
+  },
+  {
+    id: "known-at-runtime",
+    prompt: "A plusarg tells you at run time that there are N lanes. Lane results arrive in any order and you write each one by lane number. Which structure?",
+    options: [
+      { id: "dynamic-array", label: "Dynamic array", correct: true, feedback: "new[N] creates exactly N default-initialized slots, so lane_res[lane] = v is valid in any order (§7.5.1)." },
+      { id: "queue", label: "Queue", correct: false, feedback: "Writing q[5] when size() is 2 is an invalid index: the write is ignored (§7.4.5). Queues fit in-order filling." },
+      { id: "fixed-size-array", label: "Fixed-size array", correct: false, feedback: "A fixed-size array needs its size at elaboration. N is only known at run time." },
+    ],
+    code: "int lane_res[];\nlane_res = new[n_lanes];   // all 0 (int is 2-state)\nlane_res[lane] = result;",
+  },
+  {
+    id: "bounded",
+    prompt: "A stimulus buffer may hold at most 8 pending items. A ninth must be dropped, and the tool must tell you. Which declaration?",
+    options: [
+      { id: "bounded-7", label: "item_t buf[$:7]", correct: true, feedback: "The bound is the last legal index, so [$:7] holds 8 items. A ninth push_back is discarded with a required warning (§7.10.5)." },
+      { id: "bounded-8", label: "item_t buf[$:8]", correct: false, feedback: "Off by one: [$:8] allows indices 0..8, which is nine items." },
+      { id: "unbounded", label: "item_t buf[$]", correct: false, feedback: "An unbounded queue just grows. Nothing is dropped and nothing warns." },
+    ],
+    code: "item_t buf[$:7];                // indices 0..7: at most 8 items\nif (buf.size() == 8) n_drops++;  // count drops yourself if you need them\nbuf.push_back(it);              // a 9th item is discarded with a warning",
   },
   {
     id: "packed",
-    prompt:
-      "A register mirror needs to line up bit-for-bit with a DUT bus so you can drive packed fields over an interface. Choose a structure.",
-    options: ["Packed Array", "Dynamic Array", "Queue"],
-    correct: "Packed Array",
-    explanation:
-      "Packed arrays preserve contiguous bit ordering, making them ideal for hardware-accurate register and bus mirrors.",
-  },
-  {
-    id: "queue_replay",
-    prompt:
-      "Diagnostics bursts arrive late and must pre-empt the oldest stored packet. Choose the structure that lets you push_front() and pop_back() without rewriting code.",
-    options: ["Dynamic Array", "Queue", "Associative Array"],
-    correct: "Queue",
-    explanation:
-      "Queues support push_front(), pop_back(), insert(), and delete() so replay buffers stay compact and drop the right packet.",
+    prompt: "A register mirror must line up bit-for-bit with a 32-bit bus so you can assign the whole bus to it in one statement. Which declaration?",
+    options: [
+      { id: "packed", label: "logic [3:0][7:0] mirror", correct: true, feedback: "Packed dimensions form one 32-bit vector, so mirror = bus; works and mirror[2] is byte 2 (§7.4.1, §7.6)." },
+      { id: "unpacked", label: "logic [7:0] mirror [4]", correct: false, feedback: "An unpacked array is not a vector: mirror = bus; does not compile without a cast or streaming operator (§7.6)." },
+      { id: "queue", label: "logic [7:0] mirror [$]", correct: false, feedback: "A queue is an unpacked, variable-size array. It cannot be assigned from a vector either." },
+    ],
+    code: "logic [3:0][7:0] mirror;\nmirror = bus;           // one 32-bit assignment\nbyte2  = mirror[2];     // packed index selects byte 2",
   },
 ];
 
-const modalVariants = {
-  initial: { opacity: 0, scale: 0.95 },
-  animate: { opacity: 1, scale: 1 },
-  exit: { opacity: 0, scale: 0.95 },
-};
-
 export const PacketSorterGame: React.FC = () => {
   const [current, setCurrent] = useState(0);
-  const [answers, setAnswers] = useState<ChallengeAnswer[]>([]);
-  const [showModal, setShowModal] = useState(false);
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [finished, setFinished] = useState(false);
 
-  const currentChallenge = challenges[current];
-  const selectedAnswer = answers.find((answer) => answer.challengeId === currentChallenge?.id);
+  const challenge = PACKET_SORTER_CHALLENGES[current];
+  const chosenId = answers[challenge.id];
+  const chosen = challenge.options.find((o) => o.id === chosenId);
+  const best = challenge.options.find((o) => o.correct) as Option;
+  const correctCount = PACKET_SORTER_CHALLENGES.filter((c) => c.options.find((o) => o.id === answers[c.id])?.correct).length;
+  const answeredCount = Object.keys(answers).length;
+  const total = PACKET_SORTER_CHALLENGES.length;
 
-  const correctCount = useMemo(() => answers.filter((answer) => answer.correct).length, [answers]);
-  const isFinished = useMemo(() => answers.length === challenges.length, [answers.length]);
-
-  const handleSelect = (option: string) => {
-    if (!currentChallenge) return;
-    if (selectedAnswer) return;
-
-    setAnswers((prev) => [
-      ...prev,
-      {
-        challengeId: currentChallenge.id,
-        selected: option,
-        correct: option === currentChallenge.correct,
-      },
-    ]);
-  };
-
-  const goToNext = () => {
-    if (current < challenges.length - 1) {
-      setCurrent((prev) => prev + 1);
-    } else {
-      setShowModal(true);
-    }
-  };
-
-  const restartGame = () => {
-    setAnswers([]);
+  const restart = () => {
+    setAnswers({});
     setCurrent(0);
-    setShowModal(false);
+    setFinished(false);
   };
 
-  const feedback = selectedAnswer
-    ? selectedAnswer.correct
-      ? {
-          tone: "success" as const,
-          title: "Correct!",
-          detail: currentChallenge.explanation,
-        }
-      : {
-          tone: "error" as const,
-          title: "Not quite",
-          detail: `${selectedAnswer.selected} struggles here. ${currentChallenge.explanation}`,
-        }
-    : null;
+  if (finished) {
+    return (
+      <VisualFrame label="Structure choice practice" eyebrow="Practice" title="Pick the container: results" fidelity="illustration">
+        <div className="space-y-4" data-testid="packet-sorter-summary" role="status">
+          <p className="text-base font-semibold text-foreground" data-testid="packet-score">
+            You chose the best structure in {correctCount} of {total} scenarios.
+          </p>
+          <p className="text-sm text-muted-foreground">
+            {correctCount === total
+              ? "Every choice matched the idiomatic answer."
+              : "Review the scenarios marked ✕ below: each one names the rule behind the better choice."}
+          </p>
+          <ol className="space-y-2">
+            {PACKET_SORTER_CHALLENGES.map((c) => {
+              const pick = c.options.find((o) => o.id === answers[c.id]);
+              const ok = Boolean(pick?.correct);
+              const right = c.options.find((o) => o.correct) as Option;
+              return (
+                <li key={c.id} className={cn("rounded-lg border p-3 text-sm", ok ? "border-emerald-500/60 bg-emerald-500/10" : "border-rose-500/60 bg-rose-500/10")}>
+                  <p className="font-medium text-foreground">
+                    <span aria-hidden>{ok ? "✓ " : "✕ "}</span>
+                    <span className="sr-only">{ok ? "Correct: " : "Incorrect: "}</span>
+                    {c.prompt}
+                  </p>
+                  <p className="mt-1 text-muted-foreground">
+                    You chose <strong className="text-foreground">{pick?.label ?? "nothing"}</strong>
+                    {ok ? "." : <>; best is <strong className="text-foreground">{right.label}</strong>. {right.feedback}</>}
+                  </p>
+                </li>
+              );
+            })}
+          </ol>
+          <button type="button" onClick={restart} data-testid="packet-restart" className="min-h-10 rounded-lg border border-border/70 px-4 text-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+            Try again
+          </button>
+        </div>
+      </VisualFrame>
+    );
+  }
 
   return (
-    <div className="space-y-6" data-testid="packet-sorter-game">
-      <div className="space-y-1">
-        <Badge variant="outline" className="uppercase tracking-wide text-xs text-muted-foreground">
-          Challenge {current + 1} of {challenges.length}
-        </Badge>
-        <h3 className="text-xl font-semibold">Think on Your Feet: Manage the Data Flow</h3>
-        <p className="text-muted-foreground">Pick the structure that keeps packets organized under pressure.</p>
-      </div>
-
-      <div className="space-y-4 rounded-xl border border-border/60 bg-background/80 p-6 shadow-sm" data-testid="packet-sorter-card">
-        <div className="text-lg font-medium" data-testid="packet-sorter-prompt">
-          {currentChallenge.prompt}
-        </div>
-        <div className="grid gap-3 sm:grid-cols-3">
-          {currentChallenge.options.map((option) => {
-            const optionAnswer = answers.find((answer) => answer.challengeId === currentChallenge.id);
-            const isSelected = optionAnswer?.selected === option;
-            const isCorrect = isSelected && optionAnswer?.correct;
+    <VisualFrame
+      label="Structure choice practice"
+      eyebrow={`Practice · scenario ${current + 1} of ${total}`}
+      title="Pick the container"
+      summary="Choose the structure an experienced verification engineer would reach for. Every option explains itself after you answer."
+      fidelity="illustration"
+    >
+      <div className="space-y-4" data-testid="packet-sorter-game">
+        <p className="text-base font-medium text-foreground" data-testid="packet-sorter-prompt">
+          {challenge.prompt}
+        </p>
+        <div className="grid gap-2 grid-cols-[repeat(auto-fit,minmax(min(100%,200px),1fr))]" role="group" aria-label="Options">
+          {challenge.options.map((option) => {
+            const isChosen = chosenId === option.id;
+            const revealed = Boolean(chosenId);
             return (
-              <Button
-                key={option}
-                data-testid={`packet-option-${option.replace(/\s+/g, "-").toLowerCase()}`}
-                variant="outline"
+              <button
+                key={option.id}
+                type="button"
+                data-testid={`packet-option-${option.id}`}
+                disabled={revealed}
+                onClick={() => setAnswers((a) => ({ ...a, [challenge.id]: option.id }))}
+                aria-pressed={isChosen}
                 className={cn(
-                  "h-auto whitespace-normal text-left",
-                  !isSelected && "bg-secondary/30",
-                  isSelected && !isCorrect && "border-rose-500/60 bg-rose-500/10 text-rose-700 dark:bg-rose-900/80 dark:text-rose-100",
-                  isCorrect && "border-emerald-500/60 bg-emerald-500/10 text-emerald-700 dark:bg-emerald-900/80 dark:text-emerald-100",
+                  "min-h-10 rounded-lg border px-3 py-2 text-left font-mono text-sm text-foreground transition-colors [font-variant-ligatures:none] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none",
+                  !revealed && "border-border/70 bg-background/60 hover:bg-muted",
+                  revealed && option.correct && "border-emerald-500/70 bg-emerald-500/10",
+                  revealed && isChosen && !option.correct && "border-rose-500/70 bg-rose-500/10",
+                  revealed && !isChosen && !option.correct && "border-border/50 opacity-70",
                 )}
-                onClick={() => handleSelect(option)}
               >
-                {option}
-              </Button>
+                {option.label}
+                {revealed && option.correct ? <span className="ml-2 font-sans text-xs text-emerald-700 dark:text-emerald-300">✓ best choice</span> : null}
+                {revealed && isChosen && !option.correct ? <span className="ml-2 font-sans text-xs text-rose-700 dark:text-rose-300">✕ your choice</span> : null}
+              </button>
             );
           })}
         </div>
-        <AnimatePresence>
-          {feedback && (
-            <motion.div
-              key={feedback.title}
-              data-testid="packet-sorter-feedback"
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 8 }}
-              className={
-                feedback.tone === "success"
-                  ? "rounded-md border border-emerald-500/60 bg-emerald-500/10 p-4 text-emerald-700 dark:bg-emerald-900/80 dark:text-emerald-100"
-                  : "rounded-md border border-rose-500/60 bg-rose-500/10 p-4 text-rose-700 dark:bg-rose-900/80 dark:text-rose-100"
-              }
-            >
-              <div className="font-semibold">{feedback.title}</div>
-              <div className="text-sm">{feedback.detail}</div>
-            </motion.div>
-          )}
-        </AnimatePresence>
+
+        <div aria-live="polite">
+          {chosen ? (
+            <div data-testid="packet-sorter-feedback" className="space-y-2 rounded-xl border border-border/70 bg-background/50 p-3 text-sm">
+              <p className={chosen.correct ? "text-emerald-700 dark:text-emerald-300" : "text-rose-700 dark:text-rose-300"}>
+                <strong>{chosen.correct ? "Correct. " : "Not the best fit. "}</strong>
+                {chosen.feedback}
+              </p>
+              {!chosen.correct ? (
+                <p className="text-muted-foreground">
+                  <strong className="text-foreground">Best choice, {best.label}: </strong>
+                  {best.feedback}
+                </p>
+              ) : null}
+              <pre className="overflow-x-auto rounded-lg bg-slate-950/90 p-3 font-mono text-[12.5px] leading-5 text-slate-100 [font-variant-ligatures:none]">
+                <code>{challenge.code}</code>
+              </pre>
+            </div>
+          ) : null}
+        </div>
+
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="text-sm text-muted-foreground" data-testid="packet-score">
-            Score: {correctCount} / {challenges.length}
-          </div>
-          <Button data-testid="packet-next" onClick={goToNext} disabled={!selectedAnswer}>
-            {current === challenges.length - 1 ? "Finish" : "Next Challenge"}
-          </Button>
+          <p className="text-sm text-muted-foreground" data-testid="packet-progress">
+            {correctCount} correct of {answeredCount} answered
+          </p>
+          <button
+            type="button"
+            data-testid="packet-next"
+            disabled={!chosen}
+            onClick={() => (current < total - 1 ? setCurrent((c) => c + 1) : setFinished(true))}
+            className="min-h-10 rounded-lg bg-cyan-700 px-4 text-sm font-semibold text-white hover:bg-cyan-500 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {current === total - 1 ? "See results" : "Next scenario"}
+          </button>
         </div>
       </div>
-
-      <AnimatePresence>
-        {showModal && (
-          <motion.div
-            className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            data-testid="packet-sorter-modal"
-          >
-            <motion.div
-              variants={modalVariants}
-              initial="initial"
-              animate="animate"
-              exit="exit"
-              className="w-full max-w-md space-y-4 rounded-2xl border border-primary/40 bg-background p-6 text-center shadow-xl"
-            >
-              <h4 className="text-2xl font-semibold">Success!</h4>
-              <p className="text-muted-foreground">You earned +150 XP and the Data Flow Master badge.</p>
-              <div className="space-y-2 text-left text-sm">
-                {challenges.map((challenge) => {
-                  const answer = answers.find((item) => item.challengeId === challenge.id);
-                  const correct = answer?.correct;
-                  return (
-                    <div
-                      key={challenge.id}
-                      className={
-                        correct
-                          ? "rounded-md border border-emerald-500/60 bg-emerald-500/10 p-3"
-                          : "rounded-md border border-rose-500/60 bg-rose-500/10 p-3"
-                      }
-                    >
-                      <div className="font-semibold">{challenge.prompt}</div>
-                      <div className="mt-1 text-sm">
-                        You chose <strong>{answer?.selected ?? "No answer"}</strong> — {challenge.explanation}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-              <div className="flex justify-center gap-2">
-                <Button variant="outline" onClick={() => setShowModal(false)} data-testid="packet-modal-close">
-                  Close
-                </Button>
-                <Button onClick={restartGame} data-testid="packet-modal-restart">
-                  Play Again
-                </Button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
+    </VisualFrame>
   );
 };
 

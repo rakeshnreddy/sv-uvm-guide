@@ -17,15 +17,15 @@ flashcards: "E-SOC-1_SoC_Verification"
 
 At the block level, your UVM Agent is **Active**: its Sequencer and Driver are generating transactions and wiggling DUT pins. 
 
-At the SoC level, an embedded processor (running C firmware) generally takes over the driving responsibilities. If your VIP stays active, the UVM Driver and the embedded core will both try to drive the bus, causing fatal `X` state collisions.
+At the SoC level, an embedded processor (running C firmware) generally takes over the driving responsibilities. If your VIP stays active, the UVM driver and the embedded core both drive the same bus: contention, which shows up as `X` values or as a multiple-driver error, depending on how the interface is wired.
 
-Instead of rewriting the VIP, you reuse it in **Passive** mode.
+Instead of rewriting the VIP, you reuse it in **Passive** mode. Predict which parts of the agent exist after `build_phase` in passive mode, then switch between block and SoC level and try breaking the agent.
 
 <VIPReuseVisualizer />
 
 **Implementation mechanism:**
-- Wrap block agents to respond to `uvm_active_passive_enum`.
-- In passive mode, the agent's `build_phase` simply skips creating the sequencer and driver.
+- The agent builds its sequencer and driver only when `get_is_active() == UVM_ACTIVE`. In passive mode they are never constructed: the handles stay null, so `connect_phase` must use the same guard, and no virtual sequence may start a sequence on that agent.
+- `uvm_agent::build_phase` reads an `"is_active"` config_db entry into `is_active` (uvm-core `uvm_agent.svh`). A derived agent that forgets `super.build_phase(phase)` ignores the setting and stays active. A VIP that keeps the mode in its own config object (A-UVM-7) is switched through that object instead.
 - The `monitor` remains alive—it snoops the bus, parses the firmware's traffic into UVM Sequence Items, and feeds them to your existing coverage collectors and scoreboards.
 
 ```systemverilog
@@ -37,7 +37,8 @@ class spi_soc_test extends uvm_test;
     super.build_phase(phase);
     
     // Switch the block-level VIP to passive mode
-    // Now firmware drives, but our UVM monitors still check protocols
+    // Now firmware drives, but our UVM monitors still check protocols.
+    // spi_agent's build_phase calls super.build_phase(), where uvm_agent reads this entry.
     uvm_config_db#(uvm_active_passive_enum)::set(this, "*.spi_agent", "is_active", UVM_PASSIVE);
 
     env = soc_env::type_id::create("env", this);
@@ -51,7 +52,7 @@ When C firmware runs on the SoC's embedded core, it needs to coordinate with the
 
 1. **Shared Memory Mailboxes:** Firmware writes specific "magic numbers" to an unused memory region. A UVM monitor snoops that address and broadcasts an event or transaction when it sees the magic number.
 2. **Interrupts:** Firmware triggers a software interrupt; UVM catches the IRQ pin wiggling.
-3. **Register Mirrors:** Firmware writes to a scratchpad register; UVM RAL auto-predicts the write and tests can `wait(rm.scratchpad.get() == 0xDEADBEEF)`.
+3. **Register Mirrors:** Firmware writes to a scratchpad register. Only an **explicit** `uvm_reg_predictor` connected to the bus monitor sees that write and updates the mirror; auto-predict (`set_auto_predict(1)`) tracks only the RAL's own `read()`/`write()` calls, so it never sees firmware traffic. Note that `get()` returns the *desired* value; poll `get_mirrored_value()` from a loop that waits on a clock or a monitor event, or have the monitor trigger a `uvm_event` when it sees the magic value.
 
 ### Interconnect & System Observability
 

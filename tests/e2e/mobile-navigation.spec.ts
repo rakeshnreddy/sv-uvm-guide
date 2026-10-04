@@ -1,13 +1,21 @@
-import { test, expect, devices } from '@playwright/test';
+import { existsSync } from 'node:fs';
+import { test, expect, devices, webkit } from '@playwright/test';
 
 // Use iPhone 13 device for all tests in this file
 test.use({ ...devices['iPhone 13'] });
+
+// iPhone 13 defaults to WebKit, which a Chromium-only install does not include.
+test.skip(
+  ({ browserName }) => browserName === 'webkit' && !existsSync(webkit.executablePath()),
+  'WebKit is not installed. Run `npx playwright install webkit`, or pass --browser=chromium for an emulated run.',
+);
 
 test.describe('Mobile Navigation', () => {
   test.setTimeout(180000); // 3 minute timeout for this test
 
   test('should open slide-out menu and sidebar', async ({ page }) => {
-    await page.goto('/');
+    // The mobile navbar belongs to the (learning) layout; the public landing page at / does not render it.
+    await page.goto('/curriculum');
 
     // Test mobile menu
     await page.getByRole('button', { name: 'Open main menu' }).click();

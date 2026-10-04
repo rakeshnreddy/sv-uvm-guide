@@ -13,34 +13,37 @@ export const metadata = {
 >
 
   ## Elevator Pitch
-  *IEEE 1800-2023, Clauses 16.3 and 16.4: Immediate and Concurrent assertions*
+  *IEEE 1800-2023, Clauses 16.3 and 16.5: Immediate and concurrent assertions*
 
-  Immediate assertions execute like regular procedural statements and check a condition at the exact time they run.
+  Immediate assertions execute like regular procedural statements and check a condition, on current values, at the moment they run.
 
-  Assertions catch bugs by checking that design behavior meets expectations. **Immediate** assertions fire instantly within procedural code, while **concurrent** assertions monitor signal relationships over time.
+  Assertions catch bugs by checking that design behavior meets expectations. **Immediate** assertions fire instantly within procedural code. **Concurrent** assertions start an attempt at every tick of their clock, use values sampled just before the edge (§16.5.1), and can span many cycles.
 
   ## Practical Explanation
 
   ```systemverilog
-  // Immediate assertion: procedural
+  // Immediate assertion: procedural, checks current values when it executes
   always_ff @(posedge clk) begin
-    assert (req == 0) else $error("Req high during reset");
+    if (!rst_n)
+      assert (req == 0) else $error("req high during reset");
   end
 
-  // Concurrent assertion: temporal
-  property hold_until_ack;
-    req |-> ##[1:3] ack;
+  // Concurrent assertion: temporal, needs a clocking event
+  property p_req_ack_within3;
+    @(posedge clk) disable iff (!rst_n)
+      req |-> ##[1:3] ack;
   endproperty
-  assert property (hold_until_ack);
+  a_req_ack_within3: assert property (p_req_ack_within3)
+    else $error("ack did not arrive 1-3 cycles after req");
   ```
 
-  Immediate assertions live in [procedural blocks](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control). Concurrent assertions sit outside and observe signal sequences, enabling checks like "req must be followed by ack within 3 cycles." See [multi-clocking](../I-SV-4B_Advanced_Temporal_Logic/multi-clocking) for multi-clock properties.
+  Immediate assertions live in [procedural blocks](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control). Concurrent assertions sit outside procedural code (or inside it, as procedural concurrent assertions) and observe signal sequences, enabling checks like "req must be followed by ack within 3 cycles." A concurrent property needs a clocking event: write `@(posedge clk)` in the property, or declare a `default clocking` block in the scope. Without either, the property above would not compile. See [multi-clocking](../I-SV-4B_Advanced_Temporal_Logic/multi-clocking) for multi-clock properties.
 
   ## Advanced Notes
 
-  * Concurrent assertions support sampling with `##` delays and repetition operators.
-  * Use `disable iff` to mask assertions during reset.
-  * Remember: **Immediate = instant; Concurrent = temporal watchdog**.
+  * Concurrent assertions express time with `##` delays and repetition operators.
+  * Use `disable iff` to discard attempts during reset: a disabled attempt is neither a pass nor a fail.
+  * Remember: **Immediate = instant, current values; Concurrent = every clock tick, sampled values**.
 
   <Quiz questions={[
     {
@@ -85,20 +88,20 @@ export const metadata = {
   ### Advanced Tips
 
   - Use immediate assertions for quick sanity checks inside procedural code.
-  - Concurrent assertions can be reused across modules by placing them in interfaces or packages.
+  - Named sequences and properties can be declared in packages and reused (§16.12). The `assert property` statements themselves belong in modules, interfaces, programs, generate blocks, checkers or procedures (§16.14), often in a bind file.
 
   ## Check Your Understanding
 
   <Quiz questions={[
     {
-      question: "Where do immediate assertions execute?",
+      question: "At a rising clock edge, the design's flop writes q from 0 to 1. Which value of q does a concurrent assertion clocked on that edge use?",
       answers: [
-        { text: "Only in interfaces", correct: false },
-        { text: "Inside procedural code such as always blocks", correct: true },
-        { text: "In a separate assertion block", correct: false },
-        { text: "Only during reset", correct: false }
+        { text: "1, because the assertion is evaluated after the NBA region", correct: false },
+        { text: "0, the value sampled just before the edge (Preponed)", correct: true },
+        { text: "Either value, depending on the simulator", correct: false },
+        { text: "X, because q changes in the same time step", correct: false }
       ],
-      explanation: "Immediate assertions behave like procedural statements."
+      explanation: "Concurrent assertions are evaluated in the Observed region but on sampled values, which are the Preponed values (§16.5, §16.5.1). The new value of q is first seen at the next edge."
     }
   ]} />
 
@@ -107,8 +110,8 @@ export const metadata = {
       question="A verification engineer writes a checker to verify sequential logic inside an `always_comb` block using a simple immediate assertion: `assert (a == b)`. However, it fires multiple times with false failures during a single delta cycle before signals settle. What is the modern solution to this problem?"
       options={[
         { text: "Wrap the assertion in an `always_ff @(posedge clk)` block.", isCorrect: false, feedback: "That turns it into a synchronous check, but the goal was to check combinational logic." },
-        { text: "Change it to a deferred assertion using `assert #0` or `assert final`.", isCorrect: true, feedback: "Correct! Standard immediate assertions execute exactly when reached, risking 'glitch' failures in combinational blocks. Deferred assertions (`assert #0` or `assert final`) wait until the end of the time step (after signals settle) to evaluate, preventing false glitch reports." },
-        { text: "Use a concurrent assertion (`assert property`).", isCorrect: false, feedback: "Concurrent assertions evaluate on clock sequences, not for continuous combinational checks." },
+        { text: "Change it to a deferred assertion using `assert #0` or `assert final`.", isCorrect: true, feedback: "Correct! A deferred assertion queues its report instead of reporting at once. If the always_comb block runs again in the same time step, the pending report is flushed. An observed deferred assertion (`assert #0`) reports only once its pending report matures in the Observed region. `assert final` waits even longer: its pending report matures only after every other region of the time step has run, in Postponed (§16.4). Glitches caused by the order of procedural execution are filtered out." },
+        { text: "Use a concurrent assertion (`assert property`).", isCorrect: false, feedback: "Concurrent assertions check at clock ticks, so they do not watch a combinational relation continuously." },
         { text: "Add a `#1` artificial delay before the `assert`.", isCorrect: false, feedback: "Adding timing delays inside `always_comb` breaks synthesis and simulation semantics." }
       ]}
     />

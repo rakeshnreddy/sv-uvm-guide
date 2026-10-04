@@ -1,442 +1,250 @@
-'use client';
+"use client";
 
-import React, { useState, useCallback, useMemo } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import React, { useMemo, useState } from "react";
+
+import { CodeTrace, type CodeTraceLine } from "@/components/visual-system/CodeTrace";
+import { PlaybackControls } from "@/components/visual-system/PlaybackControls";
+import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { usePlayback } from "@/components/visual-system/usePlayback";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
 import {
-  Play,
-  RotateCcw,
-  ChevronRight,
-  ChevronDown,
-  GitBranch,
-  Terminal,
-  Layers,
-  Cpu,
-  SkipForward,
-} from 'lucide-react';
+  buildHookTrace,
+  CHILD_START_CODE,
+  childHookSequence,
+  type ChildStartStyle,
+  type HookEvent,
+  type HookKind,
+  type HookTraceConfig,
+} from "@/lib/uvm-sequencer-model";
+import { cn } from "@/lib/utils";
 
-// ── Data Types ──────────────────────────────────────────────────────────────────
+const ASSUMPTIONS = [
+  "Order of calls follows uvm-core 2020.3.1 uvm_sequence_base::start(), start_item() and finish_item(), and the `uvm_do macro (uvm_rand_send).",
+  "One sequencer and a driver that always calls item_done(). Time is not shown: this is call order only.",
+  "Hooks are empty; randomize() succeeds.",
+];
 
-type NodeStatus = 'idle' | 'running' | 'done';
-
-interface SeqNode {
-  id: string;
-  className: string;
-  sequencer: string;
-  children: SeqNode[];
-}
-
-interface LogEntry {
-  step: number;
-  nodeId: string;
-  event: string;
-  detail: string;
-}
-
-// ── Preset Data ─────────────────────────────────────────────────────────────────
-
-const BASIC_TREE: SeqNode = {
-  id: 'top',
-  className: 'top_sequence',
-  sequencer: 'main_sqr',
-  children: [
-    {
-      id: 'wb',
-      className: 'write_burst_sequence',
-      sequencer: 'main_sqr',
-      children: [
-        {
-          id: 'wb_rw',
-          className: 'base_rw_sequence',
-          sequencer: 'main_sqr',
-          children: [],
-        },
-      ],
-    },
-    {
-      id: 'rc',
-      className: 'read_check_sequence',
-      sequencer: 'main_sqr',
-      children: [
-        {
-          id: 'rc_rw',
-          className: 'base_rw_sequence',
-          sequencer: 'main_sqr',
-          children: [],
-        },
-      ],
-    },
-  ],
+const STYLES: ChildStartStyle[] = ["start_with_parent", "uvm_do", "start_no_parent"];
+const STYLE_LABEL: Record<ChildStartStyle, string> = {
+  start_with_parent: "start(m_sequencer, this)",
+  uvm_do: "`uvm_do(child)",
+  start_no_parent: "start(m_sequencer)",
 };
 
-const VIRTUAL_SEQ_TREE: SeqNode = {
-  id: 'vsq',
-  className: 'virtual_sequence',
-  sequencer: 'v_sqr (virtual)',
-  children: [
-    {
-      id: 'axi_w',
-      className: 'axi_write_seq',
-      sequencer: 'axi_sqr',
-      children: [
-        {
-          id: 'axi_item',
-          className: 'axi_base_rw',
-          sequencer: 'axi_sqr',
-          children: [],
-        },
-      ],
-    },
-    {
-      id: 'apb_cfg',
-      className: 'apb_config_seq',
-      sequencer: 'apb_sqr',
-      children: [
-        {
-          id: 'apb_item',
-          className: 'apb_base_rw',
-          sequencer: 'apb_sqr',
-          children: [],
-        },
-      ],
-    },
-  ],
+const kindGlyph: Record<HookKind, string> = {
+  hook: "◇",
+  "parent-hook": "◆",
+  body: "▶",
+  item: "■",
+  api: "→",
+  sequencer: "SQR",
+  driver: "DRV",
+  error: "✕",
 };
 
-// ── Execution order builder ─────────────────────────────────────────────────────
+const statusStyle: Record<string, { glyph: string; className: string }> = {
+  idle: { glyph: "○", className: "border-border/70 text-muted-foreground" },
+  running: { glyph: "▶", className: "border-cyan-500 bg-cyan-500/10 text-foreground" },
+  done: { glyph: "✓", className: "border-emerald-500/60 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200" },
+  blocked: { glyph: "⊘", className: "border-rose-500 bg-rose-500/10 text-rose-800 dark:text-rose-200" },
+};
 
-function buildExecutionOrder(node: SeqNode): LogEntry[] {
-  const entries: LogEntry[] = [];
-  let step = 0;
+function hookOptions(child: string, parent: string): { id: string; label: string; style?: ChildStartStyle }[] {
+  return [
+    { id: "full", label: childHookSequence(child, parent, "start_with_parent").join(" → "), style: "start_with_parent" },
+    { id: "no-pre-post-body", label: childHookSequence(child, parent, "uvm_do").join(" → "), style: "uvm_do" },
+    { id: "no-parent", label: childHookSequence(child, parent, "start_no_parent").join(" → "), style: "start_no_parent" },
+    { id: "body-only", label: `${child}.pre_start() → ${child}.body() → ${child}.post_start()` },
+  ];
+}
 
-  function walk(n: SeqNode) {
-    entries.push({ step: step++, nodeId: n.id, event: 'start()', detail: `${n.className}.start() called on ${n.sequencer}` });
-    entries.push({ step: step++, nodeId: n.id, event: 'body()', detail: `${n.className}.body() begins execution` });
+const hookFeedback: Record<string, string> = {
+  full: "start(sqr, this) keeps call_pre_post = 1, so pre_body/post_body run, and because a parent is passed, the parent's pre_do(0), mid_do and post_do wrap the child's body.",
+  "no-pre-post-body": "`uvm_do ends in start(seqr, this, PRIORITY, 0): call_pre_post = 0 skips pre_body/post_body, but the parent's pre_do/mid_do/post_do still run. It also randomizes the child first.",
+  "no-parent": "start(sqr) with no parent makes the child a new root: pre_body/post_body run, but there is no parent to call pre_do/mid_do/post_do on.",
+  "body-only": "pre_start and post_start always run, but they are never the only hooks: pre_body/post_body or the parent's hooks (or both) are added by every start style.",
+};
 
-    if (n.children.length === 0) {
-      entries.push({ step: step++, nodeId: n.id, event: 'finish_item()', detail: `${n.className}: start_item → randomize → finish_item handshake` });
-    } else {
-      for (const child of n.children) {
-        walk(child);
-      }
-    }
-
-    entries.push({ step: step++, nodeId: n.id, event: 'done', detail: `${n.className}.body() completed — returning to parent` });
+function buildPrediction(cfg: HookTraceConfig): { question: string; options: PredictionOption[] } {
+  const child = cfg.children[0];
+  if (cfg.rootLocks) {
+    const deadlocks = child.style === "start_no_parent";
+    return {
+      question: `${cfg.root} calls lock(), then starts ${child.name} with ${CHILD_START_CODE[child.style](child.name)}. What happens at ${child.name}'s first start_item()?`,
+      options: [
+        {
+          id: "granted",
+          label: `It is granted: the lock covers ${cfg.root} and its children`,
+          correct: !deadlocks,
+          feedback: deadlocks
+            ? `Only real children are covered. With no parent argument, is_child(${cfg.root}, ${child.name}) is false, so the lock blocks ${child.name}.`
+            : `is_blocked() ignores a lock held by the sequence's own ancestor. ${child.name} was started with ${cfg.root} as its parent, so it is not blocked.`,
+        },
+        {
+          id: "deadlock",
+          label: `It waits forever: ${cfg.root}'s lock blocks ${child.name}, and ${cfg.root} waits for ${child.name} to finish`,
+          correct: deadlocks,
+          feedback: deadlocks
+            ? `${child.name} has no parent, so it is just another sequence to the sequencer. ${cfg.root} holds the lock and is itself blocked in ${child.name}.start(): a deadlock.`
+            : `That deadlock needs a child started without a parent. Here the parent is passed, so the lock does not block ${child.name}.`,
+        },
+        {
+          id: "error",
+          label: "UVM reports an error and grants it anyway",
+          correct: false,
+          feedback: "Arbitration never reports a blocked request. A blocked request simply waits, which is why lock problems look like silent hangs.",
+        },
+      ],
+    };
   }
-
-  walk(node);
-  return entries;
+  const opts = hookOptions(child.name, cfg.root);
+  return {
+    question: `${cfg.root}.body() starts ${child.name} with ${CHILD_START_CODE[child.style](child.name)}. Which calls does that produce, in order?`,
+    options: opts.map((o) => ({ id: o.id, label: o.label, correct: o.style === child.style, feedback: hookFeedback[o.id] })),
+  };
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────────
-
-function getStatusForNode(
-  nodeId: string,
-  visibleLog: LogEntry[],
-): NodeStatus {
-  const events = visibleLog.filter(e => e.nodeId === nodeId);
-  if (events.length === 0) return 'idle';
-  const last = events[events.length - 1];
-  if (last.event === 'done') return 'done';
-  return 'running';
+function rootSource(cfg: HookTraceConfig): CodeTraceLine[] {
+  const lines: CodeTraceLine[] = [
+    { text: `class ${cfg.root} extends uvm_sequence #(bus_item);`, owner: "testbench" },
+    { text: `  \`uvm_object_utils(${cfg.root})` },
+    { text: "  write_seq w;  read_seq r;" },
+    { text: "  task body();" },
+  ];
+  if (cfg.rootLocks) lines.push({ text: "    lock();", key: "lock" });
+  cfg.children.forEach((c, i) => {
+    const v = i === 0 ? "w" : "r";
+    if (c.style !== "uvm_do") lines.push({ text: `    ${v} = ${c.name}::type_id::create("${v}");` });
+    lines.push({ text: `    ${CHILD_START_CODE[c.style](v)}`, key: c.name });
+  });
+  if (cfg.rootLocks) lines.push({ text: "    unlock();", key: "unlock" });
+  lines.push({ text: "  endtask" }, { text: "endclass" });
+  return lines;
 }
 
-const statusColors: Record<NodeStatus, string> = {
-  idle: 'bg-slate-100 border-slate-300 text-slate-600',
-  running: 'bg-amber-50 border-amber-400 text-amber-900 ring-2 ring-amber-300',
-  done: 'bg-emerald-50 border-emerald-400 text-emerald-800',
-};
-
-const statusBadge: Record<NodeStatus, string> = {
-  idle: 'bg-slate-200 text-slate-600',
-  running: 'bg-amber-200 text-amber-800',
-  done: 'bg-emerald-200 text-emerald-800',
-};
-
-// ── Tree Node component ─────────────────────────────────────────────────────────
-
-function TreeNode({
-  node,
-  depth,
-  collapsed,
-  toggleCollapse,
-  visibleLog,
-  isHighlighted,
-}: {
-  node: SeqNode;
-  depth: number;
-  collapsed: Set<string>;
-  toggleCollapse: (id: string) => void;
-  visibleLog: LogEntry[];
-  isHighlighted: boolean;
-}) {
-  const status = getStatusForNode(node.id, visibleLog);
-  const isCollapsed = collapsed.has(node.id);
-  const hasChildren = node.children.length > 0;
-
+function TraceView({ events, deadlock, resetKey }: { events: HookEvent[]; deadlock: boolean; resetKey: string }) {
+  const playback = usePlayback(events.length, resetKey);
+  const index = Math.min(playback.index, events.length - 1);
+  const ev = events[index];
+  const names = Object.keys(ev.status);
   return (
-    <div className="flex flex-col" style={{ marginLeft: depth > 0 ? 20 : 0 }}>
-      <motion.div
-        layout
-        className={`flex items-center gap-2 rounded-lg border px-3 py-2 mb-1.5 transition-all cursor-pointer
-          ${statusColors[status]}
-          ${isHighlighted ? 'shadow-md scale-[1.02]' : 'shadow-sm'}`}
-        onClick={() => hasChildren && toggleCollapse(node.id)}
-        data-testid={`seq-node-${node.id}`}
-      >
-        {hasChildren ? (
-          isCollapsed ? (
-            <ChevronRight size={14} className="shrink-0 text-slate-400" />
-          ) : (
-            <ChevronDown size={14} className="shrink-0 text-slate-400" />
-          )
-        ) : (
-          <Cpu size={14} className="shrink-0 text-slate-400" />
-        )}
-
-        <div className="flex flex-col flex-1 min-w-0">
-          <span className="text-xs font-bold truncate">{node.className}</span>
-          <span className="text-[10px] opacity-70 truncate">on: {node.sequencer}</span>
-        </div>
-
-        <span
-          className={`text-[10px] font-semibold uppercase px-1.5 py-0.5 rounded ${statusBadge[status]}`}
-          data-testid={`status-${node.id}`}
-        >
-          {status}
-        </span>
-      </motion.div>
-
-      <AnimatePresence>
-        {hasChildren && !isCollapsed && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="border-l-2 border-slate-200 ml-3 pl-1 overflow-hidden"
+    <div className="space-y-3">
+      <PlaybackControls playback={playback} stepCount={events.length} stepNoun="Call" describeStep={(i) => events[i]?.call ?? ""} />
+      <div className="rounded-xl border border-border/70 bg-background/60 p-3" aria-live="polite">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+          call {index + 1} of {events.length}
+        </p>
+        <p className="mt-1 font-mono text-[15px] font-medium text-foreground [font-variant-ligatures:none]">{ev.call}</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          <strong className="text-foreground">Why: </strong>
+          {ev.why}
+        </p>
+      </div>
+      <div className="flex flex-wrap gap-2" aria-label="Sequence status">
+        {names.map((n) => {
+          const st = statusStyle[ev.status[n]];
+          return (
+            <span key={n} className={cn("rounded-full border px-2.5 py-1 font-mono text-xs [font-variant-ligatures:none]", st.className)}>
+              <span aria-hidden>{st.glyph} </span>
+              {n}: {ev.status[n]}
+            </span>
+          );
+        })}
+      </div>
+      <ol className="max-h-80 overflow-auto rounded-xl border border-border/70 bg-slate-950/90 py-2 font-mono text-[12px] leading-6 text-slate-100 [font-variant-ligatures:none]" aria-label="Call log so far">
+        {events.slice(0, index + 1).map((e) => (
+          <li
+            key={e.index}
+            aria-current={e.index === index ? "step" : undefined}
+            style={{ paddingLeft: `${0.75 + e.depth * 0.9}rem` }}
+            className={cn(
+              "border-l-2 pr-2",
+              e.index === index ? "border-cyan-400 bg-cyan-400/15" : "border-transparent",
+              e.kind === "error" && "text-rose-300",
+              e.kind === "parent-hook" && "text-amber-200",
+              (e.kind === "sequencer" || e.kind === "driver") && "text-slate-400",
+            )}
           >
-            {node.children.map(child => (
-              <TreeNode
-                key={child.id}
-                node={child}
-                depth={depth + 1}
-                collapsed={collapsed}
-                toggleCollapse={toggleCollapse}
-                visibleLog={visibleLog}
-                isHighlighted={
-                  visibleLog.length > 0 &&
-                  visibleLog[visibleLog.length - 1].nodeId === child.id
-                }
-              />
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
+            <span aria-hidden className="mr-1.5 inline-block min-w-[1.5rem] text-[10px] text-slate-400">
+              {kindGlyph[e.kind]}
+            </span>
+            {e.call}
+          </li>
+        ))}
+      </ol>
+      <p className="text-xs text-muted-foreground">◇ own hook · ◆ parent hook · ▶ body · ■ item · SQR/DRV sequencer and driver work · ✕ never returns</p>
+      {deadlock && index === events.length - 1 ? (
+        <p className="rounded-lg border border-rose-500/50 bg-rose-500/10 px-3 py-2 text-sm font-medium text-rose-800 dark:text-rose-200">
+          ✕ Deadlock: nothing reports an error. The test hangs until the phase timeout.
+        </p>
+      ) : null}
     </div>
   );
 }
 
-// ── Main Component ──────────────────────────────────────────────────────────────
-
+/**
+ * Nested sequence execution: which hooks start() calls for each way of
+ * starting a child, and where items enter the handshake.
+ */
 export function UvmSequenceHierarchyVisualizer() {
-  const [preset, setPreset] = useState<'basic' | 'virtual'>('basic');
-  const tree = preset === 'basic' ? BASIC_TREE : VIRTUAL_SEQ_TREE;
-  const executionOrder = useMemo(() => buildExecutionOrder(tree), [tree]);
+  const [writeStyle, setWriteStyle] = useState<ChildStartStyle>("start_with_parent");
+  const [readStyle, setReadStyle] = useState<ChildStartStyle>("uvm_do");
+  const [itemDetail, setItemDetail] = useState(false);
+  const [rootLocks, setRootLocks] = useState(false);
 
-  const [currentStep, setCurrentStep] = useState(-1);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-
-  const visibleLog = useMemo(
-    () => (currentStep >= 0 ? executionOrder.slice(0, currentStep + 1) : []),
-    [currentStep, executionOrder],
+  const cfg: HookTraceConfig = useMemo(
+    () => ({
+      root: "top_seq",
+      children: [
+        { name: "write_seq", style: writeStyle, items: 1 },
+        { name: "read_seq", style: readStyle, items: 1 },
+      ],
+      itemDetail,
+      rootLocks,
+    }),
+    [writeStyle, readStyle, itemDetail, rootLocks],
   );
-
-  const stepForward = useCallback(() => {
-    setCurrentStep(prev => Math.min(prev + 1, executionOrder.length - 1));
-  }, [executionOrder.length]);
-
-  const reset = useCallback(() => {
-    setCurrentStep(-1);
-  }, []);
-
-  const toggleCollapse = useCallback((id: string) => {
-    setCollapsed(prev => {
-      const next = new Set(prev);
-      if (next.has(id)) {
-        next.delete(id);
-      } else {
-        next.add(id);
-      }
-      return next;
-    });
-  }, []);
-
-  const switchPreset = useCallback(
-    (p: 'basic' | 'virtual') => {
-      setPreset(p);
-      setCurrentStep(-1);
-      setCollapsed(new Set());
-    },
-    [],
-  );
-
-  const isFinished = currentStep >= executionOrder.length - 1;
+  const trace = useMemo(() => buildHookTrace(cfg), [cfg]);
+  const prediction = useMemo(() => buildPrediction(cfg), [cfg]);
+  const predictionKey = `${writeStyle}:${rootLocks}`;
 
   return (
-    <div className="flex flex-col border border-slate-200 rounded-lg bg-white my-8 shadow-sm font-sans overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-6 py-4 border-b border-slate-200 bg-slate-50">
-        <GitBranch size={20} className="text-violet-600" />
-        <h3 className="text-lg font-bold text-slate-800 m-0">
-          UVM Sequence Hierarchy Explorer
-        </h3>
-        <span className="text-xs text-slate-500 ml-2">
-          Step through nested sequence execution
-        </span>
-      </div>
-
-      {/* Preset + Controls Bar */}
-      <div className="flex flex-wrap items-center gap-3 px-6 py-3 border-b border-slate-100 bg-slate-50/50">
-        <span className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
-          Preset:
-        </span>
-        <button
-          onClick={() => switchPreset('basic')}
-          className={`text-xs px-3 py-1 rounded-full font-medium transition-colors ${
-            preset === 'basic'
-              ? 'bg-violet-600 text-white'
-              : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
-          }`}
-          data-testid="preset-basic"
-        >
-          Basic Hierarchy
-        </button>
-        <button
-          onClick={() => switchPreset('virtual')}
-          className={`text-xs px-3 py-1 rounded-full font-medium transition-colors ${
-            preset === 'virtual'
-              ? 'bg-violet-600 text-white'
-              : 'bg-slate-200 text-slate-600 hover:bg-slate-300'
-          }`}
-          data-testid="preset-virtual"
-        >
-          Virtual Sequencer
-        </button>
-
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            onClick={stepForward}
-            disabled={isFinished}
-            className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-            data-testid="step-forward"
-          >
-            <SkipForward size={14} /> Step
-          </button>
-          <button
-            onClick={reset}
-            className="flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded bg-slate-200 text-slate-700 hover:bg-slate-300 transition-colors"
-            data-testid="reset-btn"
-          >
-            <RotateCcw size={14} /> Reset
-          </button>
+    <VisualFrame
+      label="Sequence start hooks explorer"
+      eyebrow="Call trace"
+      title="What start() calls, and in which order"
+      summary="top_seq starts two child sequences. Change how each child is started, predict the hooks, then step through the calls."
+      fidelity="model"
+      assumptions={ASSUMPTIONS}
+    >
+      <div className="grid gap-3 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
+        <div className="min-w-0 space-y-1.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Start write_seq with</p>
+          <SegmentedControl label="How top_seq starts write_seq" mono options={STYLES.map((s) => ({ value: s, label: STYLE_LABEL[s] }))} value={writeStyle} onChange={setWriteStyle} />
+        </div>
+        <div className="min-w-0 space-y-1.5">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Start read_seq with</p>
+          <SegmentedControl label="How top_seq starts read_seq" mono options={STYLES.map((s) => ({ value: s, label: STYLE_LABEL[s] }))} value={readStyle} onChange={setReadStyle} />
         </div>
       </div>
-
-      {/* Main content */}
-      <div className="grid md:grid-cols-[1fr_1fr] gap-0">
-        {/* Left: Tree */}
-        <div className="p-4 border-r border-slate-200 bg-slate-50/30 overflow-auto max-h-[420px]">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3 flex items-center gap-1.5">
-            <Layers size={14} /> Sequence Call Tree
-          </h4>
-          <TreeNode
-            node={tree}
-            depth={0}
-            collapsed={collapsed}
-            toggleCollapse={toggleCollapse}
-            visibleLog={visibleLog}
-            isHighlighted={
-              visibleLog.length > 0 &&
-              visibleLog[visibleLog.length - 1].nodeId === tree.id
-            }
-          />
-        </div>
-
-        {/* Right: Log */}
-        <div className="p-4 bg-white overflow-auto max-h-[420px]">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-slate-500 mb-3 flex items-center gap-1.5">
-            <Terminal size={14} /> Lifecycle Event Log
-          </h4>
-
-          {visibleLog.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 text-slate-400 gap-2">
-              <Play size={28} className="opacity-50" />
-              <span className="text-sm">
-                Press <strong>Step</strong> to begin execution
-              </span>
-            </div>
-          ) : (
-            <div className="space-y-1">
-              {visibleLog.map((entry, idx) => {
-                const isLatest = idx === visibleLog.length - 1;
-                return (
-                  <motion.div
-                    key={`${entry.step}-${entry.nodeId}-${entry.event}`}
-                    initial={{ opacity: 0, x: 8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    className={`text-xs font-mono px-3 py-1.5 rounded border transition-colors ${
-                      isLatest
-                        ? 'bg-violet-50 border-violet-200 text-violet-900'
-                        : 'bg-slate-50 border-slate-100 text-slate-600'
-                    }`}
-                    data-testid="log-entry"
-                  >
-                    <span className="text-slate-400 mr-2">[{entry.step}]</span>
-                    <span
-                      className={`font-bold mr-1.5 ${
-                        entry.event === 'start()'
-                          ? 'text-blue-600'
-                          : entry.event === 'body()'
-                          ? 'text-amber-600'
-                          : entry.event === 'finish_item()'
-                          ? 'text-emerald-600'
-                          : 'text-slate-500'
-                      }`}
-                    >
-                      {entry.event}
-                    </span>
-                    <span className="opacity-80">{entry.detail}</span>
-                  </motion.div>
-                );
-              })}
-            </div>
-          )}
-
-          {isFinished && currentStep >= 0 && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="mt-3 text-xs text-center text-emerald-700 bg-emerald-50 border border-emerald-200 rounded py-2 font-medium"
-            >
-              ✅ All sequences completed — full hierarchy executed
-            </motion.div>
-          )}
-        </div>
+      <div className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
+        <label className="flex min-h-10 items-center gap-2">
+          <input type="checkbox" className="h-4 w-4 accent-cyan-500" checked={itemDetail} onChange={(e) => setItemDetail(e.target.checked)} />
+          Show the calls inside start_item() / finish_item()
+        </label>
+        <label className="flex min-h-10 items-center gap-2">
+          <input type="checkbox" className="h-4 w-4 accent-amber-500" checked={rootLocks} onChange={(e) => setRootLocks(e.target.checked)} />
+          Debug: top_seq calls lock() first
+        </label>
       </div>
 
-      {/* Step counter */}
-      <div className="px-6 py-2 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between text-xs text-slate-500">
-        <span>
-          Step: {currentStep < 0 ? '—' : currentStep + 1} /{' '}
-          {executionOrder.length}
-        </span>
-        <span>
-          Preset:{' '}
-          <strong>
-            {preset === 'basic' ? 'Basic Hierarchy' : 'Virtual Sequencer'}
-          </strong>
-        </span>
-      </div>
-    </div>
+      <CodeTrace label="top_seq.body()" lines={rootSource(cfg)} className="min-w-0" />
+
+      <PredictionPrompt question={prediction.question} options={prediction.options} resetKey={predictionKey}>
+        <TraceView events={trace.events} deadlock={trace.deadlock} resetKey={JSON.stringify(cfg)} />
+      </PredictionPrompt>
+    </VisualFrame>
   );
 }
 

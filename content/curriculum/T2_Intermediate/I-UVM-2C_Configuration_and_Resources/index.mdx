@@ -4,31 +4,36 @@ description: "Use uvm_config_db and uvm_resource_db to pass settings and virtual
 flashcards: "I-UVM-2C_Configuration_and_Resources"
 ---
 
-import { InteractiveCode, Quiz } from '@/components/ui';
-import ConfigDbExplorer from '@/components/curriculum/interactives/ConfigDbExplorer';
-
 ## Quick Take
 - **What it is:** The `uvm_config_db` (and its underlying database `uvm_resource_db`) allows tests and top-level modules to distribute settings, virtual interfaces, and handles precisely through the component tree.
 - **Why it matters:** It breaks hardcoded dependencies. A driver doesn't need to know where its virtual interface comes from; it just asks the config database.
 - **The Analogy:** The `config_db` is the testbench's DNS service. A test publishes a value (e.g., `is_active=0`) under a specific hierarchal path string. Later, when the agent wakes up, it queries that path to decide its role.
 
-> **Retention Hook:** `set()` pushes from the top down. `get()` pulls from the bottom up. 
+> **Retention Hook:** A `set()` stores a value under a scope pattern, a field name and a type. A `get()` finds it only when all three match: its own path matches the pattern, the field name is identical, and the type is identical.
 
 ## Build Your Mental Model
-### The Database Mechanics (IEEE 1800.2-2020 Clause 23)
-The UVM configuration DB is essentially a strongly-typed string-keyed dictionary that respects testbench hierarchy. It is built on top of the lower-level `uvm_resource_db`. While `config_db` enforces hierarchy precedence (a `uvm_env`'s `set()` overrides an `uvm_agent`'s `set()`), `resource_db` relies strictly on a chronological or explicit precedence value.
+### The Database Mechanics (IEEE 1800.2-2020 Annex C)
+The UVM configuration DB is a typed, string-keyed database that understands the testbench hierarchy. `uvm_config_db#(T)` is built on the resource pool that `uvm_resource_db#(T)` also uses. Each entry has a scope pattern, a field name, a type `T`, and a precedence number.
+- **`uvm_config_db`** builds the scope from the calling component, so it knows *who* made the setting. During build, a setting from a higher component (closer to `uvm_test_top`) gets a higher precedence.
+- **`uvm_resource_db`** takes a raw scope string and has no notion of hierarchy. Equal-precedence resources resolve by queue order, so a plain `set()` does not displace an earlier one; `set_override()` puts the new resource in front.
 
-**Rule of Thumb:** Use `uvm_config_db` for 99% of settings. It automatically injects the hierarchical context string. Fall back to `resource_db` only if you need exotic globally-scoped precedence control that defies standard testbench hierarchy.
+**Rule of Thumb:** Use `uvm_config_db` for nearly all settings. It adds the hierarchical context for you. Reach for `uvm_resource_db` only for settings that are not tied to the component tree.
 
 ```systemverilog
 class soc_base_test extends uvm_test;
+  `uvm_component_utils(soc_base_test)
   soc_config cfg;
-  
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
   function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
     // 1. Create and randomize a configuration object
     cfg = soc_config::type_id::create("cfg");
-    cfg.randomize() with { active_lanes == 4; };
-    
+    if (!cfg.randomize() with { active_lanes == 4; })
+      `uvm_fatal("RAND", "soc_config randomization failed")
+
     // 2. Publish it! 
     // Type: soc_config
     // Target Context: this (uvm_test_top)
@@ -44,9 +49,14 @@ Deep in the hierarchy, an agent or driver queries the exact same database.
 
 ```systemverilog
 class my_agent extends uvm_agent;
+  `uvm_component_utils(my_agent)
   soc_config cfg;
-  
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
   function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
     // 3. Retrieve it!
     // If getting the config fails, raise a fatal error.
     if (!uvm_config_db#(soc_config)::get(this, "", "cfg", cfg)) begin
@@ -56,6 +66,7 @@ class my_agent extends uvm_agent;
     // Configure agent based on the retrieved data
     is_active = cfg.is_tx_active ? UVM_ACTIVE : UVM_PASSIVE;
   endfunction
+endclass
 ```
 
 ### Passing Virtual Interfaces
@@ -75,21 +86,62 @@ endmodule
 ```
 
 ### Precedence and Path Matching
-The UVM configuration database uses glob matching. The context parameter (`cntxt`) and the target string (`inst_name`) are concatenated to form a fully resolved path. 
+**Scope.** A `set(cntxt, inst_name, field, value)` stores its value under the scope `{cntxt.get_full_name(), ".", inst_name}`. A `null` context means `uvm_root`, whose full name is empty, so `inst_name` alone is the scope. The scope is a glob: `*` matches any run of characters (dots included) and `?` matches one character.
 
-When a component calls `get()`, UVM checks if that component's `get_full_name()` matches any of the stored `set()` paths. If multiple match, **the highest component in the hierarchy wins** (top-down precedence during the build phase).
-However, if strings are set during the `run_phase` (runtime), **the latest set() call wins**.
+**Lookup.** A `get(this, "", field, value)` looks up the component's own full name. It sees only entries whose scope glob matches that path, whose field name is *exactly* the same, and whose type parameter `T` is *exactly* the same.
+
+**Precedence.** When several entries match, the rules (checked against uvm-core 2020.3.1) are:
+1. **During `build_phase`, the higher context wins.** A set's precedence is 1000 minus the depth of its context: `uvm_root`/`null` is 1000, `uvm_test_top` 999, `env` 998. The env's later `set()` still loses to the test's.
+2. **The top module beats the test.** A `set(null, ...)` made before `run_test()` has precedence 1000.
+3. **Equal precedence: the most recent `set()` wins.** This covers two sets from the same context during build, and every set made after build, since all of them have precedence 1000.
+4. **Path specificity is not a factor.** A test's `"*"` beats an env's exact `"agt0"` during build.
+
+Predict each scenario below before you reveal it. The debug scenarios show the two silent failures: a type mismatch and a misspelled field name. Neither prints an error; `get()` simply returns 0.
 
 <ConfigDbExplorer />
+
+<VisualRecap
+  title="Who wins a config_db lookup"
+  rule="get() sees only entries with the exact field name, the exact type T, and a scope glob that matches its own path. Among those, the highest precedence wins: during build that is the highest context (1000 minus depth); otherwise every set is 1000 and the most recent one wins."
+  code={`// tb_top, before run_test(): precedence 1000
+uvm_config_db#(virtual apb_if)::set(null, "uvm_test_top.env.agt0.*", "vif", apb_vif);
+// my_test::build_phase: precedence 999, beats any env set during build
+uvm_config_db#(int)::set(this, "env.agt*", "num_pkts", 10);
+// my_driver::build_phase: same field, same type, path matches
+if (!uvm_config_db#(virtual apb_if)::get(this, "", "vif", vif))
+  \`uvm_fatal("NOVIF", "vif not set for this driver")`}
+  mistake="Setting virtual apb_if and getting virtual apb_if.drv_mp (or int vs bit [31:0]). The types differ, so get() returns 0 without any message."
+  inTestbench="tb_top publishes virtual interfaces with set(null, ...); the base test publishes config objects; every component checks the result of get() and calls uvm_fatal when a required setting is missing."
+>
+  <svg viewBox="0 0 320 150" role="img" aria-label="Three filters, then precedence: exact field, exact type, scope glob match; highest precedence wins; ties go to the most recent set." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="8" y="8" width="96" height="30" rx="6" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
+    <text x="16" y="27" fontSize="11" fill="currentColor">field ==</text>
+    <rect x="112" y="8" width="96" height="30" rx="6" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
+    <text x="120" y="27" fontSize="11" fill="currentColor">type T ==</text>
+    <rect x="216" y="8" width="96" height="30" rx="6" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
+    <text x="224" y="27" fontSize="11" fill="currentColor">scope glob ✓</text>
+    <rect x="8" y="50" width="304" height="40" rx="6" fill="rgba(16,185,129,0.10)" stroke="rgb(16,185,129)" />
+    <text x="18" y="67" fontSize="11" fill="currentColor">build: precedence = 1000 − depth of cntxt</text>
+    <text x="18" y="82" fontSize="10" fill="currentColor" opacity="0.8">tb_top 1000 · test 999 · env 998 · agent 997</text>
+    <rect x="8" y="100" width="304" height="40" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.45" strokeDasharray="4 3" />
+    <text x="18" y="117" fontSize="11" fill="currentColor">after build: every set is 1000</text>
+    <text x="18" y="132" fontSize="10" fill="currentColor" opacity="0.8">tie → the most recent set() wins</text>
+  </svg>
+</VisualRecap>
 
 ## Make It Work
 1. **Combine variables into Config Objects:** Instead of 10 `set()` calls for 10 integers, pack them into a `uvm_object` config class, and set the handle once. It creates a single source of truth.
 2. **Wildcards are powerful, but dangerous:** Passing to `"uvm_test_top.env.agent.drv"` is extremely safe. Passing to `"*"` puts that setting into the global namespace where it might accidentally override another agent's parameters.
-3. **Handle failed gets:** ALWAYS wrap your `get()` in an `if (!)` statement and `uvm_fatal` out. The worst bugs come from an uninitialized config variable silently falling back to a default value value of 0.
+3. **Handle failed gets:** Always wrap a required `get()` in `if (!...)` and call `uvm_fatal`. A failed `get()` prints nothing and leaves the variable at its default, often 0 or `null`.
+4. **Trace when lost:** Run with `+UVM_CONFIG_DB_TRACE` to log every `set()` and `get()` with its scope, field and type. A failed lookup shows as `null (failed lookup)`. `print_config(1)` on a component lists the settings visible to it, and `check_config_usage()` reports settings nobody read.
+5. **Getting from a sequence:** A sequence is not a component. Call `uvm_config_db#(T)::get(null, get_full_name(), "field", value)` or pass the sequencer: `get(m_sequencer, "", "field", value)`.
 
 ## Interview Pitfalls
 **The Missing Virtual Interface Issue:**
 You may be given code that has a `null pointer exception` inside the driver's `run_phase` when it tries to wiggle a pin. Look for the `uvm_config_db::set` in the top module and the `get` in the driver's `build_phase`. Typographical errors in the string names (e.g. `"viif"` vs `"vif"`) are a classic bug pattern tested in interviews.
+
+**The Silent Type Mismatch:**
+`tb_top` calls `uvm_config_db#(virtual apb_if)::set(...)`, and the driver calls `uvm_config_db#(virtual apb_if.drv_mp)::get(...)`. Each type parameter is a separate set of entries, so the driver's `get()` returns 0 with no message and `vif` stays `null`. The same happens with `int` vs `bit [31:0]`. Make `set` and `get` use the identical type, or run with `+UVM_CONFIG_DB_TRACE`.
 
 **Late Runtime Overrides:**
 If someone calls `set()` *after* the `build_phase` has finished and the target components have already called `get()`, the value will sit in the database unused. The `config_db` is not reactive; components must explicitly `get()` the value again to see runtime changes.
@@ -111,16 +163,35 @@ If someone calls `set()` *after* the `build_phase` has finished and the target c
       "explanation": "Because interfaces live in the static module domain and UVM lives in the dynamic class domain, the top module must bridge them by setting the `vif` in the config DB."
     },
     {
-      "question": "If `uvm_test_top` sets an integer 'speed' to 10, and `uvm_test_top.env` sets 'speed' to 20 for the exact same path, what value does the driver receive?",
+      "question": "During build_phase, `uvm_test_top` sets an integer 'speed' to 10 and `uvm_test_top.env` sets 'speed' to 20 for the same path. What does the driver's get() return in its build_phase?",
       "answers": [
-        { text: "10, because components higher in the hierarchy win.", correct: true },
-        { text: "20, because env is closer to the driver.", correct: false },
+        { text: "10, because during build a set from a higher context has higher precedence.", correct: true },
+        { text: "20, because env's set() ran later.", correct: false },
         { text: "An error occurs due to conflicts.", correct: false }
       ],
-      "explanation": "`uvm_config_db` resolves conflicts top-down. The test is the ultimate authority, so its settings always override its children's settings."
+      "explanation": "During build, precedence is 1000 minus the depth of the set's context: the test's set has 999, the env's 998. Order does not matter here. After build it does: all sets have precedence 1000 and the most recent one wins."
+    },
+    {
+      "question": "The same two sets are made in run_phase instead: the test at 10 ns, then env at 20 ns. The driver calls get() again at 30 ns. What does it read?",
+      "answers": [
+        { text: "10, because the test always wins.", correct: false },
+        { text: "20, because outside build all sets have equal precedence and the most recent wins.", correct: true },
+        { text: "The value it read during build; config_db cannot change after build.", correct: false }
+      ],
+      "explanation": "Outside build_phase every set() gets the default precedence (1000), so ties go to the most recent set(). The driver must call get() again to see it."
+    },
+    {
+      "question": "tb_top sets the field 'vif' with type virtual apb_if. The driver calls uvm_config_db#(virtual apb_if.drv_mp)::get(this, \"\", \"vif\", vif). What happens?",
+      "answers": [
+        { text: "get() returns 1, because the modport is part of the same interface.", correct: false },
+        { text: "get() returns 0 with no message, and vif stays null.", correct: true },
+        { text: "UVM issues a type-mismatch error.", correct: false }
+      ],
+      "explanation": "uvm_config_db#(T) only finds entries of exactly type T. Different type parameters never match, and get() reports nothing unless +UVM_CONFIG_DB_TRACE is on."
     }
   ]} />
 
 ## References & Next Topics
-- IEEE 1800.2-2020 LRM: Clause 23 (Configuration and Resource Classes).
+- IEEE 1800.2-2020 LRM: Annex C (Configuration and Resource Classes): C.4.2.2 (`uvm_config_db` set/get), C.2.4 (`uvm_resource_pool` lookup and precedence).
+- Accellera uvm-core 2020.3.1 reference implementation: `src/base/uvm_config_db.svh`, `uvm_config_db_implementation.svh`, `uvm_resource_pool.svh`.
 - Next: [/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals](../../T2_Intermediate/I-UVM-3A_Fundamentals/index).

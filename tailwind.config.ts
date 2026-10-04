@@ -4,6 +4,8 @@ const config: Config = {
   content: [
     "./src/app/**/*.{js,ts,jsx,tsx,mdx}",
     "./src/components/**/*.{js,ts,jsx,tsx,mdx}",
+    // Lessons use Tailwind classes in JSX blocks; without this they are never generated.
+    "./content/**/*.mdx",
   ],
   darkMode: "class",
   theme: {

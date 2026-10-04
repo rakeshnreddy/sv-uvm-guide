@@ -1,260 +1,355 @@
 "use client";
 
-import React, { useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
-import { Check, X, AlertOctagon, Info, ArrowRight } from "lucide-react";
+import React, { useId, useMemo, useState } from "react";
+
+import { CodeTrace } from "@/components/visual-system/CodeTrace";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import {
+  classToSource,
+  formatPercent,
+  hard,
+  marginal,
+  soft,
+  solve,
+  solveBefore,
+  toFraction,
+  type ClassModel,
+  type ConstraintItem,
+  type RandomizeCall,
+  type SolveResult,
+} from "@/lib/constraint-solver-model";
+import { cn } from "@/lib/utils";
+
 import InterviewQuestionPlayground from "./InterviewQuestionPlayground";
 
-type Scenario = "base" | "solve_before" | "soft_hard" | "contradiction";
+type ScenarioId = "base" | "solve_before" | "soft_hard" | "contradiction";
+
+/** What one cell shows at one step. */
+type CellView =
+  | { kind: "space" }
+  | { kind: "legal" }
+  | { kind: "removed"; failing: string[] }
+  | { kind: "prob"; p: number };
+
+interface Step {
+  text: string;
+  cell: (a: number, b: number) => CellView;
+}
+
+interface ScenarioData {
+  title: string;
+  cls: ClassModel;
+  call: RandomizeCall;
+  steps: Step[];
+}
+
+const ab = (blocks: Array<[string, ConstraintItem[]]>): ClassModel => ({
+  className: "Packet",
+  vars: [
+    { name: "A", type: { kind: "bits", width: 2 } },
+    { name: "B", type: { kind: "bits", width: 2 } },
+  ],
+  blocks: blocks.map(([name, items]) => ({ name, items })),
+});
+
+const cellKey = (a: number, b: number) => `${a},${b}`;
+const probOf = (r: SolveResult) => new Map(r.solutions.map((s) => [cellKey(s.values.A, s.values.B), s.probability]));
+
+/** Which enabled constraints a pair violates (each one checked on its own, for the explanation only). */
+function failingConstraints(cls: ClassModel, call: RandomizeCall, a: number, b: number): string[] {
+  const pinned = { ...call, stateVars: { A: a, B: b } };
+  const out: string[] = [];
+  const blocks = cls.blocks.filter((blk) => blk.items.some((i) => i.kind !== "solveBefore"));
+  for (const blk of blocks) {
+    const alone: ClassModel = { ...cls, blocks: [blk] };
+    if (solve(alone, { stateVars: pinned.stateVars }).status === "unsat") out.push(blk.name);
+  }
+  (call.inline ?? []).forEach((item, i) => {
+    if (solve({ ...cls, blocks: [] }, { stateVars: pinned.stateVars, inline: [item] }).status === "unsat") out.push(`with #${i + 1}`);
+  });
+  return out;
+}
+
+function buildScenario(id: ScenarioId): ScenarioData {
+  const all = (cls: ClassModel, call: RandomizeCall = {}) => {
+    const r = solve(cls, call);
+    const legal = new Set(r.solutions.map((s) => cellKey(s.values.A, s.values.B)));
+    return { r, legal, probs: probOf(r) };
+  };
+  const space: Step["cell"] = () => ({ kind: "space" });
+
+  if (id === "base") {
+    const cls = ab([["c_sum", [hard("A + B < 4")]], ["c_ne", [hard("A != B")]]]);
+    const { r, legal, probs } = all(cls);
+    const n = r.solutions.length;
+    const pA0 = marginal(r, "A").get(0) ?? 0;
+    const removed = (a: number, b: number): CellView => (legal.has(cellKey(a, b)) ? { kind: "legal" } : { kind: "removed", failing: failingConstraints(cls, {}, a, b) });
+    return {
+      title: "Solve all constraints at once",
+      cls,
+      call: {},
+      steps: [
+        { text: "The space: every combination of the two 2-bit variables, 16 (A, B) pairs.", cell: space },
+        {
+          text: `Every constraint is one condition on the whole pair, and all of them must hold at the same time. There is no "first c_sum, then c_ne". ${n} pairs satisfy both.`,
+          cell: removed,
+        },
+        { text: `randomize() picks uniformly among the ${n} legal pairs (§18.5.9): each has probability 1/${n}.`, cell: (a, b) => (legal.has(cellKey(a, b)) ? { kind: "prob", p: probs.get(cellKey(a, b)) ?? 0 } : removed(a, b)) },
+        {
+          text: `Consequence: P(A = 0) = ${toFraction(pA0)} (${formatPercent(pA0)}), not 1/4. A value of A that fits more B values is picked more often.`,
+          cell: (a, b) => (legal.has(cellKey(a, b)) ? { kind: "prob", p: probs.get(cellKey(a, b)) ?? 0 } : removed(a, b)),
+        },
+      ],
+    };
+  }
+
+  if (id === "solve_before") {
+    const cls = ab([["c1", [hard("(A == 0) -> (B == 3)")]], ["order", [solveBefore(["A"], ["B"])]]]);
+    const ordered = all(cls);
+    const joint = probOf(solve(cls, {}, { ignoreSolveBefore: true }));
+    const n = ordered.r.solutions.length;
+    const removed = (a: number, b: number): CellView =>
+      ordered.legal.has(cellKey(a, b)) ? { kind: "legal" } : { kind: "removed", failing: failingConstraints(cls, {}, a, b) };
+    const pJoint = joint.get(cellKey(0, 3)) ?? 0;
+    const pOrdered = ordered.probs.get(cellKey(0, 3)) ?? 0;
+    return {
+      title: "solve…before changes odds, not legality",
+      cls,
+      call: {},
+      steps: [
+        { text: "The space: 16 (A, B) pairs.", cell: space },
+        { text: `c1 removes A = 0 with B ≠ 3. ${n} legal pairs remain, with or without the order constraint.`, cell: removed },
+        {
+          text: `Without solve…before, every legal pair is equally likely: (0, 3) has ${toFraction(pJoint)} = ${formatPercent(pJoint)}.`,
+          cell: (a, b) => (joint.has(cellKey(a, b)) ? { kind: "prob", p: joint.get(cellKey(a, b)) ?? 0 } : removed(a, b)),
+        },
+        {
+          text: `With solve A before B, A is chosen first, uniformly over its 4 legal values; then B. (0, 3) now has ${formatPercent(pOrdered)}. Same legal pairs, different probabilities (§18.5.9).`,
+          cell: (a, b) => (ordered.legal.has(cellKey(a, b)) ? { kind: "prob", p: ordered.probs.get(cellKey(a, b)) ?? 0 } : removed(a, b)),
+        },
+      ],
+    };
+  }
+
+  if (id === "soft_hard") {
+    const cls = ab([["hard_c", [hard("A > 1")]], ["soft_c", [soft("B == 0")]]]);
+    const call: RandomizeCall = { inline: [hard("B == 3")] };
+    const final = all(cls, call);
+    const allHard = ab([["hard_c", [hard("A > 1")]], ["soft_c", [hard("B == 0")]]]);
+    const together = solve(allHard, call);
+    const withoutInline = all(cls);
+    const n = final.r.solutions.length;
+    return {
+      title: "Soft vs hard",
+      cls,
+      call,
+      steps: [
+        { text: "The space: 16 (A, B) pairs.", cell: space },
+        {
+          text: `First the solver tries every constraint together: A > 1, soft B == 0 and the inline B == 3. ${together.solutions.length} pairs satisfy all three, because B cannot be 0 and 3 at once.`,
+          cell: (a, b) => ({ kind: "removed", failing: failingConstraints(allHard, call, a, b) }),
+        },
+        {
+          text: `So the soft constraint is discarded (§18.5.13); the hard ones always stay. ${n} pairs remain. Without the inline with, soft B == 0 would hold on every call (${withoutInline.r.solutions.length} pairs, all with B = 0).`,
+          cell: (a, b) => (final.legal.has(cellKey(a, b)) ? { kind: "legal" } : { kind: "removed", failing: failingConstraints(cls, { inline: call.inline }, a, b).filter((x) => x !== "soft_c") }),
+        },
+        {
+          text: `randomize() picks uniformly among the ${n} remaining pairs: ${formatPercent(1 / n)} each.`,
+          cell: (a, b) => (final.legal.has(cellKey(a, b)) ? { kind: "prob", p: final.probs.get(cellKey(a, b)) ?? 0 } : { kind: "removed", failing: [] }),
+        },
+      ],
+    };
+  }
+
+  const cls = ab([["c1", [hard("A == 3")]], ["c2", [hard("A < 2")]]]);
+  const r = solve(cls);
+  const core = r.core.map((m) => m.clause.block).join(" and ");
+  const removed = (a: number, b: number): CellView => ({ kind: "removed", failing: failingConstraints(cls, {}, a, b) });
+  return {
+    title: "Contradiction",
+    cls,
+    call: {},
+    steps: [
+      { text: "The space: 16 (A, B) pairs.", cell: space },
+      { text: "Both constraints apply to every pair at once. No pair has A == 3 and A < 2, so every pair is removed.", cell: removed },
+      { text: "The solution space is empty, so randomize() returns 0 and A, B keep their previous values (§18.6.3).", cell: removed },
+      {
+        text: `The minimal conflict is ${core}. Switching off either one with constraint_mode(0) makes the call succeed. Always check the return value.`,
+        cell: removed,
+      },
+    ],
+  };
+}
+
+const SCENARIO_LABELS: Record<ScenarioId, string> = {
+  base: "All constraints at once",
+  solve_before: "Solve before",
+  soft_hard: "Soft vs hard",
+  contradiction: "Contradiction",
+};
+
+function Cell({ a, b, view }: { a: number; b: number; view: CellView }) {
+  const label =
+    view.kind === "space"
+      ? `A = ${a}, B = ${b}: not yet checked`
+      : view.kind === "legal"
+        ? `A = ${a}, B = ${b}: legal`
+        : view.kind === "removed"
+          ? `A = ${a}, B = ${b}: removed${view.failing.length ? `, fails ${view.failing.join(", ")}` : ""}`
+          : `A = ${a}, B = ${b}: legal, probability ${formatPercent(view.p)}`;
+  return (
+    <li
+      aria-label={label}
+      className={cn(
+        "flex h-14 min-w-0 flex-col items-center justify-center rounded-lg border-2 font-mono text-[11px] transition-colors duration-200 motion-reduce:transition-none sm:h-16 sm:text-xs [font-variant-ligatures:none]",
+        view.kind === "space" && "border-slate-300 bg-slate-100 text-slate-700 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200",
+        view.kind === "legal" && "border-emerald-500 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200",
+        view.kind === "prob" && "border-cyan-500 bg-cyan-500/10 text-cyan-900 dark:text-cyan-100",
+        view.kind === "removed" && "border-dashed border-slate-300 bg-transparent text-slate-400 dark:border-slate-700 dark:text-slate-500",
+      )}
+    >
+      <span aria-hidden>
+        A:{a} B:{b}
+      </span>
+      <span aria-hidden className="font-semibold">
+        {view.kind === "legal" ? "✓" : view.kind === "removed" ? "✕" : view.kind === "prob" ? formatPercent(view.p) : "?"}
+      </span>
+    </li>
+  );
+}
 
 export default function ConstraintSolverVisualizer() {
-    const [scenario, setScenario] = useState<Scenario>("base");
-    const [step, setStep] = useState(0);
+  const [scenario, setScenario] = useState<ScenarioId>("base");
+  const [step, setStep] = useState(0);
+  const selectId = useId();
+  const current = useMemo(() => buildScenario(scenario), [scenario]);
+  const lines = classToSource(current.cls, current.call).map((l) => ({ text: l.text, key: l.key }));
+  const lastStep = current.steps.length - 1;
 
-    // Define 4x4 state space for variables A and B (0 to 3)
-    const grid = Array.from({ length: 4 }, (_, a) =>
-        Array.from({ length: 4 }, (_, b) => ({ a, b }))
-    ).flat();
-
-    const scenarios = {
-        base: {
-            title: "Basic Pruning",
-            code: `class Packet;
-  rand bit [1:0] A, B;
-  constraint c { A + B < 4; }
-endclass`,
-            steps: [
-                { desc: "Initial State Space: 16 possibilities." },
-                { desc: "Evaluating constraint: A + B < 4" },
-                { desc: "Pruning invalid states where A + B >= 4." },
-                { desc: "Randomizer will pick uniformly from remaining valid states." }
-            ],
-            getState: (a: number, b: number, step: number) => {
-                if (step < 2) return "untested";
-                if (a + b < 4) return "valid";
-                return step >= 2 ? "pruned" : "untested";
-            }
-        },
-        solve_before: {
-            title: "Solve Before",
-            code: `class Packet;
-  rand bit [1:0] A, B;
-  constraint c1 { (A == 0) -> (B == 3); }
-  constraint order { solve A before B; }
-endclass`,
-            steps: [
-                { desc: "Without solve before, A=0, B=3 is 1/13 probability." },
-                { desc: "Evaluating A first: A picked from {0, 1, 2, 3} (25% each)." },
-                { desc: "If A=0, B must be 3. Prob is 25%." },
-                { desc: "Solve before changes probability distribution drastically." }
-            ],
-            getState: (a: number, b: number, step: number) => {
-                if (a === 0 && b !== 3) return step >= 1 ? "pruned" : "untested";
-                if (step === 2 && a === 0 && b === 3) return "highlight";
-                if (step >= 1) return "valid";
-                return "untested";
-            }
-        },
-        soft_hard: {
-            title: "Soft vs Hard",
-            code: `class Packet;
-  rand bit [1:0] A, B;
-  constraint hard_c { A > 1; }
-  constraint soft_c { soft B == 0; }
-  constraint override { B == 3; } // From inline randomize with
-endclass`,
-            steps: [
-                { desc: "Evaluating hard constraint: A > 1." },
-                { desc: "Evaluating soft constraint: B == 0." },
-                { desc: "Hard constraint overrides soft constraint: B == 3." },
-                { desc: "Soft constraints are discarded if they conflict with hard." }
-            ],
-            getState: (a: number, b: number, step: number) => {
-                if (step >= 0 && a <= 1) return "pruned"; // hard constraint
-                if (step === 1 && b !== 0) return "soft-pruned"; // soft constraint effect shown temporarily
-                if (step >= 2 && b !== 3) return "pruned"; // hard override
-                if (step >= 2 && b === 3 && a > 1) return "valid";
-                return "untested";
-            }
-        },
-        contradiction: {
-            title: "Contradiction",
-            code: `class Packet;
-  rand bit [1:0] A, B;
-  constraint c1 { A == 3; }
-  constraint c2 { A < 2; }
-endclass`,
-            steps: [
-                { desc: "Evaluating constraint c1: A == 3." },
-                { desc: "Evaluating constraint c2: A < 2." },
-                { desc: "Contradiction! Solution space is empty." },
-                { desc: "randomize() returns 0. State space collapsed." }
-            ],
-            getState: (a: number, b: number, step: number) => {
-                if (step === 0 && a !== 3) return "pruned";
-                if (step >= 1) return "pruned-all";
-                return "untested";
-            }
-        }
+  // The embedded interview question is answered by the same model.
+  const quiz = useMemo(() => {
+    const cls: ClassModel = {
+      className: "Packet",
+      vars: [
+        { name: "A", type: { kind: "bits", width: 1 } },
+        { name: "B", type: { kind: "bits", width: 1 } },
+      ],
+      blocks: [{ name: "c", items: [hard("(A == 0) -> (B == 1)")] }],
     };
+    const r = solve(cls);
+    return {
+      pA0: marginal(r, "A").get(0) ?? 0,
+      pairs: r.solutions.map((s) => `(A=${s.values.A}, B=${s.values.B})`).join(", "),
+      n: r.solutions.length,
+    };
+  }, []);
 
-    const current = scenarios[scenario];
-
-    return (
-        <div className="my-8 flex flex-col gap-6 font-sans">
-            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-
-                {/* Left Column: Code and Controls */}
-                <div className="flex flex-col gap-4 rounded-xl border border-slate-200 bg-slate-50 p-5 dark:border-slate-800 dark:bg-slate-900/50">
-                    <div className="flex items-center justify-between border-b border-slate-200 pb-3 dark:border-slate-800">
-                        <h3 className="m-0 text-lg font-semibold dark:text-slate-100">Solver Engine</h3>
-                        <select
-                            className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200"
-                            value={scenario}
-                            onChange={(e) => {
-                                setScenario(e.target.value as Scenario);
-                                setStep(0);
-                            }}
-                        >
-                            <option value="base">Basic Pruning</option>
-                            <option value="solve_before">Solve Before</option>
-                            <option value="soft_hard">Soft vs Hard</option>
-                            <option value="contradiction">Contradiction</option>
-                        </select>
-                    </div>
-
-                    <div className="rounded-lg bg-slate-900 p-4 font-mono text-sm leading-relaxed text-slate-300 shadow-inner">
-                        <pre><code>{current.code}</code></pre>
-                    </div>
-
-                    <div className="flex flex-1 flex-col justify-end gap-3">
-                        <div className="rounded-lg border border-blue-200 bg-blue-50 p-4 dark:border-blue-900/50 dark:bg-blue-950/30">
-                            <div className="mb-2 flex items-center gap-2 font-medium text-blue-900 dark:text-blue-200">
-                                <Info size={16} />
-                                <span>Step {step + 1} of 4</span>
-                            </div>
-                            <p className="text-sm text-blue-800 dark:text-blue-300">
-                                {current.steps[step].desc}
-                            </p>
-                        </div>
-
-                        <div className="flex gap-2">
-                            <button
-                                onClick={() => setStep(Math.max(0, step - 1))}
-                                disabled={step === 0}
-                                className="flex-1 rounded-md border border-slate-300 bg-white py-2 text-sm font-medium hover:bg-slate-50 disabled:opacity-50 dark:border-slate-700 dark:bg-slate-800 dark:hover:bg-slate-700"
-                            >
-                                Previous
-                            </button>
-                            <button
-                                onClick={() => setStep(Math.min(3, step + 1))}
-                                disabled={step === 3}
-                                className="flex-[2] flex items-center justify-center gap-2 rounded-md bg-blue-600 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:bg-blue-300 dark:bg-blue-500 dark:hover:bg-blue-600 dark:disabled:bg-blue-800"
-                            >
-                                {step === 3 ? "Finished" : "Next Step"} <ArrowRight size={16} />
-                            </button>
-                        </div>
-                    </div>
-                </div>
-
-                {/* Right Column: State Space Grid */}
-                <div className="relative flex min-h-[400px] flex-col rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-                    <h3 className="mb-6 text-center text-sm font-semibold uppercase tracking-wider text-slate-500">
-                        State Space (A x B)
-                    </h3>
-
-                    <div className="flex flex-1 items-center justify-center">
-                        <div className="grid grid-cols-4 gap-2 sm:gap-4">
-                            <AnimatePresence>
-                                {grid.map(({ a, b }) => {
-                                    const state = current.getState(a, b, step);
-
-                                    let bgColor = "bg-slate-100 dark:bg-slate-800";
-                                    let borderColor = "border-slate-200 dark:border-slate-700";
-                                    let textColor = "text-slate-600 dark:text-slate-400";
-                                    let icon = null;
-
-                                    if (state === "valid") {
-                                        bgColor = "bg-green-100 dark:bg-green-900/30";
-                                        borderColor = "border-green-400 dark:border-green-600";
-                                        textColor = "text-green-700 dark:text-green-400";
-                                        icon = <Check size={16} className="absolute right-1 top-1 opacity-50" />;
-                                    } else if (state === "pruned") {
-                                        bgColor = "bg-slate-50 dark:bg-slate-900";
-                                        borderColor = "border-slate-200 dark:border-slate-800";
-                                        textColor = "text-slate-300 dark:text-slate-600";
-                                        icon = <X size={16} className="absolute right-1 top-1 opacity-20" />;
-                                    } else if (state === "pruned-all") {
-                                        bgColor = "bg-rose-50 dark:bg-rose-950/30";
-                                        borderColor = "border-rose-200 dark:border-rose-900";
-                                        textColor = "text-rose-400 dark:text-rose-700";
-                                        icon = <AlertOctagon size={16} className="absolute right-1 top-1 opacity-40 text-rose-500" />;
-                                    } else if (state === "soft-pruned") {
-                                        bgColor = "bg-amber-50 dark:bg-amber-900/20";
-                                        borderColor = "border-amber-300 dark:border-amber-700";
-                                        textColor = "text-amber-600 dark:text-amber-500";
-                                        icon = <X size={16} className="absolute right-1 top-1 opacity-50" />;
-                                    } else if (state === "highlight") {
-                                        bgColor = "bg-blue-100 dark:bg-blue-900/40";
-                                        borderColor = "border-blue-400 dark:border-blue-500";
-                                        textColor = "text-blue-700 dark:text-blue-300";
-                                        icon = <Check size={16} className="absolute right-1 top-1 text-blue-500" />;
-                                    }
-
-                                    return (
-                                        <motion.div
-                                            key={`${a}-${b}`}
-                                            layout
-                                            initial={{ scale: 0.8, opacity: 0 }}
-                                            animate={{
-                                                scale: state.includes("pruned") ? 0.95 : 1,
-                                                opacity: 1,
-                                                backgroundColor: "var(--tw-colors)",
-                                            }}
-                                            transition={{ duration: 0.3 }}
-                                            className={`relative flex h-14 w-14 sm:h-16 sm:w-16 flex-col items-center justify-center rounded-lg border-2 ${bgColor} ${borderColor} ${textColor}`}
-                                        >
-                                            {icon}
-                                            <span className="font-mono text-xs font-bold sm:text-sm">A:{a}</span>
-                                            <span className="font-mono text-xs font-bold sm:text-sm">B:{b}</span>
-                                        </motion.div>
-                                    );
-                                })}
-                            </AnimatePresence>
-                        </div>
-                    </div>
-                </div>
+  return (
+    <div className="my-8 flex flex-col gap-6 font-sans">
+      <VisualFrame
+        label="Constraint solver stepper"
+        eyebrow="Mental model"
+        title="How the solver sees two 2-bit variables"
+        summary="Step through what the solver does with the whole (A, B) space. Every cell's state and probability comes from the constraint model."
+        fidelity="model"
+        assumptions={[
+          "Exact enumeration of all 16 (A, B) pairs (IEEE 1800-2023 §18.5.9).",
+          "The steps explain the result; a real solver evaluates all constraints together, not one after another.",
+          "Soft constraints are discarded only when they conflict with higher-priority constraints (§18.5.13).",
+        ]}
+        className="my-0"
+      >
+        <div className="grid gap-6 grid-cols-[repeat(auto-fit,minmax(min(100%,280px),1fr))]">
+          <div className="flex min-w-0 flex-col gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <label htmlFor={selectId} className="text-sm font-semibold text-foreground">
+                Scenario
+              </label>
+              <select
+                id={selectId}
+                className="min-h-10 rounded-md border border-border bg-background px-3 text-sm text-foreground"
+                value={scenario}
+                onChange={(e) => {
+                  setScenario(e.target.value as ScenarioId);
+                  setStep(0);
+                }}
+              >
+                {(Object.keys(SCENARIO_LABELS) as ScenarioId[]).map((id) => (
+                  <option key={id} value={id}>
+                    {SCENARIO_LABELS[id]}
+                  </option>
+                ))}
+              </select>
             </div>
 
-            <InterviewQuestionPlayground
-                title="Constraint Solver Pitfall"
-                question={
-                    <p>
-                        You have a class with <code>rand bit A; rand bit B;</code> and a constraint <code>A == 0 -{'>'} B == 1;</code>.
-                        If you do not use <code>solve A before B;</code>, what is the probability that <code>A</code> evaluates to 0?
-                    </p>
-                }
-                options={[
-                    {
-                        id: "opt1",
-                        label: "50%, because A is a 1-bit variable (0 or 1).",
-                        isCorrect: false,
-                        explanation: "Incorrect. The solver looks at the entire valid solution space at once unless 'solve before' is used."
-                    },
-                    {
-                        id: "opt2",
-                        label: "33.3%, because there are 3 valid global states.",
-                        isCorrect: true,
-                        explanation: "Correct! The valid states are (A=0, B=1), (A=1, B=0), and (A=1, B=1). The solver picks uniformly from these 3 states, so P(A=0) = 1/3."
-                    },
-                    {
-                        id: "opt3",
-                        label: "100%, implication forces A to be 0 first.",
-                        isCorrect: false,
-                        explanation: "Incorrect. Implication A -> B means 'if A is true, B must be true', but it does not force A to be true."
-                    }
-                ]}
-            />
+            <CodeTrace label={`${current.title}: generated from the model`} lines={lines} />
+
+            <div className="rounded-lg border border-border/70 bg-muted/20 p-4" aria-live="polite">
+              <p className="mb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                Step {step + 1} of {current.steps.length}
+              </p>
+              <p className="text-sm text-foreground">{current.steps[step].text}</p>
+            </div>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setStep(Math.max(0, step - 1))}
+                disabled={step === 0}
+                className="min-h-10 flex-1 rounded-md border border-border bg-background text-sm font-medium hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                onClick={() => setStep(Math.min(lastStep, step + 1))}
+                disabled={step === lastStep}
+                className="min-h-10 flex-[2] rounded-md bg-cyan-700 text-sm font-medium text-white hover:bg-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+              >
+                {step === lastStep ? "Finished" : "Next step →"}
+              </button>
+            </div>
+          </div>
+
+          <div className="min-w-0">
+            <p className="mb-3 text-center text-xs font-semibold uppercase tracking-wider text-muted-foreground">State space (A × B)</p>
+            <ul aria-label={`State space at step ${step + 1}`} className="mx-auto grid max-w-[18rem] grid-cols-4 gap-2">
+              {[0, 1, 2, 3].flatMap((a) => [0, 1, 2, 3].map((b) => <Cell key={cellKey(a, b)} a={a} b={b} view={current.steps[step].cell(a, b)} />))}
+            </ul>
+            <p className="mt-3 text-center text-xs text-muted-foreground">✓ legal · ✕ removed · % exact probability · ? not yet checked</p>
+          </div>
         </div>
-    );
+      </VisualFrame>
+
+      <InterviewQuestionPlayground
+        title="Constraint Solver Pitfall"
+        question={
+          <p>
+            You have a class with <code>rand bit A; rand bit B;</code> and a constraint <code>(A == 0) -{">"} (B == 1);</code>. Without <code>solve A before B;</code>, what is the
+            probability that <code>A</code> is 0?
+          </p>
+        }
+        options={[
+          {
+            id: "opt1",
+            label: "50%, because A is a 1-bit variable (0 or 1).",
+            isCorrect: false,
+            explanation: "The solver picks uniformly from the legal (A, B) combinations, not from each variable on its own (§18.5.9).",
+          },
+          {
+            id: "opt2",
+            label: `${formatPercent(quiz.pA0)}, because there are ${quiz.n} legal combinations.`,
+            isCorrect: true,
+            explanation: `Correct. The legal combinations are ${quiz.pairs}. The solver picks one uniformly, so P(A = 0) = ${toFraction(quiz.pA0)}.`,
+          },
+          {
+            id: "opt3",
+            label: "100%, the implication forces A to be 0 first.",
+            isCorrect: false,
+            explanation: "A -> B is the Boolean !A || B (§18.5.5). It says what must hold if A == 0; it never forces A == 0.",
+          },
+        ]}
+      />
+    </div>
+  );
 }

@@ -11,6 +11,14 @@ interface packet_if(input logic clk);
   endclocking
 
   modport driver_mp(clocking driver_cb);
+
+  // Checker: every valid beat must carry even parity (parity == ^payload).
+  property p_parity_ok;
+    @(posedge clk) valid |-> (parity == ^payload);
+  endproperty
+  a_parity_ok: assert property (p_parity_ok)
+    else `uvm_error("PARITY_ERR", $sformatf("payload=%02h parity=%0b",
+                                            $sampled(payload), $sampled(parity)))
 endinterface
 
 class packet extends uvm_sequence_item;
@@ -35,6 +43,7 @@ class packet extends uvm_sequence_item;
   endfunction
 endclass
 
+// The callback class refers to the driver, which is declared below it.
 typedef class packet_driver;
 
 virtual class packet_driver_cb extends uvm_callback;
@@ -42,6 +51,8 @@ virtual class packet_driver_cb extends uvm_callback;
     super.new(name);
   endfunction
 
+  // Hook: runs just before the driver drives pkt. It may change the
+  // packet's control fields; it returns to the driver when done.
   virtual function void pre_drive(packet_driver driver, packet pkt);
   endfunction
 endclass
@@ -96,11 +107,13 @@ class my_seq extends uvm_sequence #(packet);
   endfunction
 
   task body();
-    packet pkt = packet::type_id::create("pkt");
-    start_item(pkt);
-    if (!pkt.randomize() with { payload == 8'hAA; })
-      `uvm_fatal("RANDFAIL", "Packet randomization failed")
-    finish_item(pkt);
+    repeat (3) begin
+      packet pkt = packet::type_id::create("pkt");
+      start_item(pkt);
+      if (!pkt.randomize())
+        `uvm_fatal("RANDFAIL", "Packet randomization failed")
+      finish_item(pkt);
+    end
   endtask
 endclass
 
@@ -125,6 +138,7 @@ class my_env extends uvm_env;
   endfunction
 endclass
 
+// --- LAB EXERCISE: the callback ---
 class error_inject_cb extends packet_driver_cb;
   `uvm_object_utils(error_inject_cb)
 
@@ -151,6 +165,16 @@ class my_test extends uvm_test;
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
     env = my_env::type_id::create("env", this);
+    // Do NOT add the callback here: env.drv is created later, in
+    // my_env::build_phase (UVM builds top-down), so it is still null.
+    // add(null, cb) would register the callback type-wide, for every
+    // packet_driver in the testbench.
+  endfunction
+
+  // Every component exists by connect_phase, so env.drv is a real handle
+  // and the callback is attached to this one driver instance only.
+  function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
     my_cb = error_inject_cb::type_id::create("my_cb");
     uvm_callbacks#(packet_driver, packet_driver_cb)::add(env.drv, my_cb);
   endfunction
@@ -162,6 +186,7 @@ class my_test extends uvm_test;
     phase.drop_objection(this);
   endtask
 
+  // Remove it from the same instance it was added to.
   function void final_phase(uvm_phase phase);
     super.final_phase(phase);
     uvm_callbacks#(packet_driver, packet_driver_cb)::delete(env.drv, my_cb);

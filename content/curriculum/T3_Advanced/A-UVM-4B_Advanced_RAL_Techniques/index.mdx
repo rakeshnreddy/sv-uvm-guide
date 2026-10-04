@@ -4,97 +4,145 @@ description: "Master adapters, predictors, and sophisticated debug workflows for
 flashcards: "A-UVM-4B_Advanced_RAL"
 ---
 
-import { InteractiveCode } from "@/components/ui";
-import RALPredictorVisualizer from "@/components/visuals/RALPredictorVisualizer";
-
 ## Quick Take
 - **What it is:** Techniques for bridging RAL into bus agents, keeping the mirror synchronized, and debugging mismatches.
-- **Why it matters:** Large-scale verification relies on implicit prediction and hybrid frontdoor/backdoor access. When the mirror drifts from the DUT, you need a deterministic debug flow.
-- **The Standard:** IEEE 1800.2-2020 Clause 19 (Memory Allocation / Adapters) and Clause 18.2 (Registers).
+- **Why it matters:** A register model is only as good as its mirror. The mirror changes only when something *predicts* an access, and UVM gives you two ways to do that. Pick the wrong one, or wire it wrong, and the mirror drifts silently.
+- **The terms:** *Implicit* (auto) prediction is `map.set_auto_predict(1)`. *Explicit* prediction is a `uvm_reg_predictor` fed by a bus monitor. By default neither is active.
+- **The Standard:** IEEE 1800.2-2020 Clause 18 (register model: `uvm_reg_map` 18.2, `uvm_reg` 18.4, `uvm_mem` 18.6, memory allocation manager 18.12) and Clause 19 (`uvm_reg_adapter` 19.2, `uvm_reg_predictor` 19.3, `uvm_reg_sequence` 19.4).
 
 ## Build Your Mental Model
 
 ### The Adapter Bridge
-`uvm_reg_adapter` is the translator between generic `uvm_reg_bus_op` requests and your bus transaction item (e.g., `axi_item`). It converts read/write intent into an actual sequence item and back. Each bus protocol needs its own adapter, often shared across environments.
+`uvm_reg_adapter` is the translator between generic `uvm_reg_bus_op` requests and your bus transaction item (e.g., `axi_item`). The map calls `reg2bus()` to build the item, and `bus2reg()` on the finished item (or on the response, when `provides_responses = 1`) to get the read data and status. A predictor calls the same `bus2reg()` on every item the monitor publishes.
 
 ### Predictors and the Mirror
-Prediction keeps the RAL mirror aligned with the DUT. The `uvm_reg_predictor` listens to bus transactions from the monitor and updates the register model's mirrored values automatically (implicit prediction). 
+Prediction keeps the RAL mirror aligned with the DUT. There are three set-ups:
 
-## Adapter/Predictor/Mirror Debug Workflow
-When the RAL mirror diverges from the DUT, it is often difficult to pinpoint the failure. Use this deterministic debug workflow:
+| Mode | How you turn it on | Who updates the mirror | Sees firmware, DMA or other masters? | Typical failure |
+| --- | --- | --- | --- | --- |
+| **Implicit** (auto-predict) | `ral.default_map.set_auto_predict(1);` | `read()`/`write()` call `do_predict()` when their own access completes | No | Mirror misses every access the RAL did not start; it trusts the adapter's round trip |
+| **Explicit** | `agent.mon.ap.connect(predictor.bus_in);` plus `predictor.map` and `predictor.adapter` | The `uvm_reg_predictor`, from every transfer the monitor sees | Yes | A missing `connect()` is silent; a null adapter is `UVM_FATAL REG/WRITE/NULL` |
+| **Passive** | A predictor on a bus the RAL never drives | The predictor only | Yes | Same wiring risks as explicit |
 
-1. **Trace the Bus Interface:** Did the bus monitor broadcast the transaction? Check the `ap` ([analysis port](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections)) of the active bus monitor.
-2. **Adapter Execution:** Did the `uvm_reg_adapter::bus2reg` function correctly reconstruct the generic `uvm_reg_bus_op`? Missing fields passed back to `bus_op` will silently drop updates.
-3. **Predictor Update:** Did the `uvm_reg_predictor` receive the item and update the correct `uvm_reg` via implicit prediction?
-4. **Mirror Inspection:** Is the `uvm_reg` configured with the right access policy? Trying to update a `RO` (Read-Only) field will correctly and silently fail in the register model but might mismatch a broken RTL implementation.
+Out of the box, `uvm_reg_map` starts with auto-predict **off** and no predictor exists, so frontdoor accesses do not update the mirror until you choose one. Backdoor `peek()` and `poke()` are different: they call `do_predict()` themselves.
+
+In the visual, choose a wiring and an access, predict `get_mirrored_value()`, then step through the path to see who carries the transfer and who predicts it. Try a firmware write with auto-predict only, and a W1T write with both paths on.
 
 <RALPredictorVisualizer />
 
+<VisualRecap
+  title="Who updates the mirror?"
+  rule="Implicit = set_auto_predict(1): the register predicts only the accesses the RAL itself started. Explicit = uvm_reg_predictor on the monitor: it predicts everything on the bus. Use one, not both."
+  code={`// explicit (recommended when anything else can write registers)
+ral.default_map.set_sequencer(agent.sqr, adapter);
+predictor.map     = ral.default_map;
+predictor.adapter = adapter;
+agent.mon.ap.connect(predictor.bus_in);
+// implicit (only when the RAL is the sole initiator)
+ral.default_map.set_auto_predict(1);`}
+  mistake="Calling the predictor flow 'implicit', or turning on auto-predict next to a connected predictor: every RAL access is then predicted twice, which breaks toggle (W1T) fields."
+  inTestbench="connect_phase of the env that owns the RAL. Expose the predictor handle so tests never reach through component internals."
+>
+  <svg viewBox="0 0 320 150" role="img" aria-label="Two paths into the mirror: auto-predict from the map after a RAL access, and the predictor from the bus monitor, which also sees firmware writes." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="110" y="8" width="100" height="34" rx="6" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="160" y="29" fontSize="11" textAnchor="middle" fill="currentColor">mirror</text>
+    <rect x="8" y="64" width="100" height="30" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+    <text x="58" y="83" fontSize="10" textAnchor="middle" fill="currentColor">map (auto-predict)</text>
+    <rect x="212" y="64" width="100" height="30" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+    <text x="262" y="83" fontSize="10" textAnchor="middle" fill="currentColor">uvm_reg_predictor</text>
+    <line x1="58" y1="64" x2="130" y2="42" stroke="currentColor" strokeDasharray="5 3" />
+    <line x1="262" y1="64" x2="190" y2="42" stroke="currentColor" />
+    <rect x="8" y="112" width="100" height="30" rx="2" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="58" y="131" fontSize="10" textAnchor="middle" fill="currentColor">RAL read()/write()</text>
+    <rect x="212" y="112" width="100" height="30" rx="2" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+    <text x="262" y="131" fontSize="10" textAnchor="middle" fill="currentColor">bus monitor</text>
+    <text x="160" y="131" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.7">+ firmware ✓</text>
+  </svg>
+</VisualRecap>
+
+## Adapter/Predictor/Mirror Debug Workflow
+When the RAL mirror diverges from the DUT, use this deterministic workflow. The **Debug** tab of the visual above walks through the most common case.
+
+1. **Was the access predicted at all?** With auto-predict off, only a connected `uvm_reg_predictor` updates the mirror. Check `agent.mon.ap.connect(predictor.bus_in)` in `connect_phase`; a missing connection produces no warning.
+2. **Did the monitor publish the transfer?** Check the bus monitor's `ap` ([analysis port](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections)) and that it publishes reads with their data.
+3. **Did `bus2reg()` rebuild the operation?** Wrong `kind`, `addr` or `status` sends the prediction to the wrong register or skips it (`UVM_NOT_OK` is not predicted).
+4. **Does the field's policy and volatility match the hardware?** The predictor applies the policy: an RO field ignores the written bits, W1C clears, RC clears on a read. A hardware-driven field configured `volatile = 0` produces false `mirror(UVM_CHECK)` mismatches.
+5. **Is the access predicted twice?** Auto-predict plus a connected predictor predicts every RAL access twice. Toggle (W1T) fields end up back where they started.
+
 > **Interview Pitfall:** A common interview question asks "My RAL mirror isn't updating after a bus write, why?". The most frequent architectural cause is simply forgetting to connect the bus monitor's [analysis port](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections) to the `uvm_reg_predictor` in the `connect_phase`.
 
-## Memories — `uvm_mem` (IEEE 1800.2-2020 Clause 19)
+## Memories — `uvm_mem` (IEEE 1800.2-2020 §18.6)
 
-RAL also models addressable memories via `uvm_mem`. Unlike registers, memories are typically too large to mirror completely, so the RAL tracks metadata (base address, size, access policy) rather than content.
+RAL also models addressable memories via `uvm_mem`. Memories have **no mirror**: the model keeps their size, width, access and address, and `uvm_reg_predictor` does not predict memory accesses. Size, width and access are constructor arguments, so a memory is a small subclass:
 
 ```systemverilog
+class sram_mem extends uvm_mem;
+  `uvm_object_utils(sram_mem)
+  function new(string name = "sram_mem");
+    super.new(name, 1024, 32, "RW", UVM_NO_COVERAGE);   // 1K words x 32 bits
+  endfunction
+endclass
+
 class sram_block extends uvm_reg_block;
-  uvm_mem sram;
-  uvm_reg_map map;
+  `uvm_object_utils(sram_block)
+  sram_mem      sram;
+  uvm_reg_map   mem_map;
+
+  function new(string name = "sram_block");
+    super.new(name, UVM_NO_COVERAGE);
+  endfunction
 
   virtual function void build();
-    sram = uvm_mem::type_id::create("sram");
-    sram.configure(this, 1024, 32, "RW");   // 1K words × 32 bits
-
-    map = create_map("mem_map", 'h0, 4, UVM_LITTLE_ENDIAN);
-    map.add_mem(sram, 'h0000, "RW");
+    sram = sram_mem::type_id::create("sram");
+    sram.configure(this, "sram_q");   // parent block, optional HDL path
+    mem_map = create_map("mem_map", 'h0, 4, UVM_LITTLE_ENDIAN);
+    mem_map.add_mem(sram, 'h0000, "RW");
     lock_model();
   endfunction
 endclass
 ```
 
-**Memory allocation manager** (`uvm_mem_mam`) tracks allocated regions so DMA tests can claim/release buffer space without address collisions:
+**Memory allocation manager** (`uvm_mem_mam`, §18.12) tracks allocated regions so DMA tests can claim and release buffer space without address collisions. Every `uvm_mem` builds one in `configure()`, available as its `mam` member:
 
 ```systemverilog
-uvm_mem_mam mam = new("mam", sram.get_size());
-uvm_mem_region r = mam.request_region(256);  // Claim 256 words
-// ... run DMA test ...
-mam.release_region(r);
+uvm_mem_region r = ral.sram.mam.request_region(256);   // 256 BYTES = 64 32-bit words, random free offset
+// ... program the DMA with r.get_start_offset() ...
+r.release_region();
 ```
 
 ## Volatile and Special Access Policies
 
-Not every field behaves like simple RW memory. Several access policies require special handling because **the hardware changes the field value behind the RAL's back**:
+Not every field behaves like simple RW memory. Several access policies need care because **the hardware changes the field value behind the RAL's back**:
 
 | Policy | Behavior | Mirror Implication |
 | --- | --- | --- |
-| **W1C** (Write-1-to-Clear) | Writing `1` to a bit clears it | RAL auto-predicts the clear; manual `predict()` often still needed after HW sets the bit |
-| **W1S** (Write-1-to-Set) | Writing `1` to a bit sets it | Similar to W1C—RAL predicts the set on write |
-| **RC** (Read-to-Clear) | Reading the field clears it | Mirror must update on every read; frontdoor reads trigger auto-prediction |
-| **Volatile** | HW can change the value at any time | Mirror may diverge between accesses; use `mirror(UVM_CHECK)` judiciously |
+| **W1C** (Write-1-to-Clear) | Writing `1` to a bit clears it | The prediction for a write is mirror AND NOT data. When hardware *sets* the bit, nothing is predicted until a read, `peek()` or `predict()` |
+| **W1S** (Write-1-to-Set) | Writing `1` to a bit sets it | The prediction is mirror OR data |
+| **W1T** (Write-1-to-Toggle) | Writing `1` to a bit toggles it | The prediction is mirror XOR data, so a double prediction undoes it |
+| **RC** (Read-to-Clear) | Reading the field clears it | A predicted frontdoor read sets the mirror to 0. `peek()` does not clear the hardware |
+| **Volatile** | HW can change the value at any time | `configure(…, volatile = 1, …)` sets the compare mode to `UVM_NO_CHECK`, so `mirror(UVM_CHECK)` skips the field unless you call `set_compare(UVM_CHECK)` |
 
-> **Gotcha:** If a `W1C` status register is set by hardware between your write and your next read, the mirror will be stale unless you explicitly call `predict()` or `mirror()` after the hardware event. This is the single most common source of false mirror-mismatch errors in interrupt-status registers.
+> **Gotcha:** If hardware sets a W1C status bit after your last access, the mirror is stale until the next read, `peek()` or `predict()`. If that field is configured `volatile = 0`, `mirror(UVM_CHECK)` reports a mismatch that is not a DUT bug. Configure hardware-driven fields as volatile, and check them by reading the value and comparing it with what your scoreboard expects.
 
 ## `set_auto_predict()` Strategy
 
-By default, RAL uses **implicit prediction**: a `uvm_reg_predictor` component watches bus traffic and updates the mirror. This is the recommended production approach because it catches bugs where the driver/adapter silently mangles data.
-
-`set_auto_predict(1)` on a map **disables** the predictor pipeline and instead auto-updates the mirror on every `write()`/`read()` call directly. This is simpler but **less safe**:
+Auto-predict is **off** by default (`uvm_reg_map::new` clears it). Turning it on makes `read()` and `write()` predict their own access when it completes. It does not disable or replace a predictor: if a predictor is also connected, the access is predicted twice.
 
 | Mode | Pros | Cons |
 | --- | --- | --- |
-| Implicit (default) | Catches adapter bugs, realistic mirror | Requires predictor wiring |
-| Auto-predict | No predictor needed, fast bringup | Misses adapter/bus mismatches |
+| Explicit (`uvm_reg_predictor`) | Sees every master on the bus; predicts what the bus really carried | Requires monitor, predictor and wiring |
+| Implicit (auto-predict) | No predictor needed, fast bring-up | Blind to firmware, DMA and other masters; predicts the value it wrote rather than what the bus carried, so `reg2bus()` bugs stay hidden |
 
 **When to use auto-predict:**
-- Early bring-up when no monitor exists yet.
-- Non-critical debug environments where speed matters more than accuracy.
-- Never in production regressions—switch to implicit prediction once the bus agent is ready.
+- Early bring-up, before a monitor exists.
+- Production environments where the register model is the **only** initiator on that bus and the adapter round trip is trusted.
+- Never together with a connected predictor on the same map.
 
 ```systemverilog
-// Bring-up mode: skip predictor during early integration
+// Bring-up: the RAL is the only master and there is no monitor yet
 cfg_map.set_auto_predict(1);
 
-// Production mode: disable auto-predict and use the predictor pipeline
+// Explicit prediction: leave auto-predict at 0 and wire the predictor
 cfg_map.set_auto_predict(0);
 predictor.map     = ral.cfg_map;
 predictor.adapter = adapter;
@@ -103,28 +151,72 @@ axi_agt.monitor.ap.connect(predictor.bus_in);
 
 ## Multi-Map Concerns
 
-When the same register is accessible from multiple bus interfaces (e.g., AXI config bus and APB debug port), each map needs its own:
-- Adapter instance (different bus protocols)
-- Predictor instance (listening to different monitors)
-- Sequencer assignment
+When the same register is accessible from multiple bus interfaces (e.g., AXI config bus and APB debug port), there is still **one** register object and **one** mirror; every map references it. What each bus with traffic needs is its own:
+- Adapter instance (different bus protocols).
+- Predictor instance, with `predictor.map` set to **that bus's map** so it decodes that bus's addresses.
+- Sequencer assignment (`set_sequencer` on each map).
 
-Writes from one bus interface will update the DUT, but only the **predictor attached to the observing monitor** will update the mirror. If a test writes through map A but reads through map B, ensure both predictors are active or call `mirror()` explicitly after cross-map operations.
+A write through map A, predicted by A's predictor, updates the same mirror that a read through map B compares against. If one bus has no predictor, accesses on it are invisible to the model.
 
 ## Make It Work
 1. **Instantiate Predictors:** Build the adapter and predictor in the `build_phase`.
-2. **Connect the Flow:** In `connect_phase`, wire the bus monitor's `ap` into the predictor's `bus_in`, and explicitly assign `predictor.map` and `predictor.adapter`.
-3. **Mirror responsibly:** Decide which registers need continuous mirroring; throttle expensive frontdoor reads by enabling backdoor mirroring when risk justifies it.
-4. **Handle volatile fields:** For interrupt-status and HW-modified registers, schedule explicit `mirror(UVM_CHECK)` calls after known hardware events.
+2. **Connect the Flow:** In `connect_phase`, call `set_sequencer()` on each map, wire the bus monitor's `ap` into the predictor's `bus_in`, and assign `predictor.map` and `predictor.adapter`. Leave auto-predict at 0.
+3. **Mirror responsibly:** Decide which registers need continuous mirroring; use backdoor `mirror()` or `peek()` where speed matters and HDL paths exist.
+4. **Handle volatile fields:** Configure interrupt-status and other HW-modified fields as volatile. Check them by reading and comparing against your scoreboard's expectation, or temporarily with `set_compare(UVM_CHECK)`, rather than relying on `mirror(UVM_CHECK)`.
 
 **Checklist before moving on:**
-- [ ] You know which class creates the bus translation layer (the adapter).
-- [ ] You can systematically debug why a mirror fails to update.
+- [ ] You can define implicit and explicit prediction without mixing them up.
+- [ ] You can systematically debug why a mirror fails to update, including the silent missing `connect()`.
 - [ ] Your environment exposes the predictor so tests do not drill through component internals.
-- [ ] You understand when `set_auto_predict` is appropriate and when it hides real bugs.
-- [ ] You know how volatile and W1C policies affect mirror accuracy.
+- [ ] You know when `set_auto_predict(1)` is appropriate and why it must not be combined with a predictor.
+- [ ] You know how volatile, W1C, W1T and RC policies affect the mirror and the check.
 
 ## Practice & Reinforce
-- Dive into **[Explicit vs. Implicit Prediction](./explicit-vs-implicit)** to weigh different synchronization strategies.
+
+### Retrieval check: no animation allowed
+
+<Quiz
+  questions={[
+    {
+      question: "Firmware writes a scratch register over the bus. The map has set_auto_predict(1) and there is no uvm_reg_predictor. Does the mirror change?",
+      answers: [
+        { text: "Yes: auto-predict watches the bus", correct: false },
+        { text: "No: auto-predict only predicts accesses the register model starts", correct: true },
+        { text: "Only after mirror(UVM_NO_CHECK)", correct: false }
+      ],
+      explanation: "Implicit prediction runs inside uvm_reg::write()/read(). A transfer from another master never passes through them; only a predictor fed by the monitor sees it."
+    },
+    {
+      question: "Which set-up is 'explicit prediction'?",
+      answers: [
+        { text: "ral.default_map.set_auto_predict(1)", correct: false },
+        { text: "A uvm_reg_predictor whose bus_in is connected to the bus monitor's analysis port", correct: true },
+        { text: "Calling predict() after every write", correct: false }
+      ],
+      explanation: "Explicit = a predictor component fed by observed bus transfers. Implicit (auto) = set_auto_predict(1)."
+    },
+    {
+      question: "The env connects a predictor and also calls set_auto_predict(1). The test writes 1 to a W1T LED bit that was 0. What does the mirror hold?",
+      answers: [
+        { text: "1, same as the DUT", correct: false },
+        { text: "0: the access is predicted twice and the toggle cancels out", correct: true },
+        { text: "X until the next read", correct: false }
+      ],
+      explanation: "The predictor predicts mirror XOR 1 = 1, then auto-predict predicts 1 XOR 1 = 0. Idempotent policies hide double prediction; toggles expose it."
+    },
+    {
+      question: "After ral.CTRL.poke(status, 'h3), what must you do to keep the mirror accurate?",
+      answers: [
+        { text: "Call predict('h3)", correct: false },
+        { text: "Nothing: poke() calls do_predict() itself", correct: true },
+        { text: "Call mirror(status, UVM_NO_CHECK)", correct: false }
+      ],
+      explanation: "Backdoor poke() and peek() predict their own access. What a bus-monitor predictor cannot see is the backdoor change, so scoreboards fed by the monitor will not see it either."
+    }
+  ]}
+/>
+
+- Dive into **[Explicit vs. Implicit Prediction](./explicit-vs-implicit)** to wire each strategy correctly.
 - Explore **[Frontdoor vs. Backdoor Access](./frontdoor-vs-backdoor)** to blend realistic bus traffic with fast execution.
 - Leverage **[Built-in RAL Sequences](./built-in-ral-sequences)** to quickly sanity-check your generated model.
 - Pair the RAL model with callback hooks to inject targeted errors.
@@ -137,6 +229,6 @@ Practice debugging a broken RAL mirror in a hands-on lab:
 
 ## References & Next Topics
 - IEEE 1800.2-2020, Clauses 18–19.
-- Accellera *UVM User Guide*, Chapter 6 (Register Layer).
-- Verification Academy, *UVM Register Layer* course.
+- Accellera uvm-core 2020.3.1, `src/reg/uvm_reg_predictor.svh` (explicit predictor), `uvm_reg_map.svh` (`set_auto_predict`, adapter calls), `uvm_reg.svh` (`do_write`/`do_read` auto-predict, `poke`/`peek`).
+- Accellera *UVM User's Guide*, register layer chapter (mirroring and prediction modes).
 - Next: Move to Tier-4 methodology customization for performance and debug.

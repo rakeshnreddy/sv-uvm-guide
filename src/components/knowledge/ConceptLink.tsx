@@ -8,6 +8,11 @@ interface ConceptLinkProps {
   children: React.ReactNode;
 }
 
+/**
+ * Inline concept reference injected into lesson prose by remark-concept-links.
+ * Rendered as a real button so keyboard and screen-reader users can open the
+ * concept dialog; styled to read as part of the sentence.
+ */
 const ConceptLink = ({ conceptId, children }: ConceptLinkProps) => {
   const { setActiveConcept, getNodeById } = useKnowledgeContext();
 
@@ -21,14 +26,16 @@ const ConceptLink = ({ conceptId, children }: ConceptLinkProps) => {
   };
 
   return (
-    <span
+    <button
+      type="button"
       onClick={handleClick}
       data-concept-id={conceptId}
-      className="text-blue-400 hover:text-blue-300 font-semibold cursor-pointer border-b border-blue-400/50 hover:border-blue-300/80 transition-colors duration-200"
+      aria-haspopup="dialog"
+      className="inline cursor-pointer border-0 border-b border-dotted border-primary/60 bg-transparent p-0 font-[inherit] font-semibold text-primary transition-colors duration-200 hover:border-primary focus-visible:rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring motion-reduce:transition-none"
       title={`Learn more about ${String(children)}`}
     >
       {children}
-    </span>
+    </button>
   );
 };
 

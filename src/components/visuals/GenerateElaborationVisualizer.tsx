@@ -1,236 +1,214 @@
 "use client";
 
-import React, { useState, useMemo } from 'react';
-import { Cpu, Play, Layers, ToggleLeft, ToggleRight, ChevronLeft, ChevronRight, AlertTriangle, Zap } from 'lucide-react';
+import React, { useMemo, useState } from "react";
 
-type ViewMode = 'generate' | 'runtime';
+import { CodeTrace, type CodeTraceLine } from "@/components/visual-system/CodeTrace";
+import { PredictionPrompt, type PredictionOption } from "@/components/visual-system/PredictionPrompt";
+import { SegmentedControl } from "@/components/visual-system/SegmentedControl";
+import { VisualFrame } from "@/components/visual-system/VisualFrame";
+import { elaborateGenerate, generateBlockNames, type GenerateConstruct } from "@/lib/sv-elaboration-model";
 
-interface ElaboratedInstance {
-  name: string;
-  label: string;
+type ViewMode = "generate" | "runtime";
+
+const MIN_CH = 1;
+const MAX_CH = 4;
+
+function constructsFor(numCh: number, labelled: boolean, covFirst: boolean): GenerateConstruct[] {
+  const loop: GenerateConstruct = { kind: "loop", label: labelled ? "gen_chk" : undefined, iterations: numCh, items: ["chk_inst"] };
+  return covFirst ? [{ kind: "if", label: "gen_cov", condition: true, items: ["u_cov"] }, loop] : [loop];
 }
 
+function generateSource(numCh: number, labelled: boolean, covFirst: boolean, loopName: string): CodeTraceLine[] {
+  const lines: CodeTraceLine[] = [
+    { text: "module tb_top;", owner: "testbench" },
+    { text: `  parameter int NUM_CH = ${numCh};`, owner: "testbench", key: "param" },
+  ];
+  if (covFirst) lines.push({ text: "  parameter bit EN_COV = 1;", owner: "testbench" });
+  lines.push(
+    { text: "  logic clk;", owner: "testbench" },
+    { text: "  logic [7:0] data_bus [NUM_CH];", owner: "testbench" },
+    { text: "" },
+  );
+  if (covFirst) {
+    lines.push(
+      { text: "  if (EN_COV) begin : gen_cov        // generate construct 1", owner: "testbench", key: "cov" },
+      { text: "    bus_cov u_cov (.clk(clk));", owner: "testbench", key: "cov" },
+      { text: "  end", owner: "testbench", key: "cov" },
+      { text: "" },
+    );
+  }
+  const n = covFirst ? 2 : 1;
+  lines.push(
+    {
+      text: `  for (genvar i = 0; i < NUM_CH; i++) begin${labelled ? " : gen_chk" : ""}   // construct ${n}${labelled ? "" : ` -> ${loopName}`}`,
+      owner: "testbench",
+      key: "loop",
+    },
+    { text: "    protocol_checker chk_inst (.clk(clk), .data(data_bus[i]));", owner: "testbench", key: "loop" },
+    { text: "  end", owner: "testbench", key: "loop" },
+    { text: "endmodule", owner: "testbench" },
+  );
+  return lines;
+}
+
+const RUNTIME_SOURCE: CodeTraceLine[] = [
+  { text: "module tb_top;", owner: "testbench" },
+  { text: "  always_ff @(posedge clk) begin", owner: "testbench", key: "loop" },
+  { text: "    for (int i = 0; i < NUM_CH; i++)   // one process, runs every edge", owner: "testbench", key: "loop" },
+  { text: "      if (data_bus[i] !== expected[i])", owner: "testbench", key: "loop" },
+  { text: '        $error("Mismatch on ch %0d", i);', owner: "testbench", key: "loop" },
+  { text: "  end", owner: "testbench", key: "loop" },
+  { text: "endmodule", owner: "testbench" },
+];
+
 export default function GenerateElaborationVisualizer() {
-  const [mode, setMode] = useState<ViewMode>('generate');
-  const [numChannels, setNumChannels] = useState(2);
+  const [mode, setMode] = useState<ViewMode>("generate");
+  const [numCh, setNumCh] = useState(2);
+  const [labelled, setLabelled] = useState(true);
+  const [covFirst, setCovFirst] = useState(false);
 
-  const elaboratedInstances: ElaboratedInstance[] = useMemo(() => {
-    return Array.from({ length: numChannels }, (_, i) => ({
-      name: `chan_chk[${i}]`,
-      label: `Channel ${i} Checker`,
-    }));
-  }, [numChannels]);
+  const constructs = useMemo(() => constructsFor(numCh, labelled, covFirst), [numCh, labelled, covFirst]);
+  const names = useMemo(() => generateBlockNames(["NUM_CH", "EN_COV", "clk", "data_bus"], constructs), [constructs]);
+  const loopName = names[names.length - 1];
+  const paths = useMemo(() => elaborateGenerate({ path: "tb_top", declared: ["NUM_CH", "EN_COV", "clk", "data_bus"], constructs }), [constructs]);
+  const checkerPaths = paths.filter((p) => p.endsWith(".chk_inst"));
+  const last = numCh - 1;
+  const correctPath = `tb_top.${loopName}[${last}].chk_inst`;
 
-  const generateCode = useMemo(() => {
-    const lines = [
-      `module tb_top;`,
-      `  parameter NUM_CH = ${numChannels};`,
-      ``,
-      `  // Elaboration-time: compiler unrolls`,
-      `  generate`,
-      `    for (genvar i = 0; i < NUM_CH; i++) begin : gen_chk`,
-      `      protocol_checker chk_inst (`,
-      `        .clk  (clk),`,
-      `        .data (data_bus[i])`,
-      `      );`,
-      `    end`,
-      `  endgenerate`,
-      `endmodule`,
-    ];
-    return lines;
-  }, [numChannels]);
+  const candidates = [`tb_top.gen_chk[${last}].chk_inst`, `tb_top.chk_inst[${last}]`, `tb_top.genblk1[${last}].chk_inst`, `tb_top.genblk2[${last}].chk_inst`];
+  const feedbackFor = (path: string): string => {
+    if (path === correctPath) {
+      return labelled
+        ? "The loop's label names each generated block, and the block index comes from the genvar: gen_chk[i].chk_inst (§27.4)."
+        : `An unnamed generate block is named genblk<n>, where n is the loop's position among all generate constructs in tb_top (§27.6). Here it is construct ${covFirst ? 2 : 1}.`;
+    }
+    if (path.includes("chk_inst[")) return "The loop makes an array of generate blocks, each holding one instance named chk_inst. The index belongs to the block, not to the instance (§27.4).";
+    if (path.includes("gen_chk")) return "The loop has no label in this code, so it has no gen_chk name. The tool assigns genblk<n> (§27.6).";
+    if (labelled) return "The block has a label, and a label is its name. genblk<n> is only for unnamed blocks (§27.6).";
+    return covFirst
+      ? "The numbering counts every generate construct in the scope, named or not. The labelled if (EN_COV) block is construct 1, so the loop is construct 2 (§27.6)."
+      : "No generate construct comes before the loop, so it is construct 1 (§27.6).";
+  };
+  const options: PredictionOption[] = candidates.map((p) => ({
+    id: p,
+    label: <code className="font-mono text-xs [font-variant-ligatures:none]">{p}</code>,
+    correct: p === correctPath,
+    feedback: feedbackFor(p),
+  }));
 
-  const runtimeCode = useMemo(() => {
-    const lines = [
-      `module tb_top;`,
-      `  parameter NUM_CH = ${numChannels};`,
-      ``,
-      `  // Runtime: sequential execution each cycle`,
-      `  always_ff @(posedge clk) begin`,
-      `    for (int i = 0; i < NUM_CH; i++) begin`,
-      `      if (data_bus[i] !== expected[i])`,
-      `        $error("Mismatch on ch %0d", i);`,
-      `    end`,
-      `  end`,
-      `endmodule`,
-    ];
-    return lines;
-  }, [numChannels]);
+  const source = mode === "generate" ? generateSource(numCh, labelled, covFirst, loopName) : RUNTIME_SOURCE;
 
   return (
-    <div className="flex flex-col gap-6 p-6 bg-slate-900 rounded-xl border border-slate-800 text-slate-200 font-sans my-8">
-      {/* Header & Controls */}
-      <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 border-b border-slate-800 pb-4">
-        <div>
-          <h3 className="text-xl font-bold font-display text-white m-0">Generate vs Runtime</h3>
-          <p className="text-sm text-slate-400 mt-1">See how <code className="text-sky-400">generate&nbsp;for</code> creates hardware at elaboration versus a runtime <code className="text-sky-400">for</code> loop.</p>
-        </div>
-
-        <div className="flex flex-col sm:flex-row items-center gap-3">
-          {/* Mode toggle */}
-          <div className="flex items-center bg-slate-800 p-1 rounded-lg border border-slate-700 text-xs">
-            <button
-              onClick={() => setMode('generate')}
-              className={`px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 ${
-                mode === 'generate' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300'
-              }`}
-            >
-              <Cpu className="w-3.5 h-3.5" />
-              Generate (Elaboration)
-            </button>
-            <button
-              onClick={() => setMode('runtime')}
-              className={`px-3 py-1.5 rounded-md transition-all flex items-center gap-1.5 ${
-                mode === 'runtime' ? 'bg-slate-700 text-white shadow-sm' : 'text-slate-400 hover:text-slate-300'
-              }`}
-            >
-              <Play className="w-3.5 h-3.5" />
-              Runtime Loop
-            </button>
-          </div>
-
-          {/* Channel count control */}
-          <div className="flex items-center gap-2 bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-700 text-xs">
-            <button
-              onClick={() => setNumChannels(Math.max(1, numChannels - 1))}
-              disabled={numChannels <= 1}
-              className="p-0.5 rounded hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-              aria-label="Decrease channels"
-            >
-              <ChevronLeft className="w-4 h-4" />
-            </button>
-            <span className="text-slate-300 font-mono min-w-[6rem] text-center">
-              NUM_CH = <span className="text-amber-400 font-bold">{numChannels}</span>
-            </span>
-            <button
-              onClick={() => setNumChannels(Math.min(4, numChannels + 1))}
-              disabled={numChannels >= 4}
-              className="p-0.5 rounded hover:bg-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
-              aria-label="Increase channels"
-            >
-              <ChevronRight className="w-4 h-4" />
-            </button>
-          </div>
+    <VisualFrame
+      label="Generate versus runtime loop"
+      eyebrow="Experiment"
+      title="Generate vs Runtime"
+      summary={
+        <>
+          A <code className="font-mono">for (genvar …)</code> loop is unrolled at elaboration, before time 0, into separate named scopes. A runtime{" "}
+          <code className="font-mono">for (int …)</code> loop is one process that iterates while the simulation runs. Change the code, then predict the hierarchical
+          path you would use in <code className="font-mono">bind</code>, <code className="font-mono">config_db</code> or a waveform.
+        </>
+      }
+      fidelity="model"
+      assumptions={[
+        "Block names follow §27.4 (loop index) and §27.6 (genblk<n> numbering, leading zeros on clashes).",
+        "generate/endgenerate keywords are optional and do not change any name.",
+        "Instance paths are shown from tb_top.",
+      ]}
+    >
+      <div className="flex flex-wrap items-center gap-3">
+        <SegmentedControl
+          label="View"
+          options={[
+            { value: "generate", label: "Generate (Elaboration)" },
+            { value: "runtime", label: "Runtime Loop" },
+          ]}
+          value={mode}
+          onChange={setMode}
+        />
+        <div className="flex items-center gap-1 rounded-full border border-border/70 px-1 py-0.5 text-xs">
+          <button
+            type="button"
+            onClick={() => setNumCh((n) => Math.max(MIN_CH, n - 1))}
+            disabled={numCh <= MIN_CH}
+            aria-label="Decrease channels"
+            className="h-9 w-9 rounded-full hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
+          >
+            −
+          </button>
+          <span className="min-w-[6.5rem] text-center font-mono" aria-live="polite">
+            NUM_CH = <strong>{numCh}</strong>
+          </span>
+          <button
+            type="button"
+            onClick={() => setNumCh((n) => Math.min(MAX_CH, n + 1))}
+            disabled={numCh >= MAX_CH}
+            aria-label="Increase channels"
+            className="h-9 w-9 rounded-full hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-40"
+          >
+            +
+          </button>
         </div>
       </div>
 
-      {/* Main Area: Code + Visualization */}
-      <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
+      {mode === "generate" ? (
+        <div className="flex flex-wrap gap-x-5 gap-y-2 text-sm">
+          <label className="flex items-center gap-2">
+            <input type="checkbox" className="accent-amber-500" checked={labelled} onChange={(e) => setLabelled(e.target.checked)} />
+            Label the loop block <code className="font-mono">: gen_chk</code>
+          </label>
+          <label className="flex items-center gap-2">
+            <input type="checkbox" className="accent-amber-500" checked={covFirst} onChange={(e) => setCovFirst(e.target.checked)} />
+            Put an <code className="font-mono">if (EN_COV)</code> generate block first
+          </label>
+        </div>
+      ) : null}
 
-        {/* Source Code Panel */}
-        <div className="md:col-span-5">
-          <div className="bg-slate-800/40 rounded-xl border border-slate-700 p-4">
-            <div className="flex items-center gap-2 mb-3 text-sm font-semibold text-slate-300">
-              {mode === 'generate' ? (
-                <><Cpu className="w-4 h-4 text-emerald-400" /> SystemVerilog Source (generate)</>
-              ) : (
-                <><Play className="w-4 h-4 text-blue-400" /> SystemVerilog Source (runtime loop)</>
-              )}
-            </div>
-            <pre className="text-[11px] font-mono text-slate-300 bg-slate-900 p-3 rounded border border-slate-800 overflow-x-auto leading-relaxed">
-              {(mode === 'generate' ? generateCode : runtimeCode).map((line, i) => (
-                <div key={i}>
-                  <span className="text-slate-600 select-none mr-3 inline-block w-4 text-right">{i + 1}</span>
-                  {line.includes('generate') || line.includes('genvar') ? (
-                    <span className="text-emerald-400">{line}</span>
-                  ) : line.includes('always_ff') || line.includes('for (int') ? (
-                    <span className="text-blue-400">{line}</span>
-                  ) : line.includes('//') ? (
-                    <span className="text-slate-500">{line}</span>
-                  ) : (
-                    <span>{line}</span>
-                  )}
-                </div>
+      <CodeTrace label={mode === "generate" ? "SystemVerilog source (generate)" : "SystemVerilog source (runtime loop)"} lines={source} contextKeys={["loop"]} />
+
+      {mode === "generate" ? (
+        <PredictionPrompt
+          resetKey={`${numCh}:${labelled}:${covFirst}`}
+          question={
+            <>
+              What is the full hierarchical path of the checker for channel {last}?
+            </>
+          }
+          options={options}
+        >
+          <div className="space-y-2" aria-live="polite">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Elaborated hierarchy (built before time 0)</p>
+            <ul aria-label="Elaborated instances" className="space-y-1.5">
+              {paths.map((p) => (
+                <li key={p} className="w-fit max-w-full break-all rounded-sm border border-emerald-500/50 bg-emerald-500/10 px-2 py-1 font-mono text-xs text-foreground">
+                  {p}
+                </li>
               ))}
-            </pre>
+            </ul>
+            <p className="text-sm text-muted-foreground">
+              {checkerPaths.length} separate <code className="font-mono">protocol_checker</code> instance{checkerPaths.length > 1 ? "s" : ""}, each in its own
+              scope, all running concurrently. Inside each block, <code className="font-mono">i</code> is a constant (an implicit localparam, §27.4), so
+              procedural code in the block such as <code className="font-mono">always_ff @(posedge clk) q[i] &lt;= d[i];</code> is legal.
+            </p>
           </div>
+        </PredictionPrompt>
+      ) : (
+        <div className="space-y-2 rounded-xl border border-border/70 bg-background/50 p-3 text-sm" aria-live="polite">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">Runtime execution (simulation time)</p>
+          <ol className="list-decimal space-y-1 pl-5 font-mono text-xs">
+            {Array.from({ length: numCh }, (_, i) => (
+              <li key={i}>
+                i = {i}: check data_bus[{i}] against expected[{i}]
+              </li>
+            ))}
+          </ol>
+          <p className="text-muted-foreground">
+            One process repeats these {numCh} steps in order at every clock edge. Nothing new appears in the hierarchy, and a runtime loop cannot instantiate
+            modules, interfaces or checkers.
+          </p>
         </div>
-
-        {/* Elaboration / Runtime Result Panel */}
-        <div className="md:col-span-7 flex flex-col gap-4">
-          <div className="bg-slate-800/80 rounded-xl border border-slate-600 p-5 flex-1 relative overflow-hidden">
-            <div className="flex items-center gap-2 mb-4 text-sm font-semibold text-slate-300">
-              <Layers className="w-4 h-4 text-amber-400" />
-              {mode === 'generate' ? 'Elaborated Hardware (Compile Time)' : 'Runtime Execution (Simulation Time)'}
-            </div>
-
-            {mode === 'generate' ? (
-              /* Generate mode: show physical instances */
-              <div className="space-y-3">
-                <div className="bg-slate-700/30 border border-slate-600 rounded-lg p-4 font-mono text-sm">
-                  <div className="text-slate-300 font-bold mb-3">tb_top (elaborated)</div>
-                  <div className="pl-4 border-l-2 border-emerald-800/50 flex flex-col gap-2">
-                    {elaboratedInstances.map((inst, i) => (
-                      <div
-                        key={inst.name}
-                        className="bg-emerald-900/20 border border-emerald-800/50 rounded p-3 transition-all duration-300"
-                        style={{ animationDelay: `${i * 100}ms` }}
-                      >
-                        <div className="flex items-center gap-2">
-                          <Cpu className="w-3.5 h-3.5 text-emerald-400" />
-                          <span className="text-emerald-300 font-semibold text-xs">gen_chk[{i}].chk_inst</span>
-                        </div>
-                        <div className="text-[10px] text-slate-400 mt-1 pl-5">
-                          protocol_checker — monitors <code className="text-slate-300">data_bus[{i}]</code>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex items-start gap-2 text-xs text-emerald-400/80 bg-emerald-900/10 border border-emerald-900/30 rounded-lg p-3">
-                  <Zap className="w-4 h-4 mt-0.5 shrink-0" />
-                  <span>Each iteration creates a <strong>distinct hardware instance</strong> with its own scope (<code>gen_chk[i]</code>). These exist as independent concurrent blocks — they all run in parallel, not sequentially.</span>
-                </div>
-              </div>
-            ) : (
-              /* Runtime mode: show sequential execution */
-              <div className="space-y-3">
-                <div className="bg-slate-700/30 border border-slate-600 rounded-lg p-4 font-mono text-sm">
-                  <div className="text-slate-300 font-bold mb-3">tb_top (runtime behavior)</div>
-                  <div className="pl-4 border-l-2 border-blue-800/50">
-                    <div className="bg-blue-900/20 border border-blue-800/50 rounded p-3">
-                      <div className="flex items-center gap-2 text-blue-300 font-semibold text-xs mb-2">
-                        <Play className="w-3.5 h-3.5" />
-                        always_ff @(posedge clk)
-                      </div>
-                      <div className="space-y-1.5 pl-4 border-l border-blue-900/50">
-                        {Array.from({ length: numChannels }, (_, i) => (
-                          <div key={i} className="text-[10px] text-slate-400 flex items-center gap-1.5">
-                            <span className="text-blue-400 font-semibold">→ i={i}:</span>
-                            <span>check data_bus[{i}] vs expected[{i}]</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-start gap-2 text-xs text-blue-400/80 bg-blue-900/10 border border-blue-900/30 rounded-lg p-3">
-                  <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
-                  <span>A runtime loop executes <strong>sequentially in one process</strong>. No new hardware is created — the same process iterates {numChannels} times each clock edge. You <em>cannot</em> instantiate modules or checkers inside a runtime loop.</span>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-
-      {/* Key Insight Footer */}
-      <div className="bg-black/50 rounded-lg border border-slate-800 p-4">
-        <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-wider text-slate-400 mb-2 border-b border-slate-800 pb-2">
-          {mode === 'generate' ? (
-            <><ToggleLeft className="w-3.5 h-3.5 text-emerald-400" /> Key Insight: Elaboration Phase</>
-          ) : (
-            <><ToggleRight className="w-3.5 h-3.5 text-blue-400" /> Key Insight: Simulation Phase</>
-          )}
-        </div>
-        <p className="text-xs text-slate-300 leading-relaxed">
-          {mode === 'generate' ? (
-            <>The compiler evaluates <code className="text-emerald-400">generate for</code> before simulation begins, unrolling it into {numChannels} independent <code className="text-emerald-400">protocol_checker</code> instances. Each lives in its own named scope (<code className="text-emerald-400">gen_chk[0]</code>, <code className="text-emerald-400">gen_chk[1]</code>, …) and can be individually referenced in hierarchical paths.</>
-          ) : (
-            <>A runtime <code className="text-blue-400">for</code> loop inside <code className="text-blue-400">always_ff</code> is procedural code. It runs {numChannels} iterations <em>sequentially</em> at each clock edge. It cannot create structural elements like module instances, checkers, or covergroups — only perform runtime checks and assignments.</>
-          )}
-        </p>
-      </div>
-    </div>
+      )}
+    </VisualFrame>
   );
 }

@@ -42,9 +42,10 @@ Simulation time advances in discrete increments. Delay controls (`#`) explicitly
 
 module time_steps_demo;
   initial begin
-    $display("Time is %0t", $time); // 0
-    #5.5; // Advances time by 5.5ns
-    $display("Time is %0t", $time); // 5500 (ps resolution)
+    $display("Time is %0t", $time);     // 0
+    #5.5; // Advances time by 5.5ns (representable: precision is 1ps)
+    $display("Time is %0t", $time);     // 6000: $time rounds to the 1ns unit (6), %t prints in ps
+    $display("Time is %0t", $realtime); // 5500: $realtime keeps the fraction
   end
 endmodule
 ```
@@ -55,23 +56,24 @@ Multiple events can occur at the exact same simulation time. The simulator proce
 ```systemverilog
 module delta_time_demo;
   logic clk = 0;
-  logic d, q1, q2;
+  logic d = 1, q = 0;
+  logic q_n;
 
   always #5 clk = ~clk;
 
+  always_ff @(posedge clk) q <= d; // Active: reads d. NBA: writes q.
+  assign q_n = ~q;                 // re-evaluated when q changes: one more delta
+
   initial begin
-    d = 1;
-    @(posedge clk);
-    // At posedge clk, q1 gets d, and q2 gets q1. 
-    // This happens in delta cycles within the same simulation time step.
-    q1 <= d;  // Delta cycle 1 (NBA region update)
-    q2 <= q1; // Delta cycle 2 (subsequent evaluation triggered by q1 change)
+    @(posedge clk);                                       // all of this is t = 5
+    $display("display q=%0d q_n=%0d", q, q_n);            // Active: q=0 q_n=1 (old values)
+    $strobe ("strobe  q=%0d q_n=%0d", q, q_n);            // Postponed: q=1 q_n=0
   end
 endmodule
 ```
 
 ## Make It Work
-- Always define a `` `timescale `` at the top of your testbench files, or better yet, use `$timeformat` and pass timescales via compiler directives to avoid compilation order bugs.
+- Give every file an explicit time unit. Prefer `timeunit 1ns; timeprecision 1ps;` inside each module or package (IEEE 1800-2023 §3.14.2.2): unlike `` `timescale ``, it cannot leak between files through compilation order. `$timeformat` only changes how `%t` prints.
 - Recognize that `#0` delays are a legacy hack for forcing delta cycle delays. Do not use them in modern SystemVerilog; use non-blocking assignments (`<=`) or clocking blocks instead.
 
 ## Push Further
@@ -84,27 +86,27 @@ endmodule
 
 ## Interview Questions
 
-<Card className="mt-8 border-slate-700 bg-slate-900">
+<Card className="mt-8">
   <CardHeader>
     <CardTitle>Ready for the Interview?</CardTitle>
   </CardHeader>
   <CardContent className="space-y-4">
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        What is a delta cycle? How is it different from simulation time?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">What is a delta cycle? How is it different from simulation time?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
         <p>A delta cycle is a zero-delay iteration within a single simulation time step. Simulation time (the wall clock) only advances when there are no more events to process at the current time. Delta cycles allow the simulator to model the propagation of logic gates that all happen "instantaneously" at the same simulation time.</p>
       </div>
     </details>
 
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        What does `` `timescale 1ns/10ps `` mean? If I write `#1.234`, what delay is actually applied?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">What does `` `timescale 1ns/10ps `` mean? If I write `#1.234`, what delay is actually applied?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
         <p>The first value (1ns) is the time unit (what `#1` means). The second value (10ps) is the time precision (the smallest time step the simulator can resolve, which dictates rounding).</p>
         <p>`#1.234` means 1.234ns. However, because the precision is 10ps (0.01ns), the simulator rounds it to 1.23ns (or 1230ps). The '4' is lost.</p>
       </div>

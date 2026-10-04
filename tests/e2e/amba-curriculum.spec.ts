@@ -80,7 +80,8 @@ test.describe('AMBA curriculum coverage', () => {
       await test.step(route.sectionSlug, async () => {
         await expectLesson(page, route);
         await expect(page.getByRole('heading', { name: 'Reinforce the essentials' })).toBeVisible();
-        await expect(page.getByText('Card 1 of 5')).toBeVisible();
+        // Deck sizes vary per lesson (B-AHB-1 has 10 cards); assert the deck opened on card 1.
+        await expect(page.getByText(/^Card 1 of \d+$/)).toBeVisible();
       });
     }
   });
@@ -104,6 +105,7 @@ test.describe('AMBA curriculum coverage', () => {
 
     await expectLesson(page, bridgeRoute!);
     await page.getByTestId('scenario-btn-0').click();
+    await page.getByRole('button', { name: /reveal without predicting/i }).first().click();
     await expect(page.getByTestId('axi-bursts-container')).toContainText('AXI Burst 1');
     await expect(page.getByTestId('axi-bursts-container')).not.toContainText('AXI Burst 2');
 

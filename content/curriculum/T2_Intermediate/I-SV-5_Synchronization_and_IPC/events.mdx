@@ -21,9 +21,10 @@ export const metadata = {
   ### Declaring and Triggering
 
   -   Declare an event: `event done;`
-  -   Trigger once: `-> done;` (all waiters run in the current timestep).
-  -   Trigger with persistence: `->> done;` (waiters that start later in the same timestep still wake up).
-  -   Wait for it: `@done;` or, if you need to poll, `wait(done.triggered);`.
+  -   Trigger: `-> done;` unblocks every process that is **already** waiting on `@done`. A process that reaches `@done` later in the same time step misses it (IEEE 1800-2023 §15.5.2).
+  -   Nonblocking trigger: `->> done;` does not trigger now. It schedules the trigger for the NBA region of the current time step (§15.5.1), so processes that reach `@done` during that time step's Active region are already waiting when it fires. It does **not** make the event persistent.
+  -   Persistent state: `done.triggered` is true from the trigger until simulation time advances (§15.5.3). `wait(done.triggered);` therefore succeeds whether it runs before or after the trigger in the same time step.
+  -   Wait for it: `@done;` for the next trigger, or `wait(done.triggered);` when the trigger may come first in the same time step.
 
   <InteractiveCode>
   ```systemverilog
@@ -42,32 +43,40 @@ export const metadata = {
     forever begin
       @start;
       $display("Start seen at %0t", $time);
-      #2 ->> done;           // acknowledge with persistence
+      #2 -> done;            // safe: the producer has been waiting at @done since t = 10
     end
   end
 
   initial begin
-    // Late listener still sees the persistent trigger
-    wait(done.triggered);
+    // Listener that wakes at t = 12, the same time step as the first "-> done"
+    #12 wait (done.triggered);   // passes whether it runs before or after the trigger (§15.5.3)
+    // "#12 @done;" here would race with the consumer and could miss it (§15.5.2)
     $display("First completion observed at %0t", $time);
   end
   ```
   </InteractiveCode>
 
+  Pick each variant below, predict what happens to the consumer, then flip the scheduler order. Only one variant gives a different answer depending on which process the simulator runs first.
+
+  <ForkJoinVisualizer scenario="event-race" scenarios={["event-race"]} />
+
   Events often coordinate randomized stimulus or monitor actions. Review [Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals) to see how events can trigger new random transactions.
 
   ## Failure Mode: Lost Event Pulses
   
-  **The `->` vs `->>` Race Condition:** Native events do not queue requests. If a producer triggers an event with `->` before the consumer thread reaches the `@event_name` statement (even by a fraction of a delta-cycle at the exact same timestep), the pulse is gone forever. The consumer will wait infinitely for a pulse that already happened.
+  **The `->` race:** Events do not queue triggers. If a producer executes `-> done` before the consumer reaches `@done` in the same time step, the consumer misses it and waits for the next trigger, possibly forever (§15.5.2). The standard does not fix the order of processes that wake at the same time, so this code can pass on one simulator and hang on another.
 
-  **The Non-Blocking Wait Trap:**
-  Another dangerous pattern is combining a blocking trigger with a non-blocking check. If Thread A does `-> done;` and Thread B does `wait(done.triggered)` in a zero-delay loop without yielding, it might miss the event entirely or evaluate to true erroneously depending on simulator scheduling.
-  
-  **The Fix:** Use the Nonblocking Trigger `->>` which persists the event state through the *entire* Reactive region of the current time step. Alternatively, maintain a `bit done_seen` state flag, or use `uvm_event` which tracks trigger counts safely under the hood.
+  **Two fixes, for two different reasons:**
+  - Wait on the persistent state: `wait(done.triggered)` succeeds whether the trigger came before or after it in the same time step (§15.5.3).
+  - Trigger later in the time step: `->> done` fires in the NBA region (§15.5.1), after every process running in that time step's Active region has had the chance to reach `@done`. It is not persistent: a process that only starts waiting after the NBA region can still miss it.
+
+  You can also keep a `bit done_seen` flag, or use `uvm_event`, which counts triggers.
+
+  **The real `.triggered` trap: a zero-delay loop.** Because `done.triggered` stays true for the whole time step, a loop such as `forever begin wait(done.triggered); count++; end` passes the wait again and again without letting time advance — the simulation hangs at that time. Try the *forever wait(done.triggered)* variant above. Inside loops, wait with `@done`, or make sure every iteration advances time.
 
   **Ordering constraints:** `wait_order(e1, e2)` (or the array form) asserts that events arrive in a given sequence—perfect for handshake protocols. Pair with assertions so violations show up in logs.
 
-  **Leveraging `triggered`:** The built-in `event.triggered` bit goes high for the remainder of the timestep after a trigger. Combine it with `wait(event.triggered)` when you need to poll or drive scoreboard state machines.
+  **Leveraging `triggered`:** The built-in `event.triggered` state is true for the remainder of the time step after a trigger. Use `wait(event.triggered)` for a one-shot wait when the trigger and the wait may happen in the same time step.
 
   **Bridging to UVM:** `uvm_event` adds `wait_on()`, `wait_off()`, callbacks, and a `trigger_cnt`. Manage them through an `uvm_event_pool` so components can look up events by name without hard-coded handles. See [analysis components](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections#monitors-scoreboards-and-the-analysis-fabric) for how that integrates with monitors.
 

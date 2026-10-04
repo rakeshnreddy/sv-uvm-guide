@@ -9,7 +9,8 @@ flashcards: "A-UVM-4A_RAL_Fundamentals"
 ## Quick Take
 - **What it is:** The Register Abstraction Layer (RAL) turns the DUT register map into an object-oriented model (`uvm_reg_block`, `uvm_reg`, `uvm_reg_field`).
 - **Why it matters:** It centralizes register addresses, reset values, and access policies so tests don't hardcode magic numbers—and so the same stimulus works across different bus protocols.
-- **The Standard:** IEEE 1800.2-2020 Clauses 18 (Registers) and 19 (Memory Allocation) define these base classes.
+- **The one idea to keep:** every field holds a **desired** value (what the test wants) and a **mirrored** value (what the model believes the DUT holds). Neither is the DUT. Calls move them in different ways, and the mirror only moves when something *predicts* an access.
+- **The Standard:** IEEE 1800.2-2020 Clause 18 defines the register model: `uvm_reg_block` (18.1), `uvm_reg_map` (18.2), `uvm_reg` (18.4), `uvm_reg_field` (18.5), `uvm_mem` (18.6) and the memory allocation manager (18.12). Clause 19 defines the classes that connect it to a bus: `uvm_reg_adapter` (19.2), `uvm_reg_predictor` (19.3) and `uvm_reg_sequence` (19.4).
 
 > **Signal:** When scoreboard logic knows address constants, when adapter code is duplicated across tests, or when register coverage is manual—it's time to centralize that knowledge inside RAL.
 
@@ -17,58 +18,58 @@ flashcards: "A-UVM-4A_RAL_Fundamentals"
 
 ### RAL Object Hierarchy (IEEE 1800.2-2020 Clause 18)
 
-The RAL is a containment hierarchy. Each level owns the level below it:
+The block owns everything; a map only *references* registers:
 
 | Level | Class | Responsibility |
 | --- | --- | --- |
-| Block | `uvm_reg_block` | Top-level container: owns registers, memories, sub-blocks, and address maps |
-| Map | `uvm_reg_map` | Assigns physical addresses to registers/memories for a specific bus interface |
-| Register | `uvm_reg` | A single HW register: knows reset value, access policy, mirrored value |
-| Field | `uvm_reg_field` | Bit-slice within a register: defines access type (RW, RO, W1C, etc.) and reset |
-| Memory | `uvm_mem` | Addressable memory region: DMA buffers, LUTs, instruction stores |
-
-Explore the hierarchy interactively:
-
-<RalRegisterMapVisualizer />
+| Block | `uvm_reg_block` | Owns registers, memories, sub-blocks and address maps. The first map you create becomes `default_map`. |
+| Map | `uvm_reg_map` | Gives each register an offset and access rights for one bus interface. It does not own the registers: one register can sit in several maps. |
+| Register | `uvm_reg` | A collection of fields. `get()`, `get_mirrored_value()`, `write()`, `read()` work on the whole register. |
+| Field | `uvm_reg_field` | A bit-slice with its own access policy (RW, RO, W1C…), reset value and volatility. Desired and mirrored values live here. |
+| Memory | `uvm_mem` | An addressable array (DMA buffers, LUTs). Memories have no mirror. |
 
 ### uvm_reg_block — The Container
 
-A block is the outermost shell. It owns one or more `uvm_reg_map` instances and all the registers and memories that belong to that IP. Sub-blocks model hierarchical designs (e.g., a SoC block that contains an Ethernet block and a DMA block).
+A block is the outermost shell. Sub-blocks model hierarchical designs (e.g., a SoC block that contains an Ethernet block and a DMA block).
 
 ```systemverilog
 class codec_block extends uvm_reg_block;
   `uvm_object_utils(codec_block)
-  codec_status_reg status;
-  codec_control_reg control;
-  uvm_reg_map cfg_map;
+  rand codec_status_reg  status;
+  rand codec_control_reg control;
+  uvm_reg_map            cfg_map;
+
+  function new(string name = "codec_block");
+    super.new(name, UVM_NO_COVERAGE);
+  endfunction
 
   virtual function void build();
-    // Create registers
-    status  = codec_status_reg::type_id::create("status");
-    status.configure(this, null);
+    status = codec_status_reg::type_id::create("status");
+    status.configure(this, null, "status_q");   // parent block, no register file, HDL path
     status.build();
 
     control = codec_control_reg::type_id::create("control");
-    control.configure(this, null);
+    control.configure(this, null, "control_q");
     control.build();
 
-    // Create address map for this bus interface
+    // First map created becomes default_map.
     cfg_map = create_map("cfg_map", 'h0, 4, UVM_LITTLE_ENDIAN);
     cfg_map.add_reg(status,  'h00, "RO");
     cfg_map.add_reg(control, 'h04, "RW");
 
-    lock_model();   // Freeze – no more structural changes
+    add_hdl_path("tb_top.dut.u_regs");   // root of every register's backdoor path
+    lock_model();                         // freeze the structure
   endfunction
 endclass
 ```
 
 **Key points:**
-- `configure(this, null)` sets the parent block and optional back-door HDL path.
-- `lock_model()` freezes the structure so the predictor can safely query it at run time. Always call it at the end of `build()`.
+- `uvm_reg::configure(blk_parent, regfile_parent = null, hdl_path = "")`: the second argument is an optional register file; the **third** is the register's HDL path. With the block's `add_hdl_path()` above, `status` is reachable at `tb_top.dut.u_regs.status_q`. Without an HDL path, `peek()` and `poke()` fail with "No backdoor access available".
+- `lock_model()` freezes the structure and builds the address lookup tables the map and the predictor use. Call it once, after every register and map exists.
 
 ### uvm_reg_map — The Address Bridge
 
-A **map** bridges the abstract register model to a physical bus protocol. Each bus port the DUT exposes typically gets its own map. The **same register** can appear in multiple maps at different addresses (multi-map), which is common when an IP is accessible from both a configuration bus and a debug port.
+A **map** bridges the abstract register model to a physical bus protocol. Each bus port the DUT exposes typically gets its own map. The **same register** can appear in several maps at different addresses, which is common when an IP is reachable from both a configuration bus and a debug port. The register, and therefore its mirror, is shared by all of them.
 
 ```systemverilog
 // Two maps sharing the same register set
@@ -79,11 +80,11 @@ cfg_map.add_reg(status,  'h00, "RO");
 debug_map.add_reg(status, 'h100, "RO");
 ```
 
-After creating a map, you attach it to a **sequencer** and supply an **adapter** so RAL knows how to transform generic `uvm_reg_bus_op` operations into your protocol-specific sequence items.
+After creating a map, the environment attaches it to a **sequencer** and an **adapter** with `map.set_sequencer(sequencer, adapter)`, so RAL knows how to turn generic `uvm_reg_bus_op` operations into your protocol's sequence items.
 
 ### uvm_reg and uvm_reg_field — Register and Fields
 
-Each register is a collection of typed fields. Fields declare their **access policy** (RW, RO, W1C, W1S, RC, RS, volatile, etc.) and their reset value. This information drives the RAL's built-in mirror checking and sequence automation.
+Each register is a collection of fields. A field's `configure()` call declares its size, position, **access policy**, **volatility** and reset value. UVM predefines 25 policies (RO, RW, RC, RS, WRC, WRS, WC, WS, WSRC, WCRS, W1C, W1S, W1T, W0C, W0S, W0T, W1SRC, W1CRS, W0SRC, W0CRS, WO, WOC, WOS, W1, WO1).
 
 ```systemverilog
 class codec_status_reg extends uvm_reg;
@@ -97,29 +98,54 @@ class codec_status_reg extends uvm_reg;
 
   virtual function void build();
     state = uvm_reg_field::type_id::create("state");
-    //             parent, size, lsb, access, volatile, reset, has_reset, is_rand, individual_accessible
-    state.configure(this,   8,    0,   "RO",   0,        0,     1,         0,       0);
+    //             parent, size, lsb, access, volatile, reset, has_reset, is_rand, individually_accessible
+    state.configure(this,   8,    0,   "RO",   1,        0,     1,         0,       0);
 
     error = uvm_reg_field::type_id::create("error");
-    error.configure(this,   1,    8,   "W1C",  0,        0,     1,         0,       0);
+    error.configure(this,   1,    8,   "W1C",  1,        0,     1,         0,       0);
   endfunction
 endclass
 ```
 
-**Why `configure()` matters:** The 9 arguments tell RAL everything it needs to predict, mirror, and automate this field—no external documentation lookup required.
+**Why `volatile = 1` here:** the DUT's own logic changes `state` and sets `error`; no bus access tells the model when. For a volatile field, `configure()` sets the field's compare mode to `UVM_NO_CHECK`, so `mirror(UVM_CHECK)` skips it instead of reporting false mismatches. A field the RAL can predict (control bits, configuration) stays `volatile = 0`.
+
+### Three values per field: desired, mirrored, DUT
+
+This is the part most testbenches get wrong. Each call moves different values:
+
+| Call | Bus access? | Desired, `get()` | Mirrored, `get_mirrored_value()` |
+| --- | --- | --- | --- |
+| `set(v)` | none | becomes `v`, adjusted per policy (W1C clears, RO keeps) | unchanged |
+| `update()` | a write, only if `needs_update()` | (calls `write()`) | predicted* |
+| `write(v)` | frontdoor write | `write()` calls `set(v)` first | predicted* per field policy |
+| `read()` | frontdoor read | follows the mirror after prediction | predicted* (RC fields → 0) |
+| `mirror(UVM_CHECK)` | frontdoor read | as `read()` | compared with the old mirror, then predicted* |
+| `peek()` | none (backdoor) | = DUT value | = DUT value, always |
+| `poke(v)` | none (backdoor) | = `v` | = `v`, no policy applied, always |
+| `predict(v)` | none | = `v` | = `v` |
+
+\* Predicted **only** if a `uvm_reg_predictor` sees the transfer (explicit prediction) or the map has `set_auto_predict(1)` (implicit prediction). By default neither is set up, so frontdoor accesses leave the mirror alone. A-UVM-4B covers both.
+
+Two consequences worth memorizing:
+- `update()` writes only when a writable field's desired value differs from its mirror, or the field is volatile. `set(5); update(); set(5); update();` produces **one** bus write when prediction works.
+- The mirror is computed **field by field from the access policy**, not copied from the bus. Writing `'hFFFF_FFFF` to a register whose upper bits are RO gives a mirror with those bits unchanged.
+
+Start in **Predict** mode: commit an answer for each challenge before the model reveals the three columns. Then use **Sandbox** to try any call, and **Debug a mismatch** to find a mis-configured field.
+
+<RalRegisterMapVisualizer />
 
 ### The Adapter Bridge
 
 `uvm_reg_adapter` is the translator between generic `uvm_reg_bus_op` requests and your bus transaction item (e.g., `axi_item`, `apb_item`). Each bus protocol needs its own adapter.
 
 ```systemverilog
-class apb_adapter extends uvm_reg_adapter;
-  `uvm_object_utils(apb_adapter)
+class apb_reg_adapter extends uvm_reg_adapter;
+  `uvm_object_utils(apb_reg_adapter)
 
-  function new(string name = "apb_adapter");
+  function new(string name = "apb_reg_adapter");
     super.new(name);
-    supports_byte_enable = 0;   // APB doesn't support byte lanes
-    provides_responses   = 0;   // We read status from the item directly
+    supports_byte_enable = 0;   // APB has no byte lanes (APB4 PSTRB aside)
+    provides_responses   = 0;   // the driver writes read data back into the request item
   endfunction
 
   virtual function uvm_sequence_item reg2bus(const ref uvm_reg_bus_op rw);
@@ -136,26 +162,28 @@ class apb_adapter extends uvm_reg_adapter;
     rw.addr   = item.addr;
     rw.data   = item.data;
     rw.kind   = item.write ? UVM_WRITE : UVM_READ;
-    rw.status = UVM_IS_OK;
+    rw.status = item.slverr ? UVM_NOT_OK : UVM_IS_OK;   // map PSLVERR to the RAL status
   endfunction
 endclass
 ```
 
 **Two key methods:**
-- `reg2bus()` — converts a RAL operation into a bus-specific item (used by the sequencer when a test calls `reg.write()`).
-- `bus2reg()` — converts a monitored bus item back into a generic operation (used by the predictor to update the mirror).
+- `reg2bus()` turns a RAL operation into a bus item. The **register map** calls it when a test calls `write()` or `read()`; the sequencer only arbitrates the resulting item.
+- `bus2reg()` turns a bus item back into a `uvm_reg_bus_op`. The map calls it on the completed request item to get **read data and status** (or on the response item when `provides_responses = 1`), and a `uvm_reg_predictor` calls it on every item the monitor publishes.
+
+> **Read returns 0?** With `provides_responses = 0`, the map reads the data from the request item. If your driver returns read data in a separate response (`put_response`), either copy it into the request item or set `provides_responses = 1`.
 
 ### Frontdoor Sequence Flow
 
-When a test calls `my_reg.write(status, 'hFF)`, here is what happens internally:
+When a test calls `ral.control.write(status, 'hFF)`:
 
-1. RAL looks up the register's **map** and finds the **sequencer** and **adapter** attached to it.
-2. RAL calls `adapter.reg2bus()` to create a protocol-specific sequence item.
-3. The item is sent to the bus **sequencer → driver → DUT**.
-4. The bus **monitor** observes the transaction and broadcasts it via its [analysis port](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections).
-5. The **predictor** receives the broadcast, calls `adapter.bus2reg()`, and updates the **mirror**.
+1. `write()` calls `set('hFF)`, so the desired value changes first.
+2. The map calls `adapter.reg2bus()` and runs the item on the sequencer registered with `set_sequencer()`.
+3. The driver performs the transfer and the DUT applies its field behaviour.
+4. The map calls `adapter.bus2reg()` on the finished item to get the status (and, for a read, the data).
+5. The mirror is updated **only if** the map has `set_auto_predict(1)` (the register predicts itself now), or a `uvm_reg_predictor` connected to the bus monitor's [analysis port](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections) sees the transfer.
 
-This entire flow is transparent to the test writer—they only call `write()` or `read()`.
+The test writer only calls `write()` or `read()`; the environment decides how the mirror is kept up to date.
 
 ### Generation Workflow
 
@@ -169,26 +197,129 @@ In practice, RAL models are **generated** from a formal register specification:
 
 **Governance rules:**
 - Always commit the generated RAL code to version control so all team members share the same specification snapshot.
-- Treat the generated files as **read-only**—never hand-modify them. Customizations belong in subclasses or environment-level wrappers.
+- Treat the generated files as **read-only**—never hand-modify them. Fix access policies and volatility in the spec, then regenerate.
 - Re-generate and diff when the spec changes to catch address shifts or policy updates early.
+
+<VisualRecap
+  title="Three values per field"
+  rule="set() moves the desired value, a bus access moves the DUT, and only prediction moves the mirror: field by field, through each field's access policy."
+  code={`ral.CTRL.set('h5);                     // desired = 5, no bus
+ral.CTRL.update(status);               // writes: desired != mirrored
+ral.CTRL.write(status, 'hFFFF_FFFF);   // mirror 'hF if [31:4] is RO
+ral.STATUS.mirror(status, UVM_CHECK);  // volatile fields are skipped`}
+  mistake="Expecting the mirror to equal the written value. It is predicted per field (RO keeps, W1C clears, RC clears on read), and only when a predictor or auto-predict sees the access."
+  inTestbench="The env builds and locks the block, calls default_map.set_sequencer(sqr, adapter) and wires a predictor. Tests call ral.<reg>.write/read/mirror and never hardcode addresses."
+>
+  <svg viewBox="0 0 320 150" role="img" aria-label="Desired, mirrored and DUT columns. set() changes desired, a bus write changes the DUT, prediction copies the policy result into the mirror." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="8" y="30" width="86" height="60" rx="14" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="51" y="56" fontSize="11" textAnchor="middle" fill="currentColor">desired</text>
+    <text x="51" y="72" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.7">get()</text>
+    <rect x="117" y="30" width="86" height="60" rx="6" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="160" y="56" fontSize="11" textAnchor="middle" fill="currentColor">mirrored</text>
+    <text x="160" y="72" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.7">model belief</text>
+    <rect x="226" y="30" width="86" height="60" rx="2" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+    <text x="269" y="56" fontSize="11" textAnchor="middle" fill="currentColor">DUT</text>
+    <text x="269" y="72" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.7">actual</text>
+    <text x="51" y="20" fontSize="10" textAnchor="middle" fill="currentColor">set()</text>
+    <text x="269" y="20" fontSize="10" textAnchor="middle" fill="currentColor">bus write</text>
+    <text x="160" y="110" fontSize="10" textAnchor="middle" fill="currentColor">↑ predict (per field policy)</text>
+    <text x="160" y="140" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.7">mirror(UVM_CHECK) compares mirrored vs DUT</text>
+  </svg>
+</VisualRecap>
 
 ## Make It Work
 
 1. **Generate the model:** Produce the `uvm_reg_block` hierarchy from your register spec and commit the output.
-2. **Create the adapter:** Write `reg2bus()` and `bus2reg()` for each bus protocol your DUT exposes.
-3. **Instantiate in the environment:** Build the block and adapter in `build_phase()`; set the map's sequencer and adapter in `connect_phase()`.
-4. **Lock the model:** Call `lock_model()` before any test runs to freeze the structure.
+2. **Create the adapter:** Write `reg2bus()` and `bus2reg()` for each bus protocol your DUT exposes, including the error status.
+3. **Instantiate in the environment:** Build the block (and lock it) and the adapter in `build_phase()`; call `map.set_sequencer(sequencer, adapter)` in `connect_phase()`.
+4. **Choose how the mirror is updated:** connect a `uvm_reg_predictor` to the bus monitor (explicit prediction) or call `set_auto_predict(1)`; see A-UVM-4B.
+5. **Give the registers a backdoor:** set HDL paths (`configure(…, hdl_path)` or `add_hdl_path_slice()`, plus the block's `add_hdl_path()`) so `peek()`, `poke()` and the access sequence work.
+
+```systemverilog
+function void my_env::build_phase(uvm_phase phase);
+  super.build_phase(phase);
+  agent   = apb_agent::type_id::create("agent", this);
+  ral     = codec_block::type_id::create("ral");
+  ral.build();        // ends with lock_model()
+  ral.reset();        // mirror and desired = reset values
+  adapter = apb_reg_adapter::type_id::create("adapter");
+endfunction
+
+function void my_env::connect_phase(uvm_phase phase);
+  ral.default_map.set_sequencer(agent.sqr, adapter);
+endfunction
+```
 
 **Checklist before moving on:**
-- [ ] You understand the hierarchy: `uvm_reg_block` → `uvm_reg_map` → `uvm_reg` → `uvm_reg_field`.
-- [ ] You can explain why `uvm_reg_map` is necessary to bridge physical bus addresses.
-- [ ] You know the adapter's two key translation methods (`reg2bus` / `bus2reg`).
+- [ ] You can state the ownership: the block owns registers and maps; maps reference registers; registers own fields.
+- [ ] You can predict, for each call in the table above, whether desired, mirrored and the DUT change.
+- [ ] You know the adapter's two methods, who calls them, and where read data comes from.
+- [ ] You configure hardware-driven fields as volatile and know what that does to `mirror(UVM_CHECK)`.
 - [ ] You understand why generated RAL files should be treated as read-only.
 
 ## Push Further
+- **Policies beyond RW/RO:** In the visual's Sandbox, select `LAB` and switch its field through all 25 policies. Notice that `set()` and the prediction both model the *effect* of the write (W1T toggles, WS sets all bits), and that write-only fields are never predicted on a read or compared.
 - **Formal tie-in:** Reuse the RAL spec to generate SVA properties that enforce access policies and reset expectations without writing manual assertions.
-- **Team governance:** Always treat the generated RAL model as read-only. Avoid hand-tweaking the generated files.
 - **Sub-blocks:** Nest `uvm_reg_block` instances to model SoC-level register hierarchies with sub-maps and address translation.
 
 ## Practice & Reinforce
-- Next: Move onto adapters, predictors, and debugging workflows in [A-UVM-4B: Advanced RAL Techniques](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index).
+
+### Retrieval check: no animation allowed
+
+<Quiz
+  questions={[
+    {
+      question: "CTRL has EN, IE and MODE (RW) in bits [3:0] and RSVD (RO) in [31:4]. A predictor is connected. After ral.CTRL.write(status, 'hFFFF_FFFF), what does get_mirrored_value() return?",
+      answers: [
+        { text: "'hFFFF_FFFF", correct: false },
+        { text: "'h0000_000F", correct: true },
+        { text: "'h0000_0000", correct: false },
+        { text: "'hFFFF_FFF0", correct: false }
+      ],
+      explanation: "The predictor applies each field's policy: RW fields take the written bits, the RO field keeps its value (0)."
+    },
+    {
+      question: "With a working predictor: ral.CTRL.set('h5); ral.CTRL.update(status); ral.CTRL.set('h5); ral.CTRL.update(status); How many bus writes happen?",
+      answers: [
+        { text: "2", correct: false },
+        { text: "1", correct: true },
+        { text: "0", correct: false }
+      ],
+      explanation: "After the first update() the mirror equals the desired value, so needs_update() is 0 and the second update() returns without a bus access."
+    },
+    {
+      question: "No predictor and auto-predict off. After ral.CTRL.poke(status, 'h3), what does get_mirrored_value() return?",
+      answers: [
+        { text: "'h0: nothing predicted the poke", correct: false },
+        { text: "'h3: poke() calls do_predict() itself", correct: true },
+        { text: "'h3, but only after you call predict()", correct: false }
+      ],
+      explanation: "poke() and peek() update the mirror themselves after the backdoor access. Only a bus-monitor predictor misses them, because no transfer appears on the bus."
+    },
+    {
+      question: "A hardware-driven status field is configured with volatile = 1. Hardware changes it, then the test calls mirror(status, UVM_CHECK). What happens?",
+      answers: [
+        { text: "UVM_ERROR: the field's mirror is stale", correct: false },
+        { text: "The field is skipped by the compare (UVM_NO_CHECK); prediction still updates its mirror", correct: true },
+        { text: "mirror() skips the bus read for volatile registers", correct: false }
+      ],
+      explanation: "configure() sets the compare mode of a volatile field to UVM_NO_CHECK. Use set_compare(UVM_CHECK) if you really want it compared."
+    },
+    {
+      question: "Which argument of uvm_reg::configure(blk_parent, regfile_parent, hdl_path) sets the register's backdoor HDL path?",
+      answers: [
+        { text: "The first", correct: false },
+        { text: "The second", correct: false },
+        { text: "The third", correct: true }
+      ],
+      explanation: "The second argument is an optional uvm_reg_file parent. The third is the HDL path, which configure() passes to add_hdl_path_slice()."
+    }
+  ]}
+/>
+
+- Next: Move onto prediction strategies, the adapter/predictor debug workflow and backdoor access in [A-UVM-4B: Advanced RAL Techniques](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index).
+
+## References & Next Topics
+- IEEE 1800.2-2020, Clause 18 (register model classes) and Clause 19 (adapter, predictor, register sequences).
+- Accellera uvm-core 2020.3.1 reference implementation, `src/reg/`: `uvm_reg_field.svh` (policies, `set`, prediction), `uvm_reg.svh` (`write`, `update`, `mirror`, `peek`, `poke`), `uvm_reg_map.svh` (`set_auto_predict`, adapter calls).
+- Next: [A-UVM-4B: Advanced RAL Techniques](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index).

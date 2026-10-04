@@ -19,7 +19,7 @@ In this module, we will dissect the most common AXI design flaws, why they cause
 - **Destination Policy:** A slave may wait for `VALID` before asserting `READY`; cross-channel gating is risky but not automatically a protocol violation.
 - **Liveness:** Bounded `READY` latency belongs to an integration or QoS contract, not the base AXI handshake rules.
 - **Cyclic Deadlocks:** Poor interconnect topology can cause traffic jams where multiple masters block each other in a circle.
-- **4KB Boundary Violations:** Crossing a 4KB page boundary in a single burst causes slave addressing errors and data corruption.
+- **4KB Boundary Violations:** An INCR burst that crosses a 4KB boundary can run past the slave it was routed to (IHI0022E A3.4.1). Check INCR bursts only, from the aligned start address.
 </QuickTake>
 
 ---
@@ -110,29 +110,33 @@ AXI enforces a strict rule: **A single burst must not cross a 4 Kilobyte (0x1000
 
 ### Why does this rule exist?
 
-In modern systems with Memory Management Units (MMUs), physical memory is divided into 4KB pages.
-If a burst starts at address `0x0FF0` and is 64 bytes long, it will cross into `0x1000`.
-- Page 0 (ends at `0x0FFF`) might be mapped to physical DRAM.
-- Page 1 (starts at `0x1000`) might be unmapped, or mapped to a read-only peripheral.
-
-If the AXI interconnect allowed the burst to cross the boundary, the hardware would have to pause the burst in the middle, check the MMU, potentially trigger a software page fault, and then resume. This is too complex for high-speed hardware.
+The spec gives two reasons (IHI0022E A3.4.1): the rule prevents a burst from crossing a boundary between two slaves, and it limits the number of address increments a slave must support.
+So an interconnect can decode a whole burst from its start address, and a slave only needs a 12-bit incrementer.
+If a burst starts at address `0x0FF0` and is 64 bytes long, it crosses into `0x1000`, which may belong to a different slave.
 
 ### The Pitfall
 
-If a Master issues a burst that crosses a 4KB boundary, the slave or interconnect will return an **`SLVERR`** or **`DECERR`**, or worse, it will wrap the address incorrectly and corrupt data.
+The protocol does not define what happens when a master breaks the rule. A typical interconnect routes the whole burst by its start address, so the beats past `0x1000` reach the first slave. Depending on the slave, they alias onto its own addresses, get an `SLVERR`, or silently corrupt data. The other slave never sees them.
 
 ### The Verification Check
 
 Your monitor or scoreboard should catch this immediately:
 
 ```systemverilog
+// [Protocol IHI0022E A3.4.1] Only INCR bursts can cross: a legal WRAP stays
+// inside its wrap region and a FIXED burst repeats one address.
 function void check_4kb_boundary(axi_transaction txn);
-  bit [31:0] start_addr = txn.addr;
-  bit [31:0] end_addr = txn.addr + (txn.len + 1) * (1 << txn.size) - 1;
-  
+  bit [31:0] aligned_addr, end_addr;
+  if (txn.burst != 2'b01) return;  // INCR only
+
+  // Only the first transfer may be unaligned, and it does not use the bytes
+  // below txn.addr, so count from the aligned address.
+  aligned_addr = (txn.addr >> txn.size) << txn.size;
+  end_addr     = aligned_addr + (txn.len + 1) * (1 << txn.size) - 1;
+
   // If the top 20 bits change, we crossed a 4KB boundary
-  if ((start_addr & 32'hFFFF_F000) != (end_addr & 32'hFFFF_F000)) begin
-    `uvm_error("AXI_VIOLATION", $sformatf("Burst crossed 4KB boundary! Start: %0h, End: %0h", start_addr, end_addr))
+  if ((txn.addr & 32'hFFFF_F000) != (end_addr & 32'hFFFF_F000)) begin
+    `uvm_error("AXI_VIOLATION", $sformatf("INCR burst crossed 4KB boundary! Start: %0h, End: %0h", txn.addr, end_addr))
   end
 endfunction
 ```

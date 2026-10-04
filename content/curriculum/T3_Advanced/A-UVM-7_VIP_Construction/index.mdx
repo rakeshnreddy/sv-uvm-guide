@@ -44,10 +44,13 @@ class apb_agent extends uvm_agent;
   endfunction
 
   function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
+    super.build_phase(phase);   // uvm_agent reads an "is_active" config_db entry here
 
     if (!uvm_config_db#(apb_agent_config)::get(this, "", "cfg", cfg))
       `uvm_fatal("NO_CFG", "Agent config not found in config_db")
+
+    // One source of truth: the config object decides, get_is_active() reports it
+    is_active = cfg.is_active;
 
     // Monitor is ALWAYS built (both active and passive mode)
     monitor = apb_monitor::type_id::create("monitor", this);
@@ -56,7 +59,7 @@ class apb_agent extends uvm_agent;
     coverage = apb_coverage::type_id::create("coverage", this);
 
     // Driver and sequencer are only built in ACTIVE mode
-    if (cfg.is_active == UVM_ACTIVE) begin
+    if (get_is_active() == UVM_ACTIVE) begin
       driver    = apb_driver::type_id::create("driver", this);
       sequencer = apb_sequencer::type_id::create("sequencer", this);
     end
@@ -68,8 +71,8 @@ class apb_agent extends uvm_agent;
     // Monitor analysis port → coverage collector
     monitor.ap.connect(coverage.analysis_export);
 
-    // Driver ↔ sequencer connection (active mode only)
-    if (cfg.is_active == UVM_ACTIVE) begin
+    // Driver ↔ sequencer connection (active mode only: in passive mode both handles are null)
+    if (get_is_active() == UVM_ACTIVE) begin
       driver.seq_item_port.connect(sequencer.seq_item_export);
     end
   endfunction
@@ -80,6 +83,9 @@ endclass
 
 ```systemverilog
 interface apb_if (input logic pclk, input logic preset_n);
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+
   logic        psel;
   logic        penable;
   logic        pwrite;
@@ -90,30 +96,33 @@ interface apb_if (input logic pclk, input logic preset_n);
   logic        pslverr;
 
   // ------ Protocol checker assertions ------
+  // Reported through UVM so they count in the UVM_ERROR total, and switchable
+  // for error-injection tests that break the protocol on purpose.
+  bit checks_enable = 1;
 
-  // SETUP phase: PSEL must be asserted before PENABLE
-  property p_setup_before_enable;
-    @(posedge pclk) disable iff (!preset_n)
-    $rose(psel) |-> !penable;
+  // A SETUP cycle (PSEL=1, PENABLE=0) is always followed by an ACCESS cycle
+  property p_setup_then_access;
+    @(posedge pclk) disable iff (!preset_n || !checks_enable)
+    (psel && !penable) |=> (psel && penable);
   endproperty
-  assert property (p_setup_before_enable)
-    else $error("APB PROTOCOL VIOLATION: PENABLE asserted without SETUP phase");
+  assert property (p_setup_then_access)
+    else `uvm_error("APB_SVA", "SETUP cycle not followed by ACCESS")
 
-  // ACCESS phase: PSEL must remain stable during ACCESS
-  property p_psel_stable_during_access;
-    @(posedge pclk) disable iff (!preset_n)
-    (psel && penable && !pready) |=> psel;
+  // PENABLE rises only one cycle after a SETUP cycle
+  property p_enable_needs_setup;
+    @(posedge pclk) disable iff (!preset_n || !checks_enable)
+    $rose(penable) |-> $past(psel && !penable);
   endproperty
-  assert property (p_psel_stable_during_access)
-    else $error("APB PROTOCOL VIOLATION: PSEL deasserted during ACCESS phase");
+  assert property (p_enable_needs_setup)
+    else `uvm_error("APB_SVA", "PENABLE asserted without a preceding SETUP cycle")
 
-  // PADDR must remain stable during a transfer
-  property p_addr_stable;
-    @(posedge pclk) disable iff (!preset_n)
-    (psel && penable && !pready) |=> $stable(paddr);
+  // While the slave waits (PREADY=0), the master holds the transfer stable
+  property p_access_stable;
+    @(posedge pclk) disable iff (!preset_n || !checks_enable)
+    (psel && penable && !pready) |=> (psel && penable && $stable({paddr, pwrite, pwdata}));
   endproperty
-  assert property (p_addr_stable)
-    else $error("APB PROTOCOL VIOLATION: PADDR changed during transfer");
+  assert property (p_access_stable)
+    else `uvm_error("APB_SVA", "PSEL, PENABLE, PADDR, PWRITE or PWDATA changed during a wait state")
 
   // ------ Clocking blocks for driver/monitor ------
   clocking driver_cb @(posedge pclk);
@@ -129,6 +138,8 @@ interface apb_if (input logic pclk, input logic preset_n);
   modport monitor_mp (clocking monitor_cb, input pclk, preset_n);
 endinterface
 ```
+
+> **Why not `$error`?** A plain `$error` goes to the simulator, not to the UVM report server. The UVM summary still says `UVM_ERROR : 0`, and a regression that only checks that line passes with protocol violations. `` `uvm_error `` works in an interface once it imports `uvm_pkg` (it calls the global `uvm_report_error`). Tests that inject protocol errors clear `checks_enable` through the virtual interface, or demote the `APB_SVA` id with a report catcher, so the deliberate violation does not fail the test.
 
 ## Passive vs Active Agent Mode
 
@@ -156,6 +167,12 @@ class apb_agent_config extends uvm_object;
   endfunction
 endclass
 ```
+
+**One mechanism, two places to set it.** `uvm_agent` has an `is_active` field (default `UVM_ACTIVE`), and `uvm_agent::build_phase` fills it from a config_db entry named `"is_active"` if a test set one (uvm-core `uvm_agent.svh`). This agent copies `cfg.is_active` into that field right after `super.build_phase()`, so its own code, and anyone else, asks `get_is_active()` and gets one answer. A test configures this VIP through its config object; a VIP without a config object is configured with `uvm_config_db#(uvm_active_passive_enum)::set(..., "is_active", UVM_PASSIVE)`. Read the VIP's documentation to know which.
+
+Predict which components exist after `build_phase` in passive mode, then switch levels. Under "break the agent", forget `super.build_phase()` or the `connect_phase` guard and watch what fails.
+
+<VIPReuseVisualizer />
 
 **When to use passive mode:**
 - Monitoring traffic between two DUT-internal interfaces
@@ -299,7 +316,7 @@ Commercial VIP requires runtime licenses. CI pipelines must handle license check
         "In the scoreboard's compare function"
       ],
       correctAnswer: 2,
-      explanation: "Protocol assertions belong in the interface definition as concurrent SVA properties. They fire continuously on every clock edge regardless of test scenario, catching protocol violations even when no test-specific checks are active. This ensures protocol compliance monitoring is always on."
+      explanation: "Protocol assertions belong in the interface definition as concurrent SVA properties. They check every clock edge whatever the test does, including in passive reuse where no driver exists. Two details make them usable in a VIP: report through `uvm_error so the UVM summary counts them, and provide an enable knob for error-injection tests."
     }
   ]}
 />

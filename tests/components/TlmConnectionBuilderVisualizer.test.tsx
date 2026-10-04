@@ -1,117 +1,85 @@
-import React from 'react';
-import { render, screen, fireEvent } from '@testing-library/react';
-import { describe, it, expect, vi } from 'vitest';
-import { TlmConnectionBuilderVisualizer } from '@/components/visualizers/TlmConnectionBuilderVisualizer';
+import React from "react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-describe('TlmConnectionBuilderVisualizer', () => {
-  it('renders without crashing and displays the builder', () => {
+import { TlmConnectionBuilderVisualizer } from "@/components/visualizers/TlmConnectionBuilderVisualizer";
+
+const endpoint = (id: string) => screen.getByRole("button", { name: new RegExp(`^${id.replace(/\./g, "\\.")} \\(`) });
+const connect = (from: string, to: string) => {
+  fireEvent.click(endpoint(from));
+  fireEvent.click(endpoint(to));
+};
+const scenario = (name: string) => fireEvent.click(within(screen.getByRole("radiogroup", { name: "Scenario" })).getByRole("radio", { name: name }));
+
+describe("TlmConnectionBuilderVisualizer", () => {
+  it("accepts port.connect(imp) and generates the agent's connect_phase code", () => {
     render(<TlmConnectionBuilderVisualizer />);
-    expect(screen.getByTestId('tlm-builder')).toBeInTheDocument();
-    expect(screen.getByText('TLM Connection Builder')).toBeInTheDocument();
+    connect("drv.seq_item_port", "sqr.seq_item_export");
+    expect(screen.getByTestId("connect-verdict")).toHaveTextContent("✓ Connected.");
+    const code = screen.getByRole("list", { name: "Generated connect_phase code" });
+    expect(within(code).getByText("drv.seq_item_port.connect(sqr.seq_item_export);")).toBeInTheDocument();
+    expect(within(code).getByText("// bus_agent::connect_phase")).toBeInTheDocument();
   });
 
-  it('renders all component nodes for the default scenario (Basic Agent)', () => {
+  it("rejects imp.connect(port) with uvm-core's message and an explanation", () => {
     render(<TlmConnectionBuilderVisualizer />);
-    expect(screen.getByTestId('node-sequencer')).toBeInTheDocument();
-    expect(screen.getByTestId('node-driver')).toBeInTheDocument();
-    expect(screen.getByTestId('node-monitor')).toBeInTheDocument();
-    expect(screen.getByTestId('node-scoreboard')).toBeInTheDocument();
+    connect("sqr.seq_item_export", "drv.seq_item_port");
+    const verdict = screen.getByTestId("connect-verdict");
+    expect(verdict).toHaveTextContent("UVM_ERROR. Not connected.");
+    expect(verdict).toHaveTextContent("[Connection Error] Cannot call an imp port's connect method.");
+    expect(verdict).toHaveTextContent(/Why:/);
+    expect(screen.getByText("// no connect() calls yet")).toBeInTheDocument();
   });
 
-  it('accepts a valid connection (port → export)', () => {
+  it("accepts hierarchical promotion child port → parent port and writes it in the parent", () => {
     render(<TlmConnectionBuilderVisualizer />);
-    // drv_port (port) → sqr_export (export) should be valid
-    fireEvent.click(screen.getByTestId('port-drv_port'));
-    fireEvent.click(screen.getByTestId('port-sqr_export'));
-
-    // A connection line should appear
-    expect(screen.getByTestId('connection-drv_port-sqr_export')).toBeInTheDocument();
-    // No error message
-    expect(screen.queryByTestId('error-message')).not.toBeInTheDocument();
+    connect("mon.ap", "agt.ap");
+    expect(screen.getByTestId("connect-verdict")).toHaveTextContent("✓ Connected.");
+    expect(within(screen.getByRole("list", { name: "Generated connect_phase code" })).getByText("mon.ap.connect(ap);")).toBeInTheDocument();
   });
 
-  it('rejects an incompatible connection (port → analysis_port) with error', () => {
+  it("flags a different interface family as a compile error", () => {
     render(<TlmConnectionBuilderVisualizer />);
-    // drv_port (port) → mon_ap (analysis_port) should be invalid
-    fireEvent.click(screen.getByTestId('port-drv_port'));
-    fireEvent.click(screen.getByTestId('port-mon_ap'));
-
-    // Error message should appear
-    expect(screen.getByTestId('error-message')).toBeInTheDocument();
-    // No connection should be created
-    expect(screen.queryByTestId('connection-drv_port-mon_ap')).not.toBeInTheDocument();
+    connect("drv.seq_item_port", "scb.item_imp");
+    expect(screen.getByTestId("connect-verdict")).toHaveTextContent("Compile error. Not connected.");
   });
 
-  it('Check Connections button highlights missing connections', () => {
+  it("hides elaboration results until the learner runs to end_of_elaboration, then reports min_size errors", () => {
     render(<TlmConnectionBuilderVisualizer />);
-
-    // Click Check without any connections made
-    fireEvent.click(screen.getByTestId('btn-check'));
-
-    // Validation result should show fail
-    const result = screen.getByTestId('validation-result');
-    expect(result).toBeInTheDocument();
-    expect(result).toHaveTextContent(/Missing connections/);
+    scenario("Env with an analysis FIFO");
+    connect("agt.ap", "fifo.analysis_export");
+    expect(screen.queryByLabelText("Simulation log")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Run to end_of_elaboration" }));
+    const log = screen.getByLabelText("Simulation log");
+    expect(log).toHaveTextContent("uvm_test_top.env.scb.get_port [Connection Error] connection count of 0 does not meet required minimum of 1");
+    expect(log).toHaveTextContent("[BUILDERR] stopping due to build errors");
   });
 
-  it('Check Connections shows pass when all connections are correct', () => {
+  it("the shown solution passes elaboration and meets every goal", () => {
     render(<TlmConnectionBuilderVisualizer />);
-
-    // Make both expected connections for Basic Agent scenario
-    // 1. drv_port → sqr_export
-    fireEvent.click(screen.getByTestId('port-drv_port'));
-    fireEvent.click(screen.getByTestId('port-sqr_export'));
-    // 2. mon_ap → sb_imp
-    fireEvent.click(screen.getByTestId('port-mon_ap'));
-    fireEvent.click(screen.getByTestId('port-sb_imp'));
-
-    fireEvent.click(screen.getByTestId('btn-check'));
-
-    const result = screen.getByTestId('validation-result');
-    expect(result).toHaveTextContent(/All connections are correct/);
+    scenario("Promotion through two boundaries");
+    fireEvent.click(screen.getByRole("button", { name: "Show a solution" }));
+    fireEvent.click(screen.getByRole("button", { name: "Run to end_of_elaboration" }));
+    expect(screen.getByText(/every port and export reaches an allowed number of imps/)).toBeInTheDocument();
+    const goals = screen.getByRole("list", { name: "Goals" });
+    expect(within(goals).getAllByText("✓", { exact: false })).toHaveLength(3);
   });
 
-  it('Show Solution button draws all expected connections', () => {
+  it("spot-the-bug mode gates the outcome behind a prediction", () => {
     render(<TlmConnectionBuilderVisualizer />);
-
-    fireEvent.click(screen.getByTestId('btn-solution'));
-
-    // Both expected connections for Basic Agent should appear
-    expect(screen.getByTestId('connection-drv_port-sqr_export')).toBeInTheDocument();
-    expect(screen.getByTestId('connection-mon_ap-sb_imp')).toBeInTheDocument();
-
-    // Validation should show pass
-    expect(screen.getByTestId('validation-result')).toHaveTextContent(/All connections are correct/);
+    fireEvent.click(screen.getByRole("radio", { name: "Spot the bug" }));
+    expect(screen.queryByLabelText("Simulation log")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("radio", { name: /Cannot call an imp port's connect method/ }));
+    fireEvent.click(screen.getByRole("button", { name: /lock in prediction/i }));
+    expect(screen.getByText(/Correct\./)).toBeInTheDocument();
+    expect(screen.getByLabelText("Simulation log")).toHaveTextContent("Cannot call an imp port's connect method");
   });
 
-  it('scenario dropdown changes the displayed components', () => {
+  it("endpoint buttons are keyboard reachable real buttons with pressed state", () => {
     render(<TlmConnectionBuilderVisualizer />);
-
-    // Switch to "Scoreboard Checker" scenario (index 1)
-    const select = screen.getByTestId('scenario-select');
-    fireEvent.change(select, { target: { value: '1' } });
-
-    // Should now show FIFO node instead of sequencer/driver
-    expect(screen.getByTestId('node-fifo')).toBeInTheDocument();
-    expect(screen.queryByTestId('node-sequencer')).not.toBeInTheDocument();
-    expect(screen.queryByTestId('node-driver')).not.toBeInTheDocument();
-
-    // Description should update
-    expect(screen.getByTestId('scenario-description')).toHaveTextContent(/FIFO/);
-  });
-
-  it('Reset button clears all connections and state', () => {
-    render(<TlmConnectionBuilderVisualizer />);
-
-    // Make a connection
-    fireEvent.click(screen.getByTestId('port-drv_port'));
-    fireEvent.click(screen.getByTestId('port-sqr_export'));
-    expect(screen.getByTestId('connection-drv_port-sqr_export')).toBeInTheDocument();
-
-    // Reset
-    fireEvent.click(screen.getByTestId('btn-reset'));
-
-    // Connection should be gone
-    expect(screen.queryByTestId('connection-drv_port-sqr_export')).not.toBeInTheDocument();
+    const btn = endpoint("mon.ap");
+    expect(btn.tagName).toBe("BUTTON");
+    fireEvent.click(btn);
+    expect(btn).toHaveAttribute("aria-pressed", "true");
   });
 });

@@ -4,10 +4,6 @@ description: "Adopt the destructive testing philosophy and explore the methodolo
 flashcards: "F1B_Verification_Mindset"
 ---
 
-import { VerificationMethodologiesDiagram } from '@/components/visuals';
-import FirstBugHuntGame from '@/components/curriculum/f1/FirstBugHuntGame';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-
 ## Quick Take
 - **What it is:** The mindset shift from "make it work" (design) to "make it fail" (verification) — and the systematic methodologies that make destructive thinking productive.
 - **Why it matters:** Bugs hide where designers don't look. Verification engineers are paid to think adversarially and measure their progress quantitatively.
@@ -20,18 +16,18 @@ The most important tool in verification isn't SystemVerilog—it's your mindset.
 *   **Designers are Constructive:** They build pathways for data to flow. They ask, "How do I make this work?"
 *   **Verifiers are Destructive:** They look for cracks in the pavement. They ask, "How can I make this fail?"
 
-<Card className="my-6 border-l-4 border-l-purple-500 bg-slate-900/50">
+<Card className="my-6 border-l-4 border-l-purple-500">
   <CardHeader>
-    <CardTitle className="text-lg text-purple-300">The Conflict of Interest</CardTitle>
+    <CardTitle className="text-lg text-purple-700 dark:text-purple-300">The Conflict of Interest</CardTitle>
   </CardHeader>
   <CardContent className="grid gap-4 md:grid-cols-2">
     <div>
-      <h4 className="font-semibold text-sky-300 mb-2">Designer's View</h4>
-      <p className="text-sm text-slate-300">"The spec says the burst length is 4, 8, or 16. I implemented logic for those."</p>
+      <h4 className="mb-2 font-semibold text-sky-700 dark:text-sky-300">Designer's View</h4>
+      <p className="text-sm text-muted-foreground">"The spec says the burst length is 4, 8, or 16. I implemented logic for those."</p>
     </div>
     <div>
-      <h4 className="font-semibold text-amber-300 mb-2">Verifier's View</h4>
-      <p className="text-sm text-slate-300">"What happens if I send a burst length of 5? Or 0? Or 255? Does the controller hang? Does it corrupt memory?"</p>
+      <h4 className="mb-2 font-semibold text-amber-700 dark:text-amber-300">Verifier's View</h4>
+      <p className="text-sm text-muted-foreground">"What happens if I send a burst length of 5? Or 0? Or 255? Does the controller hang? Does it corrupt memory?"</p>
     </div>
   </CardContent>
 </Card>
@@ -52,7 +48,7 @@ When handed any new feature or block to verify, systematically ask:
 
 ## Verification Methodologies
 
-How do we systematically break things?
+How do we systematically break things? Step through the methods below and notice which design representation each one runs on. Emulation, for example, runs the RTL, not the gate-level netlist.
 
 <VerificationMethodologiesDiagram />
 
@@ -100,17 +96,17 @@ If you are generating random tests, how do you know when you are done?
 
 ### The Coverage Closure Trap
 
-Coverage closure follows a classic diminishing-returns curve:
+Coverage closure follows a classic diminishing-returns curve. The stages below show its typical shape; where the boundaries fall varies by project:
 
-- **0–80% coverage:** Achieved quickly with basic random stimulus.
-- **80–95% coverage:** Requires constrained sequences targeting specific scenarios.
-- **95–100% coverage:** Demands highly targeted directed sequences, constraint tuning, or formal proofs. This "last mile" consumes a disproportionate amount of the schedule.
+- **The first large chunk (often most of the goals):** reached quickly with basic random stimulus.
+- **The middle stretch:** needs constrained sequences that target specific scenarios.
+- **The last few percent:** demand targeted directed sequences, constraint tuning, or formal proofs. This "last mile" consumes a disproportionate share of the schedule.
 
 Understanding this curve is critical for planning. Teams that don't plan for the last mile end up scrambling at tape-out.
 
 ## Interactive: Your First Bug Hunt
 
-You are the verifier. The designer has handed you a simple FIFO (First-In-First-Out) buffer. Your job is to break it.
+You are the verifier. The designer has handed you a 3-bit up counter and a one-line spec. Compare the spec with the waveform before you look at the code: find the first edge that is wrong, then the line that caused it, then pick the assertion that would have caught it.
 
 <FirstBugHuntGame />
 
@@ -130,52 +126,100 @@ Not all bugs are created equal. Understanding bug categories helps prioritize ve
 | **Performance** | Arbiter starvation under heavy load | Medium | Performance counters + assertions |
 | **Power** | Retention register corruption after power-down | Critical | Power-aware simulation (UPF) |
 
-### Real-World War Story: The One-Hot FSM Bug
+### War Story (composite): The One-Hot FSM Bug
 
 A verification team achieved 100% code coverage on an FSM. All states were visited, all transitions exercised. The chip taped out.
 
-In the lab, the FSM occasionally entered an **illegal state** — two bits of the one-hot encoding were set simultaneously. Why didn't code coverage catch it?
+In the lab, the FSM occasionally entered an **illegal state**: two bits of the one-hot encoding were set at once. Why didn't code coverage catch it?
 
-Because code coverage measures what the *existing* code does. The FSM had no default/illegal-state handler — there was no code *to cover*. A single SVA assertion `assert property (one_hot(state))` would have caught it during simulation.
+Because code coverage measures what the *existing* code does. The FSM had no default or illegal-state handler, so there was no code *to cover*. One concurrent assertion, `assert property (@(posedge clk) $onehot(state));`, would have flagged the illegal state the moment any simulation produced it. A formal tool, which explores every reachable state, could also have proved it unreachable or shown how to reach it. (`$onehot` is a built-in system function, IEEE 1800-2023 §20.9. A concurrent assertion also needs a clock, given here by `@(posedge clk)`.)
 
-**Lesson:** Code coverage tells you what you tested. Functional coverage and assertions tell you what you *should have* tested.
+**Lesson:** Code coverage tells you what you exercised. Functional coverage and assertions tell you whether the behaviour you *intended* was checked.
+
+
+### Retrieval check
+
+<Quiz
+  questions={[
+    {
+      question: "A team reports 100% code coverage on an FSM. What can they conclude?",
+      answers: [
+        { text: "Every line that exists ran at least once; behaviour with no code, such as a missing illegal-state handler, is invisible to this metric", correct: true },
+        { text: "The FSM is bug-free", correct: false },
+        { text: "Every requirement in the spec has been tested", correct: false },
+        { text: "Functional coverage is also 100%", correct: false }
+      ],
+      explanation: "Code coverage measures the implementation that exists. Missing features and unchecked intent need functional coverage and assertions."
+    },
+    {
+      question: "Which line checks, on every clock, that state is one-hot?",
+      answers: [
+        { text: "assert property (@(posedge clk) $onehot(state));", correct: true },
+        { text: "assert property (one_hot(state));", correct: false },
+        { text: "cover property (@(posedge clk) $onehot(state));", correct: false },
+        { text: "assert (state == 1);", correct: false }
+      ],
+      explanation: "$onehot is the built-in system function (§20.9), and a concurrent assertion needs a clock. There is no built-in one_hot(). cover only records that the property happened; it never fails. state == 1 checks one specific value, not one-hotness."
+    },
+    {
+      question: "In the bug hunt, the counter wraps at 6 and never reaches 7. Why does assert property (@(posedge clk) disable iff (rst) count == 3'd7 |=> count == 3'd0); never fail on it?",
+      answers: [
+        { text: "Its antecedent never matches, so every attempt passes vacuously", correct: true },
+        { text: "|=> checks the consequent in the same cycle", correct: false },
+        { text: "disable iff (rst) hides every failure", correct: false },
+        { text: "The property is not valid SystemVerilog", correct: false }
+      ],
+      explanation: "No antecedent match means the implication succeeds vacuously (§16.12.7, §16.14.8). A checker that never triggers proves nothing, so pair important assertions with cover property on their antecedent."
+    },
+    {
+      question: "Which statement about verification and validation is accurate?",
+      answers: [
+        { text: "Verification checks the design against its spec; validation checks that the product meets real needs, and it starts before silicon, for example by running software on an emulator", correct: true },
+        { text: "Verification is always pre-silicon and validation is always post-silicon", correct: false },
+        { text: "They are two names for the same activity", correct: false },
+        { text: "Validation only checks timing", correct: false }
+      ],
+      explanation: "The split is about the question asked (built right vs. right thing to build), not about the phase. Pre-silicon validation on emulators and FPGA prototypes is standard practice."
+    }
+  ]}
+/>
 
 ## Interview Questions
 
-<Card className="mt-8 border-slate-700 bg-slate-900">
+<Card className="mt-8">
   <CardHeader>
     <CardTitle>Ready for the Interview?</CardTitle>
   </CardHeader>
   <CardContent className="space-y-4">
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        What is the difference between Verification and Validation?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">What is the difference between Verification and Validation?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
         <p><strong>Verification</strong> answers "Are we building the product right?" (Does RTL match Spec?).</p>
         <p><strong>Validation</strong> answers "Are we building the right product?" (Does the chip meet the customer's needs in the real world?).</p>
-        <p><strong>Deeper point:</strong> Verification is pre-silicon (simulation, formal, emulation). Validation is post-silicon (lab testing with real software). A design can pass verification perfectly but fail validation if the specification itself was wrong.</p>
+        <p><strong>Deeper point:</strong> Verification is mostly pre-silicon (simulation, formal, emulation). Validation is not only post-silicon: teams validate before tape-out by running real software on emulators and FPGA prototypes, then continue in the lab on real chips. A design can pass verification perfectly but fail validation if the specification itself was wrong.</p>
       </div>
     </details>
 
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        If you have 100% Code Coverage, are you done?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">If you have 100% Code Coverage, are you done?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
         <p>No. Code coverage only tells you that the tests exercised the code that <em>exists</em>. It cannot tell you about missing features (code that <em>should</em> be there but isn't). You need <strong>Functional Coverage</strong> to verify that all requirements from the spec have been tested.</p>
         <p><strong>Follow-up trap:</strong> An interviewer may ask "What about 100% functional coverage?" Even that isn't sufficient — your coverage model might have gaps if the test plan missed requirements from the spec.</p>
       </div>
     </details>
 
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        When would you use formal verification instead of simulation?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">When would you use formal verification instead of simulation?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
         <p>Formal verification is ideal for:</p>
         <ul className="list-disc pl-5 mt-2 space-y-1">
           <li><strong>Protocol compliance:</strong> Proving VALID/READY handshake rules are never violated.</li>
@@ -187,12 +231,12 @@ Because code coverage measures what the *existing* code does. The FSM had no def
       </div>
     </details>
 
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        How would you approach verifying a block you've never seen before?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">How would you approach verifying a block you've never seen before?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
         <p>Systematic approach:</p>
         <ol className="list-decimal pl-5 mt-2 space-y-1">
           <li><strong>Read the spec</strong> — understand the intended behavior and all the interfaces.</li>
@@ -206,12 +250,12 @@ Because code coverage measures what the *existing* code does. The FSM had no def
       </div>
     </details>
 
-    <details className="group rounded-lg bg-slate-800 p-4 open:bg-slate-800/80">
-      <summary className="flex cursor-pointer items-center justify-between font-medium text-slate-200">
-        What's the difference between a bug found by simulation vs. an assertion?
-        <span className="text-slate-400 transition group-open:rotate-180">▼</span>
+    <details className="group rounded-lg border border-border bg-muted/40 p-4">
+      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
+        <span className="min-w-0 flex-1">What's the difference between a bug found by simulation vs. an assertion?</span>
+        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
       </summary>
-      <div className="mt-4 text-sm text-slate-300 leading-relaxed">
+      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
         <p>A <strong>simulation-found bug</strong> requires checking infrastructure (scoreboard) to compare actual vs. expected outputs — it catches wrong results but often after the damage propagates through the design.</p>
         <p>An <strong>assertion-caught bug</strong> fires at the exact point of violation — it catches protocol/timing errors immediately at the source, making debugging faster. Assertions are also reusable: they check every cycle, every seed, without extra test code.</p>
       </div>
@@ -220,5 +264,6 @@ Because code coverage measures what the *existing* code does. The FSM had no def
 </Card>
 
 ## References & Next Topics
-- Wilson Research Group / Siemens EDA Functional Verification Study
+- Siemens EDA and Wilson Research Group, [2022 IC/ASIC Functional Verification Trend Report](https://verificationacademy.com/topics/planning-measurement-and-analysis/wrg-industry-data-and-trends/2022-siemens-eda-and-wilson-research-group-ic-asic-functional-verification-trend-report/)
+- IEEE 1800-2023: §16 (assertions, including implication and vacuity), §20.9 (`$onehot`)
 - Next: [Why SystemVerilog?](../F1C_Why_SystemVerilog/)

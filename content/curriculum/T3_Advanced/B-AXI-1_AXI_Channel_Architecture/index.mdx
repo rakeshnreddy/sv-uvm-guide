@@ -20,7 +20,8 @@ This architectural difference is what allows AXI to support **outstanding transa
 <QuickTake>
 - AXI has **five channels**: Write Address (AW), Write Data (W), Write Response (B), Read Address (AR), Read Data (R).
 - Each channel uses the same **VALID/READY handshake**: the sender asserts VALID, the receiver asserts READY, and the transfer occurs when both are high on the same clock edge.
-- Channels are **independent** — a write can proceed while a read is stalled.
+- Channels are **independent** — a write can proceed while a read is stalled. Write data may even arrive before its write address.
+- Only three cross-channel dependencies exist: read data after the read address, and (AXI4) the write response after **both** the write-address handshake and the last write-data handshake.
 - The VALID/READY contract has strict rules to prevent **combinatorial loops** and **deadlocks**.
 </QuickTake>
 
@@ -62,19 +63,21 @@ Every AXI channel uses the same handshake protocol.  This is the most important 
 3. The transfer occurs on the clock edge where **both VALID and READY are high**.
 4. Once `VALID` is asserted, the sender **must not de-assert it** until the transfer completes (VALID ∧ READY).
 
+Look at one transfer on the write address channel. Notice that `AWVALID` stays high through the stall and that exactly one column ends in a transfer.
+
 <ProtocolWaveform
-  title="AXI VALID/READY Handshake"
+  title="AXI VALID/READY handshake: one transfer"
   spec={{
     signal: [
-      { name: "ACLK",   wave: "p......" },
-      { name: "VALID",  wave: "01...0." },
-      { name: "READY",  wave: "0.1.0.." },
-      { name: "DATA",   wave: "x=...x.", data: ["D"] },
+      { name: "ACLK", wave: "p....." },
       {},
-      { name: "Transfer", wave: "0..10..", data: ["✓"] }
+      { name: "AWVALID", wave: "01..0." },
+      { name: "AWREADY", wave: "0..10." },
+      { name: "AWADDR", wave: "x=..x.", data: ["0x1000"] },
+      { name: "AWVALID && AWREADY", wave: "0..10." }
     ]
   }}
-  caption="The transfer occurs at the clock edge where both VALID and READY are high simultaneously. VALID must not drop before READY arrives."
+  caption="Each column is one ACLK cycle; a value is sampled at the rising edge that ends its column. AWVALID rises first and holds AWADDR stable through two stalled cycles. The transfer happens at the end of the fourth column, the only edge where AWVALID and AWREADY are both 1 (bottom row). Generated from the course's channel model and checked against IHI0022E A3.2.1."
 />
 
 ### Three Legal Timing Scenarios
@@ -90,30 +93,9 @@ The receiver is pre-emptively signaling it can accept.  This is efficient becaus
 **Scenario C: VALID and READY simultaneously**
 Both assert on the same cycle.  The transfer completes in one cycle.
 
-<ProtocolWaveform
-  title="Three Legal Handshake Orderings"
-  spec={{
-    signal: [
-      { name: "ACLK",  wave: "p........" },
-      {},
-      ["Scenario A",
-        { name: "VALID", wave: "01..0...." },
-        { name: "READY", wave: "0..10...." }
-      ],
-      {},
-      ["Scenario B",
-        { name: "READY", wave: "0....1..." },
-        { name: "VALID", wave: "0....10.." }
-      ],
-      {},
-      ["Scenario C",
-        { name: "VALID", wave: "0......10" },
-        { name: "READY", wave: "0......10" }
-      ]
-    ]
-  }}
-  caption="All three scenarios are legal. The critical rule: once VALID is asserted, it must stay high until READY arrives."
-/>
+A destination may also raise READY early and drop it again before VALID arrives; that is legal too (IHI0022E A3.2.1). Predict the transfer edge in each case, then click `READY` cells to see how the handshake moves. The last scenario is a trace with a bug for you to find.
+
+<AxiChannelHandshakeVisualizer focus="handshake" />
 
 > [!IMPORTANT]
 > **VALID must never depend on READY.**
@@ -142,8 +124,11 @@ If both sides waited for each other, you'd get a combinatorial loop:
 ```
 VALID = f(READY)   // master waits for slave
 READY = f(VALID)   // slave waits for master
-// → circular dependency → simulation hangs or synthesis generates a latch
+// → a combinational loop: it can oscillate or never settle in simulation,
+//   and static timing cannot close it
 ```
+
+IHI0022E A3.2.1 states it directly: "On master and slave interfaces there must be no combinatorial paths between input and output signals."
 
 The spec breaks this loop by forbidding the VALID → READY dependency direction.
 
@@ -155,19 +140,21 @@ Once VALID is asserted:
 
 This guarantees the receiver can safely sample the payload at any time after seeing VALID.
 
+The check has to fire on **every** stalled cycle, not just when VALID rises. A `$rose(valid)` trigger misses back-to-back transfers where VALID stays high from one transfer into the next stall, and it never checks the payload.
+
 ```systemverilog
-// Assertion: VALID must not drop before handshake completes
-property p_valid_stable(valid, ready);
+// IHI0022E A3.2.1: once VALID is 1 it stays 1, with a stable payload,
+// until READY is also 1. Triggered by every stalled cycle.
+property p_hold(valid, ready, payload);
   @(posedge ACLK) disable iff (!ARESETn)
-    $rose(valid) |-> valid throughout (ready [->1]);
+    valid && !ready |=> valid && $stable(payload);
 endproperty
 
-// Apply to all channels
-a_awvalid_stable: assert property (p_valid_stable(AWVALID, AWREADY));
-a_wvalid_stable:  assert property (p_valid_stable(WVALID, WREADY));
-a_bvalid_stable:  assert property (p_valid_stable(BVALID, BREADY));
-a_arvalid_stable: assert property (p_valid_stable(ARVALID, ARREADY));
-a_rvalid_stable:  assert property (p_valid_stable(RVALID, RREADY));
+a_aw_hold: assert property (p_hold(AWVALID, AWREADY, {AWID, AWADDR, AWLEN, AWSIZE, AWBURST}));
+a_w_hold:  assert property (p_hold(WVALID,  WREADY,  {WDATA, WSTRB, WLAST}));
+a_b_hold:  assert property (p_hold(BVALID,  BREADY,  {BID, BRESP}));
+a_ar_hold: assert property (p_hold(ARVALID, ARREADY, {ARID, ARADDR, ARLEN, ARSIZE, ARBURST}));
+a_r_hold:  assert property (p_hold(RVALID,  RREADY,  {RID, RDATA, RRESP, RLAST}));
 ```
 
 ---
@@ -185,38 +172,39 @@ The master sends data beats.  Each beat includes `WSTRB` (write strobe) indicati
 ### Step 3: Write Response Channel (B)
 After the slave has accepted all data beats, it sends a response (`BRESP`) indicating success or failure.
 
+In this write, follow `BVALID`: it rises only after both the AW handshake and the WLAST handshake are behind it.
+
 <ProtocolWaveform
-  title="Complete AXI Write Transaction"
+  title="Complete AXI write transaction"
   spec={{
     signal: [
-      { name: "ACLK",    wave: "p........" },
+      { name: "ACLK", wave: "p......" },
       {},
-      ["AW Channel",
-        { name: "AWVALID", wave: "010......" },
-        { name: "AWREADY", wave: "010......" },
-        { name: "AWADDR",  wave: "x=x......", data: ["0x1000"] }
+      ["AW channel",
+        { name: "AWVALID", wave: "010...." },
+        { name: "AWREADY", wave: "010...." },
+        { name: "AWADDR", wave: "x=x....", data: ["0x1000"] }
       ],
       {},
-      ["W Channel",
-        { name: "WVALID",  wave: "0.1..0..." },
-        { name: "WREADY",  wave: "0.1..0..." },
-        { name: "WDATA",   wave: "x.===x...", data: ["D0", "D1", "D2"] },
-        { name: "WLAST",   wave: "0...10..." }
+      ["W channel",
+        { name: "WVALID", wave: "0.1..0." },
+        { name: "WREADY", wave: "0.1..0." },
+        { name: "WDATA", wave: "x.===x.", data: ["D0", "D1", "D2"] },
+        { name: "WLAST", wave: "x.0.1x." }
       ],
       {},
-      ["B Channel",
-        { name: "BVALID",  wave: "0....010." },
-        { name: "BREADY",  wave: "0....010." },
-        { name: "BRESP",   wave: "x....=x..", data: ["OK"] }
+      ["B channel",
+        { name: "BVALID", wave: "0....10" },
+        { name: "BREADY", wave: "0....10" },
+        { name: "BRESP", wave: "x....=x", data: ["OKAY"] }
       ]
     ]
   }}
-  caption="A 3-beat write burst: address on AW, three data beats on W (with WLAST marking the final beat), and write response on B."
+  caption="A 3-beat write. The address transfers at the end of column 2, the three data beats at the ends of columns 3 to 5 (WLAST on the third), and the response at the end of column 6. BRESP is valid in the same column as BVALID. Generated from the course's channel model and checked against IHI0022E A3.2.1 and A3.3.1."
 />
 
 > [!NOTE]
-> **AW and W are independent.**  The write data can arrive *before* the write address.
-> This is legal in AXI (the spec allows interleaving), though most practical designs send AW first or simultaneously.
+> **AW and W are independent.** IHI0022E A3.3: "the write data can appear at an interface before the write address", for example when the address path has more register stages. It can also appear in the same cycle. This is not *interleaving*: that word means mixing data beats of different writes, which AXI4 removed (A5.4). Many masters send AW first, but a monitor or slave that assumes it is wrong.
 
 ---
 
@@ -230,28 +218,30 @@ The master sends the address and burst parameters.
 ### Step 2: Read Data Channel (R)
 The slave returns data beats with `RRESP` and marks the last beat with `RLAST = 1`.
 
+Notice that `RVALID` waits until after the AR handshake, and that every beat carries its own `RRESP`.
+
 <ProtocolWaveform
-  title="Complete AXI Read Transaction"
+  title="Complete AXI read transaction"
   spec={{
     signal: [
-      { name: "ACLK",    wave: "p........" },
+      { name: "ACLK", wave: "p......" },
       {},
-      ["AR Channel",
-        { name: "ARVALID", wave: "010......" },
-        { name: "ARREADY", wave: "010......" },
-        { name: "ARADDR",  wave: "x=x......", data: ["0x2000"] }
+      ["AR channel",
+        { name: "ARVALID", wave: "010...." },
+        { name: "ARREADY", wave: "010...." },
+        { name: "ARADDR", wave: "x=x....", data: ["0x2000"] }
       ],
       {},
-      ["R Channel",
-        { name: "RVALID",  wave: "0..1..0.." },
-        { name: "RREADY",  wave: "0..1..0.." },
-        { name: "RDATA",   wave: "x..===x..", data: ["D0", "D1", "D2"] },
-        { name: "RRESP",   wave: "x..===x..", data: ["OK", "OK", "OK"] },
-        { name: "RLAST",   wave: "0....10.." }
+      ["R channel",
+        { name: "RVALID", wave: "0..1..0" },
+        { name: "RREADY", wave: "0..1..0" },
+        { name: "RDATA", wave: "x..===x", data: ["D0", "D1", "D2"] },
+        { name: "RRESP", wave: "x..===x", data: ["OKAY", "OKAY", "OKAY"] },
+        { name: "RLAST", wave: "x..0.1x" }
       ]
     ]
   }}
-  caption="A 3-beat read burst: address on AR, then three data beats returned on R with RLAST marking the final beat."
+  caption="A 3-beat read. The address transfers at the end of column 2; the slave returns the three beats at the ends of columns 4 to 6, each with its own RRESP, and RLAST on the last. Generated from the course's channel model and checked against IHI0022E A3.3.1."
 />
 
 ---
@@ -269,31 +259,70 @@ If the slave's write buffer is full, it deasserts `WREADY`.  The master stalls o
 
 This is fundamentally different from AHB, where a single `HREADY` signal stalls the entire bus.
 
-### Channel Ordering Rules
+### Dependencies Between Channels
 
-While channels are independent, there are ordering constraints:
-1. **Write data must not complete before the write address** (the slave needs the address to know where to store data).
-2. **The write response must come after the last write data beat** (the slave can't acknowledge what it hasn't received).
-3. **Read data must come after the read address** (the slave needs to know what to read).
+The channels are independent except for the dependencies in IHI0022E A3.3.1. In any transaction:
 
-These ordering rules are **per-transaction**, not global.  Different transactions (identified by their ID) can interleave freely.
+1. **A source never waits for READY.** The master must not wait for `AWREADY` or `WREADY` before asserting `AWVALID` or `WVALID` (or for `ARREADY` before `ARVALID`). The slave must not wait for `BREADY` or `RREADY` before asserting `BVALID` or `RVALID`.
+2. **A destination may wait for VALID, or not.** The slave can wait for `AWVALID` or `WVALID`, or both, before asserting `AWREADY` or `WREADY`, or assert them earlier.
+3. **Write data may come first.** W can transfer before, with, or after its AW (A3.3).
+4. **Read data follows the read address.** The slave must wait for both `ARVALID` and `ARREADY` before asserting `RVALID`.
+5. **The write response follows both the address and the last data beat (AXI4).** The slave must wait for `AWVALID`, `AWREADY`, `WVALID` and `WREADY`, with `WLAST`, before asserting `BVALID`. An AXI3-style slave that accepts all the data and responds before accepting the address is not AXI4 compliant (A3.3.2).
 
-<InteractiveWrapper>
-  <AxiChannelHandshakeVisualizer />
-</InteractiveWrapper>
+These are per-transaction rules. Ordering *between* transactions is set by IDs (B-AXI-3). AXI4 write data is never interleaved: each write's beats are consecutive, in address order (A5.4).
+
+A checker for rules 4 and 5 only needs handshake counters. Each counter adds 1 at every edge where its handshake happens, so at any edge it holds the handshakes of earlier edges:
+
+```systemverilog
+// aw_done, wlast_done, b_done, ar_done, rlast_done: handshake counters
+// IHI0022E A3.3.1 (AXI4 write response dependency)
+a_b_dep: assert property (@(posedge ACLK) disable iff (!ARESETn)
+  BVALID |-> (aw_done > b_done) && (wlast_done > b_done));
+// IHI0022E A3.3.1 (read data after the read address)
+a_r_dep: assert property (@(posedge ACLK) disable iff (!ARESETn)
+  RVALID |-> (ar_done > rlast_done));
+```
+
+Try these rules on full channel traces. Predict, then change the READY patterns; the last scenario hides a dependency bug.
+
+<AxiChannelHandshakeVisualizer />
+
+<VisualRecap
+  title="The handshake and its three dependencies"
+  rule="A transfer happens at the edge where VALID and READY are both 1. VALID never waits for READY and, once raised, stays up with a stable payload until that edge. Across channels only three things wait: R for the AR handshake, and in AXI4, B for both the AW and the WLAST handshake."
+  code={`valid && !ready |=> valid && $stable(payload);         // every channel
+BVALID |-> (aw_done > b_done) && (wlast_done > b_done); // AXI4
+RVALID |-> (ar_done > rlast_done);`}
+  mistake="Assuming AW always arrives before W. W may come first: a monitor that only collects write data after an AW drops it, and a slave that answers on WLAST alone breaks AXI4."
+  inTestbench="The monitor runs the five channels as independent threads and pairs W bursts with AW in issue order. The protocol checker carries the hold, stability and dependency assertions above."
+>
+  <svg viewBox="0 0 320 130" role="img" aria-label="AW handshake and WLAST handshake both lead to BVALID; AR handshake leads to RVALID; there is no arrow between AW and W." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="8" y="8" width="128" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="16" y="25" fontSize="11" fill="currentColor">✓ AW handshake</text>
+    <rect x="8" y="40" width="128" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="16" y="57" fontSize="11" fill="currentColor">✓ WLAST handshake</text>
+    <path d="M136 20 L176 36 M136 52 L176 36" stroke="currentColor" fill="none" strokeDasharray="5 3" />
+    <text x="182" y="40" fontSize="11" fill="currentColor">then BVALID may rise</text>
+    <rect x="8" y="80" width="128" height="24" rx="4" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+    <text x="16" y="97" fontSize="11" fill="currentColor">✓ AR handshake</text>
+    <path d="M136 92 L176 92" stroke="currentColor" fill="none" strokeDasharray="5 3" />
+    <text x="182" y="96" fontSize="11" fill="currentColor">then RVALID may rise</text>
+    <text x="8" y="124" fontSize="10" fill="currentColor" fillOpacity="0.7">No arrow between AW and W: either may come first.</text>
+  </svg>
+</VisualRecap>
 
 ---
 
 ## 7. Reset Protocol
 
-AXI defines a simple asynchronous reset protocol:
+`ARESETn` is active-LOW. IHI0022E A3.1.2 defines:
 
-1. When `ARESETn` is deasserted (low), all VALID signals must be driven low.
-2. After `ARESETn` is asserted (high), the master must wait at least one clock cycle before asserting any VALID.
-3. The slave must not assert any VALID during reset.
+1. Reset may be **asserted** (driven LOW) asynchronously, but must be **deasserted** synchronously with a rising `ACLK` edge.
+2. While `ARESETn` is LOW, a master drives `ARVALID`, `AWVALID` and `WVALID` LOW, and a slave drives `RVALID` and `BVALID` LOW. Other signals can take any value.
+3. The earliest a master may drive a VALID HIGH is at a rising `ACLK` edge after `ARESETn` is HIGH.
 
 ```systemverilog
-// Assertion: No VALID signals during reset
+// IHI0022E A3.1.2: VALID LOW while reset is asserted (checked at each ACLK edge)
 property p_no_valid_during_reset(valid);
   @(posedge ACLK)
     !ARESETn |-> !valid;
@@ -365,5 +394,16 @@ In the next module, we will dive into AXI burst math — how `AWLEN`, `AWSIZE`, 
     ]}
     correctAnswer="It must hold AWVALID high and keep AWADDR/control signals stable until AWREADY is also high"
     explanation="The stability rule requires that once VALID is asserted, neither it nor the associated payload signals may change until the handshake completes (both VALID and READY high on the same clock edge)."
+  />
+  <QuizQuestion
+    question="All beats of an AXI4 write, including WLAST, have transferred, but the slave has not yet asserted AWREADY. May the slave assert BVALID now?"
+    options={[
+      "Yes: the data is complete, so the response may go",
+      "No: in AXI4, BVALID must wait for both the AW handshake and the WLAST handshake",
+      "Yes, as long as BREADY is already high",
+      "No: write data must never transfer before the write address"
+    ]}
+    correctAnswer="No: in AXI4, BVALID must wait for both the AW handshake and the WLAST handshake"
+    explanation="IHI0022E A3.3.1 (AXI4 write response dependency): the slave must wait for AWVALID, AWREADY, WVALID and WREADY, with WLAST, before asserting BVALID. Sending the data first is legal (A3.3); answering before the address is accepted is not."
   />
 </Quiz>
