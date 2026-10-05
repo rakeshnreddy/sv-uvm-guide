@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/Button';
 import { ArrowRight, Compass } from 'lucide-react';
 import Link from 'next/link';
 
+import { PLACEMENT_QUIZ_HREF } from '@/lib/site-links';
+
 const taglines = [
   "From Basics to Brilliance in UVM",
   "Your Interactive Guide to SystemVerilog",
@@ -96,10 +98,11 @@ const HeroSection = () => {
               Calibrate the roadmap to your baseline and jump straight to the SystemVerilog and UVM lessons that will help most right now.
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
+              {/* Same label and target as the Practitioner route's call to action (src/lib/learning-paths.ts). */}
               <Button size="lg" asChild>
-                <Link href="/quiz/placement">
-                  Take skill assessment
-                  <ArrowRight className="ml-2 h-5 w-5" />
+                <Link href={PLACEMENT_QUIZ_HREF}>
+                  Find your level
+                  <ArrowRight aria-hidden="true" className="ml-2 h-5 w-5" />
                 </Link>
               </Button>
               <Button size="lg" variant="outline" asChild>

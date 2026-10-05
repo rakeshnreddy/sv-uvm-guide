@@ -15,17 +15,27 @@
  * tests/lib/learning-paths.test.ts runs it on every route.
  *
  * Resolution takes the generated curriculum data and the lab registry as
- * arguments, so this module never bundles them itself. Client components
- * import only types from here; the chosen route and the position on a route
- * live in src/lib/learning-route-state.ts.
+ * arguments. Practice pages are named by route only: their titles and kinds
+ * come from the practice map (getPracticePage in src/lib/practice-links.ts),
+ * so a route and the Practice Hub can never disagree (NB4 request 8). That map
+ * is server data, so client components import only types from here; the
+ * chosen route and the position on a route live in
+ * src/lib/learning-route-state.ts.
  */
 
 import type { Module as CurriculumTier } from '@/lib/curriculum-data';
 import { cleanLessonTitle, lessonHref, lessonKey, moduleCode } from '@/lib/curriculum-overview';
-import { isRouteId, type RouteId } from '@/lib/learning-route-state';
+import { isRouteId, routeAnchor, type RouteId } from '@/lib/learning-route-state';
+import {
+  PRACTICE_KIND_LABELS as PRACTICE_MAP_KIND_LABELS,
+  getPracticePage,
+  type PracticePageDefinition,
+} from '@/lib/practice-links';
+import { EXPERT_INDEX_HREF, INTERVIEW_PREP_HREF, PLACEMENT_QUIZ_HREF } from '@/lib/site-links';
 
 export { isRouteId };
 export type { RouteId };
+export { EXPERT_INDEX_HREF, INTERVIEW_PREP_HREF, PLACEMENT_QUIZ_HREF };
 
 // ---------------------------------------------------------------------------
 // Types
@@ -42,23 +52,28 @@ export interface Milestone {
 
 /**
  * Practice linked from a route step. Labs are named by registry id and take
- * their title from the lab registry; "lesson" items are activities inside a
- * lesson; everything else is a site route.
+ * their title from the lab registry; practice pages (exercises, interactive
+ * models, diagrams, charts and tools) are named by route and take their title
+ * and kind from the practice map; "lesson" items are activities inside a
+ * lesson; the rest are other site routes.
  */
 export type RoutePracticeItem =
   | { kind: 'lab'; labId: string }
+  | { kind: 'page'; href: string }
   | { kind: 'lesson'; module: string; lesson?: string; label: string }
-  | { kind: 'exercise' | 'visualizer' | 'tool' | 'quiz' | 'index' | 'interview'; href: string; label: string };
+  | { kind: 'quiz' | 'index' | 'interview'; href: string; label: string };
 
-export type PracticeKind = RoutePracticeItem['kind'];
+/** A practice page's kind in the practice map: exercise, interactive, diagram, chart or tool. */
+export type PracticePageKind = PracticePageDefinition['kind'];
 
-/** Learner-facing name of each practice kind (shown as text, never as colour alone). */
+/** The kind of a resolved practice item: a page reports its practice-map kind. */
+export type PracticeKind = Exclude<RoutePracticeItem['kind'], 'page'> | PracticePageKind;
+
+/** Learner-facing name of each practice kind (shown as text, never as colour alone). Pages use the practice map's names. */
 export const PRACTICE_KIND_LABELS: Readonly<Record<PracticeKind, string>> = {
+  ...PRACTICE_MAP_KIND_LABELS,
   lab: 'Lab',
   lesson: 'In the lesson',
-  exercise: 'Exercise',
-  visualizer: 'Interactive',
-  tool: 'Tool',
   quiz: 'Quiz',
   index: 'Index',
   interview: 'Interview prep',
@@ -130,18 +145,14 @@ export function milestoneName(id: string): string {
 // ---------------------------------------------------------------------------
 
 const lab = (labId: string): RoutePracticeItem => ({ kind: 'lab', labId });
-const interactive = (href: string, label: string): RoutePracticeItem => ({ kind: 'visualizer', href, label });
-const exercise = (href: string, label: string): RoutePracticeItem => ({ kind: 'exercise', href, label });
+/** A page in the practice map (src/lib/practice-links.ts), by route. */
+const practicePage = (href: string): RoutePracticeItem => ({ kind: 'page', href });
 const inLesson = (module: string, label: string, lesson?: string): RoutePracticeItem => ({
   kind: 'lesson',
   module,
   lesson,
   label,
 });
-
-export const EXPERT_INDEX_HREF = '/curriculum/expert-index';
-export const PLACEMENT_QUIZ_HREF = '/quiz/placement';
-export const INTERVIEW_PREP_HREF = '/interview-prep';
 
 // ---------------------------------------------------------------------------
 // The routes
@@ -179,10 +190,10 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
         ],
         practice: [
           lab('basics-1'),
-          interactive('/practice/visualizations/systemverilog-data-types', 'SystemVerilog Data Types'),
-          interactive('/visualizations/systemverilog-3d', 'SystemVerilog Array Sandbox'),
-          interactive('/practice/visualizations/procedural-blocks', 'Procedural Blocks Simulator'),
-          interactive('/practice/visualizations/concurrency', 'Fork/Join Lab'),
+          practicePage('/practice/visualizations/systemverilog-data-types'),
+          practicePage('/visualizations/systemverilog-3d'),
+          practicePage('/practice/visualizations/procedural-blocks'),
+          practicePage('/practice/visualizations/concurrency'),
         ],
         milestones: ['M0'],
       },
@@ -201,7 +212,7 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
         ],
         practice: [
           inLesson('F3C_Delta_Cycles_and_Race_Conditions', 'Race debug challenge (in F3C)'),
-          interactive('/practice/visualizations/interface-signal-flow', 'Interface Signal Flow'),
+          practicePage('/practice/visualizations/interface-signal-flow'),
         ],
         milestones: ['M1'],
       },
@@ -218,9 +229,9 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
           { id: 'I-SV-5_Synchronization_and_IPC' },
         ],
         practice: [
-          interactive('/practice/visualizations/randomization-explorer', 'Constraint Solution Space'),
-          interactive('/practice/visualizations/coverage-analyzer', 'Coverage Closure Lab'),
-          interactive('/practice/visualizations/assertion-builder', 'SVA Trace Lab'),
+          practicePage('/practice/visualizations/randomization-explorer'),
+          practicePage('/practice/visualizations/coverage-analyzer'),
+          practicePage('/practice/visualizations/assertion-builder'),
           lab('ipc-deadlock'),
         ],
       },
@@ -241,10 +252,10 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
           { id: 'I-UVM-3A_Fundamentals' },
         ],
         practice: [
-          interactive('/practice/visualizations/uvm-architecture', 'Interactive UVM Architecture'),
-          exercise('/exercises/uvm-phase-sorter', 'UVM Phase Sorter'),
-          exercise('/exercises/uvm-agent-builder', 'UVM Agent Builder'),
-          exercise('/exercises/scoreboard-connector', 'Scoreboard Connector'),
+          practicePage('/practice/visualizations/uvm-architecture'),
+          practicePage('/exercises/uvm-phase-sorter'),
+          practicePage('/exercises/uvm-agent-builder'),
+          practicePage('/exercises/scoreboard-connector'),
           lab('config-debug'),
           lab('scoreboard-decoupling'),
         ],
@@ -316,7 +327,7 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
         ],
         practice: [
           { kind: 'quiz', href: PLACEMENT_QUIZ_HREF, label: 'Placement quiz' },
-          interactive('/practice/visualizations/interface-signal-flow', 'Interface Signal Flow'),
+          practicePage('/practice/visualizations/interface-signal-flow'),
         ],
       },
       {
@@ -334,9 +345,9 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
         practice: [
           lab('randomization-advanced-1'),
           lab('coverage-advanced-1'),
-          interactive('/practice/visualizations/randomization-explorer', 'Constraint Solution Space'),
-          interactive('/practice/visualizations/coverage-analyzer', 'Coverage Closure Lab'),
-          interactive('/practice/visualizations/assertion-builder', 'SVA Trace Lab'),
+          practicePage('/practice/visualizations/randomization-explorer'),
+          practicePage('/practice/visualizations/coverage-analyzer'),
+          practicePage('/practice/visualizations/assertion-builder'),
         ],
         milestones: ['M4'],
       },
@@ -351,7 +362,7 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
           { id: 'I-UVM-5_UVM_Container_Classes' },
           { id: 'I-UVM-6_UVM_Recording_Classes' },
         ],
-        practice: [exercise('/exercises/sequencer-arbitration', 'Sequencer Arbitration Sandbox')],
+        practice: [practicePage('/exercises/sequencer-arbitration')],
       },
       {
         id: 'environments',
@@ -368,7 +379,7 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
           lab('scoreboard-reference-model'),
           lab('uvm-mini-capstone'),
           lab('callbacks-driver-behavior'),
-          exercise('/exercises/scoreboard-connector', 'Scoreboard Connector'),
+          practicePage('/exercises/scoreboard-connector'),
         ],
         milestones: ['M2', 'M3', 'M5'],
       },
@@ -403,7 +414,7 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
           { id: 'B-AMBA-F3_Interview_Debug_Clinic' },
         ],
         practice: [
-          { kind: 'tool', href: '/practice/waveform-studio', label: 'Waveform Studio' },
+          practicePage('/practice/waveform-studio'),
           lab('ahb-checker-lab'),
           lab('axi-deadlock-hunt-lab'),
           lab('axi-scoreboard-lab'),
@@ -634,6 +645,12 @@ export function validateRoutes(
           else if (registered && registered.status !== 'available') {
             problems.push(`${where}: lab ${item.labId} is ${registered.status}, so it cannot be linked`);
           }
+        } else if (item.kind === 'page') {
+          if (!getPracticePage(item.href)) {
+            problems.push(`${where}: practice page ${item.href} is not in PRACTICE_PAGES (src/lib/practice-links.ts)`);
+          } else if (options.hrefExists && !options.hrefExists(item.href)) {
+            problems.push(`${where}: practice page ${item.href} does not resolve`);
+          }
         } else if (!item.href.startsWith('/')) {
           problems.push(`${where}: practice "${item.label}" has a non-site href ${item.href}`);
         } else if (options.hrefExists && !options.hrefExists(item.href)) {
@@ -785,6 +802,14 @@ function resolvePractice(
   labs: readonly LabLike[] | undefined,
   where: string,
 ): ResolvedPracticeItem {
+  if (item.kind === 'page') {
+    // Title, kind and route come from the practice map, so they match the Practice Hub and the page's own H1.
+    const page = getPracticePage(item.href);
+    if (!page || page.kind === 'lab' || page.kind === 'interview') {
+      throw new Error(`learning-paths: ${where} names practice page ${item.href}, which is not in PRACTICE_PAGES`);
+    }
+    return { kind: page.kind, kindLabel: PRACTICE_KIND_LABELS[page.kind], label: page.title, href: page.href };
+  }
   const kindLabel = PRACTICE_KIND_LABELS[item.kind];
   if (item.kind === 'lab') {
     const resolved = resolveLab(item.labId, labs);
@@ -907,6 +932,39 @@ export function resolveRoutes(data: readonly CurriculumTier[], options: RouteRes
       skipped,
     };
   });
+}
+
+// ---------------------------------------------------------------------------
+// Summaries for the home page
+// ---------------------------------------------------------------------------
+
+/** What the home page shows for a route: plain, small data for its client cards. */
+export interface RouteSummary {
+  id: RouteId;
+  name: string;
+  tagline: string;
+  audience: string;
+  /** Step titles, in route order. */
+  steps: string[];
+  lessonCount: number;
+  /** The route's call to action: F1A for Junior, the placement quiz for Practitioner, the expert index for Expert. */
+  cta: { label: string; href: string };
+  /** The route on the curriculum overview, which follows it there. */
+  overviewHref: string;
+}
+
+/** Home page cards for resolved routes (G30-PATH-05; NB2 request 3), in route order. */
+export function summarizeRoutes(routes: readonly ResolvedRoute[]): RouteSummary[] {
+  return routes.map((route) => ({
+    id: route.id,
+    name: route.name,
+    tagline: route.tagline,
+    audience: route.audience,
+    steps: route.steps.map((step) => step.title),
+    lessonCount: route.sequence.length,
+    cta: { label: route.cta.label, href: route.cta.href },
+    overviewHref: `/curriculum#${routeAnchor(route.id)}`,
+  }));
 }
 
 // ---------------------------------------------------------------------------

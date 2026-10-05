@@ -8,7 +8,7 @@
 
 - Shared state such as authentication and navigation lives in lightweight React context providers so it can wrap the App Router layout without introducing additional dependencies (`src/app/layout.tsx:35`).
 - `AuthProvider` bridges Firebase auth events into a serializable context while exposing async helpers for sign-in/out (`src/contexts/AuthContext.tsx:1`).
-- Navigation shortcuts, locale toggles, and theming follow the same pattern, keeping long-lived UI concerns colocated with the layout tree (`src/contexts/NavigationContext.tsx:1`).
+- Locale toggles and theming follow the same pattern, keeping long-lived UI concerns colocated with the layout tree (`src/components/providers/ClientProviders.tsx:1`). The navigation shell's open/closed state (course outline, search, menu) moved to a small external store that needs no provider (`src/components/search/shell-store.ts:1`); the unused `NavigationContext` was removed in 2026-10.
 - Feature teams rely on focused hooks for client persistence—curriculum progress is stored in localStorage through `useCurriculumProgress`, which manages loading, saving, and derived metrics (`src/hooks/useCurriculumProgress.ts:1`).
 - No global state library (Redux, Zustand, etc.) is in use today, and existing data-fetching occurs through Next.js server components or feature-specific hooks.
 

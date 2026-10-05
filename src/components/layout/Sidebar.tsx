@@ -26,12 +26,28 @@ import {
 } from "@/components/search/shell-store";
 import { useModalDialog } from "@/components/search/useModalDialog";
 import { curriculumData } from "@/lib/curriculum-data";
+import { INTERVIEW_PREP_HREF, LABS_HREF, START_HERE_HREF } from "@/lib/site-links";
 import { cn } from "@/lib/utils";
 
 /** The id the navbar's outline button points at (aria-controls) while the drawer is open. */
 export const OUTLINE_DRAWER_ID = "course-outline-drawer";
 /** The id of the docked outline column on lesson pages. */
 export const DOCKED_OUTLINE_ID = "course-outline-docked";
+
+/**
+ * Quick links under the outline, in the drawer and in the docked column
+ * (G30-SIDE-04, G30-SIDE-05, G30-PATH-07): the route chooser, the overview,
+ * the practice hub, its labs and the interview banks. The navbar shows Labs
+ * and Interview prep only from xl, so on narrower windows these are their
+ * links in the shell.
+ */
+export const OUTLINE_QUICK_LINKS: readonly { label: string; href: string }[] = [
+  { label: "Start here", href: START_HERE_HREF },
+  { label: "Curriculum overview", href: "/curriculum" },
+  { label: "Practice hub", href: "/practice" },
+  { label: "Labs", href: LABS_HREF },
+  { label: "Interview prep", href: INTERVIEW_PREP_HREF },
+];
 
 type Density = "compact" | "comfortable";
 
@@ -249,6 +265,37 @@ export function CourseOutlineTree({ outline, density, onNavigate }: TreeProps) {
   );
 }
 
+/** OUTLINE_QUICK_LINKS as a labelled list. `onNavigate` runs when a link is followed (the drawer closes itself). */
+function OutlineQuickLinks({ density, onNavigate }: { density: Density; onNavigate?: (href: string) => void }) {
+  return (
+    <ul
+      aria-label="Quick links"
+      className={cn(
+        "flex shrink-0 flex-wrap gap-x-4 border-t border-border text-sm",
+        density === "compact" ? "px-3 py-1.5" : "gap-y-1 px-4 py-2",
+      )}
+    >
+      {OUTLINE_QUICK_LINKS.map((link) => (
+        <li key={link.href}>
+          <Link
+            href={link.href}
+            onClick={(event) => {
+              if (!isModifiedClick(event)) onNavigate?.(link.href);
+            }}
+            className={cn(
+              "inline-flex items-center whitespace-nowrap rounded font-medium text-foreground underline-offset-4 hover:underline",
+              density === "compact" ? "min-h-8" : "min-h-10",
+              focusRing,
+            )}
+          >
+            {link.label}
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function useCourseOutline() {
   const pathname = usePathname();
   const current = useMemo(() => currentLessonSlug(pathname), [pathname]);
@@ -298,6 +345,7 @@ function DockedOutline({ outline }: { outline: OutlineTier[] }) {
         <div ref={scrollRef} className="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 pb-6">
           <CourseOutlineTree outline={outline} density="compact" />
         </div>
+        <OutlineQuickLinks density="compact" />
       </nav>
     </div>
   );
@@ -359,22 +407,7 @@ function OutlineDrawer({ outline }: { outline: OutlineTier[] }) {
         <nav aria-label="Course outline" className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-3">
           <CourseOutlineTree outline={outline} density="comfortable" onNavigate={onNavigate} />
         </nav>
-        <div className="flex flex-wrap gap-x-4 gap-y-2 border-t border-border px-4 py-3 text-sm">
-          <Link
-            href="/curriculum"
-            onClick={(event) => !isModifiedClick(event) && onNavigate("/curriculum")}
-            className={cn("rounded font-medium text-foreground underline-offset-4 hover:underline", focusRing)}
-          >
-            Curriculum overview
-          </Link>
-          <Link
-            href="/practice"
-            onClick={(event) => !isModifiedClick(event) && onNavigate("/practice")}
-            className={cn("rounded font-medium text-foreground underline-offset-4 hover:underline", focusRing)}
-          >
-            Practice hub
-          </Link>
-        </div>
+        <OutlineQuickLinks density="comfortable" onNavigate={onNavigate} />
       </motion.div>
     </div>
   );

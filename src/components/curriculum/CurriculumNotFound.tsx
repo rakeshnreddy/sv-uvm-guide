@@ -18,6 +18,39 @@ const linkClass =
   "font-semibold text-foreground underline underline-offset-2 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded-sm";
 
 /**
+ * "Find your way back": the curriculum overview, the first lesson and the
+ * practice hub. Shared by the not-found page and the lesson error page, so no
+ * dead end looks different from another.
+ */
+export function FindYourWayBack() {
+  return (
+    <div className="mt-6">
+      <h2 className="text-lg font-semibold text-foreground">Find your way back</h2>
+      <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-muted-foreground">
+        <li>
+          <Link href="/curriculum" className={linkClass}>
+            Curriculum overview
+          </Link>
+          : every tier, module and lesson in order.
+        </li>
+        <li>
+          <Link href={firstLessonHref()} className={linkClass}>
+            Start at the first lesson
+          </Link>{" "}
+          if you are new to verification.
+        </li>
+        <li>
+          <Link href="/practice" className={linkClass}>
+            Practice hub
+          </Link>
+          : labs, exercises and interactive models.
+        </li>
+      </ul>
+    </div>
+  );
+}
+
+/**
  * The not-found page body (G30-PAGE-04): what happened, "did you mean" links
  * built from the requested path, the ways back into the curriculum, and search
  * tips. Used by the root not-found page and by the curriculum route.
@@ -64,29 +97,7 @@ export default function CurriculumNotFound() {
           </div>
         ) : null}
 
-        <div className="mt-6">
-          <h2 className="text-lg font-semibold text-foreground">Find your way back</h2>
-          <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-muted-foreground">
-            <li>
-              <Link href="/curriculum" className={linkClass}>
-                Curriculum overview
-              </Link>
-              : every tier, module and lesson in order.
-            </li>
-            <li>
-              <Link href={firstLessonHref()} className={linkClass}>
-                Start at the first lesson
-              </Link>{" "}
-              if you are new to verification.
-            </li>
-            <li>
-              <Link href="/practice" className={linkClass}>
-                Practice hub
-              </Link>
-              : labs, exercises and interactive models.
-            </li>
-          </ul>
-        </div>
+        <FindYourWayBack />
 
         <div className="mt-6">
           <h2 className="text-lg font-semibold text-foreground">Search tips</h2>

@@ -2,10 +2,8 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { PRACTICE_PAGES, requirePracticePage } from '@/lib/practice-links';
 
-/** Owned by another workstream; remove when its page renders <LearnInLesson /> (see tests/lib/practice-links.test.ts). */
-const PENDING_BACK_LINKS = new Set(['/visualizations/systemverilog-3d']);
-
-const practicePages = PRACTICE_PAGES.filter((definition) => !PENDING_BACK_LINKS.has(definition.href)).map((definition) => ({
+// Every practice page renders its "Learn this in" back link (tests/lib/practice-links.test.ts checks the source).
+const practicePages = PRACTICE_PAGES.map((definition) => ({
   href: definition.href,
   title: definition.title,
   teacher: requirePracticePage(definition.href).lessons[0],

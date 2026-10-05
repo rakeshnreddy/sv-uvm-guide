@@ -95,6 +95,49 @@ describe('Navbar landmarks and links', () => {
     expect(navLinkCurrent('/practice/lab/x', '/practice')).toBe('true');
     expect(navLinkCurrent('/practices', '/practice')).toBeUndefined();
   });
+
+  it('links Start here, Labs and Interview prep in order (G30-SIDE-05, G30-PATH-07)', () => {
+    render(<Navbar />);
+    const main = within(screen.getByRole('banner')).getAllByRole('navigation', { name: 'Main' })[0];
+    const links = within(main).getAllByRole('link');
+    expect(links.map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
+      ['Start here', '/curriculum#routes'],
+      ['Curriculum', '/curriculum'],
+      ['Practice', '/practice'],
+      ['Labs', '/practice#labs'],
+      ['Interview prep', '/interview-prep'],
+    ]);
+  });
+
+  it('keeps the bar narrow: Labs and Interview prep join it from xl, the rest from md', () => {
+    render(<Navbar />);
+    const main = within(screen.getByRole('banner')).getAllByRole('navigation', { name: 'Main' })[0];
+    for (const name of ['Labs', 'Interview prep']) {
+      expect(within(main).getByRole('link', { name })).toHaveClass('hidden', 'xl:inline-flex');
+    }
+    for (const name of ['Start here', 'Curriculum', 'Practice']) {
+      const link = within(main).getByRole('link', { name });
+      expect(link).toHaveClass('inline-flex');
+      expect(link).not.toHaveClass('hidden');
+    }
+  });
+
+  it('marks pages, never a link to part of a page', () => {
+    nav.pathname = '/curriculum';
+    const { unmount } = render(<Navbar />);
+    let main = screen.getAllByRole('navigation', { name: 'Main' })[0];
+    expect(within(main).getByRole('link', { name: 'Curriculum' })).toHaveAttribute('aria-current', 'page');
+    expect(within(main).getByRole('link', { name: 'Start here' })).not.toHaveAttribute('aria-current');
+    unmount();
+
+    nav.pathname = '/interview-prep';
+    render(<Navbar />);
+    main = screen.getAllByRole('navigation', { name: 'Main' })[0];
+    expect(within(main).getByRole('link', { name: 'Interview prep' })).toHaveAttribute('aria-current', 'page');
+    expect(within(main).getByRole('link', { name: 'Practice' })).not.toHaveAttribute('aria-current');
+    expect(navLinkCurrent('/curriculum', '/curriculum#routes')).toBeUndefined();
+    expect(navLinkCurrent('/practice', '/practice#labs')).toBeUndefined();
+  });
 });
 
 describe('account-only UI (G30-SIDE-V07)', () => {
@@ -207,6 +250,15 @@ describe('mobile menu', () => {
     expect(menu).toHaveAttribute('aria-modal', 'true');
     expect(within(menu).getAllByRole('button')[0]).toHaveAccessibleName('Close menu');
     expect(within(menu).getByRole('link', { name: 'Curriculum' })).toHaveAttribute('href', '/curriculum');
+    // Every main link, including the ones the desktop bar shows only from xl.
+    expect(within(menu).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual([
+      '/curriculum#routes',
+      '/curriculum',
+      '/practice',
+      '/practice#labs',
+      '/interview-prep',
+    ]);
+    for (const link of within(menu).getAllByRole('link')) expect(link).not.toHaveClass('hidden');
     expect(menuButton).toHaveAttribute('aria-expanded', 'true');
 
     await user.keyboard('{Escape}');

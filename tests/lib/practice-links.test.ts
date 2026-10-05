@@ -30,12 +30,6 @@ import {
 const repoRoot = path.resolve(__dirname, '../..');
 const learningRoutes = path.join(repoRoot, 'src', 'app', '(learning)');
 
-/**
- * Practice pages whose page.tsx is owned by another workstream and does not
- * render <LearnInLesson /> yet. When the back link lands, remove the route here.
- */
-const PENDING_BACK_LINKS = new Set(['/visualizations/systemverilog-3d']);
-
 const CANONICAL_LESSON_URL = /^\/curriculum\/T[1-4]_[A-Za-z]+\/[^/]+\/[^/]+$/;
 
 function expectCanonical(lesson: LessonLink | undefined, ref: string) {
@@ -126,14 +120,12 @@ describe('practice pages', () => {
 
   it.each(PRACTICE_PAGES.map((page) => [page.href]))('%s renders its "Learn this in" back link from the map', (href) => {
     const source = pageSource(href);
-    // Either requirePracticePage('<href>') or `const HREF = '<href>'` passed to requirePracticePage(HREF).
+    // Either requirePracticePage('<href>') or `const HREF = '<href>'` passed to requirePracticePage(HREF), in either quote style.
     const declares =
-      source.includes('<LearnInLesson item={') && source.includes('requirePracticePage(') && source.includes(`'${href}'`);
-    if (PENDING_BACK_LINKS.has(href)) {
-      expect(declares, `${href} now renders its back link: remove it from PENDING_BACK_LINKS`).toBe(false);
-    } else {
-      expect(declares, `${href} must render <LearnInLesson item={requirePracticePage('${href}')} />`).toBe(true);
-    }
+      source.includes('<LearnInLesson item={') &&
+      source.includes('requirePracticePage(') &&
+      (source.includes(`'${href}'`) || source.includes(`"${href}"`));
+    expect(declares, `${href} must render <LearnInLesson item={requirePracticePage('${href}')} />`).toBe(true);
   });
 
   it('lists pages in manifest order of their teaching lesson', () => {

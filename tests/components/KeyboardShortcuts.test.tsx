@@ -224,14 +224,31 @@ describe('KeyboardShortcuts', () => {
     expect(press({ key: 't', code: 'KeyT' }).defaultPrevented).toBe(false);
   });
 
-  it('switches light and dark with Option+T on macOS and leaves Alt+T elsewhere to ThemeSwitcher', () => {
+  it('switches light and dark once with Option+T on macOS and Alt+T elsewhere', () => {
     render(<KeyboardShortcuts />);
-    press({ key: '†', code: 'KeyT', altKey: true });
+    const mac = press({ key: '†', code: 'KeyT', altKey: true });
+    expect(setTheme).toHaveBeenCalledTimes(1);
     expect(setTheme).toHaveBeenCalledWith('ocean-light');
+    expect(mac.defaultPrevented).toBe(true);
     setTheme.mockReset();
     const elsewhere = press({ key: 't', code: 'KeyT', altKey: true });
+    expect(setTheme).toHaveBeenCalledTimes(1);
+    expect(setTheme).toHaveBeenCalledWith('ocean-light');
+    expect(elsewhere.defaultPrevented).toBe(true);
+  });
+
+  it('leaves Alt/Option+T alone while the learner is typing', () => {
+    render(
+      <>
+        <input aria-label="Notes" />
+        <KeyboardShortcuts />
+      </>,
+    );
+    const field = screen.getByRole('textbox', { name: 'Notes' });
+    field.focus();
+    const typed = press({ key: '†', code: 'KeyT', altKey: true }, field);
     expect(setTheme).not.toHaveBeenCalled();
-    expect(elsewhere.defaultPrevented).toBe(false);
+    expect(typed.defaultPrevented).toBe(false);
   });
 
   it('closes open dialogs when the route changes', () => {

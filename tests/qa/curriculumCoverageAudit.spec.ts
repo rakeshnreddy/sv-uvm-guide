@@ -1,7 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import matter from 'gray-matter';
 import { generateCurriculumData } from '../../scripts/generate-curriculum-data';
+import { lessonPracticeSections } from '../../src/lib/curriculum/lesson-mdx';
+import { scanLessonHeadings } from '../../src/lib/expert-index';
+import { getAllLabs } from '../../src/lib/lab-registry';
+import { getPracticeForModule } from '../../src/lib/practice-links';
 
 const repoRoot = process.cwd();
 const contentRoot = path.join(repoRoot, 'content', 'curriculum');
@@ -21,8 +26,33 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Every App Router page as its URL segments: route groups such as `(learning)`
+ * and parallel-route slots are not part of the URL, so they are dropped.
+ * `(learning)/practice/lab/[labId]/page.tsx` -> ['practice', 'lab', '[labId]'].
+ */
+function appPageRoutes(): string[][] {
+  return walkFiles(appRoot, (filePath) => filePath.endsWith(`${path.sep}page.tsx`)).map((filePath) =>
+    path
+      .relative(appRoot, filePath)
+      .replace(/\\/g, '/')
+      .split('/')
+      .slice(0, -1)
+      .filter((segment) => !/^\(.+\)$/.test(segment) && !segment.startsWith('@')),
+  );
+}
+
+const isDynamicSegment = (segment: string) => /^\[.+\]$/.test(segment);
+
+/** Static pages beside the lesson catch-all, such as /curriculum/expert-index (NB2 request 4). */
+function buildStaticCurriculumPages(): string[] {
+  return appPageRoutes()
+    .filter((segments) => segments[0] === 'curriculum' && segments.length > 1 && !segments.some(isDynamicSegment))
+    .map((segments) => `/${segments.join('/')}`);
+}
+
 function buildCurriculumRoutes(): Set<string> {
-  const routes = new Set<string>(['/curriculum']);
+  const routes = new Set<string>(['/curriculum', ...buildStaticCurriculumPages()]);
   const data = generateCurriculumData();
 
   data.forEach((courseModule) => {
@@ -39,17 +69,17 @@ function buildCurriculumRoutes(): Set<string> {
 }
 
 function buildAppRoutePatterns(): RegExp[] {
-  const pageFiles = walkFiles(appRoot, (filePath) => filePath.endsWith(`${path.sep}page.tsx`));
-
-  return pageFiles
-    .map((filePath) => path.relative(appRoot, filePath).replace(/\\/g, '/').replace(/\/page\.tsx$/, ''))
-    .filter((route) => !route.startsWith('curriculum'))
+  return appPageRoutes()
+    .filter((segments) => segments[0] !== 'curriculum')
     .map((route) => {
       if (route.length === 0) {
         return /^\/$/;
       }
 
-      const segments = route.split('/').map((segment) => {
+      const segments = route.map((segment) => {
+        if (/^\[\[\.\.\.[^\]]+\]\]$/.test(segment)) {
+          return '(?:/[^/]+)*';
+        }
         if (/^\[\.\.\.[^\]]+\]$/.test(segment)) {
           return '(?:/[^/]+)+';
         }
@@ -73,6 +103,13 @@ function collectInternalLinks(filePath: string): string[] {
 
   for (const match of source.matchAll(/\[[^\]]+\]\((\/[^)\s]+)\)/g)) {
     links.add(match[1]);
+  }
+
+  // TypeScript link maps (uvm-link-map.ts) hold curriculum routes as plain string literals.
+  if (/\.tsx?$/.test(filePath)) {
+    for (const match of source.matchAll(/["'`](\/curriculum\/[^"'`\s$]+)["'`]/g)) {
+      links.add(match[1]);
+    }
   }
 
   return Array.from(links);
@@ -109,19 +146,6 @@ function collectBrokenInternalLinks(): string[] {
   });
 
   return brokenLinks;
-}
-
-function slugifyHeading(value: string): string {
-  return value
-    .trim()
-    .replace(/\{#.+\}$/, '')
-    .replace(/`/g, '')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&[a-z]+;/gi, '')
-    .toLowerCase()
-    .replace(/[^\w\s-]/g, '')
-    .replace(/\s+/g, '-')
-    .replace(/-+/g, '-');
 }
 
 function collectCustomMdxTags(): Set<string> {
@@ -191,12 +215,25 @@ function resolveCurriculumRouteToFilePath(route: string): string | null {
   return null;
 }
 
+/**
+ * The anchors a lesson page renders. Heading ids come from scanLessonHeadings
+ * (src/lib/expert-index.ts): one createSlugger() from src/lib/heading-slug.ts
+ * per page, fed every heading in document order, exactly as the lesson page's
+ * remark-heading-ids plugin does (tests/lib/expert-index.test.ts holds the two
+ * equal). So "#practice--reinforce" and repeated-heading suffixes such as
+ * "-1" resolve as they do in the browser (NB1 request). The practice block's
+ * own headings and explicit id="…" attributes count too.
+ */
 function collectDefinedAnchors(filePath: string): Set<string> {
   const source = fs.readFileSync(filePath, 'utf8');
-  const anchors = new Set<string>();
+  const { content, data } = matter(source);
+  const anchors = new Set<string>(scanLessonHeadings(content).headings.map((heading) => heading.anchor));
 
-  for (const match of source.matchAll(/^#{2,6}\s+(.+)$/gm)) {
-    anchors.add(slugifyHeading(match[1]));
+  const [moduleSlug, lessonSlug] = path.relative(contentRoot, filePath).replace(/\\/g, '/').replace(/\.mdx$/, '').split('/').slice(1);
+  const hasFlashcards = Boolean(data.flashcards ?? data.flashcardId);
+  const hasHandsOn = getPracticeForModule(moduleSlug, `${moduleSlug}/${lessonSlug}`, getAllLabs()).length > 0;
+  for (const section of lessonPracticeSections(hasFlashcards, hasHandsOn)) {
+    anchors.add(section.id);
   }
 
   for (const match of source.matchAll(/\bid=["']([^"']+)["']/g)) {
@@ -272,6 +309,34 @@ describe('Curriculum coverage audit', () => {
 
     expect(filesToCheck.length).toBeGreaterThan(0);
     expect(internalLinkCount).toBeGreaterThan(0);
+  });
+
+  it('accepts static pages under /curriculum, such as the expert index, as curriculum routes', () => {
+    const staticPages = buildStaticCurriculumPages();
+    expect(staticPages).toContain('/curriculum/expert-index');
+    expect(staticPages.every((route) => !route.includes('['))).toBe(true);
+    const curriculumRoutes = buildCurriculumRoutes();
+    for (const route of staticPages) expect(curriculumRoutes.has(route), route).toBe(true);
+  });
+
+  it('matches app routes inside route groups, so the strict link audit sees /practice and friends', () => {
+    const patterns = buildAppRoutePatterns();
+    for (const route of ['/', '/practice', '/practice/lab/basics-1', '/exercises/uvm-phase-sorter', '/interview-prep', '/quiz/placement']) {
+      expect(patterns.some((pattern) => pattern.test(route)), route).toBe(true);
+    }
+    expect(patterns.some((pattern) => pattern.test('/curriculum/expert-index'))).toBe(false);
+    expect(patterns.some((pattern) => pattern.test('/no-such-page'))).toBe(false);
+  });
+
+  it('reads lesson anchors with the lesson page\'s slugger, so "--" and repeat suffixes resolve', () => {
+    const anchors = collectDefinedAnchors(path.join(contentRoot, 'T2_Intermediate', 'I-UVM-3A_Fundamentals', 'index.mdx'));
+    expect(anchors.has('the-handshake-sequence--sequencer--driver')).toBe(true);
+    expect(anchors.has('practice--reinforce')).toBe(true);
+    expect(anchors.has('the-handshake-sequence-sequencer-driver')).toBe(false);
+    expect(anchors.has('teach-it-back')).toBe(true);
+    // The anchor audit reads the diagram link map's string literals, not only href="…" attributes.
+    const mapLinks = collectInternalLinks(path.join(repoRoot, 'src', 'components', 'diagrams', 'uvm-link-map.ts'));
+    expect(mapLinks).toContain('/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index#the-handshake-sequence--sequencer--driver');
   });
 
   it('keeps hard-coded curriculum routes in Playwright specs aligned with current lesson paths', () => {

@@ -44,22 +44,13 @@ export function ThemeSwitcher() {
     setTheme(`${newTheme}-${mode}`);
   };
 
+  // Alt/Option+T is handled once, by the learning layout's KeyboardShortcuts
+  // (it matches event.code, so it also fires on macOS, and pauses while typing).
   const toggleMode = useCallback(() => {
     const newMode = mode === "light" ? "dark" : "light";
     setMode(newMode);
     setTheme(`${currentTheme}-${newMode}`);
   }, [mode, currentTheme, setTheme]);
-
-  useEffect(() => {
-    const handleKey = (e: KeyboardEvent) => {
-      if (e.altKey && e.key.toLowerCase() === "t") {
-        e.preventDefault();
-        toggleMode();
-      }
-    };
-    window.addEventListener("keydown", handleKey);
-    return () => window.removeEventListener("keydown", handleKey);
-  }, [toggleMode]);
 
   const label = getString(locale as any, "toggleTheme");
 

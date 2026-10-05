@@ -6,7 +6,6 @@ import {
   matchShortcut,
   shortcutHelp,
   shortcutRoute,
-  themeShortcutHandledByThemeSwitcher,
   toggledThemeName,
   type ShortcutId,
   type ShortcutKeyEvent,
@@ -112,12 +111,6 @@ describe('isEditableTarget', () => {
 });
 
 describe('theme and route helpers', () => {
-  it('leaves Alt+T to ThemeSwitcher except where macOS turns it into "†"', () => {
-    expect(themeShortcutHandledByThemeSwitcher({ key: 't' })).toBe(true);
-    expect(themeShortcutHandledByThemeSwitcher({ key: 'T' })).toBe(true);
-    expect(themeShortcutHandledByThemeSwitcher({ key: '†' })).toBe(false);
-  });
-
   it('switches light and dark within the current theme family', () => {
     expect(toggledThemeName('default-dark')).toBe('default-light');
     expect(toggledThemeName('ocean-light')).toBe('ocean-dark');

@@ -43,6 +43,8 @@ export default async function CurriculumTopicPage({ params }: CurriculumTopicPag
   // One URL per lesson (G30-PAGE-03, G30-LINK-V03, G30-LINK-V11): pretty slugs,
   // two-segment module URLs, one-segment tier URLs and extra trailing segments
   // all redirect permanently to /curriculum/<Tier>/<Module>/<lesson>.
+  // src/middleware.ts sends the same 308 with a Location header before the ISR
+  // cache (which drops Location on a cache hit); this is the fallback.
   const request = resolveCurriculumRequest(params.slug);
   if (request.kind === "not-found") notFound();
   if (request.kind === "redirect") permanentRedirect(request.location);

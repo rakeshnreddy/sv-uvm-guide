@@ -149,19 +149,17 @@ describe("remarkHeadingIds", () => {
     }
   }, 120_000);
 
-  it("resolves the curriculum anchors that diagrams link to", () => {
-    // Stale anchors owned by the overview workstream (G30-OVW-08); remove an entry once its link is fixed.
-    const knownStale = new Set([
-      "/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index#the-handshake-uvm_sequence-and-the-driver",
-      "/curriculum/T2_Intermediate/I-UVM-1A_Components/index#uvm_component-vs-uvm_object",
-    ]);
+  it("resolves the curriculum anchors that diagrams link to (G30-OVW-08)", () => {
     const broken: string[] = [];
+    let checked = 0;
     for (const href of new Set(Object.values(componentLinkMap))) {
-      if (!href || !href.includes("#") || knownStale.has(href)) continue;
+      if (!href || !href.includes("#")) continue;
+      checked += 1;
       const [route, anchor] = href.split("#");
       const body = matter(fs.readFileSync(path.join(contentRoot, `${route.replace(/^\/curriculum\//, "")}.mdx`), "utf8")).content;
       if (!headingIds(compileWithIds(body).code).includes(anchor)) broken.push(href);
     }
+    expect(checked).toBeGreaterThan(0);
     expect(broken).toEqual([]);
   });
 });

@@ -15,6 +15,17 @@ export function getLabById(id: string): LabManifest | undefined {
   return LAB_REGISTRY[id];
 }
 
+/**
+ * Whether opening the lab needs a signed-in learner (G30-PRAC-10). The lab
+ * route, src/app/(learning)/practice/lab/[labId]/page.tsx, calls
+ * requireSession() for every available lab, because step progress, editor
+ * files and grading are stored per learner. Labs that are not available
+ * cannot be opened at all (the route returns 404), so they need nothing.
+ */
+export function labRequiresSignIn(lab: Pick<LabManifest, "status">): boolean {
+  return lab.status === "available";
+}
+
 export function toLearnerLabDto(lab: LabManifest): LearnerLabDto {
   return {
     id: lab.id,

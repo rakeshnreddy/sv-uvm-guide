@@ -12,7 +12,6 @@ import {
   isEditableTarget,
   matchShortcut,
   shortcutRoute,
-  themeShortcutHandledByThemeSwitcher,
   toggledThemeName,
   type ShortcutId,
 } from "@/components/search/shortcuts";
@@ -68,7 +67,7 @@ export default function KeyboardShortcuts() {
   }, [pathname]);
 
   useEffect(() => {
-    const run = (id: ShortcutId, event: KeyboardEvent): boolean => {
+    const run = (id: ShortcutId): boolean => {
       switch (id) {
         case "search":
           focusGlobalSearch();
@@ -80,7 +79,7 @@ export default function KeyboardShortcuts() {
           shellStore.toggleHelp();
           return true;
         case "toggle-theme":
-          if (themeShortcutHandledByThemeSwitcher(event)) return false;
+          // The only Alt/Option+T handler: ThemeSwitcher no longer listens for it.
           setTheme(toggledThemeName(theme ?? resolvedTheme));
           return true;
         case "toc":
@@ -106,7 +105,7 @@ export default function KeyboardShortcuts() {
       const match = matchShortcut(event);
       if (!match) return;
       if (!match.allowWhileTyping && isEditableTarget(event.target)) return;
-      if (run(match.id, event)) event.preventDefault();
+      if (run(match.id)) event.preventDefault();
     };
 
     window.addEventListener("keydown", onKeyDown);

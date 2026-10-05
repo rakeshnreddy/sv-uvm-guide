@@ -26,7 +26,11 @@ import {
   routeIdFromHash,
   type RouteLessonRef,
 } from '@/lib/learning-route-state';
+import { PRACTICE_KIND_LABELS as PRACTICE_MAP_KIND_LABELS, getPracticePage } from '@/lib/practice-links';
 import { appRouteExists, curriculumRoot, readManifest } from '../fixtures/site-routes';
+
+/** Kinds a resolved practice page reports: the practice map's own. */
+const PAGE_KINDS = new Set<string>(['exercise', 'interactive', 'diagram', 'chart', 'tool']);
 
 const manifest: ManifestLike = readManifest();
 const labs = getAllLabs();
@@ -148,6 +152,34 @@ describe('resolved routes', () => {
     expect(cta.junior).toEqual({ label: 'Start here', href: '/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index' });
     expect(cta.practitioner).toEqual({ label: 'Find your level', href: PLACEMENT_QUIZ_HREF });
     expect(cta.expert).toEqual({ label: 'Expert layers', href: EXPERT_INDEX_HREF });
+  });
+
+  it('take practice page titles, kinds and routes from the practice map (NB4 request 8)', () => {
+    const pageItems = LEARNING_ROUTES.flatMap((r) => r.steps.flatMap((s) => s.practice)).filter((p) => p.kind === 'page');
+    expect(pageItems.length).toBeGreaterThan(10);
+    for (const item of pageItems) expect(getPracticePage(item.href), item.href).toBeDefined();
+
+    const resolved = routes.flatMap((r) => r.steps.flatMap((s) => s.practice)).filter((p) => PAGE_KINDS.has(p.kind));
+    expect(resolved).toHaveLength(pageItems.length);
+    for (const item of resolved) {
+      const page = getPracticePage(item.href!)!;
+      expect(item.label, item.href).toBe(page.title);
+      expect(item.kind, item.href).toBe(page.kind);
+      expect(item.kindLabel, item.href).toBe(PRACTICE_MAP_KIND_LABELS[page.kind]);
+    }
+    const sandbox = resolved.find((item) => item.href === '/visualizations/systemverilog-3d');
+    expect(sandbox).toMatchObject({ label: 'SystemVerilog Array Sandbox', kindLabel: 'Interactive model' });
+  });
+
+  it('report and refuse a practice page that is not in the practice map', () => {
+    const broken: LearningRoute = {
+      ...getRoute('junior'),
+      steps: [{ ...getRoute('junior').steps[0], practice: [{ kind: 'page', href: '/practice/visualizations/no-such-page' }] }],
+    };
+    expect(validateRoutes(manifest, [broken])).toEqual(
+      expect.arrayContaining([expect.stringContaining('/practice/visualizations/no-such-page is not in PRACTICE_PAGES')]),
+    );
+    expect(() => resolveRoutes(curriculumData, { routes: [broken], labs })).toThrow(/not in PRACTICE_PAGES/);
   });
 
   it('label labs from the lab registry and say they need sign-in', () => {

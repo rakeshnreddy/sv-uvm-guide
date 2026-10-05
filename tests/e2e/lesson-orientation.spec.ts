@@ -38,8 +38,12 @@ test.describe('canonical lesson URLs (G30-PAGE-03, G30-LINK-V03, G30-LINK-V11)',
       [pretty, F1B],
       [extra, F1A],
     ];
+    // Twice each: src/middleware.ts answers every request with a 308 and a Location header. The page's own
+    // permanentRedirect alone loses Location on an ISR cache hit under `next start` (NB1 lead request 1).
     for (const [from, to] of cases) {
-      expect(await redirectTarget(page, from), from).toEqual({ status: 308, location: to });
+      for (const attempt of [1, 2]) {
+        expect(await redirectTarget(page, from), `${from} (request ${attempt})`).toEqual({ status: 308, location: to });
+      }
     }
     expect((await page.request.get(F1B, { maxRedirects: 0 })).status()).toBe(200);
   });
@@ -138,7 +142,8 @@ test.describe('not-found pages (G30-PAGE-04)', () => {
     const response = await page.goto(`/curriculum/${'does-not-exist'}`);
     expect(response?.status()).toBe(404);
     await expect(page.getByRole('heading', { level: 1, name: 'Page not found' })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'Curriculum overview' })).toHaveAttribute('href', '/curriculum');
+    // Scoped to main: the footer's site map has a "Curriculum overview" link too.
+    await expect(page.getByRole('main').getByRole('link', { name: 'Curriculum overview' })).toHaveAttribute('href', '/curriculum');
     await expect(page.getByRole('heading', { name: 'Search tips' })).toBeVisible();
   });
 

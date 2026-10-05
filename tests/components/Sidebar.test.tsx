@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import manifest from '../../content/curriculum/curriculum.manifest.json';
-import Sidebar from '@/components/layout/Sidebar';
+import Sidebar, { OUTLINE_QUICK_LINKS } from '@/components/layout/Sidebar';
 import {
   buildCourseOutline,
   currentLessonSlug,
@@ -200,6 +200,16 @@ describe('docked course outline on a lesson page', () => {
     );
   });
 
+  it('ends with the quick links, none of them marked as the current page', () => {
+    render(<Sidebar />);
+    const nav = screen.getByRole('navigation', { name: 'Course outline' });
+    const list = within(nav).getByRole('list', { name: 'Quick links' });
+    expect(within(list).getAllByRole('link').map((link) => link.getAttribute('href'))).toEqual(
+      OUTLINE_QUICK_LINKS.map((link) => link.href),
+    );
+    expect(list.querySelector('[aria-current]')).toBeNull();
+  });
+
   it('shows no authoring-status badges or placeholder bookmarks', () => {
     render(<Sidebar />);
     for (const text of ['Draft', 'In Review', 'Complete', 'Bookmarks', 'Quick Access']) {
@@ -269,13 +279,15 @@ describe('course outline drawer (below lg, and off lesson pages)', () => {
     act(() => shellStore.openOutline());
     const dialog = screen.getByRole('dialog', { name: 'Course outline' });
     const close = within(dialog).getByRole('button', { name: 'Close course outline' });
-    const practice = within(dialog).getByRole('link', { name: 'Practice hub' });
+    // The last quick link is the dialog's last focusable element.
+    const last = within(within(dialog).getByRole('list', { name: 'Quick links' })).getAllByRole('link').at(-1)!;
+    expect(last).toHaveAccessibleName('Interview prep');
 
-    practice.focus();
+    last.focus();
     await user.tab();
     expect(document.activeElement).toBe(close);
     await user.tab({ shift: true });
-    expect(document.activeElement).toBe(practice);
+    expect(document.activeElement).toBe(last);
   });
 
   it('starts on the current lesson and closes when a lesson is chosen', async () => {
@@ -290,12 +302,32 @@ describe('course outline drawer (below lg, and off lesson pages)', () => {
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
   });
 
-  it('links the curriculum overview and the practice hub', () => {
+  it('lists quick links: Start here, the overview, the practice hub, Labs and Interview prep (G30-SIDE-04/05)', () => {
     renderWithOpener();
     act(() => shellStore.openOutline());
     const dialog = screen.getByRole('dialog', { name: 'Course outline' });
     expect(within(dialog).getByRole('link', { name: 'Practice hub' })).toHaveAttribute('href', '/practice');
     expect(within(dialog).getByRole('link', { name: 'Curriculum overview' })).toHaveAttribute('href', '/curriculum');
+    const quickLinks = within(within(dialog).getByRole('list', { name: 'Quick links' })).getAllByRole('link');
+    expect(quickLinks.map((link) => [link.textContent, link.getAttribute('href')])).toEqual(
+      OUTLINE_QUICK_LINKS.map((link) => [link.label, link.href]),
+    );
+    expect(OUTLINE_QUICK_LINKS.map((link) => link.href)).toEqual([
+      '/curriculum#routes',
+      '/curriculum',
+      '/practice',
+      '/practice#labs',
+      '/interview-prep',
+    ]);
+  });
+
+  it('closes when a quick link is followed', async () => {
+    const user = userEvent.setup();
+    renderWithOpener();
+    act(() => shellStore.openOutline());
+    await user.click(within(screen.getByRole('dialog', { name: 'Course outline' })).getByRole('link', { name: 'Labs' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(shellStore.getState().outlineOpen).toBe(false);
   });
 
   it('stops the page behind from scrolling while open', async () => {

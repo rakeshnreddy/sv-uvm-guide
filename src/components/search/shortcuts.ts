@@ -116,15 +116,6 @@ export function isEditableTarget(target: EventTarget | null): boolean {
   return target.closest('[contenteditable]:not([contenteditable="false"]), [role="textbox"]') !== null;
 }
 
-/**
- * ThemeSwitcher listens for Alt+T itself by comparing `event.key` with "t".
- * That works everywhere except macOS, where Option+T gives "†". The layout
- * handles only that case, so the theme never toggles twice.
- */
-export function themeShortcutHandledByThemeSwitcher(event: Pick<ShortcutKeyEvent, "key">): boolean {
-  return event.key.toLowerCase() === "t";
-}
-
 /** "default-dark" → "default-light", "ocean-light" → "ocean-dark". */
 export function toggledThemeName(theme: string | undefined): string {
   const current = theme && /-(light|dark)$/.test(theme) ? theme : "default-dark";

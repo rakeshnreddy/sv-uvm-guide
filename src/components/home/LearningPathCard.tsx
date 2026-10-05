@@ -1,97 +1,69 @@
 "use client";
 import React from 'react';
-import { motion } from 'framer-motion';
-import { Button } from '@/components/ui/Button';
-import { Clock, Zap, ArrowRight } from 'lucide-react';
 import Link from 'next/link';
+import { motion } from 'framer-motion';
+import { ArrowRight, Compass, Crown, Wrench, type LucideIcon } from 'lucide-react';
+
+import { eyebrow, primaryAction, secondaryAction } from '@/components/curriculum/overview-ui';
+import type { RouteId, RouteSummary } from '@/lib/learning-paths';
+
+const ROUTE_ICONS: Readonly<Record<RouteId, LucideIcon>> = {
+  junior: Compass,
+  practitioner: Wrench,
+  expert: Crown,
+};
 
 interface LearningPathCardProps {
-  path: {
-    tier: string;
-    title: string;
-    icon: any;
-    color: string;
-    time: string;
-    skills: string[];
-    description: string;
-    href: string;
-  };
+  route: RouteSummary;
 }
 
-const LearningPathCard: React.FC<LearningPathCardProps> = ({ path }) => {
-  const colorMap: { [key: string]: { [key: string]: string } } = {
-    emerald: {
-      bg: 'bg-emerald-500/10 dark:bg-emerald-900/20',
-      border: 'border-emerald-500/50',
-      text: 'text-emerald-500 dark:text-emerald-400',
-      buttonBg: 'bg-emerald-500',
-      buttonHoverBg: 'hover:bg-emerald-600',
-      shadow: 'hover:shadow-emerald-500/20',
-    },
-    sky: {
-      bg: 'bg-sky-500/10 dark:bg-sky-900/20',
-      border: 'border-sky-500/50',
-      text: 'text-sky-500 dark:text-sky-400',
-      buttonBg: 'bg-sky-500',
-      buttonHoverBg: 'hover:bg-sky-600',
-      shadow: 'hover:shadow-sky-500/20',
-    },
-    violet: {
-      bg: 'bg-violet-500/10 dark:bg-violet-900/20',
-      border: 'border-violet-500/50',
-      text: 'text-violet-500 dark:text-violet-400',
-      buttonBg: 'bg-violet-500',
-      buttonHoverBg: 'hover:bg-violet-600',
-      shadow: 'hover:shadow-violet-500/20',
-    },
-    amber: {
-      bg: 'bg-amber-500/10 dark:bg-amber-900/20',
-      border: 'border-amber-500/50',
-      text: 'text-amber-500 dark:text-amber-400',
-      buttonBg: 'bg-amber-500',
-      buttonHoverBg: 'hover:bg-amber-600',
-      shadow: 'hover:shadow-amber-500/20',
-    },
-  };
-  const colors = colorMap[path.color];
-
-  const Icon = path.icon;
+/**
+ * One learner route on the home page, as the curriculum overview's route
+ * chooser shows it: who it is for, its steps, and its call to action (F1A,
+ * the placement quiz or the expert index). Theme tokens only, so every theme
+ * keeps AA contrast.
+ */
+const LearningPathCard: React.FC<LearningPathCardProps> = ({ route }) => {
+  const Icon = ROUTE_ICONS[route.id];
+  const headingId = `home-route-${route.id}`;
 
   return (
-    <motion.div
-      className={`rounded-xl p-6 border ${colors.bg} ${colors.border} flex flex-col h-full transition-all duration-300 ${colors.shadow}`}
-      whileHover={{ y: -8, boxShadow: `0px 20px 30px -10px var(--tw-shadow-color)` }}
+    <motion.article
+      aria-labelledby={headingId}
+      data-testid={`home-route-${route.id}`}
+      className="flex h-full min-w-0 flex-col rounded-2xl border border-border bg-card p-6 text-card-foreground shadow-sm transition-colors hover:border-primary/60 motion-reduce:transition-none"
+      whileHover={{ y: -4 }}
     >
-      <div className={`flex items-center mb-4 ${colors.text}`}>
-        <Icon className="w-8 h-8 mr-3" />
-        <h3 className="text-2xl font-bold">{path.tier}</h3>
+      <div className="flex items-center gap-3">
+        <Icon aria-hidden="true" className="h-7 w-7 shrink-0 text-primary" />
+        <p className={eyebrow}>{route.name} route</p>
       </div>
-      <h4 className="text-xl font-semibold text-foreground mb-2">{path.title}</h4>
-      <p className="text-foreground/70 mb-6 flex-grow">{path.description}</p>
+      <h3 id={headingId} className="mt-3 text-2xl font-bold text-foreground">
+        {route.tagline}
+      </h3>
+      <p className="mt-2 text-sm text-muted-foreground">{route.audience}</p>
 
-      <div className="mb-6 space-y-3">
-        <div className="flex items-center text-foreground/80">
-          <Clock className="w-4 h-4 mr-2 flex-shrink-0" />
-          <span>{path.time} estimated</span>
-        </div>
-        <div className="flex items-start text-foreground/80">
-          <Zap className="w-4 h-4 mr-2 mt-1 flex-shrink-0" />
-          <div>
-            <span className="font-semibold">Key Skills:</span>
-            <ul className="list-none ml-0 mt-1 text-sm text-foreground/70">
-              {path.skills.slice(0, 3).map(skill => <li key={skill}>- {skill}</li>)}
-            </ul>
-          </div>
-        </div>
-      </div>
+      <p className="mt-5 text-sm font-semibold text-foreground">
+        {route.steps.length} steps · {route.lessonCount} lessons
+      </p>
+      <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-muted-foreground marker:text-muted-foreground">
+        {route.steps.map((title) => (
+          <li key={title} className="[overflow-wrap:anywhere]">
+            {title}
+          </li>
+        ))}
+      </ol>
 
-      <Button asChild className={`${colors.buttonBg} ${colors.buttonHoverBg} text-white mt-auto font-bold group`}>
-        <Link href={path.href}>
-          Start Learning
-          <ArrowRight className="ml-2 w-4 h-4 transition-transform duration-300 group-hover:translate-x-1" />
+      <div className="mt-auto flex flex-wrap items-center gap-3 pt-6">
+        <Link href={route.cta.href} className={primaryAction}>
+          {route.cta.label}
+          <ArrowRight aria-hidden="true" className="h-4 w-4" />
         </Link>
-      </Button>
-    </motion.div>
+        <Link href={route.overviewHref} className={secondaryAction}>
+          See the {route.name} route
+        </Link>
+      </div>
+    </motion.article>
   );
 };
 

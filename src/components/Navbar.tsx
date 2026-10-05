@@ -14,17 +14,28 @@ import Logo from "@/components/ui/Logo";
 import { ThemeSwitcher } from "@/components/ui/ThemeSwitcher";
 import { useAuth } from "@/contexts/AuthContext";
 import { formatTimestamp, NOTIFICATION_CATEGORY_META, type NotificationItem } from "@/lib/notifications";
+import { INTERVIEW_PREP_HREF, LABS_HREF, START_HERE_HREF } from "@/lib/site-links";
 import { cn } from "@/lib/utils";
 import { featureFlags } from "@/tools/featureFlags";
 
 interface NavLink {
   label: string;
   href: string;
+  /**
+   * In the desktop bar only from xl (1280 px), where it fits beside the search
+   * field. Below that it stays in the phone menu and in the course outline's
+   * quick links.
+   */
+  wideOnly?: boolean;
 }
 
-const navLinks: NavLink[] = [
+/** The main navigation, in order (G30-SIDE-05, G30-PATH-07). */
+const navLinks: readonly NavLink[] = [
+  { label: "Start here", href: START_HERE_HREF },
   { label: "Curriculum", href: "/curriculum" },
   { label: "Practice", href: "/practice" },
+  { label: "Labs", href: LABS_HREF, wideOnly: true },
+  { label: "Interview prep", href: INTERVIEW_PREP_HREF, wideOnly: true },
   ...(featureFlags.tracking ? [{ label: "Dashboard", href: "/dashboard" }] : []),
   ...(featureFlags.community ? [{ label: "Community", href: "/community" }] : []),
 ];
@@ -42,9 +53,13 @@ const iconButton = cn(
 const popoverPanel =
   "absolute right-0 top-full z-50 mt-2 overflow-hidden rounded-xl border border-border bg-card text-card-foreground shadow-xl";
 
-/** aria-current for a navbar link: "page" on the page itself, "true" inside its section. */
+/**
+ * aria-current for a navbar link: "page" on the page itself, "true" inside its
+ * section. A link to a part of a page (/curriculum#routes) never marks the
+ * page; that page's own link does.
+ */
 export function navLinkCurrent(pathname: string | null, href: string): "page" | "true" | undefined {
-  if (!pathname) return undefined;
+  if (!pathname || href.includes("#")) return undefined;
   if (pathname === href) return "page";
   if (pathname.startsWith(`${href}/`)) return "true";
   return undefined;
@@ -357,7 +372,8 @@ const Navbar = () => {
                   href={link.href}
                   aria-current={current}
                   className={cn(
-                    "inline-flex h-10 items-center border-b-2 px-3 text-sm transition-colors motion-reduce:transition-none",
+                    link.wideOnly ? "hidden xl:inline-flex" : "inline-flex",
+                    "h-10 shrink-0 items-center whitespace-nowrap border-b-2 px-3 text-sm transition-colors motion-reduce:transition-none",
                     current ? "border-primary font-semibold text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
                     focusRing,
                   )}

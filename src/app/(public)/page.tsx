@@ -1,6 +1,9 @@
 import React from 'react';
 import dynamic from 'next/dynamic';
 import HeroSection from '@/components/home/HeroSection';
+import { curriculumData } from '@/lib/curriculum-data';
+import { getAllLabs } from '@/lib/lab-registry';
+import { resolveRoutes, summarizeRoutes } from '@/lib/learning-paths';
 
 // A simple placeholder for lazy-loaded components
 const LoadingPlaceholder = () => (
@@ -17,11 +20,15 @@ const InteractiveFeaturesSection = dynamic(() => import('@/components/home/Inter
   loading: () => <LoadingPlaceholder />,
 });
 export default function HomePage() {
+  // The learner routes from src/lib/learning-paths.ts, resolved here so the cards receive plain data
+  // and never bundle the curriculum (G30-PATH-05; NB2 request 3).
+  const routes = summarizeRoutes(resolveRoutes(curriculumData, { labs: getAllLabs() }));
+
   return (
     <main className="flex flex-col items-center w-full bg-background">
       <HeroSection />
 
-      <LearningPathsSection />
+      <LearningPathsSection routes={routes} />
       <InteractiveFeaturesSection />
     </main>
   );
