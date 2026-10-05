@@ -1,27 +1,77 @@
 [
   {
     "id": "isv7-1",
-    "question": "How does a SystemVerilog int argument cross a DPI-C import?",
-    "answer": "As a C int passed by value for input arguments. 4-state vectors such as logic [31:0] use svLogicVecVal (aval/bval encoding); 2-state bit vectors use svBitVecVal."
+    "question": "How does a SystemVerilog int argument cross a DPI-C import, and how does a logic [31:0] cross?",
+    "answer": "An input `int` is a small value, so C receives a plain `int` by value. An input `logic [31:0]` is a packed 4-state vector, so C receives `const svLogicVecVal*`, a pointer to aval/bval chunks; a 2-state `bit [31:0]` arrives as `const svBitVecVal*` (H.7.7, H.8.7)."
   },
   {
     "id": "isv7-2",
     "question": "When may an import be declared pure?",
-    "answer": "Only for non-void functions with no output or inout arguments and no side effects; the result depends only on the inputs, so calls may be removed or reused (§35.5.2)."
+    "answer": "Only for a non-void function with no output or inout arguments whose result depends only on its inputs: no I/O, no static or global data, no side effects. Calls may then be removed or reused, so a pure function that prints or counts silently loses those effects (§35.5.2)."
   },
   {
     "id": "isv7-3",
-    "question": "Why declare an import context?",
-    "answer": "So the call carries its SystemVerilog scope: required when the C code calls exported SV subroutines or uses VPI (§35.5.3). svSetScope can change which scope an export call runs in."
+    "question": "Why declare an import context, and what does it cost?",
+    "answer": "An import whose C body calls an export, a VPI routine that reads or writes the design, or the svdpi.h scope functions shall be context, so each call carries its SystemVerilog scope (§35.5.1.3, §35.5.3, H.9.5). Each context call is a barrier to compiler optimization, so do not add it just in case."
   },
   {
     "id": "isv7-4",
-    "question": "Does C code run in parallel with other SV processes?",
-    "answer": "No. An imported call runs in the calling process and simulation does not advance while C executes. An imported task can consume simulation time only by calling an exported SV task that waits."
+    "question": "Does C code run in parallel with other SystemVerilog processes?",
+    "answer": "No. While C code runs, nothing else in the simulator runs and time stands still. An imported task can let time pass only by calling an exported task that waits; other processes run while the C frame waits inside that export (§35.5.1.1, §35.5.1.5)."
   },
   {
     "id": "isv7-5",
     "question": "What is the classic export bug?",
-    "answer": "Calling an exported SV task or function from C through a non-context import: the call has no defined scope, so behaviour is undefined (§35.5.3). Declare the import context."
+    "answer": "Calling an exported subroutine from C through an import that is not context: it compiles, then behaves unpredictably or crashes (§35.5.1.3, §35.5.3). Declare the import context; to call an exported task, the import must also be a task (§35.8)."
+  },
+  {
+    "id": "isv7-6",
+    "question": "How long may C keep the const char* it receives from an input string argument?",
+    "answer": "Only until the call returns: C may assume nothing about the lifetime of that storage, and must never free it (H.8.10). Copy the characters into C-owned memory if C needs them later."
+  },
+  {
+    "id": "isv7-7",
+    "question": "How does C read an open array argument such as input int unsigned data []?",
+    "answer": "Through its `const svOpenArrayHandle`: loop from `svLow(h, 1)` to `svHigh(h, 1)`, which are the actual argument's SystemVerilog indices, and read elements with `svGetArrElemPtr1`, checking for NULL (H.12). There is no `svGetIntElement`: use only functions declared in svdpi.h."
+  },
+  {
+    "id": "isv7-8",
+    "question": "Which types can a DPI function return?",
+    "answer": "Only small values: void, byte, shortint, int, longint, real, shortreal, chandle, string, and scalar bit or logic (§35.5.5). Return a wider value, such as logic [31:0], through an output argument."
+  },
+  {
+    "id": "isv7-9",
+    "question": "Can an imported function call an exported task?",
+    "answer": "Never (§35.8), just as a SystemVerilog function cannot enable a task. Only an imported task declared context may call an exported task."
+  },
+  {
+    "id": "isv7-10",
+    "question": "What does an imported task return in C, and what must it do when an export it called returns 1?",
+    "answer": "An `int`: 0 normally, 1 to acknowledge that its thread was disabled (§35.5.4, §35.9). When an exported task returns 1, the import cleans up, calls no more exports and returns 1 at once; otherwise the simulator issues a fatal error."
+  },
+  {
+    "id": "isv7-11",
+    "question": "A context import declared in tb_top must call an export defined in the instance tb_top.u_bfm1. What does C do first?",
+    "answer": "`svSetScope(svGetScopeFromName(\"tb_top.u_bfm1\"))`. Without it, C can directly call only exports declared in the import's own scope (§35.5.3, H.9.3)."
+  },
+  {
+    "id": "isv7-12",
+    "question": "What two rules apply to DPI routines written in C++?",
+    "answer": "Give them C linkage with `extern \"C\"`, or the mangled name is not found when the simulator loads the library. Never let a C++ exception propagate out of one (§35.5.1.6)."
+  },
+  {
+    "id": "isv7-13",
+    "question": "How does IEEE 1800-2023 recommend loading a DPI shared library?",
+    "answer": "With `-sv_lib <path without extension>` (Annex J.4), plus `-sv_root` for relative paths and `-sv_liblist` for a bootstrap file that starts with `#!SV_LIBRARIES`. The switch names are recommendations, so check your simulator's manual (J.2)."
+  },
+  {
+    "id": "isv7-14",
+    "question": "A logic [39:0] arrives in C as svLogicVecVal chunks. Which bits must C mask?",
+    "answer": "The upper 24 bits of chunk [1]: the vector needs two 32-bit chunks, and unused bits are undetermined (H.7.7). Mask both words, for example `SV_GET_UNSIGNED_BITS(v[1].aval, 8)` and the same for `bval`."
+  },
+  {
+    "id": "isv7-15",
+    "question": "How do aval and bval encode one 4-state bit?",
+    "answer": "(aval, bval) = (0,0) is 0, (1,0) is 1, (0,1) is Z, and (1,1) is X. It is the same encoding as VPI's s_vpi_vecval (H.7.7)."
   }
 ]

@@ -21,6 +21,40 @@ import I_UVM_4_Policy_Classes from '../../content/flashcards/I-UVM-4_Policy_Clas
 import I_UVM_5_Container_Classes from '../../content/flashcards/I-UVM-5_Container_Classes.json';
 import I_UVM_6_UVM_Recording_Classes from '../../content/flashcards/I-UVM-6_UVM_Recording_Classes.json';
 import I_SV_5_Synchronization_and_IPC from '../../content/flashcards/I-SV-5_Synchronization_and_IPC.json';
+import I_SV_2A_Constrained_Randomization_Fundamentals from '../../content/flashcards/I-SV-2A_Constrained_Randomization_Fundamentals.json';
+import I_SV_2B_Advanced_Constrained_Randomization from '../../content/flashcards/I-SV-2B_Advanced_Constrained_Randomization.json';
+import I_SV_3A_Functional_Coverage_Fundamentals from '../../content/flashcards/I-SV-3A_Functional_Coverage_Fundamentals.json';
+import I_SV_3B_Advanced_Functional_Coverage from '../../content/flashcards/I-SV-3B_Advanced_Functional_Coverage.json';
+import I_SV_4A_Assertions_SVA_Fundamentals from '../../content/flashcards/I-SV-4A_Assertions_SVA_Fundamentals.json';
+import I_SV_4B_Advanced_SVA from '../../content/flashcards/I-SV-4B_Advanced_SVA.json';
+import I_SV_4C_Checkers_and_Bind from '../../content/flashcards/I-SV-4C_Checkers_and_Bind.json';
+import I_UVM_2A_Component_Roles from '../../content/flashcards/I-UVM-2A_Component_Roles.json';
+import I_UVM_2B_TLM_Connections from '../../content/flashcards/I-UVM-2B_TLM_Connections.json';
+import I_UVM_2C_Configuration_and_Resources from '../../content/flashcards/I-UVM-2C_Configuration_and_Resources.json';
+import I_UVM_3A_Fundamentals from '../../content/flashcards/I-UVM-3A_Fundamentals.json';
+import I_UVM_3B_Advanced_Sequencing from '../../content/flashcards/I-UVM-3B_Advanced_Sequencing.json';
+import I_SV_1_Constructors from '../../content/flashcards/I-SV-1_Constructors.json';
+import I_SV_1_Copying_and_Cloning from '../../content/flashcards/I-SV-1_Copying_and_Cloning.json';
+import I_SV_1_Polymorphism_Pitfalls from '../../content/flashcards/I-SV-1_Polymorphism_Pitfalls.json';
+import I_SV_1_Parameterized_Classes from '../../content/flashcards/I-SV-1_Parameterized_Classes.json';
+import I_SV_2B_Advanced_Constraints from '../../content/flashcards/I-SV-2B_Advanced_Constraints.json';
+import I_SV_2B_Controlling_Randomization from '../../content/flashcards/I-SV-2B_Controlling_Randomization.json';
+import I_SV_2B_Randomization_Methods from '../../content/flashcards/I-SV-2B_Randomization_Methods.json';
+import I_SV_2B_Solver_Debug from '../../content/flashcards/I-SV-2B_Solver_Debug.json';
+import I_SV_3B_Linking_Coverage from '../../content/flashcards/I-SV-3B_Linking_Coverage.json';
+import I_SV_3B_Coverage_APIs from '../../content/flashcards/I-SV-3B_Coverage_APIs.json';
+import I_SV_3B_Closure_Workflow from '../../content/flashcards/I-SV-3B_Closure_Workflow.json';
+import I_SV_4A_Immediate_vs_Concurrent from '../../content/flashcards/I-SV-4A_Immediate_vs_Concurrent.json';
+import I_SV_4B_Local_Variables from '../../content/flashcards/I-SV-4B_Local_Variables.json';
+import I_SV_4B_Multiclock_Assertions from '../../content/flashcards/I-SV-4B_Multiclock_Assertions.json';
+import I_UVM_3B_Sequencer_Driver_Handshake from '../../content/flashcards/I-UVM-3B_Sequencer_Driver_Handshake.json';
+import I_UVM_3B_Sequence_Arbitration from '../../content/flashcards/I-UVM-3B_Sequence_Arbitration.json';
+import I_UVM_3B_Sequence_Libraries from '../../content/flashcards/I-UVM-3B_Sequence_Libraries.json';
+import I_UVM_3B_Layered_Sequences from '../../content/flashcards/I-UVM-3B_Layered_Sequences.json';
+import I_UVM_3B_Virtual_Sequences from '../../content/flashcards/I-UVM-3B_Virtual_Sequences.json';
+import I_UVM_3B_Virtual_Sequencer from '../../content/flashcards/I-UVM-3B_Virtual_Sequencer.json';
+import I_UVM_3B_Interrupt_Handling from '../../content/flashcards/I-UVM-3B_Interrupt_Handling.json';
+import I_UVM_3B_Coordinated_Attack_Lab from '../../content/flashcards/I-UVM-3B_Coordinated_Attack_Lab.json';
 import I_SV_5_Events from '../../content/flashcards/I-SV-5_Events.json';
 import I_SV_5_Mailboxes from '../../content/flashcards/I-SV-5_Mailboxes.json';
 import I_SV_5_Semaphores from '../../content/flashcards/I-SV-5_Semaphores.json';
@@ -108,6 +142,40 @@ export const flashcardDecks: Record<string, any[]> = {
   'I-UVM-5_Container_Classes': I_UVM_5_Container_Classes,
   'I-UVM-6_UVM_Recording_Classes': I_UVM_6_UVM_Recording_Classes,
   'I-SV-5_Synchronization_and_IPC': I_SV_5_Synchronization_and_IPC,
+  'I-SV-2A_Constrained_Randomization_Fundamentals': I_SV_2A_Constrained_Randomization_Fundamentals,
+  'I-SV-2B_Advanced_Constrained_Randomization': I_SV_2B_Advanced_Constrained_Randomization,
+  'I-SV-3A_Functional_Coverage_Fundamentals': I_SV_3A_Functional_Coverage_Fundamentals,
+  'I-SV-3B_Advanced_Functional_Coverage': I_SV_3B_Advanced_Functional_Coverage,
+  'I-SV-4A_Assertions_SVA_Fundamentals': I_SV_4A_Assertions_SVA_Fundamentals,
+  'I-SV-4B_Advanced_SVA': I_SV_4B_Advanced_SVA,
+  'I-SV-4C_Checkers_and_Bind': I_SV_4C_Checkers_and_Bind,
+  'I-UVM-2A_Component_Roles': I_UVM_2A_Component_Roles,
+  'I-UVM-2B_TLM_Connections': I_UVM_2B_TLM_Connections,
+  'I-UVM-2C_Configuration_and_Resources': I_UVM_2C_Configuration_and_Resources,
+  'I-UVM-3A_Fundamentals': I_UVM_3A_Fundamentals,
+  'I-UVM-3B_Advanced_Sequencing': I_UVM_3B_Advanced_Sequencing,
+  'I-SV-1_Constructors': I_SV_1_Constructors,
+  'I-SV-1_Copying_and_Cloning': I_SV_1_Copying_and_Cloning,
+  'I-SV-1_Polymorphism_Pitfalls': I_SV_1_Polymorphism_Pitfalls,
+  'I-SV-1_Parameterized_Classes': I_SV_1_Parameterized_Classes,
+  'I-SV-2B_Advanced_Constraints': I_SV_2B_Advanced_Constraints,
+  'I-SV-2B_Controlling_Randomization': I_SV_2B_Controlling_Randomization,
+  'I-SV-2B_Randomization_Methods': I_SV_2B_Randomization_Methods,
+  'I-SV-2B_Solver_Debug': I_SV_2B_Solver_Debug,
+  'I-SV-3B_Linking_Coverage': I_SV_3B_Linking_Coverage,
+  'I-SV-3B_Coverage_APIs': I_SV_3B_Coverage_APIs,
+  'I-SV-3B_Closure_Workflow': I_SV_3B_Closure_Workflow,
+  'I-SV-4A_Immediate_vs_Concurrent': I_SV_4A_Immediate_vs_Concurrent,
+  'I-SV-4B_Local_Variables': I_SV_4B_Local_Variables,
+  'I-SV-4B_Multiclock_Assertions': I_SV_4B_Multiclock_Assertions,
+  'I-UVM-3B_Sequencer_Driver_Handshake': I_UVM_3B_Sequencer_Driver_Handshake,
+  'I-UVM-3B_Sequence_Arbitration': I_UVM_3B_Sequence_Arbitration,
+  'I-UVM-3B_Sequence_Libraries': I_UVM_3B_Sequence_Libraries,
+  'I-UVM-3B_Layered_Sequences': I_UVM_3B_Layered_Sequences,
+  'I-UVM-3B_Virtual_Sequences': I_UVM_3B_Virtual_Sequences,
+  'I-UVM-3B_Virtual_Sequencer': I_UVM_3B_Virtual_Sequencer,
+  'I-UVM-3B_Interrupt_Handling': I_UVM_3B_Interrupt_Handling,
+  'I-UVM-3B_Coordinated_Attack_Lab': I_UVM_3B_Coordinated_Attack_Lab,
   'I-SV-5_Events': I_SV_5_Events,
   'I-SV-5_Mailboxes': I_SV_5_Mailboxes,
   'I-SV-5_Semaphores': I_SV_5_Semaphores,
@@ -169,21 +237,9 @@ export const flashcardDecks: Record<string, any[]> = {
  * deck was written. Each alias points at the deck that covers the module.
  */
 const deckAliases: Record<string, string> = {
-  'I-SV-2A_Constrained_Randomization_Fundamentals': 'I-SV-2_Constrained_Randomization',
-  'I-SV-2B_Advanced_Constrained_Randomization': 'I-SV-2_Constrained_Randomization',
-  'I-SV-3A_Functional_Coverage_Fundamentals': 'I-SV-3_Functional_Coverage',
-  'I-SV-3B_Advanced_Functional_Coverage': 'I-SV-3_Functional_Coverage',
-  'I-SV-4A_Assertions_SVA_Fundamentals': 'I-SV-4_Assertions_SVA',
-  'I-SV-4B_Advanced_SVA': 'I-SV-4_Assertions_SVA',
-  'I-SV-4C_Checkers_and_Bind': 'I-SV-4_Assertions_SVA',
   'I-UVM-1A_Components': 'I-UVM-1_UVM_Intro',
   'I-UVM-1B_The_UVM_Factory': 'I-UVM-4_Factory_and_Overrides',
   'I-UVM-1C_UVM_Phasing': 'I-UVM-5_Phasing_and_Synchronization',
-  'I-UVM-2A_Component_Roles': 'I-UVM-2_Building_TB',
-  'I-UVM-2B_TLM_Connections': 'I-UVM-2_Building_TB',
-  'I-UVM-2C_Configuration_and_Resources': 'I-UVM-2_Building_TB',
-  'I-UVM-3A_Fundamentals': 'I-UVM-3_Sequences',
-  'I-UVM-3B_Advanced_Sequencing': 'I-UVM-3_Sequences',
   'A-UVM-4A_RAL_Fundamentals': 'A-UVM-4_RAL',
   'A-UVM-4B_Advanced_RAL': 'A-UVM-4_RAL',
 };
