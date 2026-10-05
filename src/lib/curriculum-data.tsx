@@ -704,6 +704,24 @@ export const curriculumData: Module[] = [
         ]
       },
       {
+        "title": "I-UVM-1D: Reporting, Run Control and Pass/Fail",
+        "slug": "I-UVM-1D_Reporting_and_Run_Control",
+        "topics": [
+          {
+            "title": "I-UVM-1D: Reporting, Run Control and Pass/Fail",
+            "slug": "index",
+            "description": "Run a UVM test from the command line and decide from its log whether it passed, controlling message severity, verbosity and actions."
+          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-1C_UVM_Phasing"
+        ],
+        "milestones": [
+          "M2"
+        ]
+      },
+      {
         "title": "I-UVM-2A: Component Roles and the Testbench Hierarchy",
         "slug": "I-UVM-2A_Component_Roles",
         "topics": [
@@ -778,6 +796,29 @@ export const curriculumData: Module[] = [
         ],
         "milestones": [
           "M2"
+        ]
+      },
+      {
+        "title": "I-UVM-3C: Your First Complete UVM Testbench",
+        "slug": "I-UVM-3C_First_Complete_Testbench",
+        "topics": [
+          {
+            "title": "I-UVM-3C: Your First Complete UVM Testbench",
+            "slug": "index",
+            "description": "Assemble, compile, run and debug a complete single-agent UVM testbench for a small DUT, ending with an analysis-FIFO scoreboard and a clean report."
+          }
+        ],
+        "track": "core",
+        "prerequisites": [
+          "I-UVM-2A_Component_Roles",
+          "I-UVM-2B_TLM_Connections",
+          "I-UVM-2C_Configuration_and_Resources",
+          "I-UVM-3A_Fundamentals",
+          "I-UVM-1D_Reporting_and_Run_Control"
+        ],
+        "milestones": [
+          "M2",
+          "M3"
         ]
       },
       {

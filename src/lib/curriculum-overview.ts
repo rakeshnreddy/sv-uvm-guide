@@ -127,22 +127,6 @@ export interface PlannedModule {
  */
 export const PLANNED_MODULES: readonly PlannedModule[] = [
   {
-    code: 'I-UVM-1D',
-    title: 'Reporting, Run Control and Pass/Fail',
-    tierId: 'T2_Intermediate',
-    after: 'I-UVM-1C_UVM_Phasing',
-    lane: 'UVM',
-    summary: 'Run a UVM test from the command line and decide from its log whether it passed.',
-  },
-  {
-    code: 'I-UVM-3C',
-    title: 'Your First Complete UVM Testbench',
-    tierId: 'T2_Intermediate',
-    after: 'I-UVM-3A_Fundamentals',
-    lane: 'UVM',
-    summary: 'Assemble, run and debug a complete single-agent UVM testbench with a scoreboard.',
-  },
-  {
     code: 'A-UVM-9',
     title: 'Reset Handling and Error Injection',
     tierId: 'T3_Advanced',

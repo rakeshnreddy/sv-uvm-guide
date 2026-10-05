@@ -34,9 +34,9 @@ function topLessons(query: string, count = 3): string[] {
 }
 
 describe('generated search index', () => {
-  it('has one lesson entry per manifest lesson, in manifest order (108 lessons today)', () => {
+  it('has one lesson entry per manifest lesson, in manifest order (110 lessons today)', () => {
     expect(lessonDocs.map((doc) => doc.href)).toEqual(manifestLessonHrefs);
-    expect(lessonDocs).toHaveLength(108);
+    expect(lessonDocs).toHaveLength(110);
     expect(data.tiers.map((tier) => tier.title)).toEqual(manifest.tiers.map((tier) => tier.title));
   });
 

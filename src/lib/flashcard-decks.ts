@@ -21,6 +21,8 @@ import I_UVM_4_Policy_Classes from '../../content/flashcards/I-UVM-4_Policy_Clas
 import I_UVM_5_Container_Classes from '../../content/flashcards/I-UVM-5_Container_Classes.json';
 import I_UVM_6_UVM_Recording_Classes from '../../content/flashcards/I-UVM-6_UVM_Recording_Classes.json';
 import I_SV_5_Synchronization_and_IPC from '../../content/flashcards/I-SV-5_Synchronization_and_IPC.json';
+import I_UVM_1D_Reporting_and_Run_Control from '../../content/flashcards/I-UVM-1D_Reporting_and_Run_Control.json';
+import I_UVM_3C_First_Complete_Testbench from '../../content/flashcards/I-UVM-3C_First_Complete_Testbench.json';
 import I_SV_2A_Constrained_Randomization_Fundamentals from '../../content/flashcards/I-SV-2A_Constrained_Randomization_Fundamentals.json';
 import I_SV_2B_Advanced_Constrained_Randomization from '../../content/flashcards/I-SV-2B_Advanced_Constrained_Randomization.json';
 import I_SV_3A_Functional_Coverage_Fundamentals from '../../content/flashcards/I-SV-3A_Functional_Coverage_Fundamentals.json';
@@ -142,6 +144,8 @@ export const flashcardDecks: Record<string, any[]> = {
   'I-UVM-5_Container_Classes': I_UVM_5_Container_Classes,
   'I-UVM-6_UVM_Recording_Classes': I_UVM_6_UVM_Recording_Classes,
   'I-SV-5_Synchronization_and_IPC': I_SV_5_Synchronization_and_IPC,
+  'I-UVM-1D_Reporting_and_Run_Control': I_UVM_1D_Reporting_and_Run_Control,
+  'I-UVM-3C_First_Complete_Testbench': I_UVM_3C_First_Complete_Testbench,
   'I-SV-2A_Constrained_Randomization_Fundamentals': I_SV_2A_Constrained_Randomization_Fundamentals,
   'I-SV-2B_Advanced_Constrained_Randomization': I_SV_2B_Advanced_Constrained_Randomization,
   'I-SV-3A_Functional_Coverage_Fundamentals': I_SV_3A_Functional_Coverage_Fundamentals,
