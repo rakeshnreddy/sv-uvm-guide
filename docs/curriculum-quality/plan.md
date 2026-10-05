@@ -117,12 +117,12 @@ Scores R1–R9 (0–3) and S1/S2/S3/S4 counts come from the analyst. Verifier ch
 | L10 | ↳ polymorphism-pitfalls.mdx | major | 1 2 0 2 2 1 1 1 1 | 0/5/8/4 | M | ✓ |
 | L10 | ↳ parameterized-classes.mdx | major | 1 2 0 2 0 1 1 1 1 | 0/5/6/3 | M | ✓ |
 | L11 | I-SV-2A_Constrained_Randomization_Fundamentals | major | 1 2 1 2 2 1 1 1 1 | 0/9/17/17 | L | ✓ |
-| L12 | I-SV-2B_Advanced_Constrained_Randomization | **rewrite** | 1 2 1 1 1 1 1 1 1 | 0/14/21/8 | XL | pending |
+| L12 | I-SV-2B_Advanced_Constrained_Randomization | **rewrite** | 1 2 1 1 1 1 1 1 1 | 0/14/21/8 | XL | ✓ |
 | L13 | I-SV-3A_Functional_Coverage_Fundamentals | major | 1 2 1 2 2 1 1 1 1 | 0/8/18/17 | L | ✓ |
 | L14 | I-SV-3B_Advanced_Functional_Coverage | rewrite | 1 2 1 2 1 1 1 1 1 | 1/15/20/14 | XL | ✓ |
 | L15 | I-SV-4A_SVA_Fundamentals | **major** (index); `immediate-vs-concurrent.mdx` **rewrite** (verifier) | 1 2 1 2 2 1 1 1 1 | 0/15/18/11 | L | ✓ |
-| L16 | I-SV-4B_Advanced_Temporal_Logic | **major** | 1 2 1 2 1 1 1 1 1 | 0/12/14/3 | L | pending |
-| L16 | I-SV-4C_Checkers | **major** | 1 2 1 2 1 0 1 2 1 | 0/9/7/7 | L | pending |
+| L16 | I-SV-4B_Advanced_Temporal_Logic | **major** (index); `local-variables.mdx` and `multi-clocking.mdx` **rewrite** (verifier); lab `assertions-1` **rewrite** | 1 2 1 2 1 1 1 1 1 | 0/12/14/3 | L | ✓ |
+| L16 | I-SV-4C_Checkers | **major** | 1 2 1 2 1 0 1 2 1 | 0/9/7/7 | L | ✓ |
 | L17 | I-SV-5_Synchronization_and_IPC | **rewrite** (verifier: major → rewrite) | 1 2 1 2 2 1 1 1 1 | 0/11/17/8 | L | ✓ |
 | L18 | I-SV-6_Compiler_Directives_and_Generates | major | 1 2 1 2 1 1 1 2 1 | 0/8/9/10 | L | ✓ |
 | L18 | I-SV-7_DPI_and_Foreign_Language_Interfaces | major | 1 2 1 2 2 1 2 2 1 | 0/7/11/11 | L | ✓ |
@@ -136,20 +136,20 @@ Scores R1–R9 (0–3) and S1/S2/S3/S4 counts come from the analyst. Verifier ch
 | L22 | I-UVM-3A_Fundamentals | **major** | 1 2 1 2 2 1 2 2 1 | 1/6/9/4 | L | ✓ |
 | L23 | I-UVM-3B_Advanced_Sequencing_and_Layering (L23 scope: `index.mdx`, `sequencer-driver-handshake.mdx`, `sequence-arbitration.mdx`, `sequence-libraries.mdx`) | **major** | 1 2 1 2 2 1 2 1 1 | 1/8/22/8 | L | ✓ |
 | L24 | I-UVM-3B_Advanced_Sequencing_and_Layering (L24 scope: 5 sub-lessons) | **major** | 1 2 1 2 1 1 2 1 1 | 1/10/20/5 | XL | ✓ |
-| L25 | I-UVM-4_UVM_Policy_Classes | **major** | 1 2 2 2 2 1 2 2 1 | 0/5/10/4 | L | pending |
-| L25 | I-UVM-5_UVM_Container_Classes | **major** | 1 2 2 2 2 1 2 2 1 | 0/2/7/8 | M | pending |
-| L25 | I-UVM-6_UVM_Recording_Classes | **major** | 1 2 1 2 2 1 2 1 1 | 0/7/7/4 | L | pending |
-| L26 | A-UVM-4A_RAL_Fundamentals | **major** | 1 2 2 2 1 1 1 2 1 | 0/10/17/6 | L | pending |
-| L27 | A-UVM-4B_Advanced_RAL_Techniques (index + 3 sub-lessons) | **major** | 1 2 1 2 1 1 2 1 1 | 1/11/26/7 | XL | pending |
-| L28 | A-UVM-5_UVM_Callbacks | **major** | 1 2 1 2 2 1 2 1 1 | 0/5/16/9 | L | pending |
-| L29 | A-UVM-6_Scoreboards_and_Reference_Models | **major** | 1 2 1 2 2 1 2 2 1 | 1/9/19/10 | L | pending |
-| L30 | A-UVM-7_VIP_Construction | **rewrite** | 1 2 1 2 1 1 1 1 1 | 0/11/20/11 | L | pending |
+| L25 | I-UVM-4_UVM_Policy_Classes | **major** | 1 2 2 2 2 1 2 2 1 | 0/5/10/4 | L | ✓ |
+| L25 | I-UVM-5_UVM_Container_Classes | **major** | 1 2 2 2 2 1 2 2 1 | 0/2/7/8 | M | ✓ |
+| L25 | I-UVM-6_UVM_Recording_Classes | **major** | 1 2 1 2 2 1 2 1 1 | 0/7/7/4 | L | ✓ |
+| L26 | A-UVM-4A_RAL_Fundamentals | **major** | 1 2 2 2 1 1 1 2 1 | 0/10/17/6 | L | ✓ |
+| L27 | A-UVM-4B_Advanced_RAL_Techniques (index + 3 sub-lessons) | **major** | 1 2 1 2 1 1 2 1 1 | 1/11/26/7 | XL | ✓ |
+| L28 | A-UVM-5_UVM_Callbacks | **major** | 1 2 1 2 2 1 2 1 1 | 0/5/16/9 | L | ✓ |
+| L29 | A-UVM-6_Scoreboards_and_Reference_Models | **major** | 1 2 1 2 2 1 2 2 1 | 1/9/19/10 | L | ✓ |
+| L30 | A-UVM-7_VIP_Construction | **rewrite** | 1 2 1 2 1 1 1 1 1 | 0/11/20/11 | L | ✓ |
 | L31 | A-UVM-8_Multi_Agent_Topologies | rewrite | 1 2 1 1 1 1 1 1 1 | 0/13/14/2 | L | pending |
 | L32 | B-AMBA-1_Protocol_Families_and_Tradeoffs | major | 1 2 1 2 1 1 1 1 1 | 0/7/13/4 | L | pending |
 | L32 | B-AMBA-2_Protocol_Intuition_and_Memory_Hooks | major | 1 2 1 2 1 1 1 1 1 | 0/8/9/6 | L | pending |
-| L33 | B-AHB-1_AHB_Design_Timing_Mechanics | major | 1 2 1 2 2 2 1 1 1 | 0/9/7/3 | L | pending |
-| L33 | B-AHB-2_AHB_Pitfalls_and_Deadlocks | major | 1 2 1 2 1 1 2 1 1 | 0/7/6/6 | L | pending |
-| L34 | B-AHB-3_AHB_Verification | **major** | 1 2 1 2 0 1 2 1 1 | 0/6/18/6 | L | pending |
+| L33 | B-AHB-1_AHB_Design_Timing_Mechanics | major | 1 2 1 2 2 2 1 1 1 | 0/9/7/3 | L | ✓ |
+| L33 | B-AHB-2_AHB_Pitfalls_and_Deadlocks | major | 1 2 1 2 1 1 2 1 1 | 0/7/6/6 | L | ✓ |
+| L34 | B-AHB-3_AHB_Verification | **major** | 1 2 1 2 0 1 2 1 1 | 0/6/18/6 | L | ✓ |
 | L35 | B-AXI-1_AXI_Channel_Architecture | **major** | 1 2 1 2 2 1 1 1 1 | 1/4/16/6 | L | pending |
 | L36 | B-AXI-2_AXI_Burst_Math | **major** | 1 2 1 2 2 1 1 1 1 | 1/6/15/4 | L | pending |
 | L37 | B-AXI-3_AXI_Ordering_and_IDs | **major** | 1 2 1 2 2 1 2 1 1 | 0/6/15/3 | L | pending |
@@ -172,10 +172,12 @@ Scores R1–R9 (0–3) and S1/S2/S3/S4 counts come from the analyst. Verifier ch
 | L43 | Lab `formal-harness | **rewrite** | -1 -1 -1 -1 -1 -1 -1 -1 -1 | 1/3/3/1 | M | pending |
 | L44 | E-PSS-1_Portable_Stimulus_Standard | **major** | 1 2 1 2 1 1 1 1 1 | 0/12/12/14 | L (page L, deck S) | pending |
 | L44 | Lab `pss-portable-intent | **minor** |          | 0/0/3/7 | S | pending |
+| L46 | E-EMU-1_Emulation_Aware_Verification | **rewrite** | 1 1 1 1 1 1 1 1 1 | 3/13/18/5 | L (page L, deck S) | pending |
+| L46 | E-UVM-ML-1_Multi_Language_Verification | **rewrite** | 1 1 1 1 1 1 1 1 1 | 0/13/13/2 | L (page L, deck S) | pending |
 | G29 | Interview banks (6) | 5 major, 1 rewrite (`uvm.json`) | — | 7 S1 | L | ✓ |
 | G30 | Navigation (8 units) | 6 major, 2 rewrite | — | 0 S1, 23 S2 | L | ✓ |
 
-Pending analysis: L45–L48. Pending verification: L12, L16, L25–L44.
+Pending analysis: L45, L47–L48. Pending verification: L31–L32, L35–L44, L46.
 
 **What the first 30 verdicts show.**
 - R1 (objectives) and R9 (completeness and depth) score 1 on every page: no lesson states measurable objectives, and none has an expert layer.
@@ -195,13 +197,14 @@ Each wave runs the implementation workflow:
 | Wave | Groups | Starts when | Status |
 |---|---|---|---|
 | W1a | L01 (F1A–F1C), L02 (F2A index), L03 (F2B), N01 (F2E), N02 (F2A sub-lessons) | L01–L03 verified; the lead adds placeholders, manifest entries and registered decks for N01/N02 first | running |
-| W1b | L04 (F2C), L05a/b/c (F2D index + basics-1, tasks-functions, ipc), L06a/b/c (F3A, F3B, F3C), L08 (F4C) | L04–L06 and L08 verified | running |
-| W1c | L07 (F4A rewrite, F4B) | L07 verified | waiting |
-| W2 | L09–L18 | L09–L18 verified | waiting |
-| W3 | L19–L25, N03 (I-UVM-1D), N04 (I-UVM-3C) | L19–L25 verified | waiting |
-| W4 | L26–L31, N05 (A-UVM-9) | L26–L31 verified | waiting |
-| W5 | L32–L40, N06 (B-APB-1) | L32–L40 verified | waiting |
-| W6 | L41–L48, G29 bank fixes | L41–L48 verified | waiting |
+| W1b | L04 (F2C), L05a/b/c (F2D pages), L06a/b/c (F3A, F3B, F3C), L08 (F4C) | L04–L06 and L08 verified | running |
+| W2a | L17a–d (I-SV-5 pages), L18a/b (I-SV-6, I-SV-7), L19a/b (I-SV-9, I-UVM-1A) | L17–L19 verified; the lead adds sub-lesson decks | running |
+| W2-SV | L07a/b (F4A, F4B), L09a–c and L10a/b (I-SV-1 pages), L11 (I-SV-2A), L12a–e (I-SV-2B pages and lab), L13 (I-SV-3A), L14a–d (I-SV-3B pages and lab), L15a/b (I-SV-4A pages), L16a–d (I-SV-4B pages, I-SV-4C), L16e (lab assertions-1) | L07–L16 verified; the lead gives every module and split sub-lesson its own deck | running (v2 author rules) |
+| W2-UVM | L20a/b (I-UVM-1B, 1C), L21a/b (2A, 2B), L22a/b (2C with config-debug, 3A), L23a–d and L24a–e (I-UVM-3B pages) | L20–L24 verified; decks as for W2-SV | running (v2 author rules) |
+| W3 | L25 (I-UVM-4/5/6), N03 (I-UVM-1D), N04 (I-UVM-3C) | L25 verified; the lead adds N03/N04 placeholders | waiting |
+| W4 | L26–L31 (RAL, callbacks, scoreboards with uvm-mini-capstone, VIP, multi-agent), N05 (A-UVM-9) | L26–L31 verified | waiting |
+| W5 | L32–L40 (AMBA), N06 (B-APB-1) | L32–L40 verified | waiting |
+| W6 | L41–L48 (expert tier), G29 bank fixes | L41–L48 analysed and verified | waiting |
 
 Waves overlap when usage allows. A group whose verifier could not run still proceeds; its accuracy reviewer then also re-checks the analyst's S1/S2 claims.
 
