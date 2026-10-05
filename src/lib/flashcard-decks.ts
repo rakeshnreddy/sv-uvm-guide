@@ -2,6 +2,7 @@ import F1A_Cost_of_Bugs from '../../content/flashcards/F1A_Cost_of_Bugs.json';
 import F1B_Verification_Mindset from '../../content/flashcards/F1B_Verification_Mindset.json';
 import F1C_Why_SystemVerilog from '../../content/flashcards/F1C_Why_SystemVerilog.json';
 import F2_Data_Types from '../../content/flashcards/F2_Data_Types.json';
+import F2B_Dynamic_Structures from '../../content/flashcards/F2B_Dynamic_Structures.json';
 import F2C_Operators from '../../content/flashcards/F2C_Operators.json';
 import F2E_First_Self_Checking_Testbench from '../../content/flashcards/F2E_First_Self_Checking_Testbench.json';
 import F2A_Structs_Unions_Enums from '../../content/flashcards/F2A_Structs_Unions_Enums.json';
@@ -88,6 +89,7 @@ export const flashcardDecks: Record<string, any[]> = {
   F1B_Verification_Mindset,
   F1C_Why_SystemVerilog,
   F2_Data_Types,
+  F2B_Dynamic_Structures,
   F2C_Operators,
   F2E_First_Self_Checking_Testbench,
   F2A_Structs_Unions_Enums,

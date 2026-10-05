@@ -348,7 +348,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 - **Sub-lessons:** intended order index → tasks-functions → ipc (nav today: index → ipc → tasks-functions).
   - `index.mdx`: module overview, system tasks, reporting, file and command-line I/O, simulation control, waveform dumping.
   - `tasks-functions.mdx`: subroutines, lifetime, argument passing; owns `basics-1`. It lacks `Make It Work`, `Practice & Reinforce` and the full References H2.
-  - `ipc.mdx`: duplicates I-SV-5 and uses built-in classes before I-SV-1. **Merge it into I-SV-5 and redirect** (P1). It is e2e-pinned ("Interprocess Communication" heading, the "Mailbox and semaphore lab" region, and the link from the index), so the lead updates `F2_F3_lessons`, `f2-revamp` and `phase9-visuals` specs.
+  - `ipc.mdx`: a labelled foundation-level first look at events, semaphores and mailboxes that links forward to I-SV-5 for depth (lead decision, plan.md §1 topic ownership; this supersedes the earlier "merge into I-SV-5 and redirect" proposal). Keep its e2e pins: the "Interprocess Communication" heading, one default-mode `<MailboxSemaphoreGame />` region, and the link from the index.
 
 ### F3A_Simulation_Semantics — F3A: Simulation Semantics
 - **Tier / position:** T1 · after F2D (proposed F2E between) · before F3B · nav #8
@@ -827,7 +827,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
   2. `@(ev)` catches a trigger earlier in the same time slot;
   3. `put` into a full bounded mailbox overwrites;
   4. skipping `put()` on an early return is harmless.
-- **Sub-lessons:** `events.mdx`, `mailboxes.mdx`, `semaphores.mdx` (order is correct), each with 1 quiz question. The index section "Threads first: join_any, disable fork, wait fork" re-teaches F2C; reduce it to a recap. F2D/`ipc.mdx` should merge in here.
+- **Sub-lessons:** `events.mdx`, `mailboxes.mdx`, `semaphores.mdx` (order is correct), each with 1 quiz question. The index section "Threads first: join_any, disable fork, wait fork" re-teaches F2C; reduce it to a recap. F2D/`ipc.mdx` stays as a foundation-level first look that links here; I-SV-5 owns the depth (plan.md §1).
 
 ### I-SV-6_Compiler_Directives_and_Generates — I-SV-6: Compiler Directives & Generate Constructs
 - **Tier / position:** T2 · after I-SV-5 · before I-SV-7 · nav #23
@@ -2071,7 +2071,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 | F2B index (scoreboard example) | `uvm_component`, `` `uvm_component_utils ``, `` `uvm_error ``, `check_phase` | I-UVM-1A/1C | Rewrite in plain SV |
 | F2C index ("Timeline of a Simulation Tick", Scheduler Game) | full region model | F3B | Label as preview. Moving the game to F3B needs the lead to update `F2_F3_lessons`/`f2-revamp`/`phase9-visuals` specs |
 | F2D index (`$cast` example) | class downcasting | I-SV-1 polymorphism-pitfalls | Use an enum (F2A) or drop it |
-| F2D/`ipc.mdx` | built-in `mailbox`/`semaphore` classes, handles, `new` | I-SV-1, I-SV-5 | Merge into I-SV-5 |
+| F2D/`ipc.mdx` | built-in `mailbox`/`semaphore` classes, handles, `new` | I-SV-1, I-SV-5 | Keep as a labelled first look; link forward to I-SV-5 (plan.md §1) |
 | F2D nav order (ipc before tasks-functions) | tasks | tasks-functions | Order index → tasks-functions → ipc |
 | F4B "The Bridge to Classes" | classes; `uvm_config_db` set/get code | I-SV-1; I-UVM-2C | Minimal class syntax labelled as preview; replace config_db code with a forward link |
 | F4C driver/monitor classes ("both classes get vif from `uvm_config_db`") | classes, config_db | I-SV-1; I-UVM-2C | Task form first (M1); class form as preview |
@@ -2094,7 +2094,7 @@ Cards follow today's **nav order** (#1–#69). Neighbours in *Tier / position* a
 
 | Topic | Appears in | Owner | Others do |
 |---|---|---|---|
-| Events, mailboxes, semaphores | F2D/ipc, I-SV-5 (index + 3) | I-SV-5 | F2D/ipc merges in |
+| Events, mailboxes, semaphores | F2D/ipc, I-SV-5 (index + 3) | I-SV-5 | F2D/ipc is the first look and links forward |
 | fork/join, `disable fork`, `wait fork`, fork-in-loop | F2C, I-SV-5 index | F2C | I-SV-5 recaps and owns `process` (§9.7) |
 | `$cast` | F2A, F2D, I-SV-1 polymorphism-pitfalls | F2A (enum, static cast); I-SV-1 (class downcast) | F2D drops it |
 | Scheduling regions | F2C (table, game), F3A, F3B, F3C, E-PERF-1 | F3B (regions); F3C (deltas, races); F3A (time) | F2C preview only; E-PERF-1 links |
