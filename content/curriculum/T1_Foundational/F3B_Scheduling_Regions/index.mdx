@@ -1,6 +1,6 @@
 ---
 title: "F3B: Scheduling Regions"
-description: "Master the SystemVerilog scheduler regions and how statements are ordered for execution to eliminate race conditions."
+description: "Predict the region where each SystemVerilog construct runs inside one time slot, and use that to explain sampling, drive timing and printed output."
 flashcards: "F3B_Scheduling_Regions"
 sources:
   - title: "IEEE Standard for SystemVerilog"
@@ -8,115 +8,726 @@ sources:
     identifier: "IEEE 1800-2023"
 ---
 
-import { InteractiveCode, Quiz, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
-import SVSchedulerRegionVisualizer from '@/components/visualizers/SVSchedulerRegionVisualizer';
-
 ## Quick Take
-- **What it is:** The IEEE standard divides each simulation time step into ordered scheduling regions: Preponed, Active, Inactive, NBA, Observed, Reactive, Re-Inactive, Re-NBA and Postponed (plus PLI regions), §4.4.
-- **Why it matters:** Without these regions, RTL and Testbench code would step on each other's toes, creating non-deterministic race conditions.
-- **The Analogy:** Think of the time step as a factory assembly line. Parts are inspected (Preponed), assembled (Active), shifted down the line (NBA), QA tested (Observed), logged (Reactive), and shipped (Postponed).
+
+- **What it is:** A **time slot** is everything the simulator does at one simulation time (F3A). IEEE 1800-2023 divides every time slot into ordered **regions** (§4.4). Nine of them are **simulation regions**, where SystemVerilog code runs or its effects land: Preponed, Active, Inactive, NBA, Observed, Reactive, Re-Inactive, Re-NBA and Postponed (§4.4.2). Eight more exist only for C-language tool callbacks, the **PLI regions** (§4.4.3). A loop, the **simulation reference algorithm**, walks the regions and may return to Active many times before time moves on (§4.5).
+- **Why it matters:** The region a statement runs in decides which values it reads and when its writes become visible. That is why `$display` and `$strobe` print different values at the same time stamp, why an assertion checks the value from before the clock edge, and why a clocking-block drive does not race the flops it feeds on that edge. The order of the regions is fixed, but the order of processes inside one region is not (§4.7). Regions give you safe places to put code; they do not remove races on their own (F3C).
+- **The Analogy:** One service call in a restaurant kitchen. Before anyone moves, an inspector photographs every station (Preponed). Cooks work their tickets in no fixed order (Active); a cook who says "after you" steps aside until the others have finished (Inactive, `#0`); finished plates go onto the pass (NBA). The inspector then grades what the photo shows (Observed). Only then do the waiters act on what is on the pass (Reactive) and hand in new orders (Re-NBA). The manager reads the settled board once the kitchen is quiet (Postponed). *Where it breaks:* a plate on the pass or a waiter's order can send the cooks back to work in the same instant, any number of times (the §4.5 loop). And a real inspector would look at today's plates; the scheduler's inspector deliberately grades the photo.
+
+**You will be able to:**
+1. Name the nine simulation regions of a time slot in order, and sort them into the active region set, the Observed region and the reactive region set (§4.4.1, §4.4.2).
+2. Predict where each construct runs or lands: blocking and nonblocking assignments, continuous assignments, `#0`, concurrent assertions and their action blocks, program and checker code, clocking-block samples and drives, `$strobe` and `$monitor`, and `final`, which runs outside every region.
+3. Trace the reference algorithm (§4.5) through one time slot and explain each return to Active or Reactive.
+4. Predict what `$display`, `#0 $display`, `$strobe` and an assertion action block print in one time slot, and debug a logged value you did not expect.
+5. Explain what IEEE 1800-2023 guarantees about execution order (§4.6), what it leaves open (§4.7), and why program blocks and clocking blocks were introduced (§24.4).
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
-SystemVerilog fixes the **order of the regions** within a time step (IEEE 1800-2023 §4.4–4.5). It does **not** fix the order of processes that are ready in the same region: those may run in any order (§4.7), and that freedom is exactly where races come from. The regions give you places to put work so that order stops mattering. Here are the regions you must understand for interviews:
+### From one time slot to nine regions
 
-| Region | Primary Purpose | Examples |
+[F3A](/curriculum/T1_Foundational/F3A_Simulation_Semantics/index) showed that a simulator is **event-driven**: it executes every event scheduled for the current simulation time, then jumps to the next time that has events (§4.4). Two kinds of event matter here (§4.3). An **update event** is a change in the value of a net or variable. An **evaluation event** is a run of a **process**, such as an `always` procedure or a continuous assignment, that is sensitive to such a change.
+
+Inside one time slot those events are not processed as one heap. Each event is scheduled into a **region**, and the scheduler processes the regions in a fixed order. The region tells you two things about a statement: which values it can see, and when anything it writes becomes visible to other processes.
+
+Two notes before the details. **Delta cycle** is the industry name for one more pass through the regions at the same simulation time; IEEE 1800-2023 never uses the word and speaks of iterations of the §4.5 loop instead. And if blocking (`=`) versus nonblocking (`<=`) assignments are still new to you, review [F2C Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) first.
+
+**How to read this section.** The core path is the nine regions, the scheduler loop, the rows that "Where each construct runs" tells you to read first, sampling versus evaluation, the guarantees, and the pitfalls. The other table rows are practitioner depth for when you meet those constructs, and Push Further holds the expert corner cases.
+
+### The nine simulation regions, in order
+
+Each region exists to solve one problem. Read the table top to bottom: that is the order inside every time slot.
+
+| Region | What runs or lands here | Why it exists |
 |---|---|---|
-| **Preponed** | Sample stable values from the previous time step before any new changes occur. | Used by clocking blocks (input sampling) and concurrent assertions. |
-| **Active** | Evaluate and update variables using blocking assignments, evaluate RHS of non-blocking assignments. | `a = b;`, `$display();` |
-| **Inactive** | Process `#0` delaying statements (legacy, avoid using). | `#0 a = b;` |
-| **NBA (Non-Blocking Assignment)** | Update LHS of non-blocking assignments evaluated in the Active region. | `a <= b;` |
-| **Observed** | Evaluate concurrent assertions (SVA) using values sampled in the Preponed region. | `assert property (...)` |
-| **Reactive** | Execute testbench program blocks and testbench checks. | Program block execution, action blocks of assertions |
-| **Re-NBA** | Apply clocking-block drives and nonblocking updates made by program code, after the design's NBA updates. | `vif.cb.req <= 1;` |
-| **Postponed** | Execute read-only tasks after all other regions have settled for the current time step. | `$monitor()`, `$strobe()` |
+| **1. Preponed** · read-only · §4.4.2.1 | A snapshot of every value before anything in the slot changes: `#1step` samples for clocking-block inputs and the sampled values of concurrent assertions | Checks need what a real flip-flop would capture: the state just before the clock edge |
+| **2. Active** · active set · §4.4.2.2 | Processes woken in module code: blocking assignments, the right-hand side of `<=`, continuous-assignment updates, `$display` | The main work area of the design; ready processes run here in any order |
+| **3. Inactive** · active set · §4.4.2.3 | Processes resumed after an explicit `#0` | Lets a process run after the current Active work. It comes from the Verilog (IEEE 1364-2005) scheduling model, which these regions still encompass, so legacy Verilog code runs unchanged (§4.4) |
+| **4. NBA** · active set · §4.4.2.4 | Updates of nonblocking-assignment targets, applied in the order the assignments executed | Lets every flop read its inputs before any flop output changes, so flop-to-flop transfers do not depend on process order |
+| **5. Observed** · neither set · §4.4.2.5 | Evaluation of triggered properties (concurrent assertions); clocking-block events such as `@(cb)` (§14.10); clocking inputs with an explicit `#0` skew are sampled here (§14.13) | Properties are checked once the design is stable, before testbench code reacts (§4.3) |
+| **6. Reactive** · reactive set · §4.4.2.6 | Program-block code, blocking statements in checkers, pass and fail action blocks of concurrent assertions | Testbench-side code runs after the design and the checks, so it reacts to settled values |
+| **7. Re-Inactive** · reactive set · §4.4.2.7 | Reactive-set processes resumed after `#0` | The reactive-set copy of Inactive: a `#0` in program code resumes inside the reactive set, still after the design's work, instead of jumping back into the active set |
+| **8. Re-NBA** · reactive set · §4.4.2.8 | Nonblocking updates made by program and checker code; zero-skew clocking-block drives (§14.16) | Testbench writes land after the design has read its inputs for this edge, the way a real driver would behave |
+| **9. Postponed** · read-only · §4.4.2.9 | `$strobe` and `$monitor` output; nothing may write | Lets you observe the slot's settled values, which nothing later in the slot can change |
 
-> [!IMPORTANT]
-> **The Active vs. Reactive Split:** The original intent was to separate RTL (active region set) from testbench code in `program` blocks (reactive region set). That separation reduces races but does not guarantee their absence: program code can still race with other program code. UVM components are classes called from module code, so they run in the **active** region set; UVM testbenches get same-edge race safety from **clocking blocks** (Preponed sampling, Re-NBA drives), not from phasing, which orders whole phases rather than events within one time slot.
+Two things the table cannot show come next: the scheduler climbs back up the ladder (the loop), and processes that are ready in the same region run in no defined order (§4.7).
 
-### Interactive Visualizer: where each event lands
+**Region sets.** §4.4.1 groups the regions. The **active region set** is Active, Inactive and NBA, plus the PLI regions Pre-NBA and Post-NBA. The **reactive region set** is Reactive, Re-Inactive and Re-NBA, plus Pre-Re-NBA and Post-Re-NBA. Each reactive-set region is the dual of an active-set region: the same run, `#0` and nonblocking-update steps, for code that should act after the design (§4.4.2.6 to §4.4.2.8). **Observed** belongs to neither set; it is where checks happen between the two. Preponed and Postponed run once per slot and change nothing.
 
-Pick a scenario, read the code and lock in a prediction before you step. Notice two things: every event is filed under the region it was *scheduled* in, and the scheduler goes back to Active (Δ increases) whenever an NBA or Re-NBA update wakes more logic in the same time slot (§4.5).
+**PLI regions (awareness).** A full time slot has seventeen regions (§4.4). The other eight, Pre-Active, Pre-NBA, Post-NBA, Pre-Observed, Post-Observed, Pre-Re-NBA, Post-Re-NBA and Pre-Postponed, are callback points for C applications that use the PLI and VPI, such as waveform dumpers and debuggers (§4.4.3). Preponed and Postponed are also defined as PLI callback points (§4.4.3.1, §4.4.3.10). Your SystemVerilog code never runs in the eight PLI-only regions. Push Further maps the common callbacks to their regions.
 
-<SVSchedulerRegionVisualizer />
+**Use the map.** Select each rung below. Before you read its card, name one statement from your own code that lands there, then check the card's example and its testbench note. The map leaves out the PLI regions.
+
+<TimeSlotRegionMap />
+
+**What to take from it.** The dashed rungs, Preponed and Postponed, never change a value: one takes the "before" photo, the other reports the settled result. The solid rungs between them are where work happens, and they repeat.
+
+Three cards need a precision:
+- **Re-NBA:** "after all design NBA updates" means the updates pending when Re-NBA is reached. A Re-NBA update can wake design code whose own `<=` lands in a later NBA pass of the same slot (§4.5).
+- **Preponed:** written on its own as a module item, a concurrent assertion carries its clock inside the parentheses: `assert property (@(posedge clk) req |-> ##1 gnt);`.
+- **Reactive:** a program whose only `initial` prints once ends the whole simulation right after that print, through an implicit `$finish` (§24.3). The worked example in Make It Work keeps its program alive.
+
+**Where you meet each region in a real testbench:**
+- **Preponed:** a monitor that reads a clocking-block input such as `cb.data` gets the Preponed sample (F4C), and assertions bound to the DUT or an interface sample their signals there.
+- **Active and NBA:** the DUT's flops and combinational logic, and module-based driver and monitor code, including UVM class code started from a module.
+- **Inactive:** legacy `#0` "fixes" in old code. You should not add new ones.
+- **Observed:** assertions in the DUT and its interfaces are evaluated here, and every clocking-block event `@(cb)` is triggered here; module code waiting on it resumes in the next Active pass (§14.10).
+- **Reactive and Re-NBA:** program-based testbenches, checker code, assertion action blocks and clocking-block drives.
+- **Postponed:** `$strobe` and `$monitor` debug prints.
+
+### The scheduler loop (§4.5)
+
+The **simulation reference algorithm** of §4.5 is short pseudocode. A simulator may work differently inside, as long as everything you can observe is consistent with that algorithm (§4.3). Its building block is *execute a region*: while the region has events, take **any one** of them. If it is an update event, change the value and schedule an evaluation event for every process sensitive to it. If it is an evaluation event, run the process, which may schedule more events. "Any one" is the formal root of §4.7: the standard does not choose the order.
+
+One time slot then runs like this:
+
+1. **Preponed, once.** The samples are taken.
+2. **Inner loop.** Run Active until it is empty. Then take the first later region that has events, in order Inactive, then NBA, then Observed (with their PLI neighbours), process its events, and go back to Active. Repeat until every region from Active to Observed is empty. So `#0` code resumes only after Active is empty, `<=` updates apply only after Inactive is empty, and properties are evaluated only once the whole active set has settled.
+3. **Reactive loop.** The same pattern for the reactive set: run Reactive until it is empty, then Re-Inactive, then Re-NBA, going back to Reactive after each. This loop drains completely before the inner loop can run again.
+4. **Outer loop.** When every region from Active to Post-Re-NBA is empty, the PLI region Pre-Postponed runs. If any region from Active to Pre-Postponed has events again, typically because reactive-set code wrote a design signal and woke design processes, go back to step 2.
+5. **Postponed, once.** `$strobe` and `$monitor` print; nothing may write. Time then jumps to the next time slot that has events.
+
+The picture shows the same five steps. Solid rungs repeat; dashed rungs run once or only on a condition.
+
+<figure className="not-prose my-6">
+<svg viewBox="0 0 360 486" role="img" aria-labelledby="f3b-loop-title" style={{ width: "100%", maxWidth: 520, height: "auto" }}>
+  <title id="f3b-loop-title">The scheduler loop of one time slot: Preponed once; an outer loop containing the inner loop (Active, Inactive and NBA of the active region set, then Observed, which is in neither set) and the reactive loop (Reactive, Re-Inactive, Re-NBA), followed by the conditional PLI region Pre-Postponed; then Postponed once.</title>
+  <defs>
+    <marker id="f3b-loop-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L8,4 L0,8 z" fill="currentColor" />
+    </marker>
+  </defs>
+  <rect x="22" y="6" width="262" height="24" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.55" strokeDasharray="4 3" />
+  <text x="30" y="22" fontSize="11" fill="currentColor">Preponed · take samples (read-only, once)</text>
+  <path d="M153 30 V44" stroke="currentColor" strokeWidth="1.2" fill="none" markerEnd="url(#f3b-loop-arrow)" />
+  <rect x="6" y="46" width="348" height="372" rx="12" fill="none" stroke="currentColor" strokeOpacity="0.4" />
+  <text x="14" y="60" fontSize="10" fill="currentColor" fillOpacity="0.8">Outer loop: repeat while any region below has events</text>
+  <rect x="14" y="66" width="308" height="160" rx="9" fill="none" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="22" y="79" fontSize="10" fill="currentColor" fillOpacity="0.8">Inner loop: active region set, then Observed</text>
+  <rect x="22" y="84" width="262" height="22" rx="6" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <text x="30" y="99" fontSize="11" fill="currentColor">Active · woken processes run, any order</text>
+  <rect x="22" y="110" width="262" height="22" rx="6" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <text x="30" y="125" fontSize="11" fill="currentColor">Inactive · resume after #0</text>
+  <rect x="22" y="136" width="262" height="22" rx="6" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <text x="30" y="151" fontSize="11" fill="currentColor">NBA · apply {"<="} updates, in execution order</text>
+  <text x="22" y="172" fontSize="10" fill="currentColor" fillOpacity="0.8">Observed belongs to neither region set</text>
+  <rect x="22" y="177" width="262" height="22" rx="6" fill="rgba(14,165,233,0.12)" stroke="rgb(14,165,233)" />
+  <text x="30" y="192" fontSize="11" fill="currentColor">Observed · evaluate properties, @(cb)</text>
+  <path d="M284 188 H303 V95 H290" stroke="currentColor" strokeWidth="1.2" fill="none" markerEnd="url(#f3b-loop-arrow)" />
+  <text x="22" y="218" fontSize="10" fill="currentColor" fillOpacity="0.8">↺ run the next non-empty rung, then Active again</text>
+  <rect x="14" y="234" width="308" height="132" rx="9" fill="none" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="22" y="247" fontSize="10" fill="currentColor" fillOpacity="0.8">Reactive loop · reactive region set</text>
+  <rect x="22" y="252" width="262" height="22" rx="6" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+  <text x="30" y="267" fontSize="11" fill="currentColor">Reactive · program code, assertion actions</text>
+  <rect x="22" y="278" width="262" height="22" rx="6" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+  <text x="30" y="293" fontSize="11" fill="currentColor">Re-Inactive · resume after #0</text>
+  <rect x="22" y="304" width="262" height="22" rx="6" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+  <text x="30" y="319" fontSize="11" fill="currentColor">Re-NBA · program {"<="}, clocking drives</text>
+  <path d="M284 315 H303 V263 H290" stroke="currentColor" strokeWidth="1.2" fill="none" markerEnd="url(#f3b-loop-arrow)" />
+  <text x="22" y="344" fontSize="10" fill="currentColor" fillOpacity="0.8">↺ run the next non-empty rung, then Reactive again;</text>
+  <text x="22" y="357" fontSize="10" fill="currentColor" fillOpacity="0.8">this loop drains before the inner loop runs again</text>
+  <rect x="22" y="378" width="262" height="22" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="3 3" />
+  <text x="30" y="393" fontSize="11" fill="currentColor">Pre-Postponed (PLI) · only if all above empty</text>
+  <path d="M284 389 H338 V92 H325" stroke="currentColor" strokeWidth="1.2" fill="none" strokeDasharray="5 3" markerEnd="url(#f3b-loop-arrow)" />
+  <text x="343" y="240" fontSize="10" fill="currentColor" fillOpacity="0.8" transform="rotate(90 343 240)" textAnchor="middle">events left? back to Active</text>
+  <path d="M153 418 V432" stroke="currentColor" strokeWidth="1.2" fill="none" markerEnd="url(#f3b-loop-arrow)" />
+  <rect x="22" y="434" width="262" height="24" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.55" strokeDasharray="4 3" />
+  <text x="30" y="450" fontSize="11" fill="currentColor">Postponed · $strobe, $monitor (read-only, once)</text>
+  <text x="22" y="476" fontSize="10" fill="currentColor" fillOpacity="0.8">Then time moves to the next non-empty time slot.</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">One time slot under IEEE 1800-2023 §4.5. The numbered steps above give the same loop as text.</figcaption>
+</figure>
+
+**Watch the loop run.** The visualizer below runs one time slot on a tested scheduler model. Pick a scenario, read the code and answer its prediction before you step. Every event is filed under the region it was scheduled in, and Δ counts each return to an earlier region. Work through all three scenarios, in order.
+
+<SVSchedulerRegionVisualizer scenario="comb-after-nba" />
+
+**What the three scenarios showed.**
+- **NBA → combinational.** The NBA update of `q` is itself an event: it wakes `assign y = q`, which runs in Active again, and the change of `y` wakes the `always_comb`. It all happens at one simulation time, so a waveform viewer draws `q`, `y` and `z` changing together (§4.5, §4.9.1).
+- **`$display` · `#0` · `$strobe`.** `#0` resumes the process in Inactive, which still comes before NBA, so the second `$display` prints the old `q` as well. Only `$strobe`, which prints in Postponed, sees the new value (§4.4.2.3, §21.2.2).
+- **program block.** The program thread runs in Reactive, after the active set has drained, so `seen = q` reads the *new* `q`. Its `cmd <= 1` lands in Re-NBA. That update wakes the design's `assign led = cmd`, and the outer loop takes the slot back to Active: the dashed arrow in the picture (§24.3.1, §4.5).
+
+### Where each construct runs
+
+This is the reference you will use most. Read each row as "when this executes, here is where its effect lands". On a first read, focus on `=`, `<=`, `#0`, `$display`, `$strobe`, concurrent assertions, clocking drives and `final`; the other rows are there for when you meet them. One rule sits under all of it: sequential code has no region of its own; it runs in the region of the thread that executes it. The same task runs in the active set when a module `initial` calls it and in the reactive set when a program calls it (§24.3.1, §24.5).
+
+**Assignments and delays**
+
+| Construct | Where it runs or lands | Clause |
+|---|---|---|
+| A process woken in module code (`always`, `always_ff`, `always_comb`, a resumed `initial`) | Active | §4.4.2.2 |
+| Blocking assignment `a = b;` | Executes and updates `a` at once, in the region of its process (Active in module code) | §4.9.3 |
+| Nonblocking assignment `q <= d;` | Value and target are computed when it executes (in Active, for module code); `q` changes in NBA of the same slot. From program or checker code the update goes to Re-NBA instead | §4.9.4, §4.4.2.4, §4.4.2.8 |
+| Delayed nonblocking `q <= #5 d;` | Value computed now; `q` changes in the NBA region of the slot 5 time units later (Re-NBA from program or checker code) | §4.9.4, §4.4.2.8 |
+| `#0` | The process suspends and resumes in Inactive, or in Re-Inactive from reactive-set code | §4.4.2.3, §4.4.2.7 |
+| `a = #0 b;` | `b` is read now; the process resumes in Inactive (or Re-Inactive) and then writes `a` | §4.9.3 |
+| `#5` | The process resumes 5 time units later: in Active for module code, in Reactive for program code | §24.3.1 |
+| Continuous assignment `assign y = a & b;`, and the implicit ones made by port connections | A process sensitive to its right-hand side: each change schedules an active update of `y`. It is also evaluated once at time 0 | §4.9.1, §4.9.6 |
+| `force` and procedural `assign` | While in effect, behave like a continuous assignment: each change of the expression is an active update. Procedural `assign` and `deassign` are on the standard's deprecation list (Annex C.4.2) | §4.9.2 |
+| Task and function arguments passed by value | Copied in at the call and out at the return; the copy-out behaves like a blocking assignment | §4.9.7 |
+
+**Events and prints**
+
+| Construct | Where it runs or lands | Clause |
+|---|---|---|
+| `-> e;` | Triggers `e` at once, in the region of the triggering process. Only processes already waiting on `@e` wake | §15.5.1, §15.5.2 |
+| `->> e;` | Triggers `e` later, in the NBA region | §15.5.1 |
+| `$display`, `$write` | Print at once, with current values, in the region of the calling process | §24.3.1 |
+| `$strobe` | Prints at the end of the time slot, in Postponed, with the settled values | §4.4.2.9, §21.2.2 |
+| `$monitor` | Prints in Postponed of every slot in which one of its arguments changed | §4.4.2.9, §21.2.3 |
+
+**Assertions**
+
+| Construct | Where it runs or lands | Clause |
+|---|---|---|
+| Concurrent assertion `assert property (@(posedge clk) p)` | Its values come from Preponed; the property is evaluated in Observed; its pass or fail action block runs in Reactive, with current values | §16.5, §16.5.1, §4.4.2.5 |
+| Immediate assertion `assert (e)` | Evaluated and reported at once, in the region of its process | §16.3 |
+| Observed deferred assertion `assert #0 (e)` | Evaluated at once; the report waits, matures in Observed, and its action runs in Reactive | §16.4.1 |
+| Final deferred assertion `assert final (e)` | Evaluated at once; the report matures and runs in Postponed | §16.4.1 |
+
+Push Further compares these four forms and the glitches each one can report.
+
+**Testbench constructs.** Program blocks and clocking blocks are taught in F4C, and UVM in Tier 2; here you only need their timing.
+
+| Construct | Where it runs or lands | Clause |
+|---|---|---|
+| Program-block code: `initial`, event controls, `#` resumes, continuous assignments | Reactive | §24.3.1 |
+| Nonblocking assignment in program code | Re-NBA | §24.3.1, §4.4.2.8 |
+| Checker code: blocking statements and constructs sensitive to changes | Reactive | §4.4.2.6, §17.7.3 |
+| Nonblocking assignment to a checker variable | Re-NBA | §17.7.3 |
+| Clocking-block input with the default `#1step` skew | Returns the value sampled in Preponed of the clocking event's slot, which equals the previous slot's Postponed value | §14.3, §14.13, §4.4.2.1 |
+| Clocking-block input with an explicit `#0` skew | Sampled in Observed | §14.4, §14.13 |
+| Clocking-block input with a nonzero skew such as `#2` | The signal's value in the Postponed region at the time 2 time units before the clocking event | §14.13 |
+| Clocking-block event `@(cb)` | Triggered in Observed, after the clocking block updates its samples; module code waiting on it resumes in the next Active pass | §14.10, §14.13 |
+| Clocking drive `cb.sig <= v;` with output skew 0 and no `##`, executed at the clocking event | Re-NBA of the same slot, whichever region the driving code runs in. A drive executed between clocking events waits for the next one | §14.16 |
+| Clocking drive with a nonzero output skew, or a cycle delay `##n` with n of 1 or more | Re-NBA of a later slot. A `##0` on a drive has no effect | §14.16, §14.11 |
+| UVM class code (drivers, monitors, sequences) | No region of its own: the region of the calling thread. With `run_test()` called from a module `initial`, the active set | §24.3.1 |
+
+**End of simulation**
+
+| Construct | Where it runs or lands | Clause |
+|---|---|---|
+| `final` procedure | In no region. It runs once, in zero time, when the simulation ends through an explicit or implicit `$finish` | §9.2.3 |
+| `$finish` | Ends the run at once. After the `final` procedures, no other scheduled event runs, so a pending `$strobe` of that slot never prints | §20.2, §9.2.3 |
+| The last `initial` thread of every program ends | The simulation ends through an implicit `$finish` | §24.3 |
+
+**Try it with `final`.** In the simulator below, keep the program *initial · always · final*. Answer its question, what the `final` procedure prints and when, before you look at the trace.
+
+<ProceduralBlocksSimulator scenario="procedures" />
+
+**What it showed.** The test calls `$finish` at 22 ns. The run ends there, and only then does `final` run: once, in zero time (§9.2.3). It prints `final: count = 2` because the counter's last NBA update, at 15 ns, happened long before. A `final` procedure belongs to no time slot, so nothing scheduled can run after it.
+
+### Sampling versus evaluation
+
+A concurrent assertion does its work in three places of the same slot:
+
+1. **Sample in Preponed.** The **sampled value** of a variable is its value in the Preponed region of the slot, before anything changed (§16.5.1). It is the same snapshot that `#1step` takes: §4.4.2.1 defines `#1step` sampling as sampling in the Preponed region, which is equivalent to sampling in the previous slot's Postponed region.
+2. **Evaluate in Observed.** The property is evaluated after the active set has settled (§16.5, §4.4.2.5). It still uses the samples, so a flop that changed on this edge cannot fool it.
+3. **Act in Reactive.** Pass and fail statements are scheduled into Reactive (§4.4.2.5, §4.4.2.6). They run with the *current* values. To print what the property used, call `$sampled(x)` in the action block (§16.9.3).
+
+**Exceptions** (§16.5, §16.5.1). Disable conditions such as `disable iff (rst)` and the clocking event itself use current values, not samples. So do automatic variables, local variables, `const'` casts and the `.triggered` method. At time 0 the sampled value is the default sampled value: a static variable's declaration initializer, or otherwise the type's default (`x` for `logic`).
+
+**Predict before you look.** `a_q_was_low: assert property (@(posedge clk) q == 1'b0);` checks a flop output `q`. The flop copies `d` into `q` on edge 2. Does the attempt at edge 2 pass? At which edge is the first failure reported?
+
+<TimingDiagram
+  title="a_q_was_low: sampled in Preponed, evaluated in Observed"
+  caption="Each value is the one sampled at that rising edge. The testbench changes d just after edge 1; the flop copies it at edge 2, so q changes just after edge 2, in the NBA region of edge 2's time slot."
+  edges={4}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "d", kind: "bit", values: [0, 0, 1, 1] },
+    { name: "q", kind: "bit", values: [0, 0, 0, 1] }
+  ]}
+  markers={[
+    { edge: 2, tone: "pass", label: "Edge 2: a_q_was_low uses the Preponed sample q = 0 and passes, although the flop sets q to 1 in this slot's NBA region" },
+    { edge: 3, tone: "fail", label: "Edge 3: the sample is q = 1, so this attempt fails, one edge after q changed" }
+  ]}
+/>
+
+**What the waveform shows.** The attempt at edge 2 passes: by the time Observed runs, `q` is already 1, but the property reads the Preponed sample, 0. The first failure is reported at edge 3. This one-edge "lag" is not a bug: it is exactly what a flip-flop that captured `q` would see. If the action block printed plain `q`, edge 2's pass message would say `q=1`; the worked example below makes that happen on purpose.
+
+### What the standard guarantees, and what it leaves open
+
+IEEE 1800-2023 makes two promises about order (§4.6):
+
+1. **Source order inside one `begin`…`end`.** A process can be suspended between its statements, for example at a `#` or an `@`, but its statements never run out of order.
+2. **NBAs in execution order.** Nonblocking updates are performed in the order the assignments executed (§4.6, §10.4.2).
+
+It also names two freedoms (§4.7):
+
+1. **Any order inside a region.** Events that are ready in the Active region, or in the Reactive region, can be processed in any order.
+2. **Interleaving.** A process need not run as one uninterrupted event: the simulator may suspend it in the middle and run other processes before it continues.
+
+Trace what that means for real code:
+
+| Code | Defined? | Possible results |
+|---|---|---|
+| `initial begin a = 1; b = a; end` | Yes: source order (§4.6) | `b` is 1 |
+| `initial begin a <= 0; a <= 1; end` | Yes: NBAs in execution order (§4.6) | `a` is 1 at the end of the slot |
+| Two processes on one edge: `always @(posedge clk) a <= 0;` and `always @(posedge clk) a <= 1;` | No: either process may run first, so either NBA may execute last (§4.7) | `a` is 0 or 1 |
+| Two processes on one edge: `always @(posedge clk) x = 1;` and `always @(posedge clk) y = x;` | No: either process may run first (§4.7) | `y` is the old `x`, or 1 |
+
+The regions are what rescue the fourth row: write `x` with `x <= 1;` and `y = x` always reads the old `x`, because every read in Active happens before the NBA update. Written that way for every flop, process order cannot leak into the result. The third row has no region fix: one variable needs one writer. [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) proves both points and shows what else still races.
+
+**Why program blocks and clocking blocks exist (§24.4).** The standard's own argument runs in three steps:
+- A testbench only needs the steady state of the design. A **clocking block** gives it Preponed samples of DUT outputs (`#1step`) and Re-NBA drives of DUT inputs. A program that reads design values only through clocking blocks clocked by design signals is insensitive to read-write races (§24.4); module code gets the same protection when it waits on the clocking block event, `@(cb)`, before it reads (§14.13, F4C).
+- Sampling handles one clock. With several clocks that change at the same time, the order in which they are processed is arbitrary, and a clock generated with `<=` changes only in an NBA pass. **Program** code runs in Reactive, after all design events of the slot have been processed, including such clocks (§24.4).
+- Programs are not a cure-all. Ready processes in Reactive also run in any order (§4.4.2.6, §4.7), so two program threads can race with each other.
+
+**Where UVM runs.** UVM components are classes, and class code has no region of its own: it runs in the region of the thread that calls it (§24.3.1). A typical UVM bench calls `run_test()` from a module `initial`, so its drivers, monitors and sequences run in the active set. Their race-free timing comes from clocking blocks, not from program blocks, and not from UVM phases, which order whole phases rather than events inside one time slot. (Practice: most UVM benches use this module-plus-clocking-block style.)
+
+### Pitfalls and misconceptions
+
+1. **"A concurrent assertion sees the values written on this edge, because Observed comes after NBA."** It is evaluated after NBA, but on Preponed samples (§16.5.1). Disable conditions and clocking events use current values (§16.5), as do the few other exceptions listed under "Sampling versus evaluation". A module variable such as `q` in the property expression is always sampled.
+2. **"`final` is the last region of a time slot."** It is not a region and belongs to no time slot. It runs once, when the simulation ends (§9.2.3), so it can report statistics but cannot wait for anything.
+3. **"A clocking-block drive lands in NBA, or wherever the driving code runs."** A zero-skew clocking drive executed at its clocking event always matures in Re-NBA of that slot, whether the driver is module code or program code (§14.16). That is what keeps it behind every flop's read.
+4. **"Re-NBA is part of the Reactive region."** It is a separate region of the reactive region set, processed only after Reactive and Re-Inactive are empty (§4.4.2.8, §4.5).
+5. **"`#0` waits until my `<=` has happened."** Inactive comes before NBA (§4.4.2.3, §4.5), so code after `#0` still sees the old value. To observe settled values use `$strobe`; to order processes, never use `#0` (F3C).
+6. **"`$display` runs in the Active region."** It runs wherever its process runs: Active for module code, Reactive for program code (§24.3.1).
+7. **"Regions make my testbench race-free."** Regions order *kinds* of work; processes in one region still run in any order (§4.7). Race freedom comes from where you put each read and write: `<=` for flops, clocking blocks for the testbench (F3C, F4C).
+
+### Recap
+
+- A time slot runs Preponed once, then loops over the active set and Observed (inner loop) and the reactive set (reactive loop) until nothing is left, then runs Postponed once (§4.5).
+- `=` writes at once; `<=` reads in Active and writes in NBA, or Re-NBA from program and checker code; `#0` resumes in Inactive or Re-Inactive, still before those updates.
+- Concurrent assertions sample in Preponed, evaluate in Observed and act in Reactive; clocking blocks sample in Preponed, trigger `@(cb)` in Observed and drive in Re-NBA.
+- `$strobe` and `$monitor` print settled values in Postponed. `final` runs once when the simulation ends, in no region.
+- The standard fixes source order inside a `begin`…`end` and the order of NBAs (§4.6); it leaves process order inside a region open (§4.7).
 
 ## Make It Work
-- **Avoid `#0` delays:** They were used in Verilog-1995 to fix races by pushing assignments to the Inactive region. In SystemVerilog, use non-blocking assignments (`<=`) instead.
-- **Use `$strobe` for debug:** If you need to print a variable's final value at the end of a time step after all NBA updates, use `$strobe` (which executes in the Postponed region) instead of `$display` (which executes in the Active region).
+
+### Worked example: one time slot, every region
+
+This bench puts a print in five different regions of one time slot, the first rising edge at t = 5. Read it, predict all five lines, then check them against the trace.
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  logic clk = 1'b0;
+  logic d   = 1'b1;
+  logic q   = 1'b0;  // declaration initializers run before any process starts (§6.8)
+  logic y;
+
+  always #5 clk = ~clk;                 // first rising edge at t = 5
+
+  always_ff @(posedge clk) q <= d;      // reads d in Active, writes q in NBA
+  assign y = q;                         // runs again in Active after q changes
+
+  // Samples q in Preponed, evaluates in Observed, runs this pass action in Reactive.
+  a_q_was_low: assert property (@(posedge clk) q == 1'b0)
+    $display("%0d ACTION $sampled(q)=%0d q=%0d", $time, $sampled(q), q);
+
+  initial begin
+    @(posedge clk);                                        // t = 5, Active
+    $display("%0d ACTIVE q=%0d y=%0d", $time, q, y);       // Active: before NBA
+    #0 $display("%0d INACT  q=%0d y=%0d", $time, q, y);    // Inactive: still before NBA
+    $strobe("%0d POSTP  q=%0d y=%0d", $time, q, y);        // printed in Postponed
+    #1 $finish;  // t = 6: a $finish at t = 5 would end the run before Postponed
+  end
+
+  // Nested program without ports: it reads tb_top's q and y directly.
+  program tb_prog;
+    timeunit 1ns; timeprecision 1ns;
+    initial begin
+      @(posedge clk);                                      // resumes in Reactive
+      $display("%0d REACT  q=%0d y=%0d", $time, q, y);
+      @(posedge clk);  // stay alive: when all program initials end, $finish is implicit
+    end
+  endprogram
+endmodule
+```
+
+**Expected output** (illustrative: derived from the IEEE 1800-2023 rules on this page, not captured from a simulator run):
+
+```text
+5 ACTIVE q=0 y=0
+5 INACT  q=0 y=0
+5 REACT  q=1 y=1
+5 ACTION $sampled(q)=0 q=1
+5 POSTP  q=1 y=1
+```
+
+The REACT and ACTION lines may appear in either order: both run in the Reactive region, and §4.7 leaves their order open. Your simulator may also print its own banner and a note when `$finish` runs.
+
+**The trace.** Every row happens at t = 5; only the region changes.
+
+| Step | Region | What runs | `q`, `y` after | Prints |
+|---|---|---|---|---|
+| 0 | Preponed | Samples are taken; the assertion will use `q` = 0 | 0, 0 | |
+| 1 | Active | The clock process sets `clk` to 1. That wakes `always_ff`, the `initial`, the assertion's clock and the program thread | 0, 0 | |
+| 2 | Active | `always_ff` reads `d` (1) and schedules `q <= 1` | 0, 0 | |
+| 3 | Active | The `initial` prints, then `#0` suspends it | 0, 0 | `5 ACTIVE q=0 y=0` |
+| 4 | Inactive | The `initial` resumes and prints; `$strobe` is queued for Postponed; `#1` schedules t = 6 | 0, 0 | `5 INACT  q=0 y=0` |
+| 5 | NBA | `q` becomes 1; the update wakes `assign y = q` | 1, 0 | |
+| 6 | Active | The continuous assignment updates `y` | 1, 1 | |
+| 7 | Observed | `a_q_was_low` is evaluated on the sample `q` = 0 and passes; its pass action goes to Reactive | 1, 1 | |
+| 8 | Reactive | The program thread prints, then waits for the next edge | 1, 1 | `5 REACT  q=1 y=1` |
+| 9 | Reactive | The pass action prints the sample and the current value | 1, 1 | `5 ACTION $sampled(q)=0 q=1` |
+| 10 | Postponed | `$strobe` prints the settled values | 1, 1 | `5 POSTP  q=1 y=1` |
+
+Steps 2 and 3 may swap without changing any output, and so may steps 8 and 9, which swaps the REACT and ACTION lines (§4.7). At t = 6, `$finish` ends the run while the program thread is still waiting, which is fine.
+
+**Run it.** Save the code as `tb_top.sv`, then compile and run it with a simulator that supports IEEE 1800 program blocks and concurrent assertions; online simulator playgrounds offer several. With most tools this is one command that names the file and the top module `tb_top`, but the options are tool-dependent. Support for program blocks, the reactive regions and concurrent assertions also varies among open-source simulators (tool-dependent). Two portable fallbacks, if your tool objects:
+- **The initializer on `q`.** A declaration initializer runs before any process starts (§6.8, §10.5), so it is not a second writer of `q`; if a tool still reports one because `always_ff` also writes `q`, change that `always_ff` to `always` for this demo. The scheduling is identical.
+- **The nested program.** IEEE 1800-2023 allows a program nested in a module (§24.3). If a tool rejects it, declare `tb_prog` after `endmodule` and read `tb_top.clk`, `tb_top.q` and `tb_top.y` by hierarchical name; a top-level program that nothing instantiates is instantiated implicitly (§24.3).
+
+**How to work through it:**
+1. Write the region of each print next to the code before you run anything.
+2. Predict the five lines, including which two might swap.
+3. Run the bench and compare the log with your prediction and with the trace.
+4. Explain every difference with a region or a clause, not with "the simulator did it".
+5. Change `#1 $finish;` to `$finish;` and predict again. The run now ends at step 4: only the ACTIVE and INACT lines print, because `$finish` exits before NBA, the reactive set or Postponed get their turn (§20.2, §9.2.3).
+6. Restore it, then delete the second `@(posedge clk);` in `tb_prog`. The program's only thread now ends at step 8, which calls `$finish` implicitly (§24.3): the POSTP line disappears, and the ACTION line prints only if your simulator ran it before REACT.
+7. Restore it, then print plain `q` instead of `$sampled(q)` in the pass action. The message now says `q=1` for a check that passed on `q == 0`; that is the action block's region showing (§16.9.3).
+
+### Debug it: when the log surprises you
+
+All lines of one time slot carry the same time stamp, and waveform viewers draw everything in a slot at one instant. When a value looks wrong, ask which region the printing or checking code ran in.
+
+| Symptom in the log | Cause | Fix |
+|---|---|---|
+| `$display` right after `@(posedge clk)` shows a flop output's value from before the edge | The print runs in Active; the flop's update waits for NBA | Correct, and deterministic while the flop is written with `<=`: it is the value the flop held at the edge. Use `$strobe` if you want the slot's settled value |
+| `#0 $display` still shows the old value | Inactive comes before NBA | Same as above; remove the `#0` |
+| An assertion's message contradicts what the assertion checked | The action block runs in Reactive with current values | Print `$sampled(sig)` in the action block (§16.9.3) |
+| An assertion fails one edge after the signal went wrong | It checks Preponed samples, the values just before each edge | Expected: compare with the waveform value just before the edge |
+| The last `$strobe` or `$monitor` line is missing | `$finish` ran in the same slot and ended the run before Postponed | Call `$finish` one time unit later, as the worked example does |
+| The run ends as soon as a program's code finishes | Every program `initial` thread ended, which calls `$finish` implicitly (§24.3) | Keep the program thread alive, or end the test deliberately |
+| A testbench read after `@(posedge clk)` differs between simulators or file orders | Two processes in one region; their order is free (§4.7) | A race: see F3C. Read through a clocking block, or make every writer on that path use `<=` |
+
+**Checklist before moving on:**
+- [ ] I can say which region produced each of the five lines of the worked example.
+- [ ] I can explain why the INACT line still shows `q=0`.
+- [ ] I can explain why the ACTION line shows two different values of `q`.
+- [ ] I know which two lines may swap, and which clause allows it.
+- [ ] I can explain why the bench ends with `#1 $finish` and why the program waits for a second edge.
 
 ## Push Further
-- Investigate how clocking blocks span multiple regions: inputs are sampled in the Preponed region (§14.13), outputs are driven in the Re-NBA region (§14.16) — a separate region in the reactive region set — and the `@(cb)` event fires in Observed (§14.10). F3C lets you step through all three.
-- Read IEEE 1800-2023 §4.4 for the regions and §4.5 for the reference scheduling algorithm that loops through them. Notice that the scheduler can loop back from NBA to Active if new events are triggered.
+
+### Expert: corner cases of the reference algorithm
+
+- **Some regions run once.** Preponed, the PLI region Pre-Active and Postponed sit outside the loop. The **iterative regions** are the fourteen from Active to Pre-Postponed (§4.4.1, §4.5).
+- **Woken processes can overtake NBA updates.** When the scheduler processes NBA events, each update schedules the processes sensitive to it, and §4.5 then takes any pending event. §4.6 orders the updates only among themselves, so a process woken by the first update may legally run before the second update is applied. Usually this changes nothing; for clocks generated with `<=` it can, which F3C covers.
+- **The reactive loop drains first.** Once Reactive, Re-Inactive, Pre-Re-NBA, Re-NBA or Post-Re-NBA has been processed, the scheduler does not return to the other regions until all five are empty (§4.5). All of a program's Re-NBA updates in one pass are applied before the design reacts to any of them.
+- **Observed can run more than once per slot.** When reactive-set code wakes design processes, the slot goes back through Active and Observed. An assertion clocked by activity on a program object is evaluated in such a later Observed pass (§24.3.1). Clocking-block inputs with an explicit `#0` skew are not sampled again in that pass unless a new clocking event occurs in the active region set (§14.13).
+- **Pre-Postponed is conditional.** It runs only when every region from Active to Post-Re-NBA is empty, and a PLI callback there may create events that restart the loop (§4.4.3.9, §4.5).
+- **Value and target are computed at different times.** For `mem[i] <= v` both the value and the index are computed when the statement executes (§4.9.4). For `mem[i] = #0 v` the value is computed at once, but the target is determined when the process resumes (§4.9.3). If `i` changes in between, the two forms write different elements.
+- **Events have regions too.** `-> e` triggers in the region of the process that executes it, so a process that reaches `@e` in the same Active pass may or may not already be waiting (§15.5.2). `->> e` triggers in the NBA region (§15.5.1), after the Active and Inactive work of that pass, so every process that reached `@e` during that work is already waiting.
+- **Delays you did not intend.** A delay expression that evaluates to `x` or `z` is treated as a zero delay (§9.4.1).
+- **Zero-delay loops.** Processes that keep waking each other with no delay keep the slot busy and time never advances. Simulators stop such a run with an iteration-limit error; the limit, the message and any option to change it are tool-dependent.
+- **Passes cost run time, not simulated time.** Every return to Active or Reactive is more work inside the same slot. Long zero-delay chains, and program ports used without clocking blocks (§24.3.2), add passes; how much that costs in wall-clock time is tool-dependent.
+- **Out of scope here.** Switch-level (`tran`) networks need their own relaxation processing (§4.9.5); T1 benches do not use them.
+
+### Expert: program blocks versus clocking blocks
+
+**What a program changes** (§24.3, §24.3.1, §24.5):
+- Its `initial` procedures, event controls and continuous assignments run in Reactive, its `#` delays resume in Reactive, and its nonblocking assignments update in Re-NBA.
+- A module task called from program code runs in the reactive set; calling a program's subroutine from a module is an error (§24.5).
+- A program cannot contain `always` procedures or instances of modules, interfaces or other programs. A nested program without ports, like `tb_prog` above, is instantiated implicitly (§24.3).
+- When the last `initial` thread of every program has ended, the whole simulation ends by an implicit `$finish` (§24.3). `$exit` ends a program's threads deliberately (§24.7).
+- Without clocking blocks, program ports update their design-side objects in the reactive set, which can force extra trips around the outer loop (§24.3.2).
+
+**What a clocking block changes** (§14.3, §14.10, §14.13, §14.16): inputs with the default `#1step` skew return Preponed samples, the `@(cb)` event triggers in Observed after the samples are updated, and zero-skew drives land in Re-NBA. That gives module-based testbench code the same insulation from the design for one clock. One trap remains: reading a clockvar after `@(posedge clk)` instead of `@(cb)` races the clocking block's own update; wait on the clocking block event (§14.4, §14.13).
+
+**The trade-off.** The standard motivates programs with multiple simultaneous clocks and clocks generated by nonblocking assignments (§24.4); clocking blocks alone do not order those. Programs are not deprecated. In practice (not normative), class-based and UVM benches use modules and clocking blocks: class code inherits the region of its caller anyway, and the implicit-`$finish` rule and the one-way call rules make programs awkward to mix with module-based testbench code. Programs also still race among themselves (§4.7).
+
+### Expert: where assertion messages come from
+
+| Assertion form | Expression evaluated | Report and action |
+|---|---|---|
+| Immediate `assert (e)` | When the statement executes | At once, in the same region (§16.3) |
+| Observed deferred `assert #0 (e)` | When the statement executes | Queued; flushed if the process runs again; matures in Observed, action in Reactive (§16.4.1, §16.4.2) |
+| Final deferred `assert final (e)` | When the statement executes | Queued; matures and runs in Postponed (§16.4.1) |
+| Concurrent `assert property (...)` | In Observed, on Preponed samples | Pass or fail action in Reactive (§4.4.2.5, §16.5) |
+
+- **Glitches.** An `always_comb` can run more than once in a slot while its inputs settle, so an immediate assertion inside it can report a transient value. Deferred assertions exist to suppress such reports: a pending report is flushed when its process runs again (§16.4, §16.4.2).
+- **Loops still glitch.** An observed deferred assertion can still report a glitch when Reactive code wakes the design and the block runs again in a later pass. Postponed is not iterative, so the final form does not have that problem (§16.4.1).
+- **Deferred actions are restricted.** Each pass or fail statement of a deferred assertion is a single subroutine call. For the final form, that subroutine must be one that may legally be called in the read-only Postponed region (§16.4).
+- **Action blocks see current values.** The LRM's own example compares an action that prints `a` and `b` with one that prints `$sampled(a)` and `$sampled(b)`; only the second reports the values the property checked (§16.9.3).
+- **Action blocks can write.** A write to a design signal from an action block sends the slot back through Active (§4.5).
+- **Same timing everywhere.** Concurrent assertions have the same scheduling in a module, an interface, a program or a checker (§24.3.1, §17.7.3).
+
+### Expert: PLI and VPI callback regions
+
+Tools written in C, such as waveform dumpers, coverage collectors and debuggers, register callbacks through the VPI. Table 4-1 of IEEE 1800-2023 maps the callback reasons to regions:
+
+| VPI callback reason | Region |
+|---|---|
+| `cbAtStartOfSimTime`, `cbNextSimTime`, `cbAfterDelay` | Pre-Active |
+| `cbNBASynch` | Pre-NBA |
+| `cbReadWriteSynch` | Pre-NBA or Post-NBA |
+| `cbAtEndOfSimTime` | Pre-Postponed |
+| `cbReadOnlySynch` | Postponed |
+
+- PLI callbacks are not allowed in Observed (§4.4.2.5), and the PLI currently schedules no callbacks in Preponed or Post-Observed (§4.4.3.1, §4.4.3.6).
+- A `cbReadOnlySynch` callback reads the settled values of the slot and may not write any net or variable (§4.4.3.10, §4.4.2.9). The Pre-NBA and Post-NBA regions used by `cbReadWriteSynch` let a callback read and write values and create events (§4.4.3.3, §4.4.3.4).
+- Python verification frameworks built on the VPI, for example cocotb, expose triggers built on these callbacks; how they map is tool-dependent, so check the framework's documentation.
+
+### Expert: interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: the assertion that passes but prints the wrong value"
+  question="A concurrent assertion checks q == 0 at each rising edge and its pass action prints q. At the edge where a flop sets q to 1, the assertion passes and the message says q=1. A colleague says the simulator is broken. What do you answer?"
+  options={[
+    { text: "The simulator is broken: a passing check must print the value it checked.", isCorrect: false, feedback: "Both values are right for their regions. The property used the Preponed sample (0); the action block runs later, in Reactive, after the NBA update (§4.4.2.5, §16.5.1)." },
+    { text: "Observed comes after NBA, so the property checked q = 1 and should have failed; the pass itself is the bug.", isCorrect: false, feedback: "Observed does come after NBA, but the property uses the Preponed sample of q, not its current value: q = 0 (§16.5.1). The pass is correct." },
+    { text: "The pass action runs in Reactive with current values, while the property used the Preponed sample. Print $sampled(q) in the action.", isCorrect: true, feedback: "Correct. $sampled(q) returns the value the property checked (§16.9.3); the LRM's own example does exactly this." },
+    { text: "Add disable iff so the print becomes consistent.", isCorrect: false, feedback: "disable iff uses current values to abort attempts; it does not change what an action block prints." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: where does a clocking drive mature?"
+  question="A module-based driver waits on @(cb) and drives cb.req <= 1 through a clocking block with zero output skew. In which region does req change, and why not in NBA?"
+  options={[
+    { text: "Re-NBA of the same time slot, so the change lands after every flop has read its inputs in Active and after the design's NBA pass.", isCorrect: true, feedback: "Correct (§14.16). The driver resumes only after @(cb), which is triggered in Observed, and its drive matures in Re-NBA, so it cannot race the DUT flops on that edge." },
+    { text: "NBA, because the driver is module code in the active region set.", isCorrect: false, feedback: "The caller's region does not matter for a clocking drive; §14.16 always schedules it in Re-NBA." },
+    { text: "At the next clock edge, because a clocking block always adds one cycle.", isCorrect: false, feedback: "Only a nonzero output skew or a cycle delay of ##1 or more moves the change to a later slot (§14.16)." },
+    { text: "Postponed, after all other activity of the slot.", isCorrect: false, feedback: "Postponed is read-only (§4.4.2.9); no drive can land there." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: can a program-based testbench race?"
+  question="Your team's testbench is written as a program block. A reviewer claims it cannot have races because program code runs in the Reactive region. Is the claim right?"
+  options={[
+    { text: "Yes: the Reactive region runs program threads one at a time in source order.", isCorrect: false, feedback: "Reactive, like Active, processes ready events in any order (§4.4.2.6, §4.7)." },
+    { text: "Yes, as long as every program thread uses nonblocking assignments.", isCorrect: false, feedback: "Two threads that both write one variable with <= still race on which update executes last (§4.6, §4.7)." },
+    { text: "No, but only at time 0.", isCorrect: false, feedback: "Ordering freedom applies in every time slot, not only at time 0." },
+    { text: "No: two program threads woken by the same event run in any order, so blocking communication between them can race.", isCorrect: true, feedback: "Correct. Programs separate testbench code from the design (§24.4), not program threads from each other." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the missing last line"
+  question="A test ends with $strobe(...) followed immediately by $finish in the same time slot, and the strobe line never appears in the log. Why?"
+  options={[
+    { text: "$strobe is unreliable and should not be used in tests.", isCorrect: false, feedback: "$strobe is well defined: it prints at the end of the time slot (§21.2.2)." },
+    { text: "$strobe prints in Postponed, but $finish ends the run first; no scheduled event runs after the end of simulation.", isCorrect: true, feedback: "Correct (§20.2, §9.2.3). Call $finish one time unit later." },
+    { text: "$strobe prints only when one of its arguments changes.", isCorrect: false, feedback: "That describes $monitor (§21.2.3), not $strobe." },
+    { text: "The last time slot of a simulation has no Postponed region.", isCorrect: false, feedback: "Every time slot has one; the run simply never reached it." }
+  ]}
+/>
 
 ## Practice & Reinforce
-- Flashcards – Review the 7 primary regions and their specific roles.
-- Quiz – Complete the knowledge check below.
 
-## Interview Questions
-
-<Card className="mt-8">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">In what scheduling region is the RHS of a non-blocking assignment evaluated? In what region is the LHS updated?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>The Right-Hand Side (RHS) of a non-blocking assignment is evaluated in the <strong>Active</strong> region. The update to the Left-Hand Side (LHS) is scheduled and executed in the <strong>NBA (Non-Blocking Assignment)</strong> region.</p>
-      </div>
-    </details>
-
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">How do concurrent assertions avoid sampling the "new" value of a signal if they are evaluated in the same time step?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>Concurrent assertions sample their variables in the <strong>Preponed</strong> region (before any Active events happen in that time step). They are then evaluated in the <strong>Observed</strong> region (after all Active and NBA events are settled). This guarantees they always see the stable values from the <em>previous</em> time step, exactly like a physical flip-flop.</p>
-      </div>
-    </details>
-  </CardContent>
-</Card>
-
-## References & Next Topics
-- IEEE 1800-2023 §4 (Scheduling semantics)
-- IEEE 1800-2023 §14 (Clocking blocks)
-- Next: [Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)
+### Retrieval quiz
 
 <Quiz
   questions={[
     {
-      question: "Which region evaluates the Right-Hand Side (RHS) of a non-blocking assignment?",
+      question: "An always_ff block executes q <= d on a clock edge. Where is d read, and where does q change?",
       answers: [
-        { text: "Active", correct: true },
-        { text: "NBA", correct: false },
-        { text: "Observed", correct: false },
-        { text: "Reactive", correct: false }
+        { text: "d is read in NBA, together with the update of q", correct: false, feedback: "NBA only applies updates computed earlier. Reading d that late would let other flops' updates leak in." },
+        { text: "d is read in Active; q changes in NBA", correct: true, feedback: "Right. The value and target are computed when the statement executes, in Active; the update waits for the NBA region (§4.9.4)." },
+        { text: "d is read in Preponed; q changes in Active", correct: false, feedback: "Preponed is a sampling snapshot for assertions and clocking blocks; procedural code does not run there. And the update of q is scheduled into NBA, not applied when the statement executes." },
+        { text: "d is read in Active; q changes in Postponed", correct: false, feedback: "Postponed is read-only: no value may change there (§4.4.2.9)." }
       ],
-      explanation: "The RHS is evaluated in the Active region alongside blocking assignments, while the LHS update is scheduled for the NBA region."
+      explanation: "A nonblocking assignment computes its value and target when it executes, here in Active, and schedules the update for the NBA region of the same time slot (§4.9.4, §4.4.2.4). That split is what makes flops modelled with <= independent of process order.",
+      objective: 2
     },
     {
-      question: "Which region is used to update the LHS of a non-blocking assignment?",
+      question: "A concurrent assertion is clocked by posedge clk. On this edge a flop updates q from 0 to 1. Which q does the property use, and where is the property evaluated?",
       answers: [
-        { text: "Active", correct: false },
-        { text: "Inactive", correct: false },
-        { text: "NBA", correct: true },
-        { text: "Reactive", correct: false }
+        { text: "q = 1, because Observed comes after the NBA update", correct: false, feedback: "Observed does come after NBA, but the property uses the Preponed sample of q, not its current value (§16.5.1)." },
+        { text: "q = 1, read in Reactive together with the action block", correct: false, feedback: "The action block runs in Reactive and sees q = 1, but the property was decided earlier, in Observed, on the sample." },
+        { text: "q = 0 from the Preponed sample; evaluated in Observed", correct: true, feedback: "Right: evaluation happens late, after NBA, but on the values from before the edge (§16.5, §16.5.1)." },
+        { text: "q = X, because the edge and the update collide", correct: false, feedback: "Nothing collides: the sample is taken before anything in the slot changes, so it is a clean 0." }
       ],
-      explanation: "The Non-Blocking Assignment (NBA) region specifically handles LHS updates to prevent race conditions with evaluating logic."
+      explanation: "For times after 0, the sampled value of a variable is its value in the Preponed region (§16.5.1). Properties are evaluated in Observed (§16.5) and their action blocks run in Reactive with current values. Disable conditions and clocking events are the main exceptions that use current values.",
+      objective: 2
     },
     {
-      question: "Where do concurrent assertions (SVA) typically evaluate?",
+      question: "Where does a final procedure execute?",
       answers: [
-        { text: "Active", correct: false },
-        { text: "NBA", correct: false },
-        { text: "Observed", correct: true },
-        { text: "Reactive", correct: false }
+        { text: "Once, when the simulation ends, outside every time-slot region", correct: true, feedback: "Right. It runs in zero time when the run ends through an explicit or implicit $finish, and no scheduled event runs after it (§9.2.3)." },
+        { text: "In the Postponed region of the last time slot", correct: false, feedback: "Postponed belongs to every time slot and only prints settled values. The procedure in the question belongs to no slot at all (§9.2.3)." },
+        { text: "In the Reactive region, like program code", correct: false, feedback: "Reactive runs program and checker code inside a time slot; the procedure in the question runs after the last slot." },
+        { text: "At time 0, after every initial procedure has started", correct: false, feedback: "That describes when always_comb first runs (§9.2.2.2), not this procedure, which runs once at the very end." }
       ],
-      explanation: "Assertions are evaluated in the Observed region to ensure they check stable values after all NBA updates are complete, using values sampled in the Preponed region."
+      explanation: "A final procedure is not a process scheduled in a region. It executes once, in zero time, as a series of function calls when the simulation ends, and no remaining scheduled event runs after it (§9.2.3). That is why it can report statistics but cannot wait for anything.",
+      objective: 2
+    },
+    {
+      question: "A module-based driver waits on @(cb) and then drives cb.req <= 1 through a clocking block with an output skew of 0. When does req change?",
+      answers: [
+        { text: "In the NBA region, because the driver is module code in the active set", correct: false, feedback: "The driver's region does not matter: clocking drives always mature in Re-NBA (§14.16). That is how they stay behind every flop's read in Active." },
+        { text: "At the next rising edge of clk", correct: false, feedback: "Only a nonzero output skew or a cycle delay of ##1 or more moves the change to a later slot (§14.16)." },
+        { text: "In the Postponed region, after everything else", correct: false, feedback: "Postponed is read-only (§4.4.2.9); a drive can never land there." },
+        { text: "In the Re-NBA region of the same time slot", correct: true, feedback: "Right. A zero-skew synchronous drive schedules the new value in Re-NBA of the slot of the clocking event (§14.16), whichever region the driver runs in." }
+      ],
+      explanation: "Clocking-block outputs with zero skew and no cycle delay are updated in the Re-NBA region of the clocking event's time slot (§14.16), and the default output skew is 0 (§14.3). Re-NBA comes after the design's NBA pass, so the DUT's flops have already read their inputs.",
+      objective: 2
+    },
+    {
+      question: "Which statement about the Re-NBA region is true?",
+      answers: [
+        { text: "It is part of the Reactive region: program code writes there directly, in the same pass as its other statements", correct: false, feedback: "Program code runs in Reactive, but its nonblocking updates are scheduled into a different region, Re-NBA, which runs later (§4.4.2.8)." },
+        { text: "It is the NBA region of the active set, reused by testbench code once the design is done", correct: false, feedback: "NBA belongs to the active region set; Re-NBA is a separate region of the reactive set (§4.4.1)." },
+        { text: "It is a separate region of the reactive region set, processed after Reactive and Re-Inactive are empty", correct: true, feedback: "Right (§4.4.2.8, §4.5). It is the reactive-set dual of NBA." },
+        { text: "It is read-only, like Postponed, and only reports the values that testbench code computed", correct: false, feedback: "Re-NBA exists to change values: nonblocking updates from reactive-set code and clocking drives land there." }
+      ],
+      explanation: "§4.4.1 puts Reactive, Re-Inactive and Re-NBA, with the PLI regions Pre-Re-NBA and Post-Re-NBA, in the reactive region set. Re-NBA is processed when Reactive and Re-Inactive are empty (§4.4.2.8), and the reactive loop drains before the active set runs again (§4.5).",
+      objective: 1
+    },
+    {
+      question: "Which sequence lists the nine simulation regions in time-slot order?",
+      answers: [
+        { text: "Preponed, Active, NBA, Inactive, Observed, Reactive, Re-NBA, Re-Inactive, Postponed", correct: false, feedback: "NBA comes after Inactive, which is exactly why code after #0 cannot see the result of <= (§4.4.2.3, §4.4.2.4)." },
+        { text: "Preponed, Active, Inactive, NBA, Observed, Reactive, Re-Inactive, Re-NBA, Postponed", correct: true, feedback: "Right (§4.4, §4.4.2)." },
+        { text: "Preponed, Active, Inactive, NBA, Reactive, Observed, Re-Inactive, Re-NBA, Postponed", correct: false, feedback: "Observed sits between the active and reactive sets: checks run before testbench code reacts (§4.4.1)." },
+        { text: "Active, Inactive, NBA, Observed, Reactive, Re-Inactive, Re-NBA, Postponed, Preponed", correct: false, feedback: "Preponed comes first: its samples are the values before anything in the slot changes (§4.4.2.1)." }
+      ],
+      explanation: "The active set (Active, Inactive, NBA) comes first, then Observed, then the reactive set (Reactive, Re-Inactive, Re-NBA). Preponed opens the slot and Postponed closes it; both are read-only.",
+      objective: 1
+    },
+    {
+      question: "One always @(posedge clk) block runs: q <= 5; $display(q); #0 $display(q); $strobe(q); Before the edge q is 0, and nothing else writes q. What prints, in order?",
+      answers: [
+        { text: "0, 5, 5", correct: false, feedback: "This assumes #0 waits for the NBA update. Inactive comes before NBA (§4.4.2.3), so the second print still shows 0." },
+        { text: "5, 5, 5", correct: false, feedback: "A nonblocking update is not visible until the NBA region; both $display calls run before it." },
+        { text: "0, 0, 0", correct: false, feedback: "$strobe evaluates its arguments when it prints, at the end of the slot, after the NBA update (§21.2.2)." },
+        { text: "0, 0, 5", correct: true, feedback: "Right: $display prints in Active, the #0 resume is in Inactive (still before NBA), and $strobe prints in Postponed." }
+      ],
+      explanation: "Statements inside one begin-end run in source order (§4.6). The first print runs in Active and the second after #0 resumes the process in Inactive; q is updated in NBA only after Inactive is empty (§4.5). $strobe waits for Postponed.",
+      objective: 4
+    },
+    {
+      question: "A concurrent assertion checks q == 0 at each rising edge, and its pass action prints q. At the edge where a flop sets q to 1, the assertion passes but its message says q=1. What is happening, and what do you print instead?",
+      answers: [
+        { text: "The pass action runs in Reactive with current values; print $sampled(q)", correct: true, feedback: "Right. The property used the Preponed sample (0); the action runs later and sees the new q (1). $sampled(q) returns the value the property used (§16.9.3)." },
+        { text: "The simulator is wrong: a passing check cannot see q = 1", correct: false, feedback: "Both values are correct for their regions: the check used the sample, the print uses the current value." },
+        { text: "Action blocks run in Postponed; print with $display before the assertion instead", correct: false, feedback: "Action blocks run in Reactive (§4.4.2.6), not Postponed, and moving the print elsewhere does not show the sampled value." },
+        { text: "Use $strobe in the action block to print the checked value", correct: false, feedback: "$strobe prints the settled value at the end of the slot, which is still 1. Only $sampled(q) returns what the property checked." }
+      ],
+      explanation: "A concurrent assertion is evaluated in Observed, using the values from Preponed, but its action blocks run in Reactive with current values (§4.4.2.5, §16.9.3). The LRM's own example uses $sampled in the action block for exactly this reason.",
+      objective: 4
+    },
+    {
+      question: "In one time slot the NBA region updates q, and the design also contains assign y = q. Where and when does y change?",
+      answers: [
+        { text: "In the NBA region, together with q", correct: false, feedback: "NBA only applies the scheduled <= updates. Processes woken by those updates, including continuous assignments, run in Active." },
+        { text: "In Active again, in the same time slot", correct: true, feedback: "Right. The update of q is an event; it wakes the continuous assignment, and the scheduler returns to Active before it moves on (§4.5, §4.9.1)." },
+        { text: "In Observed, after all design updates", correct: false, feedback: "Observed evaluates properties and triggers clocking-block events; design logic never runs there." },
+        { text: "At the next time slot", correct: false, feedback: "Combinational logic does not wait for time to advance: y changes at the same simulation time, in a later pass of the loop." }
+      ],
+      explanation: "After the NBA updates, the inner loop returns to Active, runs every process the updates woke, and moves on only when the whole active set is empty (§4.5). Industry calls each such return a delta cycle; a waveform shows q and y changing at one time stamp.",
+      objective: 3
+    },
+    {
+      question: "On a clock edge, a program thread executes cmd <= 1, and the design contains assign led = cmd. What happens next in the same time slot?",
+      answers: [
+        { text: "led changes in Re-NBA together with cmd", correct: false, feedback: "Only the program's own nonblocking update lands in Re-NBA. The design's continuous assignment is active-set work, so it runs in Active." },
+        { text: "led changes at the next clock edge", correct: false, feedback: "Nothing here waits for a clock; the outer loop handles it at the same simulation time." },
+        { text: "cmd changes in Re-NBA; then the scheduler goes back to Active to update led", correct: true, feedback: "Right: a reactive-set write that wakes design code sends the slot around the outer loop (§4.5, §24.3.1)." },
+        { text: "led changes in Postponed", correct: false, feedback: "Postponed is read-only (§4.4.2.9)." }
+      ],
+      explanation: "Program code runs in Reactive and its <= lands in Re-NBA (§24.3.1). When the reactive loop has drained, the outer loop of §4.5 finds new active-set work, the woken continuous assignment, and returns to Active, then to Observed and the reactive set again if needed.",
+      objective: 3
+    },
+    {
+      question: "An initial block executes a <= 0; a <= 1; at time 0. What is a at the end of time 0, and which rule decides it?",
+      answers: [
+        { text: "0 or 1, because the NBA region has no defined order", correct: false, feedback: "The order of NBA updates is defined: execution order (§4.6). What is free is the order of different processes in Active (§4.7)." },
+        { text: "0, because the first nonblocking assignment wins", correct: false, feedback: "Both updates are applied; the later one is applied last and stays." },
+        { text: "X, because two writes in one slot conflict", correct: false, feedback: "Variables do not resolve conflicting writes; the last update simply wins." },
+        { text: "1, because NBAs are performed in the order they were executed", correct: true, feedback: "Right (§4.6). Both updates wait in NBA and are applied 0, then 1." }
+      ],
+      explanation: "§4.6 guarantees source order inside one begin-end and execution order for NBAs, using this very example. If the two assignments sat in two different processes woken by the same event, the result would not be defined, because those processes may run in either order (§4.7).",
+      objective: 5
+    },
+    {
+      question: "IEEE 1800-2023 §24.4 explains why program code runs in the Reactive region. Which reason does it give?",
+      answers: [
+        { text: "So testbench code runs after all design events of the slot, including clocks driven by nonblocking assignments, which input sampling alone cannot order", correct: true, feedback: "Right. Clocking-block sampling handles one clock; with several simultaneous clocks the processing order is arbitrary, so programs wait until the design events have been processed." },
+        { text: "Because the Reactive region runs program threads in a defined order, so testbench threads cannot race each other", correct: false, feedback: "Reactive, like Active, processes ready events in any order (§4.4.2.6). Programs can still race with each other." },
+        { text: "Because UVM classes must run in the reactive region set, and programs are how UVM components get there", correct: false, feedback: "UVM code runs in the region of its calling thread; with run_test() called from a module, that is the active set (§24.3.1)." },
+        { text: "So testbench writes land before the design's NBA updates and the DUT captures them on the same edge", correct: false, feedback: "The opposite: reactive-set writes, including Re-NBA updates, come after the design's active-set work." }
+      ],
+      explanation: "§24.4 names two sources of nondeterminism: active events processed in any order, and statements that do not execute as one event. Clocking blocks remove read-write races for one clock; programs address multiple clocks by running after the design events, including NBA-driven clocks, have been processed.",
+      objective: 5
     }
   ]}
 />
+
+### Game: place the events
+
+The game below asks where a series of events land, then for the order of a printed log. Every answer is computed by the same scheduler model as the visualizer above, and every round explains its answer. Aim for a perfect score; for each miss, find the matching row in "Where each construct runs" before you play again.
+
+<EventRegionGame />
+
+### Kata: label the region
+
+**Objective:** label every read, write and print on the six labelled lines, predict the log, then confirm both on a simulator.
+
+```systemverilog
+// snippet: place inside a module that has timeunit 1ns; timeprecision 1ns; and
+//   logic clk = 1'b0, d = 1'b1, q = 1'b0; logic y; always #5 clk = ~clk;
+always_ff @(posedge clk) q <= d;                                   // L1
+assign y = ~q;                                                     // L2
+initial begin
+  @(posedge clk);
+  $display("A q=%0d y=%0d", q, y);                                 // L3
+  #0 $display("B q=%0d y=%0d", q, y);                              // L4
+  $strobe("C q=%0d y=%0d", q, y);                                  // L5
+  #1 $finish;
+end
+a_y_high: assert property (@(posedge clk) y == 1'b1)
+  $display("D y=%0d", y);                                          // L6
+```
+
+**Requirements:**
+1. For the first rising edge (t = 5), write the region of every read, write and print next to L1 to L6.
+2. Predict the four printed lines, their values and their order.
+3. Build the snippet into a compilable `tb_top`, run it, and explain every difference from your prediction with a region.
+4. Change line L6 to print `$sampled(y)` and predict the new D line before you rerun.
+
+**What to reflect on:** what the log would lose if `$finish` had no `#1` in front of it, and why the D line prints before the C line.
+
+<details>
+<summary>Worked solution (try the kata first)</summary>
+
+| Line | What happens at t = 5 | Region |
+|---|---|---|
+| L1 | Reads `d` (1) and schedules the update; later `q` becomes 1 | Active, then NBA |
+| L2 | `y` was 1 since time 0 (§4.9.1); after the NBA update of `q` it becomes 0 | Active, in a later pass |
+| L3 | Prints `A q=0 y=1` | Active |
+| L4 | Resumes after `#0` and prints `B q=0 y=1` | Inactive |
+| L5 | Called in the Inactive pass; prints `C q=1 y=0` | Postponed |
+| L6 | `y` sampled as 1, property passes; the pass action prints `D y=0` | Preponed, Observed, Reactive |
+
+The log reads A, B, D, C, because Reactive comes before Postponed. With `$sampled(y)`, the D line becomes `D y=1`, the value the property checked (§16.9.3). Without the `#1` before `$finish`, the run would end during the Inactive pass, so only the A and B lines would print (§20.2, §9.2.3).
+
+</details>
+
+The flashcards for this lesson follow below, under "Reinforce the essentials".
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023)
+- §4.3 Event simulation; §4.4 Stratified event scheduler; §4.4.1 Active region sets and reactive region sets
+- §4.4.2.1 to §4.4.2.9, the Preponed, Active, Inactive, NBA, Observed, Reactive, Re-Inactive, Re-NBA and Postponed events regions; §4.4.3 PLI regions (§4.4.3.1 to §4.4.3.10)
+- §4.5 SystemVerilog simulation reference algorithm; §4.6 Determinism; §4.7 Nondeterminism
+- §4.9.1 to §4.9.7 Scheduling implication of assignments (§4.9.5, switch processing, is out of scope here); §4.10 PLI callback control points, Table 4-1
+- §6.8 Variable declarations; §9.2.2.2 Combinational logic always_comb procedure; §9.2.3 Final procedures; §9.4.1 Delay control; §10.4.1 and §10.4.2 Blocking and nonblocking procedural assignments
+- §14.3 Clocking block declaration; §14.4 Input and output skews; §14.10 Clocking block events; §14.11 Cycle delay: ##; §14.13 Input sampling; §14.16 Synchronous drives
+- §15.5.1 Triggering an event; §15.5.2 Waiting for an event
+- §16.3 Immediate assertions; §16.4 Deferred assertions (§16.4.1 reporting, §16.4.2 flush points); §16.5 Concurrent assertions overview; §16.5.1 Sampling; §16.9.3 Sampled value functions
+- §17.7.3 Scheduling semantics (checker variables); §20.2 Simulation control system tasks; §21.2.2 Strobed monitoring; §21.2.3 Continuous monitoring
+- §24.3 The program construct; §24.3.1 Scheduling semantics of code in program constructs; §24.3.2 Operation of program port connections in the absence of clocking blocks; §24.4 Eliminating testbench races; §24.5 Blocking tasks in cycle/event mode; §24.7 Program control tasks
+- Annex C.4.2 Procedural assign and deassign statements (deprecation)
+
+**Prerequisites:** [F3A Simulation Semantics](/curriculum/T1_Foundational/F3A_Simulation_Semantics/index) for time slots. F3A builds on [F2C Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index), which this page assumes for `=` versus `<=`.
+
+**Related**
+- [F3C Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index): races, and the fixes these regions make possible.
+- [F4C Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): clocking-block syntax, skews and program blocks in a real bench.
+- [I-SV-4A SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): assertion syntax, `disable iff` and the sampled-value functions.
+- [I-SV-4C Checkers](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index): checker code, which runs in the reactive set.
+- [I-SV-5 Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index): named events, `->>` and `.triggered`.
+
+<NextLesson />

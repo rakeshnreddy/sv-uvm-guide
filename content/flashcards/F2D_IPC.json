@@ -1,22 +1,72 @@
 [
   {
     "id": "f2d-ipc-1",
-    "question": "What is the primary difference between a semaphore and a mailbox?",
-    "answer": "A semaphore is used for mutual exclusion (controlling access to a shared resource). A mailbox is used for inter-process communication (safely transferring data between threads)."
+    "question": "What is the difference between a semaphore and a mailbox?",
+    "answer": "A semaphore makes processes take turns on a shared resource: they `get()` keys before using it and `put()` them back. A mailbox passes data: one process `put()`s messages and another `get()`s them, oldest first (IEEE 1800-2023 §15.3, §15.4)."
   },
   {
     "id": "f2d-ipc-2",
-    "question": "What happens if a thread calls get() on an empty mailbox?",
-    "answer": "The thread blocks (suspends execution) until another thread puts an item into the mailbox."
+    "question": "What happens when a process calls `get()` on an empty mailbox?",
+    "answer": "It blocks until another process puts a message, then resumes by itself with the oldest message (§15.4.5). Use `try_get()` when the process must not wait: it returns 0 if the mailbox is empty."
   },
   {
     "id": "f2d-ipc-3",
-    "question": "How do you perform a non-blocking check for a semaphore key?",
-    "answer": "Use the try_get() function. It returns 1 if the key was successfully obtained, and 0 if it was not available, allowing the thread to continue without blocking."
+    "question": "How do you try to take a semaphore key without blocking?",
+    "answer": "Call `try_get()`. It takes the keys and returns a positive integer if they are available, or returns 0 and takes nothing (§15.3.4). Check the result before you use the resource."
   },
   {
     "id": "f2d-ipc-4",
-    "question": "What is the danger of creating an unbounded mailbox with new(0)?",
-    "answer": "An unbounded mailbox never blocks the producer on a put() call. If the producer generates data faster than the consumer can process it, the mailbox grows infinitely, eventually causing a memory exhaustion crash (Out Of Memory)."
+    "question": "What is the risk of an unbounded mailbox, created with `new()` or `new(0)`?",
+    "answer": "`put()` never blocks (§15.4.1), so a producer that outruns its consumer grows the queue, and its memory, for the whole run. A bound such as `new(4)` makes the producer wait instead: backpressure."
+  },
+  {
+    "id": "f2d-ipc-5",
+    "question": "What does `-> ev` do, and which processes wake?",
+    "answer": "It triggers the named event. Every process already blocked on `@(ev)` or `wait (ev.triggered)` wakes (§15.5.1). The trigger lasts no time, so a process that reaches `@(ev)` later stays blocked (§15.5.2)."
+  },
+  {
+    "id": "f2d-ipc-6",
+    "question": "When does `wait (ev.triggered)` succeed where `@(ev)` fails?",
+    "answer": "When `-> ev` ran earlier in the same time slot. The triggered state lasts until simulation time advances, so the wait passes whichever process ran first (§15.5.3)."
+  },
+  {
+    "id": "f2d-ipc-7",
+    "question": "Why is a loop of `forever begin wait (ev.triggered); ... end` a bug?",
+    "answer": "After the first pass, `ev.triggered` stays true for the rest of the time slot, so the wait passes again and again and time never advances: a zero-delay loop (§15.5.3). Use `@(ev)` inside loops."
+  },
+  {
+    "id": "f2d-ipc-8",
+    "question": "How many keys does `semaphore s = new;` hold?",
+    "answer": "None: `keyCount` defaults to 0 (§15.3.1), so the first `get(1)` blocks until some process calls `put()`. Write `new(1)` when you mean one key."
+  },
+  {
+    "id": "f2d-ipc-9",
+    "question": "What does `put()` do on a full bounded mailbox?",
+    "answer": "It blocks until a `get()` frees a slot; a mailbox never overwrites or drops a message (§15.4.3). `try_put()` returns 0 instead of waiting (§15.4.4)."
+  },
+  {
+    "id": "f2d-ipc-10",
+    "question": "Symptom: the first transfers finish, then every process that uses the bus stops inside `get()`, with no error. What do you suspect?",
+    "answer": "A leaked semaphore key: a path out of the critical section (an early `return`, a `disable` or a `disable fork`) skipped `put()`. Make every path out of the code return the key."
+  },
+  {
+    "id": "f2d-ipc-11",
+    "question": "Two processes each hold one semaphore key and wait for the other's key. What is this, and how do you prevent it?",
+    "answer": "A deadlock caused by a circular wait: neither process can reach its `put()`. Make every process take the keys in the same global order."
+  },
+  {
+    "id": "f2d-ipc-12",
+    "question": "Why declare `mailbox #(int)` instead of a plain `mailbox`?",
+    "answer": "A plain mailbox is typeless, so a type mismatch is found only at run time (§15.4.5). The parameterized form makes the compiler check every `put`, `get` and `peek` argument (§15.4.9)."
+  },
+  {
+    "id": "f2d-ipc-13",
+    "question": "In what order do blocked processes get semaphore keys or mailbox messages?",
+    "answer": "Semaphore waiters and processes blocked in a mailbox `get()` are served first-in first-out (§15.3.3, §15.4.5). The standard does not fix the arrival order of processes that block in the same time slot (§4.7), so never rely on it."
+  },
+  {
+    "id": "f2d-ipc-14",
+    "question": "Which tool fits each need: announce that something happened, take turns on a resource, pass data in order?",
+    "answer": "Announce: a named event (`->`, `@`). Take turns: a semaphore (`get()`, `put()`). Pass data in order: a mailbox (`put()`, `get()`)."
   }
 ]

@@ -1,9 +1,890 @@
 ---
 title: "Structs, Unions and Enums"
-description: "Group related fields with packed and unpacked structs and unions, and name values safely with enums and their methods."
+description: "Declare packed and unpacked structs, unions and enums with typedef, predict their bit layout, and use enum methods and casts safely in transactions and register fields."
 flashcards: "F2A_Structs_Unions_Enums"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
 ## Quick Take
 
-This lesson is being written.
+- **What it is:** A **structure** (`struct`) groups named members into one variable. A **union** gives one piece of storage several member names. An **enumeration** (`enum`) is a type whose values are a list of named integer constants. `typedef` gives any of these types a name you can reuse (IEEE 1800-2023 §7.2, §7.3, §6.19, §6.18).
+- **Why it matters:** A bus command, a protocol header or a control register is a record with fixed bit positions, not one anonymous vector. A **packed struct** writes that layout down once, so a monitor turns a 32-bit bus word into named fields with one assignment, and a log prints `OP_WRITE` instead of `2`. The bugs here are silent: a field order that is backwards, an enum that never left its starting value, or a cast that stored a value the enum does not list.
+- **The Analogy:** A packed struct is a form printed on one strip of tape: every field has a fixed box at a fixed position, and you can copy or compare the whole strip at once. An unpacked struct is a folder of separate cards. A packed union is one strip with several transparent templates you can lay over it. An enum is a drop-down list. *Where it breaks:* paper has no "unknown" ink, but a field of a 4-state struct can hold `x`; and a drop-down never shows a value that is not on its list, while an enum variable can, after a static cast or when it was never assigned.
+
+**You will be able to:**
+1. Write `typedef`'d packed and unpacked structs, and choose the right kind for a bus word, a register field map and testbench bookkeeping.
+2. Predict the bit layout of a packed struct or packed union: each member's bit range, `$bits`, and the value after a member write.
+3. Compare unpacked, hard packed, soft packed and tagged unions, and decide when a packed union is the right tool.
+4. Predict what the enum methods `first`, `last`, `next`, `prev`, `num` and `name` return, including wrap-around and values that are not members.
+5. Debug enum assignments and casts: choose a plain assignment, a static cast or `$cast`, and diagnose an enum that hides a missing reset.
+
+<BeforeYouStart />
+
+## Build Your Mental Model
+
+### The picture: one strip of bits, or a folder of members
+
+A struct comes in two kinds, and the keyword `packed` makes the whole difference. A **packed** struct is a **vector**: a row of bits numbered from the most significant bit (MSB) down to bit 0, where each member owns a fixed range of those bits. An **unpacked** struct, the default, is a set of separate members. The simulator decides how to store them, so they have no bit numbers (§7.2, §7.2.1).
+
+<figure>
+<svg viewBox="0 0 360 172" role="img" aria-label="Top: a packed struct cmd_t is one 32-bit strip with op at the most significant end, then addr, then data at bit 0. Bottom: an unpacked struct cmd_rec_t is three separate members, cmd, tag and beat, with no bit numbers; the simulator chooses the layout." style={{ width: "100%", maxWidth: 440 }}>
+  <text x="8" y="14" fontSize="11" fontWeight="600" fill="currentColor">{"packed: cmd_t, one 32-bit vector"}</text>
+  <text x="20" y="30" fontSize="9" fill="currentColor" fillOpacity="0.75">{"bit 31 (MSB)"}</text>
+  <text x="340" y="30" fontSize="9" fill="currentColor" fillOpacity="0.75" textAnchor="end">{"bit 0"}</text>
+  <rect x="20" y="35" width="40" height="30" fill="rgba(139,92,246,0.14)" stroke="rgb(139,92,246)" />
+  <rect x="60" y="35" width="120" height="30" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <rect x="180" y="35" width="160" height="30" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+  <text x="40" y="54" fontSize="11" textAnchor="middle" fill="currentColor">{"op"}</text>
+  <text x="120" y="54" fontSize="11" textAnchor="middle" fill="currentColor">{"addr"}</text>
+  <text x="260" y="54" fontSize="11" textAnchor="middle" fill="currentColor">{"data"}</text>
+  <text x="8" y="94" fontSize="11" fontWeight="600" fill="currentColor">{"unpacked: cmd_rec_t, separate members"}</text>
+  <rect x="20" y="102" width="96" height="34" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <rect x="132" y="102" width="96" height="34" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <rect x="244" y="102" width="96" height="34" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="68" y="123" fontSize="11" textAnchor="middle" fill="currentColor">{"cmd (cmd_t)"}</text>
+  <text x="180" y="123" fontSize="11" textAnchor="middle" fill="currentColor">{"tag (string)"}</text>
+  <text x="292" y="123" fontSize="11" textAnchor="middle" fill="currentColor">{"beat (int)"}</text>
+  <text x="8" y="160" fontSize="10" fill="currentColor" fillOpacity="0.8">{"No bit numbers: the simulator chooses the layout (§7.2)"}</text>
+</svg>
+<figcaption>The same idea, two storage models. Everything you can do to a vector works on the packed struct; the unpacked struct is copied, compared and printed member by member.</figcaption>
+</figure>
+
+Keep this picture in mind for every rule below. Arithmetic, part-selects, `%h` and assignment to or from a `logic [31:0]` work on a packed struct because it is a vector. None of them work on an unpacked struct.
+
+### Name the type once: `typedef`
+
+**`typedef`** gives a data type a name, and the name then works anywhere a type can appear (§6.18):
+
+```systemverilog
+// snippet
+typedef logic [7:0] byte_t;                          // a vector type
+typedef enum logic [1:0] {IDLE, RUN, DONE} state_e;  // an enumeration
+typedef struct packed {                              // a packed struct
+  logic [3:0]  op;
+  logic [11:0] addr;
+} hdr_t;
+
+state_e st;   // variables are declared with the type name
+hdr_t   h;
+```
+
+Name every struct, union and enum, for three reasons:
+
+1. **Reuse.** One definition serves the driver, the monitor and the scoreboard.
+2. **Type matching.** An anonymous `struct { … }` written in two places declares two different types. An anonymous struct, union or enum matches itself only among the variables declared in the same statement, while a `typedef` declared in a **package** matches itself in every scope that imports it (§6.22.1).
+3. **Casts need a name.** A cast names a simple type, so you write `hdr_t'(raw)`; a struct written out in full cannot be a cast type (§6.18, §6.24.1).
+
+Matching matters most for unpacked structs, which only assign to an equivalent type (§6.22.2):
+
+| Declarations | Same type? | So `x = y;` … |
+|---|---|---|
+| `struct { int a; } x, y;` (one statement) | yes (§6.22.1 c) | compiles |
+| `struct { int a; } x;` and, in a second statement, `struct { int a; } y;` | no | is a compile error |
+| `typedef struct { int a; } ab_t;` then `ab_t x, y;` | yes (§6.22.1 d) | compiles |
+| the same `typedef` text written separately inside two modules | no: each declaration is its own type (§6.22) | fails across the module boundary |
+| `ab_t` declared once in a package and imported where needed | yes (§6.22.1 h) | compiles everywhere |
+
+**Classic mistake:** copying a typedef into every file that needs it. Put shared types in one package and import it ([F4A: Structuring Designs with Modules and Packages](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index)).
+
+### Unpacked structs: a record of named members
+
+An **unpacked struct** is a collection of members that can be referenced as a whole or one at a time by name (§7.2). Its members can be of any type: strings, reals, arrays, queues, class handles and other structs. Use it for testbench records that never travel on a wire, such as an expected-value entry or a log line.
+
+```systemverilog
+// snippet: module-level declarations and one initial block
+typedef struct {
+  string name;
+  int    id = -1;      // default member value, used when no initializer is given
+  real   latency_ns;
+} txn_rec_t;
+
+txn_rec_t a, b;
+
+initial begin
+  a = '{name: "rd", id: 3, latency_ns: 12.5};  // assignment pattern by member name
+  b = a;                                       // copies every member
+  b.id = 4;                                    // then change one member
+  if (a != b) $display("%p", b);               // prints each member with its name
+end
+```
+
+What you can do with an unpacked struct:
+- **Build it in one statement** with an **assignment pattern** (an apostrophe followed by braces): by position `'{"rd", 3, 12.5}`, by name `'{name: "rd", …}`, or with `default` and type keys, as in `'{string: "", default: 0}`, which sets the string member to `""` and every other member to 0 (§10.9.2, §5.10).
+- **Copy it as a whole**, and pass it to or return it from a subroutine (§7.2.2). Assignment copies the values. A class variable copies only a handle; that difference comes back in [I-SV-1: Object-Oriented Programming for Verification](/curriculum/T2_Intermediate/I-SV-1_OOP/index).
+- **Compare it** with `==` or `!=` against a variable of an equivalent type (§11.2.2), and print it with `%p`, which writes member names (§21.2.1.6).
+- **Give members default values** in the typedef, as `id = -1` above. An initializer on the variable itself overrides them (§7.2.2).
+
+What you cannot do: arithmetic, part-selects or `%h` on the whole struct, or assigning it straight to a vector. It has no bit numbers. Unpacked structs cannot be declared `signed` either (§7.2.1). The explicit conversion to bits is a bit-stream cast, covered in the next lesson.
+
+### Packed structs: named fields on one vector
+
+A **packed struct** subdivides a vector into named fields with no gaps between them (§7.2.1). Three rules give you the whole layout:
+
+1. **The first member is the most significant.** Later members follow in decreasing significance, down to bit 0.
+2. **The width is the sum of the member widths.** `$bits` returns it, as a constant you can use in other declarations (§20.6.2).
+3. **The whole struct is a vector.** It is unsigned unless you write `struct packed signed`, and it is 4-state if any member is 4-state. You can select its bits as `[n-1:0]` and use it with arithmetic and logical operators (§7.2.1).
+
+This is the bus command used in the rest of the lesson:
+
+```systemverilog
+// snippet
+typedef struct packed {
+  logic [3:0]  op;     // first member: the 4 most significant bits
+  logic [11:0] addr;
+  logic [15:0] data;   // last member: ends at bit 0
+} cmd_t;               // $bits(cmd_t) == 4 + 12 + 16 == 32
+```
+
+<figure>
+<svg viewBox="0 0 360 152" role="img" aria-label="cmd_t layout. op occupies bits 31 to 28, addr bits 27 to 16, data bits 15 to 0. The value 32'h2123_BEEF splits along its hex digits: op holds 2, addr holds 123 and data holds BEEF." style={{ width: "100%", maxWidth: 440 }}>
+  <text x="22" y="12" fontSize="9" fill="currentColor" fillOpacity="0.75">{"31"}</text>
+  <text x="58" y="12" fontSize="9" fill="currentColor" fillOpacity="0.75" textAnchor="end">{"28"}</text>
+  <text x="62" y="12" fontSize="9" fill="currentColor" fillOpacity="0.75">{"27"}</text>
+  <text x="178" y="12" fontSize="9" fill="currentColor" fillOpacity="0.75" textAnchor="end">{"16"}</text>
+  <text x="182" y="12" fontSize="9" fill="currentColor" fillOpacity="0.75">{"15"}</text>
+  <text x="338" y="12" fontSize="9" fill="currentColor" fillOpacity="0.75" textAnchor="end">{"0"}</text>
+  <rect x="20" y="16" width="40" height="32" fill="rgba(139,92,246,0.14)" stroke="rgb(139,92,246)" />
+  <rect x="60" y="16" width="120" height="32" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <rect x="180" y="16" width="160" height="32" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+  <text x="40" y="36" fontSize="11" textAnchor="middle" fill="currentColor">{"op"}</text>
+  <text x="120" y="36" fontSize="11" textAnchor="middle" fill="currentColor">{"addr [27:16]"}</text>
+  <text x="260" y="36" fontSize="11" textAnchor="middle" fill="currentColor">{"data [15:0]"}</text>
+  <rect x="20" y="58" width="40" height="24" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+  <rect x="60" y="58" width="40" height="24" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+  <rect x="100" y="58" width="40" height="24" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+  <rect x="140" y="58" width="40" height="24" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+  <rect x="180" y="58" width="40" height="24" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+  <rect x="220" y="58" width="40" height="24" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+  <rect x="260" y="58" width="40" height="24" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+  <rect x="300" y="58" width="40" height="24" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+  <text x="40" y="75" fontSize="12" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"2"}</text>
+  <text x="80" y="75" fontSize="12" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"1"}</text>
+  <text x="120" y="75" fontSize="12" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"2"}</text>
+  <text x="160" y="75" fontSize="12" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"3"}</text>
+  <text x="200" y="75" fontSize="12" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"B"}</text>
+  <text x="240" y="75" fontSize="12" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"E"}</text>
+  <text x="280" y="75" fontSize="12" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"E"}</text>
+  <text x="320" y="75" fontSize="12" textAnchor="middle" fontFamily="monospace" fill="currentColor">{"F"}</text>
+  <text x="40" y="102" fontSize="10" textAnchor="middle" fill="currentColor">{"op = 2"}</text>
+  <text x="120" y="102" fontSize="10" textAnchor="middle" fill="currentColor">{"addr = 12'h123"}</text>
+  <text x="260" y="102" fontSize="10" textAnchor="middle" fill="currentColor">{"data = 16'hBEEF"}</text>
+  <text x="8" y="126" fontSize="10" fill="currentColor" fillOpacity="0.85">{"c = 32'h2123_BEEF: one hex digit is 4 bits, so fields that"}</text>
+  <text x="8" y="142" fontSize="10" fill="currentColor" fillOpacity="0.85">{"start on a 4-bit boundary can be read straight off the hex."}</text>
+</svg>
+<figcaption>Read the layout from the left: `op` takes the top 4 bits, `addr` the next 12, `data` the last 16. The hex digits of `32'h2123_BEEF` fall exactly on those boundaries.</figcaption>
+</figure>
+
+**Predict before you read on.** With the same `cmd_t`, a monitor executes `c = 32'h5ABC_0042;` and then `c.addr = 12'h0FF;`. What are `c.op`, the `c.addr` read just before the second assignment, and the final value of `c`?
+
+<details>
+<summary>Check your prediction</summary>
+
+`c.op` is `4'h5` and `c.addr` is `12'hABC`: the hex digits split as 5 | ABC | 0042. Writing `addr` changes only bits [27:16], so `c` becomes `32'h50FF_0042`. If you answered `c.op = 4'h2`, you put the first member at bit 0, which is how C bit-fields often behave and exactly backwards here (§7.2.1).
+
+</details>
+
+Rules that catch people out:
+- **Only packed types and integer types may be members** (§7.2.1): `logic` and `bit` vectors, packed arrays, enums, other packed structs and unions, and `byte`, `int` and the other types of Table 6-8. A `string`, a `real` or a queue cannot go in a packed struct.
+- **No default member values and no `rand` on members.** A packed struct member cannot have an initial value (§7.2.2) or a `rand`/`randc` qualifier; `rand` is legal only in unpacked structs (§7.2, Syntax 7-1, footnote 20). Randomize the struct as a whole instead (Push Further).
+- **Width mismatches are silent.** A packed struct is assignment compatible with every integral type, so `c = 16'hBEEF;` compiles, zero-extends, and leaves `op = 0` and `addr = 0` (§6.22.3, §10.7). Size raw words to `$bits(cmd_t)`.
+
+**Use a packed struct for** anything with a bit layout: bus words, protocol headers, register fields, and ports of the design under test (DUT) that carry several fields. **Avoid it for** testbench records that hold strings, reals or variable-length data; those belong in an unpacked struct or a class.
+
+### Unions: one piece of storage, several names
+
+A **union** is one piece of storage that you access through one of several named members (§7.3). Writing `u.raw` and then reading `u.f.addr` reads the same bits through a different name. The kind of union decides whether that read is defined.
+
+**Packed unions** follow the IEEE 1800-2023 rules of §7.3.1:
+- Members must be integral types: vectors, packed arrays, packed structs, enums, integer types.
+- A **packed untagged union** lets you write one member and read another, and the result does not depend on the byte order of the machine running the simulator.
+- **Hard packed** (`union packed`): every member must have the same width, or the declaration is an error.
+- **Soft packed** (`union soft`, new in 1800-2023; `packed` may be omitted): members may differ in width. The union is as wide as its widest member, each member is **right-justified** (it starts at bit 0), and writing a narrower member leaves the bits above it unchanged.
+- Like a packed struct, the union as a whole is a vector: unsigned by default, selectable as `[n-1:0]`, 4-state if any member is 4-state.
+
+```systemverilog
+// snippet
+typedef union packed {           // hard packed: all three members are 32 bits
+  cmd_t            f;            // fields
+  logic [31:0]     raw;          // the whole word
+  logic [3:0][7:0] bytes;        // four bytes, bytes[3] is bits [31:24]
+} cmd_u;
+
+typedef union soft {             // soft packed (IEEE 1800-2023): widths may differ
+  logic [31:0] word;
+  logic [15:0] half;             // right-justified: overlays word[15:0]
+} word_u;
+```
+
+<figure>
+<svg viewBox="0 0 360 214" role="img" aria-label="Hard packed union cmd_u: three names for the same 32 bits. u.f splits them into op, addr and data; u.raw is the whole vector; u.bytes splits them into bytes 3 down to 0. Soft packed union word_u: word covers bits 31 to 0, half covers bits 15 to 0, and writing half leaves bits 31 to 16 unchanged." style={{ width: "100%", maxWidth: 440 }}>
+  <text x="8" y="12" fontSize="11" fontWeight="600" fill="currentColor">{"cmd_u (union packed): same 32 bits, three names"}</text>
+  <text x="8" y="37" fontSize="10" fill="currentColor">{"u.f"}</text>
+  <rect x="70" y="22" width="35" height="24" fill="rgba(139,92,246,0.14)" stroke="rgb(139,92,246)" />
+  <rect x="105" y="22" width="105" height="24" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <rect x="210" y="22" width="140" height="24" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+  <text x="87" y="38" fontSize="10" textAnchor="middle" fill="currentColor">{"op"}</text>
+  <text x="157" y="38" fontSize="10" textAnchor="middle" fill="currentColor">{"addr"}</text>
+  <text x="280" y="38" fontSize="10" textAnchor="middle" fill="currentColor">{"data"}</text>
+  <text x="8" y="67" fontSize="10" fill="currentColor">{"u.raw"}</text>
+  <rect x="70" y="52" width="280" height="24" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="210" y="68" fontSize="10" textAnchor="middle" fill="currentColor">{"raw [31:0]"}</text>
+  <text x="8" y="97" fontSize="10" fill="currentColor">{"u.bytes"}</text>
+  <rect x="70" y="82" width="70" height="24" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <rect x="140" y="82" width="70" height="24" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <rect x="210" y="82" width="70" height="24" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <rect x="280" y="82" width="70" height="24" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="105" y="98" fontSize="10" textAnchor="middle" fill="currentColor">{"bytes[3]"}</text>
+  <text x="175" y="98" fontSize="10" textAnchor="middle" fill="currentColor">{"bytes[2]"}</text>
+  <text x="245" y="98" fontSize="10" textAnchor="middle" fill="currentColor">{"bytes[1]"}</text>
+  <text x="315" y="98" fontSize="10" textAnchor="middle" fill="currentColor">{"bytes[0]"}</text>
+  <text x="70" y="120" fontSize="9" fill="currentColor" fillOpacity="0.75">{"bit 31"}</text>
+  <text x="350" y="120" fontSize="9" fill="currentColor" fillOpacity="0.75" textAnchor="end">{"bit 0"}</text>
+  <text x="8" y="146" fontSize="11" fontWeight="600" fill="currentColor">{"word_u (union soft): members right-justified"}</text>
+  <text x="8" y="171" fontSize="10" fill="currentColor">{"u.word"}</text>
+  <rect x="70" y="156" width="280" height="24" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="210" y="172" fontSize="10" textAnchor="middle" fill="currentColor">{"word [31:0]"}</text>
+  <text x="8" y="201" fontSize="10" fill="currentColor">{"u.half"}</text>
+  <rect x="70" y="186" width="140" height="24" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+  <rect x="210" y="186" width="140" height="24" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <text x="140" y="202" fontSize="9" textAnchor="middle" fill="currentColor" fillOpacity="0.85">{"unchanged by u.half = ..."}</text>
+  <text x="280" y="202" fontSize="10" textAnchor="middle" fill="currentColor">{"half [15:0]"}</text>
+</svg>
+<figcaption>Every row of the hard packed union names the same 32 bits. In the soft packed union the narrower member sits at the least significant end, and the dashed bits keep their old value when only `half` is written.</figcaption>
+</figure>
+
+**Predict before you read on.** (a) After `u.raw = 32'h1ABC_0042;` on a `cmd_u u`, what are `u.f.addr` and `u.bytes[3]`? (b) After `w.word = 32'hAAAA_BBBB; w.half = 16'h1234;` on a `word_u w`, what is `w.word`?
+
+<details>
+<summary>Check your prediction</summary>
+
+(a) `u.f.addr` is `12'hABC` and `u.bytes[3]` is `8'h1A`: every member names the same bits, so read them off the hex as 1 | ABC | 0042 and as 1A | BC | 00 | 42.
+
+(b) `w.word` is `32'hAAAA_1234`. The 16-bit member is right-justified, so it overlays bits [15:0], and bits [31:16] keep `AAAA` (§7.3.1). Two common wrong answers: `32'h1234_BBBB` (the member was placed at the MSB end, as in a packed struct) and `32'h0000_1234` (the write was assumed to clear the upper bits).
+
+</details>
+
+**Unpacked and tagged unions** are for awareness at this level:
+- An **unpacked union** (no `packed` keyword) has no required storage layout (§7.3). Only packed untagged unions promise that a member written under one name can be read back under another (§7.3.1), so do not use an unpacked union to reinterpret bits. An unpacked union variable starts at the default value of its first member's type (§7.3).
+- A **tagged union** (`union tagged`) stores a **tag**, the name of the member that is valid, next to the value (§7.3.2). You build values with tagged union expressions such as `tagged Valid (23)`, and reading a member that does not match the current tag is a run-time error (§11.9). Tagged unions may also hold `void` members and dynamic types, which untagged unions may not (§7.3, §7.3.2):
+
+```systemverilog
+// snippet: an int that may be absent, after the example in §7.3.2
+typedef union tagged {
+  void Invalid;     // carries no value: the tag is the whole message
+  int  Valid;
+} VInt;
+
+VInt v;
+
+initial begin
+  v = tagged Valid (23);        // tag is Valid, value is 23 (§11.9)
+  $display("%0d", v.Valid);     // legal: the read matches the tag
+  v = tagged Invalid;           // tag is Invalid, no value
+  // $display("%0d", v.Valid);  // would be a run-time error: the tag is Invalid
+end
+```
+
+**Use a packed union for** two views of the same bits: a register read as a raw word and as fields, a header read as bytes, or several instruction formats that share a width. **Avoid unions for** saving testbench memory (there is nothing to gain) and for type-safe variants, where a tagged union or a class hierarchy says what you mean.
+
+### Enums: named values on a base type
+
+An **enumerated type** declares a set of named integral constants, and its variables are strongly typed: they are meant to hold one of those constants (§6.19). Every enum has a **base type**, the integer type that stores the value. Without one the base type is `int`: 2-state, 32 bits, signed.
+
+```systemverilog
+// snippet
+typedef enum {IDLE, RUN, DONE} state_e;                 // base type int: 0, 1, 2
+typedef enum logic [1:0] {S_IDLE, S_RUN, S_DONE} st4_e; // 4-state base: starts at 'x
+typedef enum bit [3:0] {OP_RD = 4'h1, OP_WR = 4'h2, OP_IRQ = 4'hF} op_e;
+```
+
+How the values are assigned, traced declaration by declaration:
+
+| Declaration | Members and values | Rule (§6.19) |
+|---|---|---|
+| `enum {IDLE, RUN, DONE}` | IDLE=0, RUN=1, DONE=2 | an unassigned first member is 0; each later one is the previous value + 1 |
+| `enum {A=3, B, C=7, D}` | A=3, B=4, C=7, D=8 | you may set some values and not others |
+| `enum {add=10, sub[3], jmp[6:8]}` | add=10, sub0..sub2 = 11..13, jmp6..jmp8 = 14..16 | `name[N]` and `name[N:M]` generate a range of names (§6.19.2, Table 6-10) |
+| `enum {A=0, B=7, C, D=8}` | error | C becomes 8, so C and D collide; names and values must be unique |
+| `enum bit [1:0] {S0, S1, S2, S3, S4}` | error | S4 would be 4, which does not fit the 2-bit base |
+| `enum bit [3:0] {LOW = 3'h1}` | error | a sized value must have exactly the base type's width |
+| `enum logic [1:0] {OK, BAD = 'x}` | OK=0, BAD = 2'bxx | an x or z value needs a 4-state base; with a 2-state base it is an error |
+
+**The starting value is the base type's default** (Table 6-7). An `int`-based enum starts at 0, which is the first member whenever that member's value is 0. A state variable that was never reset therefore already "sits in IDLE", and the missing reset is invisible. A `logic [1:0]` base starts at `2'bxx`, which is not a member, so the missing reset shows up as `x` and as an empty `name()`. Give state enums a 4-state base.
+
+**Enums are strongly typed** (§6.19.3, §6.19.4). In an expression an enum is automatically converted to its base type; going the other way needs a cast:
+
+```systemverilog
+// snippet
+typedef enum logic [1:0] {IDLE, RUN, DONE} state_e;
+state_e st;
+int     i;
+
+st = RUN;              // OK: a member
+// st = 1;             // ERROR: an int is not a state_e
+// st = st + 1;        // ERROR: st + 1 is a value of the base type, not a state_e
+// st++;               // ERROR, for the same reason (§6.19.4)
+i  = st + 1;           // OK: st is converted to its base type in an expression
+if (st == 2'd1) i = 0; // OK: compared as its base type
+```
+
+### Enum methods: walking the list
+
+Every enum variable has six built-in methods (§6.19.5). They return a value; the variable changes only if you assign the result back.
+
+| Call | Returns | Corner cases |
+|---|---|---|
+| `s.first()` | the first member | independent of what `s` holds (§6.19.5.1) |
+| `s.last()` | the last member | independent of what `s` holds (§6.19.5.2) |
+| `s.next(N)` | the member N places after `s`; N defaults to 1 | wraps from the last member to the first; if `s` is not a member, returns the base type's default value (§6.19.5.3, Table 6-7) |
+| `s.prev(N)` | the member N places before `s` | wraps from the first member to the last; same rule for a non-member (§6.19.5.4) |
+| `s.num()` | the number of members, as an `int` | (§6.19.5.5) |
+| `s.name()` | the member's name as a `string` | the empty string `""` if `s` is not a member (§6.19.5.6) |
+
+"Next" means the next member **in declaration order**, not the value plus one: in `enum {A=3, B, C=7, D}`, `C` follows `B` although 5 and 6 sit in between. To visit every member, use the loop from §6.19.5.7:
+
+```systemverilog
+// snippet: inside an initial block, with state_e s declared at module level
+s = s.first();
+forever begin
+  $display("%s = %0d", s.name(), s);
+  if (s == s.last()) break;
+  s = s.next();
+end
+```
+
+Now try the methods on a model of the standard. The explorer below declares `state_e` with the members `IDLE`, `START`, `BUSY` and `ERROR` (values 0 to 3). Start with the default `int` base type and **predict** what `s.name()` returns for a variable that was never assigned; then switch to the `logic [1:0]` base and predict again. Then set `s` to `ERROR`, predict `s.next()`, and choose the non-member value and predict `s.next()` and `s.name()`.
+
+<EnumMethodVisualizer />
+
+What the explorer showed:
+- With the `int` base, an unassigned `s` reads `IDLE`: 0 is a member. With the `logic [1:0]` base it reads `'x` and `name()` returns `""`, so the missing reset is visible.
+- `next()` from the last member wraps to the first. On a value that is not a member it does not find a neighbour; it returns the default value (0 for `int`, `'x` for `logic [1:0]`), which may itself not be a member.
+- The table under the `int` base shows the three ways to put the integer 7 into `s`. They are the subject of the next section.
+
+### Putting a number into an enum: three ways
+
+Sooner or later a raw number has to become an enum: an opcode decoded from a bus, a state read back from the DUT. There are exactly three ways to write it, and they differ in what happens when the number is not a member (§6.19.3, §6.19.4, §6.24.1, §6.24.2):
+
+```systemverilog
+// snippet
+typedef enum logic [3:0] {OP_NOP = 4'h0, OP_READ = 4'h1, OP_WRITE = 4'h2, OP_IRQ = 4'hF} opcode_e;
+opcode_e op;
+int      raw;
+int      ok;
+
+// op = raw;             // ERROR at compile time: an int is not an opcode_e
+op = opcode_e'(raw);     // static cast: always succeeds, never checks the value
+ok = $cast(op, raw);     // $cast as a function: checks, returns 1 or 0
+$cast(op, raw);          // $cast as a task: checks, run-time error on failure
+```
+
+Traced for `op = OP_NOP` beforehand:
+
+| Statement | `raw = 2` | `raw = 7` (not a member) |
+|---|---|---|
+| `op = raw;` | compile error | compile error |
+| `op = opcode_e'(raw);` | `op = OP_WRITE` | `op` holds 7; `op.name()` is `""` |
+| `ok = $cast(op, raw);` | `ok = 1`, `op = OP_WRITE` | `ok = 0`, `op` stays `OP_NOP` |
+| `$cast(op, raw);` (task) | `op = OP_WRITE` | run-time error, `op` stays `OP_NOP` |
+
+Choose by what you know. Use the static cast only when the value is guaranteed to be a member, for example a loop over `first()` to `last()`. Use `$cast` as a function whenever the value comes from outside (the DUT, a file, a plusarg) and handle the 0 case yourself.
+
+One more door bypasses the type check: **a whole packed struct or packed union written from a vector.** If the `op` member of a packed struct is an `opcode_e` (as in Make It Work below), `c = vif.bus;` copies whatever bits arrive into `c.op`, member or not. Only a direct assignment to the enum is type-checked: §6.19.3 names the union case, and a packed struct is assigned as one vector (§7.2.1). A monitor that decodes into a struct with an enum field should check the field, for example with `c.op.name() == ""` or `$cast`.
+
+### In a real testbench: transactions, register fields and states
+
+**Transactions.** In a class-based or UVM testbench the transaction is a class with `rand` fields ([I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index)). Enums type its kind and opcode fields, so logs and coverage show names. A packed struct describes the **wire format**: the driver turns an item into a `cmd_t` and drives it as one word, and the monitor does the reverse with a single assignment. One layout definition is shared by both sides through a package.
+
+**Register fields.** A packed struct can mirror a register's field map, so test code reads `ctrl.mode` instead of `rdata[3:2]`:
+
+```systemverilog
+// snippet
+typedef struct packed {
+  logic [15:0] rsvd;      // [31:16] reserved, reads as 0
+  logic [3:0]  prescale;  // [15:12]
+  logic [7:0]  thresh;    // [11:4]
+  logic [1:0]  mode;      // [3:2]
+  logic        irq_en;    // [1]
+  logic        en;        // [0]
+} ctrl_reg_t;             // $bits(ctrl_reg_t) == 32
+
+ctrl_reg_t ctrl;
+logic [31:0] wdata;
+
+initial begin
+  ctrl        = '0;       // every field 0
+  ctrl.en     = 1'b1;
+  ctrl.thresh = 8'd100;
+  wdata       = ctrl;     // 32'h0000_0641: thresh 100 = 8'h64 lands in [11:4]
+end
+```
+
+In a UVM environment the register model provides fields of its own ([A-UVM-4A: RAL Fundamentals](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index)); a packed struct is still the quickest way to decode a raw value in a monitor, a checker or a directed test.
+
+**States and opcodes.** Give state and opcode enums an explicit, 4-state base type (`enum logic [N-1:0]`) so an unassigned value shows as `x` and prints with an empty name.
+
+**Debugging: symptom, cause, fix.**
+
+| What you see | Likely cause | Fix |
+|---|---|---|
+| Fields print with plausible but wrong values, as if shifted or swapped | members declared in the wrong order (the first member is the MSB, §7.2.1) | reorder the members; check with a pattern such as `32'h1234_5678` and `$bits` |
+| Compile error assigning one struct to another identical-looking struct | two separate anonymous or locally declared types (§6.22) | one `typedef` in a package, imported everywhere |
+| Compile error on `st = 1;` or `st++` | an int assigned to an enum without a cast (§6.19.3, §6.19.4) | `st = st.next();`, a static cast, or `$cast` |
+| A log line prints an empty state or opcode name | the enum holds a value that is not a member: never assigned with a 4-state base, a static cast, or a raw vector written into a struct | reset it; replace the static cast with `$cast`; check decoded fields |
+| The FSM appears to sit in `IDLE` although reset was never asserted | 2-state `int` base starting at 0 (Table 6-7) | `enum logic [N-1:0]` |
+| `rand` on a packed struct member does not compile | `rand` is legal only on unpacked struct members (§7.2) | declare the whole packed struct `rand` in a class |
+| `%p` on a union shows only one member | `%p` prints the first declared member of an untagged union (§21.2.1.6) | print the member you need, or the raw view with `%h` |
+
+<VisualRecap
+  title="Positions, views and names"
+  rule="A packed struct lays its members on one vector, first member at the MSB. A packed union gives the same bits several names. An enum names values of its base type, and only direct assignments to it are type-checked."
+  code={`typedef struct packed {
+  logic [3:0]  op;    // [31:28]
+  logic [11:0] addr;  // [27:16]
+  logic [15:0] data;  // [15:0]
+} cmd_t;
+cmd_t c;
+c = 32'h2123_BEEF;    // op=2, addr=123, data=BEEF
+c.addr = 12'h0FF;     // c = 32'h20FF_BEEF`}
+  mistake="Treating the first member as bit 0, or trusting an enum field decoded from a bus word without checking that it is a member."
+  inTestbench="Wire formats and register fields as packed structs in a shared package; testbench records as unpacked structs or classes; state and opcode enums with a 4-state base, printed with name()."
+>
+  <svg viewBox="0 0 320 120" role="img" aria-label="A 32-bit strip labelled op, addr and data from the most significant end, with a union row naming the same bits raw, and an enum row listing IDLE, RUN and DONE." style={{ width: "100%", maxWidth: 360 }}>
+    <text x="8" y="14" fontSize="10" fill="currentColor">{"struct"}</text>
+    <rect x="60" y="4" width="32" height="20" fill="rgba(139,92,246,0.14)" stroke="rgb(139,92,246)" />
+    <rect x="92" y="4" width="96" height="20" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <rect x="188" y="4" width="124" height="20" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="76" y="18" fontSize="9" textAnchor="middle" fill="currentColor">{"op"}</text>
+    <text x="140" y="18" fontSize="9" textAnchor="middle" fill="currentColor">{"addr"}</text>
+    <text x="250" y="18" fontSize="9" textAnchor="middle" fill="currentColor">{"data"}</text>
+    <text x="8" y="48" fontSize="10" fill="currentColor">{"union"}</text>
+    <rect x="60" y="36" width="252" height="20" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="186" y="50" fontSize="9" textAnchor="middle" fill="currentColor">{"raw: the same 32 bits"}</text>
+    <text x="8" y="84" fontSize="10" fill="currentColor">{"enum"}</text>
+    <rect x="60" y="70" width="70" height="22" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="136" y="70" width="70" height="22" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="212" y="70" width="70" height="22" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="95" y="85" fontSize="9" textAnchor="middle" fill="currentColor">{"IDLE = 0"}</text>
+    <text x="171" y="85" fontSize="9" textAnchor="middle" fill="currentColor">{"RUN = 1"}</text>
+    <text x="247" y="85" fontSize="9" textAnchor="middle" fill="currentColor">{"DONE = 2"}</text>
+    <text x="8" y="112" fontSize="9" fill="currentColor" fillOpacity="0.8">{"MSB on the left; next() follows declaration order"}</text>
+  </svg>
+</VisualRecap>
+
+## Make It Work
+
+This self-checking file uses all three types the way a bus monitor and a scoreboard would. The package holds the shared types; `tb_top` builds a command, decodes a raw word through the union, records it in an unpacked struct, walks the enum, and puts integers into the enum both ways.
+
+```systemverilog
+// compile
+package bus_pkg;
+  // 4-state base: an opcode that was never written reads x, not OP_NOP.
+  typedef enum logic [3:0] {
+    OP_NOP   = 4'h0,
+    OP_READ  = 4'h1,
+    OP_WRITE = 4'h2,
+    OP_IRQ   = 4'hF
+  } opcode_e;
+
+  // Wire format of one bus command: the first member is the MSB end.
+  typedef struct packed {
+    opcode_e     op;    // [31:28]
+    logic [11:0] addr;  // [27:16]
+    logic [15:0] data;  // [15:0]
+  } cmd_t;
+
+  // Three views of the same 32 bits. Hard packed: every member is 32 bits.
+  typedef union packed {
+    cmd_t            f;
+    logic [31:0]     raw;
+    logic [3:0][7:0] bytes;
+  } cmd_u;
+
+  // Bookkeeping that never travels on the bus, so it may hold a string.
+  typedef struct {
+    cmd_t  cmd;
+    string tag;
+    int    beat;
+  } cmd_rec_t;
+endpackage
+
+module tb_top;
+  import bus_pkg::*;
+
+  int pass_count = 0;
+  int fail_count = 0;
+
+  // Callers compute ok with ===, so an x counts as a failure, never a pass.
+  function automatic void check(string what, bit ok);
+    if (ok) pass_count++;
+    else begin
+      fail_count++;
+      $display("FAIL: %s", what);
+    end
+  endfunction
+
+  cmd_t     c;
+  cmd_u     u;
+  cmd_rec_t rec;
+  opcode_e  op;
+  opcode_e  never_set;  // never assigned: 4'bxxxx (Table 6-7)
+  int       n;
+  int       cast_ok;
+  string    names;      // starts as ""
+
+  initial begin
+    // 1. Build a command by member name, then use it as one vector.
+    c = '{op: OP_WRITE, addr: 12'h123, data: 16'hBEEF};
+    $display("c = %h, $bits(cmd_t) = %0d", c, $bits(cmd_t));
+    check("layout",     c === 32'h2123_BEEF);
+    check("$bits",      $bits(cmd_t) == 32);
+
+    // 2. Write one member: only bits [27:16] change.
+    c.addr = 12'h0FF;
+    check("addr write", c === 32'h20FF_BEEF);
+
+    // 3. Decode a raw bus word through the union.
+    u.raw = 32'h1ABC_0042;
+    op    = u.f.op;
+    $display("op = %s, addr = %h, bytes[3] = %h", op.name(), u.f.addr, u.bytes[3]);
+    check("op field",   op === OP_READ);
+    check("addr field", u.f.addr === 12'hABC);
+    check("byte 3",     u.bytes[3] === 8'h1A);
+
+    // 4. An unpacked record: built by name, printed with member names.
+    rec = '{cmd: c, tag: "first write", beat: 0};
+    $display("rec = %p", rec);
+
+    // 5. Visit every member in declaration order.
+    op = op.first();
+    n  = 0;
+    forever begin
+      names = {names, " ", op.name()};
+      n++;
+      if (op == op.last()) break;
+      op = op.next();
+    end
+    $display("members:%s (num() = %0d)", names, op.num());
+    check("num()",      n == op.num());
+
+    // 6. next() wraps; a value that is not a member has no name.
+    op = OP_IRQ;
+    check("wrap",       op.next() === OP_NOP);
+    $display("never_set = %b, name() = \"%s\"", never_set, never_set.name());
+    check("no name",    never_set.name() == "");
+
+    // 7. Integers into the enum: a static cast never checks, $cast does.
+    op = opcode_e'(7);
+    $display("static cast: op = %0d, name() = \"%s\"", op, op.name());
+    cast_ok = $cast(op, 2);
+    check("$cast accepts 2", cast_ok == 1 && op === OP_WRITE);
+    cast_ok = $cast(op, 7);
+    check("$cast rejects 7", cast_ok == 0 && op === OP_WRITE);
+
+    $display("PASS=%0d FAIL=%0d", pass_count, fail_count);
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative: derived from the IEEE 1800-2023 rules cited in the comments, not captured from a simulator run; your simulator adds its own `$finish` message):
+
+```text
+c = 2123beef, $bits(cmd_t) = 32
+op = OP_READ, addr = abc, bytes[3] = 1a
+rec = '{cmd:'{op:OP_WRITE, addr:255, data:48879}, tag:"first write", beat:0}
+members: OP_NOP OP_READ OP_WRITE OP_IRQ (num() = 4)
+never_set = xxxx, name() = ""
+static cast: op = 7, name() = ""
+PASS=11 FAIL=0
+```
+
+The `rec` line follows §21.2.1.6: member names, the enum by name, other integral values in decimal. The standard leaves its white space to the implementation, so compare names and values rather than exact spacing.
+
+**Run it.** Save the file as `tb_top.sv` and compile and run it with any simulator that supports IEEE 1800-2023 and 4-state values; `tb_top` is the top module. Verilator models only 2-state values, so the `never_set` line prints 0 there instead of `xxxx` (tool-dependent).
+
+**How to work through it:**
+1. Before running, write down what each `$display` line will print. Use the layout picture for lines 1 and 2 and the method table for lines 4 to 6.
+2. Run the file and compare. For every difference, find the rule in this lesson that explains it before changing anything.
+3. Reverse the order of `addr` and `data` in `cmd_t` and predict which checks fail. Run it to confirm, then restore the order.
+4. Change the base type of `opcode_e` to `bit [3:0]` and predict the `never_set` line and which check fails. (The line becomes `never_set = 0000, name() = "OP_NOP"` and the "no name" check fails: a 2-state base starts at 0, which is a member.)
+5. Add a fifth opcode, `OP_SYNC = 4'h3`, at the end of the list. Predict the `members:` line, `num()`, and which check now fails. (The "wrap" check: `next()` from `OP_IRQ` now returns `OP_SYNC`.)
+
+**Checklist before moving on:**
+- [ ] I can draw the bit layout of a packed struct from its declaration, first member at the MSB.
+- [ ] I keep shared struct, union and enum typedefs in one package.
+- [ ] I choose packed for wire formats and register fields, unpacked or a class for testbench records.
+- [ ] I know which union kind allows reading back a different member, and that a hard packed union needs equal widths.
+- [ ] I give state and opcode enums a 4-state base type.
+- [ ] I use `$cast` as a function, and check its result, whenever a value from outside becomes an enum.
+
+## Push Further
+
+### Expert: Randomizing structs, unions and enum fields
+
+Randomization (taught in [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index)) treats the two kinds of struct differently (§18.4):
+- An **unpacked struct** can be declared `rand` in a class. Its members are random only if their own declarations carry `rand` or `randc`, and the struct itself cannot be `randc`.
+- A **packed struct** or **packed untagged union** can be declared `rand` or `randc` and is then randomized as one integral value. Its members cannot carry `rand` or `randc`.
+- Unpacked unions and packed tagged unions cannot be `rand` or `randc` at all.
+
+The trap: a random `enum` variable only ever receives member values (§18.3), but **that restriction does not apply to an enum member of a rand packed struct or packed union** (§18.4). The standard's own example is `typedef enum bit [1:0] {A=2'b00, B=2'b11} ab_e;` inside a packed struct: randomizing the struct can produce `2'b01` and `2'b10`. If the opcode field of a randomized `cmd_t` must be legal, constrain it, for example `constraint c_op { cmd.op inside {OP_NOP, OP_READ, OP_WRITE, OP_IRQ}; }`, or keep the transaction fields in a class and pack them into the struct after randomization.
+
+### Expert: Type identity: packages, instances and equivalence
+
+Three levels of type compatibility decide what a compiler accepts (§6.22):
+- **Matching** types are the same type (§6.22.1). An anonymous struct, union or enum matches only the variables declared in the same statement, and every instance of a module that declares its own user-defined type gets a unique type. Unpacked structs, unpacked unions, enums and classes that must agree across instances have to come from a package or a higher-level scope.
+- **Equivalent** types are interchangeable. Two packed structs, packed unions, packed arrays or integer types are equivalent when they have the same total number of bits, are both 2-state or both 4-state, and have the same signedness (§6.22.2). So `struct packed signed {bit [3:0] a, b;}` is equivalent to `byte`.
+- **Assignment compatible** types can be assigned with an implicit conversion; all integral types are assignment compatible with each other (§6.22.3). That is why a packed struct accepts any vector, with silent truncation or extension, while an unpacked struct accepts only an equivalent type.
+
+Interview angle: "Two modules each declare `typedef struct { int a; } s_t;` locally, and you pass a value of one module's type to a port of the other's. Why does it fail, and why would it work if the struct were packed?" The two unpacked types are separate declarations and not equivalent, so they are not assignment compatible. Packed, both are 32-bit 2-state unsigned vectors (a packed struct is unsigned unless declared `signed`, even when its member is an `int`), and those are equivalent. The fix is the same either way: declare the type once, in a package.
+
+### Expert: Unions in IEEE 1800-2023: soft packing and tagged layouts
+
+The **soft packed union** is new in IEEE 1800-2023 (§7.3.1); earlier editions accepted only equal-width packed unions. Its rules apply recursively to nested soft unions: each member is right-justified inside the widest member, and a write to a narrower member leaves the bits above it unchanged. Support for `union soft` in a given simulator, linter or synthesis tool is **tool-dependent**: check it before relying on it in shared code.
+
+A **packed tagged union** has a defined layout too (§7.3.2): the tag bits sit at the MSB end, using the minimum number of bits that can code every member name; each member is right-justified; the bits between tag and member are undefined. A `void` member leaves only the tag significant. Tagged union values are built with `tagged` expressions (§11.9) and are naturally read with pattern matching, `case (v) matches` and `if (v matches …)` (§12.6).
+
+Two printing and packing details follow from the same clause family:
+- `%p` prints only the first declared member of an untagged union, and prints `tag:value` for a tagged union (§21.2.1.6).
+- When a streaming operator packs an untagged union, it streams the first-declared member (§11.4.14.1). Put the "raw" view first if that is the view you want streamed.
+
+### Expert: Interview angles
+
+Commit to an answer before you check it.
+
+<InterviewQuestionPlayground
+  title="Interview: field order"
+  question={"typedef struct packed { logic [7:0] hdr; logic [23:0] body; } frame_t; frame_t f = 32'hAB00_0001; A candidate says f.hdr is 8'h01. What is it, and why?"}
+  options={[
+    { text: "8'hAB: the first member of a packed struct is the most significant, so hdr is bits [31:24].", isCorrect: true, feedback: "Correct. The first member specified is the most significant (§7.2.1), so hdr reads the top byte. A quick check is $bits(frame_t) and a known pattern." },
+    { text: "8'h01: the first member is bit 0, as in C bit-fields.", isCorrect: false, feedback: "That is the C bit-field habit. SystemVerilog packed structs put the first member at the MSB end (§7.2.1)." },
+    { text: "It depends on the simulator's byte order.", isCorrect: false, feedback: "Packed layouts are defined by the standard and independent of the host machine (§7.2.1, §7.3.1). Only unpacked layouts are implementation-dependent (§7.2)." },
+    { text: "The assignment does not compile: a struct needs an assignment pattern.", isCorrect: false, feedback: "A packed struct is a vector and accepts any integral value (§6.22.3). Unpacked structs are the ones that need a pattern or an equivalent type." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the empty state name"
+  question={"A regression log prints 'state=' with an empty name for a few cycles after a mid-test reset. The state enum is typedef enum logic [2:0] {IDLE, ...} st_e and the monitor decodes it from a packed struct. Name two causes worth checking first."}
+  options={[
+    { text: "The DUT drove x or an unused encoding during reset, and the struct assignment stored it without a type check, so name() returns an empty string.", isCorrect: true, feedback: "Correct. name() returns \"\" for any non-member (§6.19.5.6), and a packed struct written as a vector does not type-check its enum field. Check the DUT's reset values and add a $cast or name() check in the monitor." },
+    { text: "name() always returns an empty string for 4-state enums.", isCorrect: false, feedback: "name() returns the member name whenever the value is a member, whatever the base type (§6.19.5.6)." },
+    { text: "The enum needs an int base type for name() to work.", isCorrect: false, feedback: "An int base would hide the problem: it starts at 0, which looks like IDLE (Table 6-7). The 4-state base is what made the bad value visible." },
+    { text: "The simulator printed the line before the enum was declared.", isCorrect: false, feedback: "Declarations are elaborated before simulation starts; the value, not the declaration, is the issue." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
+    {
+      question: "typedef struct packed { logic [3:0] op; logic [11:0] addr; logic [15:0] data; } cmd_t; cmd_t c = 32'hA123_BEEF; What is c.addr?",
+      answers: [
+        { text: "12'h123", correct: true, feedback: "Right. op takes bits [31:28] (A), addr bits [27:16] (123), data bits [15:0] (BEEF)." },
+        { text: "12'hBEE", correct: false, feedback: "This puts the first member at bit 0, the C bit-field habit. In a packed struct the first member is the most significant (§7.2.1)." },
+        { text: "12'hEEF", correct: false, feedback: "addr is not the low 12 bits; data, the last member, ends at bit 0. addr sits above data, in bits [27:16]." },
+        { text: "It does not compile: a struct must be set member by member", correct: false, feedback: "A packed struct is a vector and accepts any integral value (§7.2.1, §6.22.3). The member-wise rule applies to unpacked structs." }
+      ],
+      explanation: "The first member of a packed struct is the most significant and the members follow without gaps, so 32'hA123_BEEF splits as A | 123 | BEEF (§7.2.1).",
+      objective: 2
+    },
+    {
+      question: "Which declaration compiles?",
+      answers: [
+        { text: "typedef struct packed { string name; logic [7:0] id; } t1;", correct: false, feedback: "A string is not a packed or integer type, so it cannot be a member of a packed struct (§7.2.1)." },
+        { text: "typedef struct packed { rand logic [7:0] id; } t2;", correct: false, feedback: "rand and randc are legal only on members of unpacked structs (§7.2, Syntax 7-1, footnote 20). Randomize the packed struct as a whole." },
+        { text: "typedef struct packed { logic [7:0] id = 8'h1; } t3;", correct: false, feedback: "Members of packed structs cannot have default member values (§7.2.2)." },
+        { text: "typedef struct { string name; rand logic [7:0] id; int crc = 0; } t4;", correct: true, feedback: "Right. An unpacked struct can hold any type, its members may be rand, and they may have default values (§7.2, §7.2.2)." }
+      ],
+      explanation: "Packed structs are vectors: only packed and integer members, no default member values and no rand members. Unpacked structs accept all three (§7.2, §7.2.1, §7.2.2).",
+      objective: 1
+    },
+    {
+      question: "typedef union soft { logic [31:0] word; logic [15:0] half; } word_u; word_u w; w.word = 32'hAAAA_BBBB; w.half = 16'h1234; What is w.word now?",
+      answers: [
+        { text: "32'hAAAA_1234", correct: true, feedback: "Right. In a soft packed union each member is right-justified, and writing the 16-bit member leaves bits [31:16] unchanged (§7.3.1)." },
+        { text: "32'h1234_BBBB", correct: false, feedback: "That places the narrow member at the MSB end, like the first member of a packed struct. Soft union members are right-justified (§7.3.1)." },
+        { text: "32'h0000_1234", correct: false, feedback: "Writing a narrower member of a soft packed union does not clear the bits above it (§7.3.1)." },
+        { text: "Compile error: union members must all be the same width", correct: false, feedback: "That rule is for hard packed unions (union packed). The soft qualifier, new in IEEE 1800-2023, allows different widths (§7.3.1)." }
+      ],
+      explanation: "A soft packed union is as wide as its widest member; every member is right-justified, and a write to a narrower member leaves the higher bits alone (§7.3.1).",
+      objective: 3
+    },
+    {
+      question: "You need to read a 32-bit status register both as a raw word and as named fields, writing one view and reading the other. Which type fits?",
+      answers: [
+        { text: "A hard packed union of a 32-bit packed struct and logic [31:0]", correct: true, feedback: "Right. A packed untagged union allows a member written under one name to be read under another, independent of host byte order (§7.3.1)." },
+        { text: "An unpacked union of the same two members", correct: false, feedback: "An unpacked union has no required layout, and only packed untagged unions guarantee read-back through another member (§7.3, §7.3.1)." },
+        { text: "A tagged union of the two members", correct: false, feedback: "A tagged union records which member is valid; reading the other member is a run-time error (§11.9). It is built for type safety, not for reinterpreting bits." },
+        { text: "An unpacked struct with both members", correct: false, feedback: "A struct gives each member its own storage, so writing one never changes the other." }
+      ],
+      explanation: "Two views of the same bits is the job of a packed untagged union; equal widths make it hard packed (§7.3.1).",
+      objective: 3
+    },
+    {
+      question: "typedef enum logic [1:0] {IDLE, RUN, DONE} st_e; st_e s = DONE; What do s.next() and s.num() return?",
+      answers: [
+        { text: "IDLE and 3", correct: true, feedback: "Right. next() from the last member wraps to the first (§6.19.5.3), and num() counts the members (§6.19.5.5)." },
+        { text: "2'b11 and 3", correct: false, feedback: "next() is not arithmetic: it moves to the next member in declaration order, wrapping at the end (§6.19.5.3)." },
+        { text: "DONE and 3", correct: false, feedback: "next() does not stop at the end of the list; it wraps to the first member (§6.19.5.3)." },
+        { text: "IDLE and 4", correct: false, feedback: "num() counts the declared members, three here, not the codes a 2-bit base type could hold (§6.19.5.5)." }
+      ],
+      explanation: "next() and prev() step through members in declaration order and wrap around; num() returns the number of members (§6.19.5).",
+      objective: 4
+    },
+    {
+      question: "st_e is declared as in the previous question and s is never assigned. What do s.name() and s.next() return?",
+      answers: [
+        { text: "\"\" and 2'bxx", correct: true, feedback: "Right. s starts at its base type's default, 2'bxx (Table 6-7), which is not a member. name() returns the empty string and next() returns the default value again (§6.19.5.3, §6.19.5.6)." },
+        { text: "\"IDLE\" and RUN", correct: false, feedback: "That is what an int-based enum would show, because int starts at 0. A logic [1:0] base starts at 'x (Table 6-7)." },
+        { text: "\"\" and IDLE", correct: false, feedback: "next() on a non-member does not jump to the first member; it returns the enumeration's default initial value (§6.19.5.3)." },
+        { text: "A run-time error", correct: false, feedback: "Both methods are legal on any value. A non-member gives an empty name rather than an error (§6.19.5.6)." }
+      ],
+      explanation: "An enum variable starts at its base type's default (Table 6-7). For a non-member, name() returns \"\" and next()/prev() return the default initial value (§6.19.5.3, §6.19.5.6).",
+      objective: 4
+    },
+    {
+      question: "typedef enum {IDLE, BUSY, DONE} st_e; The model's state variable st has no reset logic, yet the log shows st = IDLE from time 0. What is going on?",
+      answers: [
+        { text: "The default base type int is 2-state and starts at 0, which happens to be IDLE, so the missing reset is hidden", correct: true, feedback: "Right. Table 6-7 gives int a starting value of 0. Declare the enum with a 4-state base, enum logic [1:0], and the missing reset shows as x with an empty name." },
+        { text: "Every enum variable starts at its first member", correct: false, feedback: "It starts at the base type's default (Table 6-7). Here that is 0, which is the first member only because IDLE was given the value 0." },
+        { text: "%s prints the first name for any value", correct: false, feedback: "name() returns \"\" for a value that is not a member (§6.19.5.6). The value really is 0 here." },
+        { text: "The simulator runs an implicit reset", correct: false, feedback: "There is no implicit reset; the variable simply starts at its type's default value (Table 6-7)." }
+      ],
+      explanation: "An int-based enum starts at 0 (Table 6-7). When 0 is the first member, an unreset state looks valid. A 4-state base type makes the bug visible.",
+      objective: 5
+    },
+    {
+      question: "opcode_e op; int raw = 7; 7 is not a member of opcode_e. Which statement lets your code detect that and leaves op unchanged, without a run-time error?",
+      answers: [
+        { text: "if (!$cast(op, raw)) $error(\"bad opcode %0d\", raw);", correct: true, feedback: "Right. $cast called as a function returns 0 for an invalid value, makes no assignment and raises no error itself (§6.24.2)." },
+        { text: "op = raw;", correct: false, feedback: "This does not compile: an int cannot be assigned to an enum without a cast (§6.19.3)." },
+        { text: "op = opcode_e'(raw);", correct: false, feedback: "A static cast always succeeds and never checks the value, so op silently holds 7 (§6.19.4)." },
+        { text: "$cast(op, raw);", correct: false, feedback: "Called as a task, $cast leaves op unchanged but raises a run-time error on failure (§6.24.2)." }
+      ],
+      explanation: "Use $cast as a function for any value that comes from outside and test its result; a static cast is only for values you know are members (§6.19.4, §6.24.2).",
+      objective: 5
+    }
+  ]}
+/>
+
+### Kata: decode a packet header
+
+**Objective:** Define a header type, predict its bit layout, and decode raw words into named fields, with every result self-checked.
+
+**Requirements:**
+- In a package `pkt_pkg`, declare `typedef enum logic [1:0] {PKT_DATA, PKT_ACK, PKT_NAK, PKT_PING} pkt_kind_e;` and a 32-bit packed struct `pkt_hdr_t` with, from the MSB: `kind` (a `pkt_kind_e`), `seq` (6 bits), `len` (8 bits) and `crc` (16 bits).
+- In `tb_top`, build a header with an assignment pattern by name: `PKT_ACK`, `seq` 5, `len` 64, `crc` `16'hCAFE`. **Write down the `%h` value before you run.**
+- Decode the raw word `32'hC1FF_0000` into a second header and print `kind.name()`, `seq` and `len`.
+- Add a packed union `pkt_view_u` with the members `pkt_hdr_t h` and `logic [3:0][7:0] bytes`, and print `bytes[3]` of the first header.
+- Check every value with `===` and finish with `PASS=<n> FAIL=0`.
+
+**What to reflect on:**
+- Which fields can you read straight off the hex digits, and which cannot? Why?
+- What would `kind.name()` print if the top two bits came from a DUT driving `x`?
+
+<details>
+<summary>Worked solution</summary>
+
+`kind` is 2 bits and `seq` 6 bits, so together they fill the top byte: `PKT_ACK` (`2'b01`) followed by 5 (`6'b000101`) gives `8'b0100_0101` = `8'h45`. Then `len` = `8'h40` and `crc` = `16'hCAFE`, so the header is `32'h4540_CAFE`. For the raw word, the top byte `8'hC1` = `8'b1100_0001` splits into `kind = 2'b11` (`PKT_PING`) and `seq = 1`; `len` is `8'hFF` = 255.
+
+```systemverilog
+// compile
+package pkt_pkg;
+  typedef enum logic [1:0] {PKT_DATA, PKT_ACK, PKT_NAK, PKT_PING} pkt_kind_e;
+
+  typedef struct packed {
+    pkt_kind_e   kind;  // [31:30]
+    logic [5:0]  seq;   // [29:24]
+    logic [7:0]  len;   // [23:16]
+    logic [15:0] crc;   // [15:0]
+  } pkt_hdr_t;
+
+  typedef union packed {
+    pkt_hdr_t        h;
+    logic [3:0][7:0] bytes;
+  } pkt_view_u;
+endpackage
+
+module tb_top;
+  import pkt_pkg::*;
+
+  int pass_count = 0;
+  int fail_count = 0;
+
+  function automatic void check(string what, bit ok);
+    if (ok) pass_count++;
+    else begin
+      fail_count++;
+      $display("FAIL: %s", what);
+    end
+  endfunction
+
+  pkt_hdr_t  hdr, rx;
+  pkt_view_u view;
+
+  initial begin
+    hdr = '{kind: PKT_ACK, seq: 6'd5, len: 8'd64, crc: 16'hCAFE};
+    $display("hdr = %h", hdr);
+    check("hdr layout", hdr === 32'h4540_CAFE);
+
+    rx = 32'hC1FF_0000;  // a whole-vector write: rx.kind is not type-checked
+    $display("rx: kind = %s, seq = %0d, len = %0d", rx.kind.name(), rx.seq, rx.len);
+    check("rx kind", rx.kind === PKT_PING);
+    check("rx seq",  rx.seq === 6'd1);
+    check("rx len",  rx.len === 8'd255);
+
+    view.h = hdr;
+    $display("bytes[3] = %h", view.bytes[3]);
+    check("top byte", view.bytes[3] === 8'h45);
+
+    $display("PASS=%0d FAIL=%0d", pass_count, fail_count);
+    $finish;
+  end
+endmodule
+```
+
+Expected output (illustrative):
+
+```text
+hdr = 4540cafe
+rx: kind = PKT_PING, seq = 1, len = 255
+bytes[3] = 45
+PASS=5 FAIL=0
+```
+
+Reflection: `kind` and `seq` share a hex digit (bits [31:28] hold `kind` and the top two bits of `seq`), so only fields that start and end on 4-bit boundaries can be read straight off the hex. If the DUT drove `x` on bits [31:30], `rx.kind` would hold `2'bxx`, not a member, and `name()` would print an empty string.
+
+</details>
+
+A lab that exercises structs, enums and arrays together (`common-1`) is planned; until it is available, the kata above is this lesson's hands-on exercise.
+
+## References & Next Topics
+
+**Primary sources (IEEE 1800-2023):**
+- §6.18 user-defined types (`typedef`); §6.19 enumerations, with §6.19.2 enumerated type ranges (Table 6-10), §6.19.3 type checking, §6.19.4 enumerated types in numerical expressions, §6.19.5.1–§6.19.5.7 enumerated type methods; Table 6-7 default variable initial values
+- §6.22.1 matching types, §6.22.2 equivalent types, §6.22.3 assignment compatible types
+- §6.24.1 cast operator, §6.24.2 `$cast` dynamic casting
+- §7.2 structures, §7.2.1 packed structures, §7.2.2 assigning to structures
+- §7.3 unions, §7.3.1 packed unions (hard and soft), §7.3.2 tagged unions
+- §5.10 structure literals, §10.9.2 structure assignment patterns, §11.2.2 aggregate expressions
+- §11.9 tagged union expressions and member access, §12.6 pattern matching
+- §18.3 and §18.4 random variables (structs, unions and enum members)
+- §20.6.2 `$bits`, §21.2.1.6 assignment pattern format (`%p`)
+
+**Related:**
+- [F2A: Core Data Types](/curriculum/T1_Foundational/F2A_Core_Data_Types/index): 4-state values, packed and unpacked arrays, and casting basics.
+- [Operators and Expressions](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions): streaming a struct into bytes, bit-stream casts and `$bits`.
+- [F2B: Dynamic Data Structures](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index): queues and associative arrays of structs.
+- [F4A: Structuring Designs with Modules and Packages](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index): packages for shared typedefs.
+- [I-SV-1: Object-Oriented Programming for Verification](/curriculum/T2_Intermediate/I-SV-1_OOP/index): transactions as classes; copying a struct versus copying a handle.
+- [I-SV-2A: Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index): random enum fields and constraints.
+- [A-UVM-4A: RAL Fundamentals](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index): register fields in a UVM register model.
+
+<NextLesson />

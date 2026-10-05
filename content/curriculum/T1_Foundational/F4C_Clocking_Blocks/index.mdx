@@ -1,6 +1,6 @@
 ---
 title: "F4C: Synchronizing with Clocking and Program Blocks"
-description: "Understand how clocking blocks help create race-free testbenches by defining clear timing for signal interaction."
+description: "Drive and sample a DUT race-free through clocking blocks, predict when each sample, drive and clocking block event happens, and decide when a program block is worth using."
 flashcards: "F4C_Clocking_Blocks"
 sources:
   - title: "IEEE Standard for SystemVerilog"
@@ -8,289 +8,1157 @@ sources:
     identifier: "IEEE 1800-2023"
 ---
 
-import { InteractiveCode, Quiz } from '@/components/ui';
-
 ## Quick Take
-- **What it is:** **Clocking blocks** define a timing discipline for driving and sampling signals relative to a clock edge. **Program blocks** are an older mechanism (still in IEEE 1800, not deprecated) for running testbench code in the reactive region set.
-- **Why it matters:** Without clocking blocks, you risk "race conditions" where the testbench and DUT try to read/write a signal at the exact same simulation time, leading to unpredictable results.
-- **The Analogy:** A clocking block is like an airlock. It ensures that data only enters or leaves the clean room (the testbench) at specific, safe times, preventing contamination (race conditions).
+
+- **What it is:** A **clocking block** gathers the signals that are synchronous to one clock and makes their timing explicit: it names a clock event and fixes when each signal is sampled and when each drive takes effect relative to that event (IEEE 1800-2023 §14.2, §14.3). A **program block** is a testbench scope whose code is scheduled in the reactive region set, after the design's activity in the same time slot (§24.2, §24.3.1). Both are current parts of the standard; neither is deprecated.
+- **Why it matters:** The testbench (TB) and the design under test (DUT) wake on the same clock edge, and the simulator may run them in any order (§4.7). Through a clocking block, the TB reads the values from just before the edge, and its drives land after the DUT's flops have read their inputs, whichever order the simulator picks. Every bench in this curriculum from milestone M1 onward, including the UVM drivers and monitors of later tiers, drives and samples the DUT this way.
+- **The Analogy:** A clocking block is a photographer and a courier stationed at the clock. Just before each edge the photographer takes a **photo** of every input, and your code reads the photo, never the live signal. The courier takes every value you **drive** and delivers it just after the edge, once the flops have taken their own snapshot. *Where it breaks:* the default photo shows the last value before the edge's time slot, however long ago that value changed, not a picture taken a fixed time earlier. A photo with an explicit `#0` skew is taken at the edge itself, after the design's nonblocking updates. A zero-skew delivery happens in the same time slot as the edge, in the Re-NBA region, not "a little later" in simulated time. And if you hand the courier two parcels for one signal in one cycle, only the last one is delivered (§14.16.2).
+
+**You will be able to:**
+1. **Predict** when a clocking block samples each input and when each synchronous drive changes its signal, for `#1step`, `#N` and explicit `#0` input skews and for zero and nonzero output skews.
+2. **Predict** where a process that waits on `@(cb)` resumes compared with one that waits on `@(posedge clk)`, and **write** cycle delays that compile: `##N` with a default clocking, and `cb.sig <= ##N v` in a drive.
+3. **Write** a task-based driver and monitor that touch the DUT only through `cb` and `mon_cb`, keep an asynchronous reset outside the clocking block, and predict the value driven when two drives hit one signal in one cycle.
+4. **Debug** a racy bench by converting it to clocking blocks, and explain why the result no longer depends on process order or source order.
+5. **Explain** what a program block changes (reactive scheduling, no `always` procedures, how it ends the run) and that it is not deprecated, and **choose** between a module and a program as the top of a testbench.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
+**How to read this section.** The core path is the first six subsections: the race, the anatomy of a clocking block, the photo, the delivery, the clocking block event, and the experiment with its recap. Everything after the recap is practitioner depth that you will use in every real bench: cycle delays, one clocking block per role, reset, several drives in one cycle, program blocks, global clocking and debugging. Push Further holds the corner cases.
+
 ### The Race Condition Problem
 
-The testbench and the DUT wake on the same clock edge, and IEEE 1800 lets the simulator run them in any order (§4.7). The dangerous case is the testbench **driving** a DUT input with a blocking assignment at that edge: if the testbench happens to run first, the DUT's flop captures the *new* value instead of the pre-edge value.
+The TB and the DUT wake on the same clock edge, and IEEE 1800-2023 §4.7 lets the simulator run them in any order. The dangerous case is the TB **driving** a DUT input with a blocking assignment at that edge: if the TB happens to run first, the DUT's flop captures the *new* value instead of the value from before the edge.
 
-**Race-Prone Testbench (Avoid this):**
 ```systemverilog
-// RTL: reads din in Active, writes q in NBA
+// snippet: the racy pattern (do not copy)
+// DUT: reads din in the Active region, writes q in the NBA region
 always_ff @(posedge clk) q <= din;
 
-// Testbench: also runs in Active on the same edge
+// TB: wakes in the same Active region on the same edge
 always @(posedge clk) begin
-  din = next_value; // RACE: the flop may or may not see this value
+  din = next_value;   // blocking write: the flop may or may not see it
 end
 ```
 
-Reading `q` with a plain `@(posedge clk)` is deterministic *only* while the DUT writes `q` with `<=`: the read happens in Active, before the NBA update. If any design logic on that path uses blocking assignments, the read races too. A clocking block removes both risks. See F3C's Race Condition Debugger to try every legal order.
+**Trace the legal orders of one edge.**
 
-**Clocking blocks solve this by:**
-1.  **Sampling** inputs before the clock edge. With the default `#1step` input skew the sample is taken in the **Preponed** region, so the testbench reads the stable, old value. A `#N` skew samples N time units earlier, in the Postponed region of that time step; an explicit `#0` samples at the edge, in **Observed** (§14.13).
-2.  **Driving** outputs synchronized to the clock edge. With the default `#0` output skew the update is scheduled in the **Re-NBA** region of that time step, whichever code issued the drive (§14.16), so it lands after every design NBA update.
-3.  **Signalling** the clocking event `@(cb)` in the **Observed** region (§14.10), after the design's NBA updates. Code that waits on `@(vif.cb)` therefore never competes with the flops for the same edge.
+| What runs at the edge | What the flop captures | Verdict |
+|---|---|---|
+| The DUT's flop first, then the TB's `din = next_value` | the old `din` | what real hardware does |
+| The TB first, then the flop | the new `next_value`, one cycle early | a race: the order is the simulator's choice (§4.7) |
+| The TB waits on `@(cb)` and drives `cb.din <= next_value` | the old `din` in every order: `din` changes in the Re-NBA region, after the flop has read it | race-free (§14.16) |
 
-Picture the clocking block as a camera and a delivery truck on the timeline: it takes a **photo** of each input just before the edge (▼) and **delivers** each drive after the edge (◆). The visual below runs a tested model of those rules over four clock cycles.
+Reading DUT outputs is a separate question. A read of `q` right after `@(posedge clk)` is deterministic *only* while every writer on that path uses `<=`: the read happens in the Active region, before the NBA update. If any design logic on that path uses blocking assignments, the read races too. A TB that drives with `<=`, as in [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index), already avoids the drive race. A clocking block adds three things on top: reads of the values from before the edge that do not depend on how the DUT is written, explicit skews, and one place in the interface that owns all the timing. To watch this race appear and disappear in every legal order, step through the testbench scenarios in [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index).
+
+### Anatomy of a clocking block
+
+Here is the driver's view of the bench you will build in Make It Work, declared inside its interface:
+
+```systemverilog
+// snippet: inside interface pipe_if (the complete code is in Make It Work)
+default clocking cb @(posedge clk);   // block name, then the clocking event
+  default input #1step output #0;     // the default skews, written out
+  output in_vld, in_data;             // the TB drives these: output clockvars
+  input  out_vld, out_data;           // the TB samples these: input clockvars
+endclocking
+```
+
+| Term | In the example | Meaning |
+|---|---|---|
+| **Clocking event** | `@(posedge clk)` | The event the block is clocked on. Every skew is measured from it (§14.3, §14.4). |
+| **Clocking signal** | the interface variable `in_vld` | A net or variable in the surrounding scope that the block lists (§14.3). |
+| **Clockvar** | `cb.in_vld` | The block's own view of a clocking signal, reached with a dot (§14.3, §14.7). An input clockvar holds the latest sample; an output clockvar is the target of drives. |
+| **Skew** | `#1step`, `#0` | How long before the clocking event an input is sampled, or how long after it an output is driven (§14.4). |
+| **Synchronous drive** | `cb.in_vld <= 1'b1;` | The only legal way to write an output clockvar (§14.16). |
+| **Clocking block event** | `@(cb)` | An event named after the block. The block triggers it in the Observed region, after it has processed its clocking event and stored the new samples (§14.10, §14.13). |
+
+Keep the last term apart from the first. The **clocking event** is the clock edge itself; the **clocking block event** is the notification the block sends once it has finished with that edge. Code that waits on `@(cb)` waits for the second.
+
+**Rules you will meet on day one:**
+1. **Directions are checked.** Directions are seen from the TB: `output in_vld` means the TB drives `in_vld` into the DUT (§14.9). Writing an input clockvar or reading an output clockvar is a compile error (§14.3).
+2. **Defaults.** Without a `default` item, inputs use `#1step` and outputs use `#0` (§14.3).
+3. **Skew values.** A skew is a time literal such as `2ns`, or a constant expression that evaluates to a non-negative integer, and it may be a parameter (§14.3, §14.4). A plain number uses the time unit of the enclosing scope: `#2` in an interface with `timeunit 1ns` means 2 ns. `1step` is one unit of the global time precision, the finest precision in the whole design (§3.14.3).
+4. **Where it may live.** A clocking block is declared in a module, interface, checker or program. It cannot be declared in a package, class, task or function, and clocking blocks cannot be nested (§14.7). One copy exists per instance of the enclosing block, so every instance of `pipe_if` has its own `cb`. That is why class code reaches a clocking block through a virtual interface handle, `vif.cb` (§25.9.1, [F4B](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index)).
+5. **Several blocks.** A scope may declare several clocking blocks, for different clocks or for different roles on one clock (§14.6, §14.8). Blocks on the same clock share one synchronization event, so `@(bus.cb)` and `@(bus.mon_cb)` fire at the same point of the same time slot (§14.6).
+
+**Other forms you will meet:**
+
+| Form | Example | Effect |
+|---|---|---|
+| Per-signal skew | `input #1step addr;` | Overrides the default input skew for `addr` only (§14.3). |
+| Input and output skew on one signal | `input #5 output #6 data;` | Samples `data` 5 time units before the edge and drives it 6 time units after (§14.4). |
+| Edge skew | `output negedge ack;` | Drives `ack` at the falling edge of the clock (§14.3). |
+| `inout` | `inout data;` | An input clockvar and an output clockvar with one name. It is not an `inout` port, so `data` may be a variable (§14.3, §14.5). |
+| Hierarchical expression | `input state = top.cpu1.state;` | Samples a signal from another scope under the local clockvar name `state` (§14.5). |
+| Naming an existing block as the default | `default clocking cb;` | Makes an existing clocking block the default for `##` in this scope (§14.12). |
+| Unnamed block | `default clocking @(posedge clk); … endclocking` | Only a default clocking block may be unnamed (§14.3); a global clocking, below, may also omit its name (§14.14). Its clockvars cannot be referenced, so an unnamed default serves only as the clock of `##` and of concurrent assertions (§14.12, §16.16). |
+
+**Where the pieces live.** The diagram shows the M1 bench from Make It Work. Before you read the caption, decide which boxes may write `in_vld` and which may only read it.
+
+<ArchitectureDiagram
+  title="The M1 bench: where the clocking blocks live"
+  caption={"bus is the pipe_if instance in tb_top. send() drives the DUT's inputs only through cb. cb and mon_cb name the same interface signals, so what cb drives onto in_vld and in_data, mon_cb samples at the next edge. monitor() reads nothing but mon_cb. Directions are seen from the testbench (§14.9). rst_n is a plain interface variable that initial main writes directly at 12 ns: mon_cb samples it, and no clocking block drives it. cb also samples out_vld and out_data, which this simple driver never reads."}
+  cellWidth={136}
+  gapX={120}
+  nodes={[
+    { id: "top", label: "tb_top", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "drv", label: "send()", sublabel: "called by initial main", kind: "driver", col: 0, row: 0 },
+    { id: "mon", label: "monitor()", sublabel: "runs from its own initial", kind: "monitor", col: 1, row: 0 },
+    { id: "bus", label: "bus", kind: "interface", col: 0, row: 1, colSpan: 2, rowSpan: 1, container: true },
+    { id: "cb", label: "cb", sublabel: "default clocking", kind: "generic", col: 0, row: 1 },
+    { id: "moncb", label: "mon_cb", sublabel: "inputs only, incl. rst_n", kind: "generic", col: 1, row: 1 },
+    { id: "dut", label: "dut: pipe2", sublabel: "two-stage pipeline", kind: "dut", col: 0, row: 2, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "drv", to: "cb", style: "data", label: "cb.in_* <= v" },
+    { from: "cb", to: "moncb", style: "data", label: "in_vld, in_data" },
+    { from: "cb", to: "dut", style: "data", label: "in_vld, in_data" },
+    { from: "dut", to: "moncb", style: "data", label: "out_vld, out_data" },
+    { from: "moncb", to: "mon", style: "data", label: "@(bus.mon_cb)" }
+  ]}
+/>
+
+What to take from it:
+- Only `cb` drives DUT inputs, and only `send()` uses `cb`. `mon_cb` has no outputs, so `monitor()` cannot drive the DUT even by mistake.
+- Both blocks belong to the interface instance `bus`, not to the tasks that use them. The timing is declared once, next to the signals.
+- `rst_n` is in no output list. The TB writes it directly, between edges, and `mon_cb` only samples it. "Reset stays outside the clocking block" below explains why.
+
+**Pitfalls.**
+- Reading `cb.in_vld` when `in_vld` is an output of `cb` does not compile (§14.3). Read it through a block that lists it as an input, such as `mon_cb`, or declare it `inout`.
+- A continuous assignment, a procedural `assign` or `force`, or a primitive output may not write a variable that a clocking block lists as an output (§14.16.2). Synchronous drives and ordinary procedural assignments may.
+- A clocking block declared in a package or a class does not compile (§14.7).
+
+### Sampling: the photo
+
+Every input clockvar is sampled at its clocking event (§14.13). The input skew decides which value the photo shows:
+
+| Input skew | Value sampled | Where in the time slots |
+|---|---|---|
+| `#1step` (the default) | The last value before the edge's time slot began, however long ago it changed | Identical to sampling in the Preponed region of the edge's time slot (§4.4.2.1, §14.4) |
+| `#N`, N > 0 | The value N time units before the edge; a change at exactly that time is included | The Postponed region of the time slot N time units before the edge (§14.13) |
+| Explicit `#0` | The value at the edge itself, after the design's nonblocking updates for that edge | The Observed region of the edge's time slot (§14.4, §14.13) |
+
+- Between clocking events, an input clockvar keeps returning the sample of the most recent clocking event (§14.13). The photo does not change until the next edge, whatever the live signal does.
+- `@(cb.out_vld)` and `@(posedge cb.out_vld)` wait for a change of the *sampled* value, not of the live signal (§14.15).
+- A nonzero input skew is a setup window: a DUT output that changes inside it is seen one cycle later. In zero-delay RTL simulation, keep the default `#1step`.
+
+**Classic mistake:** an input skew longer than the time a DUT output needs to settle after the edge. The bench then silently samples the previous cycle's value. The experiment below shows it.
+
+### Driving: the delivery
+
+- A drive with output skew `#0`, executed at the clocking event, updates its signal in the Re-NBA region of that same time slot (§14.16). By then the design has made its nonblocking updates for the edge: the DUT's flops have captured the old value, and they capture the new one at the next edge.
+- With a nonzero output skew, such as `output #2ns`, the signal changes in the Re-NBA region of the time slot that lies the skew after the edge (§14.16).
+- It does not matter which code issues the drive: module, interface, class or program code all land in Re-NBA (§14.16).
+- A drive executed **between** edges does not block. Its right-hand side is evaluated at once, but the drive acts as if it had been executed at the next clocking event (§14.16). That is why the M1 bench's `bus.cb.in_vld <= 1'b0;` at time 0 changes `in_vld` at the first edge, at 5 ns.
+- Only the synchronous-drive form may write a clockvar. `assign` and `force` on a clockvar are illegal, and so is an ordinary intra-assignment delay: `cb.din <= #4 v;` is an error (§14.16). The target may be a bit-select or a slice, as in `cb.data[3:0] <= 4'h5;`, but not a concatenation (§14.16).
+- When the clocking signal is a net, the block creates its own driver on that net, initialized to `'z`, so the net sees nothing from the block until the first drive (§14.16).
+
+**Classic mistake:** thinking that a drive changes the signal at once, like a blocking assignment, or in the NBA region together with the design's flops. A synchronous drive always lands in Re-NBA.
+
+### The clocking block event
+
+- `@(cb)` waits for the clocking block event. The block triggers it in the Observed region, after it has stored the samples of this edge (§14.10, §14.13). Module and class code that waits on it resumes in the next Active pass of the same time slot, after the design's nonblocking updates for the edge.
+- So "`@(cb)`, then read `cb.x`" always reads this edge's sample, whatever region the waiting process runs in (§14.13).
+- Module or class code that waits on `@(posedge clk)` resumes in the same Active region as the clock edge. If it then reads `cb.x`, it races the block's own update of its samples and may get the old sample or the new one (§14.13, §14.4 NOTE). Program code is the exception; see "Program blocks" below.
+- The rule for every bench: wait on the clocking block event of the block you read or drive. Never wait on `@(posedge clk)` and then touch a clockvar.
 
 ### Experiment: move the skews
 
-Start with the defaults and predict what `cb.dout` returns at edge 3. Then try an explicit `#0` input skew, a `#2ns` skew against a late `+9 ns` DUT path, and a blocking DUT update, and watch which reading style in the comparison table starts to race.
+The visual below runs a tested model of these rules over four clock cycles. ▼ marks each photo, ◆ marks where a drive lands, and ✓ marks the edge at which the DUT's flop captures it. Run four experiments, and answer the prediction before each reveal:
+
+1. **Defaults.** Input skew `#1step`, output skew `#0`, DUT timing "flop `<=` at the edge". Predict what `cb.dout` returns at edge 3.
+2. **Explicit `#0`.** Set the input skew to `#0` and predict again.
+3. **Setup window.** Set the input skew to `#2ns` and the DUT timing to "+9 ns path". Predict, then switch the input skew back to `#1step` and predict again.
+4. **Bad RTL.** Set the DUT timing to "blocking = at the edge" and watch which reading styles in the comparison table start to race.
 
 <ClockingBlockSkewVisualizer />
 
-What to take away:
+What the four runs show:
 
-- The photo is taken *before* the edge for every skew except an explicit `#0`. A nonzero input skew is a setup window: a DUT output that changes inside it is only seen one cycle later.
-- `@(cb)` then `cb.x` is always safe. `@(posedge clk)` then `cb.x` races the clocking block's own update (§14.13), so never mix the two styles.
-- A synchronous drive issued after `@(cb)` at edge *k* reaches the DUT's flops at edge *k* + 1, whatever the output skew below one period.
+- **Defaults:** `cb.dout` is 2 at edge 3. The photo shows the value from before the edge; the DUT's update to 3 lands later in that time slot.
+- **Explicit `#0`:** 3, because the photo is taken in the Observed region, after the NBA update. It is the only skew whose photo is not taken before the edge.
+- **Setup window:** with the +9 ns path, `dout` becomes 2 at 24 ns. The `#2ns` photo is taken at 23 ns and still shows 1, while `#1step` shows 2. A change inside the input skew is seen one cycle later.
+- **Bad RTL:** "`@(posedge clk)` then `cb.dout`" races in every run, because each edge's photo differs from the last. A raw `@(posedge clk)` read of `dout` races once the DUT writes it with a blocking assignment. "`@(cb)` then `cb.dout`" stays exact throughout.
+- **Drives:** a synchronous drive issued after `@(cb)` at edge *k* reaches the DUT's flops at edge *k* + 1, for any output skew shorter than one clock period.
 
 <VisualRecap
   title="Photo before the edge, delivery after it"
-  rule="Clocking-block inputs are a photo taken before the edge (#1step: Preponed; #N: Postponed of edge minus N; explicit #0: Observed). Outputs are delivered after the edge, in Re-NBA plus the output skew. @(cb) fires in Observed, after the photo is stored."
+  rule="Inputs are a photo. With #1step (Preponed) or #N (Postponed, N before the edge) it is taken before the edge; with an explicit #0 it is taken at the edge, in Observed, after the NBA updates. Outputs change in the Re-NBA region of the time slot that lies the output skew after the edge. @(cb) fires in Observed, after the photo is stored."
   code={`default clocking cb @(posedge clk);
   default input #1step output #0;
   input dout;  output din;
 endclocking
 @(cb) x = cb.dout;   // photo of this edge
 cb.din <= 8'hA5;     // DUT flops see it next edge`}
-  mistake="Waiting on @(posedge clk) and then reading cb.dout: that read races the clocking block's own update. Second place: an input skew longer than the DUT output's settling margin, which silently samples last cycle's value."
-  inTestbench="Every UVM driver waits on @(vif.cb) and drives vif.cb.sig; every monitor waits on @(vif.mon_cb) and reads an input-only clocking block."
+  mistake="Waiting on @(posedge clk) and then reading cb.dout: that read races the clocking block's own update. Second place: an input skew longer than the DUT output's settling time, which silently samples last cycle's value."
+  inTestbench="A typical UVM driver waits on @(vif.cb) and drives vif.cb.sig; its monitor waits on @(vif.mon_cb) and reads an input-only clocking block. If your team drives with <= after @(posedge clk) instead, still read DUT outputs through a clocking block."
 >
-  <svg viewBox="0 0 320 110" role="img" aria-label="Timeline around one clock edge: the input photo is taken just before the edge, the drive lands just after it." style={{ width: "100%", maxWidth: 360 }}>
+  <svg viewBox="0 0 320 110" role="img" aria-label="Timeline around one clock edge: the input photo is taken just before the edge, and the drive lands just after it, in the Re-NBA region." style={{ width: "100%", maxWidth: 360 }}>
     <line x1="10" y1="70" x2="310" y2="70" stroke="currentColor" strokeOpacity="0.5" />
     <polyline points="10,85 150,85 150,55 300,55" fill="none" stroke="currentColor" strokeWidth="1.5" />
     <text x="152" y="102" fontSize="11" fill="currentColor">edge</text>
-    <text x="128" y="30" fontSize="16" fill="rgb(139,92,246)">▼</text>
-    <text x="70" y="18" fontSize="11" fill="currentColor">photo (input skew)</text>
-    <text x="172" y="30" fontSize="14" fill="rgb(217,119,6)">◆</text>
-    <text x="186" y="18" fontSize="11" fill="currentColor">delivery (Re-NBA + skew)</text>
+    <text x="128" y="36" fontSize="16" className="fill-violet-600 dark:fill-violet-300">▼</text>
+    <text x="60" y="18" fontSize="11" fill="currentColor">photo (input skew)</text>
+    <text x="170" y="36" fontSize="14" className="fill-amber-600 dark:fill-amber-300">◆</text>
+    <text x="176" y="18" fontSize="11" fill="currentColor">drive lands (Re-NBA)</text>
   </svg>
 </VisualRecap>
 
-### Interactive Example: The Clocking Block Solution
-<InteractiveCode
-  language="systemverilog"
-  fileName="clocking_block_demo.sv"
-  code={`
-interface memory_if (input logic clk);
-  logic [31:0] data_in;
-  logic [31:0] data_out;
-  logic        we;
+### Cycle delays and default clocking
 
-  // LRM Clause 14: Clocking Blocks
-  clocking drv_cb @(posedge clk);
-    default input #1step output #2ns; // Skews
-    output data_in, we;
-    input  data_out;
-  endclocking
-
-  clocking mon_cb @(posedge clk);
-    default input #1step;
-    input data_in, we, data_out;
-  endclocking
-endinterface
-
-module testbench (memory_if bus);
-  initial begin
-    @(bus.drv_cb);                        // first clocking event
-    bus.drv_cb.we      <= 1;              // lands 2ns after this edge
-    bus.drv_cb.data_in <= 32'hDEAD_BEEF;
-
-    @(bus.drv_cb);                        // next edge: the DUT captured we/data_in
-    $display("Read Data: %h", bus.drv_cb.data_out);
-  end
-endmodule
-  `}
-  explanationSteps={[
-    { target: "7-11", title: "Driver Clocking Block", explanation: "Defines timing for the driver. Inputs are sampled #1step before the edge (Preponed). Outputs change 2ns after the edge, in the Re-NBA region of that time step (§14.16)." },
-    { target: "13-16", title: "Monitor Clocking Block", explanation: "Monitors only read. Every signal is an input sampled #1step before the edge, so the monitor sees the stable value." },
-    { target: "19", title: "A real interface port", explanation: "This module receives the interface instance through a port named bus. In a class you would hold a virtual interface handle instead (F4B)." },
-    { target: "21-23", title: "Synchronous Drive", explanation: "After the first @(bus.drv_cb), `bus.drv_cb.we <= 1` changes we 2ns after that edge, so the DUT's flops capture it at the next edge. A drive issued before any clocking event (for example at time 0) would simply wait for the first one (§14.16)." },
-    { target: "25-26", title: "Synchronous Sample", explanation: "`bus.drv_cb.data_out` returns the value sampled #1step before this edge. Waiting on @(bus.drv_cb), not @(posedge clk), guarantees the sample is already updated (§14.13)." }
-  ]}
-/>
-
-## Key Concepts
-
-### Clocking Blocks (LRM Clause 14)
-- **Input Skew:** When to sample inputs relative to the clock (default: `#1step`).
-- **Output Skew:** When to drive outputs relative to the clock (default: `#0`).
-- **Cycle Delay:** `##N` waits for N clocking events of the **default clocking** block. It needs a `default clocking` declaration in that module, interface, program or checker (§14.11, §14.12); otherwise the compiler reports an error. A class in a package has no default clocking, so class-based drivers use `repeat (N) @(vif.cb);` (or call an interface task that uses `##`).
-- **`##` inside a drive:** `cb.sig <= ##2 v;` evaluates `v` now and updates `sig` two cycles of `cb` later; the statement does not block, and it needs no default clocking because it counts `cb`'s own clock (§14.16). `##2 cb.sig <= v;` instead blocks the process for two default-clocking cycles first.
-
-### A driver and a monitor through `vif.cb`
-
-This is the pattern every UVM agent uses. The interface owns the timing; the classes only wait on clocking events and touch signals through clocking blocks.
+A **cycle delay** `##N` waits for N clocking block events of the **default clocking** (§14.11). Declare a block as the default with `default clocking cb @(posedge clk); … endclocking`, or name an existing block with `default clocking cb;` (§14.12). The M1 interface uses its default clocking for one task:
 
 ```systemverilog
-interface fifo_if (input logic clk);
-  logic       rst_n;            // asynchronous reset: drive it directly, not through cb
-  logic [7:0] din, dout;
-  logic       push, full;
+// snippet: inside interface pipe_if, where cb is the default clocking
+task automatic wait_cycles(input int n);
+  ##(n);                              // n clocking block events of cb (§14.11)
+endtask
+```
 
-  default clocking cb @(posedge clk);   // the default clocking of this interface (§14.12)
-    default input #1step output #0;
-    output din, push;
-    input  full, dout;
-  endclocking
+| Statement | Blocks the process? | Counts cycles of | Needs a default clocking? |
+|---|---|---|---|
+| `##2;` | yes | the default clocking | yes: without one the compiler reports an error (§14.11) |
+| `##2 cb.din <= v;` | yes, then drives | the default clocking | yes |
+| `cb.din <= ##2 v;` | no: `v` is evaluated now, and `din` changes two cycles of `cb` later | `cb` itself | no (§14.16) |
+| `repeat (2) @(vif.cb);` | yes | `cb`, through the handle | no: this is the form class code uses |
 
-  clocking mon_cb @(posedge clk);       // monitor view: inputs only, #1step by default
-    input din, push, full, dout;
-  endclocking
+- **One default per scope.** A module, interface, program or checker may declare one default clocking; a second is a compile error. The default applies in that scope and in modules, interfaces and checkers nested in it, but not in other instances (§14.12).
+- **So it does not follow the handle.** The default clocking of `pipe_if` reaches neither `tb_top`, which instantiates the interface, nor a class in a package. `##2;` in either place is a compile error. Use `repeat (2) @(vif.cb);`, or call an interface task such as `wait_cycles()`.
+- **Partial cycles.** `##1` executed between edges waits only for the rest of the current cycle (§14.11).
+- **Not for ordinary assignments.** `x = ##1 y;` and `x <= ##1 y;` are illegal (§14.11). The synchronous drive `cb.x <= ##1 y;` is the only assignment-like form that takes `##` (§14.16).
+- **Assertions too.** A default clocking also clocks concurrent assertions that have no clock of their own (§16.16; [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index)).
 
-  // ## is legal here because cb is this scope's default clocking (§14.11).
-  task automatic wait_cycles(int n);
-    ##(n);
-  endtask
-endinterface
+**Predict with the visual.** Go back to the experiment above, open "Show advanced: ## and default clocking", and untick "Declare cb as default clocking". Before you look at the result: which of the three drive forms stops compiling?
 
-class fifo_driver;
-  virtual fifo_if vif;
+**Debrief.** Only `##1 cb.din <= v;` fails, because its `##1` counts cycles of the default clocking. `cb.din <= ##1 v;` still compiles, because its `##1` counts cycles of `cb` itself. Tick the box again and compare the capture edges: the plain drive is captured at edge 3 and both `##1` forms at edge 4, but only the prefix form blocks the testbench thread until edge 3.
 
-  task push_byte(byte data);
-    @(vif.cb);                          // resume after the clocking event (Observed)
-    while (vif.cb.full) @(vif.cb);      // full is the #1step sample: no race with the DUT
-    vif.cb.din  <= data;                // lands in Re-NBA of this edge (§14.16)
-    vif.cb.push <= 1'b1;
-    @(vif.cb);                          // the DUT captured din/push at this edge
-    vif.cb.push <= 1'b0;
-  endtask
-endclass
+### Clocking blocks in an interface: one per role
 
-class fifo_monitor;
-  virtual fifo_if vif;
+Two roles touch the DUT, and each gets its own clocking block in the interface:
+- The **driver** uses `cb`: outputs for every DUT input it drives, plus inputs for any DUT output it must react to, such as a `ready` signal.
+- The **monitor** uses `mon_cb`: inputs only, for every signal it checks, including reset. It cannot drive, so a monitor bug can never disturb the DUT. A passive agent, which only watches, needs nothing but `mon_cb` ([I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)).
 
-  task run();
-    forever begin
-      @(vif.mon_cb);                    // never @(posedge vif.clk) before reading mon_cb (§14.13)
-      if (vif.mon_cb.push && !vif.mon_cb.full)
-        $display("%0t push %h", $time, vif.mon_cb.din);
+For M1, both roles are tasks in `tb_top`. These are excerpts; the complete bench is in Make It Work.
+
+```systemverilog
+// snippet: the M1 driver and monitor, tasks in tb_top
+task automatic send(input logic [7:0] data);
+  bus.cb.in_vld  <= 1'b1;            // Re-NBA after this edge: captured at the next
+  bus.cb.in_data <= data;
+  exp_q.push_back(data + 8'd1);
+  @(bus.cb);
+endtask
+
+task automatic monitor();
+  logic [7:0] expected;
+  forever begin
+    @(bus.mon_cb);                   // wakes after this edge's samples are stored
+    if (bus.mon_cb.rst_n !== 1'b1) continue;   // ignore samples taken in reset
+    if (bus.mon_cb.out_vld === 1'b1) begin
+      expected = exp_q.pop_front();  // the full bench also guards an empty queue
+      // ... compare bus.mon_cb.out_data with expected and count the result
     end
+  end
+endtask
+```
+
+The pair keeps a fixed rhythm. `send()` drives after `@(bus.cb)` at edge *k*, the DUT captures the item at edge *k* + 1, and the two-stage pipeline presents the result so that `mon_cb` samples it at edge *k* + 3.
+
+**A preview of the class form ([I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index)).** From Tier 2 on, the driver and monitor become classes. A class cannot contain a clocking block (§14.7), so it holds a virtual interface handle and reaches the blocks through it:
+
+```systemverilog
+// snippet: a preview of classes (I-SV-1); the M1 bench uses the task form
+class pipe_drv;
+  virtual pipe_if vif;               // a handle to an interface instance (F4B)
+
+  task send(input logic [7:0] data);
+    vif.cb.in_vld  <= 1'b1;          // the same synchronous drive, through the handle
+    vif.cb.in_data <= data;
+    @(vif.cb);                       // a class has no default clocking: no ## here
   endtask
 endclass
 ```
 
-The driver raises `push` after `@(vif.cb)` at edge *k*; the DUT's flops capture it at edge *k* + 1. The monitor wakes on `@(vif.mon_cb)` at edge *k* + 1 and sees `push` = 1 in its #1step sample, the same edge on which the DUT accepted the byte. Both classes get `vif` from `uvm_config_db` (F4B).
+Bind the handle in `tb_top` before its first use, with `drv = new(); drv.vif = bus;`, as in [F4B](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index). In a UVM bench the driver is a `uvm_driver` that gets the handle from the configuration database, `uvm_config_db` ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)); the clocking-block code inside it does not change.
 
-### Program Blocks (LRM Clause 24)
-- **Purpose:** Originally designed to separate testbench execution (Reactive region) from DUT execution (Active region).
-- **Modern Usage:** rarely used with UVM (the standard has not deprecated them). UVM class code runs in the active region set, so UVM benches rely on clocking blocks — not phases, which order whole phases rather than events within one time slot — for same-edge race avoidance.
-- **Recommendation:** Avoid `program` blocks for new UVM testbenches. Use `module` for the top-level testbench and `clocking` blocks for timing.
+**Modport-typed handles.** Dot access to a clocking block through a virtual interface, as in `vif.cb`, works directly only for interfaces that declare no modports (§25.9.2). When the interface has modports, list each clocking block in the modport of the role that uses it, and type the handle with that modport (§25.5.5):
+
+```systemverilog
+// snippet: modports that expose one clocking block each (§25.5.5)
+modport drv_mp (clocking cb);        // a driver reaches cb and nothing else
+modport mon_mp (clocking mon_cb);    // a monitor reaches mon_cb, so it cannot drive
+
+// in a monitor class:  virtual pipe_if.mon_mp vif;  ...  @(vif.mon_cb);
+```
+
+### Reset stays outside the clocking block
+
+An asynchronous reset must be able to change between clock edges, at the moment the TB decides. A synchronous drive cannot do that: a drive executed between edges acts as if it were executed at the next clocking event, and lands in the Re-NBA region of that time slot (§14.16). The picture compares two ways of asserting `rst_n` at 12 ns, with rising clock edges at 5, 15 and 25 ns.
+
+<figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
+  <svg viewBox="0 0 340 176" role="img" aria-label="Timeline from 0 to 30 ns with rising clock edges at 5, 15 and 25 ns. Written directly, rst_n falls at 12 ns and the DUT resets at 12 ns. Driven through a clocking block at 12 ns, rst_n stays high until the 15 ns edge and falls in the Re-NBA region of that time slot, after the flops' normal capture at 15 ns." style={{ width: "100%", maxWidth: 420 }}>
+    <title>Asserting an asynchronous reset directly versus through a clocking block</title>
+    <line x1="85" y1="14" x2="85" y2="150" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="175" y1="14" x2="175" y2="150" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="265" y1="14" x2="265" y2="150" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+    <line x1="148" y1="50" x2="148" y2="128" stroke="currentColor" strokeOpacity="0.5" />
+    <text x="4" y="36" fontSize="11" fill="currentColor">clk</text>
+    <polyline points="40,40 85,40 85,24 130,24 130,40 175,40 175,24 220,24 220,40 265,40 265,24 310,24 310,40" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <text x="4" y="80" fontSize="11" fill="currentColor">direct</text>
+    <polyline points="40,66 148,66 148,82 310,82" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="154" y="62" fontSize="10" fill="currentColor">{"12 ns: falls, DUT resets now"}</text>
+    <text x="4" y="122" fontSize="11" fill="currentColor">via cb</text>
+    <polyline points="40,108 148,108" fill="none" stroke="currentColor" strokeWidth="2" />
+    <polyline points="148,108 175,108" fill="none" stroke="currentColor" strokeWidth="2" strokeDasharray="4 3" />
+    <polyline points="175,108 175,124 310,124" fill="none" stroke="currentColor" strokeWidth="2" />
+    <text x="181" y="104" fontSize="10" fill="currentColor">{"15 ns: falls in Re-NBA"}</text>
+    <text x="40" y="142" fontSize="10" fill="currentColor">{"issued at 12 ns, waits for the edge"}</text>
+    <text x="85" y="166" fontSize="10" fill="currentColor" textAnchor="middle">5</text>
+    <text x="148" y="166" fontSize="10" fill="currentColor" textAnchor="middle">12</text>
+    <text x="175" y="166" fontSize="10" fill="currentColor" textAnchor="middle">15</text>
+    <text x="265" y="166" fontSize="10" fill="currentColor" textAnchor="middle">25 ns</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">
+    Solid lines are the value of rst_n; the dashed stretch is a drive that has been issued but has not landed yet. The lower row is a counterfactual: it assumes rst_n were listed as an output of cb. The M1 bench does not do that.
+  </figcaption>
+</figure>
+
+In words:
+- **Direct write**, `bus.rst_n = 1'b0;` at 12 ns: `rst_n` falls at 12 ns, and the DUT's `negedge rst_n` branch resets the flops at 12 ns.
+- **Through a clocking block**, `cb.rst_n <= 1'b0;` executed at 12 ns: nothing happens until the 15 ns edge. At 15 ns the flops first make their normal capture in the Active region; then `rst_n` falls in Re-NBA, and the `negedge rst_n` resets them in a later pass of the same time slot (§14.16, §4.5). The DUT ran through one more clock edge than you asked for.
+
+The M1 bench therefore:
+1. Declares `rst_n` as a plain interface variable with a declaration initializer, `logic rst_n = 1'b0;`. The initializer runs at time 0, before any `initial` or `always` procedure starts (§6.8), so the DUT is in reset from the start.
+2. Releases it with a direct write between edges: `#12 bus.rst_n = 1'b1;`. This is practice, not a rule of the standard: assert reset whenever you need to, but release it away from the active clock edge. Real cell libraries add recovery and removal checks, whose values are library- and tool-dependent.
+3. Lists `rst_n` as an **input** of `mon_cb`. Sampling a signal through a clocking block is fine; only driving it through one is the problem. The monitor skips every edge whose sample shows reset asserted.
+4. Starts driving only after the release, then synchronizes with `@(bus.cb)`. A reusable driver that does not release reset itself does the same with `wait (bus.rst_n === 1'b1); @(bus.cb);`.
+
+Reset in the middle of a test, with a driver, monitor and scoreboard that flush their state, is planned for Tier 3.
+
+### Several drives to one signal in one cycle
+
+Sooner or later two drives hit one clockvar in the same cycle. §14.16.2 defines what happens:
+
+- **The last value wins.** When several synchronous drives to one clocking output mature in the same Re-NBA region of the same time slot, only the last value is driven. This holds whether the drives executed at the clocking event or between edges in the same cycle, and whether the signal is a variable or a net.
+- **Cycle delays keep drives apart.** Drives that mature in different future cycles each take effect in their own cycle.
+- **Two processes make it a race.** Inside one process, "last" is the statement order. Between two processes woken by the same event, it is the process order, which the simulator chooses (§4.7). Give each clockvar one writer per cycle.
+
+The standard's own example:
+
+```systemverilog
+// snippet: IEEE 1800-2023 §14.16.2
+default clocking pe @(posedge clk);
+  output nibble;                     // a 4-bit output
+endclocking
+
+initial begin
+  ##2;
+  pe.nibble <= 4'b0101;
+  pe.nibble <= 4'b0011;              // same Re-NBA region: only 4'b0011 is driven
+end
+```
+
+A second example from §14.16.2 shows how cycle delays count. `cb` is the default clocking, and cycle *n* is its *n*-th clocking event after time 0:
+
+| Statement, in order | Executes at | Matures in |
+|---|---|---|
+| `##1;` | waits for cycle 1 | |
+| `cb.v <= expr1;` | cycle 1 | cycle 1: `v` becomes `expr1` |
+| `cb.v <= ##2 expr2;` | cycle 1 | cycle 3 |
+| `#1 cb.v <= ##2 expr3;` | 1 time unit after cycle 1 | cycle 3 |
+| `##1 cb.v <= ##1 expr4;` | cycle 2, after its `##1` | cycle 3 |
+
+In cycle 3 three drives mature in one Re-NBA region, and `expr4`, executed last, is the value `v` takes. A rule that fits every drive in the table: a `<= ##N` drive matures at the *N*-th clocking event after the statement executes, not counting the event of the time slot it executes in; a drive without `##` matures at the clocking event of its own time slot, or at the next one when it executes between edges.
+
+**Mixing drives with other writes.** An ordinary procedural assignment to a variable that a clocking block lists as an output is legal: it changes the variable at once, and the value holds until the next drive or assignment. If a synchronous drive and a nonblocking assignment write the same variable in one time slot, they take effect in arbitrary order (§14.16.2). Push Further covers glitches, nets and double-data-rate drives.
+
+### Program blocks
+
+A **program** is a testbench building block with special scheduling. §24.2 gives it three purposes: an entry point for testbench execution, a scope for program-wide data, tasks and functions, and a context whose code is scheduled in the reactive region set.
+
+- **What it may contain** (§24.3): ports declared like module ports, data declarations, class definitions, subroutines, object instances, continuous assignments, concurrent assertions, and `initial` and `final` procedures.
+- **What it may not contain** (§24.3): `always` procedures, primitives, UDPs, and declarations or instances of modules, interfaces or other programs.
+- **Where it lives** (§24.3): a program is instantiated like a module, usually at the top level. It can also be nested in a module or interface. Nested programs without ports, and top-level programs that nothing instantiates, are instantiated implicitly once.
+- **How it is scheduled** (§24.3.1): statements sensitive to design signals and the `initial` procedures run in the Reactive region, `#` delays resume there, and nonblocking assignments update in the Re-NBA region. A subroutine called by a program thread runs in the reactive region set even when it is declared in a module, interface or package. Design code may not call program subroutines (§24.5).
+- **How it ends** (§24.3): when all `initial` procedures of a program have finished, that program immediately ends every thread they started, so a monitor forked from them dies with them. If any program has an `initial` procedure, the simulation ends with an implicit `$finish` as soon as every thread started by the `initial` procedures of all programs has ended. `$exit` ends a program's threads on purpose (§24.7).
+- **Clocking blocks still matter.** A program without clocking blocks is "more prone to races" with the design (§24.3.2). A program that reads design values only through clocking blocks clocked by design signals is insensitive to read-write races (§24.4).
+- **Not deprecated.** Annex C lists what has been deprecated (C.2, C.3) and what is under consideration for deprecation (C.4: `defparam`, procedural `assign` and `deassign`, and some VPI definitions). Program blocks appear in none of these lists.
+
+**See it.** In the region map below, a DUT flop and a program thread wake on the same edge. The program reads `q` into `seen` and drives `cmd <= 1`, and a design `assign` reads `cmd`. **Predict** what the program reads before you reveal the answer.
+
+<SVSchedulerRegionVisualizer scenario="program-reactive" scenarios={["program-reactive"]} />
+
+**Debrief.** `seen` gets the *new* `q`: program code runs in the Reactive region, which starts only after the active region set, including the NBA update of `q`, is empty (§24.3.1). Its `cmd <= 1` lands in Re-NBA, and the design's `assign led = cmd` then runs in a later Active pass of the same time slot (§4.5). A clocking-block read of `q` in the same program would return the photo from before the edge instead.
+
+The same contrast in a program you can run:
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ps;
+
+  logic clk = 1'b0;
+  always #5 clk = ~clk;              // a module makes the clock: edges at 5, 15 ns
+
+  // A design-side counter with a known start value. Plain always: some tools
+  // reject a declaration initializer on a variable that an always_ff writes.
+  logic [7:0] count = '0;
+  always @(posedge clk) count <= count + 8'd1;   // NBA: count is 1 after 5 ns
+
+  // A nested program without ports is instantiated implicitly (§24.3).
+  program tb_prog;
+    timeunit 1ns; timeprecision 1ps;
+
+    clocking cb @(posedge clk);
+      input count;                   // default #1step: the value before the edge
+    endclocking
+
+    initial begin
+      @(posedge clk);                // program code resumes in Reactive (§24.3.1)
+      $display("%0d ns: count=%0d cb.count=%0d", $time, count, cb.count);
+    end                              // the last program thread ends: implicit $finish
+  endprogram
+endmodule
+```
+
+**Expected output** (illustrative: derived from §14.13 and §24.3.1, not captured from a simulator):
+
+```text
+5 ns: count=1 cb.count=0
+```
+
+The raw read sees the value after the edge's NBA update; the clockvar holds the photo from before the edge. Both reads are deterministic here, because program code runs after the clocking block event and the clock comes from a module (§14.4 NOTE, §14.13 NOTE). The run then ends at 5 ns by the implicit `$finish`, although `always #5` would run forever.
+
+**How to work through it:**
+1. Predict both numbers, then run it.
+2. Add a second `@(posedge clk);` before the `$display`, predict again, then check: the line becomes `15 ns: count=2 cb.count=1`.
+3. Replace `@(posedge clk)` with `@(cb)`. The output does not change: in a program both waits resume after the samples are stored.
+4. If your simulator rejects the nested program, move it after `endmodule` and refer to the module's signals by hierarchical name: `@(posedge tb_top.clk)` in the clocking event and in the `initial`, `input count = tb_top.count;` in the clocking block, and `tb_top.count` for the raw read. A top-level program that nothing instantiates is instantiated implicitly (§24.3).
+
+**Module or program at the top?** Both work. Practice, not a rule of the standard: class-based and UVM benches conventionally put the top in a module, here `tb_top`, and rely on clocking blocks, and that is what this curriculum does from here on. Class code inherits the region set of the thread that calls it (§24.3.1), so when `run_test()` is called from a module, every UVM thread runs in the active region set. Reach for a program when its reactive scheduling buys you something the clocking blocks cannot, such as several simultaneous clocks or clocks generated with nonblocking assignments (§24.4).
+
+### Global clocking (awareness)
+
+A clocking block may also be declared as the **global clocking** for all or part of the design (§14.14):
+
+```systemverilog
+// snippet: IEEE 1800-2023 §14.14
+module top;
+  logic clk1, clk2;
+  global clocking sys @(clk1 or clk2); endclocking
+  // ...
+endmodule
+```
+
+Its main purpose is to say which clocking event in simulation corresponds to the primary system clock that formal verification uses. A module, interface, checker or program contains at most one, and the system function `$global_clock` refers to the one that is effective where it is called (§14.14). Testbench drivers and monitors do not use it; you will meet it in assertion code, where the global-clocking sampled value functions such as `$past_gclk` depend on it (§16.9.4).
+
+### Debugging clocking blocks
+
+Tools word their messages differently, so the symptoms below describe what you see rather than quote a message.
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| Monitor values differ between simulators, or change after an unrelated edit; the waveform looks fine | The monitor waits on `@(posedge vif.clk)` and then reads a clockvar, racing the sample update (§14.13) | Wait on `@(vif.mon_cb)` |
+| Compile error on `##2;` in a class or in `tb_top` that points at a missing default clocking | `##` counts cycles of the default clocking, and none applies in that scope (§14.11, §14.12) | `repeat (2) @(vif.cb);`, or an interface task that uses `##` |
+| Compile error when reading `cb.in_vld` or writing `cb.out_vld` | Reading an output clockvar or writing an input clockvar (§14.3) | Read through an input of `mon_cb`, or declare the signal `inout`; drive only outputs |
+| The DUT sees only one of two values driven in one cycle | Both drives matured in one Re-NBA region; the last one wins (§14.16.2) | One drive per clockvar per cycle; send the second value next cycle |
+| After a larger input skew, or with gate-level timing, outputs appear one cycle late or flicker between runs | The skew reaches back past the point where the output settles (§14.13) | Shorten the skew; use `#1step` in zero-delay RTL simulation |
+| Reset takes effect only at the next clock edge | Reset is driven through a clocking block (§14.16) | Write it directly, between edges |
+| The first stimulus appears at the first clock edge, not at time 0 | A drive issued before the first clocking event matures at that event (§14.16) | Expected. For a value at time 0, use a declaration initializer |
+| A bus net stays `z` until the first drive | A clocking output on a net starts with its driver at `'z` (§14.16) | Drive an idle value at the start of the test |
+| Compile error on `assign in_data = ...;` | A variable that a clocking block lists as an output may not be continuously assigned (§14.16.2) | Remove the `assign`; drive through `cb` |
+| Compile error on `cb.din <= #4 v;` | Only `##` cycle delays are allowed inside a drive (§14.16) | Use an output skew, or `cb.din <= ##1 v;` |
+| `vif.mon_cb` is not found through a handle of type `virtual pipe_if.mon_mp` | The modport does not list the clocking block (§25.5.5, §25.9.2) | Add `clocking mon_cb` to that modport |
+| A program-based bench stops checking as soon as its main `initial` ends | Program termination ends every thread the `initial` procedures started (§24.3) | Keep the main thread alive until checking is done, then end the test on purpose |
+
+### Recap
+
+- A clocking block takes a photo of its inputs before each edge (`#1step`: Preponed; `#N`: N before; explicit `#0`: Observed) and delivers drives in Re-NBA, after the flops have read their inputs.
+- `@(cb)` fires in Observed, after the photo is stored. Wait on it, never on `@(posedge clk)`, before you touch a clockvar.
+- `##N` needs a default clocking in the same scope; `cb.sig <= ##N v` does not.
+- One block per role: `cb` drives, `mon_cb` only samples. Asynchronous reset is written directly.
+- Programs schedule testbench code in the reactive region set and are not deprecated; most benches use a module top with clocking blocks.
 
 ## Make It Work
-1.  **Define Clocking:** Add a `clocking` block to your interface for each agent (Driver, Monitor).
-2.  **Set Skews:** Start from the defaults, `default input #1step output #0;`. A nonzero output skew (for example `#1ns`) makes waveforms easier to read but moves drives to a later time step; choose it deliberately.
-3.  **Drive/Sample:** In your testbench/UVM driver, *always* access signals through the clocking block handle (e.g., `vif.cb.req`).
-4.  **Wait for Events:** Use `@(vif.cb)` to wait for the clock edge. Do not wait on `@(posedge vif.clk)` and then read `vif.cb` inputs: that read races the clocking block's update (§14.13).
-5.  **Keep reset out of the clocking block** when it is asynchronous: drive it directly so it can change between edges.
+
+### Worked example: a race-free pipeline testbench (M1)
+
+This is the milestone M1 bench. It keeps the self-checking conventions of [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index), an expected-value queue, `!==` comparisons, one `PASS=<n> FAIL=<m>` line and a watchdog, and adds an interface with two clocking blocks and an asynchronous reset. Read it top to bottom and **predict** the time of the first PASS line before you look at the trace.
+
+```systemverilog
+// compile
+// tb_top.sv: a two-stage pipeline (the DUT) and its M1 testbench.
+
+// ------------------------------------------------------------------- DUT
+module pipe2 #(
+  parameter int BUG = 0              // 1 plants an off-by-one bug; real RTL has none
+) (
+  input  logic       clk,
+  input  logic       rst_n,          // asynchronous, active low
+  input  logic       in_vld,
+  input  logic [7:0] in_data,
+  output logic       out_vld,
+  output logic [7:0] out_data
+);
+  timeunit 1ns; timeprecision 1ps;
+
+  logic       vld_q;
+  logic [7:0] data_q;
+
+  // Stage 1 computes in_data + 1; stage 2 registers it. Latency: two edges.
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      vld_q    <= 1'b0;
+      data_q   <= '0;
+      out_vld  <= 1'b0;
+      out_data <= '0;
+    end else begin
+      vld_q    <= in_vld;
+      data_q   <= in_data + ((BUG == 1) ? 8'd2 : 8'd1);
+      out_vld  <= vld_q;
+      out_data <= data_q;
+    end
+  end
+endmodule
+
+// ------------------------------------------------------------- interface
+interface pipe_if (input logic clk);
+  timeunit 1ns; timeprecision 1ps;
+
+  logic       rst_n = 1'b0;          // in reset from time 0 (§6.8); never a cb output
+  logic       in_vld;
+  logic [7:0] in_data;
+  logic       out_vld;
+  logic [7:0] out_data;
+
+  // Driver view, with the default skews written out: sample #1step, drive #0.
+  default clocking cb @(posedge clk);
+    default input #1step output #0;
+    output in_vld, in_data;
+    input  out_vld, out_data;
+  endclocking
+
+  // Monitor view: inputs only, so code that uses it cannot drive the DUT.
+  clocking mon_cb @(posedge clk);
+    input rst_n, in_vld, in_data, out_vld, out_data;
+  endclocking
+
+  // ## is legal here: cb is this interface's default clocking (§14.11, §14.12).
+  task automatic wait_cycles(input int n);
+    ##(n);
+  endtask
+endinterface
+
+// ------------------------------------------------------------- testbench
+module tb_top;
+  timeunit 1ns; timeprecision 1ps;
+
+  logic clk = 1'b0;
+  always #5 clk = ~clk;              // rising edges at 5, 15, 25 ns ...
+
+  pipe_if bus (.clk(clk));
+
+  // Set .BUG(1) to prove that the bench can fail.
+  pipe2 #(.BUG(0)) dut (
+    .clk(clk), .rst_n(bus.rst_n),
+    .in_vld(bus.in_vld), .in_data(bus.in_data),
+    .out_vld(bus.out_vld), .out_data(bus.out_data)
+  );
+
+  logic [7:0] exp_q[$];              // expected outputs, oldest first
+  int pass_cnt = 0;
+  int fail_cnt = 0;
+
+  // Driver. Call it right after @(bus.cb): the drives land in Re-NBA after
+  // this edge (§14.16), so the DUT captures them at the next edge.
+  task automatic send(input logic [7:0] data);
+    bus.cb.in_vld  <= 1'b1;
+    bus.cb.in_data <= data;
+    exp_q.push_back(data + 8'd1);    // the specification: out = in + 1
+    @(bus.cb);
+  endtask
+
+  // Monitor. It wakes on the clocking block event, after this edge's samples
+  // are stored (§14.10, §14.13), and reads nothing but mon_cb.
+  task automatic monitor();
+    logic [7:0] expected;
+    forever begin
+      @(bus.mon_cb);                 // never @(posedge clk) before a mon_cb read
+      if (bus.mon_cb.rst_n !== 1'b1) continue;   // ignore samples taken in reset
+      if (bus.mon_cb.out_vld === 1'b1) begin
+        if (exp_q.size() == 0) begin
+          fail_cnt++;
+          $error("CHK unexpected output %h", bus.mon_cb.out_data);
+        end else begin
+          expected = exp_q.pop_front();
+          if (bus.mon_cb.out_data !== expected) begin
+            fail_cnt++;
+            $error("CHK got %h, expected %h", bus.mon_cb.out_data, expected);
+          end else begin
+            pass_cnt++;
+            $display("%0d ns PASS data=%h", $time, expected);
+          end
+        end
+      end
+    end
+  endtask
+
+  initial monitor();                 // runs for the whole test
+
+  initial begin : main
+    bus.cb.in_vld <= 1'b0;           // no clocking event yet: lands at 5 ns (§14.16)
+    #12 bus.rst_n = 1'b1;            // release between edges, directly, not via cb
+    @(bus.cb);                       // the 15 ns edge
+    send(8'h10);
+    send(8'h20);
+    send(8'h30);
+    bus.cb.in_vld <= 1'b0;           // lands after the 45 ns edge
+    bus.wait_cycles(4);              // drain: the interface counts cycles with ##
+    fail_cnt += exp_q.size();        // expectations that never arrived
+    if (pass_cnt + fail_cnt == 0) fail_cnt++;   // a run that checked nothing fails
+    $display("PASS=%0d FAIL=%0d", pass_cnt, fail_cnt);
+    $finish;
+  end
+
+  initial begin : watchdog
+    #1us;                            // far longer than the 85 ns this test needs
+    $fatal(1, "WDOG still running at %0d ns", $time);
+  end
+endmodule
+```
+
+**Expected output** (illustrative: derived by hand from §14.13 and §14.16, not captured from a simulator; your simulator adds its own banner and a line for `$finish`):
+
+```text
+45 ns PASS data=11
+55 ns PASS data=21
+65 ns PASS data=31
+PASS=3 FAIL=0
+```
+
+**The trace.** Predict first: `send(8'h10)` runs right after the 15 ns edge. At which edge does the monitor check `8'h11`?
+
+<TimingDiagram
+  title="The M1 bench from 15 ns to 85 ns"
+  caption={"Edge k is the rising edge at 15 + 10k ns. Each value is the #1step sample at that edge, which is also what the DUT's flops read there: a drive through cb lands in Re-NBA just after an edge, so it shows up as the sample at the next edge. Bus values are hexadecimal; hatching means unknown (X). rst_n is left out: it rises at 12 ns, between edges, which a cycle diagram cannot draw, and stays 1."}
+  edges={8}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "in_vld", kind: "bit", values: [0, 1, 1, 1, 0, 0, 0, 0] },
+    { name: "in_data", kind: "bus", values: [undefined, "10", "20", "30", "30", "30", "30", "30"] },
+    { name: "out_vld", kind: "bit", values: [0, 0, 0, 1, 1, 1, 0, 0] },
+    { name: "out_data", kind: "bus", values: ["00", "00", undefined, "11", "21", "31", "31", "31"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "drive", label: "15 ns: send(8'h10) drives in_vld and in_data through cb; they change in Re-NBA after this edge" },
+    { edge: 1, tone: "sample", label: "25 ns: the DUT captures in_vld = 1 and in_data = 10, the same values mon_cb samples" },
+    { edge: 3, tone: "pass", label: "45 ns: mon_cb samples out_vld = 1 and out_data = 11, and the monitor counts a PASS" },
+    { edge: 4, tone: "pass", label: "55 ns: PASS for 21" },
+    { edge: 5, tone: "pass", label: "65 ns: PASS for 31" }
+  ]}
+/>
+
+What happens, edge by edge:
+- **Before the window.** The time-0 drive `bus.cb.in_vld <= 1'b0;` lands at the 5 ns edge, where the DUT is still in reset. `rst_n` rises at 12 ns, between edges.
+- **Edge 0, 15 ns (◆).** `main` resumes from `@(bus.cb)` and calls `send(8'h10)`. `in_vld` and `in_data` change in Re-NBA, after the DUT's flops have read their old values.
+- **Edge 1, 25 ns (▼).** The DUT captures `in_vld = 1` and `in_data = 10` into stage 1, the same values `mon_cb` samples. `send(8'h20)` drives the next item.
+- **Edge 2, 35 ns.** Stage 2 takes `11`, so `out_vld` and `out_data` change just after this edge. The X on `out_data` is stage 1's value from 15 ns, when `in_data` had never been driven; `out_vld` is 0, so nobody reads it.
+- **Edges 3 to 5, 45 to 65 ns (✓).** `mon_cb` samples `out_vld = 1` with `11`, `21` and `31`, and the monitor prints a PASS line each time. After the 45 ns edge, `main` drives `in_vld` low.
+- **Edge 7, 85 ns.** `wait_cycles(4)` returns, and `main` prints `PASS=3 FAIL=0` and calls `$finish`.
+
+### Run it
+
+1. Save the code as `tb_top.sv`.
+2. Compile it with any IEEE 1800 simulator that supports interfaces and clocking blocks. `tb_top` is the top level, because nothing instantiates it.
+3. Run it. The last line must be `PASS=3 FAIL=0`.
+
+The commands differ per simulator. These are typical invocations; check your simulator's documentation (tool-dependent):
+
+```bash
+# Synopsys VCS
+vcs -sverilog tb_top.sv
+./simv
+
+# Siemens Questa
+vlib work
+vlog tb_top.sv
+vsim -c tb_top -do "run -all; quit"
+
+# Cadence Xcelium
+xrun tb_top.sv
+```
+
+Without a local simulator, an online playground such as EDA Playground runs the file in a browser. Support for clocking blocks varies among open-source simulators, and none was verified for this page (tool-dependent).
+
+### Prove it can fail
+
+1. Change `.BUG(0)` to `.BUG(1)`: stage 1 now adds 2. **Predict** the log before you run.
+2. Run it. Every result fails. Here `[error @ t]` stands for your simulator's own `$error` prefix, which names the time, file and line (§20.10):
+
+```text
+[error @ 45 ns] CHK got 12, expected 11
+[error @ 55 ns] CHK got 22, expected 21
+[error @ 65 ns] CHK got 32, expected 31
+PASS=0 FAIL=3
+```
+
+3. Set `.BUG(0)` again before you continue.
+
+### Convert a racy bench in six steps
+
+Use this whenever you inherit a bench that drives the DUT with raw assignments:
+
+1. **Driver block.** Add a clocking block to the interface for the driver: the DUT inputs it drives as outputs, and any DUT outputs it reacts to as inputs. Make it the default clocking if code in the interface uses `##`.
+2. **Monitor block.** Add a second clocking block with inputs only: every signal the monitor checks, including reset.
+3. **Drives.** Make the driver wait on `@(bus.cb)`, and turn every `bus.sig = v;` or `bus.sig <= v;` into `bus.cb.sig <= v;`.
+4. **Reads.** Make the monitor wait on `@(bus.mon_cb)` and read only `bus.mon_cb.sig`. Delete every `@(posedge clk)` from testbench code.
+5. **Asynchronous signals.** Leave reset, and any other asynchronous input, as direct writes made between edges.
+6. **Verify.** Declare time units in every design element, rerun, compare the log with the old one, and run the mutant: the bench must fail with `.BUG(1)`.
+
+**Checklist before moving on:**
+- [ ] Every DUT input except the asynchronous reset is written only through `cb`.
+- [ ] Every clockvar read follows `@(bus.cb)` or `@(bus.mon_cb)`, never `@(posedge clk)`.
+- [ ] `##` appears only where a default clocking is in scope.
+- [ ] No clockvar is driven twice in one cycle, unless the last value is the one you want.
+- [ ] Every design element declares its time unit and precision.
+- [ ] The bench prints `PASS=3 FAIL=0` with `.BUG(0)` and `PASS=0 FAIL=3` with `.BUG(1)`.
+- [ ] I can explain, edge by edge, why the first PASS line appears at 45 ns.
 
 ## Push Further
-- Open the skew visualizer's advanced controls and compare `cb.din <= ##1 v;` with `##1 cb.din <= v;`, with and without `default clocking`. Explain why only one of them needs the default clocking.
-- Investigate the difference between synchronous drive (`vif.cb.sig <= val`) and asynchronous drive (`vif.sig = val`).
+
+### Expert: synchronous-drive corner cases
+
+- **Glitches inside one time slot.** The scheduler can pass through Re-NBA more than once in a time slot, for example when reactive code wakes the design and the loop comes back. Drives that assign different values to one clockvar in different passes make its signal change more than once in that time slot; the standard's example has a variable go 1, 0, 1 at the first edge (§14.16.2).
+- **Drives and nonblocking assignments.** A synchronous drive and a procedural nonblocking assignment to one variable in the same time slot take effect in arbitrary order (§14.16.2). Give such a variable one kind of writer.
+- **Two clocking blocks, one variable.** A variable driven by a `posedge` block and a `negedge` block takes whichever value was driven most recently, and each block writes only in cycles in which it is driven. One module can model a double-data-rate device this way; it is equivalent to a single block clocked on `edge clk` (§14.16.2).
+- **Nets.** Each clocking output on a net is its own driver with (strong1, strong0) strength, initialized to `'z`. Several clocking outputs and any other drivers on one net resolve as the net type defines (§14.16, §14.16.2).
+- **`inout` reads.** A drive to an `inout` clockvar does not change its input side: after `cb.a <= c;`, reading `cb.a` still returns the last sample (§14.16.1).
+- **Counting.** The cycle-delay rule in "Several drives to one signal in one cycle" summarizes the examples of §14.16, where `#3 cb.v <= expr1;` matures in cycle 1, and of §14.16.2. It does not follow from applying the general between-edges sentence of §14.16 and then counting the cycle delay, which would put `#1 cb.v <= ##2 expr3;` in cycle 4 instead of cycle 3. `##0` on the right-hand side of a drive has no effect (§14.11).
+
+### Expert: cycle-delay and default-clocking corner cases
+
+- **`##0`.** If the clocking block event of the current time slot has already happened, for example right after `@(cb)`, `##0` continues at once; otherwise it waits for that event (§14.11).
+- **Expressions.** `##(expr)` accepts any expression that evaluates to a non-negative integer, including a variable, as in the `wait_cycles()` task (§14.11).
+- **Default scope.** A default clocking covers its module, interface, program or checker and the modules, interfaces and checkers nested in it, but not instantiated ones (§14.12). `default clocking busA;` may name a clocking block declared in an enclosing module (§14.12, Example 2).
+- **Assertions share it.** The same default clocking clocks concurrent assertions that name no clock (§16.16). Changing it to suit a cycle delay also changes those assertions.
+
+### Expert: input-sampling corner cases
+
+- **Explicit `#0` is not resampled.** When the scheduler comes back through Observed in the same time slot, explicit-`#0` inputs keep the value from the first pass, unless a new clocking event occurs in the active region set (§14.13).
+- **Programs and the clock source.** Program code that reads a clockvar after `@(posedge clk)` does not race when a module generates the clock. When program code triggers the clocking event, reads that do not synchronize to it race with the sample update (§14.13 NOTE).
+- **Synchronous events use samples.** `@(cb.sig)`, `@(posedge cb.sig)` and slices of them use the sampled values; a dynamic slice index is evaluated once, when the `@` executes (§14.15).
+- **Assertions.** When a concurrent assertion uses a clockvar, its value comes from the clocking block's sample alone (§16.18). Properties and sequences can be declared inside a clocking block (§14.3, §16.16). [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index) owns assertion clocking.
+- **`1step` can change size.** `1step` is the global time precision (§3.14.3), so adding any module with `timeprecision 1fs` shortens it. The sample is still the last value before the edge.
+- **Before the first edge.** §14.13 defines a clockvar's value only as the sample of the most recent clocking event, so what a read returns before the first one is tool-dependent. Do not rely on it.
+- **What may be named.** A clocking signal may not be a variable restricted to a procedural block (§14.3): an automatic variable, or an element or member of a dynamic variable such as a dynamic array, whose references §6.21 limits to procedural code.
+- **One signal, many blocks.** Each block samples a shared signal with its own clocking event (§14.13).
+
+### Expert: several clocks and testbench-internal races
+
+- **Programs and several clocks.** §24.4 states the limit plainly: input sampling addresses a single clocking block. With several clocks, the arbitrary order in which simultaneous or overlapping clocks are processed is still a race source. The program construct addresses it by running after all design events, including clocks driven by nonblocking assignments.
+- **One clock, many testbench threads.** Blocks on one clock share one synchronization event (§14.6), so processes waiting on `@(bus.cb)` and `@(bus.mon_cb)` wake together and run in any order (§4.7). In the M1 bench the driver pushes onto `exp_q` and the monitor pops from it. That is deterministic only because the DUT's latency puts every push at least two edges before its pop. If a push and the pop that needs it could fall in one time slot, the result would depend on which thread ran first. Pass data between testbench threads through a mailbox or queue whose order you control ([I-SV-5](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index)), or let one thread own both ends.
+
+### Expert: skews as a timing model
+
+- **Zero-delay RTL.** `#1step` inputs and `#0` outputs are exact; nonzero skews only move the sample and the update in time (§14.4, §14.16).
+- **Gate-level timing.** With back-annotated delays, DUT outputs settle some time after the edge. The input skew then acts as a setup window: each output must settle before the sample point, the edge minus the skew, or the bench reads last cycle's value. The visual's +9 ns path with a `#2ns` skew is exactly this failure.
+- **Output skew.** A nonzero output skew models clock-to-output delay and gives the DUT hold margin in gate-level runs, and it makes waveforms easier to read. It also moves every drive into a later time slot (§14.16).
+- **Parameters.** Practice, not a rule: verification IP often exposes skews as parameters, which §14.4 allows, so one agent serves RTL and gate-level runs. The right values depend on your library and tool flow (tool-dependent).
+
+### Expert: program blocks in depth
+
+- **Scope.** Code outside every program may not reference program signals, the variables and nets declared in a program. Hierarchical references from one program into another are legal (§24.3). Anonymous programs in a package or compilation unit add tasks, functions and classes to the program-wide space without creating a scope (§24.6).
+- **Calls.** A program may call module tasks and functions; a module task called from a program runs in the reactive region set, and the same task called from a module runs in the active region set (§24.5).
+- **Assertions.** Concurrent assertions in a program are evaluated in the Observed region on Preponed values, exactly as in module code (§24.3.1).
+- **`$exit`.** Called from a thread that originates in an `initial` procedure of a program, it ends all `initial` procedures of that program and their descendants. Called from any other thread, it is ignored, and the tool may warn (§24.7).
+- **Ports without clocking blocks.** Program ports update their design-side objects in the reactive region set, which forces extra passes of the scheduler loop (§24.3.2).
+- **UVM.** In uvm-core 2020.3.1, `run_test()` ends the simulation with `$finish` when `finish_on_completion` is set, which it is by default (`src/base/uvm_root.svh`). Call it from a module top, and the whole UVM run lives in the active region set (§24.3.1).
+
+### Expert: methodology trade-offs
+
+Practice, not rules of the standard:
+
+| Approach | Race-free drives | Pre-edge reads of DUT outputs | Costs |
+|---|---|---|---|
+| Clocking blocks (`cb`, `mon_cb`) | yes: Re-NBA (§14.16) | yes, for any DUT: `#1step` | Declarations to keep in step with the interface; the `@(posedge clk)` trap |
+| `<=` drives after `@(posedge clk)`, as in F2E | yes | only while the DUT writes its outputs with `<=` | Timing spread over many tasks; no skews to tune |
+| Drives on the opposite clock edge | yes, for one clock | yes: reads at the opposite edge see settled values | Halves the timing budget in gate-level runs; breaks with several edges or clocks |
+
+- **One block per role.** `cb` for the driver and `mon_cb` for the monitor, with modport-typed handles (`virtual pipe_if.drv_mp`) so that the compiler enforces the split (§25.5.5, §25.9.2).
+- **Narrow monitor blocks.** Every input clockvar is sampled at every clocking event (§14.13), so a block that lists a wide bus samples it every cycle, used or not. The run-time cost is tool-dependent; list what the monitor checks.
+- **Module or program top.** Module top and clocking blocks for class-based benches; a program when reactive scheduling solves a real problem, such as several simultaneous clocks (§24.4).
+
+### Expert: global clocking in detail
+
+- **Placement.** At most one global clocking per module, interface, checker or program, and never in a generate block. Several may exist in different parts of the hierarchy, but at most one is effective at each point (§14.14).
+- **Lookup.** `$global_clock` searches the enclosing instance, then its parents, for the nearest global clocking declaration; reaching a top-level block without one is an error. In sequences, properties and checker arguments, the search starts where the assertion appears, after substitution (§14.14).
+- **Compatibility.** IEEE 1800-2009 allowed only one global clocking in the whole design, usable everywhere. A design that declares it in a non-top module and uses `$global_clock` outside that subhierarchy does not conform to IEEE 1800-2023 (§14.14 NOTE).
+- **Use.** The global-clocking sampled value functions, such as `$past_gclk` and `$future_gclk`, may be used only when a global clocking is defined (§16.9.4).
+
+### Expert: interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: the monitor that fails on one simulator"
+  question="Your monitor waits on @(posedge vif.clk) and then reads vif.mon_cb.data. It passes on one simulator and fails on another with the same seed. What is going on, and what do you change?"
+  options={[
+    { text: "The input skew is too small. Change mon_cb to default input #2ns.", isCorrect: false, feedback: "A skew moves where the photo is taken, not when your code reads it. The read still competes with the block's own sample update." },
+    { text: "The read races the clocking block's update of its samples: a process woken by @(posedge clk) runs in the Active region alongside it. Wait on @(vif.mon_cb) instead.", isCorrect: true, feedback: "Correct (§14.13, §14.4 NOTE). The clocking block event fires in Observed, after the samples are stored, so a read after @(vif.mon_cb) always sees this edge's photo." },
+    { text: "mon_cb needs an output skew for its inputs to be stable.", isCorrect: false, feedback: "Output skews apply only to drives. mon_cb has no outputs." },
+    { text: "Clocking blocks remove races only in program blocks, so the bench must become a program.", isCorrect: false, feedback: "In a program this read would be safe (§14.4 NOTE), but the simple fix is to wait on the clocking block event. Clocking blocks work in module and class code." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: two drives, one edge"
+  question="Two tasks in different processes both resume from @(cb) and drive cb.data at the same edge, one with 8'h0F and one with 8'hF0. What does the DUT see, and is it deterministic?"
+  options={[
+    { text: "8'hFF: the two drives are combined like two drivers on a wire.", isCorrect: false, feedback: "Drives to one clockvar are not separate drivers that resolve; within one Re-NBA region only the last value is driven (§14.16.2)." },
+    { text: "Only the value of the drive that executed last. Which process ran last is the simulator's choice, so the result is a race.", isCorrect: true, feedback: "Correct (§14.16.2, §4.7). Give each clockvar one writer per cycle." },
+    { text: "X, because two drives in one cycle conflict.", isCorrect: false, feedback: "The standard defines the result: the last drive wins. The problem is that 'last' depends on process order." },
+    { text: "Both values, one cycle apart, in the order the tasks were called.", isCorrect: false, feedback: "Without a cycle delay both drives mature in the same Re-NBA region. Use cb.data <= ##1 v to move one of them." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: ## in a class"
+  question="Why does ##2; compile inside your interface but fail inside the driver class that uses it, which is declared in a package?"
+  options={[
+    { text: "Classes may not contain timing controls.", isCorrect: false, feedback: "Class methods may use @, # and wait. The problem is specific to ##." },
+    { text: "## counts cycles of the default clocking, which applies only in the module, interface, program or checker that declares it and in scopes nested in it. A class in a package has none, so the compiler reports an error.", isCorrect: true, feedback: "Correct (§14.11, §14.12). In the class, write repeat (2) @(vif.cb); or call an interface task that uses ##." },
+    { text: "The virtual interface handle is still null when the class is compiled.", isCorrect: false, feedback: "Handles are bound at run time; this is a compile-time scope rule." },
+    { text: "## is only legal inside program blocks.", isCorrect: false, feedback: "## is legal in modules, interfaces, programs and checkers that have a default clocking." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: are program blocks deprecated?"
+  question="A colleague says program blocks are deprecated and must never be used. What is the accurate answer?"
+  options={[
+    { text: "Right: IEEE 1800 deprecated them when UVM appeared.", isCorrect: false, feedback: "Annex C of IEEE 1800-2023 does not list program blocks among deprecated constructs or among those under consideration." },
+    { text: "Wrong: they are part of IEEE 1800-2023 and their code runs in the reactive region set. Most class-based benches still use a module top with clocking blocks; a program is worth it when you need its reactive scheduling, for example with several simultaneous clocks.", isCorrect: true, feedback: "Correct (§24.3.1, §24.4, Annex C). The choice is a practice decision, not a rule." },
+    { text: "Wrong, but programs cannot contain classes, so UVM cannot use them.", isCorrect: false, feedback: "A program may contain class definitions (§24.3)." },
+    { text: "Right: always blocks in a module replace them.", isCorrect: false, feedback: "Programs are not deprecated, and they may not even contain always procedures (§24.3)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: reading an inout clockvar"
+  question="cb declares inout a and output b. At one clocking event the code executes cb.a <= c; and then cb.b <= cb.a;. What does b receive?"
+  options={[
+    { text: "c, because the drive to a executed first.", isCorrect: false, feedback: "The drive to a only matures in Re-NBA, and it never changes the input side of the clockvar." },
+    { text: "The value of a sampled at this clocking event, from before the drive: reading an inout clockvar returns its input sample.", isCorrect: true, feedback: "Correct (§14.16.1). The standard uses this exact example." },
+    { text: "X, because a is being driven in the same cycle.", isCorrect: false, feedback: "Reading the input side is always defined: it is the last sample." },
+    { text: "Nothing: an inout clockvar cannot be read.", isCorrect: false, feedback: "Reading an inout clockvar is legal and equivalent to reading its input clockvar (§14.3)." }
+  ]}
+/>
 
 ## Practice & Reinforce
-- **Practice:** F3C's Race Debugging Challenge and Kata 1 (fix a racy testbench with a clocking block). A simulator-graded race lab is planned; see `docs/audit/2026-10-03-learning-outcomes/improvement-plan.md`.
-- **Quiz:** Check your understanding of timing regions.
 
-## Interview Questions
-
-<Card className="mt-8">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is the purpose of `default input #1step`?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>It tells the clocking block to sample inputs in the <strong>Preponed</strong> region (immediately before the clock edge). This ensures that the testbench reads the stable "old" value of the signal, effectively ignoring any changes that happen exactly at the clock edge (avoiding race conditions).</p>
-      </div>
-    </details>
-
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">If you drive a clocking block output with default #0 skew (e.g. `cb.sig <= 1`), in which scheduling region does the update actually occur?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>In the <strong>Re-NBA</strong> region of the clocking-event time step, regardless of whether the drive came from module, class, or program code (IEEE 1800-2023 §14.16). Older material that splits this into NBA vs Re-NBA by origin describes pre-2009 behavior. Because Re-NBA runs after the design's NBA updates, the DUT's flops have already captured the previous value; the drive is visible to design logic that re-evaluates afterward in the same time step.</p>
-      </div>
-    </details>
-
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">Why should you avoid driving signals directly from a `program` block without a clocking block?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>While `program` blocks execute in the Reactive region (after the Active region), relying solely on this scheduling semantic can be fragile. Clocking blocks provide explicit, controllable setup and hold times (skews) that make the timing relationship between the testbench and DUT clear and robust.</p>
-      </div>
-    </details>
-  </CardContent>
-</Card>
-
-## References & Next Topics
-- **IEEE 1800-2023 Standard:**
-    - Clause 14: Clocking Blocks (§14.4 skews, §14.10 `@(cb)`, §14.11 `##`, §14.12 default clocking, §14.13 input sampling, §14.16 synchronous drives)
-    - Clause 24: Programs
-- **Next:** [I-SV-1: Object-Oriented Programming for Verification](/curriculum/T2_Intermediate/I-SV-1_OOP/index)
+### Retrieval quiz
 
 <Quiz
   questions={[
     {
-      question: 'What is the default input skew for a clocking block?',
+      question: "A clocking block has no default item and lists input data. Which value does cb.data return after @(cb)?",
       answers: [
-        { text: '#0', correct: false },
-        { text: '#1step', correct: true },
-        { text: '#1ns', correct: false },
-        { text: 'Undefined', correct: false }
+        { text: "The value at the edge itself, sampled in the Observed region", correct: false, feedback: "That is an explicit #0 input skew. #0 is the default for outputs, not inputs." },
+        { text: "The last value before the edge's time slot began, the same as a Preponed sample", correct: true, feedback: "Right: the default input skew is 1step (§14.3), and #1step sampling is identical to sampling in the Preponed region (§4.4.2.1)." },
+        { text: "The value 1 ns before the edge", correct: false, feedback: "A #1ns skew applies only when you write it." },
+        { text: "Nothing reliable: the skew is undefined until you write a default item", correct: false, feedback: "§14.3 defines both defaults: input 1step, output 0." }
       ],
-      explanation:
-        '#1step means the signal is sampled in the Preponed region, just before the clock edge, ensuring the stable previous value is read.'
+      explanation: "Without a default item, inputs use #1step and outputs #0 (§14.3). #1step returns the last value before the edge's time slot, however long ago it changed, which equals a Preponed sample (§4.4.2.1, §14.4).",
+      objective: 1
     },
     {
-      question: 'Why are program blocks less common in modern UVM?',
+      question: "An input has skew #2ns. The clocking event is a rising edge at 25 ns, and the DUT output changes from 1 to 2 at 24 ns. What does the testbench read after @(cb) at 25 ns?",
       answers: [
-        { text: 'They are not supported by simulators', correct: false },
-        { text: 'They cannot contain classes', correct: false },
-        { text: 'Clocking blocks already give module and class code race-free sampling and driving', correct: true },
-        { text: 'They are too slow', correct: false }
+        { text: "2, the value just before the edge", correct: false, feedback: "That is what #1step would return." },
+        { text: "1, the value in the Postponed region of 23 ns", correct: true, feedback: "Right: a #2ns skew samples 2 ns before the edge (§14.13), before the change at 24 ns." },
+        { text: "2, the value in the Observed region of 25 ns", correct: false, feedback: "Only an explicit #0 input skew samples in Observed." },
+        { text: "1 or 2: the read races", correct: false, feedback: "Reading after @(cb) is always deterministic (§14.13). The 24 ns change is simply seen one cycle later." }
       ],
-      explanation:
-        'Clocking blocks sample in Preponed (or at the skew) and drive in Re-NBA no matter where the code runs, so the reactive-region scheduling of program blocks adds little. UVM phasing orders whole phases; it does nothing about two processes on the same clock edge.'
+      explanation: "A nonzero input skew samples the value in the Postponed region of the time slot that lies the skew before the clocking event (§14.13). A change inside that window shows up at the next edge, which is why a skew acts as a setup window.",
+      objective: 1
     },
     {
-      question: 'A driver does @(posedge vif.clk) and then reads vif.cb.ready. What can go wrong?',
+      question: "At the 25 ns edge a driver resumes from @(vif.cb) and executes vif.cb.din <= 8'hA5 with output skew #0. The DUT has always_ff @(posedge clk) q <= din, and edges come every 10 ns. When does din change, and when does q capture A5?",
       answers: [
-        { text: 'Nothing: cb inputs are always the Preponed sample', correct: false },
-        { text: 'It may read the previous sample or the new one: it races the clocking block update', correct: true },
-        { text: 'It is a compile error', correct: false },
-        { text: 'It always reads X', correct: false }
+        { text: "Immediately, in the Active region of 25 ns, so q captures A5 at 25 ns", correct: false, feedback: "A synchronous drive never acts like a blocking assignment. It lands in Re-NBA." },
+        { text: "In the NBA region of 25 ns, together with the design's flops, so it races q", correct: false, feedback: "Clocking-block drives do not land in NBA, whoever issues them (§14.16)." },
+        { text: "In the Re-NBA region of 25 ns, after the flop has read din, so q captures A5 at 35 ns", correct: true, feedback: "Right: zero-skew drives land in Re-NBA of the clocking event's time slot (§14.16), and the flop reads din at the next edge." },
+        { text: "At 35 ns, so q captures A5 at 45 ns", correct: false, feedback: "That confuses when the drive matures with when the flop captures it. A one-cycle delay needs cb.din <= ##1 8'hA5." }
       ],
-      explanation:
-        'The clocking block updates its samples and then triggers @(cb) in Observed. A process woken by @(posedge clk) runs in Active, racing that update (IEEE 1800-2023 §14.13). Wait on @(vif.cb) instead.'
+      explanation: "With output skew #0, a drive executed at the clocking event updates its signal in the Re-NBA region of that time slot (§14.16). The flops already read din in the Active region of 25 ns, so they capture A5 at 35 ns, one edge later, in every process order.",
+      objective: 1
     },
     {
-      question: 'With default input #2ns and a rising edge at 25 ns, when is the input sampled?',
+      question: "At the 25 ns edge, process P1 waits on @(vif.mon_cb) and process P2, in module code, waits on @(posedge vif.clk). Both then print vif.mon_cb.dout. Which statement is true?",
       answers: [
-        { text: 'In the Preponed region of 25 ns', correct: false },
-        { text: 'In the Observed region of 25 ns', correct: false },
-        { text: 'In the Postponed region of 23 ns, so a change at exactly 23 ns is included', correct: true },
-        { text: 'At 27 ns', correct: false }
+        { text: "Both resume at the same point of the time slot, so both print the same value", correct: false, feedback: "@(posedge clk) resumes in the Active region of the edge; the clocking block event fires later, in Observed (§14.10)." },
+        { text: "P1 resumes after the Observed region and always prints this edge's sample; P2 resumes with the edge and may print the old sample or the new one", correct: true, feedback: "Right (§14.10, §14.13). P2 races the clocking block's own update of its samples." },
+        { text: "P2 is safer, because it runs first, before anything changes", correct: false, feedback: "Running first is the problem: P2 can run before the block has stored this edge's sample." },
+        { text: "Both may print either value, because clocking blocks do not remove races", correct: false, feedback: "Waiting on the clocking block event guarantees the updated sample (§14.13). Only P2 races." }
       ],
-      explanation:
-        'A nonzero input skew samples the value at the Postponed region of the time step skew units before the clocking event (§14.13). Input skews always look backwards from the edge; output skews look forwards.'
+      explanation: "The clocking block stores its samples and then triggers its event in the Observed region; a process waiting on @(cb) is guaranteed to read the updated samples (§14.13). A module process woken by the clock edge runs in the Active region and can read before or after the update (§14.4 NOTE).",
+      objective: 2
+    },
+    {
+      question: "A driver class declared in a package contains ##2; and drives through vif.cb. The interface declares cb as its default clocking. What happens?",
+      answers: [
+        { text: "It waits two cycles of cb, because the default clocking follows the virtual interface handle", correct: false, feedback: "A default clocking applies only in the scope that declares it and in nested modules, interfaces and checkers (§14.12)." },
+        { text: "Compile error: no default clocking is in effect in that scope", correct: true, feedback: "Right (§14.11). Use repeat (2) @(vif.cb); or call an interface task that uses ##." },
+        { text: "It waits two time units, like #2", correct: false, feedback: "## counts clocking block events, never time units." },
+        { text: "It waits for two edges of any clock in the design", correct: false, feedback: "## has no meaning without a default clocking; it does not pick a clock." }
+      ],
+      explanation: "If no default clocking has been specified for the current module, interface, checker or program, the compiler shall issue an error (§14.11). A package and a class have no default clocking, and the interface's default does not travel with the handle (§14.12).",
+      objective: 2
+    },
+    {
+      question: "Which statement compiles in a module that has no default clocking, and updates cb.data two cycles of cb later without blocking the process?",
+      answers: [
+        { text: "##2 cb.data <= v;", correct: false, feedback: "The prefix ##2 counts default-clocking cycles, so it needs a default clocking, and it blocks the process." },
+        { text: "cb.data <= ##2 v;", correct: true, feedback: "Right: a cycle delay inside a drive counts cycles of the clockvar's own block and does not block (§14.16)." },
+        { text: "cb.data <= #2 v;", correct: false, feedback: "Ordinary intra-assignment delays are illegal in a synchronous drive (§14.16)." },
+        { text: "cb.data = ##2 v;", correct: false, feedback: "A clockvar can only be written with the synchronous drive form, and ## is not legal inside an ordinary assignment (§14.11, §14.16)." }
+      ],
+      explanation: "In cb.data <= ##2 v, the right-hand side is evaluated at once and the update is postponed two cycles of cb, plus the output skew; the statement does not block and needs no default clocking (§14.16).",
+      objective: 2
+    },
+    {
+      question: "At one clocking event, one process executes pe.nibble <= 4'b0101; and then pe.nibble <= 4'b0011; with output skew #0. What value does nibble take?",
+      answers: [
+        { text: "4'b0101: the first drive wins", correct: false, feedback: "Both drives mature in the same Re-NBA region, and only the last value is driven." },
+        { text: "4'b0011: the last drive is the only one driven", correct: true, feedback: "Right: this is the standard's own example (§14.16.2)." },
+        { text: "4'b0111: the two drives resolve like two drivers on a net", correct: false, feedback: "Drives to one clockvar are not separate net drivers; the last value wins, for a variable or a net." },
+        { text: "X: two drives in one cycle conflict", correct: false, feedback: "The standard defines the result. Only the last drive takes effect." }
+      ],
+      explanation: "When several synchronous drives to one clocking output mature in the same Re-NBA region of the same time slot, the last value is the only value driven, whether the signal is a variable or a net (§14.16.2). Inside one process the last drive is the later statement; across two processes it depends on process order.",
+      objective: 3
+    },
+    {
+      question: "Why does the M1 bench write the asynchronous rst_n directly instead of driving it through cb?",
+      answers: [
+        { text: "IEEE 1800-2023 forbids reset signals in clocking blocks", correct: false, feedback: "There is no such rule. mon_cb even samples rst_n." },
+        { text: "A drive executed between edges acts as if it executed at the next clocking event, so a reset through cb would wait for the next clock edge", correct: true, feedback: "Right (§14.16). An asynchronous reset must take effect at the moment the testbench writes it." },
+        { text: "A clockvar cannot be a single bit", correct: false, feedback: "Clockvars can be any width, including one bit." },
+        { text: "rst_n would be sampled in Preponed and never reach the DUT", correct: false, feedback: "That confuses inputs with outputs. A drive does reach the DUT, but only at the next clocking event." }
+      ],
+      explanation: "A synchronous drive executed between clocking events performs its drive as if executed at the next clocking event, landing in Re-NBA (§14.16). A reset asserted at 12 ns through cb would fall only at the 15 ns edge, after the flops' normal capture there.",
+      objective: 3
+    },
+    {
+      question: "A testbench does @(posedge clk); din = v; and the DUT does q <= din on the same edge. Two simulators capture v at different edges. Which fix makes the capture edge independent of process order and also gives the testbench pre-edge reads of DUT outputs?",
+      answers: [
+        { text: "Put #0 before din = v", correct: false, feedback: "It does move this write after the flop's read, but it gives no pre-edge reads, and it races again as soon as another process also uses #0 (F3C)." },
+        { text: "Move the testbench block above the DUT in the source file", correct: false, feedback: "Source order does not fix process order; the simulator may run either first (§4.7)." },
+        { text: "Wait on @(cb), drive cb.din <= v, and read DUT outputs through cb", correct: true, feedback: "Right: the drive lands in Re-NBA after the flop's read (§14.16), and the reads return #1step samples after the clocking block event (§14.13)." },
+        { text: "Change the DUT to q = din", correct: false, feedback: "The DUT is not the problem, and a blocking flop creates races inside the design." }
+      ],
+      explanation: "Converting to a clocking block removes both sides of the problem: drives mature in Re-NBA after every flop has read its inputs, and reads after @(cb) return the samples from before the edge. Neither depends on process order or source order (§4.7, §14.13, §14.16).",
+      objective: 4
+    },
+    {
+      question: "A monitor uses @(posedge vif.clk) and then reads vif.mon_cb.out_data. It passes on one simulator and fails on another. What is the cause?",
+      answers: [
+        { text: "The input skew is too small", correct: false, feedback: "The skew decides where the photo is taken. The failure comes from when the code reads it." },
+        { text: "It reads a clockvar after @(posedge clk), racing the clocking block's update of its samples; it should wait on @(vif.mon_cb)", correct: true, feedback: "Right (§14.13, §14.4 NOTE)." },
+        { text: "mon_cb has no output skew", correct: false, feedback: "A monitor block has no outputs, so it needs no output skew." },
+        { text: "Clocking blocks work only in program blocks", correct: false, feedback: "They work in modules, interfaces, checkers and programs; module code only has to wait on the clocking block event." }
+      ],
+      explanation: "A module process woken by @(posedge clk) runs in the Active region with the edge and may read the block's old or new sample (§14.4 NOTE, §14.13). Waiting on @(vif.mon_cb) resumes after the samples are stored.",
+      objective: 4
+    },
+    {
+      question: "Which statement about program blocks in IEEE 1800-2023 is correct?",
+      answers: [
+        { text: "They are deprecated: Annex C lists them", correct: false, feedback: "Annex C lists programs neither among the deprecated constructs (C.2, C.3) nor among those under consideration for deprecation (C.4)." },
+        { text: "Their code runs in the reactive region set, and they are not deprecated", correct: true, feedback: "Right (§24.3.1, Annex C)." },
+        { text: "They cannot declare classes", correct: false, feedback: "A program may contain class definitions (§24.3)." },
+        { text: "Their initial procedures run in the Active region, like module code", correct: false, feedback: "Program initial procedures are scheduled in the Reactive region (§24.3.1)." }
+      ],
+      explanation: "Program code is scheduled in the reactive region set: initial procedures and statements sensitive to design signals run in Reactive, and nonblocking assignments update in Re-NBA (§24.3.1). Annex C does not list programs.",
+      objective: 5
+    },
+    {
+      question: "The only program in a design forks a monitor with join_none from its only initial procedure. Then that initial procedure reaches its end. What happens?",
+      answers: [
+        { text: "The monitor keeps running until someone calls $finish", correct: false, feedback: "Program termination ends the threads that the program's initial procedures started (§24.3)." },
+        { text: "The program ends the monitor at once, and because no program thread is left, the simulation ends with an implicit $finish", correct: true, feedback: "Right (§24.3). Keep the main thread alive until checking is done." },
+        { text: "Nothing: programs never end a simulation on their own", correct: false, feedback: "If any program has an initial procedure, the end of all program threads triggers an implicit $finish (§24.3)." },
+        { text: "The monitor moves to the Active region and keeps running", correct: false, feedback: "Threads do not change region sets, and this one is ended." }
+      ],
+      explanation: "When all initial procedures of a program have ended, the program immediately terminates their descendant threads; once every thread started from the initial procedures of all programs has ended, the simulation ends through an implicit $finish (§24.3).",
+      objective: 5
     }
   ]}
 />
+
+### Kata 1 (guided): expose a hidden race, then fix it
+
+**Objective:** see why a value-only checker can miss a race, catch it with a cycle-accurate check, and remove it with the six conversion steps (objective 4).
+
+**Starter.** Take the Make It Work bench. Add the racy driver below next to `send()`, and in `main` replace everything from `@(bus.cb);` to `bus.wait_cycles(4);` with the lines shown in the comment.
+
+```systemverilog
+// snippet: Kata 1 starter, a racy driver (do not copy into real benches)
+task automatic send_racy(input logic [7:0] data);
+  @(posedge clk);                    // wakes in the Active region with the DUT's flops
+  bus.in_vld  = 1'b1;                // blocking writes at the active edge race (§4.7)
+  bus.in_data = data;
+  exp_q.push_back(data + 8'd1);
+endtask
+
+// in main, after #12 bus.rst_n = 1'b1;
+//   send_racy(8'h10);
+//   send_racy(8'h20);
+//   send_racy(8'h30);
+//   @(posedge clk) bus.in_vld = 1'b0;
+//   repeat (4) @(posedge clk);
+```
+
+**Steps:**
+1. **Predict.** Does the queue-based monitor notice anything if the simulator runs `send_racy()` before the DUT's flops at every edge? Write down why.
+2. **Add a cycle-accurate check.** The DUT's output at edge *e* must equal the input `mon_cb` sampled at edge *e* − 2, plus one. Write an `initial` block that keeps the last two input samples and compares.
+3. **Run** on your simulator. If it always picks the same order, swap the textual order of the DUT instance and the `initial` blocks, try a second simulator, or use the debugger in [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) to see both orders.
+4. **Convert** the driver with the six steps from Make It Work, and rerun.
+
+**Acceptance:** after the conversion, no cycle-check errors and `PASS=3 FAIL=0` in every order and on every simulator you try, and a failing run with `.BUG(1)`.
+
+<details>
+<summary>Worked solution (try the kata first)</summary>
+
+**Step 1.** The queue-based monitor checks values and their order, not their timing. If `send_racy()` runs first at an edge, the DUT captures each item one edge early, so the results arrive one edge early, in the right order and with the right values: `PASS=3 FAIL=0` either way. The race is real but invisible to that checker.
+
+**Step 2.** A cycle-accurate check sees the shift:
+
+```systemverilog
+// snippet: Kata 1 cycle-accurate check, added to tb_top
+initial begin : cycle_check
+  logic       vld_d1, vld_d2;        // in_vld sampled 1 and 2 edges ago
+  logic [7:0] dat_d1, dat_d2;        // in_data + 1 sampled 1 and 2 edges ago
+  forever begin
+    @(bus.mon_cb);
+    if (bus.mon_cb.rst_n !== 1'b1) begin
+      vld_d1 = 1'b0;                 // the pipeline is empty in reset
+      vld_d2 = 1'b0;
+    end else begin
+      if (bus.mon_cb.out_vld !== vld_d2 ||
+          (vld_d2 && bus.mon_cb.out_data !== dat_d2)) begin
+        fail_cnt++;
+        $error("CYC out_vld=%b out_data=%h, expected %b %h",
+               bus.mon_cb.out_vld, bus.mon_cb.out_data, vld_d2, dat_d2);
+      end
+      vld_d2 = vld_d1;
+      dat_d2 = dat_d1;
+      vld_d1 = bus.mon_cb.in_vld;
+      dat_d1 = bus.mon_cb.in_data + 8'd1;
+    end
+  end
+end
+```
+
+**Step 3.** In the order where `send_racy()` runs first, the DUT captures `8'h10` at 15 ns, while `mon_cb`'s photo at 15 ns still shows `in_vld = 0`. The result appears at the 35 ns sample, one edge earlier than the check expects, so it reports `CYC` errors from 35 ns on. In the order where the flops run first, both views agree and the check passes. Same code, two outcomes: that is the race.
+
+**Step 4.** After the conversion, `send()` drives through `cb` after `@(bus.cb)`. The drive lands in Re-NBA, after the flops have read their inputs, so the DUT always captures at the edge after the drive, and that is the edge at which `mon_cb` samples the same values. The check passes in every order because no read and no write of `in_vld` or `in_data` share a region any more (§4.7, §14.13, §14.16).
+
+</details>
+
+### Kata 2 (independent): back-to-back bursts
+
+**Objective:** write a driver that sends bursts with no idle cycles, and a monitor that keeps up (objective 3).
+
+**Requirements:**
+- Add `send_burst(input logic [7:0] items[$])`, which drives one item per cycle with no idle cycle between items, then drops `in_vld`.
+- Add `idle(input int n)`, which keeps `in_vld` low for `n` cycles.
+- In `main`, send a burst of four items starting right after the 15 ns edge, idle for two cycles, then send a burst of two.
+- No `@(posedge clk)` anywhere in testbench code; `##` only inside the interface; at most one drive per clockvar per cycle.
+- **Predict** the edges at which the monitor checks the first burst, then run. The bench must print `PASS=6 FAIL=0` with `.BUG(0)` and fail with `.BUG(1)`.
+
+<details>
+<summary>Worked solution (try the kata first)</summary>
+
+```systemverilog
+// snippet: Kata 2 worked solution, tasks in tb_top
+task automatic send_burst(input logic [7:0] items[$]);
+  foreach (items[i]) begin
+    bus.cb.in_vld  <= 1'b1;          // one drive per clockvar per cycle
+    bus.cb.in_data <= items[i];
+    exp_q.push_back(items[i] + 8'd1);
+    @(bus.cb);
+  end
+  bus.cb.in_vld <= 1'b0;             // the cycle after the burst is idle
+endtask
+
+task automatic idle(input int n);
+  bus.cb.in_vld <= 1'b0;
+  repeat (n) @(bus.cb);
+endtask
+
+// in main, after @(bus.cb) at 15 ns:
+//   send_burst({8'h01, 8'h02, 8'h03, 8'h04});
+//   idle(2);
+//   send_burst({8'h05, 8'h06});
+//   bus.wait_cycles(4);
+```
+
+**Prediction.** The first burst is driven after the edges at 15, 25, 35 and 45 ns, captured at 25, 35, 45 and 55 ns, and checked by `mon_cb` at 45, 55, 65 and 75 ns. At 45 ns the driver pushes the fourth expectation while the monitor pops the first one, in the same time slot and in either order. That is safe only because the queue already holds three entries, so the pop never depends on the push.
+
+**Why one drive per cycle matters.** `send_burst()` drives each clockvar once per loop iteration and then waits on `@(bus.cb)`. Its final `in_vld <= 1'b0` and the first drive of `idle()` fall in the same cycle, but both write 0, so the last-drive-wins rule (§14.16.2) changes nothing; with different values, only the later statement would count.
+
+</details>
+
+### Drill: drive forms, skews and the default clocking
+
+Use the experiment visual's advanced controls. For each setting, predict when `din` changes and at which edge the DUT captures `A5`, then reveal. The drive executes right after `@(cb)` at edge 2, at 15 ns.
+
+1. `cb.din <= v;` with output skew `#0`, then `#2ns`.
+2. `cb.din <= ##1 v;` with output skew `#0`.
+3. `##1 cb.din <= v;` with output skew `#0`, then with the default clocking unticked.
+
+<details>
+<summary>Answers</summary>
+
+1. With `#0`, `din` changes in Re-NBA at 15 ns and is captured at edge 3 (25 ns). With `#2ns`, it changes in Re-NBA at 17 ns and is still captured at edge 3 (§14.16).
+2. The update is postponed one cycle of `cb`: `din` changes in Re-NBA at 25 ns, and the DUT captures it at edge 4 (35 ns). The statement does not block (§14.16).
+3. The thread blocks until edge 3 and then drives, so `din` changes in Re-NBA at 25 ns and is captured at edge 4. Without a default clocking the line does not compile (§14.11).
+
+</details>
+
+### Before the lab
+
+A simulator-graded lab for milestone M1, "Race-Free Pipeline TB", is planned: the Make It Work bench with hidden mutants such as a blocking drive at the edge, a monitor that reads after `@(posedge clk)`, a reset driven through `cb`, and two drives to one clockvar in a cycle. Until it exists, Kata 1 and Kata 2 are this lesson's hands-on gate. To warm up, solve the race debug challenge in [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index).
+
+The flashcards for this lesson follow below, under "Reinforce the essentials".
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023 unless noted)
+- §3.14.2.3 Precedence of timeunit, timeprecision and `` `timescale ``; §3.14.3 Simulation time unit (`1step`)
+- §4.4.2.1 Preponed, §4.4.2.5 Observed and §4.4.2.8 Re-NBA events regions; §4.5 Reference algorithm; §4.7 Nondeterminism
+- §6.8 Variable declarations (initializers run before any process starts)
+- §14.2 Overview; §14.3 Clocking block declaration; §14.4 Input and output skews; §14.5 Hierarchical expressions; §14.6 Signals in multiple clocking blocks; §14.7 Clocking block scope and lifetime; §14.8 Multiple clocking blocks example; §14.9 Interfaces and clocking blocks
+- §14.10 Clocking block events; §14.11 Cycle delay: ##; §14.12 Default clocking; §14.13 Input sampling; §14.14 Global clocking; §14.15 Synchronous events; §14.16 Synchronous drives; §14.16.1 Drives and nonblocking assignments; §14.16.2 Driving clocking output signals
+- §16.9.4 Global clocking past and future sampled value functions; §16.16 Clock resolution; §16.18 Clocking blocks and concurrent assertions
+- §24.2 Overview; §24.3 The program construct; §24.3.1 Scheduling semantics of code in program constructs; §24.3.2 Operation of program port connections in the absence of clocking blocks; §24.4 Eliminating testbench races; §24.5 Blocking tasks in cycle/event mode; §24.6 Program-wide space and anonymous programs; §24.7 Program control tasks
+- §25.5.5 Clocking blocks and modports; §25.9.1 Virtual interfaces and clocking blocks; §25.9.2 Virtual interface modports and clocking blocks
+- Annex C.2 Constructs that have been deprecated; C.3 Accellera SystemVerilog 3.1a-compatible access to packed data; C.4 Constructs identified for deprecation
+- uvm-core 2020.3.1, `src/base/uvm_root.svh`: `run_test()` and `finish_on_completion`
+
+**Related**
+- [F2E First Self-Checking Testbench](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index): the M0 bench whose conventions the M1 bench keeps.
+- [F3B Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index): Preponed, Observed, Reactive and Re-NBA in detail.
+- [F3C Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index): race theory, the race debug challenge and the race katas.
+- [F4B Interfaces and Modports](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index): interfaces, modports with clocking blocks, and binding virtual interfaces.
+- [I-SV-1 Object-Oriented Programming](/curriculum/T2_Intermediate/I-SV-1_OOP/index): the classes behind the class-form preview.
+- [I-SV-4A SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): default clocking as the clock of concurrent assertions.
+- [I-SV-5 Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index): mailboxes and queues between testbench threads.
+- [I-UVM-2A Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index): drivers, monitors and passive agents.
+- [I-UVM-2C Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index): passing the virtual interface with `uvm_config_db`.
+- [A-UVM-7 VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index): clocking blocks inside reusable verification IP.
+- Practice: [Interface Signal Flow](/practice/visualizations/interface-signal-flow) steps a value from a class through a virtual interface and a clocking block to the pins.
+
+<NextLesson />

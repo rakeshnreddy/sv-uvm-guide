@@ -1,7 +1,72 @@
 [
   {
     "id": "isv5-sem-1",
-    "question": "What happens when a process calls get(2) on a semaphore that holds only one key?",
-    "answer": "The process blocks until two keys are available, then takes both. try_get(2) would instead return 0 at once without taking any keys (IEEE 1800-2023 15.3.3, 15.3.4)."
+    "question": "What happens when a process calls `get(2)` on a semaphore that holds only one key?",
+    "answer": "The process blocks until two keys are free at the same time, then takes both in one step. `try_get(2)` would instead return 0 at once and take nothing (IEEE 1800-2023 §15.3.3, §15.3.4)."
+  },
+  {
+    "id": "isv5-sem-2",
+    "question": "How many keys does `semaphore s = new();` hold?",
+    "answer": "None: `keyCount` defaults to 0 (§15.3.1), so the first `get(1)` blocks until some process calls `put()`. `get()` and `put()` default to one key; `new()` does not. Write `new(1)` for a lock."
+  },
+  {
+    "id": "isv5-sem-3",
+    "question": "Can `put()` raise the key count above the value given to `new()`?",
+    "answer": "Yes (§15.3.1). Keys have no owner and `put()` never checks that the caller took one, so a stray second `put(1)` creates an extra key and two processes can enter a one-key critical section."
+  },
+  {
+    "id": "isv5-sem-4",
+    "question": "What does `try_get(n)` return, and does it ever wait?",
+    "answer": "It takes n keys and returns a positive value, or takes nothing and returns 0 (§15.3.4). It never waits, so it never joins the FIFO queue; always check its result."
+  },
+  {
+    "id": "isv5-sem-5",
+    "question": "What exactly does the semaphore's FIFO rule guarantee?",
+    "answer": "Processes blocked in `get()` keep their arrival order (§15.3.3). It does not decide the arrival order of same-time callers (§4.7), gives `try_get()` no place in line, and does not say whether a smaller request may take free keys past a larger one that is waiting."
+  },
+  {
+    "id": "isv5-sem-6",
+    "question": "How does a leaked semaphore key show up in the log?",
+    "answer": "The last 'granted' line has no matching 'released', and later requesters stop in `get()` with no error. With nothing else scheduled the run ends quietly (§9.6.1); with a clock or a watchdog it runs until the watchdog fires."
+  },
+  {
+    "id": "isv5-sem-7",
+    "question": "Do `p.kill()`, `disable` or `disable fork` return the semaphore keys a process holds?",
+    "answer": "No. They stop the process before its `put()` runs (§9.6.2, §9.6.3, §9.7), and SystemVerilog has no try/finally. The code that kills a holder must restore its keys."
+  },
+  {
+    "id": "isv5-sem-8",
+    "question": "Process A takes `s1` then `s2`; process B takes `s2` then `s1`. What can happen, and what is the usual fix?",
+    "answer": "A lock-order deadlock: each holds one key and waits forever for the other's. Make every process take the semaphores in one global order (`s1`, then `s2`); when that is impossible, take all or nothing with `try_get()`, release and a random back-off."
+  },
+  {
+    "id": "isv5-sem-9",
+    "question": "Why is one `get(2)` safer than two `get(1)` calls on a `new(2)` semaphore?",
+    "answer": "`get(2)` takes both keys in one step or waits holding nothing. Two processes that each call `get(1)` twice can each hold one key and wait forever for a second."
+  },
+  {
+    "id": "isv5-sem-10",
+    "question": "How do you check a semaphore's key count at the end of a test?",
+    "answer": "No method reads it (Annex G.3). `try_get(N)` must succeed (no leak), then `try_get(1)` must fail (no surplus key); then `put(N)` restores the count."
+  },
+  {
+    "id": "isv5-sem-11",
+    "question": "What is the difference between starvation and deadlock?",
+    "answer": "In a deadlock nobody in the cycle can run. In starvation one process waits indefinitely while others keep running, for example a `try_get()` poller under constant contention, or a `get(2)` passed over by a stream of `get(1)` requests."
+  },
+  {
+    "id": "isv5-sem-12",
+    "question": "Which semaphore methods can a function or a `final` procedure call?",
+    "answer": "`put()` and `try_get()`, which are functions. `get()` is a task, and a function cannot call a task (§13.4); a `final` procedure allows only what a function allows (§9.2.3)."
+  },
+  {
+    "id": "isv5-sem-13",
+    "question": "How do you draw the wait-for graph of a stuck semaphore bench, and what does a loop mean?",
+    "answer": "Draw an arrow from each blocked process to the semaphore it waits for, and from each semaphore to the process that holds its key. With one-key semaphores a loop is a deadlock, and an arrow to a holder that has returned or been killed is a leaked key."
+  },
+  {
+    "id": "isv5-sem-14",
+    "question": "Who returns a credit that a requester took from a `credits` semaphore?",
+    "answer": "Whoever finishes the request, usually the response process; that is legal because keys have no owner. On a path where no response will come, such as a refused request, the requester must return the credit itself."
   }
 ]

@@ -1,401 +1,1044 @@
 ---
 title: "F2C: Procedural Code and Flow Control"
-description: "Master the procedural heart of SystemVerilog—initial/always/final blocks, flow control, and assignment semantics that drive every testbench."
+description: "Choose the right procedure and assignment, predict blocking and nonblocking results, and write fork/join threads with race-safe timeouts."
 flashcards: "F2C_Procedural_Constructs"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
-import { InteractiveCode, Quiz, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
-import ProceduralBlocksSimulator from '@/components/animations/ProceduralBlocksSimulator';
-import EventRegionGame from '@/components/visuals/EventRegionGame';
-
 ## Quick Take
-- **What it is:** Procedural constructs are SystemVerilog’s sequential code paths—`initial`, `always`, `final`, loops, and conditionals—that choreograph stimulus and checking.
-- **Why it matters:** Misusing blocking vs. non-blocking assignments or mis-scoping procedural code leads to race conditions, false failures, and weeks of lost debug time.
-- **The Analogy:** Picture a stage production: `initial` is the stage manager’s countdown, `always_ff` and `always_comb` are the actors following scripted cues, and flow control is the choreography keeping every move in sync.
 
-> **Visual cue:** This page pairs simulators, code overlays, and animated timelines with the narrative so you can *see* how procedural elements run frame by frame.
+- **What it is:** **Procedural code** runs statement by statement inside a **procedure**: an `initial`, `always`, `always_comb`, `always_ff`, `always_latch` or `final` block (IEEE 1800-2023 §9.2). Procedures run concurrently. Inside one, you assign with blocking (`=`) or nonblocking (`<=`) assignments, wait with timing controls (`#`, `@`, `wait`), and split work into parallel threads with `fork`.
+- **Why it matters:** Every RTL model and every testbench is built from procedures. Pick the wrong procedure or assignment and your design and testbench race each other, so a test can pass on one simulator and fail on another. Misjudge when forked threads start and stop, and a timeout kills the wrong thread or leaves threads running.
+- **The Analogy:** A kitchen during service. Each procedure is a cook working down one recipe card in order. A timing control is the cook pausing for a timer or for the order bell. A nonblocking assignment is a plate put on the pass: cooks still reading this round's orders see the old plates, and all the new plates appear together afterwards. `fork` hands steps to helper cooks. *Where it breaks:* cooks who hear the same bell start in no promised order (§4.7), and a helper you fork does not start until you yourself stop to wait or finish (§9.3.2). A real helper would start at once.
+
+**You will be able to:**
+1. Choose `initial`, `always`, `always_comb`, `always_ff`, `always_latch` or `final`, and `=` or `<=`, for a given RTL or testbench job, and justify the choice.
+2. Predict what `$display` and `$strobe` print when blocking and nonblocking assignments execute in the same time slot.
+3. Predict when the parent process resumes after `fork … join`, `join_any` and `join_none`, and when the children start running.
+4. Write an isolated per-transaction timeout with `fork … join_any` and `disable fork`.
+5. Debug the fork-in-a-loop capture bug and a `disable fork` that kills a long-lived monitor.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
-### Watch procedures run over simulation time
+This module has two lessons. This one covers procedures, assignments, timing controls and threads. The next one, [Procedural Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/flow-control), covers decisions (`if`, `case`) and loops. Each section below starts with the core idea and a picture, then adds the detail you need in daily work.
 
-`initial` and every `always` procedure start together at time 0, in no promised order (IEEE 1800-2023 §9.2). An `initial` runs its statements once, an `always` loops forever, and a `final` runs once when simulation ends. Pick a program, predict what it prints, then step through it: watch each procedure's lane, and the region badge on every `<=` update.
+### Procedures over simulation time
 
-<ProceduralBlocksSimulator />
+A **procedure** is a block of statements that the simulator runs as its own **process** (§9.5). Three kinds matter first:
 
-What the four programs show:
+- `initial` starts at time 0, runs its statements once, and ends (§9.2.1).
+- `always` starts at time 0 and repeats forever (§9.2.2). It must contain a timing control. Without one it loops at time 0 and time never advances: the standard's own example, `always areg = ~areg;`, is a zero-delay infinite loop (§9.2.2.1).
+- `final` runs once, when the simulation ends through an explicit or implicit `$finish`. It takes no simulation time and may contain only statements that a function may contain, such as `$display` (§9.2.3).
 
-- `always @(posedge clk)` sleeps between rising edges. Its `count <= count + 1` lands in the **NBA region of the same time step** as the edge, never at a later time.
-- In the swap program, `$display` prints the old values because the `<=` updates have not landed yet; `$strobe` waits for the end of the time step and prints the swapped values.
-- Delays inside `fork … join` all count from the moment the fork starts.
-- `@(posedge ready)` waits for a *new* edge; `wait (ready)` passes at once if `ready` is already 1.
+All `initial` and `always` procedures start at time 0 **in no promised order** (§9.2). Never write code that needs one `initial` to run before an `always`.
 
-### Timeline of a Simulation Tick
+**Predict first.** The simulator below opens on a program with a clock, a counter, a test that calls `$finish` at 22 ns, and a `final` report. Decide what the `final` procedure prints, and when, before you step through it.
 
-SystemVerilog simulators run every timestep through distinct event regions. Internalizing this timeline eliminates the feeling that the tool is acting randomly.
+<ProceduralBlocksSimulator scenario="procedures" />
 
-| Region | What lands here | Debug cue |
-| --- | --- | --- |
-| **Preponed** | Value samples for concurrent assertions and clocking-block inputs (read-only) | Assertions see the values from *before* the edge. |
-| **Active** | `initial`/`always` processes, blocking assignments (`=`), right side of `<=` | Watch waveform edges jump immediately. |
-| **Inactive** | Processes resumed after `#0` | Rare today; a `#0` "fix" only moves a race here. |
-| **NBA** | Updates from non-blocking assignments (`<=`) | Values "snap" to their new state *after* all Active code finishes. |
-| **Observed** | Concurrent assertions are evaluated (on Preponed samples) | Assertion failures report on the edge, using pre-edge values. |
-| **Reactive / Re-NBA** | Program-block code; clocking-block drives land in Re-NBA | Testbench drives arrive after design updates. |
-| **Postponed** | `$strobe` and `$monitor` output (read-only) | Prints settled end-of-slot values. |
+What the trace showed:
 
-`final` blocks are not in this table: they run once when simulation ends (IEEE 1800-2023 §9.2.3), not in a time-slot region. F3B and F3C build this ladder step by step.
+- The counter lane sleeps between rising clock edges (5 ns and 15 ns), so `count` is 2 when the test ends the run at 22 ns.
+- Each `count <= count + 1` lands in the NBA region **of the same time slot** as its clock edge, never at a later time. The section on assignments below explains why.
+- `final` runs exactly once, at 22 ns, the moment `$finish` ends the run, and takes no simulation time.
 
-### Challenge: The Scheduler Game
-<EventRegionGame />
+Which procedure for which job:
 
-### The Golden Rule: Blocking vs. Non-Blocking
-One of the most common sources of race conditions is using the wrong assignment type.
+| Job | Procedure | Assignments |
+|---|---|---|
+| Stimulus that runs once: reset, a test sequence | `initial` | `<=` for signals the design reads; `=` for the bench's own variables |
+| Clock generator | `always #5 clk = ~clk;` | `=`: the clock's own change is the edge every flop waits for |
+| Flip-flops | `always_ff @(posedge clk ...)` | `<=` |
+| Combinational logic | `always_comb` | `=` |
+| A latch you really want | `always_latch` | `<=` |
+| End-of-run summary | `final` | none: `$display` only |
 
-<Card className="my-6 border-amber-400/40 bg-amber-500/5">
-  <CardHeader>
-    <CardTitle>Assignment Semantics (IEEE 1800-2023 §10.4)</CardTitle>
-  </CardHeader>
-  <CardContent className="grid gap-4 md:grid-cols-2 text-sm">
-    <div>
-      <p className="font-semibold text-amber-700 dark:text-amber-300">Blocking (`=`)</p>
-      <p className="italic text-xs mb-2">"Do this NOW."</p>
-      <ul className="list-disc pl-5 space-y-1">
-        <li>Executes sequentially.</li>
-        <li>Blocks the process until complete.</li>
-        <li>**Use for:** Combinational logic (`always_comb`), testbench variables, and functions.</li>
-      </ul>
-    </div>
-    <div>
-      <p className="font-semibold text-emerald-700 dark:text-emerald-300">Non-Blocking (`<=`)</p>
-      <p className="italic text-xs mb-2">"Schedule this for LATER."</p>
-      <ul className="list-disc pl-5 space-y-1">
-        <li>Schedules update for the NBA region.</li>
-        <li>Allows parallel blocks to read old values safely.</li>
-        <li>**Use for:** Sequential logic (`always_ff`) and clock-driven stimulus.</li>
-      </ul>
-    </div>
-  </CardContent>
-</Card>
+### Choosing an RTL procedure: always_comb, always_ff, always_latch
 
-### Interactive Core Patterns
-<InteractiveCode
-  language="systemverilog"
-  fileName="procedural_constructs.sv"
-  code={`
-logic clk, reset_n, d_in, q_out;
+For RTL, the plain `always` has three specialized forms. They state your intent, and the tool enforces rules that catch mistakes:
 
-// Sequential region: non-blocking keeps flip-flops in sync
-always_ff @(posedge clk or negedge reset_n) begin
-  if (!reset_n)
-    q_out <= 1'b0;
-  else
-    q_out <= d_in;
-end
+| Procedure | Models | Rules the tool enforces |
+|---|---|---|
+| `always_comb` | combinational logic, with `=` | Sensitive to what it reads, apart from variables it declares or writes itself (§9.2.2.2.1). Runs once at time 0, after all `initial` and `always` procedures have started. No other process may write its outputs (§9.2.2.2). No blocking timing controls or forks (§9.2.2.2.2). |
+| `always_ff` | flip-flops, with `<=` | Exactly one event control and no blocking timing controls. No other process may write its outputs (§9.2.2.4). |
+| `always_latch` | latches, with `<=` | The `always_comb` rules, with tool checks for latch behaviour instead of combinational behaviour (§9.2.2.3). |
 
-// Combinational region: blocking to model logic equations
-logic [2:0] state_next;
-always_comb begin
-  unique case (q_out)
-    1'b0: state_next = 3'b001;
-    1'b1: state_next = 3'b010;
-    default: state_next = 3'b000;
-  endcase
-end
+Tools *should* also warn when an `always_comb` body infers a latch, or an `always_ff` body does not describe flip-flops (§9.2.2.2, §9.2.2.4). Those warnings are tool-dependent; the single-writer and timing-control rules are language rules.
 
-// Testbench stimulus using initial + fork/join_none
-initial begin
-  reset_n = 0;
-  d_in = 0;
-  #10 reset_n = 1;
-  fork
-    begin // drive pattern
-      repeat (5) begin
-        #5 d_in = $random;
-      end
-    end
-    begin // monitor
-      forever @(posedge clk) $display("time=%0t q_out=%0b", $time, q_out);
-    end
-  join_none
-end
+**`always_comb` is not `always @*`.** Both infer a sensitivity list, but they differ in five ways (§9.2.2.2.2). The one you will meet first is time 0:
 
-final begin
-  $display("Simulation complete. Final state=%0b", q_out);
-end
-  `}
-  explanationSteps={[
-    { target: "1-8", title: "Sequential Rules", explanation: "`always_ff` with non-blocking (`<=`) mirrors flip-flop behavior and keeps updates aligned with the clock." },
-    { target: "10-16", title: "Combinational Intent", explanation: "`always_comb` and blocking assignments evaluate instantly, catching missing sensitivity list issues automatically." },
-    { target: "18-34", title: "Concurrency with Fork/Join", explanation: "Testbenches routinely spawn concurrent threads—one drives stimulus, another checks results—using `fork ... join_none`." },
-    { target: "36-38", title: "Graceful Shutdown", explanation: "`final` blocks run once at simulation end—perfect for summaries, coverage dumps, or resource cleanup." }
+```systemverilog
+// snippet
+logic a = 1'b1;          // declaration initializer: set before any procedure starts
+logic y1, y2;
+
+always @* y1 = a;        // waits for the first change of a
+always_comb y2 = a;      // also runs once at time 0
+
+initial #10 a = 1'b0;
+```
+
+| Time | `a` | `y1` (`always @*`) | `y2` (`always_comb`) | Why |
+|---|---|---|---|---|
+| 0 | 1 | x | 1 | The initializer happened before any procedure was waiting, so `@*` never saw a change (§6.8). `always_comb` runs once at time 0. |
+| 10 | 0 | 0 | 0 | The change of `a` wakes both. |
+
+The other four differences: `always_comb` also reacts to variables read inside functions it calls (`@*` sees only their arguments); it forbids other writers to its outputs; it forbids blocking timing controls and forks; and it reacts to expressions in immediate assertions inside the functions it calls (§9.2.2.2.2).
+
+#### When you really want a latch
+
+`always_latch` models a transparent latch: the output follows the input while the enable is 1 and holds while it is 0.
+
+```systemverilog
+// snippet
+always_latch
+  if (en) q <= d;        // transparent while en is 1; q holds while en is 0
+```
+
+A latch can also appear by accident. An `always_comb` that leaves a variable unassigned on some path must remember the old value, and remembering is a latch; tools should warn about it (§9.2.2.2). Assign every output at the top of an `always_comb` block, as the state machine below does, and no path can leave it unassigned.
+
+### Blocking and nonblocking assignments
+
+A **blocking assignment** (`=`) updates its variable before the next statement in the same `begin … end` runs (§10.4.1). A **nonblocking assignment** (`<=`) works in two steps (§10.4.2):
+
+1. It evaluates the right-hand side now, in the **Active region**, where procedure statements run.
+2. It updates the variable later in the **same time slot**, in the **NBA region**.
+
+So every process that runs in this time slot before the NBA region still reads the old value. `$strobe`, which prints in the Postponed region at the end of the time slot, sees the new value, and so does any process the update wakes.
+
+**Predict first.** The simulator opens on the swap program. At t = 10 ns one process runs `a <= b; b <= a;` with a = 1 and b = 2, then calls `$display`, then `$strobe`, then prints again 1 ns later. Predict the first two lines and step through. Then switch the assignments to `=` and predict again.
+
+<ProceduralBlocksSimulator scenario="nba-swap" />
+
+What the trace showed:
+
+- With `<=`, `$display` prints a=1 b=2: both right-hand sides were read and neither update has landed yet. `$strobe` prints a=2 b=1 at the same t = 10 ns.
+- With `=`, the first statement overwrites `a` at once, so `b = a` copies 2 back. Both lines print 2 2, and there is no swap.
+- The misconception this removes: *"a nonblocking assignment updates at a later simulation time."* It updates later **in the same time slot**. Only an intra-assignment delay such as `q <= #1 d;` moves an update to a later time (see Push Further).
+
+#### The race that nonblocking assignments prevent
+
+Inside one process, statement order is fixed (§4.6), so `=` and `<=` both behave predictably there. Races come from **two processes** woken by the same event, which the simulator may run in either order (§4.7). The classic case is a two-stage shift register:
+
+```systemverilog
+// snippet
+// Racy: stage A and stage B wake on the same edge, in no promised order.
+always @(posedge clk) q1 = d;        // stage A
+always @(posedge clk) q2 = q1;       // stage B
+
+// Race-free: both stages read old values, then both update in the NBA region.
+always_ff @(posedge clk) q1 <= d;
+always_ff @(posedge clk) q2 <= q1;
+```
+
+<TimingDiagram
+  title="Two-stage shift register: nonblocking versus blocking"
+  caption="Column k is the value sampled at rising edge k. The bench drives d with a nonblocking assignment just after each edge, and q1 is the same in every version. q2 NBA is the race-free version: q2 is d delayed by two edges. q2 A→B is the blocking version when stage A runs first: q2 already equals q1, so one stage of delay is lost. q2 B→A is the blocking version when stage B runs first. It looks correct, which is why this bug survives code review."
+  edges={5}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "d", kind: "bit", values: [1, 0, 1, 1, 0] },
+    { name: "q1", kind: "bit", values: [undefined, 1, 0, 1, 1] },
+    { name: "q2 NBA", kind: "bit", values: [undefined, undefined, 1, 0, 1] },
+    { name: "q2 A→B", kind: "bit", values: [undefined, 1, 0, 1, 1] },
+    { name: "q2 B→A", kind: "bit", values: [undefined, undefined, 1, 0, 1] }
   ]}
+  markers={[{ edge: 2, tone: "fail", label: "Stage A first: q2 already equals q1, so one stage of delay is lost" }]}
 />
 
-### Fork, join, and cleaning up threads
+The rules that follow from this picture:
 
-A `fork` turns each statement inside it into its own process. The join keyword decides when the parent continues: `join` waits for every child, `join_any` for the first one to finish, and `join_none` not at all (IEEE 1800-2023 §9.3.2). One rule surprises almost everyone: **spawned processes do not start until the parent blocks or finishes**, whichever join you use.
+- **Flip-flops use `<=`.** Every flop reads in the Active region before any flop updates.
+- **Before F4C, testbench writes to design inputs use `<=`**, or happen on the opposite clock edge. From F4C on, they go through a clocking block.
+- **A reset applied at time 0 uses `<=`.** The update lands after every procedure has started and is waiting (see Push Further).
+- **One writer per variable.** Two processes that write one variable at the same edge race even with `<=`: the last update performed wins. `always_comb` and `always_ff` make a second writer an error (§9.2.2.2, §9.2.2.4).
+- **`=` is right for values local to one process:** combinational logic in `always_comb`, and a testbench's own counters and temporaries.
 
-Predict when the parent continues for each join keyword, then step through the lanes. Save *fork in a loop* for last: it is the most common fork bug in real testbenches.
+F3C traces this race region by region with an interactive scheduler: [Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index).
 
-<ForkJoinVisualizer />
+### Timing controls: #, @ and wait
+
+A **timing control** suspends a process until something happens (§9.4). There are three kinds:
+
+| Control | Waits for | Example |
+|---|---|---|
+| `#d` (delay) | d time units of the current module. An x or z delay counts as 0 (§9.4.1). | `#10 rst_n <= 1'b1;` |
+| `@(...)` (event) | a change, an edge or a named event (§9.4.2) | `@(posedge clk);` |
+| `wait (expr)` (level) | nothing if `expr` is already true; otherwise until it becomes true (§9.4.3) | `wait (ready);` |
+
+Time units and precision belong to F3A: [Simulation Semantics](/curriculum/T1_Foundational/F3A_Simulation_Semantics/index).
+
+Event controls in more detail (§9.4.2):
+
+- `posedge` and `negedge` follow the edge table below, and `edge` means either one. For a vector, only changes of the least significant bit count as edges.
+- `@(a or b)` and `@(a, b)` mean the same thing: either event wakes the process (§9.4.2.1).
+- `@*` waits on every variable the statement reads (§9.4.2.2). For combinational logic, `always_comb` is better.
+- `@(posedge clk iff en)` wakes only on edges where `en` is true at that moment (§9.4.2.3).
+
+| From → to | 0 | 1 | x | z |
+|---|---|---|---|---|
+| **0** | no edge | posedge | posedge | posedge |
+| **1** | negedge | no edge | negedge | negedge |
+| **x** | negedge | posedge | no edge | no edge |
+| **z** | negedge | posedge | no edge | no edge |
+
+This is Table 9-2 of the standard. Note that x → 0 is a negedge: an active-low reset that starts as x and is driven to 0 at time 0 triggers `negedge rst_n`, but only in a flop that is already waiting for it.
+
+**Predict first.** The simulator opens on the edge-versus-level program: `ready` rises at 10 ns, and two processes start waiting for it at 20 ns, one with `@(posedge ready)` and one with `wait (ready)`. Which ones get through?
+
+<ProceduralBlocksSimulator scenario="edge-vs-level" />
+
+What the trace showed:
+
+- `wait (ready)` passes at once. It checks a level, and `ready` is already 1.
+- `@(posedge ready)` never passes. The edge happened at 10 ns, before the process started waiting, and an event control does not remember past events.
+- In a testbench, this is the driver that hangs because it waits for an edge of a handshake signal that is already high. Wait for a level with `wait`, or sample the signal at a clock edge.
+
+A timing control can also sit inside an assignment, as in `a = #5 b;`, which reads `b` now and writes `a` later (§9.4.5). Push Further covers that form.
+
+### Timeline of a Simulation Tick (preview of F3B)
+
+Everything the simulator does at one simulation time is a **time slot**. Inside it, the simulator works through ordered **regions**, and loops back whenever new work appears (§4.4). This module needs four of them:
+
+| Region | What runs there | Where you met it |
+|---|---|---|
+| Active | procedure statements, blocking assignments, the right-hand side of `<=` | almost all of your code |
+| Inactive | processes resumed after `#0` | a `#0` "fix" only moves a race here (F3C) |
+| NBA | the updates of nonblocking assignments | `q <= d` lands here, in the same time slot |
+| Postponed | `$strobe` and `$monitor` output; nothing may change any more | `$strobe` prints settled values |
+
+This table is a simplified preview. [F3B: Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) adds Preponed, Observed, Reactive, Re-Inactive and Re-NBA, plus the PLI regions, and [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) traces delta cycles through all of them. `final` procedures belong to no region: they run once, when the simulation ends (§9.2.3).
+
+#### Challenge: the scheduler game (optional preview)
+
+The game places events on the full nine-region ladder. Some of its questions involve clocking blocks and program blocks, which arrive in F3B and F4C. Answer the questions about blocking writes, nonblocking updates and `$strobe` now; treat the rest as a preview and come back after F3B.
+
+<EventRegionGame />
+
+Debrief: three answers matter for this module. Blocking writes, like all procedure statements, run in Active. Nonblocking updates land in NBA, in the same time slot. `$strobe` and `$monitor` print in Postponed. Every other placement is F3B's job.
+
+### Blocks: begin-end and fork-join
+
+Statements are grouped into blocks (§9.3):
+
+- A **sequential block**, `begin … end`, runs its statements in order. Each delay counts from the previous statement (§9.3.1).
+- A **parallel block**, `fork … join`, turns each statement into its own process. Every delay counts from the moment the block starts (§9.3.2).
+
+```systemverilog
+// snippet
+initial begin             // sequential: delays add up
+  #5 a = 1;               // t = 5
+  #5 b = 2;               // t = 10
+end
+
+initial fork              // parallel: every delay counts from the fork's start
+  #5  c = 1;              // t = 5
+  #10 d = 2;              // t = 10
+join
+```
+
+**Predict first.** The simulator opens on the fork-timing program: after 5 ns, a `fork … join` starts two branches with delays of 5 ns and 10 ns. When does "join done" print?
+
+<ProceduralBlocksSimulator scenario="fork-timing" />
+
+Debrief: "join done" prints at 15 ns. Both branches start at 5 ns, so `a` is set at 10 ns and `b` at 15 ns, and `join` waits for the later one. Adding the delays one after another (20 ns) is the sequential-block rule, not the parallel one.
+
+Details you will need in real code:
+
+- **Names and labels.** `begin : name … end` names a block (§9.3.4), and `name: begin … end` is the same thing written as a statement label (§9.3.5). A name lets you refer to the block's variables hierarchically and target the block with `disable`.
+- **Local variables.** Declarations at the top of a block are local to it. In a module's `initial` or `always`, they are static, one copy shared by every pass, unless you write `automatic`. A declaration with an initializer there needs an explicit `static` or `automatic` (§6.21).
+- **What creates a process.** Each `initial`, `always`, `always_comb`, `always_ff`, `always_latch` and `final` procedure, each statement of a fork, and each dynamic process (§9.5). A `begin … end` does **not**: it runs inside the process that reaches it. `fork begin s1; s2; end join` is one child process that runs two statements in order.
+
+### Fork and join
+
+The keyword that closes a fork decides when the **parent**, the process that executed the fork, continues (§9.3.2, Table 9-1):
+
+| Keyword | The parent continues |
+|---|---|
+| `join` | when every child has finished |
+| `join_any` | when the first child finishes; the others keep running |
+| `join_none` | at once; every child keeps running |
+
+One rule surprises almost everyone: **spawned processes do not start until the parent blocks or finishes**, whichever keyword you use (§9.3.2).
+
+**Predict first.** The visualizer opens on a parent that forks A (`#10`), B (`#30`) and C (`#20`) and then prints "parent continues". Predict the print time for `join`, `join_any` and `join_none`. Then switch to *fork in a loop*, the most common fork bug in real testbenches.
+
+<ForkJoinVisualizer scenario="join-variants" scenarios={["join-variants", "fork-loop-capture"]} />
 
 What the lanes showed:
 
-- With `join_none`, the parent prints before its children have even started. They run at its next blocking statement (`#`, `@`, `wait`) or when it ends.
-- A `for` loop has **one** loop variable. Children forked with `join_none` run after the loop ends, so they all read its final value. Declare `automatic int k = i;` inside the `fork` itself to give each child its own copy.
-- `wait fork` waits for the calling process's immediate children only, not for processes those children spawned (§9.6.1).
-- `disable fork` kills **every** descendant of the calling process, not just the children of the last fork (§9.6.3). A monitor forked earlier by the same process dies too.
-- `disable <block_name>` uses the block's static name, so it ends that block in **every** process executing it (§9.6.2). In a task called by several threads at once, one call's cleanup kills the others' threads.
-
-The safe cleanup idiom gives the race its own parent process, so `disable fork` has nothing else to reach:
+- `join_none`: the parent prints at 0 ns, before A, B and C have even started. They start at the parent's next blocking statement (`#`, `@`, `wait`) or when it ends.
+- `join_any`: the parent resumes at 10 ns, when A ends. B and C keep running until something stops them (next section).
+- `join`: the parent resumes at 30 ns, when the slowest child, B, ends.
+- **Fork in a loop.** A `for` loop has one loop variable. `join_none` children start only after the loop has ended, so all of them read its final value: 3, 3, 3. Declaring `automatic int k = i;` in the fork itself gives each child its own copy, because declarations at the top of a fork are initialized when the fork executes, before its children are spawned (§9.3.2). The same declaration inside a child's `begin … end` runs when the child starts, which is too late.
 
 ```systemverilog
-task automatic wait_for_response(int timeout_ns);
-  fork begin                 // isolation wrapper: a new parent for the race
+// snippet
+for (int i = 0; i < 3; i++)
+  fork
+    automatic int k = i;      // set when the fork runs, before its child exists
+    $display("k = %0d", k);   // the three children print 0, 1 and 2
+  join_none
+```
+
+Testbench threads usually call **tasks**: named blocks of statements that may wait for time or events. `task automatic` gives every call its own copy of the task's variables, so concurrent calls do not share them. F2D teaches tasks in full: [Tasks and Functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions).
+
+### Waiting for and cleaning up threads
+
+Three statements control threads that you have forked (§9.6):
+
+- `wait fork;` blocks until every **immediate child** of the calling process has finished. Grandchildren do not count (§9.6.1).
+- `disable fork;` kills **every descendant** of the calling process, not just the children of the last fork. A monitor that the same process forked earlier dies too (§9.6.3).
+- `disable name;` ends the named block or task in **every process** that is executing it (§9.6.2). In a task called by two threads at once, one call's cleanup kills the other call's work.
+
+**Predict first.** The visualizer opens on a test that forks a background monitor, then runs a transfer whose response races a timer with `join_any`, and cleans up with `disable fork`. Predict which processes `disable fork` kills. Then try the *isolation wrapper* variant, the *disable by name* scenario with two concurrent calls, and the *wait fork* scenario.
+
+<ForkJoinVisualizer scenario="timeout-disable-fork" scenarios={["timeout-disable-fork", "named-disable", "wait-fork"]} />
+
+What the lanes showed:
+
+- Plain `disable fork` kills the timer **and the monitor**, because the test forked both. The monitor goes silent with no error.
+- With the isolation wrapper, `disable fork` runs inside a new parent whose only descendants are the response and the timer, so the monitor survives.
+- `disable guard` with two concurrent calls ends both activations of the block, so the second call never prints its response.
+- `wait fork` returns at 20 ns, when the last immediate child ends. It does not wait for the grandchild G.
+
+The safe per-transaction timeout gives the race its own parent process, so `disable fork` has nothing else to reach:
+
+```systemverilog
+// snippet
+// Waits up to timeout time units for rsp_valid to rise. The outer fork gives
+// the race its own parent, so disable fork reaches only these two branches.
+task automatic wait_for_response(input int timeout, output bit timed_out);
+  timed_out = 1'b0;
+  fork begin
     fork
-      @(rsp_seen);           // response wins…
-      #(timeout_ns) $error("response timeout");   // …or the timer does
+      @(posedge rsp_valid);                      // the response wins...
+      begin #(timeout); timed_out = 1'b1; end    // ...or the timer does
     join_any
-    disable fork;            // kills only the losing branch
+    disable fork;                                // kill the losing branch
   end join
 endtask
 ```
 
+`#(timeout)` counts in the module's time unit, so `timeunit 1ns` makes it nanoseconds, and `timed_out` tells the caller which branch won. The same wrapper bounds a `wait fork`: put the threads you want to wait for, and the `wait fork`, inside `fork begin … end join`, and a monitor forked earlier no longer holds it up.
+
 <VisualRecap
   title="Fork, join and cleanup"
-  rule="join waits for all children, join_any for one, join_none for none, and spawned processes start only once the parent blocks. disable fork kills every descendant of the process that calls it."
-  code={`fork begin              // wrapper process
+  rule="join waits for all children, join_any for the first, join_none for none, and forked children start only once the parent blocks or ends. disable fork kills every descendant of the process that calls it."
+  code={`fork begin              // wrapper: a new parent
   fork
-    @(rsp_seen);
-    #100 $error("timeout");
+    @(posedge rsp_valid);
+    #100 timed_out = 1'b1;
   join_any
   disable fork;         // reaches only this race
 end join`}
-  mistake="Calling disable fork from a process that also owns long-lived threads such as monitors, or replacing it with disable <name>, which ends every activation of that block."
+  mistake="Calling disable fork from a process that also owns long-lived threads such as monitors, or replacing it with disable and a block name, which ends every activation of that block."
   inTestbench="Per-transaction timeouts in drivers and sequences: wrap fork … join_any; disable fork; in fork begin … end join."
 >
-  <svg viewBox="0 0 320 150" role="img" aria-label="Parent lane forks three children; join_none continues at once, join_any when the first child ends, join when the last child ends." style={{ width: "100%", maxWidth: 360 }}>
+  <svg viewBox="0 0 320 150" role="img" aria-label="A parent forks three children: A ends at 10, C at 20, B at 30. With join_none the parent resumes at 0, with join_any at 10, when A ends, and with join at 30, when B ends." style={{ width: "100%", maxWidth: 360 }}>
     <text x="8" y="20" fontSize="11" fill="currentColor">parent</text>
     <line x1="60" y1="16" x2="300" y2="16" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
     <text x="8" y="48" fontSize="11" fill="currentColor">A #10</text>
-    <rect x="60" y="40" width="70" height="10" rx="3" fill="rgba(6,182,212,0.55)" />
+    <rect x="60" y="40" width="70" height="10" rx="3" fill="currentColor" fillOpacity="0.3" />
     <text x="134" y="49" fontSize="11" fill="currentColor">✓</text>
     <text x="8" y="72" fontSize="11" fill="currentColor">C #20</text>
-    <rect x="60" y="64" width="140" height="10" rx="3" fill="rgba(6,182,212,0.55)" />
+    <rect x="60" y="64" width="140" height="10" rx="3" fill="currentColor" fillOpacity="0.3" />
     <text x="204" y="73" fontSize="11" fill="currentColor">✓</text>
     <text x="8" y="96" fontSize="11" fill="currentColor">B #30</text>
-    <rect x="60" y="88" width="210" height="10" rx="3" fill="rgba(6,182,212,0.55)" />
+    <rect x="60" y="88" width="210" height="10" rx="3" fill="currentColor" fillOpacity="0.3" />
     <text x="274" y="97" fontSize="11" fill="currentColor">✓</text>
-    <line x1="60" y1="8" x2="60" y2="112" stroke="rgb(245,158,11)" strokeDasharray="3 3" />
-    <line x1="130" y1="8" x2="130" y2="112" stroke="rgb(245,158,11)" strokeDasharray="3 3" />
-    <line x1="270" y1="8" x2="270" y2="112" stroke="rgb(245,158,11)" strokeDasharray="3 3" />
+    <line x1="60" y1="8" x2="60" y2="112" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2 3" />
+    <line x1="130" y1="8" x2="130" y2="112" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2 3" />
+    <line x1="270" y1="8" x2="270" y2="112" stroke="currentColor" strokeWidth="1.5" strokeDasharray="2 3" />
     <text x="40" y="128" fontSize="10" fill="currentColor">join_none</text>
     <text x="112" y="128" fontSize="10" fill="currentColor">join_any</text>
     <text x="258" y="128" fontSize="10" fill="currentColor">join</text>
-    <text x="8" y="145" fontSize="10" fill="currentColor" fillOpacity="0.7">Dashed lines: when the parent resumes</text>
+    <text x="8" y="145" fontSize="10" fill="currentColor" fillOpacity="0.75">Dotted lines: when the parent resumes</text>
   </svg>
 </VisualRecap>
 
-### Common Pitfalls
-- **Mixing assignments:** Never mix `=` and `<=` on the same signal. It creates unpredictable races.
-- **Implicit Latches:** Using `always @(*)` instead of `always_comb` can hide missing default cases, leading to unwanted latches.
-- **Zombie Threads:** Forgetting to terminate `fork/join_none` threads leaves them running forever, potentially hanging the simulation.
-- **The `disable fork` Trap:** `disable fork;` kills *every* descendant of the calling process, including threads it forked long before (§9.6.3). Wrap the fork you want to clean up in its own process (`fork begin … end join`) so `disable fork` only sees that fork's children. Disabling a named block is **not** a safe substitute: it ends every activation of the block, including ones started by other concurrent calls (§9.6.2).
+### Case study: a two-process state machine
 
-## The Forbidden Fruit: `always_latch`
-_When you actually want a latch (which is almost never)._
+Problem: detect the serial pattern `101` on the input `din`, counting overlapping matches, so `10101` contains two. Write it as two processes: an `always_ff` holds the state, and an `always_comb` computes the next state and the output.
 
-SystemVerilog provides `always_latch` to model transparent latches. Unlike flip-flops (`always_ff`), latches pass data through when the enable is high and hold it when low.
+<svg viewBox="0 0 400 222" role="img" aria-label="State diagram of the 101 detector. Reset enters S_IDLE. S_IDLE stays on din 0 and goes to S_GOT_1 on din 1. S_GOT_1 stays on din 1 and goes to S_GOT_10 on din 0. S_GOT_10 goes to S_GOT_1 on din 1 with detected equal to 1, and to S_IDLE on din 0." style={{ width: "100%", maxWidth: 440 }}>
+  <defs>
+    <marker id="f2c-fsm-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
+    </marker>
+  </defs>
+  <circle cx="70" cy="110" r="32" fill="none" stroke="currentColor" strokeWidth="1.5" />
+  <circle cx="200" cy="110" r="32" fill="none" stroke="currentColor" strokeWidth="1.5" />
+  <circle cx="330" cy="110" r="32" fill="none" stroke="currentColor" strokeWidth="1.5" />
+  <text x="70" y="114" fontSize="11" textAnchor="middle" fill="currentColor">S_IDLE</text>
+  <text x="200" y="114" fontSize="11" textAnchor="middle" fill="currentColor">S_GOT_1</text>
+  <text x="330" y="114" fontSize="11" textAnchor="middle" fill="currentColor">S_GOT_10</text>
+  <line x1="6" y1="110" x2="37" y2="110" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#f2c-fsm-arrow)" />
+  <text x="4" y="100" fontSize="10" fill="currentColor">reset</text>
+  <path d="M 58 81 C 46 40, 94 40, 82 81" fill="none" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#f2c-fsm-arrow)" />
+  <text x="70" y="44" fontSize="11" textAnchor="middle" fill="currentColor">0</text>
+  <path d="M 188 81 C 176 40, 224 40, 212 81" fill="none" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#f2c-fsm-arrow)" />
+  <text x="200" y="44" fontSize="11" textAnchor="middle" fill="currentColor">1</text>
+  <line x1="102" y1="110" x2="167" y2="110" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#f2c-fsm-arrow)" />
+  <text x="134" y="102" fontSize="11" textAnchor="middle" fill="currentColor">1</text>
+  <line x1="232" y1="110" x2="297" y2="110" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#f2c-fsm-arrow)" />
+  <text x="264" y="102" fontSize="11" textAnchor="middle" fill="currentColor">0</text>
+  <path d="M 316 139 C 296 172, 234 172, 214 139" fill="none" stroke="currentColor" strokeWidth="2.5" markerEnd="url(#f2c-fsm-arrow)" />
+  <text x="265" y="182" fontSize="10" textAnchor="middle" fill="currentColor">1 / detected = 1</text>
+  <path d="M 330 142 C 320 215, 80 215, 70 142" fill="none" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#f2c-fsm-arrow)" />
+  <text x="200" y="216" fontSize="11" textAnchor="middle" fill="currentColor">0</text>
+</svg>
+
+The same machine as a table (arrow labels are the value of `din`):
+
+| State | `din` = 0 | `din` = 1 |
+|---|---|---|
+| `S_IDLE` | `S_IDLE` | `S_GOT_1` |
+| `S_GOT_1` | `S_GOT_10` | `S_GOT_1` |
+| `S_GOT_10` | `S_IDLE` | `S_GOT_1`, with `detected` = 1 |
 
 ```systemverilog
-always_latch begin
-  if (enable)
-    q <= d;
-  // No 'else' branch! This infers a latch.
+// snippet
+typedef enum logic [1:0] {S_IDLE, S_GOT_1, S_GOT_10} state_t;
+state_t state, state_next;
+
+always_ff @(posedge clk or negedge rst_n) begin   // the only writer of state
+  if (!rst_n) state <= S_IDLE;
+  else        state <= state_next;
+end
+
+always_comb begin
+  state_next = state;      // seed every output: no path can infer a latch
+  detected   = 1'b0;
+  unique case (state)      // no default: an x or illegal state is reported
+    S_IDLE:   if (din)  state_next = S_GOT_1;
+    S_GOT_1:  if (!din) state_next = S_GOT_10;
+    S_GOT_10: begin
+      detected = din;      // Mealy output: depends on the state and on din
+      if (din) state_next = S_GOT_1;   // the final 1 can start the next match
+      else     state_next = S_IDLE;
+    end
+  endcase
 end
 ```
 
-> [!CAUTION]
-> **Avoid Latches**
-> In 99% of digital design, latches are accidental (due to incomplete `if/case` in combinational logic) and cause timing headaches. Only use `always_latch` if you are explicitly designing a clock gating cell or a low-power state retention block. If you see a latch inferred from `always_comb`, it is a bug.
+Each `state_next` assignment names an enum value directly. The shorter `state_next = din ? S_GOT_1 : S_IDLE;` strictly needs a cast: inside an expression, enum names become plain values of the base type, and assigning a plain value to an enum variable requires a cast (§6.19.4). Tools differ in how strictly they enforce that rule, so the `if` form is the portable one.
 
-### Case Study: Sequence Detector FSM
-Put the guidelines into context with a classic problem: detect the bit pattern `101` on a serial input. A clean implementation separates sequential state updates (`always_ff`) from combinational next-state logic.
-
-<InteractiveCode
-  language="systemverilog"
-  fileName="sequence_detector.sv"
-  code={`
-module sequence_detector (
-  input  logic clk,
-  input  logic reset,
-  input  logic din,
-  output logic detected
-);
-
-  typedef enum logic [1:0] {
-    S_IDLE,
-    S_GOT_1,
-    S_GOT_10
-  } state_t;
-
-  state_t state, state_next;
-
-  // Sequential evolution of the state register
-  always_ff @(posedge clk or posedge reset) begin
-    if (reset)
-      state <= S_IDLE;
-    else
-      state <= state_next;
-  end
-
-  // Combinational next-state logic
-  always_comb begin
-    state_next = state;
-    detected = 1'b0;
-    unique case (state)
-      S_IDLE:   state_next = din ? S_GOT_1  : S_IDLE;
-      S_GOT_1:  state_next = din ? S_GOT_1  : S_GOT_10;
-      S_GOT_10: begin
-        detected   = din;
-        state_next = din ? S_GOT_1 : S_IDLE;
-      end
-    endcase
-  end
-
-endmodule
-  `}
+<TimingDiagram
+  title="The 101 detector on the worked bench's input pattern"
+  caption="Column k is rising edge k of the worked bench in Make It Work (t = 25 + 10k ns), which samples input bit k + 1. Each value is the one sampled at that edge. detected is 1 exactly when state is S_GOT_10 and din is 1. Edge 4 shows an overlap: the 1 that completes the first match starts the second."
+  edges={8}
+  cycleWidth={60}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "din", kind: "bit", values: [1, 0, 1, 0, 1, 1, 0, 1] },
+    { name: "state", kind: "bus", values: ["S_IDLE", "S_GOT_1", "S_GOT_10", "S_GOT_1", "S_GOT_10", "S_GOT_1", "S_GOT_1", "S_GOT_10"] },
+    { name: "detected", kind: "bit", values: [0, 0, 1, 0, 1, 0, 0, 1] }
+  ]}
+  markers={[
+    { edge: 2, tone: "pass", label: "Bits 1 to 3 are 1 0 1: detected" },
+    { edge: 4, tone: "pass", label: "Bits 3 to 5 are 1 0 1: the overlapping second match" },
+    { edge: 7, tone: "pass", label: "Bits 6 to 8 are 1 0 1: detected" }
+  ]}
 />
 
-**What to notice:**
-- State updates use non-blocking assignments in `always_ff`, mirroring flip-flop behavior.
-- The combinational block seeds `state_next` and `detected` with safe defaults, preventing unintended latches.
-- Using `unique case` catches missing branches while documenting intent for tools and reviewers.
+What to notice:
+
+- **One writer, the right assignment.** `state` is written only by the `always_ff`, with `<=`. The `always_comb` uses `=` and writes only `state_next` and `detected`.
+- **Seeded outputs.** `state_next` and `detected` get a value before the `case`, so every path assigns them, even when `state` is x. No latch can be inferred.
+- **`unique case` without a `default`.** A `state` that matches no item is reported at run time. Before reset, `state` is x (the default value of a 4-state enum), but a report appears only if `state` is still x when time slot 0 ends. The bench in Make It Work resets with `<=` at time 0, so `state` is legal by then and nothing is reported. [Procedural Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/flow-control) explains the timing of these reports.
+
+### Pitfalls and misconceptions
+
+| Misconception | Why it is wrong |
+|---|---|
+| "A nonblocking assignment updates at a later simulation time." | It updates in the NBA region of the same time slot; `$strobe` at that time already sees the new value (§10.4.2). |
+| "`join_none` children start running immediately." | They start only when the parent blocks or finishes (§9.3.2). |
+| "`disable fork` kills only the children of the last fork." | It kills every descendant of the calling process, including a monitor forked earlier (§9.6.3). |
+| "Wrapping the race in `begin … end` isolates `disable fork`." | A `begin … end` creates no process (§9.5). You need `fork begin … end join`. |
+| "Disabling a named block is a safe, targeted cleanup." | It ends that block in every process executing it (§9.6.2). |
+| "Never mix `=` and `<=` in one block." | Inside one process the order is fixed (§4.6). The real rules are one writer per variable, and `<=` for anything another process reads at the same edge. |
+| "`initial` blocks run before `always` blocks." | There is no implied order at time 0 (§9.2). |
+| "`always_comb` is a new spelling of `always @*`." | They differ in five ways, starting with time 0 (§9.2.2.2.2). |
+| "A `forever` loop with delays hangs the simulation." | It keeps the run alive until `$finish`; only a loop with no timing control stops time (§12.7.6). A bench that waits for events to run out never ends, so end it with `$finish`. |
+
+### Recap
+
+- Procedures are concurrent processes that start at time 0 in no promised order; `final` runs once at the end, in zero time.
+- `always_comb` (with `=`), `always_ff` (with `<=`) and `always_latch` state your intent and are checked; `always_comb` also runs once at time 0.
+- `<=` updates later in the same time slot. Flops, testbench writes to design inputs and time-0 resets use it.
+- `#` waits for time, `@` for a change or edge that happens while you wait, and `wait` for a level.
+- Forked children start when the parent blocks. `join`, `join_any` and `join_none` decide when the parent continues. Isolate each timeout with `fork begin fork … join_any; disable fork; end join`.
 
 ## Make It Work
 
+### Worked example: a self-checking bench with a guarded watchdog
+
+This complete file puts every idea on this page to work: the two-process detector from the case study, a clock, a time-0 reset, stimulus driven with `<=`, a long-lived monitor, a watchdog isolated with the wrapper idiom, and a `final` summary. Read it once top to bottom, then follow the numbered walk-through.
+
+```systemverilog
+// compile
+// seq_detect_tb.sv: a 101 detector and a self-checking bench in one file.
+
+module seq_detector (
+  input  logic clk,
+  input  logic rst_n,      // active-low asynchronous reset
+  input  logic din,
+  output logic detected    // 1 while state is S_GOT_10 and din is 1 (Mealy)
+);
+  timeunit 1ns;            // if one module in a design declares a time unit,
+  timeprecision 1ps;       // every module must (§3.14.2.3)
+
+  typedef enum logic [1:0] {S_IDLE, S_GOT_1, S_GOT_10} state_t;
+  state_t state, state_next;
+
+  always_ff @(posedge clk or negedge rst_n) begin   // the only writer of state
+    if (!rst_n) state <= S_IDLE;
+    else        state <= state_next;
+  end
+
+  always_comb begin
+    state_next = state;    // seed every output: no path can infer a latch
+    detected   = 1'b0;
+    unique case (state)    // no default: an x or illegal state is reported
+      S_IDLE:   if (din)  state_next = S_GOT_1;
+      S_GOT_1:  if (!din) state_next = S_GOT_10;
+      S_GOT_10: begin
+        detected = din;    // Mealy output
+        if (din) state_next = S_GOT_1;
+        else     state_next = S_IDLE;
+      end
+    endcase
+  end
+endmodule
+
+module tb_top;
+  timeunit 1ns;
+  timeprecision 1ps;
+
+  localparam logic [7:0] PATTERN = 8'b1010_1101;  // sent MSB first: 1 0 1 0 1 1 0 1
+
+  logic clk = 1'b0;        // set before any procedure starts: no process sees a change
+  logic rst_n, din, detected;
+  int   pass_count, fail_count, detect_count;     // 2-state: they start at 0
+
+  seq_detector dut (.clk(clk), .rst_n(rst_n), .din(din), .detected(detected));
+
+  always #5 clk = ~clk;    // rising edges at 5, 15, 25, ... ns
+
+  initial begin
+    // A long-lived monitor, forked by this process: it counts detections.
+    fork
+      forever @(posedge clk) if (detected === 1'b1) detect_count++;
+    join_none
+
+    // The test body races a watchdog. The wrapper gives the race its own
+    // parent, so disable fork kills the loser and cannot reach the monitor.
+    fork begin
+      fork
+        drive_and_check();
+        begin
+          #1us;
+          fail_count++;
+          $error("watchdog: drive_and_check did not finish within 1 us");
+        end
+      join_any
+      disable fork;
+    end join
+
+    @(negedge clk);        // let every process finish its work for the last edge
+    $finish;
+  end
+
+  // Drives PATTERN one bit per clock and checks detected against a model.
+  task automatic drive_and_check();
+    logic [1:0] hist = 2'b00;   // the two previous input bits: the model's state
+    logic       expected;
+    rst_n <= 1'b0;              // <= at time 0: lands after the DUT flop is waiting
+    din   <= 1'b0;
+    repeat (2) @(posedge clk);
+    rst_n <= 1'b1;              // release just after an edge, never on one
+    for (int i = 7; i >= 0; i--) begin
+      din <= PATTERN[i];        // changes just after the edge, like a flop output
+      @(posedge clk);           // the DUT samples din here; detected is stable
+      expected = (hist == 2'b10) && PATTERN[i];
+      if (detected !== expected) begin
+        fail_count++;
+        $error("bit %0d: detected=%b, expected %b", 8 - i, detected, expected);
+      end else begin
+        pass_count++;
+      end
+      if (expected) $display("t=%0d ns: 101 detected at bit %0d", $time, 8 - i);
+      hist = {hist[0], PATTERN[i]};
+    end
+  endtask
+
+  final begin
+    $display("monitor counted %0d detections", detect_count);
+    $display("PASS=%0d FAIL=%0d", pass_count, fail_count);
+  end
+endmodule
+```
+
+**Expected output** (worked out by hand from the rules on this page, not captured from a simulator run; your simulator also prints its own start-up and `$finish` lines):
+
+```text
+t=45 ns: 101 detected at bit 3
+t=65 ns: 101 detected at bit 5
+t=95 ns: 101 detected at bit 8
+monitor counted 3 detections
+PASS=8 FAIL=0
+```
+
+How it works, step by step:
+
+1. **The DUT is two processes.** The `always_ff` is the only writer of `state` and uses `<=`. The `always_comb` seeds its outputs, then decodes with a `unique case` that has no `default`.
+2. **The clock.** `clk` starts at 0 through its declaration initializer, which takes effect before any procedure starts, so no process sees it as a change. `always #5 clk = ~clk;` then gives rising edges at 5, 15, 25 … ns.
+3. **The monitor.** The test process forks a `forever` monitor with `join_none`. It starts when the test process blocks at the wrapper's `join`, and counts detections for the whole run.
+4. **The guarded body.** The test races `drive_and_check()` against a 1 µs watchdog inside `fork begin … end join`. Whichever branch finishes first, `disable fork` kills the other one, and only that one: the monitor is a child of the test process, not of the wrapper.
+5. **Reset and stimulus.** `drive_and_check` asserts `rst_n` with `<=` at time 0, releases it just after the second rising edge (t = 15 ns), then drives one pattern bit per clock with `<=`. Bit 1 is sampled at 25 ns, bit 8 at 95 ns.
+6. **Checking.** At each rising edge the DUT and the checker see the same stable `detected`: it changes only after nonblocking updates. The checker compares it with `!==` against a two-bit history model, so an x output fails the check instead of passing it. The timing diagram in the case study shows the same eight edges.
+7. **Ending.** The test waits for a falling edge, so the monitor has finished with the last rising edge, then calls `$finish`. The `final` procedure prints the summary in zero time.
+
+### Run it
+
+1. Save the code as `seq_detect_tb.sv`.
+2. Compile and elaborate it with `tb_top` as the top module, using any simulator that supports IEEE 1800 SystemVerilog. On EDA Playground, pick a simulator listed with SystemVerilog support.
+3. Run until the bench calls `$finish`, and compare the log with Expected output.
+4. Break it on purpose, one change at a time, and explain what changes:
+   - Change `din <= PATTERN[i];` to `din = PATTERN[i];`. The new bit is now written in the Active region of the edge's time slot, where the DUT's flop may or may not have read `state_next` yet, so the result depends on process order, and a simulator is free to print FAIL lines.
+   - Delete the outer `fork begin … end join` around the watchdog race. `disable fork` now runs in the test process itself and kills the monitor at 95 ns. Whether the monitor counted the detection at 95 ns first depends on process order, so it reports 2 or 3.
+
 ### Debug: the monitor that went silent
 
-A test forks a coverage monitor, then runs a transfer with a timeout. The monitor stops reporting after the first transfer, and nothing fails. Find the line that kills it, then pick a fix: the model reruns your fix with one transfer and with two concurrent transfers, so a fix that only works in the simple case is caught.
+A test forks a coverage monitor, then runs a transfer with a timeout. The monitor stops reporting after the first transfer, and nothing fails. Find the line that kills it, then pick a fix. The model reruns your fix with one transfer and with two concurrent transfers, so a fix that only works in the simple case is caught.
 
 <ForkJoinVisualizer mode="debug" />
 
-### Build it yourself
+### Debugging table
 
-1. **Set the stage:** Draft a timing diagram for your DUT, marking where sequential and combinational regions live. Annotate which constructs you’ll use (`always_ff`, `always_comb`, `initial`).
-2. **Instrument aggressively:** Run a linter (for example `verilator --lint-only` or SpyGlass) to flag `=` in sequential blocks and `<=` in combinational ones. This is a coding-style check, so it belongs in lint, not in assertions.
-3. **Prototype the flow:** Use the interactive snippet above as a template. Swap in your DUT signals and run a quick sim to validate ordering.
+| Symptom | Cause | Fix |
+|---|---|---|
+| The run never gets past time 0, with no output | An `always` or `forever` with no timing control (§9.2.2.1, §12.7.6) | Add `@(...)` or `#d`, or use `always_comb` for logic |
+| A flop sometimes captures the value driven on the same edge: the result changes between simulators or after unrelated edits | A blocking write at the active edge, in a flop or a testbench drive (§4.7) | `<=` in flops and in testbench drives |
+| An `always @*` output stays x until an input first changes | `always @*` does not run at time 0 (§9.2.2.2.2) | Use `always_comb` |
+| A monitor stops printing after the first transfer, with no error | `disable fork` in the process that forked the monitor (§9.6.3) | Add the isolation wrapper |
+| Every forked thread reports the same loop value | A fork in a loop reads the shared loop variable (§9.3.2) | Declare `automatic int k = i;` in the fork |
+| With two transfers in flight, one response is lost | Disabling a named block ended both activations (§9.6.2) | Use the isolation wrapper and `disable fork` |
+| The test hangs at `wait fork` | A child that never ends, such as a monitor (§9.6.1) | Give the bounded threads, and the `wait fork`, their own parent |
+| Flops ignore a reset applied at time 0 until the first clock | A blocking `rst_n = 0` ran before the flops were waiting for the negedge (§9.2) | Drive the time-0 reset with `<=` |
+| A `$strobe` in a `final` procedure prints nothing | No scheduled event runs after the final procedures (§9.2.3) | Use `$display` in `final` |
 
 **Checklist before moving on:**
-- [ ] You can explain why sequential logic needs non-blocking assignments and combinational logic prefers blocking.
-- [ ] You’ve run a mini-simulation that includes `initial`, `always_ff`, and `final` blocks working together.
-- [ ] You can describe the event scheduling order (active → inactive → NBA → postponed) and place each construct within it.
+
+- [ ] For any block of code, you can say which procedure it belongs in, whether each assignment is `=` or `<=`, and why.
+- [ ] You can explain why `$strobe` sees a nonblocking update that a `$display` just before it does not.
+- [ ] You can predict when the parent continues after `join`, `join_any` and `join_none`, and when the children start.
+- [ ] Your timeouts use `fork begin fork … join_any; disable fork; end join`, never a disable by block name.
+- [ ] You can trace the worked bench edge by edge and explain every line of its log.
 
 ## Push Further
-- Model a multi-threaded sequencer using `fork/join_any` and observe how join semantics affect stimulus timing.
-- Rewrite legacy `always @(*)` code with `always_comb` and document the tool warnings that disappear.
-- In the fork visualizer's *disable by name* scenario, switch to two concurrent calls and explain, in one sentence, why xfer(2) never prints its response.
-- `wait fork` only waits for immediate children. Write a task that forks a child which forks a grandchild, and predict when `wait fork` returns before you simulate it.
+
+### Expert: Time zero and initialization order
+
+- **No order at time 0.** `initial` and `always` procedures start in no implied order (§9.2). A bench that runs `rst_n = 0;` with a blocking assignment at time 0 may run before the DUT's `always_ff @(posedge clk or negedge rst_n)` has reached its event control. The flop then misses the x → 0 negedge, and `state` stays x until the first clock edge with reset low.
+- **The fix is `<=`.** A nonblocking update at time 0 lands in the NBA region, after every procedure started at time 0 has run up to its first timing control (§4.5). The standard's own `forever` clock example initializes its clocks with `<=` (§12.7.6).
+- **Declaration initializers run before any procedure waits.** `logic clk = 1'b0;` is set before any `initial` or `always` procedure starts (§6.8, §10.5). No process is waiting on `clk` yet, so none of them sees a change. That is right for a clock's starting value and wrong for a reset that flops must react to. In IEEE 1364-2005 such an initializer behaved like an assignment from an `initial` procedure after simulation had started (§6.8, NOTE), so legacy code may rely on an event that no longer happens.
+- **`always_comb` runs once at time 0**, after all `initial` and `always` procedures have started (§9.2.2.2), so its outputs match its inputs from the first moment.
+- **Interleaving.** A simulator may suspend a process between statements and run others (§4.7). Only the order of statements inside one `begin … end` is guaranteed (§4.6).
+
+### Expert: Nonblocking order, intra-assignment delays and lifetimes
+
+- **Order of updates.** Nonblocking updates are performed in the order their statements executed, so `a <= 0; a <= 1;` in one process leaves `a` at 1 (§4.6 b).
+- **Intra-assignment timing.** A timing control inside an assignment evaluates the right-hand side now and assigns later (§9.4.5). `a = #5 b;` writes after 5 time units and blocks the process meanwhile. `q <= #1 d;` schedules the update one time unit later without blocking: the one case where a nonblocking update really lands at a later time. `a <= repeat (3) @(posedge clk) d;` writes after three rising edges. The standard's race-free swap is `fork a = #5 b; b = #5 a; join`.
+- **No nonblocking writes to automatic variables** (§6.21, §10.4.2). In a `task automatic` driver, `<=` to a task-local variable is a compile error; `<=` to module or interface signals is fine.
+- **Two writers still race with `<=`.** If two processes write one variable at the same edge, the last update performed wins, and which one is last depends on process order. `always_ff` and `always_comb` turn a second writer into an error (§9.2.2.2, §9.2.2.4).
+
+### Expert: Fork corner cases
+
+- **Fork-local variables are initialized before the children exist.** Declarations at the top of a fork are initialized each time the fork executes, before any child is spawned (§9.3.2). That is why `automatic int k = i;` in the fork captures each iteration's value, while the same declaration inside a child's `begin … end` runs when the child starts. In the standard's own example, that late copy reads the loop's final value.
+- **Explicit lifetime.** In a module's `initial` or `always`, a block declaration with an initializer must say `automatic` or `static` (§6.21). So `int k = i;` in the fork is a compile error, not a silent bug.
+- **`return` inside a fork is a compile error** (§9.3.2): the forked statement runs in another process.
+- **`ref` arguments.** Inside `join_any` or `join_none`, a task's `ref` argument may be used only to initialize fork-local variables, unless it is declared `ref static` (§9.3.2).
+- **No jumps across a fork.** `break` and `continue` cannot control a loop outside the fork (§12.8).
+- **Children outlive their parent.** When a parent with `join_none` children ends, the children start and run to completion. Only `disable fork`, `disable`, `process::kill()` or the end of the simulation stops them.
+
+### Expert: disable in depth
+
+- **Every activation.** Disabling a task or a named block ends all of its activations, including every concurrent execution of an automatic task (§9.6.2).
+- **Loop bodies.** Disabling a named loop-body block acts like `continue`; disabling a block that is not executing does nothing (§9.6.2).
+- **Unspecified leftovers.** After a task is disabled, its `output` and `inout` results, its scheduled but not yet performed nonblocking assignments, and its procedural continuous assignments are unspecified (§9.6.2). Never rely on the outputs of a disabled task.
+- **Descendants of finished children.** `disable fork` also kills the descendants of children that have already finished (§9.6.3).
+- **`process::kill()`** kills a process and all of its descendants, even if the process itself has finished (§9.7). I-SV-5 teaches the `process` class: [Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index).
+
+### Expert: final procedures and the end of the run
+
+- `final` procedures run when the simulation ends through an explicit call to `$finish` or an implicit one, such as the call `$fatal` makes (§9.2.3, §20.10). A run with no activity of any kind left also terminates on its own (§9.6.1), but a bench that ends with an explicit `$finish` leaves no doubt about when its `final` procedures run.
+- They run as a series of function calls from one process, in an order the standard leaves arbitrary; tools should keep it the same from run to run (§9.2.3). Never make one `final` depend on another.
+- No scheduled event runs after the last `final` procedure (§9.2.3). Anything a `final` schedules for later never happens, so a `$strobe` in a `final` prints nothing: use `$display`. Whether a tool rejects a nonblocking assignment in a `final` or silently drops it is tool-dependent.
+- `$finish` inside a `final` ends the simulation at once (§9.2.3). `$stop` only suspends the run (§20.2); `final` procedures run when the run really ends.
+- In UVM benches, the end-of-test summary belongs in `report_phase`: [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index).
+
+### Expert: Sensitivity lists in detail
+
+- `always_comb` leaves out variables declared inside the block and variables the block writes (§9.2.2.2.1). `always @*` includes written variables: the standard's example `always @* begin tmp1 = a & b; tmp2 = c & d; y = tmp1 | tmp2; end` is sensitive to `tmp1` and `tmp2` as well as to `a`, `b`, `c` and `d` (§9.4.2.2).
+- `always @*` sees only the arguments of a function it calls; `always_comb` also sees the variables the function reads (§9.2.2.2.2).
+- An edge event is detected on the least significant bit only, and a change in an operand that leaves the expression's value unchanged is no event (§9.4.2). `@(posedge bus)` on a vector watches `bus[0]`.
+- In `@(a iff en)`, the guard is evaluated when `a` changes, not when `en` changes (§9.4.2.3).
+
+### Expert: Thread hygiene at scale and in UVM
+
+- **The same guard in uvm-core.** uvm-core 2020.3.1 waits for the end of a task phase with the same isolation pattern: `fork begin // guard`, then `fork … join_any; disable fork;`, then `end join // guard`, in task `execute_phase` of `src/base/uvm_phase_hopper.svh`.
+- **Phase-end kill.** When a task phase ends, uvm-core kills the threads it started for every component. The header comment of `src/base/uvm_task_phase.svh` says that `exec_task()` threads still running when the phase completes are killed at once, and `cleanup_phase` in `uvm_phase_hopper.svh` calls `kill()` on the phase's process. A component's `forever` monitor loop in `run_phase` therefore needs no cleanup of its own. A per-transaction timer inside a driver still does, because it would fire within the phase.
+- **Leaked timers cost.** Every timer you do not kill stays a live process until it expires. How much memory and run time thousands of them cost is tool-dependent; kill them with the wrapper.
+- **`wait fork` and long-lived children.** `wait fork` waits for every immediate child, monitors included (§9.6.1). For a bounded set of threads, give them their own parent, or keep `process` handles (I-SV-5).
+
+### Interview angles
+
+Answer each one before you look at the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: one transfer passes, two fail"
+  question="Your driver's per-transaction timeout works when one transfer is in flight. With two in flight, the second transfer's response is lost. The task names its race block guard and cleans up with disable guard. Why?"
+  options={[
+    { text: "The second response arrives in a different time slot, after the timer.", isCorrect: false, feedback: "The timing is fine. The second call's response branch is killed by the first call's cleanup before it can finish." },
+    { text: "Automatic tasks cannot run concurrently.", isCorrect: false, feedback: "They can, and that is what automatic is for. disable simply ignores which call started the block." },
+    { text: "disable guard ends every activation of the guard block, including the other transfer's.", isCorrect: true, feedback: "Right. disable uses the block's static name, so one call's cleanup kills the other call's race (§9.6.2). Use fork begin fork … join_any; disable fork; end join instead." },
+    { text: "join_any waits for the first transfer's response before the second transfer starts.", isCorrect: false, feedback: "Each call runs its own fork, and join_any resumes only that call. The calls do overlap." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: four senders, one id"
+  question="for (int i = 1; i <= 4; i++) fork send(i); join_none — all four sends use id 5. Which change fixes it?"
+  options={[
+    { text: "Declare int k = i; without automatic at the top of the fork.", isCorrect: false, feedback: "In a module's static initial block, a declaration with an initializer needs an explicit automatic or static (§6.21), and a static k would be shared by every child anyway." },
+    { text: "Declare automatic int k = i; at the top of the fork and call send(k), or declare k in the loop body before the fork.", isCorrect: true, feedback: "Right. Both initialize a fresh k before the child is spawned (§9.3.2, §6.21). A declaration inside the child's own begin … end is too late, because it runs after the loop has finished." },
+    { text: "Declare automatic int m = i; inside a begin … end in the child, and call send(m).", isCorrect: false, feedback: "That declaration runs when the child starts, after the loop has ended. The standard's own example shows the late copy reading the loop's final value (§9.3.2)." },
+    { text: "Make i a module-level int instead of a loop variable.", isCorrect: false, feedback: "One shared variable is the problem. Moving it out of the loop does not give each child its own copy." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: the wait fork that never returns"
+  question="A test forks three senders with join_none and then calls wait fork. The run never ends. The same test process forked a protocol monitor, a forever loop, at time 0. What is happening?"
+  options={[
+    { text: "wait fork also waits for grandchildren, and one of the senders forked a child.", isCorrect: false, feedback: "wait fork waits for immediate children only, not for their descendants." },
+    { text: "wait fork needs a timeout argument to return.", isCorrect: false, feedback: "wait fork takes no arguments. Bound the set of children it waits for instead." },
+    { text: "The senders started before wait fork, so wait fork missed them and waits forever.", isCorrect: false, feedback: "wait fork waits for every immediate child still running, whenever it was forked." },
+    { text: "wait fork waits for every immediate child, including the monitor that never ends. Put the senders and the wait fork inside fork begin … end join.", isCorrect: true, feedback: "Right (§9.6.1). The wrapper is a new parent whose only children are the three senders, so its wait fork returns when they finish." }
+  ]}
+/>
 
 ## Practice & Reinforce
-- Flashcards – Review definitions for blocking/non-blocking, `always_ff`, `fork/join` semantics.
-- Quiz – Complete the knowledge check below.
-- Procedural simulator – Switch the swap program between `<=` and `=` and explain every printed line, including which region each update lands in.
-- Code kata – Convert a buggy `always` block using blocking assignments into a clean `always_ff` implementation.
 
-## Interview Questions
-
-<Card className="mt-8">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is a race condition in Verilog/SystemVerilog?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>A race condition occurs when the simulation result depends on the arbitrary order in which the simulator executes events at the same timestamp. A classic example is two `always` blocks reading and writing the same variable using blocking assignments (`=`) at the same clock edge.</p>
-      </div>
-    </details>
-
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">Why do we use non-blocking assignments (`<=`) for sequential logic?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>Non-blocking assignments schedule the update for the NBA region, ensuring that all `always_ff` blocks sample the "old" value of their inputs before any outputs change. This mimics the behavior of physical flip-flops and prevents hold-time races in simulation (IEEE 1800-2023 §10.4.2).</p>
-      </div>
-    </details>
-
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">Explain the difference between fork-join, fork-join_any, and fork-join_none.</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p><strong>fork-join:</strong> The parent process blocks until ALL child processes finish.</p>
-        <p><strong>fork-join_any:</strong> The parent process blocks until ANY ONE child process finishes. The other children continue running in the background.</p>
-        <p><strong>fork-join_none:</strong> The parent process does not block at all. The child processes run in the background, but only once the parent blocks or terminates: no spawned process starts before that, whichever join keyword is used (IEEE 1800-2023 §9.3.2). This is why a `for` loop that forks `join_none` children which read the loop variable sees its final value in every child.</p>
-      </div>
-    </details>
-
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is the danger of using `disable fork;` and how do you avoid it?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>`disable fork;` terminates all active descendants of the calling process (IEEE 1800-2023 §9.6.3). If your task spawns a background monitor, then later uses `fork-join_any` for a timeout and calls `disable fork;` to clean up the timeout threads, it will unintentionally kill the monitor too.</p>
-        <p><strong>Fix:</strong> Give the timeout race its own parent process: `fork begin fork … join_any; disable fork; end join`. A plain `begin…end` does not help, because it creates no new process. Avoid `disable target_block_name;` in reusable or concurrently called code: disabling a named block ends every activation of it, including other threads' (§9.6.2).</p>
-      </div>
-    </details>
-  </CardContent>
-</Card>
-
-## References & Next Topics
-- Spear & Tumbush, *SystemVerilog for Verification*, Chapter 3.
-- Accellera, *SystemVerilog LRM*, sections on process scheduling.
-- Verification Academy session: “Avoiding Race Conditions in SystemVerilog.”
-- Next: [Procedural Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/flow-control)
+### Retrieval quiz
 
 <Quiz
   questions={[
     {
-      question: 'When should you use a non-blocking assignment (`<=`)?',
+      question: "A testbench does @(posedge clk); din = 1; and the DUT has always_ff @(posedge clk) q <= din;. Whether the flop captures the new din on that same edge depends on which process the simulator runs first. Which change makes the result deterministic without touching the DUT?",
+      objective: 1,
       answers: [
-        { text: 'In combinational logic (`always_comb`)', correct: false },
-        { text: 'In sequential logic (`always_ff`)', correct: true },
-        { text: 'Inside `final` blocks', correct: false },
-        { text: 'Never in testbench code', correct: false }
+        { text: "Change the DUT flop to q = din;", correct: false, feedback: "That edits correct RTL and still leaves two blocking actions at one edge; the order of the processes still decides the result." },
+        { text: "Drive the input with din <= 1; instead", correct: true, feedback: "Right: the write now happens in the NBA region, after the flop has read din in the Active region, so the flop samples the old value on this edge, exactly as hardware would." },
+        { text: "Move the testbench's initial block above the DUT instance in the file", correct: false, feedback: "Source order does not order processes. The standard leaves the order of processes woken by the same edge open (§4.7)." },
+        { text: "Declare din as bit instead of logic", correct: false, feedback: "The data type does not change when the write happens. The race is about timing inside the time slot, not about 2-state or 4-state values." }
       ],
-      explanation:
-        'Non-blocking assignments align with flip-flop behavior and prevent races between concurrent sequential blocks. Testbench code driving a DUT input right after a clock edge should use them too (see F3C).'
+      explanation: "Two processes wake on the same rising edge: the DUT flop reads din and the testbench writes it. With =, the write happens in the Active region, so the result depends on which process runs first (§4.7). With <=, the write waits for the NBA region of the same time slot, after every Active read (§10.4.2). From F4C on, you drive through a clocking block instead."
     },
     {
-      question: 'Which procedural block starts at time 0 and runs its statements once?',
+      question: "A bench contains an initial block, an always_comb block and a final block. Which statement about when they run is true?",
+      objective: 1,
       answers: [
-        { text: '`always_comb`', correct: false },
-        { text: '`initial`', correct: true },
-        { text: '`final`', correct: false },
-        { text: '`always_ff`', correct: false }
+        { text: "initial is guaranteed to start before always_comb, so reset values are always visible to it", correct: false, feedback: "There is no implied order between procedures that start at time 0 (§9.2)." },
+        { text: "final runs at time 0, right after initial, to set up the run", correct: false, feedback: "final is the other end of the run: it executes once when the simulation ends, not at time 0." },
+        { text: "always_comb waits for the first change on one of its inputs, like always @*", correct: false, feedback: "That is how always @* behaves. always_comb also runs once at time 0, so its outputs match its inputs from the start (§9.2.2.2.2)." },
+        { text: "always_comb runs once at time 0 and again whenever a variable it reads changes; final runs once, when the simulation ends", correct: true, feedback: "Right: always_comb is triggered once at time 0 after all procedures have started (§9.2.2.2), then on every input change; final runs once, in zero time, when the run ends (§9.2.3)." }
       ],
-      explanation:
-        '`initial` starts at time 0 and runs once — ideal for reset sequences or configuration setup. `final` also runs once, but at the end of simulation (IEEE 1800-2023 §9.2.3).'
+      explanation: "initial starts at time 0 and runs once. always_comb runs once at time 0 and then whenever an input changes. final runs once at the end, in zero time, with only the statements a function may contain. Nothing orders procedures that start at time 0."
     },
     {
-      question: 'Why prefer `always_comb` over `always @(*)`?',
+      question: "Why prefer always_comb over always @* for combinational logic?",
+      objective: 1,
       answers: [
-        { text: 'It allows non-blocking assignments', correct: false },
-        { text: 'It automatically infers the sensitivity list and checks for latches', correct: true },
-        { text: 'It runs in the NBA region', correct: false },
-        { text: 'It is synthesizable for flip-flops', correct: false }
+        { text: "It infers its sensitivity list automatically", correct: false, feedback: "always @* infers a sensitivity list too (§9.4.2.2), so this does not tell them apart." },
+        { text: "It runs once at time 0, reacts to variables read inside called functions, and forbids other processes from writing its outputs", correct: true, feedback: "Right: these are three of the five differences in §9.2.2.2.2. The single-writer rule turns a hidden multiple-driver bug into a tool error." },
+        { text: "It lets you use nonblocking assignments for flip-flops", correct: false, feedback: "Flip-flops belong in always_ff with <=. always_comb is for combinational logic with =." },
+        { text: "It runs in the NBA region, after every flop has updated", correct: false, feedback: "Procedures do not run in the NBA region; only nonblocking updates land there. always_comb runs in the Active region like any other process." }
       ],
-      explanation:
-        '`always_comb` generates the correct sensitivity list and warns when storage elements sneak in—ideal for robust combinational modeling.'
+      explanation: "always_comb executes once at time 0, is sensitive to variables read inside the functions it calls, forbids other writers to its outputs, forbids blocking timing controls and forks, and reacts to expressions in immediate assertions inside called functions (§9.2.2.2.2). Tools should also warn when its body would infer a latch."
+    },
+    {
+      question: "One process runs at t = 10 ns with a = 1 and b = 2: a <= b; b <= a; $display(a, b); $strobe(a, b); What do the two lines show?",
+      objective: 2,
+      answers: [
+        { text: "$display shows 1 2 at t = 10 ns; the swap is only visible at t = 11 ns", correct: false, feedback: "Nonblocking updates do not move to a later time. They land later in the same time slot, so $strobe at t = 10 ns already sees them." },
+        { text: "$display already shows 2 1", correct: false, feedback: "$display runs immediately, in the Active region, before any nonblocking update has landed." },
+        { text: "$display shows 1 2, then $strobe shows 2 1, both at t = 10 ns", correct: true, feedback: "Right: both right-hand sides are read before either update. The updates land in the NBA region of the same time slot, and $strobe prints after that, at the end of the time slot." },
+        { text: "Both lines show 2 2", correct: false, feedback: "That is the blocking version, a = b; b = a;, where the first statement overwrites a before the second one reads it." }
+      ],
+      explanation: "A nonblocking assignment evaluates its right-hand side now and updates the variable in the NBA region of the same time slot (§10.4.2). $display prints at once; $strobe prints at the end of the time slot (§21.2.2)."
+    },
+    {
+      question: "initial begin fork $display(\"A\"); $display(\"B\"); join_none $display(\"P\"); end — in what order do the lines appear?",
+      objective: 3,
+      answers: [
+        { text: "P, then A and B, in an order the standard leaves open", correct: true, feedback: "Right: the children cannot start until the parent blocks or ends (§9.3.2). The parent prints P and ends, then A and B run, and nothing promises which of them goes first (§4.7)." },
+        { text: "A, B, then P: the forked statements run as soon as the fork executes", correct: false, feedback: "Spawned processes never start before the parent blocks or terminates, whichever join keyword you use (§9.3.2)." },
+        { text: "Only P: the children are discarded when the initial block ends", correct: false, feedback: "Children outlive their parent. When the initial block ends, its join_none children start and run to completion." },
+        { text: "A, then P, then B: one child runs, then the parent, then the other child", correct: false, feedback: "No child runs before the parent blocks or ends, so P must come first." }
+      ],
+      explanation: "join_none lets the parent continue at once. Its children are scheduled, but they start only when the parent blocks on a #, @ or wait, or terminates (§9.3.2). Here the parent terminates after printing P."
+    },
+    {
+      question: "A wait_for_response task races @(posedge rsp_valid) against a 40 ns timer with fork … join_any, then calls disable fork, and wraps both in fork begin … end join. The call starts at t = 0 and the response rises at t = 15 ns. What happens?",
+      objective: 4,
+      answers: [
+        { text: "The call returns at t = 40 ns, when both branches have finished", correct: false, feedback: "That is join's rule. join_any resumes as soon as one branch finishes." },
+        { text: "The call returns at t = 15 ns, but the timer still reports a timeout at t = 40 ns", correct: false, feedback: "That is what happens without disable fork: join_any does not stop the other branches." },
+        { text: "The call returns at t = 15 ns, and disable fork also kills a monitor that the caller forked earlier", correct: false, feedback: "Not with the wrapper: disable fork runs inside the wrapper process, whose only descendants are the two branches." },
+        { text: "The call returns at t = 15 ns, and the timer is killed then, so no timeout is reported", correct: true, feedback: "Right: join_any resumes the wrapper when the response branch finishes, disable fork kills the timer, and the wrapper's join completes at 15 ns." }
+      ],
+      explanation: "The wrapper is a new parent that owns only this race. join_any resumes it when the first branch ends, and disable fork kills every descendant of the wrapper, which is just the losing branch (§9.3.2, §9.6.3)."
+    },
+    {
+      question: "for (int i = 0; i < 3; i++) fork $display(\"%0d\", i); join_none is followed by #1. What do the three children print?",
+      objective: 5,
+      answers: [
+        { text: "0 1 2", correct: false, feedback: "That would need each child to run during its own iteration. join_none children wait until the parent blocks (§9.3.2)." },
+        { text: "2 2 2", correct: false, feedback: "The loop exits when i < 3 fails, which is at i = 3, not at 2." },
+        { text: "3 3 3", correct: true, feedback: "Right: the children start only after the loop ends and the parent blocks on #1. They all read the one loop variable, which is 3 by then." },
+        { text: "Nothing: reading i inside the fork is a compile error", correct: false, feedback: "Reading the loop variable from the children is legal: the lifetime of the loop's scope covers the processes it forks (§6.21)." }
+      ],
+      explanation: "One loop variable, three late readers. Declare automatic int k = i; at the top of the fork, or in the loop body before the fork, so each child gets its own copy, initialized before it is spawned (§9.3.2)."
+    },
+    {
+      question: "A test forks a monitor with join_none, then runs fork rsp; timer; join_any; disable fork; in the same process. The response wins at t = 15 ns. Which processes does disable fork kill?",
+      objective: 5,
+      answers: [
+        { text: "The timer and the monitor: every descendant of the test process", correct: true, feedback: "Right: disable fork kills all descendants of the calling process, not just the children of the last fork (§9.6.3). The monitor goes silent with no error." },
+        { text: "Only the timer: disable fork stops the children of the most recent fork", correct: false, feedback: "There is no 'most recent fork' rule. Every descendant of the caller dies, the monitor included." },
+        { text: "Every process in the simulation, including the DUT's always procedures", correct: false, feedback: "disable fork follows the parent-child tree only. The DUT's procedures are not descendants of the test." },
+        { text: "None: join_any already ended the fork", correct: false, feedback: "join_any only resumes the parent; the timer keeps running until something kills it." }
+      ],
+      explanation: "The fix is to give the race its own parent: fork begin fork … join_any; disable fork; end join. A begin … end alone creates no process (§9.5), and disabling a named block ends every activation of that block (§9.6.2)."
     }
   ]}
 />
+
+### Kata A (guided): fix the racy shift register
+
+**Objectives 1 and 2.** Two flops written with blocking assignments race on every edge. Predict both legal outcomes, then fix the code and predict the one log every simulator must print.
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns;
+  timeprecision 1ps;
+
+  localparam logic [4:0] D_BITS = 5'b10110;   // d values in order: 1 0 1 1 0
+
+  logic clk = 1'b0;
+  logic d, q1, q2;
+
+  always #5 clk = ~clk;                       // rising edges at 5, 15, 25, 35, 45 ns
+
+  // Two flops written with blocking assignments: a race.
+  always @(posedge clk) q1 = d;               // stage A
+  always @(posedge clk) q2 = q1;              // stage B
+
+  initial begin
+    for (int i = 4; i >= 0; i--) begin
+      d <= D_BITS[i];                          // drive with <= between edges
+      @(posedge clk);                          // both stages sample here
+      #1 $display("t=%0d d=%b q1=%b q2=%b", $time, d, q1, q2);
+    end
+    $finish;
+  end
+endmodule
+```
+
+1. Before you run it, write down the `q2` column twice: once assuming stage A runs first at every edge, once assuming stage B runs first.
+2. Run it. Which of your two columns did your simulator print? Either one is legal (§4.7).
+3. Rewrite both stages as `always_ff` with `<=`, predict the single correct log, and run it again.
+
+<details>
+<summary>Worked solution</summary>
+
+Each line prints 1 ns after an edge, so it shows the values just after that edge settled.
+
+If stage A runs first, stage B reads the `q1` that stage A has just written, so `q2` equals `q1` on every line:
+
+```text
+t=6 d=1 q1=1 q2=1
+t=16 d=0 q1=0 q2=0
+t=26 d=1 q1=1 q2=1
+t=36 d=1 q1=1 q2=1
+t=46 d=0 q1=0 q2=0
+```
+
+If stage B runs first, it reads the old `q1`, and the log matches a real two-stage shift register:
+
+```text
+t=6 d=1 q1=1 q2=x
+t=16 d=0 q1=0 q2=1
+t=26 d=1 q1=1 q2=0
+t=36 d=1 q1=1 q2=1
+t=46 d=0 q1=0 q2=1
+```
+
+The fix makes the second log the only possible one:
+
+```systemverilog
+// snippet
+always_ff @(posedge clk) q1 <= d;    // both stages read old values in Active...
+always_ff @(posedge clk) q2 <= q1;   // ...and update together in NBA
+```
+
+Both stages now read `d` and `q1` in the Active region and update in the NBA region, so process order can no longer leak into the result. The timing diagram in the section on assignments shows the same values, sampled at the edges.
+
+</details>
+
+### Kata B (independent): a timeout that cannot kill the monitor
+
+**Objectives 4 and 5.** The starter's monitor goes silent after the first transfer.
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns;
+  timeprecision 1ps;
+
+  // One transfer: its response (after lat ns) races a 40 ns timer.
+  task automatic xfer(input int id, input int lat);
+    fork
+      begin #(lat); $display("t=%0d xfer %0d response", $time, id); end
+      begin #40;    $display("t=%0d xfer %0d TIMEOUT", $time, id); end
+    join_any
+    disable fork;                       // meant to stop the losing branch
+  endtask
+
+  initial begin
+    fork                                // a monitor that should run all test long
+      forever #10 $display("t=%0d monitor alive", $time);
+    join_none
+    xfer(1, 13);
+    fork                                // two transfers in flight at once
+      xfer(2, 12);
+      xfer(3, 24);
+    join
+    #20 $display("t=%0d test done", $time);
+    $finish;
+  end
+endmodule
+```
+
+1. Run the starter, or trace it by hand, and explain why "monitor alive" stops after t = 13 ns.
+2. Fix `xfer` so that the monitor runs until the end. Do not use `disable` with a block name.
+3. Add `output bit timed_out` to `xfer`, set it in the timer branch, and print all three flags in the "test done" line.
+4. Predict the full log, then check it. Pass criteria: "monitor alive" keeps printing to the end, no TIMEOUT line appears, all three responses print, and every `timed_out` flag is 0.
+
+<details>
+<summary>Worked solution</summary>
+
+The starter calls `xfer(1, 13)` directly from the test process, so its `disable fork` kills every descendant of the test process: the timer and the monitor (§9.6.3). Its log is:
+
+```text
+t=10 monitor alive
+t=13 xfer 1 response
+t=25 xfer 2 response
+t=37 xfer 3 response
+t=57 test done
+```
+
+The fix gives each call's race its own parent process:
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns;
+  timeprecision 1ps;
+
+  // The outer fork gives each call's race its own parent process, so
+  // disable fork reaches only this call's response and timer branches.
+  task automatic xfer(input int id, input int lat, output bit timed_out);
+    timed_out = 1'b0;
+    fork begin
+      fork
+        begin #(lat); $display("t=%0d xfer %0d response", $time, id); end
+        begin
+          #40;
+          timed_out = 1'b1;
+          $display("t=%0d xfer %0d TIMEOUT", $time, id);
+        end
+      join_any
+      disable fork;                     // kills only the losing branch
+    end join
+  endtask
+
+  initial begin
+    bit to1, to2, to3;
+    fork
+      forever #10 $display("t=%0d monitor alive", $time);
+    join_none
+    xfer(1, 13, to1);
+    fork
+      xfer(2, 12, to2);
+      xfer(3, 24, to3);
+    join
+    #20 $display("t=%0d test done: timed_out = %b %b %b", $time, to1, to2, to3);
+    $finish;
+  end
+endmodule
+```
+
+Expected log (worked out by hand; no two lines share a time, so the order is fixed):
+
+```text
+t=10 monitor alive
+t=13 xfer 1 response
+t=20 monitor alive
+t=25 xfer 2 response
+t=30 monitor alive
+t=37 xfer 3 response
+t=40 monitor alive
+t=50 monitor alive
+t=57 test done: timed_out = 0 0 0
+```
+
+Why not a named block with `disable guard`? Calls 2 and 3 overlap. At 25 ns, call 2's `disable guard` would also end call 3's block, and "xfer 3 response" would never print (§9.6.2).
+
+</details>
+
+The module flashcards follow at the end of this section, under **Reinforce the essentials**. The deck is shared by both lessons of the module: nine cards cover procedures, assignments, timing controls and threads, and six cover the decisions and loops of the next lesson.
+
+## References & Next Topics
+
+**Primary sources**
+
+- IEEE 1800-2023 §9.2 structured procedures: §9.2.1 `initial`, §9.2.2 `always`, §9.2.2.1 general-purpose `always`, §9.2.2.2 `always_comb` (§9.2.2.2.1 implicit sensitivities, §9.2.2.2.2 compared to `always @*`), §9.2.2.3 `always_latch`, §9.2.2.4 `always_ff`, §9.2.3 `final`.
+- IEEE 1800-2023 §9.3 block statements (§9.3.1 sequential, §9.3.2 parallel, §9.3.4 block names, §9.3.5 statement labels); §9.4 timing controls (§9.4.1 delay, §9.4.2 event control and Table 9-2, §9.4.2.1 `or`, §9.4.2.2 `@*`, §9.4.2.3 `iff`, §9.4.3 `wait`, §9.4.5 intra-assignment timing); §9.5 process threads; §9.6.1 `wait fork`, §9.6.2 `disable`, §9.6.3 `disable fork`; §9.7 the `process` class.
+- IEEE 1800-2023 §10.4.1 blocking and §10.4.2 nonblocking assignments; §10.5 and §6.8 variable initialization; §6.21 scope and lifetime.
+- IEEE 1800-2023 §4.4 regions (preview), §4.5 reference algorithm, §4.6 determinism, §4.7 nondeterminism; §12.7.6 `forever`; §12.8 jump statements; §20.2 simulation control; §21.2.2 `$strobe`.
+- uvm-core 2020.3.1, `src/base/uvm_phase_hopper.svh` (task `execute_phase`, the guard fork; task `cleanup_phase`) and `src/base/uvm_task_phase.svh` (class header comment).
+- Further reading: Chris Spear and Greg Tumbush, *SystemVerilog for Verification* (Springer), the chapters on procedural statements and threads.
+
+**Related**
+
+- [F2A: Core Data Types](/curriculum/T1_Foundational/F2A_Core_Data_Types/index): x values, `logic` and `bit`.
+- [F3A: Simulation Semantics](/curriculum/T1_Foundational/F3A_Simulation_Semantics/index): time units and `#` delays.
+- [F3B: Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index): every region of the time slot.
+- [F3C: Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index): the two-process race, traced region by region.
+- [Tasks and Functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions): tasks, lifetimes and argument passing.
+- [F2E: Your First Self-Checking Testbench](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index): the complete M0 bench built on these pieces.
+- [F4C: Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): race-free testbench drives.
+- [I-SV-5: Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index): events, mailboxes, semaphores and the `process` class.
+- [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index): run-time phases and the threads they end.
+
+<NextLesson />

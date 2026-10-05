@@ -1,22 +1,77 @@
 [
   {
     "id": "f2d-st-1",
-    "question": "What is the difference between $display and $strobe?",
-    "answer": "$display prints immediately in the Active region. $strobe waits until the Postponed region (end of the time step) to print, ensuring all assignments in that time step are finalized."
+    "question": "When do `$display` and `$strobe` print?",
+    "answer": "`$display` prints when its statement runs, so it can show a value before a nonblocking update lands. `$strobe` prints at the end of the time step, after every update of that time (IEEE 1800-2023 §21.2.2). Picture one time step: `$display` prints q=0, `$strobe` prints q=5."
   },
   {
     "id": "f2d-st-2",
-    "question": "What is the danger of leaving $monitor calls in your code?",
-    "answer": "$monitor runs continuously in the background whenever its arguments change, creating significant log spam and potentially slowing down simulation if left active."
-  },
-  {
-    "id": "f2d-st-3",
-    "question": "Why must you check the return value of $cast?",
-    "answer": "If $cast fails (e.g., downcasting an incompatible handle), it returns 0 and leaves the destination variable unchanged. If you ignore the return value and proceed, you may access a null or incorrect handle."
+    "question": "What does `$monitor` print, and what happens when you call it a second time?",
+    "answer": "It prints once at the end of the time step in which it is called, then at the end of every time step in which an argument other than `$time`, `$stime` or `$realtime` changed. Only one `$monitor` list is active, so a second call silently replaces the first (§21.2.3)."
   },
   {
     "id": "f2d-st-4",
-    "question": "What is the difference between $urandom and class-based randomize()?",
-    "answer": "$urandom is a procedural system task for generating random 32-bit unsigned integers without constraints. randomize() is a method on class instances that uses the constraint solver to satisfy complex constraints."
+    "question": "What do `$urandom` and `$urandom_range(max, min)` return?",
+    "answer": "`$urandom` is a system function that returns a 32-bit unsigned random value. `$urandom_range(max, min)` returns a value from min to max inclusive and swaps the arguments if max is the smaller one (§18.13). Constrained stimulus uses class `randomize()` instead (I-SV-2A)."
+  },
+  {
+    "id": "f2d-st-5",
+    "question": "What is the difference between `$error` and `$fatal`?",
+    "answer": "Both print a tool-formatted message with the file, line, scope and time. `$error` lets the simulation continue; `$fatal(n, ...)` ends it with an implicit `$finish(n)` (§20.10). Neither one updates your testbench's PASS/FAIL counters."
+  },
+  {
+    "id": "f2d-st-6",
+    "question": "Does a `final` block run after `$fatal`?",
+    "answer": "Yes. `$fatal` calls `$finish` implicitly, and `final` blocks run whenever the simulation ends through an explicit or implicit `$finish` (§9.2.3). They run in zero time, so a summary there can print but cannot wait."
+  },
+  {
+    "id": "f2d-st-7",
+    "question": "What can `$fscanf` return?",
+    "answer": "The number of items it assigned; 0 if the first field does not match the format; or -1 (EOF) if the input ends before the first conversion (§21.3.4.3). After -1 the variables keep their old values."
+  },
+  {
+    "id": "f2d-st-8",
+    "question": "How do you know that `$fopen` failed, and how do you find out why?",
+    "answer": "`$fopen` returns 0 when the file cannot be opened, for example a missing file opened with mode \"r\" (§21.3.1). `$ferror` then returns an error code and a description of the most recent I/O error (§21.3.7)."
+  },
+  {
+    "id": "f2d-st-9",
+    "question": "Why does a `while (!$feof(fd))` read loop process the last vector twice?",
+    "answer": "`$feof` turns nonzero only after a read has already hit the end of the file (§21.3.8). The final newline is left unread, so one more `$fscanf` runs, returns -1 and leaves the variables unchanged. Loop on the read's return value instead."
+  },
+  {
+    "id": "f2d-st-10",
+    "question": "How do `$test$plusargs` and `$value$plusargs` match a plusarg, and what happens on a miss?",
+    "answer": "Both match by prefix: the string you pass must match the beginning of a plusarg, so \"V\" also matches +VECTORS=... (§21.6). On a miss `$value$plusargs` returns 0, leaves the variable unchanged and prints no warning, so set the default first."
+  },
+  {
+    "id": "f2d-st-11",
+    "question": "What may a `$readmemh` file contain, and which cells does it fill?",
+    "answer": "Hex numbers without a size or base (x, z and _ allowed), white space, comments and @address lines (§21.4). Numbers fill consecutive addresses from the lowest address, or from the start argument, restarting at each @address. Cells the file never reaches keep their old values."
+  },
+  {
+    "id": "f2d-st-12",
+    "question": "What is the difference between `$finish` and `$stop`?",
+    "answer": "`$finish` ends the simulation and returns to the operating system; `$stop` only suspends it (§20.2). The optional argument 0, 1 or 2 selects the diagnostic message: nothing, time and location (the default), or also memory and CPU statistics."
+  },
+  {
+    "id": "f2d-st-13",
+    "question": "Why does `$display(\"%0t\", $time)` print 10000 at 10 ns in a design whose only timescale is 1ns/1ps?",
+    "answer": "`%t` prints in the `$timeformat` unit, which defaults to the smallest time precision in the design (1 ps here), with no suffix and a minimum width of 20 that the 0 in `%0t` drops (§20.4.3, Table 20-3). Call `$timeformat(-9, 0, \" ns\", 8)` once at time 0 to print in ns."
+  },
+  {
+    "id": "f2d-st-14",
+    "question": "Why is `int count = 0;` illegal directly inside an `initial` block?",
+    "answer": "A variable declared there is static, and a static variable's initializer runs only once, at time 0. The standard therefore requires an explicit `static` or `automatic` to show which behaviour you mean (§6.21). Module-scope declarations may keep a plain initializer."
+  },
+  {
+    "id": "f2d-st-15",
+    "question": "What do `$dumpfile`, `$dumpvars(1, tb_top)` and `$dumpvars(0, tb_top)` do?",
+    "answer": "`$dumpfile` names the VCD file (default dump.vcd). Level 1 records only the variables declared in tb_top; level 0 also records every instance below it (§21.7.1). Automatic variables cannot be dumped (§13.3.2)."
+  },
+  {
+    "id": "f2d-st-16",
+    "question": "How do you print an unpacked array, the calling scope, and a number without padding?",
+    "answer": "Use `%p` for unpacked arrays and structs (without a specifier they are illegal, unless they are strings or unpacked byte arrays), `%m` for the hierarchical name of the calling scope, and a zero field width such as `%0d` or `%0h` (§21.2.1)."
   }
 ]

@@ -1,268 +1,1213 @@
 ---
 title: "I-SV-6: Compiler Directives & Generate Constructs"
-description: "Master SystemVerilog's compile-time toolkit: preprocessor directives, macro hygiene, and generate blocks for scalable, configurable verification IP."
+description: "Predict and write hygienic macros and conditional builds, generate labelled checker instances and find their paths, and choose compile-, elaboration- or run-time configuration for a testbench."
 flashcards: "I-SV-6_Compiler_Directives_and_Generates"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "Accellera UVM reference implementation (uvm-core)"
+    type: "vendor"
+    identifier: "uvm-core"
+    version: "2020.3.1"
 ---
 
 ## Quick Take
-- **What it is:** Compiler directives (`` `define ``, `` `ifdef ``, `` `include ``) let you configure source files before compilation. Generate constructs (`generate for`, `generate if`, `generate case`) let the compiler stamp out replicated hardware at elaboration time.
-- **Why it matters:** Real verification environments are parameterized — you need to create *N* protocol checkers, toggle debug features on/off, and share header definitions across files. Directives and generates are how you scale without copy-paste.
-- **The Analogy:** Think of directives as a mail-merge template and generates as a factory assembly line. The template fills in blanks before printing (directives substitute text before compilation); the assembly line stamps out multiple copies of the same part (generate unrolls loops into independent hardware instances).
 
-> **Signal:** If you find yourself manually duplicating instantiations or surrounding code with `if (ENABLE_DEBUG)` runtime checks that should really be compile-time decisions, it is time to learn these constructs.
+- **What it is:** **Compiler directives** are backtick commands such as `` `define ``, `` `ifdef ``, `` `include `` and `` `timescale `` that the compiler acts on as it reads your source files. The one you will use most is the **text macro**: a name that the compiler replaces with text. **Generate constructs** (`for (genvar …)` loops and generate `if` and `case`) create or leave out blocks of hierarchy during **elaboration**, the step that builds the design from parameter values before simulation time 0.
+- **Why it matters:** Real testbenches are configured and scaled: one checker per port, a debug build, a monitor chosen per bus type, a switch that a nightly regression flips. Each of these knobs can be turned at compile time, at elaboration time or at run time, and choosing the wrong time costs rebuilds. A careless macro computes the wrong value, a directive at the end of one file silently changes the next file, and an unlabelled generate block breaks every script that names its path.
+- **The Analogy:** Directives work like a mail merge: placeholders are filled in before the letter is printed, so the printer never sees them. Generate works like a stamping press that turns out N numbered copies of a part before the factory opens. *Where it breaks:* a mail merge pastes whatever text you give it, and so does a macro, which never adds the parentheses your expression needed. And unlike printed letters, generated copies are live scopes with names such as `gen_chk[2]` that you must use to reach them, and they are fixed before time 0.
+
+**You will be able to:**
+1. Predict the expansion of a macro with arguments, and write macros that avoid missing parentheses, double evaluation and the statement-macro semicolon trap, using `` `" `` and ``` `` ``` correctly.
+2. Write include guards and feature flags with `` `ifdef ``, `` `ifndef `` and `` `elsif ``, and explain what `` `timescale ``, `` `default_nettype ``, `` `resetall ``, `` `undef ``/`` `undefineall ``, `` `begin_keywords `` and `` `__FILE__ ``/`` `__LINE__ `` do to the files compiled after them.
+3. Write loop and conditional generate blocks with labelled scopes, and predict the hierarchical path of every generated instance, including `genblk<n>` names.
+4. Choose compile-time, elaboration-time or run-time configuration for a testbench feature, and justify the choice.
+5. Debug macro, directive and generate failures from their symptoms.
+
+<BeforeYouStart />
+
+Also useful: [I-SV-4C: SystemVerilog Checkers & Bind](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index), because Make It Work attaches its checkers with `bind`.
 
 ## Build Your Mental Model
 
-### Compiler Directives (IEEE 1800-2023 Clause 22)
+### When is each knob turned?
 
-Directives begin with a backtick (`` ` ``) and are processed by the **preprocessor** before the code reaches the compiler. They operate on the source text, not on the language semantics.
+A testbench can be configured at three different times. Before you reach for a macro, a parameter or a command-line switch, ask *when is this decided, and what does it cost to change?*
 
-#### Text Substitution with `` `define ``
+- **Compile time.** As the compiler reads the source, it processes directives: it replaces each macro with its text, keeps or skips `` `ifdef `` blocks and copies in `` `include `` files. To change one of these you compile again.
+- **Elaboration time.** The tool then builds the design hierarchy: it computes parameter values, expands generate constructs, inserts `bind` instances and connects ports (IEEE 1800-2023 §3.12, §27.3, §23.11). Everything in the hierarchy exists before time 0.
+- **Run time.** Simulation starts at time 0. Command-line plusargs, configuration objects and ordinary `if` statements decide behaviour while it runs, and nothing needs to be rebuilt.
+
+<ArchitectureDiagram
+  title="Three times at which a testbench can be configured"
+  caption="Read top to bottom. Directives and macros act while the compiler reads the text, parameters and generate build the hierarchy at elaboration, and plusargs and configuration objects act while the simulation runs. This is the conceptual order (§3.12): tools may merge the first two steps, and whether a change needs a full recompile or only a new elaboration is tool-dependent."
+  cellWidth={300}
+  nodes={[
+    { id: "comp", label: "1 · compile: read the text", sublabel: "`define  `ifdef  `include  `timescale", col: 0, row: 0, badge: "change: recompile" },
+    { id: "elab", label: "2 · elaborate: build the hierarchy", sublabel: "parameters, generate, bind, elaboration $fatal", col: 0, row: 1, badge: "change: re-elaborate" },
+    { id: "sim", label: "3 · simulate: run from time 0", sublabel: "plusargs, configuration objects, if", col: 0, row: 2, badge: "change: rerun" }
+  ]}
+  edges={[
+    { from: "comp", to: "elab", style: "causal", label: "compiled source" },
+    { from: "elab", to: "sim", style: "causal", label: "hierarchy fixed before time 0" }
+  ]}
+/>
+
+IEEE 1800-2023 defines what compilation and elaboration produce, but it does not require them to be separate steps: a "compile-time error" may be reported at any time before simulation starts (§3.12). Treat the three steps as a **teaching model**. It tells you what a change costs and what each kind of code can see. The standard also has no separate "preprocessor": directives are processed as the source is compiled. Many tools can print the source as it looks after directives (see Push Further).
+
+### Directives act on a whole compilation unit
+
+Every directive starts with the grave accent `` ` `` (ASCII 0x60), not the apostrophe `'`. Its effect runs **from the point where the compiler reads it, across every later file of the same compilation unit**, until another directive replaces it or the unit ends (§22.2).
+
+A **compilation unit** is a set of source files compiled together (§3.12.1). Which files form one unit is tool-specific, but every compliant tool must offer both of these choices: all the files on one compile command form one unit, or each file is its own unit. Directives in one unit never affect another unit, so the same sources can behave differently depending on how you compile them (§3.12.1).
+
+<ArchitectureDiagram
+  title="A directive stays in force for the rest of its compilation unit"
+  caption="Top: file_a.sv and vendor_ip.sv form one compilation unit, so the `default_nettype none at the end of file_a.sv still applies when vendor_ip.sv is read (§22.2, §22.8). Bottom: compiled as two units, vendor_ip.sv starts from the defaults (§3.12.1). Which files form one unit is tool-specific; compliant tools support both mappings."
+  cellWidth={290}
+  nodes={[
+    { id: "u1", label: "one compilation unit", col: 0, row: 0, rowSpan: 2, container: true },
+    { id: "a1", label: "file_a.sv", sublabel: "last line: `default_nettype none", col: 0, row: 0 },
+    { id: "b1", label: "vendor_ip.sv", sublabel: "implicit nets are now errors", col: 0, row: 1, state: "error", badge: "breaks" },
+    { id: "u2", label: "compilation unit 1", col: 0, row: 2, container: true },
+    { id: "a2", label: "file_a.sv", sublabel: "last line: `default_nettype none", col: 0, row: 2 },
+    { id: "u3", label: "compilation unit 2", col: 0, row: 3, container: true },
+    { id: "b2", label: "vendor_ip.sv", sublabel: "starts from the default: wire", col: 0, row: 3, state: "ok", badge: "compiles" }
+  ]}
+  edges={[
+    { from: "a1", to: "b1", style: "causal", label: "directive still in force" }
+  ]}
+/>
+
+Directives come in two kinds:
+
+- **Text directives** change what the compiler reads: `` `define ``, `` `undef ``, `` `undefineall ``, `` `ifdef `` and its family, and `` `include ``.
+- **State directives** change how later source is interpreted: `` `timescale `` (time units of later design elements), `` `default_nettype `` (what an undeclared name becomes), `` `unconnected_drive `` (pulls on unconnected inputs) and `` `pragma ``. `` `begin_keywords `` changes only which words are reserved (§22.14).
+
+Two facts surprise people. Directives are not recognized inside comments or string literals (§22.2). And macros are **not scoped by modules**: a `` `define `` written inside one module is still defined in every later module of the compilation unit (§22.5.1).
+
+### Text macros: what the compiler actually sees
+
+A **text macro** is created with `` `define `` and used by writing a backtick before its name. The compiler replaces the use with the macro's text. A macro can take arguments:
 
 ```systemverilog
-`define DATA_WIDTH 32
-`define ADDR_WIDTH 16
+// snippet
+`define TB_WIDTH 8                  // a macro without arguments: plain text
+logic [`TB_WIDTH-1:0] d;            // compiler sees: logic [8-1:0] d;
 
-// Usage — the preprocessor literally replaces the token
-logic [`DATA_WIDTH-1:0] data_bus;
-logic [`ADDR_WIDTH-1:0] addr;
+`define TB_SQ(x) ((x) * (x))        // a macro with one argument
+y = `TB_SQ(a + 1);                  // compiler sees: y = ((a + 1) * (a + 1));
 ```
 
-**Parameterized macros** accept arguments:
+The key rule: the compiler substitutes **text, not values**. Each formal argument is replaced by the actual argument's text exactly as written (§22.5.1). Nothing is evaluated, typed or checked until the expanded text is compiled. Two mistakes follow from that rule, and almost everyone makes both.
+
+**Mistake 1: missing parentheses.** The classic `MAX` macro, `` `define MAX(a,b) ((a) > (b) ? (a) : (b)) ``, puts every argument and the whole body in parentheses. Leave them out and operator precedence rearranges your expression.
+
+**Mistake 2: double evaluation.** A function evaluates each argument once and copies the value in (§13.5.1). A macro pastes the argument text wherever the formal appears, so an argument with a side effect can run more than once. §22.5.1 makes the same point with its own `max` example.
+
+Trace these by hand before you read the last column. Assume `a = 2`, and that `bump()` does `cnt++` and returns `cnt`, with `cnt` starting at 0.
+
+| You write | The compiler sees | What happens |
+|---|---|---|
+| `` `define SQ(x) x*x `` then `` y = `SQ(a+1); `` | `y = a+1*a+1;` | `y = 5`, not 9: `*` binds tighter than `+` |
+| `` `define SQ(x) ((x)*(x)) `` then `` y = `SQ(a+1); `` | `y = ((a+1)*(a+1));` | `y = 9` |
+| `` x = `MAX(bump(), 0); `` | `x = ((bump()) > (0) ? (bump()) : (0));` | `x = 2`, `cnt = 2`: `bump()` runs in the condition and again in the branch it selects |
+
+The conditional operator evaluates only the branch it selects (§11.4.11). So whether `bump()` runs twice depends on the condition: with `cnt` starting at 10, `` `MAX(bump(), 20) `` calls it once and returns 20. A bug that depends on data like this is hard to find. When an argument may have a side effect, write a function instead: `function automatic int max2(int a, int b); return (a > b) ? a : b; endfunction`.
+
+**Mistake 3: a semicolon in the wrong place.** A semicolon inside the macro text ends up wherever the macro is used. A semicolon after a `begin … end` macro becomes a null statement:
 
 ```systemverilog
-`define ASSERT_STABLE(sig, clk, rst) \
-  assert property (@(posedge clk) disable iff (rst) \
-    $stable(sig)) \
-  else $error(`"sig is not stable`");
+// snippet
+`define TB_CLK_PERIOD 10;               // the ';' is part of the macro text
+half = `TB_CLK_PERIOD / 2;              // compiler sees: half = 10; / 2;  -> error
 
-// Usage
-`ASSERT_STABLE(data_bus, clk, reset)
+`define TB_LOG_BLOCK(m) begin $display(m); end
+if (err) `TB_LOG_BLOCK("bad"); else ok_count++;
+// compiler sees: if (err) begin $display("bad"); end ; else ok_count++;
+// The if statement ends at 'end'. The ';' is a separate null statement,
+// so the else that follows has no if to belong to: a syntax error.
 ```
 
-> **Pitfall:** Macros are *textual substitution*. The preprocessor does not understand SystemVerilog syntax — it just pastes tokens. Never put a semicolon at the end of a macro that will be used as an expression or inside another statement.
-
-#### Conditional Compilation
+#### Every form of `` `define `` you will meet
 
 ```systemverilog
-`ifdef ENABLE_COVERAGE
+// snippet: the forms in IEEE 1800-2023 §22.5.1, with what the compiler sees
+
+// 1. Defaults: an empty or missing argument takes its default.
+`define MACRO1(a=5, b="B", c) $display(a,,b,,c);
+`MACRO1( , 2, 3)                  // $display(5,,2,,3);
+`MACRO1(1, , 3)                   // $display(1,,"B",,3);
+
+// 2. A backslash before the newline continues the text. Comments are not copied.
+`define TB_ASSERT_HOLD(lbl, clk, cond, sig) \
+  lbl: assert property (@(posedge clk) (cond) |=> $stable(sig)) /* hold rule */ \
+    else $error(`"sig changed while cond`");
+
+// 3. `" builds a string in which arguments ARE substituted.
+//    An ordinary "..." string is copied exactly as written.
+`define TB_SHOW(sig)  $display(`"sig = %0d`", sig)
+`define TB_SHOW0(sig) $display("sig = %0d", sig)
+`TB_SHOW(count);                  // $display("count = %0d", count);
+`TB_SHOW0(count);                 // $display("sig = %0d", count);
+
+// 4. `` joins two pieces into one token with no space between them.
+`define TB_REG(n) logic [7:0] n``_q, n``_d;
+`TB_REG(state)                    // logic [7:0] state_q, state_d;
+
+// 5. `\`" puts an escaped quote (\") inside a string built with `".
+`define TB_QUOTE(x) `"value: `\`"x`\`"`"
+$display(`TB_QUOTE(idle));        // $display("value: \"idle\"");
+```
+
+With `` `TB_ASSERT_HOLD(a_hold, clk, valid && !ready, data) ``, form 2 gives `a_hold: assert property (@(posedge clk) (valid && !ready) |=> $stable(data)) else $error("data changed while valid && !ready");`. The `cond` argument is wrapped in parentheses inside the body, for the same reason as `SQ`.
+
+More rules from §22.5.1 that you will trip over:
+
+- **Nested macros expand at the point of use.** A macro used inside another macro's text is expanded after the outer macro is substituted, not when it is defined. That is why `` `__LINE__ `` inside a logging macro gives the line of the call, not the line of the definition.
+- **Redefinition is legal, and the latest definition wins.** Whether a tool warns is tool-dependent, so two IP blocks that both define `` `DATA_WIDTH `` can silently change each other. This is why project macros get a prefix.
+- **No recursion.** A macro that expands, directly or indirectly, to a use of itself is an error.
+- **Commas need brackets.** A comma or right parenthesis inside an actual argument must be inside matched `()`, `[]`, `{}` or quotes. `` `TB_SHOW({a, b}) `` passes one argument.
+- **Use the parentheses.** A macro defined with arguments needs `( )` at every use, even when every argument has a default.
+- **Tokens stay whole.** Macro text cannot split a comment, number, string literal, identifier, keyword or operator, so you cannot open a string in a macro and close it outside.
+- **Directive names are reserved.** A macro cannot be named after a directive, such as `define` or `include`.
+
+### Macro hygiene, the way UVM does it
+
+The UVM reporting macros are the macros you will use most, and they show good macro hygiene. Below is an abridged outline of three macros from the reference implementation, labelled **uvm-core impl.**: IEEE 1800.2-2020 Annex B.1 specifies what `` `uvm_info `` does, while this expansion text belongs to uvm-core 2020.3.1 (`src/macros/uvm_message_defines.svh`, where `` `uvm_report_begin `` and `` `uvm_report_end `` are tagged as candidates for a future standard).
+
+```systemverilog
+// snippet: abridged from uvm-core 2020.3.1 src/macros/uvm_message_defines.svh
+`ifdef UVM_REPORT_DISABLE_FILE
+  `define uvm_file ""
+`else
+  `define uvm_file `__FILE__          // expands where the message is written
+`endif
+
+`define uvm_report_begin(SEVERITY, ID, VERBOSITY, RO=uvm_get_report_object()) \
+  begin \
+    uvm_pkg::uvm_report_object _local_report_object_; \
+    _local_report_object_ = RO.uvm_get_report_object(); \
+    if (/* verbosity and action allow this message */ 1) begin
+
+`define uvm_report_end \
+    end \
+  end
+
+`define uvm_info(ID, MSG, VERBOSITY) \
+  `uvm_report_begin(uvm_pkg::UVM_INFO, ID, VERBOSITY) \
+  uvm_report_info(ID, MSG, VERBOSITY, `uvm_file, `uvm_line, "", 1); \
+  `uvm_report_end
+```
+
+What each part teaches:
+
+1. **A multi-statement macro is one `begin … end` block, used without a semicolon.** The file's own comment tells users not to end the macros with semicolons. So `` `uvm_info("ID", "msg", UVM_LOW) `` stands alone as a statement, and `` if (c) `uvm_info("ID", "msg", UVM_LOW); else … `` does not compile, for the reason traced in Mistake 3.
+2. **Macro-local names are deliberately odd.** `_local_report_object_` cannot collide with a name the caller passes in. If the body declared a variable called `ro` and the caller's message used its own `ro`, the macro's declaration would hide the caller's variable.
+3. **Types and constants inside the body are package-qualified.** `uvm_pkg::uvm_report_object` and `uvm_pkg::UVM_INFO` mean the same thing in any scope where the macro is used, whatever that scope imports.
+4. **Default argument text is resolved where the macro is used.** `RO=uvm_get_report_object()` is pasted into the caller's code. Inside a component it calls the component's own `uvm_get_report_object()` method; in a module that imports `uvm_pkg` it calls the package-level function with the same name (uvm-core `uvm_report_object.svh` and `uvm_globals.svh`).
+5. **File and line are stamped at the use site.** `` `uvm_file `` and `` `uvm_line `` are `` `__FILE__ `` and `` `__LINE__ ``, expanded where the message is written, so the log names the caller. Defining `UVM_REPORT_DISABLE_FILE_LINE` turns them into `""` and `0`, which keeps logs comparable between machines (uvm-core impl.).
+6. **Names become strings with `` `" ``.** `` `uvm_object_utils(my_item) `` expands, through an inner macro, to `typedef uvm_object_registry#(my_item, "my_item") type_id;`. The inner macro's `` `"S`" `` turns the type name into the factory's lookup string (`uvm_object_defines.svh`). The outer macro passes the bare name down and the inner macro builds the string; the source comment there cites an issue with passing strings built from arguments down to lower-level macros (uvm-core impl.).
+7. **One coarse flag can drive several fine ones.** `src/dpi/uvm_dpi.svh` is wrapped in an `` `ifndef UVM_DPI_SVH `` guard, and defining `UVM_NO_DPI` defines `UVM_HDL_NO_DPI`, `UVM_REGEX_NO_DPI` and `UVM_CMDLINE_NO_DPI` in one place.
+
+Rules for your own macros:
+
+1. **Guard every header** with `` `ifndef ``/`` `define ``/`` `endif `` (next section).
+2. **Prefix project macros** (`` `TB_LOG ``, `` `TB_ASSERT_HOLD ``), so that another IP's macro of the same name cannot silently replace yours.
+3. **Use the language when it can do the job.** Use a `parameter` or `localparam` for a number, and a `let` or a function for an expression. Keep macros for what only text substitution can do: compile code in or out, generate declarations or statements, build names and strings, and stamp the file and line.
+4. **Decide how a statement macro is used, and document it.** Either it is an expression or a single statement used with a semicolon, like `` `TB_LOG(...); ``, or it is a `begin … end` block used without one, like `` `uvm_info ``. Wrap every argument and every expression body in parentheses, and never use an argument with a side effect twice.
+5. **`` `undef `` file-local helper macros** at the end of the file that defines them. Never put `` `undefineall `` in shared code (see the next sections).
+6. **Make feature flags independent**, set them on the command line or in one configuration header, and never write `` `define FLAG 0 `` to mean "off".
+
+### Conditional compilation and include files
+
+`` `ifdef NAME `` keeps the following block of text if `NAME` is currently defined as a macro. Otherwise the compiler skips the text up to the matching `` `elsif ``, `` `else `` or `` `endif ``. `` `ifndef `` is the inverse. In a chain, the **first** branch that succeeds is kept and every later branch is skipped (§22.6).
+
+```systemverilog
+// snippet: independent feature flags, one block each
+`ifdef TB_COVERAGE
   covergroup cg_bus @(posedge clk);
     cp_data: coverpoint data_bus;
   endgroup
-  cg_bus cg_inst = new;
-`elsif ENABLE_ASSERTIONS
-  // assertions-only build
-  assert property (@(posedge clk) !$isunknown(data_bus));
+  cg_bus cg_inst = new();
+`endif
+
+`ifdef TB_ASSERTIONS
+  a_known: assert property (@(posedge clk) !$isunknown(data_bus));
+`endif
+```
+
+A chain is right for mutually exclusive choices and wrong for independent features. Trace this one:
+
+```systemverilog
+// snippet: a chain keeps exactly one branch
+`ifdef TB_COVERAGE
+  // coverage build
+`elsif TB_ASSERTIONS
+  // assertions build: skipped whenever TB_COVERAGE is also defined
 `else
-  // production build — nothing extra
+  // production build
 `endif
 ```
 
-Use `` `ifndef `` for include guards:
-
-```systemverilog
-`ifndef MY_PKG_SVH
-`define MY_PKG_SVH
-  // package contents
-`endif
-```
-
-#### `` `include `` for File Composition
-
-```systemverilog
-`include "project_defines.svh"
-`include "ahb_interface.sv"
-```
-
-> **Pitfall:** Without include guards, a file included twice will cause redefinition errors. Always wrap shared headers with `` `ifndef ``/`` `define ``/`` `endif ``.
-
-#### Other Notable Directives
-
-| Directive | Purpose |
+| Macros defined | Block that is compiled |
 |---|---|
-| `` `timescale 1ns/1ps `` | Sets the time unit and precision for every design element that follows it in compilation order, across file boundaries, until the next `` `timescale `` or `` `resetall `` (§3.14.2, §22.7). Compile order can change it. |
-| `` `resetall `` | Resets all directives to their default states. |
-| `` `undef MACRO_NAME `` | Undefines a previously defined macro. |
-| `` `default_nettype none `` | Forces explicit declarations — catches typos. |
+| none | production build |
+| `TB_COVERAGE` | coverage build |
+| `TB_ASSERTIONS` | assertions build |
+| both | coverage build only: the assertions disappear without a message |
 
-### Macro Hygiene Best Practices
+Four more rules:
 
-1. **Always use include guards** for shared header files.
-2. **Namespace your macros** — prefix with the project or package name: `` `AHB_DATA_WIDTH `` instead of `` `DATA_WIDTH ``.
-3. **`` `undef `` when done** — if a macro is only needed inside one file or block, undefine it afterward to avoid polluting the global namespace.
-4. **Avoid macros for constants** when a `parameter` or `localparam` would work — parameters are typed, scoped, and understood by the compiler.
-5. **Use `` `ifdef `` for feature flags** — compile different verification builds (assertions-only, coverage-enabled, debug mode) from the same source tree.
+- **Blocks nest.** An `` `ifdef `` inside another block starts an inner construct, and each `` `endif `` closes the innermost open one (§22.6).
+- **`` `ifdef `` tests whether a name is defined, never its text.** After `` `define TB_COVERAGE 0 ``, `` `ifdef TB_COVERAGE `` succeeds. To turn a flag off, leave it undefined or `` `undef `` it (§22.6).
+- **IEEE 1800-2023 also accepts expressions** such as `` `ifdef (TB_COVERAGE && !TB_FAST) ``. Each name becomes 1 if it is defined and 0 if not; the operators are `!`, `&&`, `||`, `->` and `<->` (§22.6). Check that your tools accept this form before you rely on it.
+- **Skipped text must still be valid tokens.** An unterminated string or block comment inside a skipped block is still an error (§22.6).
+
+`` `include "file.svh" `` inserts the whole file at that point, and the included text becomes part of the including file's compilation unit (§3.12.1). With quotes, the tool searches the compiler's current working directory and any include paths you give it; `` `include <file> `` searches only an implementation-dependent location for files that the standard itself defines (§22.4). Only white space or a comment may follow an `` `include `` on its line. Nesting must be finite, and tools must allow at least 15 levels, so two headers that include each other without guards nest until the tool's limit and stop with an error.
+
+An **include guard** makes a header safe to include more than once:
 
 ```systemverilog
-// Good: feature-flag pattern
-`ifdef SIM_DEBUG
-  `define DBG_PRINT(msg) $display("[DEBUG] %0t: %s", $time, msg)
-`else
-  `define DBG_PRINT(msg)  // compiles to nothing in production
-`endif
+// snippet: a simplified tb_defines.svh (Make It Work has the full one)
+`ifndef TB_DEFINES_SVH         // first time: not defined, so keep reading
+`define TB_DEFINES_SVH         // ...and define it
+`define TB_LOG(msg) $display("%m: %s", msg)
+`endif                         // next time in the same unit: the whole file is skipped
 ```
 
----
+| Step | `TB_DEFINES_SVH` defined before the include? | What the compiler does |
+|---|---|---|
+| `port_checker.sv` includes the header | no | defines the guard and `TB_LOG` |
+| `tb_top.sv`, in the same compilation unit, includes it | yes | skips the file: no second definition |
+| `tb_top.sv` compiled as a separate unit includes it | no (a new unit does not see another unit's macros) | defines both again, which is what this unit needs |
 
-## Generate Constructs (IEEE 1800-2023 Clause 27)
+A guard protects you only **within one compilation unit**. Including a file with only macros twice is legal anyway, because a redefined macro simply replaces the old one. The real errors come from declarations: a `typedef`, class or module declared twice in one scope. A subtler trap compiles without complaint at first: if two packages each `` `include `` the same class declaration, you get two distinct classes that share a name, `pkg_a::my_item` and `pkg_b::my_item`. A handle of one cannot hold an object of the other, so type errors appear later, far from their cause. Compile each declaration once, in one package, and `import` that package.
 
-Generate constructs operate at **elaboration time** — the phase between parsing and simulation where the compiler resolves parameters and builds the design hierarchy. They create or omit structural elements (modules, interfaces, checkers, assertions, covergroups) based on compile-time-known values.
+### Directives that set compiler state
 
-### `generate for`
+| Directive | What it does | Default, and `` `resetall `` | Where it may appear |
+|---|---|---|---|
+| `` `define ``, `` `undef ``, `` `undefineall `` | create or remove text macros (§22.5) | no default; `` `resetall `` leaves macros alone | anywhere |
+| `` `ifdef `` family | keep or skip blocks of text (§22.6) | none | anywhere |
+| `` `include `` | insert a file (§22.4) | none | anywhere; only white space or a comment may share its line |
+| `` `timescale `` | time unit and precision of later design elements that have no `timeunit` (§22.7) | tool-specific; `` `resetall `` restores the tool default | outside design elements |
+| `` `default_nettype `` | net type of implicit nets, or `none` to forbid them (§22.8) | `wire`; restored by `` `resetall `` | outside design elements |
+| `` `unconnected_drive `` / `` `nounconnected_drive `` | pull unconnected input ports up or down (§22.9) | `` `resetall `` acts like `` `nounconnected_drive `` | outside design elements |
+| `` `celldefine `` / `` `endcelldefine `` | tag modules as cells for PLI tools (§22.10) | `` `resetall `` acts like `` `endcelldefine `` | anywhere, best outside |
+| `` `pragma `` | implementation-specific instructions, such as protected envelopes (§22.11) | unknown pragmas have no effect | anywhere |
+| `` `line `` | set the file name and line the tool reports (§22.12) | not affected by `` `resetall `` | anywhere, alone on its line |
+| `` `__FILE__ ``, `` `__LINE__ `` | expand to the current file name and line number (§22.13) | none | anywhere |
+| `` `begin_keywords `` / `` `end_keywords `` | choose which words are reserved (§22.14) | the tool's default set; not affected by `` `resetall `` | outside design elements |
+| `` `resetall `` | reset every directive that has a default (§22.3) | — | outside design elements |
+
+A **design element** is a module, program, interface, checker, package, primitive or configuration (§3.2). "Outside design elements" therefore means between them, usually at the top of a file.
+
+**`` `timescale `` and order dependence.** `` `timescale `` sets the unit for the design elements that follow it, so moving a file in the compile list can change the delays of a module in another file. A design element that declares its own `timeunit` and `timeprecision` is immune, because those win over any `` `timescale `` (§3.14.2.2, §3.14.2.3). It is also an error for some design elements to have a time unit and precision while others do not (§3.14.2.3). The robust habit: put `timeunit 1ns; timeprecision 1ps;` first in every module, interface, program and package you own, as Make It Work does.
+
+**`` `default_nettype none ``.** An undeclared name in a port connection or on the left of a continuous `assign` normally becomes a new 1-bit wire (§6.10). With `none`, that misspelling becomes a compile error instead. Put it at the top of your own files, and end each such file with `` `default_nettype wire ``, so that third-party files compiled next in the same unit get the default they were written for. One more catch: an input port declared without a net kind, such as `input logic a`, takes the default net type (§23.2.2.3). Tools treat that port differently under `none`, and some report an error (tool-dependent). So in files compiled under `none`, write `input wire logic a` or `input var logic a`; both are legal whatever the default is.
+
+**`` `resetall ``** resets the directives that have defaults: `` `timescale `` to the tool default, `` `default_nettype `` to `wire`, and the pull and cell directives (§22.3, §22.9, §22.10). It does **not** undefine macros (§22.5), and it does not affect `` `begin_keywords `` or `` `line `` (§22.12, §22.14).
+
+**`` `undef NAME ``** removes one macro (§22.5.2). Undefining a name that was never defined may give a warning. **`` `undefineall ``** removes **every** macro defined so far in the compilation unit (§22.5.3), including include guards and the UVM macros from `uvm_macros.svh`. Later files in the same unit then lose `` `uvm_info `` and re-read headers whose guards have vanished. Prefer a targeted `` `undef `` of your own file-local macros.
+
+**`` `begin_keywords "1364-2005" ``** … `` `end_keywords `` compiles a legacy file that uses names such as `logic` or `bit` as identifiers, which later revisions reserve (F1C). The pair changes only the reserved-word set, can be nested, applies across file boundaries until the matching `` `end_keywords ``, and may appear only outside design elements (§22.14).
+
+**`` `__FILE__ `` and `` `__LINE__ ``** expand to the current file name, as a string literal, and the current line number (§22.13). Inside an included file they name that file. The file name is the path by which the tool opened the file, in an implementation-dependent format, so do not parse it in scripts.
+
+### Generate constructs: hierarchy built at elaboration
+
+A **generate block** is a group of module items, such as instances, `assign` statements, `always` and `initial` procedures, assertions and declarations, that elaboration can create once, many times or not at all (§27.2). A generate block cannot contain port declarations, `specify` blocks or `specparam`s, and a `parameter` declared inside one is treated as a `localparam`. Modules, interfaces and checkers can all contain generate constructs.
+
+The **generate scheme**, meaning the loop bounds or the `if`/`case` condition, must be a constant expression: parameters, `localparam`s, genvars, and calls to constant functions or constant system functions such as `$clog2` (§27.3, §11.2.1). Generate schemes look like procedural code, but they **never execute during simulation**: they are evaluated once at elaboration (§27.3). The keywords `generate` and `endgenerate` are optional and change nothing. Each generated block is a new level of hierarchy, and code inside it can use names from the enclosing scope directly.
+
+### Loop generate and genvar rules
+
+This loop creates one checker per channel. It is the same code that the visual below uses:
 
 ```systemverilog
-module multi_channel_monitor #(parameter int NUM_CH = 4) (
-  input logic clk,
-  input logic [7:0] data_bus [NUM_CH]
-);
-  generate
-    for (genvar i = 0; i < NUM_CH; i++) begin : gen_mon
-      protocol_checker u_chk (
-        .clk  (clk),
-        .data (data_bus[i])
-      );
-    end
-  endgenerate
+// compile
+module protocol_checker (input logic clk, input logic [7:0] data);
+  // Stand-in: the real checks would live here.
+endmodule
+
+module tb_top;
+  parameter int NUM_CH = 2;
+  logic       clk;
+  logic [7:0] data_bus [NUM_CH];
+
+  // Generate construct 1 in tb_top: one block per channel, gen_chk[0..NUM_CH-1]
+  for (genvar i = 0; i < NUM_CH; i++) begin : gen_chk
+    protocol_checker chk_inst (.clk(clk), .data(data_bus[i]));
+  end
 endmodule
 ```
 
-Key points:
-- **`genvar`** is the loop index. It exists only during elaboration. Inside each generated block, `i` is a constant (an implicit `localparam`, §27.4), so procedural code in the block may use it.
-- Each iteration creates a **named scope**: the checkers are `multi_channel_monitor.gen_mon[0].u_chk`, `gen_mon[1].u_chk`, …. The index belongs to the block, not to the instance.
-- If you leave out the `: gen_mon` label, the block is named `genblk<n>`, where *n* counts every generate construct in that scope (§27.6). Always label generate blocks so their paths stay stable.
-- You are creating *parallel hardware*, not running a sequential loop.
-
-### `generate if` / `generate case`
-
-```systemverilog
-generate
-  if (BUS_TYPE == "AHB") begin : gen_ahb
-    ahb_monitor u_mon (.clk(clk), .bus(bus_if));
-  end else if (BUS_TYPE == "AXI") begin : gen_axi
-    axi_monitor u_mon (.clk(clk), .bus(bus_if));
-  end else begin : gen_default
-    $fatal(1, "Unsupported BUS_TYPE: %s", BUS_TYPE);
-  end
-endgenerate
-```
-
-This lets you configure entirely different sub-architectures at elaboration time, which is invaluable for protocol-parameterized VIP wrappers.
-
-### Generate vs Runtime: The Critical Distinction
-
-This is the single most important concept in this lesson. In the interactive below, change `NUM_CH`, remove the loop label, and add a generate block before the loop. Predict the checker's full hierarchical path each time before revealing the elaborated hierarchy.
+**Predict first.** Write down the full hierarchical path of the checker for channel 1. Then, in the visual, change `NUM_CH`, untick the loop label, and put an `if (EN_COV)` generate block before the loop. Predict the path of the last checker each time before you reveal the elaborated hierarchy. Switch to the runtime-loop view to compare a procedural `for (int …)` loop.
 
 <GenerateElaborationVisualizer />
 
-**Rule of thumb:**
-- Use `generate` when you need to **create structural instances** (modules, interfaces, checkers, covergroups, `assign` statements, `always` blocks).
-- Use a runtime loop (`for (int i …)`) when you need to **perform procedural operations** (signal assignments, function calls, display statements) inside an `always` or `initial` block.
+What the visual showed:
 
-You **cannot** instantiate a module inside a runtime `for` loop. You **cannot** access runtime variables (signals) in a `generate` condition — only parameters, `localparam`, and `genvar` values.
+- **The label names the block, and the genvar value indexes it.** The channel 1 checker is `tb_top.gen_chk[1].chk_inst`. The index belongs to the generate block, not to the instance, so `tb_top.chk_inst[1]` does not exist.
+- **Without a label, the block is called `genblk<n>`,** where `n` is the loop's position among **all** generate constructs in the scope, labelled or not (§27.6). Adding the `if (EN_COV)` block in front turned `genblk1` into `genblk2` without touching the loop.
+- **The paths exist before time 0.** Elaboration built the blocks; the runtime loop adds nothing to the hierarchy and cannot create instances.
+- The visual's summary mentions `config_db`. In UVM, configuration-database scopes name UVM components (`uvm_test_top.env.agent`), not module instances. Module paths such as `tb_top.gen_chk[1].chk_inst` are what `bind`, `%m`, hierarchical references and waveform viewers use.
 
----
+The genvar rules (§27.4):
 
-## Make It Work
+1. A `genvar` is the loop index of a loop generate. It is declared before the loop (`genvar i;`) or in the loop header (`for (genvar i = 0; …)`), and it does not exist during simulation.
+2. A genvar may appear **only in the loop generate scheme**. Inside each generated block, the same name refers to an implicit `localparam` that holds that block's value, so procedural code in the block may read it: `always_ff @(posedge clk) q[i] <= d[i];` is legal.
+3. The initialization and the iteration assign the same genvar, and the initialization must not read the loop index.
+4. Nested loops need different genvars, because inside the outer block the name already refers to the outer `localparam`.
+5. It is an error if the loop never ends, if a genvar value repeats, or if any bit of the genvar becomes `x` or `z`.
+6. A loop body of one item without `begin … end` is still a generate block, and still a separate scope.
+7. A labelled loop declares an array of generate blocks indexed by the genvar's values. The array may be sparse: a loop with `i += 2` creates `g[0]`, `g[2]`, … and no `g[1]`.
 
-### Verification Playbook
-
-1. **Feature-flag your testbench builds:**
-   ```systemverilog
-   // Compile with: +define+ENABLE_COVERAGE+SIM_DEBUG
-   `ifdef ENABLE_COVERAGE
-     // covergroups
-   `endif
-   `ifdef SIM_DEBUG
-     // verbose tracing
-   `endif
-   ```
-
-2. **Parameterized checker arrays:** put the generate loop in a small wrapper module and bind the wrapper once.
-   ```systemverilog
-   module port_checkers #(int N = 4) (input logic clk, input logic [7:0] data [N]);
-     for (genvar i = 0; i < N; i++) begin : gen_chk
-       protocol_checker chk_inst (.clk(clk), .data(data[i]));
-     end
-   endmodule
-
-   // Names in a bind are resolved inside the target (router): NUM_PORTS, clk, port_data
-   bind router port_checkers #(.N(NUM_PORTS)) u_chks (.clk(clk), .data(port_data));
-   // Paths: <each router instance>.u_chks.gen_chk[i].chk_inst
-   ```
-   Do **not** write `bind` inside a `for (genvar i …)` loop that targets the same module. Every iteration would insert the same instance name `chk_inst` into the same target, which is an elaboration error, and `port_data[i]` would be resolved inside the target, where `i` does not exist (§23.11).
-
-3. **Config headers for bench variants:**
-   ```systemverilog
-   // project_config.svh
-   `ifndef PROJECT_CONFIG_SVH
-   `define PROJECT_CONFIG_SVH
-     `define TARGET_FREQ_MHZ 100
-     `define NUM_DMA_CHANNELS 4
-     `define ENABLE_COVERAGE
-   `endif
-   ```
-
-**Checklist before moving on:**
-- [ ] You know the difference between `` `define `` (text substitution) and `parameter` (typed, scoped constant).
-- [ ] You can write an include guard.
-- [ ] You understand that `generate for` creates parallel hardware instances, not a sequential loop.
-- [ ] You know when to use `` `ifdef `` vs a runtime `if`.
-
----
-
-## Push Further: Common Pitfalls
-
-### Macro Expansion Surprises
+Two classic mistakes:
 
 ```systemverilog
-// BAD: semicolon in the macro definition
-`define CLK_PERIOD 10;  // <-- trailing semicolon!
+// snippet: genvar misuse
+genvar j;
+always_ff @(posedge clk)
+  for (j = 0; j < N; j++) q[j] <= d[j];   // ERROR: a genvar used as a procedural
+                                         // loop variable. Write: for (int j = 0; ...)
 
+for (genvar i = 0; i < 4; i++)
+  assign out[i] = in[i] & enable;        // the whole loop body: one item
+assign valid[i] = 1'b1;                  // ERROR: no genvar i exists out here
+```
+
+The second mistake is caught at compile time, not hidden. Still, always write `begin : label … end`, so that the body's extent is visible and the block has a stable name.
+
+### Conditional generate: if and case
+
+A **conditional generate** (`if`, or `case`) instantiates at most one of several alternative blocks, chosen by constant expressions at elaboration (§27.5). Use it to pick an implementation per instance, such as the right monitor for a bus type:
+
+```systemverilog
+// compile
+package bus_pkg;
+  typedef enum int {BUS_AHB, BUS_AXI, BUS_APB} bus_kind_e;
+endpackage
+
+module ahb_monitor (input logic clk); endmodule   // stand-ins for real monitors
+module axi_monitor (input logic clk); endmodule
+
+module bus_monitor_wrap import bus_pkg::*; #(parameter bus_kind_e KIND = BUS_AXI) (
+  input logic clk
+);
+  // Both monitor alternatives use the label gen_mon (legal, §27.5), so the
+  // monitor is always <wrapper>.gen_mon.u_mon, whichever one KIND selects.
+  case (KIND)
+    BUS_AHB: begin : gen_mon
+      ahb_monitor u_mon (.clk);
+    end
+    BUS_AXI: begin : gen_mon
+      axi_monitor u_mon (.clk);
+    end
+    default: begin : gen_no_mon
+      // Elaboration-time check (§20.10.1): stop before simulation starts.
+      $fatal(1, "bus_monitor_wrap: no monitor for KIND=%0d", KIND);
+    end
+  endcase
+endmodule
+```
+
+| `KIND` | Block that exists after elaboration | Path of the monitor |
+|---|---|---|
+| `BUS_AHB` | `gen_mon` (the AHB alternative) | `<wrapper>.gen_mon.u_mon`, an `ahb_monitor` |
+| `BUS_AXI` | `gen_mon` (the AXI alternative) | `<wrapper>.gen_mon.u_mon`, an `axi_monitor` |
+| `BUS_APB` | `gen_no_mon` | none: elaboration stops at the `$fatal`, and simulation never starts |
+
+Rules worth knowing:
+
+- **One label for all alternatives** keeps paths stable: only one alternative is ever built, so they may share a name. That block name may not be reused by another generate construct, or by any other declaration, in the same scope (§27.5).
+- **An `else if` chain adds no extra level of hierarchy.** If an `else` branch holds just another conditional generate without `begin … end`, it is "directly nested" and belongs to the outer construct, so its blocks may reuse the outer label (§27.5). `if (KIND == BUS_AHB) begin : gen_mon … end else if (KIND == BUS_AXI) begin : gen_mon … end` gives the same paths as the `case`.
+- **Elaboration-time severity tasks** (`$fatal`, `$error`, `$warning`, `$info`) written outside any procedure, usually under a generate `if`, run during elaboration (§20.10.1). Their arguments must be constants. The message includes the file, the line and the scope. After `$fatal` the elaboration may be aborted and simulation is not started; after `$error` elaboration continues but simulation is not started. The same task inside a procedure is an ordinary run-time task.
+
+### Naming and reaching generated hierarchy
+
+The tool numbers the generate constructs of each scope 1, 2, 3, … in textual order, **counting every construct, labelled or not, even one that creates nothing** (§27.6):
+
+```systemverilog
+// snippet: how generate constructs are numbered in one scope
+module top;
+  parameter bit EN_COV = 1;
+  if (EN_COV) begin : gen_cov             // construct 1: labelled, so gen_cov
+  end
+  for (genvar i = 0; i < 2; i++) begin    // construct 2: unlabelled, so genblk2
+  end                                     // blocks: top.genblk2[0], top.genblk2[1]
+  if (0) begin                            // construct 3: creates nothing, still counted
+  end
+  if (1) begin                            // construct 4: unlabelled, so genblk4
+  end
+endmodule
+```
+
+If `genblk<n>` would clash with a name you declared, the tool adds leading zeros (`genblk02`). Never write these generated names into scripts. Label the block instead.
+
+Reaching generated instances:
+
+- **From outside, write the full path with constant indices:** `tb_top.gen_chk[1].chk_inst`. An index after an instance array or generate block name is an **instance select** and must be a constant expression; when the array name is not the last element of the path, the index is required (§23.6).
+- **Names inside an unlabelled block cannot be referenced from outside it** (§23.6, §27.4). Tools still show those blocks as `genblk<n>` in messages and waveforms, and some accept such names in hierarchical references, which is tool-dependent. Label the block and the question never arises.
+- **`%m` prints the path of the scope that calls the display task** (§21.2.1.5). `$display("%m")` inside a generated block is the quickest way to see what elaboration built.
+
+Because instance selects are constants, testbench code cannot loop over `gen_chk[k]` with a run-time `k`. The standard pattern copies a handle out of each block at time 0. Here each generated interface instance is given to the testbench through an array of virtual interfaces:
+
+```systemverilog
+// snippet: one interface per port, each handle copied out at time 0
+interface port_if (input logic clk);
+  logic       valid, ready;
+  logic [7:0] data;
+endinterface
+
+module tb_top;
+  localparam int NUM_PORTS = 3;
+  logic clk;
+  virtual port_if vifs [NUM_PORTS];      // testbench code may index it at run time
+
+  for (genvar i = 0; i < NUM_PORTS; i++) begin : gen_if
+    port_if u_if (.clk);
+    initial vifs[i] = u_if;              // this block's own instance, at index i
+    // In UVM, this is also where each handle goes into the configuration
+    // database (preview of I-UVM-2C).
+  end
+endmodule
+```
+
+### Compile time, elaboration time or run time?
+
+Command-line **plusargs** are the usual run-time switch. `$test$plusargs("NAME")` returns nonzero if any argument on the simulator's command line starts with `+NAME`. `$value$plusargs("NAME=%d", var)` also converts the rest of that argument into `var`; it returns 0 and leaves `var` unchanged if the plusarg is absent (§21.6). F2D covers them in depth.
+
+```systemverilog
+// snippet: the two plusarg functions (§21.6)
+int unsigned n_pkts = 100;                       // the default when absent
+bit          inject_bug;
 initial begin
-  half = `CLK_PERIOD / 2;   // expands to: half = 10; / 2;  -> syntax error
+  void'($value$plusargs("N_PKTS=%d", n_pkts));   // +N_PKTS=500 overrides it
+  // The match is a prefix match, so +INJECT_BUG_LATER also turns this on.
+  // Compare with 0: the function returns "nonzero", not necessarily 1.
+  inject_bug = ($test$plusargs("INJECT_BUG") != 0);
 end
 ```
 
-### Missing `begin/end` in Generate Blocks
+| Mechanism | Fixed when | To change it | Can differ per instance? | Can a regression flip it per run? | Visible in the hierarchy? |
+|---|---|---|---|---|---|
+| `` `define `` / `` `ifdef `` | compile | recompile | no: one definition at a time per compilation unit | only with one build per setting | no: the code is present or absent |
+| parameter + generate | elaboration | re-elaborate with a new override: `#(...)`, a configuration (§23.10, §33.4.3) or a top-level override switch (tool-dependent) | yes | only by re-elaborating | yes: blocks and instances |
+| `bind` | elaboration | edit and re-elaborate | per module, per instance list, or one instance (§23.11) | no | yes: bound instances |
+| plusarg | run time | change the run command | only if each instance reads its own name | yes | no |
+| configuration object or `uvm_config_db` | run time | choose another test, or a plusarg | yes, per component | yes | no |
+
+How to choose:
+
+- **Structure** (how many checkers, agents or ports, and which monitor) must exist before time 0, so it belongs at **elaboration**: parameters and generate. Run-time code can steer instances that exist; it cannot create them.
+- **Choices a regression makes per run** (enable an expensive checker, inject an error, change verbosity) belong at **run time**: plusargs or configuration objects. You build once and run many ways.
+- **Code that must not even be compiled** (code for one tool only, optional DPI imports as in `UVM_NO_DPI`, a gate-level build) belongs behind `` `ifdef ``.
+- The trade-off: a generate `if` removes a disabled checker from the design entirely, while a run-time switch keeps the instance and only skips its work. Removing it costs a re-elaboration; keeping it costs a little simulation time.
+
+### Debugging: symptom, cause, fix
+
+Tools word their messages differently, so this table describes each symptom by category.
+
+| What you see | Likely cause | Fix |
+|---|---|---|
+| A syntax error on a line that looks correct, at a macro use | The macro text is wrong where it lands: a `;` inside the definition, a missing parenthesis, a token split across the boundary | Look at the expanded text (Push Further), then fix the definition |
+| A wrong value from an arithmetic macro | Missing parentheses around an argument or the body | `((x)*(x))`, or use a `let` or a function |
+| A counter, `randomize()` call or FIFO pop happens twice | An argument with a side effect appears twice in the macro body | Use a function, which evaluates each argument once |
+| A syntax error at `else` right after a macro | A `begin … end` statement macro followed by `;` | Drop the `;` (UVM style), or put the `if` branch in `begin … end` |
+| Undeclared-identifier or implicit-net errors in a file nobody changed | An earlier file in the same unit left `` `default_nettype none `` in force | End your files with `` `default_nettype wire ``, or compile third-party code as its own unit |
+| Delays change when the file order changes, or a mixed-time-unit error or warning | A `` `timescale `` from one file applies to the next | `timeunit` and `timeprecision` in every design element you own |
+| An undefined-macro error when one file is compiled alone, but not in the full build | The file uses a macro that another file happened to define first | Each file includes the headers it uses; every header has a guard |
+| A `typedef`, class or module reported as declared twice | A header included twice into one scope without a guard, or a package `` `include ``d instead of imported | Add the guard; compile the package once and `import` it |
+| A waveform script, coverage exclusion or log filter cannot find a checker after an unrelated edit | An unlabelled generate block was renumbered (`genblk1` became `genblk2`) | Label every generate block, and never write `genblk` names into scripts or code |
+| Elaboration stops with your own message and no simulation runs | An elaboration-time `$fatal` rejected a parameter value | Read the file, line and scope in the message, and fix the override |
+| A genvar reported outside a loop generate scheme | A genvar used as a procedural loop variable | Use `int` in procedural loops |
+| A non-constant index reported in a hierarchical name | A run-time variable indexes a generate block or instance array | Reach the instances from a generate loop, or copy handles into an array at time 0 |
+
+### Recap
+
+- Directives act as the compiler reads the text, and they stay in force for the rest of the compilation unit. Macros replace text: parenthesize, never reuse an argument with a side effect, and decide whether each statement macro takes a semicolon.
+- `` `ifdef `` tests definedness. A chain keeps one branch. Guards work within one compilation unit.
+- State directives (`` `timescale ``, `` `default_nettype ``) leak into later files; `timeunit` in every design element and a restored `` `default_nettype wire `` stop the leak. `` `resetall `` does not touch macros.
+- Generate builds labelled, indexed scopes before time 0. Paths use the label and the genvar value; unlabelled blocks become `genblk<n>`, counted over every construct in the scope.
+- Structure belongs at elaboration, per-run choices at run time, and compile-out code behind `` `ifdef ``.
+
+## Make It Work
+
+### Worked example: one checker per port, three kinds of knob
+
+You will attach one hold-rule checker to every port of a router, the design under test (DUT), and turn three knobs, one of each kind:
+
+- **Compile time:** the `TB_DEBUG` macro turns logging on or off.
+- **Elaboration time:** `NUM_PORTS` sets how many checkers are built.
+- **Run time:** the `+INJECT_BUG` plusarg makes the stimulus break the protocol on purpose, so you can see the checker fire.
+
+Every design element declares `timeunit` and `timeprecision`, so file order cannot change any delay. The five files form one example; compile them together.
 
 ```systemverilog
-// BAD: no begin/end means no named scope
-generate
-  for (genvar i = 0; i < 4; i++)
-    // Only ONE statement is part of the loop body!
-    assign out[i] = in[i] & enable;
-    assign valid[i] = 1'b1;  // THIS IS OUTSIDE THE LOOP
-endgenerate
+// compile
+// tb_defines.svh: included by every file that logs
+`ifndef TB_DEFINES_SVH
+`define TB_DEFINES_SVH
+
+// Compile-time knob: define TB_DEBUG on the compile command line.
+// `__FILE__ and `__LINE__ inside TB_LOG expand where TB_LOG is USED,
+// so each message names the caller's file and line (§22.5.1, §22.13).
+`ifdef TB_DEBUG
+  `define TB_LOG(msg) $display("[%s:%0d] %m: %s", `__FILE__, `__LINE__, msg)
+`else
+  `define TB_LOG(msg)
+`endif
+
+`endif // TB_DEFINES_SVH
 ```
 
-Always wrap generate loop bodies with `begin : label_name … end`.
+```systemverilog
+// compile
+// port_checker.sv: the hold rule for one port
+`include "tb_defines.svh"
 
-### `genvar` Scope Confusion
+module port_checker (
+  input logic       clk,
+  input logic       rst_n,
+  input logic       valid,
+  input logic       ready,
+  input logic [7:0] data
+);
+  timeunit 1ns; timeprecision 1ps;
+
+  // While a transfer is stalled (valid && !ready), data must hold.
+  a_hold: assert property (@(posedge clk) disable iff (!rst_n)
+                           valid && !ready |=> $stable(data))
+    else $error("data changed while stalled");
+
+  // Runs at time 0, after elaboration has built this instance.
+  initial `TB_LOG("checker alive at time 0");
+endmodule
+```
 
 ```systemverilog
-generate
-  for (genvar i = 0; i < N; i++) begin : gen_blk
-    // LEGAL: inside the block, i is a constant (implicit localparam, §27.4)
-    always_ff @(posedge clk) q[i] <= d[i];
-    assign out[i] = in[i];
+// compile
+// router.sv: a stand-in for the DUT. It has the real port list but no logic,
+// so the example compiles without a router design.
+module router #(parameter int NUM_PORTS = 4) (
+  input logic                      clk,
+  input logic                      rst_n,
+  input logic [NUM_PORTS-1:0]      port_valid,
+  input logic [NUM_PORTS-1:0]      port_ready,
+  input logic [NUM_PORTS-1:0][7:0] port_data
+);
+  timeunit 1ns; timeprecision 1ps;
+endmodule
+```
+
+```systemverilog
+// compile
+// port_checkers.sv: one port_checker per port, built at elaboration
+module port_checkers #(parameter int N = 4) (
+  input logic              clk,
+  input logic              rst_n,
+  input logic [N-1:0]      valid,
+  input logic [N-1:0]      ready,
+  input logic [N-1:0][7:0] data
+);
+  timeunit 1ns; timeprecision 1ps;
+
+  // Elaboration-time check (§20.10.1): with N < 1 there is nothing to check,
+  // so stop before simulation starts. This is generate construct 1.
+  if (N < 1) begin : gen_bad_n
+    $fatal(1, "port_checkers: N must be at least 1, got %0d", N);
   end
-endgenerate
 
-// ILLEGAL: a genvar may only be used in a loop generate scheme (§27.4)
-genvar j;
-always_ff @(posedge clk)
-  for (j = 0; j < N; j++) q[j] <= d[j];   // use: for (int j = 0; ...)
+  // Generate construct 2. The label names every block: gen_chk[0], gen_chk[1], ...
+  for (genvar i = 0; i < N; i++) begin : gen_chk
+    port_checker u_chk (.clk, .rst_n, .valid(valid[i]), .ready(ready[i]),
+                        .data(data[i]));
+  end
+endmodule
 ```
 
-The trap is not using `i` inside procedural code in the generated block. It is using a `genvar` *as* a procedural loop variable.
+```systemverilog
+// compile
+// tb_top.sv: three ports, with a checker per port attached by bind
+`include "tb_defines.svh"
 
-### Recursive Include
+module tb_top;
+  timeunit 1ns; timeprecision 1ps;
 
-If `a.svh` includes `b.svh` and `b.svh` includes `a.svh`, you get infinite recursion. The fix: **always use include guards** in every header file.
+  localparam int NUM_PORTS = 3;          // elaboration-time knob
+
+  logic                      clk   = 1'b0;
+  logic                      rst_n = 1'b0;
+  logic [NUM_PORTS-1:0]      valid = '0;
+  logic [NUM_PORTS-1:0]      ready = '1;
+  logic [NUM_PORTS-1:0][7:0] data  = '0;
+  bit                        inject_bug;
+
+  always #5 clk = ~clk;                  // rising edges at 5, 15, 25, ... ns
+
+  // Drive through a clocking block (F4C): zero-skew drives land in Re-NBA,
+  // after the checkers have sampled the edge.
+  clocking cb @(posedge clk);
+    output rst_n, valid, ready, data;
+  endclocking
+
+  router #(.NUM_PORTS(NUM_PORTS)) u_router (
+    .clk, .rst_n, .port_valid(valid), .port_ready(ready), .port_data(data));
+
+  // Names in a bind are resolved inside the target, so NUM_PORTS and port_*
+  // here are router's own parameter and ports (§23.11).
+  bind router port_checkers #(.N(NUM_PORTS)) u_chks (
+    .clk, .rst_n, .valid(port_valid), .ready(port_ready), .data(port_data));
+
+  initial begin
+    // Run-time knob: on only when the run command has +INJECT_BUG.
+    inject_bug = ($test$plusargs("INJECT_BUG") != 0);
+    if (inject_bug) `TB_LOG("error injection enabled (+INJECT_BUG)");
+
+    repeat (2) @(cb);                    // edges at 5 and 15 ns
+    cb.rst_n <= 1'b1;                    // reset released at 15 ns
+    @(cb);                               // 25 ns: port 1 starts, the sink stalls
+    cb.valid[1] <= 1'b1;
+    cb.ready[1] <= 1'b0;
+    cb.data[1]  <= 8'hA5;
+    @(cb);                               // 35 ns: still stalled
+    if (inject_bug) cb.data[1] <= 8'h5A;  // break the hold rule on purpose
+    @(cb);                               // 45 ns: the sink accepts
+    cb.ready[1] <= 1'b1;
+    @(cb);                               // 55 ns: the transfer is complete
+    cb.valid[1] <= 1'b0;
+    repeat (2) @(cb);
+    $finish;
+  end
+endmodule
+```
+
+This is the hierarchy that elaboration builds. Work out the paths yourself before you look at the expected output.
+
+<ArchitectureDiagram
+  title="Elaborated hierarchy of the worked example"
+  caption="bind inserts u_chks at the very end of every router instance (§23.11), so the checkers live under tb_top.u_router.u_chks. Inside port_checkers, the if (N < 1) construct builds nothing because N is 3, and the loop label gen_chk and the genvar value name each block. These are the paths that %m, error messages and waveform viewers show."
+  cellWidth={220}
+  gapY={90}
+  nodes={[
+    { id: "top", label: "tb_top", col: 0, row: 0, rowSpan: 6, container: true },
+    { id: "stim", label: "clk, cb, stimulus", sublabel: "reads +INJECT_BUG at time 0", col: 0, row: 0 },
+    { id: "rtr", label: "u_router (router)", kind: "dut", col: 0, row: 1, rowSpan: 5, container: true },
+    { id: "ports", label: "router ports", sublabel: "port_valid, port_ready, port_data", kind: "dut", col: 0, row: 1 },
+    { id: "chks", label: "u_chks (bound port_checkers)", col: 0, row: 2, rowSpan: 4, container: true },
+    { id: "bad", label: "if (N < 1): gen_bad_n", sublabel: "construct 1: not built, N = 3", col: 0, row: 2, state: "dim" },
+    { id: "g0", label: "gen_chk[0]", col: 0, row: 3, container: true },
+    { id: "c0", label: "u_chk", sublabel: "port_checker, assertion a_hold", col: 0, row: 3 },
+    { id: "g1", label: "gen_chk[1]", col: 0, row: 4, container: true },
+    { id: "c1", label: "u_chk", sublabel: "port_checker, assertion a_hold", col: 0, row: 4, state: "error", badge: "fails at 45 ns" },
+    { id: "g2", label: "gen_chk[2]", col: 0, row: 5, container: true },
+    { id: "c2", label: "u_chk", sublabel: "port_checker, assertion a_hold", col: 0, row: 5 }
+  ]}
+/>
+
+**Predict before you run.** With `+INJECT_BUG`, which checker fails, at which clock edge, and why only once? Work it out from the stimulus, then check the waveform. A zero-skew clocking-block drive made at an edge lands in the Re-NBA region of that time slot (§14.16), after the assertion has sampled its inputs in the Preponed region (§16.5.1), so each driven value first appears at the **next** edge.
+
+<TimingDiagram
+  title="Port 1 stalls and its data changes"
+  caption="Edge k is the rising edge at 5 + 10k ns, and each value is the one the checker samples at that edge. At edge 3 (35 ns) valid is 1 and ready is 0, so the antecedent holds. At edge 4 (45 ns) data has changed from A5 to 5A, so a_hold fails. The attempt that starts at edge 4 passes at edge 5, because data held at 5A."
+  edges={7}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rst_n", kind: "bit", values: [0, 0, 1, 1, 1, 1, 1] },
+    { name: "valid[1]", kind: "bit", values: [0, 0, 0, 1, 1, 1, 0] },
+    { name: "ready[1]", kind: "bit", values: [1, 1, 1, 0, 0, 1, 1] },
+    { name: "data[1]", kind: "bus", values: ["00", "00", "00", "A5", "5A", "5A", "5A"] }
+  ]}
+  markers={[
+    { edge: 3, tone: "info", label: "edge 3, 35 ns: valid=1 and ready=0, so $stable(data) is checked at edge 4" },
+    { edge: 4, tone: "fail", label: "edge 4, 45 ns: data changed from A5 to 5A during the stall, so a_hold fails" },
+    { edge: 5, tone: "pass", label: "edge 5, 55 ns: the attempt from edge 4 passes because data held 5A" }
+  ]}
+/>
+
+**Expected output** (illustrative, not from a recorded run), compiled with `TB_DEBUG` and run with `+INJECT_BUG`:
+
+```text
+[port_checker.sv:20] tb_top.u_router.u_chks.gen_chk[0].u_chk: checker alive at time 0
+[port_checker.sv:20] tb_top.u_router.u_chks.gen_chk[1].u_chk: checker alive at time 0
+[port_checker.sv:20] tb_top.u_router.u_chks.gen_chk[2].u_chk: checker alive at time 0
+[tb_top.sv:36] tb_top: error injection enabled (+INJECT_BUG)
+ERROR  45 ns  port_checker.sv:17  tb_top.u_router.u_chks.gen_chk[1].u_chk.a_hold
+       data changed while stalled
+```
+
+How to read it:
+
+- The four time-0 lines come from four `initial` procedures, which may run in any order (§4.7). The file name is the path by which your tool opened the file (§22.13), so it may include a directory.
+- The `[file:line]` prefix names `port_checker.sv:20` and `tb_top.sv:36`, the lines where `TB_LOG` is used, not the line in `tb_defines.svh` where it is defined.
+- The layout of the error line is tool-specific, but every simulator reports the severity, the simulation time, the file and line of the `$error`, and the scope (§20.10).
+- Compiled **without** `TB_DEBUG`, only the error remains. Run **without** `+INJECT_BUG`, nothing fails, and with `TB_DEBUG` you see only the three "alive" lines. The simulation ends at 75 ns.
+
+**Run it** (tool-neutral):
+
+1. Save each of the five blocks, including its two comment lines, under the file name on its second line, all in one directory, and put that directory on the include path. (The line numbers in the expected output count those comment lines.)
+2. Compile `router.sv`, `port_checker.sv`, `port_checkers.sv` and `tb_top.sv` with the macro `TB_DEBUG` defined. Many simulators accept `+define+TB_DEBUG`; Verilator documents that switch and calls it relatively standard across Verilog tools. Check your simulator's manual for its form.
+3. Run with `+INJECT_BUG` on the simulation command line.
+4. Compile again without `TB_DEBUG` and run without `+INJECT_BUG`, and compare the logs with the expected output.
+
+**How to build "N checkers for N ports" in any bench:**
+
+1. Write and test a checker for **one** port (`port_checker`).
+2. Wrap it in a module whose parameter `N` sets the count, with a **labelled** loop generate (`gen_chk`) and an elaboration-time `$fatal` that rejects impossible values of `N`.
+3. Connect the wrapper's vector ports to each checker by selecting with the genvar: `valid[i]`, `data[i]`.
+4. Attach the wrapper with **one** `bind` to the DUT module, never with a `bind` inside a generate loop, and pass parameters and ports by the names they have inside the target. A `bind` inside a loop would insert the same instance name into the same target on every iteration, which is an error, and the genvar would not exist inside the target.
+5. Put logging behind a guarded header and a compile-time flag, and per-run switches behind plusargs.
+6. Predict every path before you run, then compare with the `%m` output.
+
+**Variations to try** (predict first):
+
+- `NUM_PORTS = 4`: four "alive" lines, `gen_chk[0]` to `gen_chk[3]`, and the same single failure on `gen_chk[1]` at 45 ns.
+- Remove `: gen_chk` from the loop: the paths become `tb_top.u_router.u_chks.genblk2[i].u_chk`, because the `if (N < 1)` construct is number 1 even though it builds nothing (§27.6).
+- `NUM_PORTS = 0`: elaboration stops with the `port_checkers` message, and the simulation never starts (§20.10.1).
+- Run with `+INJECT_BUG_LATER`: the bug is still injected, because `$test$plusargs` matches a prefix (§21.6).
+
+**Checklist before moving on:**
+
+- [ ] I can write out the expansion of a macro call by hand, including `` `" ``, ``` `` ``` and default arguments.
+- [ ] I can say which of my files leave `` `default_nettype `` or `` `timescale `` set for the next file, and how to stop it.
+- [ ] I can predict the path of an instance inside a labelled and an unlabelled generate loop.
+- [ ] I can explain why `gen_chk[k]` with a run-time `k` does not compile, and what to write instead.
+- [ ] For a new bench feature, I can say whether it belongs in a macro, a parameter or a plusarg, and why.
+
+## Push Further
+
+### Expert: Compilation units decide what leaks
+
+- **The rule.** Within a compilation unit, a directive applies to all the source text the tool reads after it; directives never cross into another compilation unit (§3.12.1). The same files can therefore behave differently when compiled as one unit or as several, and a testbench that only works in one mapping has a hidden dependency on how its files are grouped.
+- **Guards are per unit.** A header included in two units is processed twice, once per unit. For macros that is what you want. For declarations it is not: a class in a header included into two packages becomes two distinct classes with the same name. Compile shared declarations once, in a package, and `import` it; a package must be compiled before any reference to it (§3.12).
+- **`$unit` is per unit.** Declarations outside every module go into the compilation-unit scope. With one unit per file, each file has its own `$unit`, so code that relied on a declaration in another file's `$unit` stops compiling. Declarations in `$unit` are also invisible to `bind` statements (§23.11). Keep shared declarations in packages.
+- **Tool-dependent:** the switches that choose "one unit for all files" or "one unit per file" differ between simulators. Find yours in the manual, and keep the testbench correct under both mappings.
+
+### Expert: Conditional expressions and triple-quoted strings in macros
+
+- **Expressions in `` `ifdef ``.** IEEE 1800-2023 accepts `` `ifdef (A && !B) ``, `` `elsif (A -> B) `` and `` `ifndef (A || B) ``. Each macro name becomes 1 if it is defined and 0 if not, and the expression is then evaluated with the logical operators `!`, `&&`, `||`, `->` and `<->` (§22.6). `` `ifndef (expr) `` means `` `ifdef (!(expr)) ``.
+- **Triple quotes in macros.** `` `""" `` in macro text builds a triple-quoted string in which arguments are substituted, like `` `" `` (§22.5.1). Unlike a plain triple-quoted string literal, a newline inside it ends the macro unless a backslash precedes it. The standard's own example defines `MACRO4` but then calls `TEST`; read the two as one macro.
+- **Tool-dependent:** older tools may reject both forms. In code shared across tools, use nested plain `` `ifdef ``s and `` `" ``.
+
+### Expert: Macro, let, function or parameter?
+
+§11.12 describes `let` as a replacement for text macros in many cases, and as safer because its scope is local while a directive reaches the whole compilation unit.
+
+| Need | Best tool | Why |
+|---|---|---|
+| A typed constant that can differ per instance | `parameter` / `localparam` (§6.20) | typed, scoped, visible in the hierarchy, overridable per instance |
+| A reusable expression | `let` (§11.12) | declared in a scope like any name; the substituted result is parenthesized; formal arguments may be typed; recursion is not allowed |
+| A computation whose arguments may have side effects | `function` (§13.4) | each argument is evaluated once and copied in (§13.5.1) |
+| Compile code in or out, generate declarations or statements, build names or strings, stamp file and line | macro and `` `ifdef `` | only text substitution can do these |
+
+A `let` still substitutes its actual arguments into its body (§11.12), so it removes the precedence trap but not double evaluation: pass side effects to a function.
+
+### Expert: Time-unit precedence and the mixed-unit error
+
+- **Precedence (§3.14.2.3).** A design element without its own `timeunit` takes its unit from, in order: (a) the enclosing module or interface, if it is nested; (b) the last `` `timescale `` earlier in the compilation unit; (c) a `timeunit` declared in the compilation-unit scope; (d) the tool's default. Precision follows the same rules. A `timeunit` inside the element beats all four.
+- **The error.** It is an error if some design elements have a time unit and precision and others do not (§3.14.2.3). Many tools report it only as a warning, which is tool-dependent, so mixed benches often "work" with silently wrong delays.
+- **After `` `resetall ``** the `` `timescale `` reverts to the tool's default (§22.7).
+- **Debugging.** `$printtimescale(tb_top.u_router)` prints the unit and precision of a design element, and `$timeunit` and `$timeprecision` return them (§20.4.1, §20.4.2).
+- **Performance.** The simulation time step is the finest precision used anywhere in the design (§3.14.3). One file with a 1 fs precision can slow the whole simulation; how much is tool-dependent.
+
+### Expert: Generate at scale: recursion, sparse arrays and defparam
+
+- **Recursion.** A conditional generate can instantiate the module that contains it, so a parameter can build a tree that ends at a leaf (§27.2, §27.5):
+
+```systemverilog
+// snippet: an OR-reduction tree built by recursive instantiation (W >= 1)
+module or_tree #(parameter int W = 8) (input logic [W-1:0] in, output logic out);
+  if (W == 1) begin : gen_leaf
+    assign out = in[0];
+  end else begin : gen_split
+    logic lo, hi;
+    or_tree #(.W(W/2))     u_lo (.in(in[W/2-1:0]), .out(lo));
+    or_tree #(.W(W - W/2)) u_hi (.in(in[W-1:W/2]), .out(hi));
+    assign out = lo | hi;
+  end
+endmodule
+```
+
+- **Sparse and empty arrays.** A loop with `i += 2` declares `g[0]`, `g[2]`, … and no `g[1]`. A loop that runs zero times still declares the array name, so the name cannot be reused (§27.4).
+- **`defparam`.** A `defparam` inside a generate block, or under an instance array, cannot change a parameter outside that block's own hierarchy, not even in a sibling block from the same loop (§23.10.1). The standard also notes that `defparam` may be removed from a future revision. Pass parameters with `#( )` instead.
+- **Scale.** Elaboration time and memory grow with the number of generated blocks, by an amount that is tool-dependent. Keep the structure regular: one wrapper module with a labelled loop, attached with one `bind`, gives every checker a predictable path and keeps the bind list to one line, where thousands of separate `bind` statements would each need maintaining.
+
+### Expert: Debugging macro-heavy code
+
+- **See the expanded text.** This is tool-dependent. Verilator's `-E` writes the preprocessed source to standard output, and `-P` with it drops `` `line `` markers and blank lines. Other simulators have similar options; check the manual. Read the expansion, not the line where the macro was used.
+- **`` `line ``** sets the file name and line number the tool reports, so code generators can point messages back at the original source (§22.12). `` `resetall `` does not affect it.
+- **`` `__FILE__ ``** is the path by which the tool opened the file, in an implementation-dependent format (§22.13). Do not match it exactly in scripts or golden logs. In UVM, defining `UVM_REPORT_DISABLE_FILE_LINE` removes file and line from messages (uvm-core impl.).
+- **Severity messages already carry the location.** `$error` and its siblings must report the file, the line and the scope; an elaboration-time task reports the same file and line that `` `__FILE__ `` and `` `__LINE__ `` would give (§20.10, §20.10.1).
+- **Skipped code still has to scan.** A block removed by `` `ifdef `` must still consist of valid tokens (§22.6), so an unterminated string or comment in a disabled block breaks every build.
+
+### Expert: Interview angles
+
+Answer each one before you open the options.
+
+<InterviewQuestionPlayground
+  title="Interview angle: the path that moved"
+  question="A colleague added a coverage block, if (EN_COV) begin : gen_cov ... end, at the top of a module. Nothing else changed, but a waveform script and a coverage-exclusion file can no longer find the module's protocol checkers. What happened?"
+  options={[
+    { text: "The checkers sit in an unlabelled loop generate. Its block was genblk1 and is now genblk2, because every generate construct in the scope is counted, labelled or not.", correct: true, feedback: "Right (§27.6). The fix is a label on every generate block, so that its path does not depend on what comes before it." },
+    { text: "The new block changed the elaboration order, so the checkers now elaborate after the test starts.", correct: false, feedback: "The whole hierarchy is built before time 0; elaboration order does not move instances." },
+    { text: "gen_cov now shadows the checkers' names, so they must be reached through gen_cov.", correct: false, feedback: "The two constructs are siblings. Nothing is nested inside gen_cov." },
+    { text: "Coverage and waveform tools cannot see instances inside generate blocks.", correct: false, feedback: "They can, given the right path. The path is what changed." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: the file that changed the timing"
+  question="Adding one new file to the compile list changed the delays of a module in a different, untouched file. How can that happen, and how do you make the bench immune to it?"
+  options={[
+    { text: "The new file has a `timescale, which applies to every later design element in the compilation unit that has no timeunit of its own. Declare timeunit and timeprecision in every design element.", correct: true, feedback: "Right (§22.2, §3.14.2.3). The same mechanism lets `default_nettype none from one file break the next." },
+    { text: "The simulator recompiled the untouched file with different optimizations.", correct: false, feedback: "Optimizations must not change delays. The order-dependent directive is the cause." },
+    { text: "Directives are per file, so the change must be inside the untouched file.", correct: false, feedback: "Directives persist across files of one compilation unit (§22.2)." },
+    { text: "A `define in the new file renamed the module's delay parameter.", correct: false, feedback: "Possible in theory only if the module used that macro; it does not explain a pure timing change." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: macro or language feature?"
+  question="A teammate wants every helper in the testbench written as a macro, 'for speed'. Which use is a good reason to choose a macro over a let, a function or a parameter?"
+  options={[
+    { text: "Wrapping a check so that each failure reports the caller's file and line, and the stringified condition.", correct: true, feedback: "Right: only text substitution can stamp `__FILE__/`__LINE__ at the use site and turn an argument into a string with `\"." },
+    { text: "A bus width that differs between two instances of the same module.", correct: false, feedback: "A macro has one definition at a time in the whole compilation unit. Use a parameter." },
+    { text: "Computing the maximum of two function results.", correct: false, feedback: "A macro would evaluate a result twice. Use a function." },
+    { text: "Making simulation faster, because macros skip type checking.", correct: false, feedback: "The expanded text is compiled like any other code; a macro is not faster than a function at run time." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+Start with the quiz: each question maps to one of the five objectives. Then do the two katas and the debug challenge, and finish with the flashcards at the end of this section, which repeat the rules that are easiest to forget.
+
+### Quiz
+
+<Quiz questions={[
+  {
+    question: "`define MAX(a,b) ((a) > (b) ? (a) : (b)). The function bump() does cnt++ and returns cnt, and cnt starts at 0. After x = `MAX(bump(), 0); what are x and cnt?",
+    answers: [
+      { text: "x = 1, cnt = 1", correct: false, feedback: "That is how a function call behaves: each argument is evaluated once. The macro pastes the text bump() into both places where a appears." },
+      { text: "x = 2, cnt = 2", correct: true, feedback: "The expansion is ((bump()) > (0) ? (bump()) : (0)). The condition calls bump(), which returns 1; 1 > 0 selects the first branch, which calls bump() again and returns 2." },
+      { text: "x = 1, cnt = 2", correct: false, feedback: "The value 1 came from the condition's call. The selected branch is a second, separate call, and x gets its result, 2." },
+      { text: "Compile error: a macro argument cannot contain a function call", correct: false, feedback: "Any text with balanced parentheses can be an actual argument (§22.5.1). The problem is the meaning, not the syntax." }
+    ],
+    explanation: "Macro arguments are substituted as text (§22.5.1), and the conditional operator evaluates only the branch it selects (§11.4.11). Here the condition and the selected branch both contain bump(), so it runs twice. With cnt starting at 10, `MAX(bump(), 20) would call it once and give 20. Use a function when an argument has a side effect.",
+    objective: 1
+  },
+  {
+    question: "`define SQ(x) x*x, and a = 2. What value does y = `SQ(a+1); assign to y?",
+    answers: [
+      { text: "9", correct: false, feedback: "That assumes the argument is evaluated before it is used. The macro pastes the text a+1 without parentheses." },
+      { text: "5", correct: true, feedback: "The text becomes a+1*a+1, which is a + (1*a) + 1 = 2 + 2 + 1." },
+      { text: "Compile error: a macro argument must be a single identifier", correct: false, feedback: "Any expression is a legal actual argument (§22.5.1)." },
+      { text: "It depends on the simulator", correct: false, feedback: "The standard defines macro expansion, so every compliant tool produces a+1*a+1." }
+    ],
+    explanation: "The argument text replaces x literally, so operator precedence regroups the expression. Write `define SQ(x) ((x)*(x)): parentheses around every use of an argument and around the whole body.",
+    objective: 1
+  },
+  {
+    question: "`define LOG(m) begin $display(m); end. What happens with: if (err) `LOG(\"bad\"); else ok_count++;",
+    answers: [
+      { text: "It prints bad when err is 1, and otherwise increments ok_count", correct: false, feedback: "That would be true without the semicolon. After expansion, the ; sits between end and else." },
+      { text: "Compile error at else: the ; after end is a separate null statement, so the else no longer follows the if", correct: true, feedback: "Expanded: if (err) begin $display(\"bad\"); end ; else ok_count++; The if statement is complete before the ;, so the else has no if." },
+      { text: "It always prints bad, because a begin-end block runs unconditionally", correct: false, feedback: "The begin-end block is the if's body, so it runs only when err is 1. In any case the code does not compile." },
+      { text: "It compiles, with a run-time warning about an empty statement", correct: false, feedback: "A null statement is legal on its own, but here it separates the if from the else, which is a syntax error." }
+    ],
+    explanation: "A macro whose text is a begin-end block must be used without a trailing semicolon. In uvm-core, `uvm_info expands to exactly this shape, which is why if (c) `uvm_info(...); else ... does not compile and the UVM macros are written without a semicolon.",
+    objective: 1
+  },
+  {
+    question: "Both TB_COVERAGE and TB_ASSERTIONS are defined on the command line. Which code is compiled? `ifdef TB_COVERAGE (coverage code) `elsif TB_ASSERTIONS (assertion code) `else (nothing) `endif",
+    answers: [
+      { text: "Both the coverage code and the assertion code", correct: false, feedback: "`elsif branches are not independent: the chain keeps only the first branch that succeeds (§22.6)." },
+      { text: "Only the coverage code", correct: true, feedback: "TB_COVERAGE is defined, so its block is kept and every later `elsif and `else in the chain is skipped." },
+      { text: "Only the assertion code, because the last macro defined wins", correct: false, feedback: "The order of the definitions does not matter. The chain is evaluated from the top." },
+      { text: "Compile error: two flags of one chain are defined", correct: false, feedback: "Any number of macros may be defined; the chain simply keeps one branch." }
+    ],
+    explanation: "Use independent `ifdef blocks for independent features. Keep a chain for choices that really are mutually exclusive.",
+    objective: 2
+  },
+  {
+    question: "A header contains `define TB_COVERAGE 0, meant as 'coverage off'. Is the code inside `ifdef TB_COVERAGE ... `endif compiled?",
+    answers: [
+      { text: "No, because the macro's value is 0", correct: false, feedback: "`ifdef never looks at a macro's text." },
+      { text: "Yes, because TB_COVERAGE is defined", correct: true, feedback: "`ifdef succeeds when the name is currently defined as a text macro, whatever its text (§22.6)." },
+      { text: "Compile error: a feature flag must have no text", correct: false, feedback: "A flag may have text; `ifdef ignores it." },
+      { text: "Only if the tool is also started with +define+TB_COVERAGE=1", correct: false, feedback: "Any definition, with any text, makes `ifdef succeed." }
+    ],
+    explanation: "To switch a flag off, leave it undefined or `undef it. The IEEE 1800-2023 expression form, such as `ifdef (A && !B), also tests only whether each name is defined.",
+    objective: 2
+  },
+  {
+    question: "file_a.sv ends with `default_nettype none. vendor_ip.sv, compiled next in the same compilation unit, now fails with undeclared-net errors, although nobody changed it. What is the cause?",
+    answers: [
+      { text: "The directive is still in force: it applies to the later files of the same compilation unit", correct: true, feedback: "A directive's scope runs from where it is read to the end of the compilation unit, or until another directive replaces it (§22.2, §3.12.1)." },
+      { text: "vendor_ip.sv has its own bug, because a directive affects only the file that contains it", correct: false, feedback: "That is true only when the two files are separate compilation units." },
+      { text: "vendor_ip.sv has no `timescale", correct: false, feedback: "A missing time unit changes delays or causes a mixed-unit error, not undeclared-net errors." },
+      { text: "vendor_ip.sv must `include file_a.sv to see the directive", correct: false, feedback: "It already sees the directive, which is the problem. No include is needed for a directive to carry over." }
+    ],
+    explanation: "End your own files with `default_nettype wire, or compile third-party code as its own compilation unit. Under none, declare ports as input wire logic or input var logic, so they do not depend on the default net type (§23.2.2.3).",
+    objective: 5
+  },
+  {
+    question: "In tb_top, a labelled if (EN_COV) begin : gen_cov ... end comes first. Then an unlabelled loop, for (genvar i = 0; i < 4; i++) begin protocol_checker chk_inst (...); end. What is the full path of the checker for i = 2?",
+    answers: [
+      { text: "tb_top.genblk1[2].chk_inst", correct: false, feedback: "The numbering counts every generate construct, labelled or not. The loop is construct 2." },
+      { text: "tb_top.genblk2[2].chk_inst", correct: true, feedback: "The loop's blocks are unnamed, so they are called genblk followed by 2, the loop's position among the generate constructs of tb_top (§27.6)." },
+      { text: "tb_top.chk_inst[2]", correct: false, feedback: "The index belongs to the generate block, not to the instance: each block holds one chk_inst." },
+      { text: "tb_top.gen_cov.chk_inst[2]", correct: false, feedback: "The checker is not inside gen_cov. The two constructs are siblings." }
+    ],
+    explanation: "Label every generate block, as in begin : gen_chk, so that its path cannot change when someone adds a construct above it. The visual in Build Your Mental Model shows the same renumbering.",
+    objective: 3
+  },
+  {
+    question: "q and d are unpacked arrays of N logic values. Inside for (genvar i = 0; i < N; i++) begin : g, one line reads always_ff @(posedge clk) q[i] <= d[i]; Is this legal, and what does it build?",
+    answers: [
+      { text: "Illegal: a genvar cannot appear inside an always block", correct: false, feedback: "Inside each generated block, i is an implicit localparam, a constant, which procedural code may read (§27.4)." },
+      { text: "Legal: N separate always_ff processes, each copying one element", correct: true, feedback: "Each block g[k] holds its own process, with i fixed at k." },
+      { text: "Legal, but every process uses i = N, because the loop has finished when simulation starts", correct: false, feedback: "Generate loops are unrolled at elaboration, and each block keeps the value i had when that block was created." },
+      { text: "Legal only if i is declared int instead of genvar", correct: false, feedback: "An int loop variable would make this a procedural loop, which cannot appear outside a procedure." }
+    ],
+    explanation: "The illegal case is the opposite one: using a genvar as the loop variable of a procedural for loop. Write for (int j = 0; ...) there.",
+    objective: 3
+  },
+  {
+    question: "A test contains for (int k = 0; k < 4; k++) $display(\"%0d\", tb_top.gen_chk[k].u_chk.err_count); and it does not compile. Why?",
+    answers: [
+      { text: "gen_chk must first be declared as an array", correct: false, feedback: "A labelled loop generate already declares the array of blocks gen_chk[0] to gen_chk[3]." },
+      { text: "An index into a generate block name in a hierarchical path must be a constant expression, and k is a run-time variable", correct: true, feedback: "§23.6 calls this an instance select, and requires a constant expression." },
+      { text: "err_count is private to port_checker", correct: false, feedback: "Module variables can be read by hierarchical reference. The index is the problem." },
+      { text: "The code compiles; the error must be somewhere else", correct: false, feedback: "The standard requires a constant here, so a compliant tool reports an error." }
+    ],
+    explanation: "Reach each instance from code with a constant index: put the display inside the generate loop, or copy handles or values into an array at time 0 and index that array at run time.",
+    objective: 5
+  },
+  {
+    question: "Nightly regressions must enable an expensive protocol checker on some seeds only, without recompiling or re-elaborating. Which mechanism fits?",
+    answers: [
+      { text: "`ifdef TB_SLOW_CHECKS around the checker", correct: false, feedback: "Changing a define means recompiling, and the choice then applies to every run of that build." },
+      { text: "A generate if on a parameter, to remove the checker", correct: false, feedback: "Parameters are fixed at elaboration, so changing one means a new elaboration." },
+      { text: "A run-time switch read with $test$plusargs, or a configuration object, that gates the checker's work", correct: true, feedback: "Plusargs are read while the simulation runs (§21.6), so every run can choose." },
+      { text: "A generate loop that is evaluated again when the plusarg is seen", correct: false, feedback: "Generate constructs never run during simulation. They are evaluated once, at elaboration (§27.3)." }
+    ],
+    explanation: "Per-run choices belong at run time, structure at elaboration, and compile-out code behind `ifdef. The trade-off: a run-time switch keeps the checker instance in the design even when it does no work.",
+    objective: 4
+  },
+  {
+    question: "One bench has two router instances, one with 4 ports and one with 8, and each port needs its own checker. Where should the port count live?",
+    answers: [
+      { text: "In a `define TB_NUM_PORTS used by both", correct: false, feedback: "A macro has one definition at a time in the compilation unit, so both routers would get the same count." },
+      { text: "In a parameter on each instance, with a generate loop in the checker wrapper", correct: true, feedback: "Parameters are set per instance at elaboration, and the loop builds the right number of checkers for each router." },
+      { text: "In a plusarg +NUM_PORTS=8 read at time 0", correct: false, feedback: "Run-time code cannot create instances: the hierarchy is fixed before time 0." },
+      { text: "In a configuration object set by the test", correct: false, feedback: "That is also run time. It can tell existing checkers what to do, but it cannot create new ones." }
+    ],
+    explanation: "Anything that changes structure, such as how many instances or which module, must be known at elaboration: use parameters and generate. Run-time knobs can only steer what already exists.",
+    objective: 4
+  },
+  {
+    question: "The first file of a compilation unit contains `define TB_DEBUG. A later file starts with `resetall. Is the code inside `ifdef TB_DEBUG in that later file compiled?",
+    answers: [
+      { text: "No: `resetall resets every directive, macros included", correct: false, feedback: "`resetall resets only directives that have default values. Text macros have none and are not affected (§22.3, §22.5)." },
+      { text: "Yes: macros survive `resetall, so use `undef to remove one", correct: true, feedback: "`resetall restores defaults such as `timescale and `default_nettype, and leaves macros defined." },
+      { text: "Only if the later file includes the header again", correct: false, feedback: "The macro is still defined in this compilation unit, so no include is needed." },
+      { text: "Compile error: `resetall cannot come before an `ifdef", correct: false, feedback: "`resetall is legal anywhere outside a design element." }
+    ],
+    explanation: "`resetall resets `timescale to the tool default, `default_nettype to wire, and the pull and cell directives. It leaves macros, `begin_keywords and `line alone (§22.3, §22.12, §22.14).",
+    objective: 2
+  }
+]} />
+
+### Kata 1 (guided): a checker per lane
+
+**Goal:** build, attach and name generated checkers on your own, using a different design from Make It Work.
+
+**Given:** a multi-lane link, and a testbench with two links of different widths. Do not edit `link`.
+
+```systemverilog
+// compile
+module link #(parameter int LANES = 4) (
+  input logic                   clk,
+  input logic                   rst_n,
+  input logic [LANES-1:0]       lane_valid,
+  input logic [LANES-1:0][31:0] lane_data
+);
+  timeunit 1ns; timeprecision 1ps;
+endmodule
+```
+
+**Requirements:**
+
+1. Write `lane_x_checker` for one lane: whenever `valid` is 1, `data` must contain no `x` or `z` bits.
+2. Write `lane_checkers #(parameter int N)` with a **labelled** loop generate `gen_lane`, and an elaboration-time `$fatal` unless N is between 1 and 16.
+3. Write a `tb_top` with `link #(.LANES(2)) u_link_a` and `link #(.LANES(4)) u_link_b`, and attach the checkers to **both** links with a **single** `bind`.
+4. Make each checker print `%m` at time 0.
+5. **Before running, write down every path you expect.** Then run and compare.
+6. Remove the label `gen_lane`, keeping the `if` first, and predict the new paths. Then set `u_link_a` to `LANES = 0` and predict what happens.
+
+**Acceptance:** six printed paths match your prediction; without the label, the paths use `genblk2`; with `LANES = 0`, elaboration stops with your message and nothing is simulated.
+
+<details>
+<summary>Worked solution</summary>
+
+```systemverilog
+// compile
+module lane_x_checker (input logic clk, rst_n, valid, input logic [31:0] data);
+  timeunit 1ns; timeprecision 1ps;
+  a_no_x: assert property (@(posedge clk) disable iff (!rst_n)
+                           valid |-> !$isunknown(data))
+    else $error("x or z on valid lane data");
+  initial $display("%m");
+endmodule
+
+module lane_checkers #(parameter int N = 4) (
+  input logic               clk,
+  input logic               rst_n,
+  input logic [N-1:0]       valid,
+  input logic [N-1:0][31:0] data
+);
+  timeunit 1ns; timeprecision 1ps;
+  if (N < 1 || N > 16) begin : gen_bad_n          // generate construct 1
+    $fatal(1, "lane_checkers: N=%0d is outside 1..16", N);
+  end
+  for (genvar i = 0; i < N; i++) begin : gen_lane  // generate construct 2
+    lane_x_checker u_chk (.clk, .rst_n, .valid(valid[i]), .data(data[i]));
+  end
+endmodule
+
+module tb_top;
+  timeunit 1ns; timeprecision 1ps;
+  logic             clk = 1'b0, rst_n = 1'b0;
+  logic [1:0]       a_valid = '0;
+  logic [1:0][31:0] a_data  = '0;
+  logic [3:0]       b_valid = '0;
+  logic [3:0][31:0] b_data  = '0;
+
+  always #5 clk = ~clk;
+
+  link #(.LANES(2)) u_link_a (.clk, .rst_n, .lane_valid(a_valid), .lane_data(a_data));
+  link #(.LANES(4)) u_link_b (.clk, .rst_n, .lane_valid(b_valid), .lane_data(b_data));
+
+  // One bind reaches every instance of link. LANES, lane_valid and lane_data are
+  // resolved inside each link instance, so each one gets the right N (§23.11).
+  bind link lane_checkers #(.N(LANES)) u_lchk (
+    .clk, .rst_n, .valid(lane_valid), .data(lane_data));
+
+  // This kata checks structure only: rst_n stays low, so a_no_x never fires.
+  // To see it fire, release rst_n and drive x on a valid lane through a
+  // clocking block (F4C).
+  initial #100 $finish;
+endmodule
+```
+
+Predicted output (the order of time-0 lines may vary):
+
+```text
+tb_top.u_link_a.u_lchk.gen_lane[0].u_chk
+tb_top.u_link_a.u_lchk.gen_lane[1].u_chk
+tb_top.u_link_b.u_lchk.gen_lane[0].u_chk
+tb_top.u_link_b.u_lchk.gen_lane[1].u_chk
+tb_top.u_link_b.u_lchk.gen_lane[2].u_chk
+tb_top.u_link_b.u_lchk.gen_lane[3].u_chk
+```
+
+Without the label, every `gen_lane[i]` becomes `genblk2[i]`: the `if` is construct 1 even when its condition is false. With `LANES = 0` on `u_link_a`, its bound `lane_checkers` gets N = 0, the `$fatal` runs during elaboration, and simulation never starts (§20.10.1).
+
+</details>
+
+### Kata 2: macro-expansion predict drill
+
+For each item, write the exact text the compiler sees, then what it does. Only then open the answers.
+
+1. `` `define MAX(a,b) ((a) > (b) ? (a) : (b)) ``, with `cnt` starting at **10**: `` x = `MAX(bump(), 20); ``. What are `x` and `cnt`?
+2. `` `define SQ(x) x*x ``, with `b = 4`: `` y = `SQ(b-1); ``. What is `y`?
+3. With `count = 7`: `` `define SHOW(s) $display("s = %0d", s) `` and `` `define SHOWQ(s) $display(`"s = %0d`", s) ``. What do `` `SHOW(count); `` and `` `SHOWQ(count); `` print?
+4. ``` `define REG(n) logic [7:0] n``_q, n``_d; ``` used as `` `REG(state) ``.
+5. `` `define CHECK(c) if (!(c)) $error("check failed: c") `` used as `` if (en) `CHECK(a == b); else $display("skipped"); ``. What prints when `en = 1, a == b`; when `en = 1, a != b`; and when `en = 0`?
+6. `` `define MACRO1(a=5, b="B", c) $display(a,,b,,c); `` used as `` `MACRO1( , 2, 3) `` and `` `MACRO1(1) ``.
+
+<details>
+<summary>Answers</summary>
+
+1. `x = ((bump()) > (20) ? (bump()) : (20));`. `bump()` returns 11, 11 > 20 is false, so the second branch gives 20: **x = 20, cnt = 11**. The double call happens only when the condition selects the branch that contains the argument (§11.4.11).
+2. `y = b-1*b-1;`, which is 4 - 4 - 1: **y = -1**.
+3. `` `SHOW `` gives `$display("s = %0d", count);` and prints **s = 7**, because nothing is substituted inside an ordinary string. `` `SHOWQ `` gives `$display("count = %0d", count);` and prints **count = 7** (§22.5.1).
+4. `logic [7:0] state_q, state_d;`
+5. The expansion is `if (en) if (!(a == b)) $error("check failed: c"); else $display("skipped");`. The `else` binds to the **nearest** `if`, the one inside the macro. So with `en = 1, a == b` it prints **skipped**; with `en = 1, a != b` it reports **check failed: c**, literally `c`, because the string is ordinary; with `en = 0` nothing happens. One fix is `` `define CHECK(c) do if (!(c)) $error(`"check failed: c`"); while (0) ``: the caller's `;` completes the `do … while`, the `else` binds correctly, and the message reads `check failed: a == b`.
+6. `$display(5,,2,,3);` (a default fills the empty first argument). `` `MACRO1(1) `` is **illegal**: `b` would take its default, but `c` has no default (§22.5.1).
+
+</details>
+
+### Debug challenge: the leaking directive
+
+One compilation unit is compiled in this order: `my_defs.sv`, `vendor_bfm.sv`, `tb_top.sv`. You own the first and the last file. `vendor_bfm.sv` is third-party code, written for `` `timescale 1ps/1ps ``, and must not be edited.
+
+```systemverilog
+// snippet: my_defs.sv (yours)
+`timescale 1ns/1ns
+`default_nettype none
+package my_defs_pkg;
+  localparam int HALF_PERIOD = 5;
+endpackage
+```
+
+```systemverilog
+// snippet: vendor_bfm.sv (third party, do not edit)
+module vendor_bfm (input wire clk, input wire req, output wire ack);
+  assign req_q = req;              // relies on an implicit net
+  assign #250 ack = req_q;         // the vendor means 250 ps
+endmodule
+```
+
+**Symptoms:** the first build fails with an undeclared-identifier error for `req_q` in `vendor_bfm.sv`. A colleague adds `` `default_nettype wire `` at the top of the vendor file; it now compiles, but `ack` follows `req` after 250 ns instead of 250 ps.
+
+1. Explain both symptoms.
+2. Predict what changes if the order becomes `vendor_bfm.sv`, `my_defs.sv`, `tb_top.sv`.
+3. Fix it without editing `vendor_bfm.sv`, so that the result no longer depends on file order.
+
+<details>
+<summary>Worked solution</summary>
+
+1. Both directives in `my_defs.sv` stay in force for the rest of the compilation unit (§22.2). `` `default_nettype none `` forbids the implicit net `req_q` (§22.8, §6.10). `` `timescale 1ns/1ns `` gives `vendor_bfm`, which has no `timeunit` of its own, a 1 ns unit, so `#250` means 250 ns (§3.14.2.3).
+2. With the vendor file first, its implicit net compiles, because the default is `wire`, but no time unit applies to it yet. Some design elements then have a time unit and others do not, which the standard makes an error (§3.14.2.3). Many tools only warn and use their default unit, so the delay becomes tool-dependent. Either way the behaviour depends on file order, and that is the real bug.
+3. In your own files, replace `` `timescale `` with `timeunit 1ns; timeprecision 1ns;` inside the package and every module you own, and end `my_defs.sv` with `` `default_nettype wire ``. Then compile the vendor file through a small wrapper instead of directly:
+
+```systemverilog
+// snippet: vendor_wrap.sv, compiled in place of vendor_bfm.sv
+`resetall                  // start from defaults: implicit nets are wire
+`timescale 1ps/1ps         // the time scale the vendor wrote the delays for
+`include "vendor_bfm.sv"
+`resetall                  // leave nothing behind for the files that follow
+```
+
+Every design element now has a time unit, the vendor's delays mean what the vendor intended, and no file can change another file's meaning. Some tools can also compile third-party code as its own compilation unit; that switch is tool-dependent.
+
+</details>
 
 ## References & Next Topics
-- **IEEE 1800-2023 Clause 22** — Compiler directives (`` `timescale `` scope: §3.14.2).
-- **IEEE 1800-2023 Clause 27** — Generate constructs (§27.4 loop generate, §27.6 names of unnamed blocks).
-- **IEEE 1800-2023 §23.11** — `bind`.
-- **Previous:** [I-SV-5: Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index)
-- **Next:** [I-SV-7: DPI & Foreign Language Interfaces](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index)
+
+**Primary sources**
+
+- IEEE 1800-2023 §3.12 (compilation and elaboration), §3.12.1 (compilation units), §3.14.2.2 and §3.14.2.3 (`timeunit`, `timeprecision` and their precedence), §3.14.3 (simulation time unit)
+- IEEE 1800-2023 §22.2 (scope of directives), §22.3 (`` `resetall ``), §22.4 (`` `include ``), §22.5, §22.5.1, §22.5.2 and §22.5.3 (`` `define ``, `` `undef ``, `` `undefineall ``), §22.6 (conditional compilation), §22.7 (`` `timescale ``), §22.8 (`` `default_nettype ``), §22.9 to §22.12 (unconnected drive, cells, pragmas, `` `line ``), §22.13 (`` `__FILE__ `` and `` `__LINE__ ``), §22.14 (`` `begin_keywords ``)
+- IEEE 1800-2023 §27.2 to §27.6 (generate constructs and names of unnamed generate blocks), §23.6 (hierarchical names and instance selects), §23.10 and §23.10.1 (parameter overrides and `defparam`), §23.11 (`bind`), §23.2.2.3 (default port kinds)
+- IEEE 1800-2023 §3.2 (design elements), §4.7 (nondeterminism), §6.10 (implicit nets), §11.2.1 (constant expressions), §11.4.11 (conditional operator), §11.12 (`let`), §13.5.1 (pass by value), §14.16 (synchronous drives), §16.5.1 (assertion sampling), §20.4.1 and §20.4.2 (time-unit queries), §20.10 and §20.10.1 (severity and elaboration-time tasks), §21.2.1.5 (`%m`), §21.6 (plusargs)
+- uvm-core 2020.3.1: `src/macros/uvm_message_defines.svh`, `src/macros/uvm_object_defines.svh`, `src/dpi/uvm_dpi.svh`, `src/base/uvm_globals.svh`, `src/base/uvm_report_object.svh`; IEEE 1800.2-2020 Annex B.1 (report macros)
+- Verilator user guide, command options `-E`, `-P` and `+define+` (the only tool switches named on this page)
+
+**Prerequisites:** [F4A: Structuring Designs with Modules and Packages](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index). Also useful: [I-SV-4C: SystemVerilog Checkers & Bind](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index).
+
+**Related**
+
+- [F1C: Why SystemVerilog?](/curriculum/T1_Foundational/F1C_Why_SystemVerilog/index): reserved keywords and `` `begin_keywords ``
+- [F2D: System Tasks and File I/O](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index): display formats and command-line plusargs
+- [F4C: Synchronizing with Clocking and Program Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): the clocking-block drives in Make It Work
+- [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): the `|=>` and `$stable` property in `port_checker`
+- [I-UVM-1A: UVM Objects and Components](/curriculum/T2_Intermediate/I-UVM-1A_Components/index): the UVM utility macros in use
+- [I-UVM-2C: Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index): run-time configuration with `uvm_config_db`
+- [A-UVM-7: VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index): packaging a VIP, include order and parameterized interfaces
+
+<NextLesson />

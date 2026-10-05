@@ -1,278 +1,1384 @@
 ---
 title: "I-SV-7: DPI & Foreign Language Interfaces"
-description: "Connect SystemVerilog to C/C++ and beyond using the Direct Programming Interface. Master import/export semantics, type marshaling, memory ownership, and build workflows."
+description: "Call C reference models from SystemVerilog through DPI-C with correct type mapping, memory ownership, scope and time semantics, and build, load and debug the shared library."
 flashcards: "I-SV-7_DPI_and_Foreign_Language_Interfaces"
+sources:
+  - title: "IEEE Standard for SystemVerilog (Clause 35; Annexes H, I and J)"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
 ## Quick Take
-- **What it is:** The Direct Programming Interface (DPI) is a standardized boundary (IEEE 1800-2023 Clause 35 and Annex H) that lets SystemVerilog call C functions and C code call back into SystemVerilog — without the complexity of the older VPI/PLI interfaces.
-- **Why it matters:** Real verification environments need to model firmware, run reference algorithms, talk to external tools, or reuse legacy C checkers. DPI provides a clean, typed, zero-PLI-overhead way to do this.
-- **The Analogy:** Think of DPI as a customs checkpoint at a national border. Both countries (SV and C) operate freely inside their own territory, but any goods (data) crossing the border must go through customs (type marshaling) and follow the treaty rules (calling conventions).
 
-> **Signal:** If you find yourself writing a complex algorithm in SystemVerilog that already exists in C, or if your testbench must coordinate with a software model, DPI is the right tool.
+- **What it is:** The **Direct Programming Interface (DPI)** lets SystemVerilog call functions and tasks written in C, called **imports**, and lets that C code call SystemVerilog functions and tasks back, called **exports**. IEEE 1800-2023 Clause 35 defines the SystemVerilog side, Annex H the C side, and Annex I the header `svdpi.h` that every simulator ships.
+- **Why it matters:** Verification teams already own C and C++ code: reference models (CRC, ECC, codecs, instruction-set simulators), firmware and stimulus generators. DPI calls them like ordinary SystemVerilog functions, and the standard says the interface itself adds "no intrinsic overhead" (§35.2.1). The price is discipline: the SystemVerilog compiler never sees your C code, so nothing checks that the two sides agree.
+- **The Analogy:** DPI is a border crossing. Every value that crosses is declared at customs (the import or export declaration) and repacked into the other side's format (C types, `svLogicVecVal`). *Where it breaks:* two countries go about their business at the same time, and DPI never does. A crossing is a call: the caller waits until it returns, and simulation time moves only inside an exported SystemVerilog task that waits.
+
+**You will be able to:**
+1. Write `import "DPI-C"` and `export "DPI-C"` declarations for functions and tasks, with matching C prototypes for 4-state `svLogicVecVal` vectors, strings and open arrays.
+2. Choose `pure`, `context` or neither for an import, and explain what each one permits and costs.
+3. Predict when simulation time passes across a DPI call, and write a `context` import task that waits through an exported task and honours the disable protocol.
+4. Debug a mismatched prototype, C code that keeps a pointer to SystemVerilog-owned memory, a missing `context`, an export called in the wrong scope and a library that does not load, from their symptoms.
+5. Implement a C reference model as a shared library, load it with the recommended `-sv_lib` switch and call it from a self-checking checker.
+
+**You also need:** basic C (pointers, `malloc` and `free`, compiling a shared library). The section on disabled calls uses `fork … join_any` and `disable fork` from [F2C: Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index).
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
-### DPI Import: Calling C from SystemVerilog
+The first eight subsections are the core path; read them in order. Subsections that start with *Practitioner depth* add the rules you need for daily work. The expert layer is in Push Further.
 
-The most common DPI use case is importing a C function so SystemVerilog can call it.
+### Two layers and one boundary
+
+DPI has two layers (§35.3). The **SystemVerilog layer** (Clause 35) is what you write in `.sv` files: import and export declarations, and ordinary calls. The **C layer** (Annex H) fixes how every SystemVerilog value looks in C and provides helper functions, all declared in `svdpi.h` (Annex I).
+
+Neither compiler is required to analyze the other language (§35.2). The SystemVerilog compiler trusts your import declaration, the C compiler trusts your C prototype, and nothing compares the two. The standard calls this the **WYSIWYG principle**, "what you specify is what you get" (§35.6.1.1): C receives each argument exactly as the declaration specifies it, and no compiler converts between that declaration and your C prototype. Making them match is your job.
+
+Two more rules shape everything on this page:
+
+- **One thread of control.** DPI has no synchronization of its own. The only interaction is data passed in calls and control passed by calls (§35.2.1). When SystemVerilog calls C, the SystemVerilog caller waits; when C calls back, C waits. DPI never runs your C code alongside SystemVerilog.
+- **Global linkage names.** Every import resolves to a C symbol, and every export defines one, in a single global name space (§35.4). By default the symbol is the SystemVerilog name. It must be a legal C identifier, and one name means one C symbol with one signature everywhere: there is no overloading.
+
+<ArchitectureDiagram
+  title="The DPI boundary in this lesson's worked example"
+  caption="Each arrow that crosses the gap is a call, and the caller waits until it returns. SystemVerilog calls two imports; the C task c_send_words calls back into the exported task sv_send_word. The same names appear in Make It Work."
+  cellWidth={170}
+  gapX={130}
+  nodes={[
+    { id: "sv", label: "SystemVerilog (Clause 35)", col: 0, row: 0, rowSpan: 3, container: true },
+    { id: "sv_imp1", label: "import crc32_step", sublabel: "pure function", col: 0, row: 0 },
+    { id: "sv_imp2", label: "import c_send_words", sublabel: "context task", col: 0, row: 1 },
+    { id: "sv_exp", label: "export sv_send_word", sublabel: "task defined in SV", col: 0, row: 2 },
+    { id: "c", label: "C (Annex H, svdpi.h)", col: 1, row: 0, rowSpan: 3, container: true },
+    { id: "c_fn1", label: "crc32_step()", sublabel: "C definition, no state", col: 1, row: 0 },
+    { id: "c_fn2", label: "c_send_words()", sublabel: "returns int: 0 or 1", col: 1, row: 1 },
+    { id: "c_call", label: "sv_send_word(w)", sublabel: "C calls the export", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "sv_imp1", to: "c_fn1", style: "data", label: "call: zero time" },
+    { from: "sv_imp2", to: "c_fn2", style: "data", label: "call" },
+    { from: "c_fn2", to: "c_call", style: "causal", label: "loops" },
+    { from: "c_call", to: "sv_exp", style: "data", label: "export call" }
+  ]}
+/>
+
+### Your first import: calling C from SystemVerilog
+
+The smallest complete DPI program is one import, one C function and one call:
 
 ```systemverilog
-// Declaration in SV: tells the compiler about the C function
-import "DPI-C" function int c_crc32(input int unsigned data[], input int len);
+// compile: tb_top.sv; build add.c into a shared library (see Run it, below)
+module tb_top;
+  // The declaration is the whole contract: name, result type and argument types
+  import "DPI-C" function int c_add(input int a, input int b);
 
-module crc_demo;
-  int unsigned payload[] = '{32'h0000_0001, 32'hDEAD_BEEF};
-  initial $display("golden CRC = %h", c_crc32(payload, payload.size()));
+  initial begin
+    $display("c_add(2, 3) = %0d", c_add(2, 3));
+    $finish;
+  end
 endmodule
 ```
 
-The corresponding C implementation:
-
 ```c
-// crc32.c: compiled separately, linked as a shared library
-#include <stdint.h>
+/* add.c */
 #include "svdpi.h"
 
-/* Reflected CRC-32 over every bit of every 32-bit word, LSB first. */
-int c_crc32(const svOpenArrayHandle data, int len) {
-    uint32_t crc = 0xFFFFFFFFu;
-    for (int i = svLow(data, 1); i <= svHigh(data, 1); i++) {        /* SV indices */
-        uint32_t word = *(const uint32_t*)svGetArrElemPtr1(data, i); /* int elements are C-compatible */
-        for (int b = 0; b < 32; b++) {
-            uint32_t bit = (word >> b) & 1u;
-            crc = (crc >> 1) ^ (0xEDB88320u & (0u - ((crc ^ bit) & 1u)));
-        }
-    }
-    (void)len;   /* svSize(data, 1) returns the same element count */
-    return (int)~crc;
+/* int inputs are small values, so they arrive by value (H.8.7) */
+int c_add(int a, int b) {
+  return a + b;
 }
 ```
 
-An open (unsized) array always arrives as a `const svOpenArrayHandle`. Read it with the svdpi.h query functions (`svLow`, `svHigh`, `svSize`) and accessors such as `svGetArrElemPtr1` (Annex H.12). There is no `svGetIntElement`.
+Expected output (illustrative, derived from the code; the simulator's own `$finish` message follows it):
 
-### DPI Export: Calling SystemVerilog from C
+```text
+c_add(2, 3) = 5
+```
 
-You can also export SV functions so C can call back into the simulation:
+An import declaration defines a SystemVerilog function whose body lives in C (§35.5.4). You call it exactly like a native function, with positional or named arguments (§35.6). The C function's name is the import's linkage name, `c_add`, and its parameters follow the type rules in the next subsection.
+
+**The two mistakes everyone makes:**
+1. **The C prototype does not match the import.** The SystemVerilog compiler cannot see your C code and the C compiler cannot see your import, so both accept a mismatch. If the import says `input logic [31:0] v` and the C code says `int v`, C reads a pointer as if it were a number. Check every parameter against the type table, or let your tool generate the prototypes (Push Further).
+2. **C calls back into SystemVerilog from an import that is not `context`.** It compiles, then behaves unpredictably or crashes (§35.5.1.3). Any import whose C body calls an export, or a VPI routine, must be declared `context`.
+
+### Types across the boundary
+
+Each argument has two descriptions that must agree: the SystemVerilog formal in the declaration and the C parameter. Annex H fixes the C side for every permitted type (§35.5.6) and every direction:
+
+- **Small values** are `byte`, `shortint`, `int`, `longint`, `real`, `shortreal`, `chandle`, `string`, and scalar `bit` and `logic`. As inputs they are passed **by value** (H.8.7).
+- **Every other input** (packed vectors, structs, sized unpacked arrays) arrives **by reference**, as a pointer to `const` data (H.8.4, H.8.7).
+- **Every output and inout** arrives as a pointer (H.8.8).
+- **Open arrays**, declared with `[]`, arrive as a `const svOpenArrayHandle` in every direction (H.8.6).
+- **Function results** must be small values (§35.5.5). Return anything wider through an `output` argument.
+
+| SystemVerilog formal | C parameter for an input | C parameter for an output or inout | Function result? |
+|---|---|---|---|
+| `byte` / `byte unsigned` | `char` / `unsigned char` | `char*` / `unsigned char*` | yes |
+| `shortint` / `shortint unsigned` | `short int` / `unsigned short` | `short int*` / `unsigned short*` | yes |
+| `int` / `int unsigned` | `int` / `unsigned int` | `int*` / `unsigned int*` | yes |
+| `longint` / `longint unsigned` | `long long` / `unsigned long long` | `long long*` / `unsigned long long*` | yes |
+| `real` / `shortreal` | `double` / `float` | `double*` / `float*` | yes |
+| `chandle` | `void*` | `void**` | yes |
+| `string` | `const char*` | `const char**` | yes |
+| `bit` (scalar) | `svBit`: 0 or 1 | `svBit*` | yes |
+| `logic` (scalar) | `svLogic`: `sv_0`, `sv_1`, `sv_z` (2), `sv_x` (3) | `svLogic*` | yes |
+| packed 2-state: `bit [N-1:0]`, packed `struct` of `bit` | `const svBitVecVal*` | `svBitVecVal*` | no |
+| packed 4-state: `logic [N-1:0]`, `integer`, `time` | `const svLogicVecVal*` | `svLogicVecVal*` | no |
+| `enum` | as its base type; names do not reach C | as its base type | if the base type is small |
+| unpacked `struct` | `const S*`, matching C `struct S` | `S*` | no |
+| sized unpacked array, `int a [8]` | `const int*`, C indices 0 to 7 | `int*` | no |
+| open array, `int a []` | `const svOpenArrayHandle` | `const svOpenArrayHandle` | no; imports only |
+
+The table follows Table H.1 and the unsigned rule after it (H.7.4), H.7.3 (enums, `integer`, `time`), H.7.6 to H.7.8, H.8.4 to H.8.9, and Annex I for the scalar codes. An unpacked struct's layout is implementation dependent but normally matches the C compiler (§35.5.6).
+
+Two traps hide in that table:
+
+- `logic [7:0]` and `bit [7:0]` are **different C types**. The 4-state form carries a second 32-bit word (`bval`) for every 32 bits, so C code written for one silently misreads the other.
+- `byte unsigned` arrives by value as `unsigned char`, but `bit [7:0]` arrives by reference as `const svBitVecVal*` (H.7.4). Same eight bits, different C parameter.
+
+Inputs are read-only: C must not change an input argument (§35.5.1.2), which is why Annex H gives every input a `const` qualifier (H.8.7). For pointers the `const` matters. For small values passed by value it does not: C ignores a top-level `const` when it compares prototypes, so `int a` and `const int a` declare the same parameter.
+
+Some types cannot cross at all. Class handles cannot be passed, `ref` arguments are not allowed (Syntax 35-1, note 27), and only the types listed in §35.5.6 are permitted, so events and virtual interfaces stay on the SystemVerilog side.
+
+### Exports: calling SystemVerilog from C
+
+An **export** makes a SystemVerilog function or task callable from C. C sees it as an ordinary C function with the same prototype rules as an import (H.8.2):
 
 ```systemverilog
-// Export declaration: makes this SV function visible to C
-export "DPI-C" function sv_get_sim_time;
-
-function longint sv_get_sim_time();
-  return $time;
+// snippet: inside a module
+export "DPI-C" function sv_now;            // C sees the symbol sv_now
+function automatic longint sv_now();
+  return $time;                            // in this module's time unit
 endfunction
 
-// The import whose C body calls the export MUST be context (§35.5.1.3)
-import "DPI-C" context function void my_c_checker(input int value);
+// Its C body calls sv_now, so this import must be context (§35.5.1.3)
+import "DPI-C" context function void c_log(input int value);
 ```
 
 ```c
+/* snippet: log.c */
 #include <stdio.h>
 #include "svdpi.h"
-extern long long sv_get_sim_time(void);   /* exported from SV */
 
-void my_c_checker(int value) {
-    long long t = sv_get_sim_time();
-    printf("[%lld] Checking value: %d\n", t, value);
+extern long long sv_now(void);   /* the export: longint result -> long long */
+
+void c_log(int value) {
+  printf("[t=%lld] value=%d\n", sv_now(), value);
 }
 ```
 
-> **Caution:** An import that calls exported subroutines (or VPI) shall be declared `context`; without it the call has no proper SystemVerilog scope and the behaviour is unpredictable, often a crash (§35.5.1.3). Exported *tasks* are stricter: only a `context` imported *task* may call them, never an imported function (§35.8). Write C++ implementations with `extern "C"` linkage.
+The rules for exports (§35.7, §35.8, H.8.2, H.9):
 
-### Function Qualifiers: `pure`, `context`, and Standard
+- Declare the export in the scope that defines the subroutine, once per subroutine. The export declaration and the definition may come in either order (§35.7).
+- **Class methods cannot be exported** (§35.7). Export a subroutine of a module, interface, program or package instead.
+- Exports follow the import type rules, but they cannot take open arrays (§35.5.6.1, H.8.2), and dynamic-array formals are erroneous (§35.5.6).
+- Every exported function is a context function (§35.7). C may call an export only from inside a `context` import's call chain. From a call chain without the context property its behaviour is undefined (H.9). From code outside any import call chain, such as a VPI callback, it is simulator-defined and beyond the DPI specification (§35.5.3).
+- An **exported task** may consume time. Its C prototype returns `int`: 1 if it returns because a disable stopped the import's thread, otherwise 0 (§35.8, §35.9). Only an imported **task** declared `context` may call an exported task. An imported function never may, just as a SystemVerilog function cannot enable a task (§35.8).
 
-Predict the C type for a few SystemVerilog types first, then judge each import/export pair: legal, a compile error, or legal-looking code that is illegal or undefined at run time. The explorer is a deterministic model of Clause 35 and Annex H.
+A practical note on logging: `printf` writes to the C program's standard output, which a simulator may buffer separately from its own log. `vpi_printf` writes to the simulator's output and log file (Table 36-9) and may be called even from an import that is not `context` (H.9.5).
+
+### pure, context or neither
+
+A qualifier is a promise about the C body. The compiler cannot check it, but it optimizes and instruments every call as if the promise were true (§35.5.1).
+
+| Qualifier | What the C body may do | Effect on calls | Use it for |
+|---|---|---|---|
+| `pure` (non-void functions with no `output` or `inout` only) | Compute from its inputs. No I/O, no static or global data, nothing with side effects. | Calls may be removed, or replaced by an earlier result for the same inputs (§35.5.2) | Stateless models: CRC, parity, ECC syndromes |
+| none | Use its own arguments; keep C-side state; write files (§35.5.1.3) | Ordinary calls; never a barrier to optimization (§35.5.3) | Self-contained C with side effects |
+| `context` | All of the above, plus call exports, VPI routines and the `svdpi.h` scope functions (§35.5.3) | Each call is instrumented and is a barrier to optimization (§35.5.3) | C that calls back into SystemVerilog |
+
+```systemverilog
+// snippet: one import of each kind
+import "DPI-C" pure function int unsigned crc32_step(input int unsigned crc,
+                                                    input int unsigned word);
+import "DPI-C" function void c_log_line(input string line);  // appends to a C-side file
+import "DPI-C" context task c_send_words(input int n);       // calls an exported task
+```
+
+Choose in this order:
+1. Does the C body call an export, a VPI routine, or `svGetScope`/`svSetScope`? Use `context`. If it calls an exported **task**, the import must also be a **task** (§35.8).
+2. Otherwise, is it a non-void function whose result depends only on its inputs, with no I/O and no static data? You may add `pure` for speed.
+3. Otherwise, use no qualifier.
+
+An imported task can never be `pure` (§35.5.1.3). Do not add `context` just in case: every context call is instrumented and blocks optimizations, so the simulation can slow down (§35.5.1.3).
+
+### Time: one side runs at a time
+
+DPI calls follow the same timing rules as SystemVerilog subroutines:
+
+- An imported **function** completes instantly and consumes zero simulation time (§35.5.1.1).
+- An imported **task** also takes zero time, unless its C code calls an exported task that executes a delay, an event control or a `wait` (§35.5.1.5). Only a `context` import task may make that call (§35.8).
+- While C code runs, no SystemVerilog process runs and time does not move. A C call that blocks on a socket for ten seconds of wall-clock time freezes the whole simulation for those ten seconds, whether it was imported as a function or as a task.
+- When an exported task waits, the C stack frame stays suspended inside the call. The simulator runs other processes and advances time, and the export finally returns into C at the new time.
+
+The worked example in Make It Work uses this pattern. A C traffic model sends words through an exported task, and the clock edges happen inside that task:
+
+```systemverilog
+// snippet (from the worked example)
+export "DPI-C" task sv_send_word;
+task automatic sv_send_word(input int unsigned w);  // automatic: one w per caller
+  cb.valid <= 1'b1;
+  cb.word  <= w;
+  @(cb);              // time passes here, in SystemVerilog
+  cb.valid <= 1'b0;
+endtask
+
+import "DPI-C" context task c_send_words(input int n);
+```
+
+```c
+/* snippet (from traffic.c in the worked example) */
+extern int sv_send_word(unsigned int w);   /* exported task: returns 1 if disabled */
+
+int c_send_words(int n) {                  /* import task: int result for §35.9 */
+  static const unsigned int words[2] = { 0x00000001u, 0xDEADBEEFu };
+  for (int i = 0; i < n && i < 2; i++) {
+    if (sv_send_word(words[i]))
+      return 1;                            /* disabled: acknowledge at once */
+  }
+  return 0;
+}
+```
+
+<SequenceDiagram
+  title="One c_send_words call: where simulation time passes"
+  caption="Time moves only at the two dividers, while sv_send_word waits on @(cb). The C frame stays suspended there and every other SystemVerilog process, such as the checker u_chk, keeps running. The checker and the export wake on the same edges as separate processes; their order inside a time slot does not change the result."
+  participants={[
+    { id: "tb", label: "tb_top initial", sublabel: "SV process" },
+    { id: "c", label: "c_send_words", sublabel: "C, context import task" },
+    { id: "exp", label: "sv_send_word", sublabel: "SV exported task" },
+    { id: "chk", label: "u_chk", sublabel: "another SV process" }
+  ]}
+  messages={[
+    { from: "tb", to: "c", label: "c_send_words(2) at t = 25 ns" },
+    { from: "c", to: "exp", label: "sv_send_word(0x00000001)" },
+    { kind: "self", from: "exp", label: "drive cb.valid, cb.word; @(cb)" },
+    { kind: "divider", label: "25 ns to 35 ns: time passes" },
+    { kind: "self", from: "chk", label: "edge at 35 ns: model step for word 1" },
+    { kind: "return", from: "exp", to: "c", label: "returns 0: not disabled" },
+    { from: "c", to: "exp", label: "sv_send_word(0xDEADBEEF)" },
+    { kind: "divider", label: "35 ns to 45 ns: time passes" },
+    { kind: "self", from: "chk", label: "edge at 45 ns: word 1 PASS; step for word 2" },
+    { kind: "return", from: "exp", to: "c", label: "returns 0" },
+    { kind: "return", from: "c", to: "tb", label: "returns 0 at t = 45 ns" }
+  ]}
+/>
+
+**Why `automatic`:** several SystemVerilog threads can be inside the same import task at once, each suspended in its own export call (§35.5.1.5). An `automatic` exported task gives each call its own variables; a static task would share them.
+
+### Predict, then check: the DPI boundary explorer
+
+The explorer below is a deterministic model of Clause 35 and Annex H. Part 1 shows how one argument crosses; part 2 judges import and export pairs as legal, a compile error, or code that compiles but is illegal or undefined when it runs. Commit to an answer before you reveal each one:
+
+1. **Part 1:** choose the type `bit [7:0]` with direction *input*. Is the C parameter `unsigned char` or something else? Then try `logic [31:0]` with direction *output / inout*.
+2. **Part 1:** choose `int x[]`. Which C type arrives, and how would you loop over it?
+3. **Part 2:** *vector result*. Can a DPI function return `logic [31:0]`?
+4. **Part 2:** compare *export, no context* with *export, with context*. Which one can crash?
+5. **Part 2:** *function calls exported task*, *context task waits in SV* and *pure with a counter*. Where does time pass, and what silently goes missing?
 
 <DPIBoundaryInspector />
 
-The qualifier you choose has major performance and capability implications:
+What the explorer showed:
 
-| Qualifier | May touch SV data or call exports? | May call exported tasks? | Optimization | Use when… |
-|---|---|---|---|---|
-| `pure` (functions only) | ❌ No | ❌ No | Calls may be removed or reused | Non-void, no output/inout args, result depends only on inputs, no side effects (§35.5.2) |
-| `context` | ✅ Yes | Only if the import is a **task** (§35.8) | Each call is an optimization barrier | C calls exported subroutines or VPI (§35.5.3) |
-| *(none)* | ❌ Only its own arguments | ❌ No | Normal | C does self-contained work; side effects such as file I/O are allowed (§35.5.1.3) |
+- **Three kinds of verdict.** A *compile error* means the declaration itself breaks a rule the SystemVerilog compiler checks: a `pure` task (§35.5.1.3) or a vector result (§35.5.5). *Compiles, but illegal or undefined* means the C body breaks a rule nobody checks: an export called from a non-`context` import, an exported task called from an imported function, or a `pure` function with side effects. Expect no error message for those; expect wrong results or a crash.
+- **Same width, different crossing.** `bit [7:0]` arrives by reference as `const svBitVecVal*` in a 32-bit chunk, not as `unsigned char`. Of the 8-bit types, only `byte` and `byte unsigned` arrive by value.
+- **Time passes only in one scenario**, *context task waits in SV*, and only inside the exported task. Every function call, and every task that does not call a waiting export, takes zero simulation time.
+- **One thing the explorer leaves out.** Its *context task waits in SV* C code ignores the value `sv_wait_cycles` returns. Real code must check it, `if (sv_wait_cycles(5)) return 1;`, so that a disabled caller is acknowledged (§35.9). The section on disabled calls below explains why.
+
+### Memory: who owns what, and for how long
+
+SystemVerilog and C allocate memory separately, and each side frees only what it allocated (§35.5.1.4). Four rules follow:
+
+1. **Anything SystemVerilog passes by reference is valid only during the call.** That covers strings, packed vectors, structs and arrays. C may assume nothing about their lifetime; to keep a value, copy it into memory that C owns (H.8.4, H.8.10).
+2. **C never frees SystemVerilog's memory** (§35.5.1.4, H.8.10). Freeing the `const char*` of an `input string` can corrupt the simulator's heap.
+3. **SystemVerilog never frees memory it gets from C.** A string that C returns, or writes to an `output string`, must still be valid when the call returns: point at static or C-owned heap storage, never at a local array on the C stack (H.8.10).
+4. **C objects that live across calls travel as a `chandle`.** C allocates the object, SystemVerilog stores the handle, and SystemVerilog calls another import that frees it. The standard describes exactly this pattern (§35.5.1.4).
+
+<ArchitectureDiagram
+  title="Who owns each piece of memory across a DPI call"
+  caption="Each row is one rule. Row 1: copy what you need before the call returns. Rows 2 and 3: C allocates and frees its own objects; SystemVerilog only holds the chandle and asks C to free it. Row 4: a string returned to SystemVerilog must stay valid, because SystemVerilog never frees it."
+  cellWidth={170}
+  gapX={140}
+  nodes={[
+    { id: "sv", label: "SystemVerilog-owned", col: 0, row: 0, rowSpan: 4, container: true },
+    { id: "sv_in", label: "input string name", sublabel: "valid during the call only", col: 0, row: 0 },
+    { id: "sv_h", label: "chandle h", sublabel: "holds C's pointer", col: 0, row: 1 },
+    { id: "sv_free", label: "c_model_free(h)", sublabel: "SV asks C to free", col: 0, row: 2 },
+    { id: "sv_s", label: "string s", sublabel: "= c_model_name()", col: 0, row: 3 },
+    { id: "c", label: "C-owned", col: 1, row: 0, rowSpan: 4, container: true },
+    { id: "c_copy", label: "copy in C memory", sublabel: "malloc + strcpy", col: 1, row: 0 },
+    { id: "c_obj", label: "model object", sublabel: "malloc in c_model_new", col: 1, row: 1 },
+    { id: "c_freed", label: "free(model)", sublabel: "C frees its own object", col: 1, row: 2 },
+    { id: "c_lit", label: "static name text", sublabel: "outlives every call", col: 1, row: 3 }
+  ]}
+  edges={[
+    { from: "sv_in", to: "c_copy", style: "data", label: "copy, never keep" },
+    { from: "c_obj", to: "sv_h", style: "data", label: "returned as chandle" },
+    { from: "sv_free", to: "c_freed", style: "control", label: "import call" },
+    { from: "c_lit", to: "sv_s", style: "data", label: "SV never frees it" }
+  ]}
+/>
+
+The classic mistake keeps SystemVerilog's pointer:
+
+```c
+/* snippet: BAD */
+static const char* g_name;                 /* points into SystemVerilog memory */
+
+void c_set_name(const char* name) {
+  g_name = name;                           /* not guaranteed after the call returns */
+}
+```
+
+The fix copies the characters into memory that C owns, and frees the previous copy:
+
+```c
+/* snippet: GOOD */
+#include <stdlib.h>
+#include <string.h>
+
+static char* g_name;                       /* C-owned copy */
+
+void c_set_name(const char* name) {
+  char* copy = malloc(strlen(name) + 1);
+  if (copy == NULL) return;
+  strcpy(copy, name);
+  free(g_name);                            /* free(NULL) is allowed */
+  g_name = copy;
+}
+```
+
+For a C object that must survive between calls, hand SystemVerilog a `chandle` and an explicit free function:
 
 ```systemverilog
-// Pure: safe to inline, result depends only on inputs
-import "DPI-C" pure function int c_parity(input int data);
-
-// Context: needs to read SV signals via VPI or call SV functions
-import "DPI-C" context function void c_monitor_check();
-
-// Standard (default): no qualifier needed
-import "DPI-C" function int c_add(input int a, input int b);
+// snippet: the chandle pattern
+import "DPI-C" function chandle c_model_new(input int seed);
+import "DPI-C" function int     c_model_next(input chandle model);
+import "DPI-C" function void    c_model_free(input chandle model);
+import "DPI-C" function string  c_model_name();  // C returns static text
 ```
 
-> **Performance tip:** Mark a function `pure` only when it truly has no side effects. The compiler may eliminate or reuse calls, so a `pure` function that prints, writes a file, or counts calls can silently lose those effects (§35.5.2).
+### Declaration and calling rules
 
----
+*Practitioner depth.* Import and export declarations may appear in a module, interface, program, package, compilation-unit scope or generate scope (H.9.2). They cannot appear inside a class, so put imports in a package and call them from class methods. An import declaration defines a SystemVerilog subroutine in its scope, so the same name can be imported only once per scope (§35.5.4).
 
-## Type Marshaling: Crossing the Border
-
-The core DPI challenge is mapping SystemVerilog's 4-state types to C's 2-state types.
-
-| SystemVerilog type | C type (input) | C type (output / inout) | Notes |
-|---|---|---|---|
-| `byte` | `char` | `char*` | 8-bit, 2-state |
-| `shortint` | `short int` | `short int*` | 16-bit |
-| `int` | `int` | `int*` | 32-bit, 2-state |
-| `longint` | `long long` | `long long*` | 64-bit |
-| `real` / `shortreal` | `double` / `float` | `double*` / `float*` | IEEE 754 |
-| `chandle` | `void*` | `void**` | Opaque C pointer that SV stores and passes back |
-| `string` | `const char*` | `const char**` | Do not free or keep it; copy if needed (H.8.10) |
-| `bit` (scalar) | `svBit` | `svBit*` | unsigned char: 0 or 1 |
-| `logic` (scalar) | `svLogic` | `svLogic*` | `sv_0`, `sv_1`, `sv_z` = 2, `sv_x` = 3 |
-| `bit [N:0]` | `const svBitVecVal*` | `svBitVecVal*` | Packed 2-state vector, 32-bit chunks |
-| `logic [N:0]` | `const svLogicVecVal*` | `svLogicVecVal*` | Packed 4-state vector (aval/bval pairs) |
-| `int arr[]` (open array) | `const svOpenArrayHandle` | `const svOpenArrayHandle` | Always a handle; use `svLow`/`svHigh`/`svGetArrElemPtr1` |
-
-Small inputs (the basic types, scalar `bit`/`logic`, `chandle`, `string`) are passed by value; every other input arrives by `const` reference, and every output or inout arrives by pointer (H.8.7, H.8.8). Only small types can be function results: `function logic [31:0] f()` is not a legal DPI import; return wide values through an `output` argument (§35.5.5).
-
-### The 4-State Problem
-
-`logic` values can be `0`, `1`, `X`, or `Z`. C has no concept of `X`/`Z`. The DPI represents `logic` vectors using `svLogicVecVal` — a struct with two members:
-
-```c
-typedef struct {
-    uint32_t aval;  // value bits
-    uint32_t bval;  // X/Z indicator bits
-} svLogicVecVal;
-// bval=0, aval=0 → logic 0
-// bval=0, aval=1 → logic 1
-// bval=1, aval=1 → logic X
-// bval=1, aval=0 → logic Z
-```
-
-> **Pitfall:** If you pass a `logic` signal that contains `X` to a C function expecting a simple `int`, the `X` information is silently lost. Always use `bit` types on the SV side when the C function cannot handle `X`/`Z`.
-
----
-
-## Memory Ownership & Lifetime
-
-**Rule:** The caller owns the memory.
-
-- When SV calls C: SV allocates the argument data. The C function must **not** free it or store pointers to it beyond the function return.
-- When C calls exported SV: C owns the arguments. The SV function must not store references to C-allocated strings or arrays.
-- **Dynamic allocation in C:** If C `malloc`s memory and returns a pointer, that memory will leak unless you provide an explicit `c_free()` import for SV to call later.
-
-```c
-// BAD: storing a pointer to SV-owned data
-static const char* cached_name = NULL;
-void c_set_name(const char* name) {
-    cached_name = name;  // DANGER: SV may reclaim this memory!
-}
-
-// GOOD: copy the data if you need it beyond the call
-void c_set_name(const char* name) {
-    cached_name = strdup(name);  // owned by C, must be freed later
-}
-```
-
----
-
-## Blocking Behavior: Functions vs Tasks
-
-- **`import "DPI-C" function`** executes in **zero simulation time**, like any SystemVerilog function (§35.5.1.1). The simulator waits until the C code returns.
-- **`import "DPI-C" task`** can consume simulation time, but only in one way: its C code calls an **exported SystemVerilog task** that executes a delay, event control or `wait` (§35.5.1.5). To call that export, the import must be declared `context` (§35.8). Without such a call, an imported task also takes zero simulation time.
-- C code that **blocks on I/O or computes for a long time freezes the whole simulator**, whether it is imported as a function or a task. `$time` does not move and no other SystemVerilog process runs until the C code returns.
+The linkage name can differ from the SystemVerilog name, and one C function can stand behind several SystemVerilog names with different default arguments (§35.2.1, §35.4, §35.5.4):
 
 ```systemverilog
-// Zero-time function: fast computation only
-import "DPI-C" function int c_compute_hash(input int data);
+// snippet: SystemVerilog name crc_seed_step, C symbol crc32_step
+import "DPI-C" pure crc32_step = function int unsigned crc_seed_step(
+  input int unsigned crc = 32'hFFFF_FFFF,    // default: may be omitted at the call
+  input int unsigned word);
 
-// Time passes only inside the exported SV task that C calls
-export "DPI-C" task sv_wait_cycles;
-task sv_wait_cycles(int n); repeat (n) @(posedge clk); endtask
-import "DPI-C" context task c_wait_for_firmware_ack(output int status);
+// called by name, using the default seed
+initial $display("%h", crc_seed_step(.word(32'h0000_0001)));  // 66074786
 ```
 
-```c
-extern int sv_wait_cycles(int n);          /* exported SV task */
-int c_wait_for_firmware_ack(int* status) {
-    while (!fw_ack_ready()) {              /* non-blocking poll of the firmware model */
-        sv_wait_cycles(10);                /* let simulation time advance in SV */
-    }
-    *status = fw_ack_value();
-    return 0;                              /* 0 = not disabled (§35.9) */
-}
-```
+Every declaration of one linkage name, in any scope, must have exactly the same signature: result type, argument types and directions, ranges, the `pure` or `context` property and the `"DPI-C"` string (§35.5.4). Only argument names and default values may differ. Always write `"DPI-C"`: the older `"DPI"` string is deprecated, and a tool must give a warning or an error for it (§35.5.4).
 
-> **Warning:** A C call that takes 500 ms of wall-clock time holds the simulator for those 500 ms, task or not. If C must wait for something, poll without blocking and let time pass by calling an exported task that waits, as above.
+Calls behave as if arguments were copied (§35.6.1):
 
----
+- **Inputs are copied in.** C sees a `const` value or a `const` pointer and must not modify it (§35.5.1.2).
+- **Outputs are copied out.** Their initial value in C is undetermined, so C should write every output it is given (§35.5.1.2).
+- **Inouts are both.** C may read the initial value of an inout argument.
+- **Coercion happens on the SystemVerilog side.** If an actual argument's type differs from the formal, for example a `logic [15:0]` passed to an `int`, SystemVerilog creates a temporary of the formal's type; C always receives exactly the declared type (§35.6.1, §35.6.1.1).
+- **Output changes appear after the call.** Values written to outputs propagate, and wake processes waiting on them, only when the C call returns (§35.6.2).
 
-## Build & Link Workflow
+### 4-state vectors in C
 
-DPI requires compiling C code into a shared library and telling the simulator where to find it.
+*Practitioner depth.* A packed vector crosses in **canonical form**: an array of 32-bit chunks, with chunk `[0]` holding bits 31:0, chunk `[1]` bits 63:32, and so on (H.7.7). A 2-state vector uses `svBitVecVal`, one 32-bit word per chunk. A 4-state vector uses `svLogicVecVal`, two words per chunk named `aval` and `bval`; the type is equivalent to VPI's `s_vpi_vecval` (H.7.7), whose bit encoding is given in Figure 38-8 (§38.15). `SV_PACKED_DATA_NELEMS(width)` gives the number of chunks (Annex I).
 
-```bash
-# 1. Compile the C code into a shared library
-# -I takes the directory that contains svdpi.h (your simulator's include dir)
-gcc -shared -fPIC -o libmydpi.so crc32.c -I${VCS_HOME}/include
-
-# 2. Run simulation with the library
-# VCS
-vcs -sverilog -LDFLAGS "-L. -lmydpi" top.sv
-# Questa
-vlog top.sv && vsim -sv_lib libmydpi top
-
-# 3. Or use the built-in DPI compilation flow
-# VCS auto-compile
-vcs -sverilog top.sv crc32.c
-```
-
-> **Pitfall:** Forgetting `-sv_lib` or `-LDFLAGS` at link time is the #1 DPI build failure. The error message is typically `"undefined symbol: c_crc32"` — which looks like a C linker error, not a SystemVerilog issue.
-
----
-
-## Common Failure Modes & Debug
-
-| Symptom | Likely Cause | Fix |
+| `aval` bit | `bval` bit | Logic value |
 |---|---|---|
-| `undefined symbol` at runtime | Missing `-sv_lib` or library not on `LD_LIBRARY_PATH` | Add correct linker flags |
-| Segmentation fault | C prototype does not match the import (e.g., `int` where SV passes `const svLogicVecVal*`), open-array misuse, or an export called from a non-`context` import | Check the C prototype against the type table; declare imports that call exports `context` |
-| Simulation hang | C code blocks or loops (function and task alike) | Make the C side non-blocking; let time pass in an exported SV task called from a `context` import task |
-| Corrupted return values | Incorrect `svLogicVecVal` packing | Verify `aval`/`bval` encoding |
-| Memory leak | C allocates, SV never frees | Add explicit `c_free()` import |
-| Stack overflow | Deep C recursion from context function | Increase simulator stack or restructure |
+| 0 | 0 | 0 |
+| 1 | 0 | 1 |
+| 0 | 1 | Z |
+| 1 | 1 | X |
 
----
+The last chunk usually has unused bits. Their contents are undetermined, and C must mask them, or sign-extend them for signed values, before using the chunk (H.7.7). Ranges are normalized first, so `logic [39:0]`, `logic [0:39]` and `logic [47:8]` all reach C as bits 39 down to 0 (H.7.6).
+
+<figure className="not-prose my-6">
+  <svg viewBox="0 0 360 152" role="img" aria-label="logic [39:0] in C. Chunk v[0] holds value bits 31 to 0. Chunk v[1] holds value bits 39 to 32 in its low 8 bits; its upper 24 bits are unused and undetermined, so C masks them. aval and bval use the same layout." style={{ width: "100%", maxWidth: 420 }}>
+    <text x="8" y="16" fontSize="11" fill="currentColor">logic [39:0] v: two 32-bit chunks (aval and bval alike)</text>
+    <text x="8" y="50" fontSize="11" fill="currentColor">v[0]</text>
+    <rect x="48" y="32" width="300" height="28" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="198" y="50" fontSize="11" textAnchor="middle" fill="currentColor">value bits 31:0</text>
+    <text x="8" y="96" fontSize="11" fill="currentColor">v[1]</text>
+    <rect x="48" y="78" width="225" height="28" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.6" strokeDasharray="4 3" />
+    <text x="160" y="96" fontSize="10" textAnchor="middle" fill="currentColor">24 unused bits: undetermined</text>
+    <rect x="273" y="78" width="75" height="28" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="310" y="96" fontSize="11" textAnchor="middle" fill="currentColor">bits 39:32</text>
+    <text x="48" y="124" fontSize="10" fill="currentColor">chunk bit 31</text>
+    <text x="348" y="124" fontSize="10" textAnchor="end" fill="currentColor">chunk bit 0</text>
+    <text x="8" y="146" fontSize="10" fill="currentColor">Mask before use: SV_GET_UNSIGNED_BITS(v[1].aval, 8)</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">{"The canonical form of logic [39:0] (H.7.7). The dashed part of v[1] holds no data: mask it in both aval and bval before you compare or combine values."}</figcaption>
+</figure>
+
+This C function reads a 40-bit 4-state value, reports X or Z bits, and otherwise returns the value through an `output longint`:
+
+```systemverilog
+// snippet
+import "DPI-C" function int c_read40(input logic [39:0] v, output longint value);
+
+logic [39:0] addr = 40'h12_3456_789A;
+longint      a;
+
+initial begin
+  if (c_read40(addr, a)) $display("addr = %0h", a);       // addr = 123456789a
+  addr[3] = 1'bx;
+  if (!c_read40(addr, a)) $display("addr has X or Z bits");
+end
+```
+
+```c
+/* snippet: read40.c */
+#include "svdpi.h"
+
+/* logic [39:0] is SV_PACKED_DATA_NELEMS(40) == 2 chunks: v[0] holds bits 31:0,
+   the low 8 bits of v[1] hold bits 39:32, the rest of v[1] is undetermined. */
+int c_read40(const svLogicVecVal* v, long long* value) {
+  unsigned int hi_a = SV_GET_UNSIGNED_BITS(v[1].aval, 8);
+  unsigned int hi_b = SV_GET_UNSIGNED_BITS(v[1].bval, 8);
+  *value = 0;                              /* write every output (§35.5.1.2) */
+  if (v[0].bval != 0 || hi_b != 0)
+    return 0;                              /* some bit is X or Z: its bval is 1 */
+  *value = ((long long)hi_a << 32) | v[0].aval;
+  return 1;
+}
+```
+
+Annex I also provides bit-select and part-select helpers for canonical values, such as `svGetBitselLogic` and `svGetPartselLogic` (H.11.5).
+
+### Open arrays
+
+*Practitioner depth.* An **open array** formal leaves a dimension unsized with `[]`, so one C routine accepts arrays of any size (§35.5.6.1). C receives a handle, never a raw pointer, and reads it through `svdpi.h` functions (H.8.6, H.12):
+
+```systemverilog
+// snippet
+import "DPI-C" function int unsigned c_crc32_words(input int unsigned data []);
+
+int unsigned w [1:2] = '{32'h0000_0001, 32'hDEAD_BEEF};
+initial $display("CRC-32 = %h", c_crc32_words(w));       // CRC-32 = 929660f4
+```
+
+```c
+/* snippet: words.c (crc32_step is the model from Make It Work) */
+#include <stddef.h>
+#include "svdpi.h"
+
+unsigned int crc32_step(unsigned int crc, unsigned int word);
+
+unsigned int c_crc32_words(const svOpenArrayHandle data) {
+  unsigned int crc = 0xFFFFFFFFu;
+  for (int i = svLow(data, 1); i <= svHigh(data, 1); i++) {  /* SV indices */
+    const unsigned int* p = (const unsigned int*)svGetArrElemPtr1(data, i);
+    if (p == NULL) return 0;               /* never dereference NULL (H.12.4) */
+    crc = crc32_step(crc, *p);
+  }
+  return ~crc;
+}
+```
+
+A traced call with the actual argument `w`, declared `int unsigned w [1:2]`:
+
+| C call | Result | Why |
+|---|---|---|
+| `svLow(data, 1)`, `svHigh(data, 1)` | 1, 2 | Unpacked dimensions keep the actual argument's own range (H.12.1, H.12.2) |
+| `svSize(data, 1)` | 2 | Number of elements in dimension 1 |
+| `svGetArrElemPtr1(data, 1)` | points at `w[1]`, `0x00000001` | Accessors take SystemVerilog indices, not 0-based ones (H.12) |
+| `svGetArrElemPtr1(data, 2)` | points at `w[2]`, `0xDEADBEEF` | Same rule |
+| `svGetArrElemPtr1(data, 0)` | `NULL` | Index outside the range (H.12.4) |
+| return value | `929660f4` | The same CRC-32 as the worked example |
+
+The rules for open arrays:
+
+- Dimension 0 is the packed part; dimensions 1 and up are the unpacked ones (H.12.2).
+- Pointer access (`svGetArrElemPtr1`, `svGetArrayPtr`) works only when the elements are laid out as in C. For scalar or packed elements, such as `bit [7:0] b []`, the layout is implementation dependent and the pointer functions may return `NULL` (H.12.4). Copy each element in canonical form instead, with `svGetBitArrElem1VecVal` or `svGetLogicArrElem1VecVal`, and write back with the matching `svPut` function (H.12.5).
+- For an `output` or `inout` open array, C may write only as many elements as the actual argument holds; writing more is undefined (H.12). Use `svSize`.
+- A dynamic array can be passed to an open-array formal under the same rules as for a native subroutine (§35.6.1.1, §7.7).
+- Exports cannot take open arrays (§35.5.6.1).
+- There is no `svGetIntElement` or similar helper. If a function is not declared in Annex I, it does not exist.
+
+### Scope and context
+
+*Practitioner depth.* A `context` import knows where it was declared. Each call carries the instance scope that contains the import declaration, for example `tb_top` (§35.5.3). That scope decides which exports C can call directly: only exports defined in that same scope. To reach an export in another instance, C switches scope first:
+
+```systemverilog
+// snippet: one exported task per bus_bfm instance
+interface bus_bfm (input logic clk);
+  logic [7:0] data;
+  clocking cb @(posedge clk);
+    output data;
+  endclocking
+
+  export "DPI-C" task bfm_write;           // every instance exports bfm_write
+  task automatic bfm_write(input byte unsigned d);
+    cb.data <= d;
+    @(cb);
+  endtask
+endinterface
+
+module tb_top;
+  logic clk = 1'b0;
+  always #5 clk = ~clk;
+
+  bus_bfm u_bfm0 (.clk);
+  bus_bfm u_bfm1 (.clk);
+
+  import "DPI-C" context task c_firmware(input string bfm_path);
+
+  initial begin
+    c_firmware("tb_top.u_bfm1");
+    $finish;
+  end
+endmodule
+```
+
+```c
+/* snippet: firmware.c */
+#include <stddef.h>
+#include "svdpi.h"
+
+extern int bfm_write(unsigned char d);     /* exported by every bus_bfm instance */
+
+int c_firmware(const char* bfm_path) {
+  svScope target = svGetScopeFromName(bfm_path);  /* NULL if no such instance */
+  if (target == NULL) return 0;
+  svScope caller = svSetScope(target);     /* returns the previous scope */
+  if (bfm_write(0xA5))
+    return 1;                              /* disabled: acknowledge (§35.9) */
+  svSetScope(caller);
+  return 0;
+}
+```
+
+<SequenceDiagram
+  title="Calling an export that lives in another instance"
+  caption="c_firmware is declared in tb_top, so its calls start in the scope tb_top. bfm_write is exported by each bus_bfm instance, so C selects u_bfm1 with svSetScope before calling it (§35.5.3, H.9.3). Without that, only exports declared in tb_top could be called directly."
+  participants={[
+    { id: "tb", label: "tb_top initial", sublabel: "scope: tb_top" },
+    { id: "c", label: "c_firmware", sublabel: "C, context import task" },
+    { id: "bfm", label: "u_bfm1.bfm_write", sublabel: "SV exported task" }
+  ]}
+  messages={[
+    { from: "tb", to: "c", label: 'c_firmware("tb_top.u_bfm1")' },
+    { kind: "self", from: "c", label: "svGetScopeFromName(bfm_path)" },
+    { kind: "self", from: "c", label: "svSetScope(target): returns tb_top" },
+    { from: "c", to: "bfm", label: "bfm_write(0xA5)" },
+    { kind: "self", from: "bfm", label: "cb.data <= d; @(cb)" },
+    { kind: "return", from: "bfm", to: "c", label: "returns 0" },
+    { kind: "self", from: "c", label: "svSetScope(caller)" },
+    { kind: "return", from: "c", to: "tb", label: "returns 0" }
+  ]}
+/>
+
+The scope functions (H.9.3, Annex I) work only inside a `context` call chain; anywhere else their behaviour is undefined (H.9):
+
+- `svGetScope()`: the current scope, which is the import's declaration scope unless `svSetScope` changed it.
+- `svSetScope(scope)`: selects the scope for the export calls that follow, and returns the previous scope.
+- `svGetScopeFromName(name)`: the scope of a module, interface, program or generate instance, given its full name; `NULL` for a name it does not recognize.
+- `svGetNameFromScope(scope)`: the full name of a scope, for messages.
+- `svPutUserData` and `svGetUserData`: attach C data to a scope, which gives one C model object per SystemVerilog instance (Push Further).
+
+### When a DPI call is disabled
+
+*Practitioner depth.* A `disable` statement can terminate a thread while it is inside an import call chain: `disable fork` after a timeout, or `disable` of a named block that encloses the call (§9.6.2, §9.6.3). An import enters the **disabled state** only at one moment, when an export it called returns (§35.9). The **disable protocol** then lets C clean up (close files, free memory) before it unwinds:
+
+- **(a)** An exported task returns 1 when it returns because of a disable, and 0 otherwise. The simulator guarantees this.
+- **(b)** An imported task that returns because of a disable returns 1, and 0 otherwise.
+- **(c)** An imported function in the disabled state calls `svAckDisabledState()` before it returns.
+- **(d)** Once disabled, the import makes no further export calls.
+
+Items (b) to (d) are the C programmer's job, simulators check them, and breaking one is a fatal simulation error (§35.9). `svIsDisabledState()` tells C whether its thread is in the disabled state (Annex I).
+
+A disabled call does not finish its work, so do not trust its results: after an import returns because of a disable, the values of its `output` and `inout` arguments, and a function's result, are undefined (§35.9).
+
+```systemverilog
+// snippet: give the C traffic model at most 15 ns
+fork
+  c_send_words(2);
+  #15;
+join_any
+disable fork;   // kills c_send_words if it is still waiting inside sv_send_word
+```
+
+<SequenceDiagram
+  title="The disable protocol when a timeout kills the caller"
+  caption="The export returns 1 because its thread was disabled (§35.9 a). C returns 1 at once (b) and calls no more exports (d). Note the side effect: sv_send_word never reached its last line, so valid is still 1 on the bus. Restore interface signals after a disable."
+  participants={[
+    { id: "br1", label: "fork branch 1", sublabel: "calls the import" },
+    { id: "c", label: "c_send_words", sublabel: "C, context import task" },
+    { id: "exp", label: "sv_send_word", sublabel: "SV exported task" },
+    { id: "br2", label: "fork branch 2", sublabel: "the #15 timeout" }
+  ]}
+  messages={[
+    { from: "br1", to: "c", label: "c_send_words(2) at t = 25 ns" },
+    { from: "c", to: "exp", label: "sv_send_word(0x00000001)" },
+    { kind: "return", from: "exp", to: "c", label: "returns 0 at 35 ns" },
+    { from: "c", to: "exp", label: "sv_send_word(0xDEADBEEF)" },
+    { kind: "self", from: "exp", label: "waits for the edge at 45 ns" },
+    { kind: "self", from: "br2", label: "#15 ends at 40 ns" },
+    { kind: "note", from: "br1", to: "br2", label: "join_any returns, and the parent runs disable fork, which disables branch 1 and the call chain inside it", tone: "error" },
+    { kind: "return", from: "exp", to: "c", label: "returns 1: disabled", tone: "error" },
+    { kind: "self", from: "c", label: "clean up; call no more exports" },
+    { kind: "return", from: "c", to: "br1", label: "returns 1: acknowledged", tone: "error" }
+  ]}
+/>
+
+### Build, load and link
+
+*Practitioner depth.* Annex J describes the tool-neutral flow. You compile and link the C code into a **shared library** yourself, and the simulator **loads** it into the simulation (J.4, Figure J.1). Every simulator ships the same normative `svdpi.h` (H.5), and object code built on one platform works with every compliant simulator on that platform (H.4).
+
+<ArchitectureDiagram
+  title="From C source to a loaded DPI library (Annex J)"
+  caption="You build the library; the simulator loads it at run time with -sv_lib, given without the file extension (J.4). Annex J calls its switch names recommendations, not requirements (J.2), so check your simulator's manual. Some tools also compile C files given on their own command line, which is tool-dependent."
+  gapX={84}
+  nodes={[
+    { id: "hdr", label: "svdpi.h", sublabel: "simulator include dir", col: 1, row: 0 },
+    { id: "csrc", label: "crc_model.c", sublabel: "and traffic.c", col: 0, row: 1 },
+    { id: "cc", label: "C compiler", sublabel: "-shared -fPIC", col: 1, row: 1 },
+    { id: "so", label: "libcrc_model.so", sublabel: "shared library", col: 2, row: 1 },
+    { id: "svsrc", label: "tb_top.sv", sublabel: "imports and exports", col: 0, row: 2 },
+    { id: "svc", label: "SV compiler", sublabel: "compile, elaborate", col: 1, row: 2 },
+    { id: "sim", label: "simulation run", sublabel: "-sv_lib libcrc_model", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "hdr", to: "cc", style: "structural", label: "#include" },
+    { from: "csrc", to: "cc", style: "data", label: "build" },
+    { from: "cc", to: "so", style: "data", label: "link" },
+    { from: "svsrc", to: "svc", style: "data", label: "compile" },
+    { from: "svc", to: "sim", style: "data", label: "elaborate" },
+    { from: "so", to: "sim", style: "causal", label: "load" }
+  ]}
+/>
+
+The recommended switches (J.3, J.4):
+
+- `-sv_lib <path without extension>` loads one library. The simulator appends the platform's extension, such as `.so`. Repeat the switch for more libraries.
+- `-sv_root <directory>` is prefixed to every relative path that follows it.
+- `-sv_liblist <file>` names a **bootstrap file** whose first line is `#!SV_LIBRARIES`, followed by one library per line, each preceded by at least one blank (J.4.1).
+
+```text
+#!SV_LIBRARIES
+  lib/libcrc_model
+  lib/libfirmware
+```
+
+Libraries listed in bootstrap files load first, then `-sv_lib` libraries in command-line order, and each library loads only once (J.4). A missing library, or a library without the symbol an import names, shows up when the simulator loads libraries or binds the imports. The message text and the exact moment depend on the tool.
+
+### DPI, VPI or the old PLI?
+
+*Practitioner depth.* SystemVerilog has two C interfaces, and you will meet the names of a third in older code:
+
+| Interface | What it is | Use it for |
+|---|---|---|
+| DPI (Clause 35) | Direct calls between SystemVerilog and C with typed arguments | Reference models, firmware models, C libraries |
+| VPI (Clauses 36 to 38) | The third generation of the PLI: a C library that walks the elaborated design, reads and writes objects by name and registers callbacks (§36.2) | Tools: signal access by name at run time, value-change callbacks, user-defined system tasks |
+| TF and ACC routines | The first and second generations of the PLI | Nothing new: deprecated by IEEE 1364-2005 and not part of IEEE 1800 (§36.2, Annex C.2.1) |
+
+A `context` import may call VPI routines (§35.5.3). uvm-core's register backdoor does exactly that (Push Further).
+
+### Pitfalls and debugging
+
+Message texts depend on the simulator, so the first column names what you will see rather than an exact message.
+
+| What you see | Likely cause | Fix |
+|---|---|---|
+| The simulator cannot load the library, or reports an undefined or unresolved symbol | Library not loaded: no `-sv_lib`, a wrong path, or the extension included (J.4); or a C++ name without `extern "C"` (§35.5.1.6) | Load it with `-sv_lib <path without extension>`; give C++ functions C linkage |
+| Wrong values or a crash on the first call | The C prototype does not match the import: by value versus by pointer, `long` for `longint`, `int` for a `logic` vector | Check every parameter against the type table, or include a prototype header your tool generates |
+| A crash or nonsense only when C calls back into SystemVerilog | The import is not `context` (§35.5.1.3) | Declare it `context`; an import that calls an exported task must be a `context` task |
+| An error that the export does not exist in a scope | The export lives in another instance than the import's declaration scope (§35.5.3) | `svSetScope(svGetScopeFromName(...))` before the call |
+| A print, file write or counter in C silently goes missing | The import is `pure` (§35.5.2) | Remove `pure` |
+| A string that turns into garbage later, or a crash inside `free` | C kept or freed SystemVerilog's pointer (H.8.10, §35.5.1.4) | Copy the data; free only what C allocated |
+| A string that C returned, or wrote to an `output string`, arrives as garbage | C pointed it at a local array on its own stack, which is gone when the call returns (H.8.10) | Point it at static text or C-owned heap memory |
+| Comparisons on wide vectors fail on some runs or tools only | Unused bits of the last chunk not masked (H.7.7) | `SV_GET_UNSIGNED_BITS`, for `aval` and `bval` |
+| Memory corruption after a call with an output open array | C wrote past the actual argument's size (H.12) | Bound every write with `svSize` |
+| A fatal error right after a timeout's `disable fork` | C ignored an export's return value of 1 and called another export (§35.9) | Return 1 at once when an export returns 1 |
+| The whole simulation freezes and time stops | C blocks on I/O or loops without returning | Poll without blocking; wait inside an exported task |
+| A warning or error naming the `"DPI"` string | Deprecated spec string (§35.5.4) | Write `"DPI-C"` |
+
+### Recap
+
+<VisualRecap
+  title="One call at a time across one boundary"
+  rule="A DPI crossing is an ordinary call: the caller waits, both sides must declare matching types, and simulation time moves only inside an exported SystemVerilog task that waits."
+  code={`import "DPI-C" pure function int unsigned crc32_step(
+  input int unsigned crc, input int unsigned word);
+import "DPI-C" context task c_send_words(input int n);
+export "DPI-C" task sv_send_word;`}
+  mistake="Writing the C prototype from memory (int for a logic vector, long for longint), or calling an export from an import that is not context. Both compile; the symptom is a wrong value or a crash at run time."
+  inTestbench="C reference models called from checkers and scoreboards (pure or plain imports), firmware models that drive the bus through exported tasks (context import tasks), and the register backdoor of uvm-core (context imports in uvm_hdl.svh)."
+>
+  <svg viewBox="0 0 320 150" role="img" aria-label="SystemVerilog on the left and C on the right. An import call goes from SystemVerilog to C and the caller waits. An export call goes from C back to SystemVerilog. Time can move only on the SystemVerilog side; inside C it stands still." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="8" y="10" width="120" height="110" rx="8" fill="rgba(245,158,11,0.10)" stroke="rgb(245,158,11)" />
+    <text x="18" y="28" fontSize="11" fill="currentColor">SystemVerilog</text>
+    <rect x="192" y="10" width="120" height="110" rx="8" fill="rgba(139,92,246,0.10)" stroke="rgb(139,92,246)" />
+    <text x="202" y="28" fontSize="11" fill="currentColor">C, via svdpi.h</text>
+    <line x1="128" y1="56" x2="186" y2="56" stroke="currentColor" strokeWidth="1.5" />
+    <path d="M186,51 L192,56 L186,61 Z" fill="currentColor" />
+    <text x="160" y="48" fontSize="9" textAnchor="middle" fill="currentColor">import call</text>
+    <line x1="192" y1="88" x2="134" y2="88" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 3" />
+    <path d="M134,83 L128,88 L134,93 Z" fill="currentColor" />
+    <text x="160" y="80" fontSize="9" textAnchor="middle" fill="currentColor">export call</text>
+    <text x="18" y="110" fontSize="10" fill="currentColor">time can move here</text>
+    <text x="202" y="110" fontSize="10" fill="currentColor">time stands still</text>
+    <text x="8" y="142" fontSize="10" fill="currentColor">The caller always waits until the callee returns.</text>
+  </svg>
+</VisualRecap>
+
+- An import is a SystemVerilog subroutine whose body is a C symbol; an export is a SystemVerilog subroutine C can call.
+- Nothing checks that the C prototype matches the declaration. Small values travel by value, everything else by pointer or handle, and `logic` vectors are `svLogicVecVal` chunks with `aval` and `bval`.
+- `pure` lets the compiler drop calls; `context` lets C call back and costs optimization; most imports need neither.
+- Functions take zero time. Time passes only inside an exported task called from a `context` import task, and C must answer a disable by returning 1.
+- Each side frees only its own memory, and nothing passed by reference outlives the call.
 
 ## Make It Work
 
-1. **Start with a plain import.** Add `pure` only for side-effect-free functions, and `context` only when the C code calls back into SystemVerilog.
-2. **Match types exactly** — consult the type table above and always check the `svdpi.h` header.
-3. **Test the C code independently** — write a standalone `main()` that exercises your C function before integrating with the simulator.
-4. **Version your shared libraries** — include a `c_get_version()` function so the SV side can assert the expected library version at `$time 0`.
+### A C reference model checks a CRC block
+
+You will build a small self-checking testbench from three files. The design under test (DUT), `crc_dut`, computes one CRC-32 step per accepted 32-bit word. `crc_checker` watches the pins and predicts every result with a `pure` C reference model. A C traffic model, `c_send_words`, sends the words through an exported task, so simulation time passes inside SystemVerilog while C waits.
+
+```systemverilog
+// compile: tb_top.sv, together with crc_model.c and traffic.c (see Run it)
+`timescale 1ns/1ps
+
+package crc_dpi_pkg;
+  // The result depends only on the inputs, with no C state and no I/O,
+  // so the import may be pure (§35.5.2).
+  import "DPI-C" pure function int unsigned crc32_step(input int unsigned crc,
+                                                      input int unsigned word);
+endpackage
+
+// DUT: one CRC-32 step (reflected polynomial 32'hEDB8_8320) per accepted word
+module crc_dut (
+  input  logic        clk,
+  input  logic        rst_n,
+  input  logic        valid,
+  input  logic [31:0] word,
+  output logic [31:0] crc
+);
+  function automatic logic [31:0] step(input logic [31:0] c, input logic [31:0] w);
+    logic [31:0] r;
+    r = c;
+    for (int b = 0; b < 32; b++)
+      r = (r >> 1) ^ ((r[0] ^ w[b]) ? 32'hEDB8_8320 : 32'h0);
+`ifdef CRC_BUG
+    r[7] = ~r[7];  // injected design bug: the checker must catch it
+`endif
+    return r;
+  endfunction
+
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n)     crc <= 32'hFFFF_FFFF;
+    else if (valid) crc <= step(crc, word);
+endmodule
+
+// Passive checker: predicts each result with the C model and compares
+module crc_checker (
+  input logic        clk,
+  input logic        rst_n,
+  input logic        valid,
+  input logic [31:0] word,
+  input logic [31:0] crc
+);
+  import crc_dpi_pkg::*;
+
+  int unsigned expected;   // C-model register value after the words seen so far
+  bit          check_due;  // the DUT accepted a word at the previous edge
+  int          pass_n;
+  int          fail_n;
+
+  // Inputs are sampled just before each edge (default #1step), so the
+  // checker never races the DUT's nonblocking updates on the same edge.
+  clocking mon_cb @(posedge clk);
+    input rst_n, valid, word, crc;
+  endclocking
+
+  always @(mon_cb) begin
+    if (check_due) begin
+      if (mon_cb.crc === expected) pass_n++;
+      else begin
+        fail_n++;
+        $error("crc_checker: DUT crc=%h, C model=%h", mon_cb.crc, expected);
+      end
+    end
+    check_due = 1'b0;
+    if (!mon_cb.rst_n) expected = 32'hFFFF_FFFF;
+    else if (mon_cb.valid) begin
+      expected  = crc32_step(expected, mon_cb.word);  // pure C reference model
+      check_due = 1'b1;
+    end
+  end
+endmodule
+
+module tb_top;
+  logic        clk   = 1'b0;
+  logic        rst_n = 1'b0;
+  logic        valid = 1'b0;
+  logic [31:0] word  = '0;
+  logic [31:0] crc;
+
+  always #5 clk = ~clk;  // rising edges at 5, 15, 25, ... ns
+
+  crc_dut     u_dut (.clk, .rst_n, .valid, .word, .crc);
+  crc_checker u_chk (.clk, .rst_n, .valid, .word, .crc);
+
+  // Drive DUT inputs only through a clocking block: the #0 output skew puts
+  // new values in Re-NBA, after the DUT has sampled this edge (§14.16).
+  clocking cb @(posedge clk);
+    output rst_n, valid, word;
+  endclocking
+
+  // Exported task: simulation time passes in here, never in C
+  export "DPI-C" task sv_send_word;
+  task automatic sv_send_word(input int unsigned w);
+    cb.valid <= 1'b1;
+    cb.word  <= w;
+    @(cb);              // the DUT accepts w at this edge
+    cb.valid <= 1'b0;   // a back-to-back call drives 1 again in the same step
+  endtask
+
+  // A context import task may call the exported task above (§35.8)
+  import "DPI-C" context task c_send_words(input int n);
+
+  initial begin
+    repeat (2) @(cb);   // reset is low at the edges at 5 and 15 ns
+    cb.rst_n <= 1'b1;
+    @(cb);              // t = 25 ns
+    c_send_words(2);    // returns at t = 45 ns, two clock edges later
+    repeat (2) @(cb);   // let the checker compare the last result
+    $display("t=%0d ns crc register=%h CRC-32=%h", $time, crc, ~crc);
+    $display("PASS=%0d FAIL=%0d", u_chk.pass_n, u_chk.fail_n);
+    $finish;
+  end
+endmodule
+```
+
+```c
+/* crc_model.c: the pure reference model */
+#include "svdpi.h"
+
+/* One CRC-32 step over the 32 bits of word, least significant bit first.
+   No static state and no I/O: exactly what the pure import promises. */
+unsigned int crc32_step(unsigned int crc, unsigned int word) {
+  for (int b = 0; b < 32; b++) {
+    unsigned int bit = (word >> b) & 1u;
+    crc = (crc >> 1) ^ (0xEDB88320u & (0u - ((crc ^ bit) & 1u)));
+  }
+  return crc;
+}
+```
+
+```c
+/* traffic.c: a tiny C traffic model that sends words through the export */
+#include "svdpi.h"
+
+/* The exported SystemVerilog task, seen from C: returns 1 if the calling
+   SystemVerilog thread was disabled while it waited, else 0 (§35.8, §35.9). */
+extern int sv_send_word(unsigned int w);
+
+/* Context import task: its int result is the disable acknowledgement. */
+int c_send_words(int n) {
+  static const unsigned int words[2] = { 0x00000001u, 0xDEADBEEFu };
+  for (int i = 0; i < n && i < 2; i++) {
+    if (sv_send_word(words[i]))
+      return 1;     /* disabled: return 1 at once, call no more exports */
+  }
+  return 0;
+}
+```
+
+**Run it.** No simulator ships with this site, so these steps are tool-neutral (Annex J):
+
+1. Build both C files into one shared library, pointing `-I` at the directory that holds your simulator's `svdpi.h`. With GCC or Clang on Linux, where `$SIM_INCLUDE` stands for that directory:
+
+```bash
+gcc -shared -fPIC -I"$SIM_INCLUDE" -o libcrc_model.so crc_model.c traffic.c
+```
+
+2. Compile and elaborate `tb_top.sv` with your simulator. For the bug run, also define `CRC_BUG`; `+define+CRC_BUG` is a common switch for that, but it is not part of IEEE 1800, so check your tool.
+3. Run the simulation with `-sv_lib libcrc_model`: the library name without its extension (J.4). Annex J calls this switch a recommendation, so confirm the name in your simulator's manual. Some simulators can instead compile `.c` files listed on their own command line, which is tool-dependent.
+
+**Expected output.** This log is illustrative: it was worked out by hand from the code and the clocking-block rules, and every CRC value was recomputed with Python's `zlib.crc32` over the little-endian bytes of the words. It was not produced by a simulator run. Your simulator's `$finish` message follows it.
+
+```text
+t=65 ns crc register=6d699f0b CRC-32=929660f4
+PASS=2 FAIL=0
+```
+
+The final `CRC-32` value is the inverted register, `929660f4`: the standard CRC-32 of the eight bytes `01 00 00 00 EF BE AD DE`. Edge by edge, the run looks like this:
+
+<TimingDiagram
+  title="The worked example, edge by edge"
+  caption="Edge k is the rising edge at t = 5 + 10k ns, and each value is the one sampled at that edge. c_send_words runs from edge 2 (t = 25 ns) until it returns at edge 4 (t = 45 ns). The DUT accepts the words at edges 3 and 4, and the checker passes them at edges 4 and 5."
+  edges={7}
+  cycleWidth={66}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rst_n", kind: "bit", values: [0, 0, 1, 1, 1, 1, 1] },
+    { name: "valid", kind: "bit", values: [0, 0, 0, 1, 1, 0, 0] },
+    { name: "word", kind: "bus", values: ["0", "0", "0", "00000001", "DEADBEEF", "DEADBEEF", "DEADBEEF"] },
+    { name: "crc", kind: "bus", values: [undefined, "FFFFFFFF", "FFFFFFFF", "FFFFFFFF", "66074786", "6D699F0B", "6D699F0B"] }
+  ]}
+  highlights={[{ from: 2, to: 4, tone: "info", label: "c_send_words(2) is active: C waits inside sv_send_word" }]}
+  markers={[
+    { edge: 3, tone: "sample", label: "DUT accepts word 1; the checker runs the C model step" },
+    { edge: 4, tone: "pass", label: "checker: crc 66074786 matches the C model (PASS 1); DUT accepts word 2" },
+    { edge: 5, tone: "pass", label: "checker: crc 6d699f0b matches the C model (PASS 2)" }
+  ]}
+/>
+
+### How to build it yourself
+
+1. **Write the C model and test it without a simulator.** Bugs are far cheaper to find here than in a simulation log. One step from the reset value must give `66074786`, and its inverse, `99f8b879`, is the standard CRC-32 of the bytes `01 00 00 00`:
+
+```c
+/* test_model.c: gcc -I"$SIM_INCLUDE" -o test_model test_model.c crc_model.c */
+#include <stdio.h>
+
+unsigned int crc32_step(unsigned int crc, unsigned int word);
+
+int main(void) {
+  unsigned int r = crc32_step(0xFFFFFFFFu, 0x00000001u);
+  printf("%08x %08x\n", r, ~r);            /* expect: 66074786 99f8b879 */
+  return r == 0x66074786u ? 0 : 1;
+}
+```
+
+2. **Declare the import in a package** and pick the qualifier: the model has no state and no I/O, so `pure` is allowed.
+3. **Check the prototypes.** Compare each C parameter with the type table, or include the prototype header your simulator can generate from the declarations (tool-dependent; see Push Further).
+4. **Write the export and the `context` import task** for anything that must wait. Make the exported task `automatic`, and make C check every exported task's return value.
+5. **Build the shared library** with `-shared -fPIC` and the simulator's include directory.
+6. **Compile, elaborate and run** with `-sv_lib libcrc_model`.
+7. **Read the log** for `PASS=2 FAIL=0`, then **prove that the checker can fail**: rebuild the SystemVerilog with `CRC_BUG` defined.
+
+### Variations to try
+
+- **Inject the bug.** With `CRC_BUG` defined, the checker reports two mismatches. Your simulator wraps each `$error` message in its own text, which names the severity, the file and line, the scope `tb_top.u_chk` and the time (§20.10). Below, `<error at 45 ns>` stands in for that tool-specific part:
+
+```text
+<error at 45 ns> crc_checker: DUT crc=66074706, C model=66074786
+<error at 55 ns> crc_checker: DUT crc=803029b0, C model=6d699f0b
+t=65 ns crc register=803029b0 CRC-32=7fcfd64f
+PASS=0 FAIL=2
+```
+
+- **Send three words.** Add `0x12345678u` to `words` in `traffic.c`, raise the array size and the loop bound from 2 to 3, and call `c_send_words(3)`. Predict before running: the call returns at 55 ns, the log line moves to `t=75 ns`, the register ends at `285bed09` (CRC-32 `d7a412f6`), and the summary is `PASS=3 FAIL=0`.
+- **Make the model lie.** Add a `printf` inside `crc32_step` while its import is still `pure`. Some calls may print and some may not, because the compiler is allowed to skip or reuse `pure` calls (§35.5.2). Remove `pure`, and every call prints.
 
 **Checklist before moving on:**
-- [ ] You understand the difference between `import` and `export`.
-- [ ] You can choose between `pure`, `context`, and standard qualifiers.
-- [ ] You know that simulation time can pass during a DPI call only inside an exported SV task called from a `context` import task.
-- [ ] You know that `logic` marshals as `svLogicVecVal` (4-state) and `bit` as `svBitVecVal` (2-state).
+- [ ] I can write the C prototype of every import and export in this example without looking at the type table.
+- [ ] My `pure` import is a non-void function with no outputs, no static state and no I/O.
+- [ ] The import whose C body calls `sv_send_word` is a `context` task, and the C code checks the export's return value.
+- [ ] I can say at which edges `c_send_words` starts and returns, and why the checker keeps running in between.
+- [ ] I have loaded the library with `-sv_lib`, or my tool's documented equivalent, and I have seen the bug run fail.
 
----
+## Push Further
 
-## Push Further: VPI and PLI
+### Expert: Context call chains and per-instance C state
 
-DPI is the modern interface, but two older APIs still exist:
+A **DPI import call chain** starts when SystemVerilog calls an import and lasts until that call returns, including any exports C calls in between (§35.5.3). Its context follows strict rules:
 
-- **VPI (Verilog Procedural Interface, IEEE 1364-2005 §27):** A callback-driven API that lets C code traverse the simulation hierarchy, register value-change callbacks, and read/write signals by name. Much more powerful than DPI but significantly more complex and slower.
-- **PLI (Programming Language Interface):** The original Verilog-95 foreign interface. Fully deprecated in favor of VPI. Avoid in new code.
+- A call to a `context` import starts the chain's context at the import's instance scope. `svSetScope` changes it. When an export returns into C, the context reverts to its value when the export was called.
+- Each import call takes the context property of the import it calls, and the property is never promoted: a non-`context` import called further down the chain, for example from an exported SystemVerilog function, is still non-`context`. The context characteristic adheres to the call chain, not to the C code, so the same C function can run in both context and non-context chains.
+- Jumping out of an export with `setjmp`/`longjmp`, so that it never returns normally to its import, gives undefined results (§35.5.3, H.9.2).
 
-**When to use VPI over DPI:**
-- You need to **discover signals by name** at runtime (e.g., a generic coverage monitor).
-- You need **value-change callbacks** — DPI has no equivalent.
-- You need to **traverse the design hierarchy** programmatically.
+Because the context identifies the calling instance, a C model can keep one object per SystemVerilog instance with `svPutUserData` and `svGetUserData` (H.9.3). The key must be unique across all C code in the simulation; the standard recommends the address of a static C function or variable:
 
-Most modern workflows use DPI for performance-critical paths and VPI only for tool/infrastructure code.
+```c
+/* snippet: one model object per instance that calls c_model_step.
+   SV: import "DPI-C" context function int c_model_step(input int in); */
+#include <stdlib.h>
+#include "svdpi.h"
+
+typedef struct { unsigned int state; } model_t;
+static int model_key;                      /* its address is the unique key */
+
+int c_model_step(int in) {
+  svScope me = svGetScope();               /* the instance that made this call */
+  model_t* m = (model_t*)svGetUserData(me, &model_key);
+  if (m == NULL) {                         /* first call from this instance */
+    m = calloc(1, sizeof *m);
+    if (m == NULL) return -1;
+    if (svPutUserData(me, &model_key, m) != 0) {
+      free(m);
+      return -1;
+    }
+  }
+  m->state += (unsigned int)in;
+  return (int)m->state;
+}
+```
+
+For debug messages, `svGetCallerInfo` returns the SystemVerilog file and line of the import call when the tool provides it (Annex I). One quirk of the standard: the H.9.4 example calls `svGetScopeByName`, which `svdpi.h` does not declare. The real function is `svGetScopeFromName` (Annex I).
+
+### Expert: Reentrancy, C threads and blocking
+
+**Reentrancy.** When an import task waits inside an exported task, another SystemVerilog thread can call the same import, so the same C code can be active in several threads at once (§35.5.1.5). Keep per-call state in local variables or per-instance objects, not in C statics, and call only thread-safe library functions.
+
+**C threads.** A C library may start its own threads, but DPI defines nothing for them. The standard calls DPI use from outside an import call chain simulator-defined and beyond the DPI specification, with a VPI callback as its example (§35.5.3); a thread that your own C code starts is not covered at all. Exports called from a chain without the context property behave in undefined ways (H.9). The portable design keeps worker threads inside C: they fill a lock-protected queue, and SystemVerilog drains it through a `context` import that it polls, for example once per clock.
+
+**Blocking.** The simulator stops while C runs, because DPI transfers control and never runs the two sides at once (§35.2.1). A blocking `recv`, `sleep` or long computation freezes simulation time and every other process. Make socket or pipe access non-blocking, and let time pass in an exported task between polls.
+
+### Expert: Disabling imported functions, and cleanup
+
+Imported **functions** follow the disable protocol too (§35.9 c, d). A function cannot wait, so it can enter the disabled state only if an exported function it calls executes a `disable` of a block that encloses the import call. For native code, IEEE 1800-2023 §9.6.2 makes exactly that undefined: a `disable` inside a function that disables a block or task that called the function. So never design for this path, but code for it defensively. An imported function in the disabled state must make no further export calls, and it must call `svAckDisabledState()` before it returns. `svIsDisabledState()` lets shared helper code test the state.
+
+The protocol exists so that C can clean up before it unwinds: close files, free heap memory, release VPI handles (§35.9). Write cleanup once, call it on both the normal and the disabled path, and test the disabled path deliberately; the kata below does.
+
+One corner case catches people out. If a `disable` statement targets the exported task itself, rather than the import's thread or a block around it, the import is not in the disabled state: the export returns 0, `svIsDisabledState()` returns 0, and C carries on normally (§35.9). Only a disable that targets the import itself, or a parent that encloses the call, puts the import into the disabled state.
+
+### Expert: C++ models and shared-library hygiene
+
+DPI uses C linkage, and exceptions must never cross the boundary (§35.5.1.6). Wrap every C++ entry point:
+
+```cpp
+// snippet: crc_model.cpp
+extern "C" unsigned int crc32_step(unsigned int crc, unsigned int word) {
+  try {
+    return model::step(crc, word);   // C++ code that may throw
+  } catch (...) {
+    return 0u;                       // never let an exception reach SystemVerilog
+  }
+}
+```
+
+`svdpi.h` wraps its own declarations in `extern "C"` (Annex I), but your functions need it too. Annex J.4 warns about two more traps in shared libraries: C++ global objects and static initializers depend on the run-time environment at load time, and two libraries that reference different versions of the same third-party library can interfere. Keep DPI libraries small, link third-party code deliberately, and give every library a version function that the testbench checks at time 0.
+
+### Expert: Performance at scale
+
+- **Context costs.** Each call to a `context` import is a barrier to compiler optimization (§35.5.3, H.6.5). Use it only where C really calls back.
+- **Pure helps.** The compiler may skip or reuse `pure` calls (§35.5.2), which pays off for repeated calls with the same inputs.
+- **Sized beats open.** A sized array formal is passed by reference "with no overhead"; an open array is passed by handle with some overhead (H.12.1). For large open arrays in C layout, `svGetArrayPtr` plus `memcpy` avoids a call per element (H.12.4, H.12.9).
+- **Cross less often.** Every crossing has a cost. Send one call per transaction, not one per clock or per bit. How large the cost is depends on the tool, so measure it with your simulator's profiler.
+- **Read time directly.** A `context` import can call `svGetTime`, `svGetTimeUnit` and `svGetTimePrecision` instead of calling an export just to read `$time` (H.13).
+
+### Expert: DPI inside a UVM environment
+
+- **Where the declarations go.** Imports cannot sit inside a class (H.9.2 lists the legal scopes), so put them in a package next to your environment code and call them from class methods, such as a predictor's `write` method.
+- **Calling objects from C.** Class methods cannot be exported (§35.7), and class handles cannot cross (Syntax 35-1, note 27). The usual bridge is a package-level exported function that takes an integer id, finds the object in a package-level table and calls its method. C calls it through a `context` import declared in the same package, so the export is in the import's own scope and needs no `svSetScope` (§35.5.3).
+- **uvm-core's own DPI** (uvm-core impl.). `src/dpi/uvm_hdl.svh` declares `context` imports such as `uvm_hdl_deposit`, `uvm_hdl_read`, `uvm_hdl_force` and `uvm_hdl_release`, on values of type `uvm_hdl_data_t`, a `logic [UVM_HDL_MAX_WIDTH-1:0]` that defaults to 1024 bits. `uvm_reg::backdoor_read_func` and `uvm_reg::backdoor_write` call them (`src/reg/uvm_reg.svh`). Their C side, for example `src/dpi/uvm_hdl_questa.c`, finds signals with VPI (`vpi_handle_by_name`) and writes them with `vpi_put_value`, which is why the imports are `context`. Defining `UVM_NO_DPI` also defines `UVM_HDL_NO_DPI`, `UVM_REGEX_NO_DPI` and `UVM_CMDLINE_NO_DPI` (`src/dpi/uvm_dpi.svh`), which compiles out uvm-core's DPI.
+- **Reference models.** A C model behind a `pure` or plain import is the predictor half of a scoreboard; [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) covers the scoreboard architecture around it.
+
+### Expert: Standard quirks and tool-dependent behaviour
+
+- **Prototype headers** (tool-dependent). Most simulators can write a C header with the exact prototypes your declarations need; include it so that the C compiler checks you. Verilator, for example, writes it with `--dpi-hdr-only`. Look up your tool's option.
+- **Compiling C through the simulator** (tool-dependent). Some tools accept `.c` files on their command line and build the library themselves. Verilator, for example, takes C and C++ files on its command line (with `--exe`) and has no `-sv_lib`.
+- **A contradiction in the standard.** The import examples in §35.5.4 include `function bit [15:0] getStimulus()`, but §35.5.5 allows only small values as results. The H.9.4 example's `function integer MapID` breaks the same rule, because `integer` is a 4-state packed type (H.7.3). Follow §35.5.5: whether a tool accepts such results is tool-dependent, and portable code returns vectors through `output` arguments.
+- **A broken helper macro.** `SV_GET_SIGNED_BITS(VALUE, N)` in Annex I tests bit `N` instead of the sign bit `N-1`, so do not use it; mask with `SV_GET_UNSIGNED_BITS` and sign-extend by hand. `SV_MASK(N)` shifts `-1` left, which ISO C leaves undefined for negative values; mainstream compilers produce the expected mask, but a strict checker may flag it.
+- **`char` signedness.** Table H.1 maps `byte` to plain `char`, and C leaves it to the platform whether `char` is signed. On platforms where it is unsigned (Arm Linux, for example), cast to `signed char` before arithmetic on a `byte`.
+
+### Expert: VPI and the PLI family
+
+The **Programming Language Interface (PLI)** has had three generations: TF routines, ACC routines and **VPI**, the Verification Procedural Interface (§36.2). IEEE 1364-2005 deprecated the TF and ACC routines, and IEEE 1800 does not include them (§36.2, Annex C.2.1). VPI's object model is in Clause 37 and its routines in Clause 38: for example `vpi_handle_by_name` (§38.21), `vpi_get_value` (§38.15), `vpi_put_value` (§38.34) and `vpi_register_cb` for value-change callbacks (§38.36).
+
+DPI and VPI differ in where they run. A DPI import runs in the scope of its declaration, like a native subroutine; a VPI routine works in the context of its system-task call site (H.9.1). Inside a DPI import:
+
+- VPI calls need a `context` import, except the output routines `vpi_printf`, `vpi_vprintf` and `vpi_flush`, the `vpi_mcd_*` file routines and `vpi_get_vlog_info`, which do not touch the design (H.9.5).
+- An import is not a system task, so `vpi_handle(vpiSysTfCall, NULL)` is an error and system-task callbacks are not available (H.9.5).
+- A `vpiHandle` and an `svOpenArrayHandle` are unrelated and cannot be swapped (H.9.5).
+
+Choose DPI for typed calls into models. Choose VPI when C must discover or watch the design: look up any signal by name at run time, react to value changes, or implement a `$` system task.
+
+### Expert: Interview angles
+
+Answer each question before you look at the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: waiting from C"
+  question="A C firmware model must wait 10 clock cycles between two register writes. How do you implement the wait?"
+  options={[
+    { text: "Call usleep() or sleep() in the C code.", correct: false, feedback: "That waits in wall-clock time. The simulator is frozen while C runs, so simulation time does not move at all (§35.5.1.1)." },
+    { text: "Keep the C routine an imported function and call an exported task from it.", correct: false, feedback: "Never legal: an imported function cannot call an exported task (§35.8)." },
+    { text: "Make the C routine a context import task that calls an exported task doing repeat (10) @(posedge clk), and check the export's return value.", correct: true, feedback: "Right. Time passes inside the exported task (§35.5.1.5), and the return value tells C if its thread was disabled (§35.9)." },
+    { text: "Start a C thread that sleeps while SystemVerilog continues.", correct: false, feedback: "A C thread has no simulation time, and calling exports from outside an import call chain is beyond the DPI specification (§35.5.3)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: reaching a UVM object from C"
+  question="A C model must call a method of a UVM object, for example to report a transaction to a scoreboard. How do you connect them?"
+  options={[
+    { text: "Export the class method with export \"DPI-C\".", correct: false, feedback: "Class methods cannot be exported (§35.7)." },
+    { text: "Pass the object handle to C as a chandle.", correct: false, feedback: "A chandle carries C pointers. Class handles cannot cross the boundary at all (Syntax 35-1, note 27)." },
+    { text: "Use svSetScope with the object's full name.", correct: false, feedback: "Objects are not scopes. svScope names module, interface, program or generate instances (Annex I)." },
+    { text: "Export a package-level function that takes an integer id, looks the object up in a package table and calls its method; C calls it from a context import declared in the same package.", correct: true, feedback: "Right. The export is a plain function and the id crosses as an int. Because the context import is declared in the same package, C can call the export directly, without svSetScope (§35.5.3)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: DPI or VPI?"
+  question="A debug utility must print the value of any signal whose hierarchical name the user types while the simulation runs. Which interface do you use?"
+  options={[
+    { text: "VPI: look the signal up with vpi_handle_by_name and read it with vpi_get_value.", correct: true, feedback: "Right. Finding and reading arbitrary objects by name at run time is what VPI is for (§38.21, §38.15)." },
+    { text: "DPI: an import with an open-array argument for the signal.", correct: false, feedback: "Every DPI argument is fixed at compile time by a call in the source. DPI cannot name an arbitrary signal at run time." },
+    { text: "DPI: one export per signal.", correct: false, feedback: "That needs a declaration for every signal at compile time, which defeats the purpose." },
+    { text: "DPI: svGetScopeFromName with the signal's name.", correct: false, feedback: "It returns instance scopes only, not signals, and it gives no access to values." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Quiz
+
+<Quiz
+  questions={[
+    {
+      question: "An import declares the formal input logic [7:0] v. Which C parameter matches it?",
+      answers: [
+        { text: "unsigned char v", correct: false, feedback: "Only byte unsigned, a basic type, arrives by value as unsigned char. A packed vector is not a small value, so it arrives by reference (H.7.4, H.8.7)." },
+        { text: "const svLogicVecVal* v", correct: true, feedback: "Right: logic vectors are 4-state packed arrays, passed as a pointer to canonical aval and bval chunks (H.7.7, H.8.7)." },
+        { text: "const svBitVecVal* v", correct: false, feedback: "That is the 2-state form for bit vectors. bit and logic vectors map to different C types, and the 4-state form carries a bval word." },
+        { text: "svLogic v", correct: false, feedback: "svLogic is for one scalar logic. An 8-bit vector is a packed array." }
+      ],
+      explanation: "Packed logic vectors of any width arrive as const svLogicVecVal*, with one aval/bval pair per 32 bits. svBitVecVal is for bit vectors, unsigned char is for byte unsigned, and svLogic is for a scalar.",
+      objective: 1
+    },
+    {
+      question: "Which import declaration does IEEE 1800-2023 reject?",
+      answers: [
+        { text: "import \"DPI-C\" function logic [31:0] c_read(input int addr);", correct: true, feedback: "Right: function results are restricted to small values, and a 32-bit logic vector is not one (§35.5.5)." },
+        { text: "import \"DPI-C\" function string c_name();", correct: false, feedback: "string is a small value, so it is a legal result (§35.5.5)." },
+        { text: "import \"DPI-C\" function chandle c_new(input int seed);", correct: false, feedback: "chandle is a small value and a legal result: this is how C hands an object to SystemVerilog." },
+        { text: "import \"DPI-C\" function void c_read(input int addr, output logic [31:0] data);", correct: false, feedback: "Legal, and the portable fix for the rejected form: wide values travel through an output argument." }
+      ],
+      explanation: "A DPI function may return only void, byte, shortint, int, longint, real, shortreal, chandle, string, or a scalar bit or logic (§35.5.5). Return a vector through an output argument.",
+      objective: 1
+    },
+    {
+      question: "C receives an open array of int unsigned elements. The actual argument is declared int unsigned w [1:2]. Which loop reads every element correctly?",
+      answers: [
+        { text: "for i from 0 to svSize(h, 1) - 1, read *(unsigned int*)svGetArrElemPtr1(h, i)", correct: false, feedback: "Index 0 is outside [1:2], so svGetArrElemPtr1 returns NULL and the dereference crashes. Open arrays keep the SystemVerilog indices (H.12)." },
+        { text: "for i from 0 to 1, read svGetIntElement(h, i)", correct: false, feedback: "svdpi.h declares no svGetIntElement (Annex I). Use only functions the header declares." },
+        { text: "for i from svLow(h, 1) to svHigh(h, 1), read *(unsigned int*)svGetArrElemPtr1(h, i) after checking it is not NULL", correct: true, feedback: "Right: the query functions return the actual argument's own range, 1 to 2, and the accessor takes SystemVerilog indices (H.12.2, H.12.4)." },
+        { text: "Cast h to unsigned int* and index it from 0", correct: false, feedback: "A handle is not a pointer to the data. Read it through the svdpi.h functions (H.8.6)." }
+      ],
+      explanation: "An open array arrives as a handle. svLow and svHigh return the actual argument's range, here 1 and 2, and svGetArrElemPtr1 takes those SystemVerilog indices. It returns NULL for an index outside the range, or when the elements are not laid out as in C (H.12.4).",
+      objective: 1
+    },
+    {
+      question: "A C function increments a static call counter and returns its argument plus one. Its import is declared pure. What can happen?",
+      answers: [
+        { text: "A compile error, because the compiler sees the static variable", correct: false, feedback: "The SystemVerilog compiler never sees C code (§35.2), so it cannot reject it." },
+        { text: "Nothing: pure only makes the calls faster", correct: false, feedback: "pure also lets the compiler skip calls, which is exactly what breaks a counter." },
+        { text: "The simulator stops with a run-time error", correct: false, feedback: "Nothing checks the promise at run time. A broken promise just produces wrong results." },
+        { text: "The counter can end up lower than the number of calls in the source, with no error", correct: true, feedback: "Right: a pure call may be removed, or replaced by an earlier result for the same inputs (§35.5.2)." }
+      ],
+      explanation: "pure promises no side effects and no static data (§35.5.2). The compiler may then remove calls or reuse earlier results, so counters, prints and file writes can silently disappear. Drop pure from any C function with side effects.",
+      objective: 2
+    },
+    {
+      question: "The C body of import \"DPI-C\" function void c_check(input int v); calls an exported SystemVerilog function. The test crashes in one testbench and works in another. What is the fix?",
+      answers: [
+        { text: "Declare the import context", correct: true, feedback: "Right: an import whose C body calls an export shall be context; otherwise the export has no defined scope and the call can crash (§35.5.1.3, §35.5.3)." },
+        { text: "Declare the import pure", correct: false, feedback: "pure forbids side effects, and calling back into SystemVerilog breaks that promise as well." },
+        { text: "Turn the export into a task", correct: false, feedback: "An exported task would need a context import task to call it. The missing property is context." },
+        { text: "Load the library with -sv_lib", correct: false, feedback: "The C code is already running, so the library is loaded. A missing library shows up as an unresolved symbol, not as a crash inside C." }
+      ],
+      explanation: "Nothing checks the C body, so a non-context import that calls an export compiles and then misbehaves (§35.5.1.3). Declare it context; to call an exported task, it must also be an imported task (§35.8).",
+      objective: 2
+    },
+    {
+      question: "At t = 100 ns a process calls a context import task. Its C code calls an exported task that runs repeat (3) @(posedge clk). Rising edges fall at 105, 115, 125 ns and so on, and a second process prints at every rising edge. What happens?",
+      answers: [
+        { text: "C runs in its own thread, so the import returns at 100 ns while the export waits in the background", correct: false, feedback: "There is no C thread. The C frame stays suspended inside the export call until the export returns (§35.2.1)." },
+        { text: "Nothing prints until the import returns, because DPI calls take zero time", correct: false, feedback: "Only imported functions are zero-time. An imported task waits while its exported task waits (§35.5.1.5)." },
+        { text: "A compile error: an imported task cannot call an exported task", correct: false, feedback: "A context import task may call an exported task (§35.8). Only imported functions may not." },
+        { text: "The second process prints at 105, 115 and 125 ns, and the import returns at 125 ns", correct: true, feedback: "Right: time passes inside the exported task, other processes run meanwhile, and C resumes when the export returns." }
+      ],
+      explanation: "Simulation time moves only inside the exported task's @(posedge clk). While it waits, the simulator runs every other process and the C frame waits in the export. While C code itself runs, nothing else does.",
+      objective: 3
+    },
+    {
+      question: "A context import task is waiting inside an exported task when a timeout branch runs disable fork and kills its thread. What must the C code do?",
+      answers: [
+        { text: "Keep looping: the next export call will notice the disable", correct: false, feedback: "Once disabled, the import shall make no further export calls; the simulator treats that as a fatal error (§35.9 d)." },
+        { text: "Return 1 at once, after any cleanup, and call no more exports", correct: true, feedback: "Right: the export returns 1, and the import task acknowledges by returning 1 (§35.9 a, b, d)." },
+        { text: "Call svAckDisabledState() and continue", correct: false, feedback: "svAckDisabledState() is how an imported function acknowledges just before it returns. A task acknowledges by returning 1, and nobody may keep calling exports." },
+        { text: "Nothing: the simulator unwinds the C stack itself", correct: false, feedback: "The simulator cannot unwind C. It returns 1 from the export and checks that C follows the protocol, with a fatal error if not (§35.9)." }
+      ],
+      explanation: "When the calling thread is disabled, the exported task returns 1 (§35.9 a). The import task must clean up, make no more export calls and return 1 (items b and d). Simulators check this and stop with a fatal error if C breaks it.",
+      objective: 3
+    },
+    {
+      question: "C stores the const char* it receives from an input string argument in a static variable, and prints it during a later call. The later print shows garbage. What is the fix?",
+      answers: [
+        { text: "Declare the import context", correct: false, feedback: "context gives the call a scope. It says nothing about how long SystemVerilog's string storage lives." },
+        { text: "Free the pointer at the end of each call", correct: false, feedback: "C shall not free memory that SystemVerilog allocated (§35.5.1.4, H.8.10)." },
+        { text: "Copy the characters into C-owned memory during the call", correct: true, feedback: "Right: C may assume nothing about the lifetime of an input string's storage, so it copies what it needs to keep (H.8.10)." },
+        { text: "Make the argument inout", correct: false, feedback: "An inout string comes with no lifetime guarantee either (H.8.10)." }
+      ],
+      explanation: "Storage that SystemVerilog passes by reference, strings included, is valid only during the call (H.8.4, H.8.10). Each side frees only what it allocated (§35.5.1.4).",
+      objective: 4
+    },
+    {
+      question: "An import declared in tb_top must call the export bfm_write, which is defined in each instance of the interface bus_bfm (tb_top.u_bfm0 and tb_top.u_bfm1). What must the C code do before calling bfm_write?",
+      answers: [
+        { text: "Nothing: linkage names are global, so C calls bfm_write directly", correct: false, feedback: "The name is global, but each instance has its own export. Directly, C can call only exports declared in tb_top (§35.5.3)." },
+        { text: "Call svSetScope(svGetScopeFromName(\"tb_top.u_bfm1\"))", correct: true, feedback: "Right: svSetScope selects which instance's export runs (§35.5.3, H.9.3)." },
+        { text: "Declare bfm_write pure", correct: false, feedback: "Only imported functions can be pure, and pure does not select a scope." },
+        { text: "Pass the instance path as an argument of bfm_write", correct: false, feedback: "Arguments do not select the instance. The call chain's scope does." }
+      ],
+      explanation: "A context import starts in the scope of its declaration. Only exports from that scope can be called directly; for any other instance, C calls svSetScope first (§35.5.3). svGetScopeFromName returns NULL for a name it does not recognize.",
+      objective: 4
+    },
+    {
+      question: "crc_model.cpp defines unsigned int crc32_step(unsigned int crc, unsigned int word). The library is built and loaded with -sv_lib, but the simulator reports that the symbol crc32_step is undefined. What fixes it?",
+      answers: [
+        { text: "Declare the function extern \"C\" in the C++ source", correct: true, feedback: "Right: without C linkage the C++ compiler mangles the name, so the library holds a different symbol (§35.5.1.6 requires C linkage)." },
+        { text: "Mark the import context", correct: false, feedback: "context changes how calls are instrumented, not how symbols are named." },
+        { text: "Remove pure from the import", correct: false, feedback: "Qualifiers do not affect symbol lookup." },
+        { text: "Pass the library as -sv_lib libcrc_model.so", correct: false, feedback: "The switch takes the name without its extension (J.4). Here the library loads; the symbol inside it has the wrong name." }
+      ],
+      explanation: "DPI uses C linkage (§35.5.1.6). A C++ definition without extern \"C\" is exported under a mangled name, so the simulator finds the library but not the symbol.",
+      objective: 5
+    }
+  ]}
+/>
+
+**Warm-up with the explorer:** scroll back to part 2 of the DPI boundary explorer and predict all nine scenarios in a row without revealing any. Aim for nine out of nine.
+
+### Kata P7: a firmware poll with a timeout
+
+**Objective:** write a `context` import task that waits in SystemVerilog, predict when it returns, and prove that it survives a timeout without breaking the disable protocol.
+
+Start from this bench:
+
+```systemverilog
+// snippet: kata starter; it compiles once you add the three TODO items
+`timescale 1ns/1ps
+
+module tb_top;
+  logic clk = 1'b0;
+  bit   ready;            // a status bit the firmware model polls
+  int   polls;
+
+  always #5 clk = ~clk;   // rising edges at 5, 15, 25, ... ns
+  initial #62 ready = 1'b1;  // the status becomes ready between two edges
+
+  // TODO 1: export a task sv_wait_clks(input int n) that waits n rising edges
+  // TODO 2: export a function sv_ready() that returns ready
+  // TODO 3: import a context task c_poll_ready(input int max_polls, output int polls)
+
+  initial begin
+    repeat (3) @(posedge clk);  // t = 25 ns
+    c_poll_ready(10, polls);
+    $display("t=%0d polls=%0d", $time, polls);
+    $finish;
+  end
+endmodule
+```
+
+**Requirements:**
+1. Write `c_poll_ready` in C. Each poll waits two clock edges through `sv_wait_clks(2)`, checking its return value, then reads `sv_ready()`. Stop at the first ready poll and write the poll count to `polls`, or write -1 after `max_polls` failed polls.
+2. **Predict** the printed line before you run it.
+3. **Add a timeout.** Replace the call with the block below, and predict the printed time and whether any error appears:
+
+```systemverilog
+// snippet: replaces the c_poll_ready call
+fork
+  c_poll_ready(10, polls);
+  #33;                  // timeout
+join_any
+disable fork;
+$display("t=%0d after timeout", $time);
+```
+
+4. **Break it on purpose.** Make the C code ignore the return value of `sv_wait_clks` and keep polling. Predict what the simulator does after the timeout.
+
+If you have no simulator, write your predicted logs first, then compare them with the solution.
+
+<details>
+<summary>Worked solution (attempt the kata first)</summary>
+
+The SystemVerilog additions replace the three TODO lines:
+
+```systemverilog
+// snippet: inside tb_top
+export "DPI-C" task sv_wait_clks;
+task automatic sv_wait_clks(input int n);   // automatic: several threads may wait here
+  repeat (n) @(posedge clk);
+endtask
+
+export "DPI-C" function sv_ready;
+function automatic bit sv_ready();
+  return ready;
+endfunction
+
+import "DPI-C" context task c_poll_ready(input int max_polls, output int polls);
+```
+
+```c
+/* poll.c */
+#include "svdpi.h"
+
+extern int   sv_wait_clks(int n);   /* exported task: 1 if this thread was disabled */
+extern svBit sv_ready(void);        /* exported function: a bit result is an svBit */
+
+int c_poll_ready(int max_polls, int* polls) {
+  *polls = -1;                      /* outputs start undetermined: always write them */
+  for (int i = 1; i <= max_polls; i++) {
+    if (sv_wait_clks(2))
+      return 1;                     /* disabled: acknowledge, no more exports */
+    if (sv_ready()) {
+      *polls = i;
+      return 0;
+    }
+  }
+  return 0;
+}
+```
+
+**Prediction 1.** The call starts at 25 ns. Poll 1 waits for the edges at 35 and 45 ns and reads `ready` = 0. Poll 2 waits for 55 and 65 ns and reads `ready` = 1, because it rose at 62 ns. The log shows `t=65 polls=2`.
+
+**Prediction 2.** The timeout branch finishes at 58 ns, first, so `join_any` returns and `disable fork` disables the polling thread while it waits for the edge at 65 ns. `sv_wait_clks` returns 1, C returns 1 at once, and the log shows `t=58 after timeout` with no error. Do not read `polls` after a disable: the call did not complete.
+
+**Prediction 3.** After the disable, the broken C code calls another export. That breaks protocol item (d), and the simulator stops with a fatal error (§35.9). The message text is tool-specific.
+
+**Reflect:** why must `sv_wait_clks` be `automatic`? Because two firmware threads polling different status bits would be inside it at the same time (§35.5.1.5), and a static task would share `n` between them.
+
+</details>
+
+### Debug challenge: five broken DPI pairs
+
+For each pair, write down the symptom you expect and the fix before you open the answers.
+
+1. `import "DPI-C" function int c_sum(input int a, input int b);` with C `int c_sum(const int* a, const int* b) { return *a + *b; }`
+2. `import "DPI-C" function void c_check(input int v);` whose C body calls the exported function `sv_now()`.
+3. `import "DPI-C" function void c_set_name(input string name);` whose C body saves `name` in a static pointer that a later call prints.
+4. `import "DPI-C" function bit c_top_all_ones(input logic [39:0] v);` with C `svBit c_top_all_ones(const svLogicVecVal* v) { return v[1].aval == 0xFFu; }`
+5. A C++ file defines `int c_model_step(int in)` without `extern "C"`, and the library is loaded with `-sv_lib`.
+
+<details>
+<summary>Answers (write your predictions first)</summary>
+
+1. **Wrong values or a crash on the first call.** `int` inputs are small values passed by value (H.8.7), so C dereferences the two integer values as if they were addresses. Fix: `int c_sum(int a, int b)`.
+2. **Unpredictable behaviour or a crash, perhaps only in some benches.** An import whose C body calls an export shall be `context` (§35.5.1.3). Fix: `import "DPI-C" context function void c_check(input int v);`.
+3. **Garbage or a crash in the later call, and no error at the first one.** The pointer is valid only during the call (H.8.10). Fix: copy the characters into memory C allocates, and free the old copy.
+4. **The result changes between runs or tools.** The upper 24 bits of `v[1]` are undetermined (H.7.7), and X or Z bits are ignored. Fix: `return SV_GET_UNSIGNED_BITS(v[1].aval, 8) == 0xFFu && SV_GET_UNSIGNED_BITS(v[1].bval, 8) == 0u;`.
+5. **The library loads, but the symbol `c_model_step` is undefined.** C++ mangled the name (§35.5.1.6). Fix: `extern "C" int c_model_step(int in)`.
+
+</details>
 
 ## References & Next Topics
-- **IEEE 1800-2023 Clause 35** — Direct Programming Interface (§35.5.1 restrictions, §35.5.2 pure, §35.5.3 context, §35.8 exported tasks).
-- **IEEE 1800-2023 Annex H** — DPI C layer (Table H.1 type mapping, H.8 argument passing, H.12 open arrays).
-- **IEEE 1800-2023 Clauses 36 & 37** — VPI.
-- **`svdpi.h`** — The canonical C header shipped with every simulator.
-- **Previous:** [I-SV-6: Compiler Directives & Generates](/curriculum/T2_Intermediate/I-SV-6_Compiler_Directives_and_Generates/index)
-- **Next:** [I-SV-8: Power Intent and UPF](/curriculum/T2_Intermediate/I-SV-8_Power_Intent_and_UPF/index)
+
+**Primary sources**
+- IEEE 1800-2023 Clause 35: §35.2.1 (tasks and functions across the boundary), §35.3 (two layers), §35.4 (global name space), §35.5.1.1 to §35.5.1.6 (zero time, arguments, `pure` and `context`, memory, reentrancy, C++ exceptions), §35.5.2 (pure functions), §35.5.3 (context and scope), §35.5.4 (import declarations), §35.5.5 (function results), §35.5.6 and §35.5.6.1 (argument types, open arrays), §35.6.1, §35.6.1.1 and §35.6.2 (argument passing), §35.7 (exported functions), §35.8 (exported tasks), §35.9 (disable protocol).
+- IEEE 1800-2023 Annex H (DPI C layer): H.4 (binary portability), H.5 (`svdpi.h`), H.7.3 to H.7.8 (data representation, Table H.1, canonical packed arrays), H.8.2 to H.8.10 (argument passing, strings), H.9 to H.9.5 (context, scope functions, DPI and VPI), H.11.5 (canonical helpers), H.12 to H.12.5 (open arrays), H.13 (time).
+- IEEE 1800-2023 Annex I (`svdpi.h`) and Annex J (inclusion of foreign language code: J.2 to J.4.1, `-sv_lib`, `-sv_root`, `-sv_liblist`).
+- IEEE 1800-2023 §36.2 (PLI generations and VPI), Clauses 37 and 38 (§38.15 `vpi_get_value`, §38.21 `vpi_handle_by_name`, §38.34 `vpi_put_value`, §38.36 `vpi_register_cb`), Annex C.2.1 (deprecated TF and ACC routines); §9.6.2 and §9.6.3 (`disable` and `disable fork`), §14.16 (synchronous drives) and §20.10 (severity tasks) for the disable protocol and the worked example.
+- uvm-core 2020.3.1: `src/dpi/uvm_hdl.svh`, `src/dpi/uvm_dpi.svh`, `src/dpi/uvm_hdl_questa.c`, `src/reg/uvm_reg.svh` (uvm-core impl.).
+
+**Related**
+- [I-SV-6: Compiler Directives & Generates](/curriculum/T2_Intermediate/I-SV-6_Compiler_Directives_and_Generates/index): `` `ifdef `` switches such as `CRC_BUG` and `UVM_NO_DPI`.
+- [F4C: Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): the clocking-block drives and samples in the worked example.
+- [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): putting a C reference model behind a UVM scoreboard.
+- [A-UVM-4B: Frontdoor vs Backdoor](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/frontdoor-vs-backdoor): the register backdoor that uvm-core implements with DPI.
+- [E-PERF-1: UVM Performance](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index): profiling a simulation, which is where the cost of DPI calls shows up.
+- [E-UVM-ML-1: Multi-Language Verification](/curriculum/T4_Expert/E-UVM-ML-1_Multi_Language_Verification/index) and [E-PYUVM-1: Python-Based Verification](/curriculum/T4_Expert/E-PYUVM-1_Python_Based_Verification/index): SystemC, TLM and Python beyond plain DPI.
+- [E-EMU-1: Emulation-Aware Verification](/curriculum/T4_Expert/E-EMU-1_Emulation_Aware_Verification/index): DPI at the boundary between a testbench and an emulator.
+- Optional elective: [I-SV-8: Power Intent and UPF](/curriculum/T2_Intermediate/I-SV-8_Power_Intent_and_UPF/index), needed before E-PWR-1.
+
+<NextLesson />

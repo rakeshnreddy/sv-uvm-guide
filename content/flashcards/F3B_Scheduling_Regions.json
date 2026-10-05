@@ -1,27 +1,77 @@
 [
   {
     "id": "f3b-1",
-    "question": "What is the primary purpose of the Preponed scheduling region in SystemVerilog?",
-    "answer": "To sample stable values from the previous time step before any new changes occur. This is where clocking blocks and concurrent assertions sample their inputs."
+    "question": "What does the Preponed region hold, and what is `#1step` sampling?",
+    "answer": "The value every signal had before anything in the time slot changed. `#1step` sampling is Preponed sampling, which equals the previous slot's Postponed values (§4.4.2.1). Concurrent assertions and clocking-block inputs with the default `#1step` skew use these samples (§14.13, §16.5.1)."
   },
   {
     "id": "f3b-2",
-    "question": "Which region evaluates the RHS of non-blocking assignments and updates blocking assignments?",
-    "answer": "The Active region."
+    "question": "In which region does module code evaluate the right-hand side of `<=` and execute blocking assignments?",
+    "answer": "Active (§4.4.2.2). Ready processes there run in any order (§4.7). Program code does the same work in the Reactive region instead (§24.3.1)."
   },
   {
     "id": "f3b-3",
-    "question": "Why does SystemVerilog have a separate NBA (Non-Blocking Assignment) region?",
-    "answer": "To update the LHS of non-blocking assignments after all Active region evaluations are complete, preventing race conditions between sequential logic."
+    "question": "Why does SystemVerilog have a separate NBA region?",
+    "answer": "So every process woken by an edge reads its inputs in Active before any `<=` target changes. The updates are applied later, in NBA, in the order they were executed (§4.4.2.4, §4.6), so flops modelled with `<=` do not depend on process order."
   },
   {
     "id": "f3b-4",
-    "question": "In which scheduling region are concurrent assertions (SVA) evaluated?",
-    "answer": "The Observed region. They are evaluated using values sampled in the Preponed region."
+    "question": "Where are concurrent assertions evaluated, which values do they use, and where do their action blocks run?",
+    "answer": "They are evaluated in Observed on values from the Preponed region (§16.5, §16.5.1). Their pass and fail statements run in Reactive with current values, so print `$sampled(x)` to show what the property checked (§16.9.3)."
   },
   {
     "id": "f3b-5",
-    "question": "What is the historical purpose of the Reactive region?",
-    "answer": "To execute testbench program blocks and action blocks of assertions, safely isolated from RTL executing in the Active/NBA regions."
+    "question": "What runs in the Reactive region, and does it make a testbench race-free?",
+    "answer": "Program-block code, blocking statements in checkers and the action blocks of concurrent assertions (§4.4.2.6). It runs after the active set and Observed have settled, which reduces testbench-to-design races. It does not remove them: Reactive processes also run in any order (§4.7, §24.4)."
+  },
+  {
+    "id": "f3b-6",
+    "question": "Which regions form the active region set and the reactive region set?",
+    "answer": "Active set: Active, Inactive and NBA, plus the PLI regions Pre-NBA and Post-NBA. Reactive set: Reactive, Re-Inactive and Re-NBA, plus Pre-Re-NBA and Post-Re-NBA (§4.4.1). Observed is an iterative region in neither set."
+  },
+  {
+    "id": "f3b-7",
+    "question": "Where does a process resume after `#0`?",
+    "answer": "In Inactive when it runs in the active set, or in Re-Inactive when it runs in the reactive set (§4.4.2.3, §4.4.2.7). Both come before their set's nonblocking-update region, so code after `#0` still sees values from before the `<=` updates."
+  },
+  {
+    "id": "f3b-8",
+    "question": "What lands in the Re-NBA region?",
+    "answer": "Updates from nonblocking assignments executed in reactive-set code (program code, checker variables) and zero-skew clocking-block drives (§4.4.2.8, §14.16, §17.7.3). It is a separate region of the reactive set, processed after Reactive and Re-Inactive are empty."
+  },
+  {
+    "id": "f3b-9",
+    "question": "What runs in the Postponed region, and what may not happen there?",
+    "answer": "`$strobe` and `$monitor` print there with the slot's settled values (§4.4.2.9, §21.2.2). Writing any net or variable, or scheduling an event in an earlier region of the slot, is illegal."
+  },
+  {
+    "id": "f3b-10",
+    "question": "When does a `final` procedure run?",
+    "answer": "Once, in zero time, when the simulation ends through an explicit or implicit `$finish` (§9.2.3). It is not scheduled in any time-slot region, and no other scheduled event runs after it."
+  },
+  {
+    "id": "f3b-11",
+    "question": "What does the §4.5 reference algorithm do after NBA updates wake more processes?",
+    "answer": "It returns to Active in the same time slot and runs them; it reaches Observed only when the whole active set is empty, and the reactive set after that. If reactive-set code then wakes design processes, the outer loop goes back to Active again (§4.5)."
+  },
+  {
+    "id": "f3b-12",
+    "question": "What does IEEE 1800-2023 guarantee about execution order, and what does it leave open?",
+    "answer": "Guaranteed: statements in one `begin`-`end` run in source order, and NBAs are performed in the order they were executed (§4.6). Open: which ready process runs first in Active or Reactive, and whether a process is interleaved with others (§4.7)."
+  },
+  {
+    "id": "f3b-13",
+    "question": "With default skews, when does a clocking block sample, trigger `@(cb)` and drive?",
+    "answer": "Inputs (`#1step`) return the Preponed sample, the `@(cb)` event is triggered in Observed, and zero-skew drives update their signals in Re-NBA of the same slot (§14.3, §14.10, §14.13, §14.16). An explicit `#0` input skew samples in Observed instead."
+  },
+  {
+    "id": "f3b-14",
+    "question": "Where does program-block code run, and what ends a run that contains programs?",
+    "answer": "Program `initial` code, its `#` resumes and its event controls run in Reactive, and its `<=` updates land in Re-NBA (§24.3.1). A module task called from a program runs in the reactive set (§24.5). When every program `initial` thread has ended, the simulation ends by an implicit `$finish` (§24.3)."
+  },
+  {
+    "id": "f3b-15",
+    "question": "What are the PLI regions of a time slot?",
+    "answer": "Callback points for C applications using the PLI/VPI, such as waveform dumpers: Pre-Active, Pre-NBA, Post-NBA, Pre-Observed, Post-Observed, Pre-Re-NBA, Post-Re-NBA and Pre-Postponed, with Preponed and Postponed doubling as callback points (§4.4.3, Table 4-1). SystemVerilog code never runs there."
   }
 ]

@@ -1,17 +1,77 @@
 [
   {
     "id": "f2d-tf-1",
-    "question": "What is the primary difference between a task and a function in SystemVerilog?",
-    "answer": "A function must execute in zero simulation time and cannot contain delays or blocking statements. A task can consume simulation time and can use delays, event controls, and blocking statements."
+    "question": "What is the difference between a task and a function?",
+    "answer": "A function runs in zero time: its own statements cannot wait (`#`, `@`, `wait`, `fork…join`), it cannot call a task directly, and a nonvoid function returns a value that can be used in an expression. A task may consume time, may call tasks and functions, and returns results only through `output`, `inout` or `ref` arguments (IEEE 1800-2023 §13.2)."
   },
   {
     "id": "f2d-tf-2",
-    "question": "Why is it important to use the 'automatic' keyword for tasks in a testbench?",
-    "answer": "Tasks in modules have a static lifetime by default, meaning their local variables are shared across all calls. Using 'automatic' makes the task re-entrant by allocating new memory for variables on each invocation, preventing race conditions when multiple threads call the same task."
+    "question": "Why declare module and interface tasks `automatic`?",
+    "answer": "Subroutines in modules, interfaces, programs and packages are static by default: every call shares one copy of the arguments and locals, so overlapping or recursive calls overwrite each other. `automatic` gives each call its own copy (§13.3.1, §13.3.2)."
   },
   {
     "id": "f2d-tf-3",
-    "question": "What is the advantage of using 'const ref' for argument passing?",
-    "answer": "'ref' passes by reference, avoiding the performance overhead of copying large arrays or structures. Adding 'const' ensures the task/function cannot modify the original variable, combining safety with high performance."
+    "question": "What does `const ref` give you?",
+    "answer": "Pass by reference with no copy, which helps for large arrays, plus a compile error if the subroutine tries to write the argument. Like `ref`, it is legal only in an automatic subroutine (§13.5.2)."
+  },
+  {
+    "id": "f2d-tf-4",
+    "question": "Predict: a static task `send(input int id)` waits `#10` and prints `id`. Two threads call `send(1)` at t=0 and `send(2)` at t=2. What prints?",
+    "answer": "`id=2` twice, at t=10 and t=12: both calls share one `id`, and call 2 overwrote it while call 1 was waiting. With `task automatic` the log is `id=1`, then `id=2` (§13.3.2)."
+  },
+  {
+    "id": "f2d-tf-5",
+    "question": "When does the caller see a change to an `output` argument?",
+    "answer": "Only when the task returns: `output` and `inout` values are copied out at the end (§13.3). A pulse written to an output inside the task never reaches the caller's signal, so drive the signal itself."
+  },
+  {
+    "id": "f2d-tf-6",
+    "question": "In `task automatic split(input logic [15:0] word, output logic [7:0] hi, lo);` what are the direction and type of `lo`?",
+    "answer": "`output logic [7:0]`: once a direction is written, later formals inherit it, and a formal with no type of its own inherits the previous formal's type. A formal with no direction and no type, written first, is a one-bit `input logic` (§13.3)."
+  },
+  {
+    "id": "f2d-tf-7",
+    "question": "Why must a recursive function be `automatic`?",
+    "answer": "Every activation needs its own arguments and locals. In a static function all activations share them, so the inner call overwrites the outer call's `n`; a static factorial written this way returns 1 for every input (§13.4.2)."
+  },
+  {
+    "id": "f2d-tf-8",
+    "question": "Why are class methods always automatic?",
+    "answer": "Many objects, created at run time, and many threads can run the same method at once, so one shared copy of its arguments and locals would let them corrupt each other. A static-lifetime method is illegal (§8.6). A `static` method, callable without an object, is a different idea (§8.10)."
+  },
+  {
+    "id": "f2d-tf-9",
+    "question": "Inside a static task, why is `int count = 0;` illegal?",
+    "answer": "In static code an initializer runs only once, at time 0, so the standard requires you to state your intent (§6.21). Write `static int count = 0;` to initialize once, or `automatic int count = 0;` to initialize on every call."
+  },
+  {
+    "id": "f2d-tf-10",
+    "question": "What may a function do that does not consume time?",
+    "answer": "Nonblocking assignments, event triggers (`->`), clocking-block drives and `fork…join_none` (§13.4.4). A process started by `fork…join_none` may wait, but it runs after the function has returned."
+  },
+  {
+    "id": "f2d-tf-11",
+    "question": "How do default arguments and named binding work for `task automatic write_word(input logic [7:0] value, input int unsigned hold = 1);`?",
+    "answer": "`write_word(8'h35)` uses `hold = 1`, and `write_word(.value(8'h07), .hold(2))` binds by name in any order. Positional arguments must come before named ones, and defaults are allowed only in ANSI-style declarations (§13.5.3, §13.5.4)."
+  },
+  {
+    "id": "f2d-tf-12",
+    "question": "What rules apply to `ref` arguments?",
+    "answer": "They are legal only in automatic subroutines. The actual must be a variable, never a net, of an equivalent type with no casting. A plain `ref` follows the rules for automatic variables, so it cannot be written with `<=` (§13.5.2)."
+  },
+  {
+    "id": "f2d-tf-13",
+    "question": "How do you call a nonvoid function and deliberately ignore its result?",
+    "answer": "Cast the call to void: `void'(f(x));`. Calling it as a plain statement is legal but produces a warning (§13.4.1)."
+  },
+  {
+    "id": "f2d-tf-14",
+    "question": "When should you write a task, a function, or a void function?",
+    "answer": "A task when the code must wait for time or events (drive, sample, handshake). A function when it computes a value in zero time, such as a reference model or a parity check. A void function for zero-time work with no result, such as printing a summary."
+  },
+  {
+    "id": "f2d-tf-15",
+    "question": "A module function with no lifetime keyword counts 1s in a byte into a local `int n;`. Why is it right on the first call and too large on later calls?",
+    "answer": "The function is static, so `n` is set to 0 once, at time 0, and keeps its value between calls: each call adds to the last result (§13.4.2, §6.21). `static int n = 0;` behaves the same way. Declare the function `automatic`, or reset `n` at the start of every call."
   }
 ]

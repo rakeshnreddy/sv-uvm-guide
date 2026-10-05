@@ -1,226 +1,662 @@
 ---
 title: "F1A: The Cost of Bugs"
-description: "Understand the economic and reputational stakes of verification in the semiconductor industry."
+description: "Explain why a bug costs more at every stage it survives, and choose between a pre-tape-out ECO, a metal-only respin and a full respin."
 flashcards: "F1A_Cost_of_Bugs"
 ---
 
 ## Quick Take
-- **What it is:** The economic argument for verification: why chip teams spend so much of a project, often about as many engineers as on design, finding bugs before silicon.
-- **Why it matters:** A single missed bug can cost millions in respins, destroy market timing, or trigger safety recalls. Verification isn't overhead — it's insurance.
-- **The Analogy:** Verification is to chip design what crash testing is to automotive engineering. You don't skip it because it's expensive; you do it because the alternative is catastrophic.
 
-## The Multi-Million Dollar Question
+- **What it is:** The economic case for verification. A **bug** is any difference between what the chip does and what it should do, including a mistake in the specification itself. The later a bug is found, the more finished work has to be redone, so every stage it survives multiplies the cost of fixing it.
+- **Why it matters:** A logic bug found after **tape-out**, when the finished layout goes to the factory, can force a **respin**: new photomasks, new wafers and weeks to months of delay. Respins are common: in the 2022 Wilson Research Group study, only about 24% of IC/ASIC projects achieved first-silicon success. Avoiding them is why projects staff about one verification engineer for every design engineer.
+- **The Analogy:** Verification is to chip design what crash testing is to car making: expensive, and still far cheaper than a recall. *Where it breaks:* crash tests happen late, on finished prototypes, while verification starts at the first spec review and runs through the whole project. And a recalled car can be repaired in a workshop; fabricated logic can only be worked around or replaced.
 
-Why does verification take such a large share of a chip project? The 2022 Wilson Research Group study found roughly **one verification engineer for every design engineer** on a typical IC/ASIC project (and up to five per designer in segments such as processors). Design engineers themselves spent close to **half of their time** on verification.
+**You will be able to:**
+1. Explain why fixing the same bug costs roughly ten times more at each later stage, on the commonly cited rule of thumb, and rank the stages (spec review, RTL simulation, full-chip simulation or emulation, post-silicon lab, field) by cost and delay.
+2. Choose between a pre-tape-out ECO (engineering change order), a metal-only respin and a full respin for a described bug, and justify the choice by the layers that change, the cost and the schedule.
+3. Explain "shift left" and choose the activity that moves a given kind of bug earlier: verification planning, lint, block-level simulation, formal or emulation.
+4. Describe the verification lifecycle (spec, plan, testbench, regression, sign-off), who owns each step, and how verification effort compares with design effort, using sourced data.
 
-The answer lies in the **immutability of silicon**. Unlike software, you cannot patch a chip's logic once it is fabricated. A logic bug found after tape-out (the final layout delivery to the fab) needs a **respin**: new photomasks and new wafers.
+You need digital logic (gates, flip-flops, clocks, reset, state machines) and any programming language. No hardware description language or verification background is assumed.
 
-*   **Cost of a full mask set at an advanced node:** millions of dollars.
-*   **Time lost:** months of schedule while new wafers are built and re-validated.
-*   **Market opportunity cost:** a missed launch window can cost far more than the masks.
+<BeforeYouStart />
+
+## Build Your Mental Model
+
+### Words you will meet
+
+This lesson uses a few industry words before later lessons teach the details. Here is what each one means.
+
+| Term | Meaning |
+|---|---|
+| **RTL** (register-transfer level) | The design written as code, such as SystemVerilog modules. Designers edit it and simulators run it. |
+| **Simulation** and **testbench** | Running the RTL on a computer. The **testbench** is the code that drives the design's inputs and checks its outputs. |
+| **Regression** | The full set of tests, rerun after every change to catch anything the change broke. |
+| **Emulation** and **FPGA prototyping** | Running the RTL compiled onto special hardware, fast enough to run real software before the chip exists. |
+| **Netlist** and **layout** | Synthesis turns the RTL into a **netlist** of gates. Place-and-route turns the netlist into a **layout**: the geometry of every transistor and wire. |
+| **Tape-out** | Sending the finished layout to the fab (the chip factory). |
+| **Mask**, **wafer**, **layer** | The fab builds the chip on a silicon **wafer**, one **layer** at a time, and patterns each layer with one or more **photomasks**. The **base layers** make the transistors; the **metal and via layers** above them wire the transistors together. |
+| **Respin** | Fabricating a corrected chip, with new masks and new (or held) wafers. |
+| **ECO** (engineering change order) | A small, targeted change to the netlist and layout, instead of a full re-implementation. |
+| **Lint** | Static checks that read RTL code and flag suspicious constructs, without simulating it. |
+| **Formal verification** | Tools that prove a property holds in every reachable state, with no test vectors. |
+
+### The Multi-Million Dollar Question
+
+Why does verification take such a large share of a chip project? In the 2022 Wilson Research Group (WRG) study, IC/ASIC projects had on average about **one verification engineer for every design engineer**, measured as mean peak headcount. In some market segments, such as processors, a 5-to-1 ratio is not unusual. Design engineers themselves spent **49%** of their time on verification.
+
+The reason is that **fabricated logic cannot be patched**. Software ships a fix; a chip's logic is built into its layers. A logic bug found after tape-out usually needs a respin: a **metal-only respin** when the fix fits in rewiring, or a **full respin** when it needs new transistors. If the chip was designed for it, some bugs can instead be worked around in firmware or microcode, or avoided by switching the feature off.
+
+- **Masks:** a full mask set is one of the largest non-recurring engineering (**NRE**) costs of a project, and it grows with each process node. This lesson quotes no dollar figure, because published numbers vary widely and are rarely sourced.
+- **Time:** weeks (metal-only) to months (full respin) while new wafers are built and the fix is validated again.
+- **Market:** a missed launch window, such as a phone cycle or an automotive program, can cost more than the masks.
+
+The outcome is measurable. In the same study, only about **24%** of IC/ASIC projects achieved first-silicon success, and logic or functional flaws were the leading category of flaws contributing to respins.
 
 > [!IMPORTANT]
-> **NRE vs. Recurring Costs:** The mask set is part of Non-Recurring Engineering (NRE) — you pay it once per design revision. But the real damage of a respin is the schedule slip. Missing a product launch window (smartphone cycle, holiday season, automotive program) can cost an entire generation of revenue.
+> **NRE versus recurring cost:** the mask set is paid once per design revision (NRE). The larger damage of a respin is usually the schedule slip, not the masks.
 
-## The Design Gap
+### The design–verification gap
 
-Moore's law, an observation rather than a law of physics, describes transistor counts doubling roughly every two years. That gives designers an enormous canvas for complex logic. Our ability to verify that logic does not grow at the same rate.
-
-Notice which curve rises faster, and that the chart is an illustration of the trend, not plotted data.
+Moore's law, an observation rather than a law of physics, describes transistor counts doubling roughly every two years. Designers get an ever larger canvas, but the ability to check what they build does not grow at the same rate. Before you look at the chart, decide which curve should rise faster, and what would close the gap.
 
 <DesignGapChart />
 
-This divergence is known as the **Design & Verification Gap**. To close it, we cannot just work harder; we must work smarter, using advanced methodologies like SystemVerilog and UVM.
+What the chart shows, and what it does not:
+- It is an **illustration of a trend**, not plotted data: its axes have no units.
+- The gap does not close by working longer hours. It closes with better methods: reuse, constrained-random stimulus, coverage measurement, formal verification and emulation, written in SystemVerilog and UVM. F1B introduces the methods and F1C the languages.
+- Two measured numbers show where the effort goes today (WRG 2022): about one verification engineer per design engineer, and design engineers spending 49% of their time on verification.
 
-## The Cost of Finding a Bug
+### The cost of finding a bug
 
-The cost of fixing a bug grows steeply with every phase it survives. Make your prediction first, then move the slider and notice how each stage multiplies the cost by roughly ten.
+The cost of fixing a bug grows with every stage it survives. Make your prediction in the graph first, then step through the stages.
 
 <InteractiveCostOfBugGraph />
 
-The multipliers are a commonly cited rule of thumb, not measurements. What they capture is *why* the cost jumps:
+The multipliers are a commonly cited **rule of thumb**, not measurements: each later stage costs roughly ten times more than the one before. What drives the jump is how much finished work has to be redone.
 
-*   **RTL simulation:** Edit the code and rerun the regression. Minutes to days of engineer time.
-*   **Full-chip simulation or emulation:** Debug spans many blocks and long software runs, and every fix needs re-verification.
-*   **Post-silicon (lab):** Debug on real chips with limited visibility. A fix needs a metal-only or full respin, or a firmware workaround. Focused ion beam (FIB) edits can patch a few samples for debug, but they are not a production fix.
-*   **In the field:** Recalls or replacement programs, emergency patches, lawsuits and lost trust.
+| Stage where the bug is found | Rule-of-thumb cost | What has to be redone |
+|---|---|---|
+| Spec review | ×1 | Reword a requirement and tell the team. Nothing is built yet. |
+| RTL simulation (one block) | ×10 | Debug the failing test, edit the RTL, rerun the block regression. Minutes to days. |
+| Full-chip simulation or emulation | ×100 | Debug across many blocks and long software runs, then re-verify every block the fix touches. |
+| Post-silicon (lab) | ×1,000 | Debug real chips with limited visibility, then a metal-only or full respin, or a firmware workaround. Weeks to months. |
+| In the field | ×10,000 | Recalls or replacements, emergency patches that may cost performance, and lost trust. |
 
-### Understanding Respins: Not All Are Equal
+Two mistakes everyone makes with this ladder:
+- **"Verification is overhead we can cut when the schedule slips."** Cutting checks does not remove bugs. It moves their discovery down this table, where each stage costs about ten times more.
+- **Treating the multipliers as data.** They are an order-of-magnitude argument. Real ratios vary by product, node and team: a firmware workaround can make a post-silicon bug cheap, and a safety recall can make a field bug far more expensive.
 
-An **ECO (engineering change order)** is the change itself: a small edit to the netlist and layout instead of a full re-implementation. *When* it happens decides what it costs:
+When a bug is found late, the question after "how do we fix it?" is **escape analysis**: which earlier activity should have caught it, and what do we add to the plan so that kind of bug cannot escape again? It is the debugging skill of this lesson, and Make It Work walks through it.
+
+### Fixing silicon: ECO, metal-only respin or full respin
+
+An **ECO** is the change itself. *When* it happens decides what it costs. Before you read the picture, predict: for each kind of fix, which mask layers must change?
+
+<figure>
+<svg viewBox="0 0 340 326" role="img" aria-labelledby="f1a-respin-title f1a-respin-desc" style={{ width: "100%", maxWidth: 520 }}>
+  <title id="f1a-respin-title">Which mask layers change for each kind of fix</title>
+  <desc id="f1a-respin-desc">Three simplified chip cross-sections, each with three metal and via layers above the base (transistor) layers. (a) Pre-tape-out ECO: every layer is drawn dashed because no masks exist yet; only the design database changes. (b) Metal-only respin: the upper metal and via layers are hatched (new masks); the lowest metal layer and the base layers are solid (reused from held wafers); a spare cell already placed in the base layer is wired in by the new metal. (c) Full respin: every layer is hatched, including the base layers, so new wafers start from the beginning.</desc>
+  <defs>
+    <pattern id="f1a-respin-hatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <line x1="0" y1="0" x2="0" y2="6" stroke="currentColor" strokeWidth="2" strokeOpacity="0.55" />
+    </pattern>
+  </defs>
+  <text x="4" y="13" fontSize="12" fill="currentColor" fontWeight="600">{"(a) Pre-tape-out ECO"}</text>
+  <text x="4" y="37" fontSize="10" fill="currentColor">{"metal"}</text>
+  <text x="4" y="49" fontSize="10" fill="currentColor">{"+ vias"}</text>
+  <text x="4" y="80" fontSize="10" fill="currentColor">{"base"}</text>
+  <rect x="48" y="21" width="96" height="11" rx="2" fill="none" stroke="currentColor" strokeOpacity="0.75" strokeWidth="1" strokeDasharray="4 3" />
+  <rect x="48" y="35" width="96" height="11" rx="2" fill="none" stroke="currentColor" strokeOpacity="0.75" strokeWidth="1" strokeDasharray="4 3" />
+  <rect x="48" y="49" width="96" height="11" rx="2" fill="none" stroke="currentColor" strokeOpacity="0.75" strokeWidth="1" strokeDasharray="4 3" />
+  <rect x="48" y="64" width="96" height="26" rx="3" fill="none" stroke="currentColor" strokeOpacity="0.75" strokeWidth="1" strokeDasharray="4 3" />
+  <text x="154" y="30" fontSize="10.5" fill="currentColor">{"Edit the netlist and layout"}</text>
+  <text x="154" y="44" fontSize="10.5" fill="currentColor">{"database. No masks exist yet."}</text>
+  <text x="154" y="58" fontSize="10.5" fill="currentColor">{"Cost: engineering time to"}</text>
+  <text x="154" y="72" fontSize="10.5" fill="currentColor">{"re-verify. No wafers to scrap."}</text>
+  <line x1="4" y1="98" x2="336" y2="98" stroke="currentColor" strokeOpacity="0.2" />
+  <text x="4" y="117" fontSize="12" fill="currentColor" fontWeight="600">{"(b) Metal-only respin"}</text>
+  <text x="4" y="141" fontSize="10" fill="currentColor">{"metal"}</text>
+  <text x="4" y="153" fontSize="10" fill="currentColor">{"+ vias"}</text>
+  <text x="4" y="184" fontSize="10" fill="currentColor">{"base"}</text>
+  <rect x="48" y="125" width="96" height="11" rx="2" fill="url(#f1a-respin-hatch)" stroke="currentColor" strokeWidth="1.2" />
+  <rect x="48" y="139" width="96" height="11" rx="2" fill="url(#f1a-respin-hatch)" stroke="currentColor" strokeWidth="1.2" />
+  <rect x="48" y="153" width="96" height="11" rx="2" fill="currentColor" fillOpacity="0.16" stroke="currentColor" strokeOpacity="0.6" strokeWidth="1" />
+  <rect x="48" y="168" width="96" height="26" rx="3" fill="currentColor" fillOpacity="0.16" stroke="currentColor" strokeOpacity="0.6" strokeWidth="1" />
+  <rect x="118" y="174" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" />
+  <text x="60" y="185" fontSize="9.5" fill="currentColor">{"spare cell"}</text>
+  <text x="154" y="134" fontSize="10.5" fill="currentColor">{"New masks for some metal and"}</text>
+  <text x="154" y="148" fontSize="10.5" fill="currentColor">{"via layers only. Spare cells"}</text>
+  <text x="154" y="162" fontSize="10.5" fill="currentColor">{"placed before tape-out are"}</text>
+  <text x="154" y="176" fontSize="10.5" fill="currentColor">{"wired in. Held wafers: weeks."}</text>
+  <line x1="4" y1="202" x2="336" y2="202" stroke="currentColor" strokeOpacity="0.2" />
+  <text x="4" y="221" fontSize="12" fill="currentColor" fontWeight="600">{"(c) Full respin"}</text>
+  <text x="4" y="245" fontSize="10" fill="currentColor">{"metal"}</text>
+  <text x="4" y="257" fontSize="10" fill="currentColor">{"+ vias"}</text>
+  <text x="4" y="288" fontSize="10" fill="currentColor">{"base"}</text>
+  <rect x="48" y="229" width="96" height="11" rx="2" fill="url(#f1a-respin-hatch)" stroke="currentColor" strokeWidth="1.2" />
+  <rect x="48" y="243" width="96" height="11" rx="2" fill="url(#f1a-respin-hatch)" stroke="currentColor" strokeWidth="1.2" />
+  <rect x="48" y="257" width="96" height="11" rx="2" fill="url(#f1a-respin-hatch)" stroke="currentColor" strokeWidth="1.2" />
+  <rect x="48" y="272" width="96" height="26" rx="3" fill="url(#f1a-respin-hatch)" stroke="currentColor" strokeWidth="1.2" />
+  <text x="154" y="238" fontSize="10.5" fill="currentColor">{"New masks for the base layers"}</text>
+  <text x="154" y="252" fontSize="10.5" fill="currentColor">{"too, usually most of the set."}</text>
+  <text x="154" y="266" fontSize="10.5" fill="currentColor">{"New wafers start from the"}</text>
+  <text x="154" y="280" fontSize="10.5" fill="currentColor">{"beginning: months."}</text>
+  <rect x="4" y="306" width="14" height="12" rx="2" fill="url(#f1a-respin-hatch)" stroke="currentColor" strokeWidth="1.2" />
+  <text x="22" y="316" fontSize="10" fill="currentColor">{"new mask"}</text>
+  <rect x="92" y="306" width="14" height="12" rx="2" fill="currentColor" fillOpacity="0.16" stroke="currentColor" strokeOpacity="0.6" strokeWidth="1" />
+  <text x="110" y="316" fontSize="10" fill="currentColor">{"reused (held wafer)"}</text>
+  <rect x="226" y="306" width="14" height="12" rx="2" fill="none" stroke="currentColor" strokeOpacity="0.75" strokeWidth="1" strokeDasharray="4 3" />
+  <text x="244" y="316" fontSize="10" fill="currentColor">{"no mask yet"}</text>
+</svg>
+<figcaption>Hatched layers need new masks, solid layers are reused, and dashed outlines mean no mask exists yet. A metal-only respin reuses the base layers, which is why it is faster and cheaper than a full respin.</figcaption>
+</figure>
 
 | Fix | What changes | Relative cost and time | When it is possible |
-|-----|--------------|------------------------|---------------------|
-| **Pre-tape-out ECO** | The design database only. No masks exist yet. | Lowest: engineering time and re-verification | Any late bug found before tape-out |
-| **Metal-only respin ("metal spin")**: a post-silicon ECO | New masks for some metal and via layers. Spare cells already placed in the design supply the extra gates. | A fraction of a full mask set. Weeks, because the fab can hold partly processed wafers below the metal layers and finish them with the new masks | The fix fits in rewiring plus the available spare cells |
-| **Full (base-layer) respin** | New masks for transistor layers too, usually most of the mask set | Highest: a full set of advanced-node masks costs millions. Months | The fix needs new transistors or a larger logic change |
+|---|---|---|---|
+| **Pre-tape-out ECO** | The design database only. No masks exist yet. | Lowest: engineering time and re-verification | Any bug found before tape-out |
+| **Metal-only respin** ("metal spin"): a post-silicon ECO | New masks for some metal and via layers. Spare cells already placed in the design supply the extra gates. | A fraction of a full mask set. Weeks, because the fab can hold partly processed wafers below the metal layers and finish them with the new masks. | The fix fits in rewiring plus the available spare cells |
+| **Full (base-layer) respin** | New masks for the transistor layers too, usually most of the mask set | Highest. Months, because new wafers start from the beginning. | The fix needs new transistors or a larger logic change |
 
-> [!TIP]
-> **Interview Insight:** Understanding the ECO vs. full respin distinction shows interviewers you have practical tape-out awareness, not just textbook knowledge.
+Three more tools sit beside the table:
+- A **focused ion beam (FIB) edit** cuts and adds wires on a few sample chips in the lab. It confirms that a fix works before you pay for masks; it is not a way to build production parts.
+- A **firmware or microcode workaround** changes software so that it avoids the bug or corrects its effect. It only works when the hardware gives software a way in.
+- A **defeature bit** (or "chicken bit") is a configuration bit that switches a feature off or forces a safe mode. Designers add them before tape-out for features they consider risky.
 
-## Cautionary Tales
+**What makes a bug ECO-able:** the fix fits in rewiring plus the spare cells placed before tape-out. It needs no new transistors and no large logic change.
 
-History is littered with companies that underestimated verification. As you page through, ask what check would have caught each one, and when.
+Two pitfalls:
+- **"Every silicon fix needs a full respin."** Wrong: metal-only respins exist because many fixes are small rewiring jobs. That is why designs carry spare cells.
+- **"A FIB edit fixes the product."** Wrong: it fixes a handful of samples. Production still needs new masks or a workaround.
+
+### Cautionary tales
+
+Bugs that escaped to silicon or to flight are the best teachers. As you page through the cards, ask what check would have caught each one, and when it would have run.
 
 <HallOfShameCarousel />
 
-### What These Bugs Have in Common
+What each card teaches:
+- **Pentium FDIV (1994):** a lookup table that fed every division had wrong entries, and random divides almost never reached them. The cards' sources give Intel's estimate of about 1 in 9 billion random divides. The check that finds this is exhaustive: compare the whole table with its mathematical definition, or prove the divider formally. More random simulation alone did not find it.
+- **Ariane 5 Flight 501 (1996):** a software failure, included as a reuse lesson. Code that had flown on Ariane 4 overflowed under Ariane 5's faster trajectory. The missing check: verify reused code again over the new operating range.
+- **Spectre and Meltdown (2018):** every instruction returned the architecturally correct value, so functional checks passed. The leak was in what cache timing reveals. The missing checks are security properties about information flow.
 
-Every catastrophic hardware bug shares a pattern:
-1. **The feature worked for the intended use case** — designers verified the happy path.
-2. **The failure arose from an unanticipated interaction** — edge cases, reuse without re-verification, or implicit assumptions.
-3. **The verification plan had a gap** — either the scenario wasn't tested, or the coverage metric didn't track it.
+The common thread is not one missing technique. In each case **the plan never asked the question that failed**. That is the third classic mistake: **"passing simulation means correct silicon."** A passing regression shows only that the checks you wrote passed for the stimulus you ran.
 
-This pattern is why modern verification relies on **constrained random** stimulus (to find scenarios humans wouldn't imagine) backed by **functional coverage** (to prove which scenarios were actually tested).
+### Shift left and the verification lifecycle
 
-## The "Shift Left" Philosophy
+Verification follows a loop that starts with the specification and ends with a reviewed decision to tape out:
 
-To mitigate these risks, modern teams adopt a **Shift Left** philosophy: move verification tasks as early in the timeline as possible.
+1. **Spec.** Architects write what the chip must do; design engineers and design-verification (DV) engineers review it. Output: a reviewed specification.
+2. **Verification plan (vplan).** The DV lead turns every feature into scenarios to run, checks that decide pass or fail, and coverage items that prove the scenarios happened. F1B shows how.
+3. **Testbench.** DV engineers build the stimulus, checks and coverage collection the plan calls for.
+4. **Regression.** DV engineers run every test on every change; design engineers fix the RTL bugs they find. Output: pass rate, coverage and the bug-discovery trend.
+5. **Sign-off.** The DV lead and project leads review the evidence and decide whether the plan is met well enough to tape out.
 
-1.  **Static Analysis / Linting:** Catch syntax and style errors before simulation.
-2.  **Unit Testing:** Verify small blocks (ALUs, Arbiters) in isolation before integration.
-3.  **Formal Verification:** Mathematically prove properties (e.g., "Grant is never asserted without Request") without simulation vectors.
+Two feedback loops keep it honest: every fix reruns the regression, and every escape found later updates the plan.
 
-### The Verification Lifecycle
+<figure>
+<svg viewBox="0 0 340 406" role="img" aria-labelledby="f1a-life-title f1a-life-desc" style={{ width: "100%", maxWidth: 520 }}>
+  <title id="f1a-life-title">The verification lifecycle and who owns each step</title>
+  <desc id="f1a-life-desc">Seven boxes in a column, top to bottom: 1 Spec, owned by architects and reviewed by all; 2 Verification plan, owned by the DV lead; 3 Testbench, DV engineers; 4 Regression, run by DV engineers while design engineers fix the RTL; 5 Sign-off review, DV lead and project leads; Tape-out, when the layout goes to the fab; Post-silicon validation, validation engineers in the lab. A short loop on Regression reads: bug found, fix, rerun. A long dashed arrow from Post-silicon validation back up to the Verification plan reads: escape found late, add the missing scenario, check and coverage item.</desc>
+  <defs>
+    <marker id="f1a-life-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 Z" fill="currentColor" />
+    </marker>
+  </defs>
+  <rect x="8" y="8" width="196" height="40" rx="8" fill="currentColor" fillOpacity="0.10" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="18" y="25" fontSize="12" fill="currentColor" fontWeight="600">{"1 · Spec"}</text>
+  <text x="18" y="40" fontSize="10" fill="currentColor" fillOpacity="0.8">{"architects; reviewed by all"}</text>
+  <rect x="8" y="64" width="196" height="40" rx="8" fill="currentColor" fillOpacity="0.10" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="18" y="81" fontSize="12" fill="currentColor" fontWeight="600">{"2 · Verification plan"}</text>
+  <text x="18" y="96" fontSize="10" fill="currentColor" fillOpacity="0.8">{"DV lead"}</text>
+  <line x1="106" y1="48" x2="106" y2="63" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#f1a-life-arrow)" />
+  <rect x="8" y="120" width="196" height="40" rx="8" fill="currentColor" fillOpacity="0.10" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="18" y="137" fontSize="12" fill="currentColor" fontWeight="600">{"3 · Testbench"}</text>
+  <text x="18" y="152" fontSize="10" fill="currentColor" fillOpacity="0.8">{"DV engineers"}</text>
+  <line x1="106" y1="104" x2="106" y2="119" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#f1a-life-arrow)" />
+  <rect x="8" y="176" width="196" height="40" rx="8" fill="currentColor" fillOpacity="0.10" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="18" y="193" fontSize="12" fill="currentColor" fontWeight="600">{"4 · Regression"}</text>
+  <text x="18" y="208" fontSize="10" fill="currentColor" fillOpacity="0.8">{"DV runs it; design fixes RTL"}</text>
+  <line x1="106" y1="160" x2="106" y2="175" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#f1a-life-arrow)" />
+  <rect x="8" y="232" width="196" height="40" rx="8" fill="currentColor" fillOpacity="0.10" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="18" y="249" fontSize="12" fill="currentColor" fontWeight="600">{"5 · Sign-off review"}</text>
+  <text x="18" y="264" fontSize="10" fill="currentColor" fillOpacity="0.8">{"DV lead and project leads"}</text>
+  <line x1="106" y1="216" x2="106" y2="231" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#f1a-life-arrow)" />
+  <rect x="8" y="288" width="196" height="40" rx="8" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="18" y="305" fontSize="12" fill="currentColor" fontWeight="600">{"Tape-out"}</text>
+  <text x="18" y="320" fontSize="10" fill="currentColor" fillOpacity="0.8">{"layout goes to the fab"}</text>
+  <line x1="106" y1="272" x2="106" y2="287" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#f1a-life-arrow)" />
+  <rect x="8" y="344" width="196" height="40" rx="8" fill="currentColor" fillOpacity="0.04" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="18" y="361" fontSize="12" fill="currentColor" fontWeight="600">{"Post-silicon validation"}</text>
+  <text x="18" y="376" fontSize="10" fill="currentColor" fillOpacity="0.8">{"validation engineers, lab"}</text>
+  <line x1="106" y1="328" x2="106" y2="343" stroke="currentColor" strokeWidth="1.5" markerEnd="url(#f1a-life-arrow)" />
+  <path d="M204,188 H226 V204 H206" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 4" markerEnd="url(#f1a-life-arrow)" />
+  <text x="232" y="193" fontSize="10" fill="currentColor">{"bug: fix the"}</text>
+  <text x="232" y="206" fontSize="10" fill="currentColor">{"RTL, rerun"}</text>
+  <path d="M204,364 H330 V84 H206" fill="none" stroke="currentColor" strokeWidth="1.5" strokeDasharray="5 4" markerEnd="url(#f1a-life-arrow)" />
+  <text x="214" y="240" fontSize="10" fill="currentColor">{"escape found"}</text>
+  <text x="214" y="253" fontSize="10" fill="currentColor">{"late: add the"}</text>
+  <text x="214" y="266" fontSize="10" fill="currentColor">{"missing scenario,"}</text>
+  <text x="214" y="279" fontSize="10" fill="currentColor">{"check and"}</text>
+  <text x="214" y="292" fontSize="10" fill="currentColor">{"coverage item"}</text>
+</svg>
+<figcaption>The lifecycle with its owners. The short loop is the daily cycle of bug, fix and rerun. The long dashed loop is escape analysis: a bug found late goes back into the plan as a new scenario, check and coverage item.</figcaption>
+</figure>
 
-Understanding where verification fits in the overall chip development timeline:
+**Shift left** means moving each activity to the earliest point where it can work, so bugs are found where the cost ladder says they are cheapest:
 
-| Phase | Verification Activity | Key Milestone |
-|-------|----------------------|---------------|
-| **Architecture** | Test plan creation, coverage goal definition | Verification plan review |
-| **RTL Design** | Block-level simulation, assertions | Code & functional coverage targets |
-| **Integration** | Sub-system and full-chip simulation | Regression stability |
-| **Emulation** | Software bring-up, performance validation | Boot success |
-| **Tape-out** | Coverage closure signoff, waivers | Signoff checklist complete |
-| **Post-silicon** | Lab validation, compliance testing | First silicon pass |
+| Activity | When it runs | What it catches early |
+|---|---|---|
+| Verification planning | At spec review | Missing, ambiguous or contradictory requirements, at ×1 |
+| Lint | As RTL is written | Suspicious code: unintended latches, width mismatches, undriven signals. Dedicated clock- and reset-domain crossing (CDC and RDC) checks look for unsafe crossings. |
+| Block-level simulation | As each block works | Functional bugs in one block, with full visibility and fast runs |
+| Formal on blocks | As each block works | Corner cases in control logic (arbiters, FIFOs, state machines) that random stimulus rarely reaches |
+| Emulation or FPGA prototyping | Before tape-out | Bugs only real software exposes: boot, drivers, performance |
 
-## Deeper Understanding
+<figure>
+<svg viewBox="0 0 340 232" role="img" aria-labelledby="f1a-shift-title f1a-shift-desc" style={{ width: "100%", maxWidth: 520 }}>
+  <title id="f1a-shift-title">Shift left: the same activities, moved earlier in the schedule</title>
+  <desc id="f1a-shift-desc">Illustration, not data. Two rows share one project timeline running from spec, through RTL and integration, to tape-out and silicon. Top row, late discovery: the testbench and simulation start during integration and software first runs on chips, so the bug marks cluster in integration and after silicon. Bottom row, shift left: planning starts at the spec, lint and block simulation run while the RTL is written, formal checks blocks, and emulation runs software before tape-out, so most bug marks sit in the RTL phase.</desc>
+  <line x1="250" y1="6" x2="250" y2="206" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+  <text x="4" y="14" fontSize="12" fill="currentColor" fontWeight="600">{"Late discovery"}</text>
+  <rect x="150" y="22" width="94" height="15" rx="4" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeOpacity="0.55" />
+  <text x="155" y="33" fontSize="9.5" fill="currentColor">{"testbench + sim"}</text>
+  <rect x="256" y="41" width="80" height="15" rx="4" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeOpacity="0.55" />
+  <text x="261" y="52" fontSize="9.5" fill="currentColor">{"first software"}</text>
+  <text x="180" y="74" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <text x="198" y="74" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <text x="216" y="74" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <text x="234" y="74" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <text x="270" y="74" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <text x="288" y="74" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <text x="306" y="74" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <text x="324" y="74" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <text x="4" y="98" fontSize="12" fill="currentColor" fontWeight="600">{"Shift left"}</text>
+  <rect x="14" y="106" width="50" height="15" rx="4" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeOpacity="0.55" />
+  <text x="19" y="117" fontSize="9.5" fill="currentColor">{"plan"}</text>
+  <rect x="56" y="125" width="114" height="15" rx="4" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeOpacity="0.55" />
+  <text x="61" y="136" fontSize="9.5" fill="currentColor">{"lint + block sim"}</text>
+  <rect x="78" y="144" width="92" height="15" rx="4" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeOpacity="0.55" />
+  <text x="83" y="155" fontSize="9.5" fill="currentColor">{"formal (blocks)"}</text>
+  <rect x="166" y="163" width="80" height="15" rx="4" fill="currentColor" fillOpacity="0.14" stroke="currentColor" strokeOpacity="0.55" />
+  <text x="171" y="174" fontSize="9.5" fill="currentColor">{"emulation"}</text>
+  <text x="40" y="196" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <text x="76" y="196" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <text x="94" y="196" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <text x="112" y="196" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <text x="130" y="196" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <text x="148" y="196" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <text x="210" y="196" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <text x="300" y="196" fontSize="12" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <line x1="8" y1="206" x2="336" y2="206" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="34" y="222" fontSize="10" fill="currentColor" textAnchor="middle">{"spec"}</text>
+  <text x="112" y="222" fontSize="10" fill="currentColor" textAnchor="middle">{"RTL"}</text>
+  <text x="192" y="222" fontSize="10" fill="currentColor" textAnchor="middle">{"integration"}</text>
+  <text x="252" y="222" fontSize="10" fill="currentColor" textAnchor="middle">{"tape-out"}</text>
+  <text x="306" y="222" fontSize="10" fill="currentColor" textAnchor="middle">{"silicon"}</text>
+</svg>
+<figcaption>Illustration, not data. Each ✕ is a bug found. Shifting left moves the same activities earlier, and the bugs move with them, away from the dashed tape-out line.</figcaption>
+</figure>
 
-### Why verification effort rivals design effort
+A pitfall: shifting left does not remove the late stages. Full-chip simulation, emulation and post-silicon validation still run, because they find what only they can find, such as interactions between blocks and real software. A second pitfall is the overhead mistake from the cost ladder: when the schedule slips, the plan and regressions are the last things to cut, not the first.
 
-Verification staffing matches or exceeds design staffing on many projects because:
-- **Stimulus creation** alone doesn't verify — you need checking infrastructure (scoreboards, assertions, coverage).
-- **Multiple abstraction levels** require separate effort: block-level, sub-system, full-chip, and firmware-level verification.
-- **Regression maintenance** — as the design evolves, tests must be maintained, debugged, and re-validated.
-- **Coverage closure** — the last few percent of coverage often take a disproportionate share of the effort (diminishing returns).
+### Who does what
 
-### Verification Team Roles in Industry
+Verification is a team sport with clear hand-offs:
 
-| Role | Responsibility | Typical Level |
-|------|---------------|---------------|
-| **Verification Engineer** | Write tests, build UVM environments, close coverage | Junior–Mid |
-| **Senior Verification Engineer** | Architecture-level test planning, complex VIP integration | Senior |
-| **Verification Lead** | Own the verification plan, track coverage, manage signoff | Staff |
-| **DV Architect** | Cross-team methodology, reuse strategy, tool evaluation | Staff–Principal |
+| Role | Owns | Hands over |
+|---|---|---|
+| Architect | The specification, performance targets | A reviewed spec to design and DV |
+| Design engineer | The RTL, block-level checks, bug fixes | RTL releases to DV; fixes for each bug report |
+| DV engineer | The vplan, testbench, regressions, coverage | Bug reports to design; evidence for sign-off |
+| Formal engineer | Properties and proofs for critical blocks | Proofs, with the assumptions they rely on, or counterexamples |
+| Emulation or prototyping engineer | Software runs on the RTL before tape-out | Software-visible bugs and performance data |
+| Post-silicon validation engineer | Lab testing of real chips | Escapes, which go back into the plan |
 
+Within DV, the career ladder runs from verification engineer (write tests, build environments, close coverage) through senior engineer (plan complex blocks, integrate verification IP) and verification lead (own the plan and sign-off) to DV architect (methodology and reuse across teams).
 
-### Retrieval check
+Why verification effort rivals design effort:
+- **Stimulus alone verifies nothing.** Every scenario needs a check that can fail and coverage that proves it ran.
+- **Several levels need their own work:** block, subsystem, full chip and software.
+- **Regressions need care.** As the design changes, tests must be updated, debugged and rerun.
+- **The last few percent of coverage take a disproportionate share of the effort**, because the remaining scenarios are rare (F1B shows why).
+
+### Recap
+
+- Each later stage costs roughly ten times more to fix the same bug, on the commonly cited rule of thumb. Cutting verification moves bugs to the expensive end.
+- After tape-out, a fix is a metal-only respin when it fits in rewiring plus spare cells, and a full respin when it needs new transistors. FIB edits and firmware workarounds buy time; they are not production fixes.
+- Escaped bugs share one cause: the plan never asked the question that failed. Escape analysis feeds each one back into the plan.
+- Shift left moves planning, lint, block simulation, formal and emulation earlier, and each role owns its part of the loop.
+
+## Make It Work
+
+This orientation lesson has no testbench to build yet. Its main worked example is a set of decisions. A second, small example shows what finding a bug at the cheapest stage looks like in code.
+
+### Worked example: four late bugs, four decisions
+
+| Bug | Found at | Fix | What changes | Rule-of-thumb cost | Typical delay (project-dependent) |
+|---|---|---|---|---|---|
+| 1. A control register resets to the wrong value; found three weeks before tape-out | Full-chip simulation | Pre-tape-out ECO | The design database; then re-verify and re-check timing | ×100 | Days to weeks; no masks yet |
+| 2. A comparator uses "greater than" where the spec says "greater than or equal"; spare cells sit nearby | Post-silicon lab | Metal-only respin, confirmed first on samples with a FIB edit | Some metal and via masks; held wafers are finished | ×1,000 | Weeks |
+| 3. The fix needs a new pipeline stage of several hundred flip-flops | Post-silicon lab | Full respin | Base and metal masks; new wafers | ×1,000 or more | Months |
+| 4. A customer sees data corruption under a rare traffic mix; a defeature bit can switch the feature off | In the field | Set the defeature bit through a firmware update now; fix the RTL in the next silicon revision | Firmware now, masks later | ×10,000 | Workaround as fast as a firmware release; the real fix waits for new silicon |
+
+Why each decision:
+1. Before tape-out no masks exist, so even a late fix is only a database edit. The cost is the debug and re-verification at full-chip level.
+2. The fix is a few gates and spare cells are nearby, so only metal and via masks change. A FIB edit on a few samples proves the fix before the masks are bought.
+3. New flip-flops need new transistors, which only the base layers can provide.
+4. The defeature bit protects customers now. Escape analysis then asks why no test combined that traffic mix, and adds it to the plan.
+
+### Worked example: the same mistake at the cheapest stage
+
+Bug 2 above is a one-character mistake: `>` where the spec says `>=`. Here is what it costs at the RTL stage. You do not need to read SystemVerilog yet (F2A through F2E teach it). The comments say what each part does.
+
+```systemverilog
+// compile
+`timescale 1ns/1ps
+
+// Spec: alarm must be 1 whenever temp is 100 or more.
+module temp_alarm (
+  input  logic [7:0] temp,
+  output logic       alarm
+);
+  assign alarm = (temp > 8'd100);    // BUG: the spec says "100 or more", so >=
+endmodule
+
+module tb_top;
+  logic [7:0] temp;
+  logic       alarm;
+  int         pass_cnt = 0;
+  int         fail_cnt = 0;
+
+  temp_alarm dut (.temp(temp), .alarm(alarm));
+
+  // Apply one value, let the output settle, then compare with the spec.
+  task automatic check(input logic [7:0] t);
+    logic expected;
+    temp = t;
+    #1;                                // the output is combinational: no clock needed
+    expected = (t >= 8'd100);          // the spec, written independently of the RTL
+    if (alarm !== expected) begin      // !== so an unknown (X) output also fails
+      fail_cnt++;
+      $display("FAIL temp=%0d alarm=%b expected=%b", t, alarm, expected);
+    end else begin
+      pass_cnt++;
+    end
+  endtask
+
+  initial begin
+    check(8'd99);                      // just below the threshold
+    check(8'd100);                     // exactly at it: the boundary the bug breaks
+    check(8'd101);                     // just above it
+    $display("PASS=%0d FAIL=%0d", pass_cnt, fail_cnt);
+    $finish;
+  end
+endmodule
+```
+
+Expected output (traced by hand; not from a simulator run):
+
+```text
+FAIL temp=100 alarm=0 expected=1
+PASS=2 FAIL=1
+```
+
+After the fix, `assign alarm = (temp >= 8'd100);`, the same test prints `PASS=3 FAIL=0`. The whole cycle takes minutes: one test that tries the boundary value, a one-character edit and a rerun. Found on first silicon, the same mistake costs a metal-only respin at best. Notice also what found it: a test that tried the exact boundary, 100. Testing only "typical" values such as 50 and 150 would have passed.
+
+To run it, compile both modules with an IEEE 1800-compliant simulator and make `tb_top` the top module. The exact command is tool-dependent.
+
+### How to triage a late bug
+
+1. **Reproduce and root-cause.** Find the first point where the behaviour diverges from the spec, and confirm the spec says what you think it says.
+2. **Ask whether the RTL must change at all.** Can firmware, a defeature bit or a software rule avoid the bug safely?
+3. **Before tape-out:** make the ECO in the design database, then rerun the regression and the physical checks.
+4. **After tape-out:** if the fix fits in rewiring plus spare cells, plan a metal-only respin and confirm it on samples with a FIB edit; otherwise plan a full respin.
+5. **Run escape analysis.** Name the earlier activity that should have caught the bug, and add the missing scenario, check and coverage item to the plan.
+
+**Checklist before moving on:**
+- [ ] I can rank spec review, RTL simulation, full-chip simulation or emulation, post-silicon and field by cost and delay, and I call the ×10 per stage a rule of thumb.
+- [ ] I can say which masks change for a pre-tape-out ECO, a metal-only respin and a full respin.
+- [ ] I can choose the shift-left activity that would catch a given kind of bug earlier.
+- [ ] I can say who owns the spec, the RTL, the plan, the testbench, the proofs and the sign-off.
+- [ ] I can explain why the boundary value 100 found the comparator bug and a value of 150 would not.
+
+## Push Further
+
+### Expert: Designing for fixability
+
+Teams that expect late bugs design the chip so they can be fixed cheaply:
+- **Spare cells:** unused gates spread across the layout before tape-out. They make metal-only fixes possible, at a small cost in area and leakage power.
+- **Defeature bits:** each one needs its own verification. Both settings of the bit must be tested, and the "off" mode must itself be safe, or the workaround becomes the next bug.
+- **Firmware and microcode patch paths:** they let shipped products change behaviour, but they are also an attack surface and need a security review.
+- **The trade-off** is area, power and verification effort before tape-out against cost and schedule risk after it. Processors and other high-volume parts usually invest more.
+
+Source: industry practice. No standard defines spare-cell or defeature strategy; how much a project adds is project- and tool-dependent.
+
+### Expert: Reading the industry data
+
+The WRG 2022 numbers used on this page come from Harry Foster's published analysis:
+- about a 1:1 mean peak ratio of verification to design engineers across most market segments, and a 5-to-1 ratio "not unusual" in segments such as processors (Part 8);
+- design engineers spending 49% of their time on verification (Part 8);
+- about 24% of IC/ASIC projects achieving first-silicon success, against about 30% historically and the lowest value the study had recorded in twenty years, with "logic or functional flaws" the leading category of flaws contributing to respins (Part 12);
+- design errors as the leading cause of functional flaws, with changing, incorrect and incomplete specifications "a common theme" (Part 12);
+- 980 participants after data cleaning, with a margin of error of ±3.7% at 95% confidence (the study's landing page).
+
+How to read them: the data is self-reported by survey respondents; a mean peak headcount is not the same as total effort; and first-silicon success counts respins for every cause, not only functional bugs. Use the numbers for trends and orders of magnitude, not for a single project's budget.
+
+### Expert: Sign-off is a judgement, not a number
+
+Tape-out sign-off is a review of evidence, not a threshold crossed automatically. A typical review weighs:
+- the reviewed verification plan, and whether every feature has scenarios, checks and coverage;
+- functional and code coverage, with every exclusion reviewed and justified;
+- regression pass rate and stability across seeds;
+- a falling bug-discovery rate;
+- every open bug, with its severity, its workaround and an explicit risk decision;
+- formal results with the assumptions they depend on, and the results of software runs on emulation.
+
+No standard defines sign-off criteria: each project sets them (project-dependent), and how coverage and regression results are collected and merged is tool-dependent. The classic failure is signing off on a number: 100% coverage of an incomplete plan.
+
+### Expert: Shift-left trade-offs
+
+Shifting left has costs of its own:
+- Verifying RTL that is still changing wastes effort. Start with plans and lint, then deepen as each block stabilizes.
+- Formal on blocks is cheap early, but a proof is only as good as its assumptions (F1B).
+- Emulation needs capacity and setup time, FPGA prototypes trade signal visibility for speed, and virtual prototypes let software start before the RTL exists. What each one costs and how much it shows are tool-dependent.
+
+### Interview angles
+
+Answer each one before you look at the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: the tape-out call"
+  question="Tape-out is in six weeks. Functional coverage is 92% and three medium-severity bugs are open. Do you tape out?"
+  options={[
+    { text: "Yes. 92% is high for a chip this size, and medium-severity bugs can wait for the next revision.", correct: false, feedback: "That decides on a number without its context. Which features do the uncovered 8% and the three bugs touch, and is there a workaround for each?" },
+    { text: "It depends: review what the holes and the bugs touch and their workarounds, then accept the risks explicitly.", correct: true, feedback: "That is the staff-level answer: sign-off weighs evidence and risk, including the bug-discovery trend and regression stability. Six weeks also leaves time for targeted tests on the holes that matter." },
+    { text: "No. A responsible team never tapes out with open bugs or with coverage below 100%.", correct: false, feedback: "Sign-off is a reviewed risk decision, not an absolute rule. Projects do tape out with waived coverage holes and understood bugs that have workarounds." },
+    { text: "Run more random seeds for six weeks, then tape out once coverage has reached 100%.", correct: false, feedback: "The last bins are usually rare, so more seeds of the same stimulus plateau. Targeted tests or formal close real holes, and unreachable bins are waived after review." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: ECO or respin?"
+  question="A bug is found on first silicon. How do you decide whether it can be fixed with a metal-only respin?"
+  options={[
+    { text: "Check that the RTL change is small, say fewer than ten lines of code.", correct: false, feedback: "Lines of RTL do not map to layers. One added line can create a register that needs new transistors." },
+    { text: "Check that the bug was first seen in simulation rather than in the lab.", correct: false, feedback: "Where it was seen first does not matter. What matters is which layers the fix changes." },
+    { text: "Check that the fix fits in rewiring plus the spare cells, with no new transistors.", correct: true, feedback: "Right. Confirm the fix on a few samples with a FIB edit first, and check whether firmware or a defeature bit can cover customers in the meantime." },
+    { text: "No check is needed: any bug can be fixed in metal with enough engineering effort.", correct: false, feedback: "Metal and via masks only rewire existing transistors. A fix that needs more logic than the spare cells provide needs a full respin." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: edge case or corner case?"
+  question="What is the difference between an edge case and a corner case?"
+  options={[
+    { text: "They are two names for the same thing: any input at an extreme value.", correct: false, feedback: "They are often used loosely, but interviewers expect the distinction: one limit versus several at once." },
+    { text: "Edge cases happen at clock edges; corner cases happen between clock edges.", correct: false, feedback: "The names refer to the boundaries of the input space, not to clock edges." },
+    { text: "Corner cases are the edge cases that the specification forgot to describe.", correct: false, feedback: "Unspecified behaviour is a separate problem (F1B's sixth question). A corner case combines several limits, each of which may be fully specified." },
+    { text: "An edge case puts one input at its limit; a corner case combines several limits at once.", correct: true, feedback: "Right: a full FIFO is an edge case; a full FIFO, a reset and a read request in the same cycle is a corner case. Corner cases hide the nastiest bugs, because each limit was tested alone and the combination never was." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
 
 <Quiz
   questions={[
     {
-      question: "Under the commonly cited rule of thumb, a bug that RTL simulation could have caught is found in the post-silicon lab instead. Roughly how much more does the fix cost?",
+      question: "One bug could be discovered at any of these points: (a) a customer reports it, (b) block-level RTL simulation, (c) emulation running firmware, (d) spec review. Order them from cheapest to most expensive to fix.",
+      objective: 1,
       answers: [
-        { text: "About the same: it is the same RTL edit", correct: false },
-        { text: "About 2–3× more, for the extra debug time", correct: false },
-        { text: "About 100× or more: orders of magnitude", correct: true },
-        { text: "It can never be fixed", correct: false }
+        { text: "b, d, c, a", correct: false, feedback: "A spec review is the cheapest place to find a bug, because nothing has been built yet. Treating reviews as overhead is a classic mistake." },
+        { text: "d, c, b, a", correct: false, feedback: "Emulation runs the integrated chip with software, after block simulation. Debugging there spans many blocks and long runs." },
+        { text: "d, b, c, a", correct: true, feedback: "Right: ×1, ×10, ×100 and ×10,000 on the rule of thumb. Each stage redoes more finished work." },
+        { text: "d, b, a, c", correct: false, feedback: "A customer report is the most expensive: recalls, replacements, patches and lost trust come on top of the fix." }
       ],
-      explanation: "Each later stage adds roughly an order of magnitude, and post-silicon is two stages after RTL. The edit may be identical, but it now needs masks, wafers and lab time. Post-silicon bugs can be fixed (respin, firmware workaround), just expensively."
+      explanation: "On the commonly cited rule of thumb each later stage costs roughly ten times more: spec review ×1, block RTL ×10, full-chip or emulation ×100, post-silicon ×1,000, field ×10,000."
     },
     {
-      question: "What is a metal-only respin (metal spin)?",
+      question: "On first silicon, a comparator uses 'greater than' where the spec says 'greater than or equal'. The fix is a few gates, and spare cells sit next to the logic. Which production fix is fastest?",
+      objective: 2,
       answers: [
-        { text: "New masks for some metal and via layers only, rewiring spare cells, so held wafers can be finished quickly", correct: true },
-        { text: "New masks for every layer, including the transistors", correct: false },
-        { text: "A firmware update shipped to customers", correct: false },
-        { text: "A pre-tape-out netlist edit that needs no masks", correct: false }
+        { text: "A metal-only respin that wires in the spare cells", correct: true, feedback: "Right. Only some metal and via masks change, and held wafers are finished with them: weeks, not months." },
+        { text: "A full respin, because any change to silicon needs new transistor masks", correct: false, feedback: "That is the misconception. When the fix fits in rewiring plus spare cells, the transistor layers stay as they are." },
+        { text: "Focused ion beam (FIB) edits on the production parts", correct: false, feedback: "A FIB edit rewires a few samples to confirm a fix in the lab. It cannot build production parts." },
+        { text: "A pre-tape-out ECO in the design database", correct: false, feedback: "That is only possible before tape-out. Here the masks already exist." }
       ],
-      explanation: "A metal spin is how a post-silicon ECO is built. It is cheaper and faster than a full respin because the transistor layers are untouched, but it only works when the fix fits in rewiring plus the spare cells."
+      explanation: "A metal-only respin is the post-silicon form of an ECO. It works when the fix fits in rewiring plus the spare cells placed before tape-out."
     },
     {
-      question: "Why is a logic bug found after tape-out far more expensive than a software bug found after release?",
+      question: "Which of these bugs cannot be fixed with a metal-only respin?",
+      objective: 2,
       answers: [
-        { text: "Fabricated logic cannot be patched: changing it needs new masks and wafers, and the schedule slips", correct: true },
-        { text: "Simulator licences cost more than compilers", correct: false },
-        { text: "Any change forces the whole chip to be re-verified from scratch", correct: false },
-        { text: "Hardware bugs are always more severe than software bugs", correct: false }
+        { text: "An enable signal has the wrong polarity", correct: false, feedback: "An inverter from a spare cell, or rewired connections, fixes it in metal." },
+        { text: "A comparator constant is off by one, with spare cells nearby", correct: false, feedback: "A few rewired gates: the textbook metal-only fix." },
+        { text: "A wire between two existing gates is missing", correct: false, feedback: "Adding a wire is exactly what metal and via masks change." },
+        { text: "The fix needs a new pipeline stage of several hundred flip-flops", correct: true, feedback: "Right. That needs new transistors, far beyond the spare cells, so the base layers must change: a full respin." }
       ],
-      explanation: "Silicon is immutable. Software ships a patch; a chip needs a respin (or a workaround in firmware), and the months of delay often cost more than the masks."
+      explanation: "Metal and via masks can only rewire transistors that already exist, including the spare cells. Anything that needs more logic than that needs new base-layer masks."
+    },
+    {
+      question: "Four weeks before tape-out the schedule slips, and a manager proposes stopping regressions and coverage work to save time. Which argument against the proposal is the strongest?",
+      objective: 1,
+      answers: [
+        { text: "An IEEE standard requires 100% coverage before a design may tape out", correct: false, feedback: "No standard sets sign-off criteria; each project decides them. The real argument is economic." },
+        { text: "The bugs those weeks would catch move past tape-out, at about ten times the cost per stage", correct: true, feedback: "Right. Post-silicon fixes sit at ×1,000 or more on the rule of thumb, plus weeks to months of delay. These weeks are the cheapest place left to find a bug." },
+        { text: "Sign-off needs the coverage number, and it can only rise while regressions run", correct: false, feedback: "Sign-off is a judgement about risk, not a number to protect. What matters is the bugs those runs would find." },
+        { text: "A slipping schedule shows the design is unstable, so it needs more tests, not fewer", correct: false, feedback: "The slip may have other causes. The decisive point is where the bugs would otherwise be found, and what that costs." }
+      ],
+      explanation: "Cutting verification does not remove bugs; it moves their discovery to later stages, where the rule of thumb puts each fix at roughly ten times the cost of the stage before."
+    },
+    {
+      question: "All regressions pass and functional coverage is 100%. Which statement is true?",
+      objective: 4,
+      answers: [
+        { text: "The silicon will work, because every planned feature was exercised and checked", correct: false, feedback: "Passing simulation means the checks you wrote passed for the stimulus you ran. It cannot cover a scenario or a check the plan never contained." },
+        { text: "Only timing bugs can remain, because simulation has proven the logic correct", correct: false, feedback: "Simulation samples behaviour; it proves nothing in general. Functional bugs outside the plan can remain, and so can bugs in the checks themselves." },
+        { text: "Every check you wrote passed for the scenarios you planned; anything else is untested", correct: true, feedback: "Right. Spectre failed in silicon and Ariane 501 in reused flight software, because the failing question was never in the plan." },
+        { text: "Only manufacturing defects can remain, because the design itself is now verified", correct: false, feedback: "Manufacturing test is a separate problem. Design bugs outside the plan can still escape." }
+      ],
+      explanation: "Sign-off evidence is only as complete as the plan behind it. That is why escape analysis feeds every late bug back into the plan."
+    },
+    {
+      question: "In the verification lifecycle, which step comes between writing the verification plan and running regressions?",
+      objective: 4,
+      answers: [
+        { text: "Tape-out: sending the layout to the fab so that chips can be tested", correct: false, feedback: "Tape-out comes after sign-off, at the end of the loop." },
+        { text: "Post-silicon validation: running the plan's tests on the first chips", correct: false, feedback: "That needs fabricated chips, which only exist after tape-out." },
+        { text: "Coverage sign-off: agreeing the coverage targets before any test runs", correct: false, feedback: "Sign-off reviews regression and coverage results, so it comes after the regressions run." },
+        { text: "Building the testbench: the stimulus, checks and coverage collection", correct: true, feedback: "Right: spec, plan, testbench, regression, sign-off." }
+      ],
+      explanation: "The lifecycle is spec, verification plan, testbench, regression and sign-off, with two loops: every fix reruns the regression, and every escape updates the plan."
+    },
+    {
+      question: "In the lifecycle on this page, who owns the verification plan, and who fixes the RTL bugs that regressions find?",
+      objective: 4,
+      answers: [
+        { text: "The DV lead owns the plan; design engineers fix the RTL", correct: true, feedback: "Right. DV owns the plan, the testbench and the regressions; design owns the RTL and its fixes, so the checks and the design are not written from one person's reading of the spec." },
+        { text: "The design engineer who wrote the RTL owns the plan and the fixes", correct: false, feedback: "Designers do check their own blocks, but a plan written only by the RTL author tends to test the author's own reading of the spec." },
+        { text: "The architect owns the plan; DV engineers fix the RTL", correct: false, feedback: "The architect owns the spec. DV engineers report bugs; design engineers fix the RTL." },
+        { text: "Post-silicon validation engineers own the plan", correct: false, feedback: "They test real chips after tape-out. Their escapes feed back into the plan, but the DV lead owns it." }
+      ],
+      explanation: "Spec: architects. Plan, testbench and regressions: DV. RTL and its fixes: design. Proofs: formal engineers. Software before tape-out: emulation engineers. Lab: validation engineers. Sign-off: the DV lead with the project leads."
+    },
+    {
+      question: "Which statement about verification effort matches the 2022 Wilson Research Group data on this page?",
+      objective: 4,
+      answers: [
+        { text: "An IEEE standard fixes the ratio of verification to design engineers at one to one", correct: false, feedback: "No standard sets staffing. About 1:1 is survey data, and it varies by market segment." },
+        { text: "About one verification engineer per designer, and designers spent 49% of their time verifying", correct: true, feedback: "Right (Foster, Part 8). The ratio is mean peak headcount, and 5-to-1 is not unusual for processors." },
+        { text: "About one verification engineer for every ten designers, since verification is a final step", correct: false, feedback: "The study found about a 1:1 mean peak ratio across most segments. Verification runs through the whole project." },
+        { text: "Design engineers spent almost no time on verification; the DV team did all of it", correct: false, feedback: "In the same study, design engineers spent 49% of their time on verification." }
+      ],
+      explanation: "WRG 2022, Part 8: about 1:1 mean peak verification-to-design headcount across most market segments, 5-to-1 not unusual for processors, and 49% of design engineers' time spent on verification. It is self-reported survey data, so read it as a trend, not a budget."
+    },
+    {
+      question: "Why did the Pentium FDIV table error escape before release, and which activity would have caught it early?",
+      objective: 3,
+      answers: [
+        { text: "It was a manufacturing defect in some chips, so no pre-silicon check could have seen it", correct: false, feedback: "It was a design error in the table contents, present in every chip." },
+        { text: "The divider was never simulated; any directed divide test would have caught it", correct: false, feedback: "The divider was exercised. The problem was that ordinary divides almost never reached the bad entries." },
+        { text: "A timing violation at high clock rates; static timing analysis would have caught it", correct: false, feedback: "The table held wrong values. The divider gave wrong results at any clock speed." },
+        { text: "Random divides rarely hit the bad entries; an exhaustive or formal table check would have", correct: true, feedback: "Right. Intel estimated about 1 in 9 billion random divides hit the bad entries, so more random tests were the wrong tool." }
+      ],
+      explanation: "Shift left is about choosing the right activity as well as running it early: a table that feeds every division deserves an exhaustive or formal check when the block is built."
     },
     {
       question: "Which activity is an example of shifting verification left?",
+      objective: 3,
       answers: [
-        { text: "Writing assertions and running formal checks on a block while its RTL is being written", correct: true },
-        { text: "Adding more lab boards after first silicon", correct: false },
-        { text: "Waiting for full-chip integration before writing any tests", correct: false },
-        { text: "Relying on customer reports to find corner cases", correct: false }
+        { text: "Adding more lab boards after first silicon, so that validation finishes sooner", correct: false, feedback: "That adds post-silicon capacity: it is the far right of the timeline." },
+        { text: "Waiting for full-chip integration, so that tests are written only once", correct: false, feedback: "That is the late-discovery pattern shift left replaces." },
+        { text: "Writing assertions and running formal on a block while its RTL is written", correct: true, feedback: "Right: the check runs at block level, as early as it can." },
+        { text: "Shipping early and relying on customer reports to find the corner cases", correct: false, feedback: "That is the most expensive stage of all." }
       ],
-      explanation: "Shift left means moving checks earlier, where the rule of thumb says each bug is cheapest to fix."
+      explanation: "Shift left moves planning, lint, block simulation, formal and emulation earlier, where the rule of thumb says each bug is cheapest to fix."
     }
   ]}
 />
 
-## Interview Questions
+### Estimation kata: four bugs, one ranking
 
-<Card className="mt-8">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">Why is a "respin" so feared in the semiconductor industry?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>A respin involves generating new photomasks and fabricating new wafers. This costs millions of dollars in direct tooling costs, but the bigger loss is <strong>Time-to-Market</strong>. Missing a launch window (e.g., for Christmas sales or a smartphone cycle) can cost a company its entire market share for that generation.</p>
-      </div>
-    </details>
+For each scenario, write down the fix you would choose, the stage where the bug was found, its rule-of-thumb cost and the likely delay. Then rank the five stages (spec review, RTL simulation, full-chip simulation or emulation, post-silicon, field) by cost and by delay.
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is the difference between a "corner case" and an "edge case"?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>While often used interchangeably, an <strong>edge case</strong> typically refers to a parameter at its maximum or minimum value (e.g., full FIFO). A <strong>corner case</strong> involves multiple parameters hitting their boundaries simultaneously (e.g., FIFO full AND reset asserted AND read request arriving). Corner cases are where the nastiest bugs hide.</p>
-      </div>
-    </details>
+1. During spec review, the DV lead notices that the spec never says what a FIFO does when written while full.
+2. Three weeks before tape-out, full-chip simulation finds that an interrupt is cleared one cycle too early. The RTL fix is two lines.
+3. On first silicon, a status bit is inverted. An inverter is needed, and spare cells sit next to the register.
+4. On first silicon, a cache needs one more way of storage to meet its performance target.
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is a verification plan and why is it created before writing any tests?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>A <strong>verification plan</strong> (or test plan) is a document that maps every requirement from the design specification to one or more verification strategies (directed tests, constrained random scenarios, assertions, formal properties). It is created before coding because it forces the team to think about <strong>what</strong> needs to be verified, <strong>how</strong> to measure completeness (coverage metrics), and <strong>who</strong> owns each area. Without a plan, you're testing randomly without knowing when you're done.</p>
-      </div>
-    </details>
+<details>
+<summary>Worked solution</summary>
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is "coverage closure" and why is it the hardest part of verification?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p><strong>Coverage closure</strong> is the process of reaching 100% of all defined functional coverage goals and achieving acceptable code coverage thresholds. It's the hardest part because the last few percent of coverage often require highly targeted stimulus for rare scenarios. You may need to write directed sequences, add new constraints, or even discover that the feature isn't implemented. Coverage closure is the gate that determines whether a design can tape out.</p>
-      </div>
-    </details>
+| # | Stage found | Fix | Rule-of-thumb cost | Delay |
+|---|---|---|---|---|
+| 1 | Spec review | Clarify the spec (drop the write, or flag an error) and add a "write when full" row to the plan | ×1 | Hours |
+| 2 | Full-chip simulation | Pre-tape-out ECO: edit the RTL, rerun the regression and the physical checks | ×100 | Days to weeks |
+| 3 | Post-silicon | Metal-only respin using a spare inverter, confirmed first with a FIB edit; a firmware workaround can invert the bit in software meanwhile | ×1,000 | Weeks |
+| 4 | Post-silicon | Full respin: more storage means new transistors | ×1,000 or more | Months |
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">Explain the difference between an ECO and a full respin.</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>An <strong>ECO (engineering change order)</strong> is a small, targeted edit to the netlist and layout. Before tape-out it changes only the design database. After tape-out it is built as a <strong>metal-only respin</strong>: new masks for some metal and via layers, rewiring spare cells that were placed in the design for this purpose. That is faster (weeks) and much cheaper than a <strong>full respin</strong>, which needs new masks for the transistor layers too and takes months. Some bugs are "ECO-fixable" (rewiring, small logic changes within the spare cells); others are not (missing features, architectural flaws).</p>
-      </div>
-    </details>
-  </CardContent>
-</Card>
+**Ranking by cost:** spec review, RTL simulation, full-chip simulation or emulation, post-silicon, field. **By delay** the order is the same, except that a field bug with a workaround can be contained quickly while its real fix waits for new silicon.
+
+**Escape analysis for scenario 2:** the plan had no check on when the interrupt clears. Add a scenario and an assertion for it at block level, where it would have cost ×10.
+
+</details>
+
+The flashcards below repeat the key facts: the cost ladder, the three kinds of fix, the lifecycle and its owners, and the industry data.
 
 ## References & Next Topics
-- IEEE 1800-2023 (SystemVerilog standard — the language we'll use throughout)
-- Siemens EDA and Wilson Research Group, [2022 IC/ASIC Functional Verification Trend Report](https://verificationacademy.com/topics/planning-measurement-and-analysis/wrg-industry-data-and-trends/2022-siemens-eda-and-wilson-research-group-ic-asic-functional-verification-trend-report/) (verification and design staffing, time spent on verification)
-- Next: [The Verification Mindset](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index)
+
+- H. Foster, "Part 8: The 2022 Wilson Research Group Functional Verification Study", Verification Horizons blog, Siemens EDA, 12 December 2022: verification-to-design headcount and the 49% of design engineers' time. [Part 8](https://blogs.sw.siemens.com/verificationhorizons/2022/12/12/part-8-the-2022-wilson-research-group-functional-verification-study/)
+- H. Foster, "Part 12: The 2022 Wilson Research Group Functional Verification Study", 9 January 2023: first-silicon success and the flaws behind respins. [Part 12](https://blogs.sw.siemens.com/verificationhorizons/2023/01/09/part-12-the-2022-wilson-research-group-functional-verification-study/)
+- Siemens EDA and Wilson Research Group, [2022 IC/ASIC Functional Verification Trend Report](https://verificationacademy.com/topics/planning-measurement-and-analysis/wrg-industry-data-and-trends/2022-siemens-eda-and-wilson-research-group-ic-asic-functional-verification-trend-report/): sample size and margin of error.
+- The incident facts come from the sources listed on each Hall of Shame card.
+- The ×10-per-stage multipliers are a commonly cited rule of thumb, not measured data.
+
+**Related:**
+- [F1B: The Verification Mindset](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index): plans, methods and coverage.
+- [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): sign-off strategy at chip level.
+- [E-EMU-1: Emulation-Aware Verification](/curriculum/T4_Expert/E-EMU-1_Emulation_Aware_Verification/index): running software before tape-out.
+- [E-INT-1: Integrating UVM with Formal Verification](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index): formal and simulation together.
+
+<NextLesson />

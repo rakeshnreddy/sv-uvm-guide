@@ -2,51 +2,76 @@
   {
     "id": "f3c-1",
     "question": "What is a delta cycle?",
-    "answer": "A delta cycle is one more pass of the scheduler at the same simulation time: when a later region (for example NBA) produces events, they move back to Active and execution continues without advancing time."
+    "answer": "One more pass of the scheduler at the same simulation time: when an update in a later region, such as NBA, wakes a process, the scheduler returns to Active without advancing time (§4.5). IEEE 1800-2023 never uses the word; it calls this an iteration of the §4.5 loop, and \"delta cycle\" is industry usage."
   },
   {
     "id": "f3c-2",
-    "question": "What causes a simulation race condition?",
-    "answer": "A race condition occurs when the simulation output depends on the arbitrary evaluation order of concurrent processes. The classic example is two always blocks communicating via a variable updated with a blocking assignment (=) at the same clock edge."
+    "question": "What is a race condition?",
+    "answer": "A result that depends on the order in which the simulator runs processes woken in the same time slot, an order IEEE 1800-2023 leaves open (§4.7). In a read-write race one process writes a variable with `=` while another reads it; in a write-write race two processes write the same variable."
   },
   {
     "id": "f3c-3",
-    "question": "How do non-blocking assignments (<=) prevent race conditions in sequential logic?",
-    "answer": "They split the update process into two phases: RHS evaluation happens immediately in the Active region, but the LHS update is deferred to the NBA region. This ensures all concurrent sequential blocks read the 'old' values before any 'new' values are written."
+    "question": "How do nonblocking assignments (`<=`) prevent races between flops?",
+    "answer": "Each `<=` reads its right side in Active and defers the write to the NBA region (§10.4.2). Every flop woken by the edge therefore reads the old values before any flop output changes, whatever order the flops run in."
   },
   {
     "id": "f3c-4",
-    "question": "What happens if you accidentally use a blocking assignment (=) in an always_ff block?",
-    "answer": "If another process triggered by the same edge reads that variable, the result depends on which process the simulator runs first (IEEE 1800-2023 §4.7) — a race. Real flops all sample before any of them update, which only <= reproduces."
+    "question": "What happens if you use a blocking assignment (`=`) in an `always_ff` block?",
+    "answer": "If another process woken by the same edge reads that variable, the result depends on which process the simulator runs first (§4.7): a race. Real flops all sample before any of them updates, which only `<=` reproduces."
   },
   {
     "id": "f3c-5",
-    "question": "Picture the time-slot ladder. Where does q <= d read d, and where does it write q?",
-    "answer": "It reads d (evaluates the right side) in Active and writes q in the NBA region, after every process woken in Active has run (§10.4.2)."
+    "question": "Picture the time-slot ladder. Where does `q <= d` read `d`, and where does it write `q`?",
+    "answer": "It reads `d` (evaluates the right side) in Active, and writes `q` in the NBA region, after every process woken in Active has run (§10.4.2)."
   },
   {
     "id": "f3c-6",
-    "question": "A testbench drives vif.din = 7 right after @(posedge clk) and the DUT flop does q <= din. Why is this a race even though the DUT is correct?",
-    "answer": "The testbench write and the flop's read of din both happen in Active on the same edge, and their order is unspecified. If the testbench runs first, the flop captures 7 instead of the pre-edge value."
+    "question": "A testbench drives `vif.din = 7` right after `@(posedge clk)`, and the DUT flop does `q <= din`. Why is this a race even though the DUT is correct?",
+    "answer": "The testbench's write and the flop's read of `din` both happen in Active on the same edge, in an unspecified order (§4.7). If the testbench runs first, the flop captures 7 instead of the pre-edge value; drive with `<=`, on the opposite edge, or through a clocking block instead."
   },
   {
     "id": "f3c-7",
-    "question": "Where does a zero-skew clocking-block drive (vif.cb.din <= v) land, and why does that prevent the race?",
-    "answer": "In the Re-NBA region of the same time step (§14.16) — after Active reads and design NBA updates — so design flops have already captured the old value."
+    "question": "Where does a zero-skew clocking-block drive (`vif.cb.din <= v`) land, and why does that prevent the race?",
+    "answer": "In the Re-NBA region of the same time slot (§14.16), after the Active reads and the design's NBA updates, so the design's flops have already captured the old value."
   },
   {
     "id": "f3c-8",
-    "question": "What value does a clocking-block input with the default #1step skew return?",
-    "answer": "The value sampled in the Preponed region, i.e. before anything in the current time slot changed (§14.13). #1step is not a 1 ns delay."
+    "question": "What value does a clocking-block input with the default `#1step` skew return?",
+    "answer": "The value sampled in the Preponed region, before anything in the current time slot changed (§14.13). `#1step` is not a 1 ns delay."
   },
   {
     "id": "f3c-9",
-    "question": "Why is adding #0 not a real fix for a race?",
-    "answer": "#0 only moves the process to the Inactive region. A second #0 process races it again there; the ordering assumption is hidden, not removed."
+    "question": "Why is adding `#0` not a real fix for a race?",
+    "answer": "`#0` only moves the rest of the process to the Inactive region of the same time slot (§4.4.2.3). A second `#0` process races it there, and the ordering assumption is hidden, not removed."
   },
   {
     "id": "f3c-10",
-    "question": "Inside one block: q <= d; $display(q); $strobe(q); — which prints the new value?",
-    "answer": "Only $strobe. $display runs in Active before the NBA update; $strobe prints in Postponed after the slot settles (§21.2.2)."
+    "question": "Inside one block: `q <= d; $display(q); $strobe(q);` Which print shows the new value?",
+    "answer": "Only `$strobe`. `$display` runs in Active, before the NBA update; `$strobe` prints at the end of the time slot, after every update (§21.2.2)."
+  },
+  {
+    "id": "f3c-11",
+    "question": "A testbench reads a DUT output right after `@(posedge clk)`. When is that read deterministic?",
+    "answer": "When every write on that signal's path on this edge goes through NBA, for example `q <= d` followed by `assign out = q`: the read runs in Active and sees the old value. Any blocking write on the path makes the read a race; a clocking-block input avoids the question."
+  },
+  {
+    "id": "f3c-12",
+    "question": "Two processes write the same variable with `<=` on the same clock edge. Race or not?",
+    "answer": "A race. NBAs are performed in execution order (§4.6), but the order of the two processes is free (§4.7), so either write can be last; §10.4.2 calls the final value indeterminate. Keep one writer per variable: with `always_ff`, a second writer is illegal (§9.2.2.4)."
+  },
+  {
+    "id": "f3c-13",
+    "question": "What does IEEE 1800-2023 §4.8 show with a continuous assignment `assign y = a;` and a process that runs `a = 0; $display(y);`?",
+    "answer": "That a race needs no clock: after `a = 0`, the simulator may update `y` first or run the `$display` first, so printing either value is correct (§4.8). Use `$strobe` for the settled value, or read at a later, defined point."
+  },
+  {
+    "id": "f3c-14",
+    "question": "Why does driving DUT inputs on the opposite clock edge avoid the testbench race, and what does it cost?",
+    "answer": "A write at the falling edge happens in a different time slot from the rising-edge reads, so no process order can make the flop see it early. It leaves inputs only half a cycle to settle in gate-level simulation, and it breaks for designs that also use the falling edge or several clocks."
+  },
+  {
+    "id": "f3c-15",
+    "question": "What does a program block buy you against races, and what does it not?",
+    "answer": "Its code runs in the Reactive region set, after the design's events of the slot, including clocks driven by `<=` (§24.3.1, §24.4). Program threads still race each other (§4.7), and the whole run ends once every program `initial` has finished (§24.3)."
   }
 ]

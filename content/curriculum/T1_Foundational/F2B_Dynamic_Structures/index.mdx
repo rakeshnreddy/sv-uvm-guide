@@ -1,29 +1,58 @@
 ---
 title: "F2B: Dynamic Data Structures"
-description: "Manipulate dynamic arrays, queues, and associative arrays with an IEEE 1800-2023 guided workflow."
-flashcards: "F2_Data_Types"
+description: "Choose dynamic arrays, queues and associative arrays for testbench data, predict the result of every resize, push, pop, lookup and array method, and build an expected-transaction tracker."
+flashcards: "F2B_Dynamic_Structures"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
 ---
 
-import { DynamicStructureVisualizer, PacketSorterGame, QueueOperationLab, SystemVerilog3DVisualizer } from '@/components/curriculum/f2';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/Card';
-import ArrayMethodExplorer from '@/components/visuals/ArrayMethodExplorer';
-
 ## Quick Take
-- **What it is:** SystemVerilog collections that resize at run time (`dynamic array`), grow and shrink at either end (`queue`), or map sparse keys (`associative array`).
-- **Why it matters:** Choosing the wrong structure wastes sim time, hides ordering bugs, or burns memory. Most real bugs here are silent: a wiped array, a dropped queue entry, or a default value read from a missing key.
-- **The Analogy:** A dynamic array is a tray you replace (`new[N]`) rather than stretch. A queue is a conveyor belt, optionally with a hard end stop. An associative array is a drawer cabinet that is always sorted by label.
-- **The Standard:** IEEE 1800-2023 §7.4–§7.10 (arrays) and §7.12 (array manipulation methods).
+
+- **What it is:** Three kinds of **unpacked array** whose size changes while the simulation runs (IEEE 1800-2023 §7.5, §7.10, §7.8). A **dynamic array** (`int a[]`) is sized by `new[N]` or by assigning a whole array to it. A **queue** (`int q[$]`) grows and shrinks at either end, and a bound (`int q[$:7]`) caps its size. An **associative array** (`int aa[string]`) holds an entry only for each key you write, and keeps the entries in key order.
+- **Why it matters:** Testbench data rarely has a size you know when you compile: stimulus lists, requests still waiting for a response, sparse memories, results by ID. The wrong container wastes memory, hides ordering bugs or turns every lookup into a search. The bugs are quiet: a wiped array prints nothing, and a dropped queue entry or a missing-key read prints one warning that is easy to miss in a long log.
+- **The Analogy:** A dynamic array is a tray of numbered slots that you swap for a new tray (`new[N]`) instead of stretching it. A queue is a conveyor belt, optionally with an end stop. An associative array is a filing cabinet with a drawer only for each label you have used, kept in label order. *Where it breaks:* the end stop holds nothing back. Whatever does not fit falls off, and after `push_front` the item that falls off is the old last one, not the new one. The cabinet files by character code, so `"Gamma"` comes before `"alpha"`, and class-handle labels have no meaningful order at all.
+
+**You will be able to:**
+1. **Choose** a fixed-size array, dynamic array, queue or associative array for a testbench job (stimulus list, FIFO model, sparse memory, expected-by-ID table) and justify the choice.
+2. **Predict** the contents, size and warnings after `new[N]` with and without `(old)`, queue pushes, pops, inserts, deletes and slices, a write past a `[$:N]` bound, and associative `exists`, `delete`, `first` and `next`.
+3. **Predict** the return type and value of the array methods (`find*`, `min`/`max`, `unique`, `sort`, `sum() with`, `item.index`), and **choose** by-value or `ref` passing for an array argument.
+4. **Write** a sparse memory model and an expected-transaction tracker (an associative array of queues) with an end-of-test leftover check.
+5. **Debug** the silent bugs: a wiped dynamic array, a missing-key read, a byte sum that wraps, and deleting while iterating.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
-### Choose the Right Structure
+
+This section builds the picture in layers. The **core path** runs from choosing a structure to the recap: each container with its rules, a lab where you predict before you see, and the mistakes everyone makes. After the recap, **practitioner depth** covers array query functions, passing arrays to tasks and functions, and iterating and storing safely.
+
+> [!NOTE]
+> **Reading the code.** The examples use a few constructs that later lessons teach in full. `initial` runs once at time 0 and `final` runs once when the simulation ends ([F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index)). `foreach (a[i])` visits every index of `a` ([flow control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/flow-control)). `function automatic` and `task automatic` are helpers whose local variables are fresh on every call ([tasks and functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions)). `$error` prints an error message and lets the simulation continue (§20.10).
+
+### Choose the right structure
+
+Every container answers one question: how will the testbench find an element again? By a position fixed when you compile, by a position fixed at run time, by arrival order, or by a key. A **fixed-size array** covers the first case and belongs to [F2A](/curriculum/T1_Foundational/F2A_Core_Data_Types/index), together with packed and unpacked dimensions. This lesson covers the three kinds whose size changes at run time.
 
 <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,220px),1fr))]">
   <Card className="h-full bg-background">
     <CardHeader>
-      <CardTitle className="text-base">Dynamic Array (§7.5)</CardTitle>
+      <CardTitle className="text-base">Fixed-size array (F2A)</CardTitle>
     </CardHeader>
     <CardContent className="text-sm text-muted-foreground space-y-2">
-      <p>Sized at run time with `new[N]`. Plain `new[N]` discards the old contents; `new[N](arr)` copies them and pads with the default. There is no `push_back`, no `pop`, and no hidden capacity.</p>
+      <p>The size is a constant you know when you compile: `int lane_err [4];`. Nothing to allocate and nothing to resize.</p>
+      <p>Use it for register files, lane counts and lookup tables whose size never changes.</p>
+    </CardContent>
+  </Card>
+  <Card className="h-full bg-background">
+    <CardHeader>
+      <CardTitle className="text-base">Dynamic array (§7.5)</CardTitle>
+    </CardHeader>
+    <CardContent className="text-sm text-muted-foreground space-y-2">
+      <p>Sized at run time with `new[N]`. Plain `new[N]` discards the old contents; `new[N](arr)` copies them and pads with the default. Assigning a whole array also resizes it. There is no `push_back`, no `pop`, and no hidden capacity.</p>
       <p>Indexed access is commonly constant-time; resize cost and storage strategy are simulator implementation choices.</p>
     </CardContent>
   </Card>
@@ -32,70 +61,414 @@ import ArrayMethodExplorer from '@/components/visuals/ArrayMethodExplorer';
       <CardTitle className="text-base">Queue (§7.10)</CardTitle>
     </CardHeader>
     <CardContent className="text-sm text-muted-foreground space-y-2">
-      <p>FIFO or LIFO with `push_front/back` and `pop_front/back`. A bound `[$:N]` caps the size at N+1 elements: anything pushed past it is discarded with a warning, not blocked.</p>
+      <p>FIFO or LIFO with `push_front`, `push_back`, `pop_front` and `pop_back`. A bound `[$:N]` caps the size at N+1 items. After any write, whatever sits past index N is discarded with a warning: the new item after `push_back`, the old last item after `push_front` or `insert`. Nothing blocks.</p>
       <p>The LRM describes end operations and element access as constant-time. Middle `insert()` and `delete(i)` carry no such promise.</p>
     </CardContent>
   </Card>
   <Card className="h-full bg-background">
     <CardHeader>
-      <CardTitle className="text-base">Associative Array (§7.8)</CardTitle>
+      <CardTitle className="text-base">Associative array (§7.8)</CardTitle>
     </CardHeader>
     <CardContent className="text-sm text-muted-foreground space-y-2">
-      <p>Sparse map keyed by integers, strings, or enums. Entries exist only once written, and iteration always follows index order: numeric, or character-code order for strings.</p>
+      <p>A sparse map from a key (an integer, a string, a class handle or another type) to a value. An entry exists only once you write it. `foreach`, `first()` and `next()` follow key order: numeric for integral keys, character-code order for strings. Class-handle keys have a deterministic but arbitrary order.</p>
       <p>The IEEE standard does not prescribe hashing, a particular complexity, or a backing structure.</p>
     </CardContent>
   </Card>
 </div>
 
-### Decision Matrix: Which Structure For What?
+Ask three questions, in this order. The first yes picks the container.
 
-| Scenario | Best Choice | Why | Avoid |
-|----------|-------------|-----|-------|
-| Scoreboard tracking outstanding TXNs by ID | **Associative array** (keyed by ID) | Sparse lookup by ID, `exists()` checks, explicit cleanup with `delete(id)` | Dynamic array (wastes memory for sparse IDs) |
-| Driver stimulus sequence of packets | **Queue** | Preserves arrival order, push/pop at ends | Associative array (ordered by key, not by arrival) |
-| Per-lane results, lane count read from a plusarg | **Dynamic array** | `new[n_lanes]` once, then write any index in any order | Queue (writing past `size()` is an invalid index) |
-| Monitor collecting variable-length bursts | **Queue** | Unknown length, `push_back` grows it by one | Dynamic array (no `push_back`; every resize is `new[n+1](arr)`) |
-| Protocol field lookup table | **Associative array** (keyed by enum/string) | Self-documenting, sparse | Queue (linear search for every lookup) |
+<ArchitectureDiagram
+  title="Which container? Three questions, asked in order"
+  caption="Start at the top; the first yes picks the container. When a job has two parts, combine containers: an associative array of queues finds an ID by key and keeps arrival order inside each ID."
+  cellWidth={200}
+  gapY={44}
+  legend={false}
+  nodes={[
+    { id: "q1", label: "Count fixed at compile?", sublabel: "4 lanes, 16 registers", col: 0, row: 0 },
+    { id: "fixed", label: "fixed-size array", sublabel: "int lane_err [4]   (F2A)", col: 1, row: 0 },
+    { id: "q2", label: "Key sparse or not 0..N-1?", sublabel: "an address, an ID, a name", col: 0, row: 1 },
+    { id: "assoc", label: "associative array", sublabel: "logic [31:0] mem [bit [31:0]]", col: 1, row: 1 },
+    { id: "q3", label: "Used in arrival order?", sublabel: "push at one end, pop at the other", col: 0, row: 2 },
+    { id: "queue", label: "queue", sublabel: "bit [31:0] stim_q [$]", col: 1, row: 2 },
+    { id: "dyn", label: "dynamic array", sublabel: "int lane_errs [] = new[n_lanes]", col: 0, row: 3 }
+  ]}
+  edges={[
+    { from: "q1", to: "fixed", style: "causal", label: "yes" },
+    { from: "q1", to: "q2", style: "causal", label: "no" },
+    { from: "q2", to: "assoc", style: "causal", label: "yes" },
+    { from: "q2", to: "q3", style: "causal", label: "no" },
+    { from: "q3", to: "queue", style: "causal", label: "yes" },
+    { from: "q3", to: "dyn", style: "causal", label: "no" }
+  ]}
+/>
 
-### Run the Containers Yourself
+The same choices as testbench jobs:
 
-Drive each structure with real operations. Every button is the exact statement it runs, and the strip shows the result. Try the operations that surprise people most: `new[N]` on an array that already holds data, `push_back` on a dynamic array, `push_front` on a full bounded queue, and a read of a missing key. Each of these asks for your prediction first.
+| Testbench job | Best choice | Why | Avoid |
+|---|---|---|---|
+| Register file, or a lane count fixed at compile time | **Fixed-size array** `int lane_err [4]` | No allocation; the size is checked when you compile | A dynamic array, which adds a `new[]` for nothing |
+| Per-lane results, lane count read at run time | **Dynamic array**, `new[n_lanes]` once | Every index exists at once, so you can write lanes in any order | A queue: a write past `q[$+1]` is ignored, so you must fill it in order |
+| Stimulus list, monitor output, a burst of unknown length | **Queue** `[$]` | Keeps arrival order; `push_back` and `pop_front` | A dynamic array: no `push_back`, and growing means `new[n+1](arr)` each time |
+| FIFO of fixed depth in a model | **Bounded queue** `[$:DEPTH-1]` plus your own `size()` check | The depth is part of the declaration | Trusting the bound to apply backpressure: it discards |
+| Expected data by transaction ID, one outstanding per ID | **Associative array** `exp[int]` | Keyed lookup, `exists()`, cleanup with `delete(id)` | A queue searched with `find_first_index`: a linear scan per lookup |
+| Several outstanding per ID, in order within each ID | **Associative array of queues** `exp_by_id[int][$]` | The key finds the ID; the queue keeps its order | One entry per ID: the second request overwrites the first |
+| Memory model over a 32-bit address space | **Associative array** `mem[bit [31:0]]` | Only written addresses use memory | A dynamic or fixed array with 2³² entries |
+| Lookup table by name | **Associative array** with an enum index, or `[string]` | Self-documenting keys | A string key where an enum would do: a mistyped string is just another key |
+
+Three choices that look right and are not:
+
+- **A queue used as a lookup table.** `find_first_index` scans the queue on every call, so a checker that searches per response gets slower as the queue grows. Key the data by ID instead.
+- **A string key where an enum would do.** A mistyped string is a different key: a write creates a new entry and a read returns the default with a warning. With an enum index type (`int count[state_e]`), a mistyped name does not compile.
+- **A queue shared by two threads.** A queue never blocks, so you write the waiting yourself. A mailbox blocks `get()` for you, and a bounded mailbox also blocks a producer when it is full ([I-SV-5: mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes)).
+
+### Run the containers yourself
+
+Drive each structure with real operations. Every button is the exact statement it runs, and the strip shows the result. Before you start, commit to three predictions: what `new[6]` leaves in a `logic [7:0]` array that holds `'{0, 10, 20, 30}`, what a second `push_back(5)` does to `int q[$:3] = '{10, 20, 30}` once the first one has filled it, and in which order `first()` and `foreach` visit the keys `"beta"`, `"alpha"` and `"Gamma"`. The lab asks for your prediction before each of these.
 
 <DynamicStructureVisualizer />
 
 What the lab should have taught you:
 
-- `arr = new[N]` is a fresh array: every element restarts at its type's default, which is `x` for 4-state `logic` and `0` for 2-state `int` (§7.5.1, Table 7-1). Only `arr = new[N](arr)` keeps the old values.
-- An invalid index never stops the simulation. A read returns the default value; a write does nothing. Either may warn (§7.4.5).
-- Associative arrays do not remember insertion order. `first()`, `next()` and `foreach` follow index order, and `"Gamma"` comes before `"alpha"` because uppercase letters have smaller character codes (§7.8.2).
-- Reading a missing key returns the default with a warning and does **not** create the entry; `exists()` asks without warning (§7.8.6, §7.9.3).
+- `arr = new[N]` is a fresh array. Every element restarts at its type's default from Table 6-7 (§6.8): `x` for 4-state `logic`, `0` for 2-state `int` (§7.5.1). Of the `new[]` forms, only `arr = new[N](arr)` keeps the old values. `push_back` on a dynamic array does not compile: it is a queue method.
+- An invalid index never stops the simulation, but the warning rules differ by kind. Fixed-size and dynamic arrays: a read returns the value Table 7-1 lists for a nonexistent element, a write does nothing, and either *may* warn (§7.4.5). Queues: a write outside `0` to `$+1` is ignored and *shall* warn, while a write to `q[$+1]` appends (§7.10.1). Associative arrays: reading a missing key *shall* warn, unless the array declares a default (§7.8.6, §7.9.11).
+- A bounded queue never blocks. A `push_back` past the bound behaves as if the item were written, and then the item is discarded with a required warning (§7.10.5).
+- Associative arrays do not remember insertion order. `first()`, `next()` and `foreach` follow index order, and `"Gamma"` comes before `"alpha"` because uppercase letters have smaller character codes (§7.8.2). Switch the index type to `int` and the keys come back in signed numeric order: `-5, 3, 10` (§7.8.4).
+- Reading a missing key returns the default with a warning and does **not** create the entry. `exists()` asks without a warning (§7.8.6, §7.9.3).
 
-### Bounded Queues: What Gets Thrown Away?
+**Table 7-1** is the LRM's list of what a read of a nonexistent element returns: `'x` for 4-state integral types, `'0` for 2-state integral types, `null` for class handles and `""` for strings (§7.4.5). This page calls it the *missing-element value*.
+
+### Dynamic arrays: size them, copy them, never stretch them
+
+A **dynamic array** is an unpacked array whose size you set at run time (§7.5). You declare it with empty brackets, `int a[];`, and until you size it, it has zero elements. A write never grows it. These are the operations that matter:
+
+| Statement | Effect | Clause |
+|---|---|---|
+| `a = new[N];` | N fresh elements at the type default (`x` for `logic`, `0` for `int`, `null` for a class handle); old contents discarded | §7.5.1, Table 6-7 |
+| `a = new[N](src);` | Copies `src`, truncated or padded with defaults to N elements. `a = new[N](a)` is the resize that keeps the data | §7.5.1 |
+| `a = q;` or `a = {a, x};` | Assigning a whole array value (dynamic, queue or fixed-size, with an equivalent element type) resizes `a` to the source | §7.6, §10.10 |
+| `a.size()` | The number of elements; there is no separate capacity | §7.5.2 |
+| `a.delete();` | Empties the array: `size()` becomes 0 | §7.5.3 |
+| `a[i] = v;` with `i` outside `0` to `a.size()-1` | Ignored (a warning is allowed); the array does not grow | §7.4.5 |
+
+Two later constructs also resize a dynamic array: `randomize()` with a size constraint (§18.4, taught in [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index)), and a streaming unpack into a dynamic target (§11.4.14.4, in [F2A: operators and expressions](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions)). An associative array can never be assigned to a dynamic array (§7.9.9).
+
+```systemverilog
+// compile
+module tb_top;
+  logic [7:0] buffer [];  // 4-state elements: new slots start as x
+  int         lens   [];  // 2-state elements: new slots start as 0
+
+  initial begin
+    buffer = new[4];
+    foreach (buffer[i]) buffer[i] = i * 10;
+    $display("new[4] + writes : %p", buffer);
+    buffer = new[6](buffer);  // copy, then pad: keeps the data
+    $display("new[6](buffer)  : %p", buffer);
+    buffer = new[2](buffer);  // copy, then truncate
+    $display("new[2](buffer)  : %p", buffer);
+    buffer = new[3];          // a fresh array: the old data is gone
+    $display("new[3]          : %p", buffer);
+    lens = {3, 1, 4};         // assignment resizes the target (§7.6)
+    lens = {lens, 5};         // append by assigning a new whole value
+    $display("lens            : %p size=%0d", lens, lens.size());
+    lens.delete();
+    $display("after delete()  : size=%0d", lens.size());
+  end
+endmodule
+```
+
+**Expected output** (illustrative, not from a simulator run; the spacing inside `%p` output is implementation-dependent, §21.2.1.6):
+
+```text
+new[4] + writes : '{0, 10, 20, 30}
+new[6](buffer)  : '{0, 10, 20, 30, x, x}
+new[2](buffer)  : '{0, 10}
+new[3]          : '{x, x, x}
+lens            : '{3, 1, 4, 5} size=4
+after delete()  : size=0
+```
+
+Each unpacked dimension can be dynamic. In `int rows [][];` each row is sized on its own: `rows = new[3];` creates three empty rows, then `rows[0] = new[4];` sizes row 0 (§7.5.1). If the elements are class handles, `new[N]` creates N `null` handles, not N objects.
+
+The mistakes everyone makes:
+
+- **The silent wipe.** `buffer = new[8];` when you meant `new[8](buffer)`. Values you wrote earlier read back as `x` (or `0` for 2-state types), and the log shows nothing, because the resize is legal.
+- **`push_back` on a dynamic array.** It does not compile. If the count grows one item at a time, you wanted a queue.
+- **Growing one element at a time.** `a = new[a.size()+1](a)` copies the whole array on every call. Use a queue.
+- **A saved reference goes stale.** After any `new[]`, even `new[N](a)`, references to the old elements are outdated (§7.5.1). Push Further explains what that means for a task holding an element by `ref`.
+
+**In a testbench:** per-lane or per-channel results when the count comes from configuration, a buffer sized once per test, or the payload bytes of a transaction whose length you know before you fill it. Do not use one when items arrive one at a time (use a queue) or when the indices are sparse (use an associative array).
+
+### Queues: an ordered list that grows at both ends
+
+A **queue** is a variable-size unpacked array with constant-time insertion and removal at either end and constant-time access to every element (§7.10). Index `0` is the front and `$` stands for the last index. A queue declared without an initial value starts empty, and `{}` is the empty queue.
+
+| Call | Effect | Edge case: no error, perhaps a warning |
+|---|---|---|
+| `q.push_back(v)`, `q.push_front(v)` | Adds `v` at the back or the front | A full bounded queue discards an item: next subsection |
+| `v = q.pop_front()`, `v = q.pop_back()` | Removes and returns the first or last item | Empty: returns the missing-element value, changes nothing, may warn (§7.10.2.4, §7.10.2.5) |
+| `q.insert(i, v)` | Puts `v` at index `i`; later items move up one | `i` negative, above `q.size()`, or x/z: no effect, may warn (§7.10.2.2) |
+| `q.delete(i)`, `q.delete()` | Removes item `i`, or every item | `i` negative, at or above `q.size()`, or x/z: no effect, may warn (§7.10.2.3) |
+| `q.size()` | The number of items | 0 when empty (§7.10.2.1) |
+
+Queues also support indexing and slicing (§7.10.1). Start from `int q[$] = '{10, 20, 30, 40};` and predict each line before you open the answers. Every line starts from the same four items.
+
+1. `q[0]` and `q[$]`
+2. `q[1:2]`
+3. `q[2:1]`
+4. `q[-1:1]`
+5. `q[2:9]`
+6. `v = q[7];`
+7. `q[$+1] = 50;`
+8. `q[7] = 1;`
+
+<details>
+<summary>Answers (§7.10.1)</summary>
+
+| Line | Result | Rule |
+|---|---|---|
+| 1 | `10` and `40` | `$` is the last index |
+| 2 | `'{20, 30}` | `q[a:b]` holds `b-a+1` items |
+| 3 | `'{}` | If `a` is greater than `b`, the slice is the empty queue |
+| 4 | `'{10, 20}` | A negative `a` is the same as 0 |
+| 5 | `'{30, 40}` | A `b` past `$` is the same as `$` |
+| 6 | `0` | An invalid index reads the missing-element value; a warning is allowed |
+| 7 | `'{10, 20, 30, 40, 50}` | Writing to `q[$+1]` is legal and appends |
+| 8 | `'{10, 20, 30, 40}`, unchanged | A write outside `0` to `$+1` is ignored, and a warning is required |
+
+</details>
+
+You can also update a queue by assigning it a new value built with unpacked array concatenation (§7.10.4, §10.10):
+
+```systemverilog
+// snippet
+q = {q, 6};                // same value as q.push_back(6)
+q = {0, q};                // same value as q.push_front(0)
+q = q[1:$];                // same value as void'(q.pop_front())
+q = {q[0:1], 9, q[2:$]};   // same value as q.insert(2, 9)
+q = {};                    // same value as q.delete()
+```
+
+The value is the same; the side effect is not. The methods leave references to the surviving items valid, but any assignment to the whole queue outdates every reference to its old elements (§7.10.3). That matters only when a task holds an element by `ref`, and then it matters a lot.
+
+A queue never blocks. A thread that must wait for data writes the wait itself: `wait (q.size() > 0);` is legal, because built-in array methods may appear in an event expression, and a change of the queue's size re-evaluates it (§9.4.2, §9.4.3). The wait and the `pop_front()` are still two separate steps. With two consumers on one queue, anything that runs between those steps (a consumer that waits for a clock edge first, or the process interleaving the LRM permits, §4.7) lets both see the same single item, and the second `pop_front()` then returns the missing-element value. A mailbox's `get()` waits and removes in one call, so each message goes to exactly one `get()` (§15.4.5, [I-SV-5](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index)).
+
+The array sandbox below draws the same queue as cubes; the 2D view shows the identical state as text. It opens on `int q[$] = '{10, 20, 30}`. Predict first: after `q.insert(1, 5)` and then `v = q.pop_back()`, what does `q` hold, what is `v`, and which values changed index? Then press those two buttons.
+
+<SystemVerilog3DVisualizer initialScene="queue" syncSceneToUrl={false} />
+
+`q` is `'{10, 5, 20}` and `v` is `30`. The insert moved `20` and `30` up one index. An index you saved before the insert now points at a different item, while a `ref` to the element `20` stays valid (§7.10.3). Moving the tail is also why a middle `insert()` on a long queue typically costs time proportional to the items behind it: the LRM promises constant time only at the ends (§7.10).
+
+- The sandbox has its own page with every container: [Dynamic Array](/visualizations/systemverilog-3d?scene=dynamic-array) | [Queue](/visualizations/systemverilog-3d?scene=queue) | [Associative Array](/visualizations/systemverilog-3d?scene=associative) | [Packed Matrix](/visualizations/systemverilog-3d?scene=packed-matrix) (packed dimensions are F2A's topic)
+
+**In a testbench:** stimulus lists, monitor output buffers, expected-value queues for an in-order design under test (DUT) ([F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index) builds one), and the per-ID queues of the tracker in Make It Work.
+
+### Bounded queues: what gets thrown away
 
 The same program runs on `int q[$]` and on `int bq[$:N]`. Predict what the bounded queue keeps, then find the first step where the two diverge. Pay attention to which end loses an element.
 
 <QueueOperationLab />
 
-The rule (§7.10.5): every write to a bounded queue first behaves as if the queue were unbounded; then every element beyond index N is discarded and a warning is issued. So `push_back` on a full queue loses the **new** item, but `push_front` and a middle `insert()` lose the **old last** item. Nothing blocks. If you need backpressure, check `size()` yourself before you push.
+The rule (§7.10.5): every write to a bounded queue first behaves as if the queue were unbounded; then every element beyond index N is discarded and a warning is issued. So `push_back` on a full queue loses the **new** item, but `push_front` and a middle `insert()` lose the **old last** item. Nothing blocks, and the bound counts indices: `[$:3]` holds four items. Assigning a longer array to a bounded queue follows the same rule: the excess is ignored with a warning (§7.10.5, §10.10).
 
-### Packed vs. Unpacked: One Rule
+If the producer must wait, or you need a count of drops, check `size()` yourself before you push. This buffer turns a tool warning that is easy to miss into a counted event in your own log:
 
-Packed dimensions sit before the name; unpacked dimensions sit after it. When you index, you write the unpacked indices first, then the packed ones. In that list the rightmost index varies fastest, and every packed dimension varies faster than every unpacked one (§7.4.4). For `bit [3:0][7:0] joe [1:10];`, `joe[9]` is a 32-bit element, `joe[9][3]` is its top byte, and `joe[9][3][7]` is a single bit.
+```systemverilog
+// snippet: inside a module
+bit [31:0] pending_q [$:63];  // bound 63 is the last legal index: at most 64 items
+int        n_dropped;
 
-Set the dimensions below, then pick indices and press **Find bit**. The 2D view lists every unpacked element as a row and its packed bits from MSB to LSB. The 3D view draws the same order, but it is a picture of index order, not of simulator memory: the LRM defines how arrays are indexed and assigned, not how they are stored.
+// A bounded buffer that reports its own drops
+function automatic bit try_enqueue(bit [31:0] item);
+  if (pending_q.size() == 64) begin
+    n_dropped++;
+    $warning("pending_q full: dropped %h (%0d drops so far)", item, n_dropped);
+    return 0;
+  end
+  pending_q.push_back(item);
+  return 1;
+endfunction
 
-<SystemVerilog3DVisualizer initialScene="packed-matrix" syncSceneToUrl={false} />
+// A producer that must not lose data waits for room instead
+task automatic enqueue_wait(bit [31:0] item);
+  wait (pending_q.size() < 64);  // queues never block on their own
+  pending_q.push_back(item);
+endtask
 
-- The sandbox also drives the three containers in 3D: [Dynamic Array](/visualizations/systemverilog-3d?scene=dynamic-array) | [Queue](/visualizations/systemverilog-3d?scene=queue) | [Associative Array](/visualizations/systemverilog-3d?scene=associative) | [Packed Matrix](/visualizations/systemverilog-3d?scene=packed-matrix)
+task automatic dequeue(output bit [31:0] item);
+  wait (pending_q.size() > 0);
+  item = pending_q.pop_front();
+endtask
+```
+
+**In a testbench:** a model of a hardware FIFO whose depth the specification fixes, where an overflow is itself something to check and count.
+
+### Associative arrays: entries only where you write
+
+An **associative array** maps a key to a value and allocates an entry only when you write one (§7.8). The key's type, the **index type**, decides which keys are legal and the order in which the array is walked.
+
+| Declaration | Keys | Order of `foreach`, `first()`, `next()` | Clause |
+|---|---|---|---|
+| `int aa[int]` (any integral type) | Values are cast to the index type; x/z is invalid | Numeric, signed or unsigned by the index type | §7.8.4 |
+| `int aa[string]` | Strings of any length; `""` is valid | Lexicographic by character code | §7.8.2 |
+| `int aa[pkt]` (a class) | Handles of that class or a derived class; `null` is valid | Deterministic but arbitrary | §7.8.3 |
+| `int aa[*]` (wildcard) | Any integral value, treated as unsigned | Numeric, but `foreach` and the traversal methods are not allowed | §7.8.1 |
+| `int aa[key_t]` (another type, such as an unpacked struct) | Any type with `==` defined; `real` is not allowed | Without relational operators, can vary between runs | §7.8.5 |
+
+| Call | Returns | Clause |
+|---|---|---|
+| `aa.num()`, `aa.size()` | The number of entries | §7.9.1 |
+| `aa.exists(k)` | 1 if `k` has an entry, else 0; never warns | §7.9.3 |
+| `aa.delete(k)` | Removes the entry `k`; silent if `k` has no entry | §7.9.2 |
+| `aa.delete()` | Removes every entry | §7.9.2 |
+| `aa.first(k)`, `aa.last(k)` | 1, and sets `k` to the smallest or largest key; 0 if the array is empty | §7.9.4, §7.9.5 |
+| `aa.next(k)`, `aa.prev(k)` | 1, and moves `k` to the next larger or smaller key; 0 at the end, with `k` unchanged | §7.9.6, §7.9.7 |
+
+**Reads, defaults and allocation.** Reading a key that has no entry returns the missing-element value (`0` for `int`, `x` for `logic`) **with a warning**, and creates nothing (§7.8.6). Only three things allocate an entry: being the target of an assignment, being passed to a `ref` argument, and a read-modify-write such as `aa[k]++`, which first allocates the entry with its default (§7.8.7).
+
+A declared default changes what a missing key reads, and removes the warning: with `int hits[string] = '{default: 0};`, reading `hits["nack"]` before anything wrote it returns 0 quietly (§7.9.11). A counter such as `hits[name]++` works with or without a default, because a read-modify-write allocates the entry, at its default, before it reads it (§7.8.7). The default does not change the methods: `exists()` still returns 0 and `num()` still counts only written keys. A literal can set entries and the default together: `int tab[string] = '{"Peter":20, "Paul":22, default:-1};`.
+
+Associative arrays assign only to associative arrays of a compatible type with the same index type, and assignment clears the target first (§7.9.9). Arguments follow the same rule (§7.9.10).
+
+Trace a walk with `first()` and `next()`:
+
+```systemverilog
+// compile
+module tb_top;
+  int    scores [string];
+  string key;
+
+  initial begin
+    scores["beta"]  = 3;
+    scores["alpha"] = 7;
+    scores["Gamma"] = 1;
+    if (scores.first(key))
+      do $display("%s = %0d", key, scores[key]);
+      while (scores.next(key));
+    $display("after the loop key = %s, num() = %0d", key, scores.num());
+  end
+endmodule
+```
+
+| Step | Call | Returns | `key` afterwards |
+|---|---|---|---|
+| 1 | `scores.first(key)` | 1 | `"Gamma"` |
+| 2 | `scores.next(key)` | 1 | `"alpha"` |
+| 3 | `scores.next(key)` | 1 | `"beta"` |
+| 4 | `scores.next(key)` | 0 | `"beta"`, unchanged: the loop ends |
+
+**Expected output** (illustrative, not from a simulator run):
+
+```text
+Gamma = 1
+alpha = 7
+beta = 3
+after the loop key = beta, num() = 3
+```
+
+A **sparse memory model** is the classic associative array. Make It Work uses this one unchanged:
+
+```systemverilog
+// snippet: inside a module
+logic [31:0] mem [bit [31:0]];  // only written addresses use memory
+
+function automatic logic [31:0] mem_read(bit [31:0] addr);
+  // exists() first: an unwritten address reads x without the missing-key warning
+  return mem.exists(addr) ? mem[addr] : 'x;
+endfunction
+```
+
+**In a testbench:** expected items keyed by transaction ID, sparse memories, counters keyed by name or by enum, and coverage-style hit tables. A UVM scoreboard uses exactly these structures ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)).
+
+### Array manipulation methods
+
+Built-in methods search, reorder and reduce any unpacked array (§7.12). Three families matter daily, and each has one rule to remember: **locators return a queue**, **ordering methods are void and work in place**, and **reductions return the element type**.
+
+| Family | Methods | Returns | Rule to remember |
+|---|---|---|---|
+| Locator (§7.12.1) | `find`, `find_first`, `find_last`, `min`, `max`, `unique` | A queue of elements, even for one result | `int m = q.max();` does not compile |
+| Index locator (§7.12.1) | `find_index`, `find_first_index`, `find_last_index`, `unique_index` | A queue of `int`, or of the index type for an associative array | The `find` family needs a `with` clause |
+| Ordering (§7.12.2) | `sort`, `rsort`, `reverse`, `shuffle` | Nothing: reorders the array itself | Illegal on associative arrays |
+| Reduction (§7.12.3) | `sum`, `product`, `and`, `or`, `xor` | One value of the element type, or of the `with` expression's type | Narrow elements wrap |
+
+Inside `with (...)`, `item` names the current element and `item.index` its index (§7.12, §7.12.4). You can rename the iterator: `q.find(x) with (x > 5)`. Unpacked structs and class handles have no `<` operator, so give `sort`, `rsort`, `min`, `max` and `unique` a key: `pkts.sort() with (item.addr);` (§7.12.1, §7.12.2). `reverse()` and `shuffle()` take no `with` clause at all. Structs are taught in [F2A: structs, unions and enums](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums).
+
+```systemverilog
+// compile
+module tb_top;
+  int       data_q [$] = '{3, 1, 4, 1, 5, 9, 2, 6};
+  bit [7:0] bytes  [$] = '{200, 100};
+  int       total;
+  int       idx [$], mx [$], uniq [$];
+
+  initial begin
+    // Reductions return the element type, or the type of the with expression
+    total = data_q.sum();
+    $display("sum               = %0d", total);
+    total = bytes.sum();                          // 300 wraps to 8 bits first
+    $display("bytes.sum         = %0d", total);
+    total = bytes.sum() with (int'(item));
+    $display("sum with int'     = %0d", total);
+    total = data_q.sum() with (int'(item > 4));   // counts the matches
+    $display("count of item > 4 = %0d", total);
+
+    // Locators always return a queue, even for one value
+    idx = data_q.find_index with (item > 4);
+    mx  = data_q.max();
+    uniq = data_q.unique();
+    $display("find_index = %p  max = %p  unique: %0d values", idx, mx, uniq.size());
+    idx = data_q.find_index with (item == item.index);  // equal to its position
+    $display("item == item.index at %p", idx);
+
+    // Ordering methods are void and work in place
+    data_q.sort();
+    $display("sort    -> %p", data_q);
+    data_q.rsort();
+    $display("rsort   -> %p", data_q);
+    data_q.reverse();
+    $display("reverse -> %p", data_q);
+  end
+endmodule
+```
+
+**Expected output** (illustrative; locators traverse in an unspecified order, so `find_index` may list the same indices in another order on some simulators, §7.12.1):
+
+```text
+sum               = 31
+bytes.sum         = 44
+sum with int'     = 300
+count of item > 4 = 3
+find_index = '{4, 5, 7}  max = '{9}  unique: 7 values
+item == item.index at '{1}
+sort    -> '{1, 1, 2, 3, 4, 5, 6, 9}
+rsort   -> '{9, 6, 5, 4, 3, 2, 1, 1}
+reverse -> '{1, 1, 2, 3, 4, 5, 6, 9}
+```
+
+Now predict before you look. The explorer opens on `bit [7:0] data[$] = '{200, 15, 8, 15, 23, 4, 8, 99}` with `sum()` selected. Commit to an answer for `sum()`, then `sum() with (item > 20)`, then `max()`. Last, switch the array kind to `data[string]` and try `sort()`.
+
+<ArrayMethodExplorer />
+
+What the explorer showed:
+
+- `sum()` is **116**, not 372. The exact sum wraps to the element type `bit [7:0]` (372 − 256) before you can assign it anywhere (§7.12.3). `sum() with (int'(item))` gives 372.
+- `sum() with (item > 20)` is **1**, although three items exceed 20. A relational expression is 1 bit wide (§11.4.4), so the count wraps modulo 2. `with (int'(item > 20))` counts properly: 3.
+- `max()` returns the **queue** `'{200}`, not the number 200 (§7.12.1).
+- `sort()` on `data[string]` does not compile: an associative array's order is fixed by its index type (§7.12.2). On `data[string]`, `find_index` returns string keys, the index type (§7.12.1).
+
+**In a testbench:** checksums over payload bytes (`sum() with (int'(item))`), finding the IDs that still wait (`find_index`), and counting error responses (`sum() with (int'(item.resp != 0))`). Whole arrays also compare with `==` and `!=`, associative arrays included (§7.4.6): `if (act_q != exp_q)` checks a complete in-order stream in one line, and `%p` prints both for the log. When only the items matter and not their order, sort a copy of each first, then compare.
+
+### Recap: three containers, three rules
 
 <VisualRecap
   title="Three containers, three rules"
-  rule="A dynamic array changes size only through new[] (destructive) or new[N](arr) (copy, then pad with defaults). A queue grows at either end, and a [$:N] bound discards whatever lands past index N, with a warning. An associative array has entries only for written keys and always iterates in index order."
+  rule="A dynamic array never grows by itself: its size changes when you call new[] (destructive) or new[N](arr) (copy, then pad), assign it a whole array value such as a queue or {arr, x}, or call delete(). A queue grows at either end, and a [$:N] bound discards whatever lands past index N, with a warning. An associative array has entries only for the keys you write, and integral and string keys iterate in key order."
   code={`logic [7:0] mem[];  mem = new[6](mem);     // keep old, pad with 8'hxx
 int q[$:3];         q.push_front(9);       // full? the old q[3] is discarded
 int aa[string];     if (aa.exists("k")) v = aa["k"];  // no warning, no default`}
   mistake="Writing arr = new[N] when you meant arr = new[N](arr) silently wipes the data, and calling push_back on a dynamic array does not compile. Both come from treating a dynamic array like a C++ vector."
-  inTestbench="Monitors collect into queues, scoreboards key expected items by ID in associative arrays, and buffers sized from configuration use dynamic arrays."
+  inTestbench="Monitors collect into queues, scoreboards key expected items by ID in associative arrays (often associative arrays of queues), and buffers sized from configuration use dynamic arrays."
 >
   <svg viewBox="0 0 320 200" role="img" aria-label="Three strips. Dynamic array after new[6](mem): 0, 10, 20, 30, x, x. Bounded queue int q[$:3] after push_front(9): 9, 1, 2, 3; the old 4 is discarded past the bound. Associative array with string keys iterates Gamma, alpha, beta in index order." style={{ width: "100%", maxWidth: 360 }}>
     <text x="8" y="14" fontSize="10" fill="currentColor" fillOpacity="0.75">{"mem = new[6](mem) · dynamic array"}</text>
@@ -138,247 +511,825 @@ int aa[string];     if (aa.exists("k")) v = aa["k"];  // no warning, no default`
   </svg>
 </VisualRecap>
 
-## Code Patterns You'll Use Daily
+That is the end of the core path. The three subsections below are practitioner depth: you will use them daily once your benches grow.
 
-### Dynamic Array — Resize and Preserve
+### Array query functions
 
-```systemverilog
-// IEEE 1800-2023 §7.5.1 — dynamic array new[]
-logic [7:0] buffer [];
+The system functions `$left`, `$right`, `$low`, `$high`, `$increment`, `$size`, `$dimensions` and `$unpacked_dimensions` describe any array dimension (§7.11, §20.7). They return an `integer`, so they can return `'x`. On a queue or dynamic array they describe the current contents. On an associative array with an integral index type, `$left` is 0 and `$right` is the largest possible index, not the largest key. Predict each row, then check it:
 
-initial begin
-  buffer = new[4];           // 4 elements, each 8'hxx (logic is 4-state)
-  foreach (buffer[i]) buffer[i] = i * 10;
+| Array | `$left` | `$right` | `$low` | `$high` | `$increment` | `$size` |
+|---|---|---|---|---|---|---|
+| `int f [7:0]` (fixed-size) | 7 | 0 | 0 | 7 | 1 | 8 |
+| `int q[$] = '{10, 20, 30}` | 0 | 2 | 0 | 2 | −1 | 3 |
+| `int q[$]`, empty | 0 | −1 | 0 | −1 | −1 | 0 |
+| `int aa[int]` holding keys 5 and 9 | 0 | 2147483647 | 5 | 9 | −1 | 2 |
+| `int aa[int]`, empty | 0 | 2147483647 | `'x` | `'x` | −1 | 0 |
 
-  buffer = new[8](buffer);   // Grow to 8, PRESERVE the first 4 elements
-  // buffer[0..3] = {0, 10, 20, 30}, buffer[4..7] = {8'hxx, 8'hxx, 8'hxx, 8'hxx}
+For `bit [31:0] exp_by_id [int][$]`, `$dimensions` is 3 (two unpacked dimensions plus the packed one) and `$unpacked_dimensions` is 2. Asking about a variable-size dimension other than the first is an error: `$size(exp_by_id, 2)` is illegal, so ask the element instead with `exp_by_id[id].size()` (§20.7.1). On a dynamic array, `size()` equals `$size(a, 1)` (§7.5.2).
 
-  buffer = new[2](buffer);   // Shrink to 2, TRUNCATES
-  // buffer = {0, 10} — elements [2..7] are LOST
+In testbench code, `q.size()` and `aa.num()` read better than `$size`. The query functions earn their place in generic code that must work for any array, and on fixed-size arrays whose ranges do not start at 0. A classic bug: a loop from `$low(aa)` to `$right(aa)` over an `int`-indexed associative array runs toward 2147483647 instead of stopping at the largest key. Loop to `$high(aa)`, or better, use `foreach`.
 
-  buffer.delete();           // Empty the array; buffer.size() == 0
-end
-```
+### Passing arrays to tasks and functions
 
-> [!WARNING]
-> **Common bug:** `buffer = new[8]` without the initializer `(buffer)` allocates a fresh array and **discards all existing data** (§7.5.1). Pass the old array whenever you resize and want to keep its contents. New slots get the type default: `x` for 4-state types such as `logic`, `0` for 2-state types such as `int`.
-
-### Queue — Bounded Buffer With Your Own Backpressure
+Arrays pass to subroutines **by value** unless you say otherwise: the subroutine gets a copy, for every kind of array, associative arrays included (§7.7). Writes inside the subroutine change only the copy, and a large array is copied on every call. **`ref`** passes the array itself: no copy, and writes land in the caller's array (§13.5.2). **`const ref`** passes it without a copy and forbids writes.
 
 ```systemverilog
-// IEEE 1800-2023 §7.10, §7.10.5
-typedef struct { int id; bit [31:0] data; } txn_t;
+// compile
+module tb_top;
+  int q[$] = '{1, 2, 3};
 
-txn_t pending_q [$:63];  // bound 63 is the last legal index: at most 64 entries
-
-function automatic bit enqueue(txn_t t);
-  if (pending_q.size() == 64) begin
-    $warning("Queue full, dropping TXN id=%0d", t.id);  // your message, with context
-    return 0;
-  end
-  pending_q.push_back(t);  // without the check, a 65th item is discarded with only a tool warning
-  return 1;
-endfunction
-
-task automatic dequeue(output txn_t t);
-  wait (pending_q.size() > 0);  // queues never block on their own
-  t = pending_q.pop_front();
-endtask
-```
-
-> [!TIP]
-> **Performance:** §7.10 describes a queue as supporting constant-time insertion and removal at either end and constant-time access to every element. It promises nothing for `insert()` or `delete(i)` in the middle, which simulators typically implement by moving elements. Profile before you build a hot path on them.
-
-### Associative Array — Transaction Tracking
-
-```systemverilog
-// IEEE 1800-2023 §7.8, §7.9 — associative array with int key
-class scoreboard extends uvm_component;
-  `uvm_component_utils(scoreboard)
-  txn_t expected_txns [int];  // keyed by transaction ID
-
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
+  function automatic void zero_first(int a[$]);         // by value: a is a copy
+    a[0] = 0;
   endfunction
 
-  function void add_expected(txn_t t);
-    if (expected_txns.exists(t.id)) begin
-      `uvm_error("DUPE", $sformatf("TXN id=%0d already pending", t.id))
-      return;                     // keep the original expectation
-    end
-    expected_txns[t.id] = t;
+  function automatic void zero_first_ref(ref int a[$]); // by reference: a is q
+    a[0] = 0;
   endfunction
-
-  function void check_actual(txn_t actual);
-    if (!expected_txns.exists(actual.id)) begin   // exists() never warns
-      `uvm_error("UNEXPECTED", $sformatf("TXN id=%0d not in expected map", actual.id))
-      return;
-    end
-    // Compare fields...
-    expected_txns.delete(actual.id);  // Clean up after match
-  endfunction
-
-  function void check_phase(uvm_phase phase);
-    if (expected_txns.num() > 0)
-      `uvm_error("LEAK", $sformatf("%0d unmatched TXNs remain", expected_txns.num()))
-  endfunction
-endclass
-```
-
-> [!IMPORTANT]
-> **Memory leak pattern:** If you never `delete()` matched entries, the associative array grows without bound during long regressions. Always clean up completed transactions. And never read `expected_txns[id]` for an ID that might be missing: you get a default-valued struct and a warning, not an error (§7.8.6).
-
-### Array Manipulation Methods
-
-```systemverilog
-// IEEE 1800-2023 §7.12
-module array_methods_demo;
-  int       data_q [$] = '{3, 1, 4, 1, 5, 9, 2, 6};  // module scope: initializers allowed
-  bit [7:0] bytes  [$] = '{200, 100};
-  int       total;
-  int       idx [$], mx [$], uniq [$];
 
   initial begin
-    // Reductions return the element type, or the type of the with expression (§7.12.3)
-    total = data_q.sum();                        // 31
-    total = bytes.sum();                         // 44: 300 wraps to 8 bits BEFORE it reaches total
-    total = bytes.sum() with (int'(item));       // 300
-    total = data_q.sum() with (int'(item > 4));  // 3: counts matches
-
-    // Locators always return a queue, even for one value (§7.12.1)
-    idx  = data_q.find_index with (item > 4);    // '{4, 5, 7}
-    mx   = data_q.max();                         // '{9}   (int m = data_q.max(); does not compile)
-    uniq = data_q.unique();                      // one copy of each value; order unspecified
-
-    // Ordering methods are void, work in place, and are illegal on associative arrays (§7.12.2)
-    data_q.sort();                               // '{1, 1, 2, 3, 4, 5, 6, 9}
-    data_q.rsort();                              // '{9, 6, 5, 4, 3, 2, 1, 1}
-    data_q.reverse();                            // '{1, 1, 2, 3, 4, 5, 6, 9}
-    data_q.shuffle();                            // random permutation
+    zero_first(q);
+    $display("after zero_first     : q = %p", q);
+    zero_first_ref(q);
+    $display("after zero_first_ref : q = %p", q);
   end
 endmodule
 ```
 
-Now predict before you look. Pick a method and a `with` clause, commit to an answer, and check the return type the explorer reports. Try `sum()` on `bit [7:0]` first, then `max()`, then `sort()` on `data[string]`.
+**Expected output** (illustrative, not from a simulator run):
 
-<ArrayMethodExplorer />
+```text
+after zero_first     : q = '{1, 2, 3}
+after zero_first_ref : q = '{0, 2, 3}
+```
 
-## Deeper Understanding
+<figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
+  <svg viewBox="0 0 340 176" role="img" aria-label="By value: q stays 1, 2, 3 while the copy a becomes 0, 2, 3 and is discarded when the function returns. By ref: a is another name for q, so the write makes q 0, 2, 3." style={{ width: "100%", maxWidth: 420 }}>
+    <text x="8" y="14" fontSize="10" fill="currentColor" fillOpacity="0.8">{"zero_first(q): by value, a is a copy"}</text>
+    <text x="8" y="40" fontSize="10" fill="currentColor">q (caller)</text>
+    <rect x="96" y="24" width="34" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="113" y="40" fontSize="11" textAnchor="middle" fill="currentColor">1</text>
+    <rect x="134" y="24" width="34" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="151" y="40" fontSize="11" textAnchor="middle" fill="currentColor">2</text>
+    <rect x="172" y="24" width="34" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="189" y="40" fontSize="11" textAnchor="middle" fill="currentColor">3</text>
+    <text x="214" y="40" fontSize="9.5" fill="currentColor">unchanged</text>
+    <text x="8" y="70" fontSize="10" fill="currentColor">a (copy)</text>
+    <rect x="96" y="54" width="34" height="24" rx="4" fill="rgba(245,158,11,0.15)" stroke="rgb(245,158,11)" strokeWidth="2" />
+    <text x="113" y="70" fontSize="11" textAnchor="middle" fill="currentColor">0</text>
+    <rect x="134" y="54" width="34" height="24" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="3 2" />
+    <text x="151" y="70" fontSize="11" textAnchor="middle" fill="currentColor">2</text>
+    <rect x="172" y="54" width="34" height="24" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="3 2" />
+    <text x="189" y="70" fontSize="11" textAnchor="middle" fill="currentColor">3</text>
+    <text x="214" y="70" fontSize="9.5" fill="currentColor">✕ write lost on return</text>
+    <line x1="8" y1="92" x2="332" y2="92" stroke="currentColor" strokeOpacity="0.2" />
+    <text x="8" y="110" fontSize="10" fill="currentColor" fillOpacity="0.8">{"zero_first_ref(q): ref, a is q itself"}</text>
+    <text x="8" y="136" fontSize="10" fill="currentColor">q (caller)</text>
+    <rect x="96" y="120" width="34" height="24" rx="4" fill="rgba(245,158,11,0.15)" stroke="rgb(245,158,11)" strokeWidth="2" />
+    <text x="113" y="136" fontSize="11" textAnchor="middle" fill="currentColor">0</text>
+    <rect x="134" y="120" width="34" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="151" y="136" fontSize="11" textAnchor="middle" fill="currentColor">2</text>
+    <rect x="172" y="120" width="34" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="189" y="136" fontSize="11" textAnchor="middle" fill="currentColor">3</text>
+    <text x="214" y="136" fontSize="9.5" fill="currentColor">▲ the write lands here</text>
+    <text x="8" y="166" fontSize="10" fill="currentColor">{"a (ref) is another name for q: no copy"}</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">By value, the function writes into its own copy, which disappears when it returns. With ref there is only one array.</figcaption>
+</figure>
 
-### Common Implementation Characteristics by Structure
+| Step | By value: `zero_first(q)` | By reference: `zero_first_ref(q)` |
+|---|---|---|
+| Call | `a` is a new copy: `'{1, 2, 3}` | `a` refers to `q` |
+| `a[0] = 0;` | `a` is `'{0, 2, 3}`; `q` is still `'{1, 2, 3}` | `q` is `'{0, 2, 3}` |
+| Return | The copy is discarded: `q` is `'{1, 2, 3}` | `q` is `'{0, 2, 3}` |
 
-Only the queue rows marked † are described by the LRM (§7.10). Everything else is a rule of thumb about typical simulators, not an IEEE guarantee.
+Which actual argument a formal accepts:
 
-| Operation | Dynamic Array | Queue | Associative Array |
-|-----------|:---:|:---:|:---:|
-| Random access `[i]` | O(1) | O(1) † | O(log N) or O(1) amortized |
-| `push_back` / `push_front` | N/A (no such method) | O(1) † | N/A |
-| `insert(mid)` | N/A | O(N) | N/A |
-| `delete(key)` | N/A | O(N) | O(1) amortized |
-| Resize / `new[N]` | O(N) copy | N/A | N/A |
-| Memory overhead | Often low | Implementation-dependent | Implementation-dependent |
-| `foreach` iteration | O(N) | O(N) | O(N), index order |
+| Formal | Accepts | Notes |
+|---|---|---|
+| `int a[]` or `int a[$]`, by value | Any dynamic array, queue or fixed-size array of `int` | A copy (§7.7) |
+| `int a[4]`, by value | A fixed-size array of 4 `int`s, or a dynamic array or queue holding 4 (checked at run time) | A copy (§7.7) |
+| `ref int a[$]` | Only a queue of `int`: the types must be equivalent, and a queue is not equivalent to a dynamic array | The subroutine must be `automatic` (§13.5.2, §6.22.2) |
+| `const ref int a[$]` | The same as `ref` | Read-only, no copy (§13.5.2) |
+| `int a[string]` | Only an associative array of `int` with a `string` index | A copy (§7.9.10) |
 
-### Corner Cases Interviewers Love
+**In a testbench:** helpers that check or print a whole queue take it as `const ref`, so a per-transaction call does not copy thousands of items. Helpers that fill a caller's array take it as `ref`, or return the new value. [F2D: tasks and functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions) teaches argument directions in general; the rules above are the array-specific part.
 
-1. **What happens if you pop from an empty queue?**
-   §7.10.2.4 and §7.10.2.5 define it: the call returns the value Table 7-1 gives for a nonexistent entry (`'0` for `int`, `'x` for `logic`), leaves the queue unchanged, and may issue a warning. Nothing stops, so check `size() > 0` before popping.
+### Iterate safely, store safely
 
-2. **Can a dynamic array hold classes?**
-   Yes. `my_class handles [];` is valid. But `new[N]` creates N null handles, not N objects (the default for a class is `null`). You must `new()` each element individually.
+**Do not resize what you are iterating.** If a dynamic array, queue or associative array changes size inside a `foreach` over it, the results are undefined (§12.7.3). Cleanup loops that delete matched or empty entries are the usual victims. Collect the keys first, then delete them in a second pass:
 
-3. **What is the iteration order of an associative array?**
-   `foreach`, `first()` and `next()` follow index order: signed or unsigned numeric order for integral keys (§7.8.4) and lexicographic character-code order for strings, so `"Zed"` comes before `"apple"` (§7.8.2). Insertion order is not kept.
+```systemverilog
+// snippet: two-pass cleanup of an associative array of queues
+int empty_ids [$];
+empty_ids = exp_by_id.find_index with (item.size() == 0);  // pass 1 only reads
+foreach (empty_ids[i]) exp_by_id.delete(empty_ids[i]);     // pass 2 deletes
+```
 
-4. **Can you assign a queue to a dynamic array?**
-   Yes. A queue, dynamic array or fixed-size array of equivalent element type is assignment compatible, and a dynamic-array or queue target is resized to the source (§7.6). `int da []; int q [$] = '{1,2,3}; da = q;` leaves `da` with 3 elements. Associative arrays are the exception: they only assign to associative arrays (§7.9.9).
+Starting from three keys, where keys 4 and 9 hold empty queues:
 
-5. **What is a bounded queue and when should you use one?**
-   Declared as `type q [$:N]`, it holds at most N+1 elements. §7.10.5 defines overflow: after any write, elements beyond the bound are discarded and a warning is issued. `push_back` on a full queue loses the new element, while `push_front` loses the old last one. Use a bound to model a fixed-depth FIFO, and still check `size()` when you need to count or report drops yourself.
+| Step | Statement | Keys in `exp_by_id` | `empty_ids` |
+|---|---|---|---|
+| 0 | (start) | 1, 4, 9 | `'{}` |
+| 1 | `find_index` | 1, 4, 9: pass 1 changes nothing | `'{4, 9}` |
+| 2 | `delete(4)` | 1, 9 | `'{4, 9}` |
+| 3 | `delete(9)` | 1 | `'{4, 9}` |
+
+**Store copies, not shared handles.** This is a preview of [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index): a queue of class handles stores handles, not objects (§8.12). A monitor that reuses one object and pushes it every cycle fills the queue with the same object, seen three times:
+
+```systemverilog
+// snippet: inside a class-based monitor's task (classes arrive in I-SV-1)
+pkt p = new();          // one object, created once: the classic aliasing bug
+repeat (3) begin
+  p.data = sample_bus();  // overwrites the one object
+  seen_q.push_back(p);    // stores another handle to it
+end
+```
+
+| After cycle | `p.data` | `seen_q` holds | Every `seen_q[i].data` reads |
+|---|---|---|---|
+| 1 | 10 | 1 handle to `p` | 10 |
+| 2 | 20 | 2 handles to `p` | 20 |
+| 3 | 30 | 3 handles to `p` | 30 |
+
+The fix is to construct a new object for each transaction (`p = new();` inside the loop) or to push a copy ([copying and cloning](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning)). Nothing in the log warns you: the values are simply wrong.
 
 ## Make It Work
 
-A checklist for every container you declare:
+### Worked example: an expected-transaction tracker and a sparse memory model
 
-1. **Unknown count, ordered:** use a queue and `push_back`. **Count known at run time, random writes:** a dynamic array sized once with `new[N]`. **Sparse keys:** an associative array.
-2. **Resize to keep data** only with `arr = new[N](arr)`. Plain `new[N]` wipes the array.
-3. **A bound is not backpressure.** `[$:N]` discards and warns. If the producer must wait or count drops, check `size()` before you push.
-4. **Never read an associative array blindly.** Call `exists()` first, or declare a default such as `int hits[string] = '{default: 0};` so missing keys read as 0 without a warning (§7.9.11).
-5. **Capture locator results in a queue** (`int r[$] = q.max();`) and **cast inside `with`** whenever a sum can outgrow the element type.
-6. **Delete matched scoreboard entries** and check `num()` at the end of the test.
+A DUT accepts requests tagged with an ID and answers each one later. Answers for different IDs may overtake each other, but answers for the same ID come back in request order; AXI uses this rule ([B-AXI-3](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index)). The checker therefore needs a table keyed by ID with a FIFO per ID: an **associative array of queues**. The bench also needs a memory model for a 32-bit address space that the test touches in only a few places: an associative array keyed by address.
+
+The traffic below is scripted, so the example runs without a DUT. `INJECT_BUGS` plays the DUT: set to 1, ID 1 answers out of order and ID 3 never answers.
+
+<figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
+  <svg viewBox="0 0 340 262" role="img" aria-label="exp_by_id after the four requests: key 1 holds A1 then A2, key 2 holds B1, key 3 holds C1. After the three responses: keys 1 and 2 were deleted when their queues emptied, and key 3 still holds C1, pending at the end of the test." style={{ width: "100%", maxWidth: 420 }}>
+    <text x="8" y="14" fontSize="10" fill="currentColor" fillOpacity="0.8">After the four add_expected() calls (trace step 4)</text>
+    <text x="66" y="30" fontSize="9" fill="currentColor" fillOpacity="0.7">{"front: pop_front() takes this one"}</text>
+    <rect x="8" y="36" width="46" height="24" rx="4" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+    <text x="31" y="52" fontSize="11" textAnchor="middle" fill="currentColor">id 1</text>
+    <rect x="66" y="36" width="40" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="86" y="52" fontSize="11" textAnchor="middle" fill="currentColor">A1</text>
+    <rect x="110" y="36" width="40" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="130" y="52" fontSize="11" textAnchor="middle" fill="currentColor">A2</text>
+    <rect x="8" y="66" width="46" height="24" rx="4" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+    <text x="31" y="82" fontSize="11" textAnchor="middle" fill="currentColor">id 2</text>
+    <rect x="66" y="66" width="40" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="86" y="82" fontSize="11" textAnchor="middle" fill="currentColor">B1</text>
+    <rect x="8" y="96" width="46" height="24" rx="4" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+    <text x="31" y="112" fontSize="11" textAnchor="middle" fill="currentColor">id 3</text>
+    <rect x="66" y="96" width="40" height="24" rx="4" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="86" y="112" fontSize="11" textAnchor="middle" fill="currentColor">C1</text>
+    <text x="162" y="82" fontSize="9.5" fill="currentColor">keys in key order: 1, 2, 3</text>
+    <line x1="8" y1="134" x2="332" y2="134" stroke="currentColor" strokeOpacity="0.2" />
+    <text x="8" y="152" fontSize="10" fill="currentColor" fillOpacity="0.8">After the three responses (trace step 7)</text>
+    <rect x="8" y="162" width="46" height="24" rx="4" fill="none" stroke="rgb(244,63,94)" strokeDasharray="3 2" />
+    <text x="31" y="178" fontSize="11" textAnchor="middle" fill="currentColor" textDecoration="line-through">id 1</text>
+    <text x="66" y="178" fontSize="9.5" fill="currentColor">{"✕ queue emptied, delete(1): two mismatches"}</text>
+    <rect x="8" y="192" width="46" height="24" rx="4" fill="none" stroke="rgb(244,63,94)" strokeDasharray="3 2" />
+    <text x="31" y="208" fontSize="11" textAnchor="middle" fill="currentColor" textDecoration="line-through">id 2</text>
+    <text x="66" y="208" fontSize="9.5" fill="currentColor">{"✓ B1 matched, delete(2)"}</text>
+    <rect x="8" y="222" width="46" height="24" rx="4" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+    <text x="31" y="238" fontSize="11" textAnchor="middle" fill="currentColor">id 3</text>
+    <rect x="66" y="222" width="40" height="24" rx="4" fill="rgba(245,158,11,0.15)" stroke="rgb(245,158,11)" strokeWidth="2" />
+    <text x="86" y="238" fontSize="11" textAnchor="middle" fill="currentColor">C1</text>
+    <text x="114" y="238" fontSize="9.5" fill="currentColor">{"▲ still pending at the end: a failure"}</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">The keys left in exp_by_id are exactly the IDs still waiting for a response, because a key is deleted when its queue empties. The trace table below walks every step.</figcaption>
+</figure>
+
+```systemverilog
+// compile
+// A plain-SV expected-transaction tracker and sparse memory model (no DUT, no UVM).
+module tb_top;
+  localparam bit INJECT_BUGS = 1;  // 0 replays the same traffic from a correct DUT
+
+  bit [31:0]   exp_by_id [int][$];  // expected data per ID, oldest first
+  logic [31:0] mem [bit [31:0]];    // sparse memory: only written addresses exist
+  int n_match, n_mismatch, n_pending;
+
+  // Record what the DUT must return for a request with this ID.
+  function automatic void add_expected(int id, bit [31:0] data);
+    if (!exp_by_id.exists(id)) exp_by_id[id] = {};  // allocate the key explicitly
+    exp_by_id[id].push_back(data);
+  endfunction
+
+  // Check one response against the oldest outstanding item of the same ID.
+  function automatic void check_actual(int id, bit [31:0] data);
+    bit [31:0] expected;
+    if (!exp_by_id.exists(id)) begin  // never read a key you have not checked
+      $error("UNEXPECTED id=%0d data=%h", id, data);
+      n_mismatch++;
+      return;
+    end
+    expected = exp_by_id[id].pop_front();  // order must hold within one ID
+    if (expected !== data) begin
+      $error("MISMATCH id=%0d exp=%h act=%h", id, expected, data);
+      n_mismatch++;
+    end else begin
+      n_match++;
+    end
+    if (exp_by_id[id].size() == 0) exp_by_id.delete(id);  // keys = pending IDs
+  endfunction
+
+  // An unwritten address reads x without the missing-key warning.
+  function automatic logic [31:0] mem_read(bit [31:0] addr);
+    return mem.exists(addr) ? mem[addr] : 'x;
+  endfunction
+
+  initial begin
+    add_expected(1, 32'hA1);
+    add_expected(2, 32'hB1);
+    add_expected(1, 32'hA2);
+    add_expected(3, 32'hC1);
+    check_actual(2, 32'hB1);    // legal: ID 2 overtakes ID 1
+    if (INJECT_BUGS) begin
+      check_actual(1, 32'hA2);  // DUT bug: ID 1 answers out of order
+      check_actual(1, 32'hA1);  // ...and ID 3 never answers
+    end else begin
+      check_actual(1, 32'hA1);
+      check_actual(1, 32'hA2);
+      check_actual(3, 32'hC1);
+    end
+    mem[32'h1000] = 32'hDEAD_BEEF;
+    $display("mem[1000]=%h mem[2000]=%h", mem_read(32'h1000), mem_read(32'h2000));
+  end  // no clock: the run ends here, then final runs
+
+  final begin
+    foreach (exp_by_id[id]) begin
+      $error("PENDING id=%0d count=%0d", id, exp_by_id[id].size());
+      n_pending += exp_by_id[id].size();
+    end
+    $display("SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
+             n_match, n_mismatch, n_pending);
+  end
+endmodule
+```
+
+**Run it.** Save the module as `tb_top.sv`, compile it with any SystemVerilog simulator (it uses no IEEE 1800-2023 additions), and run it with `tb_top` as the top module. It needs no plusargs and ends by itself when the `initial` block finishes: with nothing left to schedule, the simulation ends and the `final` block runs (§9.2.3). Then set `INJECT_BUGS` to 0 and run it again.
+
+**Expected output with `INJECT_BUGS = 1`** (illustrative, not from a simulator run). Each `$error` line carries a tool-specific prefix with the severity, file, line, time and scope (§20.10); `Error:` stands for it here.
+
+```text
+Error: MISMATCH id=1 exp=000000a1 act=000000a2
+Error: MISMATCH id=1 exp=000000a2 act=000000a1
+mem[1000]=deadbeef mem[2000]=xxxxxxxx
+Error: PENDING id=3 count=1
+SCB_SUMMARY matches=1 mismatches=2 pending=1
+```
+
+**Expected output with `INJECT_BUGS = 0`** (illustrative):
+
+```text
+mem[1000]=deadbeef mem[2000]=xxxxxxxx
+SCB_SUMMARY matches=4 mismatches=0 pending=0
+```
+
+The pass criterion is the signature `SCB_SUMMARY matches=N mismatches=0 pending=0` with no `Error` lines. The buggy run fails on both counts, so the bench has proved it can fail.
+
+The trace for `INJECT_BUGS = 1` (data shortened: `A1` stands for `32'hA1`):
+
+| Step | Call | `exp_by_id` afterwards | Result |
+|---|---|---|---|
+| 1 | `add_expected(1, A1)` | `1:[A1]` | Key 1 allocated |
+| 2 | `add_expected(2, B1)` | `1:[A1] 2:[B1]` | |
+| 3 | `add_expected(1, A2)` | `1:[A1, A2] 2:[B1]` | Same key, second item |
+| 4 | `add_expected(3, C1)` | `1:[A1, A2] 2:[B1] 3:[C1]` | |
+| 5 | `check_actual(2, B1)` | `1:[A1, A2] 3:[C1]` | Match; key 2 deleted |
+| 6 | `check_actual(1, A2)` | `1:[A2] 3:[C1]` | MISMATCH: expected A1 |
+| 7 | `check_actual(1, A1)` | `3:[C1]` | MISMATCH: expected A2; key 1 deleted |
+| 8 | `final` | `3:[C1]` | PENDING id=3; the summary fails |
+
+How to build one yourself:
+
+1. On each request, push the expected data onto the queue for its ID. Allocate the key first with an assignment. Simulators commonly also allocate when you call `push_back` on a missing key, but that is tool-dependent: §7.8.7 names only assignment targets, `ref` arguments and read-modify-writes.
+2. On each response, call `exists(id)` before you read anything. An unknown ID is an error, not a default value.
+3. Compare against `pop_front()` from that ID's queue: order holds within an ID, not across IDs.
+4. Delete the key when its queue empties, so the keys left are exactly the IDs still pending.
+5. At the end, raise an error for every pending ID and print one summary line that counts the pending items.
+6. Make the bench prove it can fail: run once with injected bugs and check that the summary fails, then once clean.
+
+### Debug the silent bugs
+
+None of these stops the simulation. The last column says what the log gives you to go on.
+
+| Symptom | Cause | Fix | What the log shows |
+|---|---|---|---|
+| Samples written earlier read back as `x` (or `0`) | `arr = new[N]` without `(arr)` wiped the array (§7.5.1) | `arr = new[N](arr)`, or a queue with `push_back` | Nothing: the resize is legal |
+| A check passes although nothing was expected for that ID | A missing-key read returned the default: with `bit [31:0] exp [int]`, `if (exp[id] == act)` passes whenever `act` is 0 (§7.8.6) | `exists()` before every keyed read | One warning per read, worded by the tool and easy to lose in a long log |
+| Items missing from a bounded FIFO model | A write past `[$:N]` was discarded (§7.10.5) | Check `size()` before you push and count drops | One required warning per discard |
+| A checksum or count is wrong | `sum()` on narrow elements wrapped (§7.12.3), or a 1-bit `with` expression wrapped (§11.4.4) | `sum() with (int'(item))` | Nothing |
+| A cleanup loop skips or repeats keys | The array changed size inside its own `foreach` (§12.7.3) | Collect keys first, then delete; or a `first()`/`next()` loop | Nothing, or tool-specific invalid-index warnings |
+| A function "fills" an array but the caller sees no change | The array was passed by value (§7.7) | `ref` in an `automatic` subroutine, or return the array | Nothing |
+| A test passes although a response was lost | Leftover expectations were printed, not counted | An error per pending ID, and `pending=0` in the pass criterion | Only your own report |
+| Every queued transaction shows the same values | The monitor reused one object handle (§8.12) | A new object, or a copy, per transaction | Nothing |
+
+**Checklist before moving on:**
+
+- [ ] I pick a queue for an unknown count in arrival order, a dynamic array sized once for a count known at run time, and an associative array for sparse or non-integer keys.
+- [ ] Every resize that must keep data uses `new[N](arr)` or assigns a whole new value; plain `new[N]` appears only where I want a fresh array.
+- [ ] I treat a bound as a discard rule, not backpressure: I check `size()` before pushing and count drops myself.
+- [ ] Every keyed read whose default could pass for real data is guarded by `exists()`, or the array declares a `'{default: v}` on purpose.
+- [ ] Locator results go into a queue, and reductions over narrow elements use `with (int'(item))`.
+- [ ] Empty per-ID queues are deleted, and nothing is deleted inside a `foreach` over the same array.
+- [ ] My end-of-test report counts pending items, and the pass line needs `mismatches=0` and `pending=0`.
 
 ## Push Further
 
-- **Never resize what you are iterating.** If a dynamic array, queue or associative array changes size inside a `foreach` over it, the results are undefined (§12.7.3). Collect the keys first, then delete: `int done[$] = exp.find_index with (item.matched); foreach (done[i]) exp.delete(done[i]);`. For an associative array, `find_index` returns a queue of the index type (§7.12.1).
-- **Queues of class handles store handles, not copies.** A monitor that reuses one transaction object and pushes it every cycle fills the queue with the same handle, so every entry shows the last value (§8.4, §8.12). Create or clone a new object per item before `push_back`.
-- **Defaults change the warning story.** An associative array declared with `'{default: v}` returns `v` for a missing key without a warning (§7.9.11), and `a[k]++` on a missing key allocates the entry with that default first (§7.8.7). That is the idiom for hit counters.
-- **What the models above do not cover:** iterator and index arguments (`find(x) with (x.id > 4)`), struct elements, multidimensional dynamic arrays, and wildcard `[*]` indices. Use a simulator for those.
+### Expert: Ordering you can and cannot rely on
+
+| What you iterate or call | Order | Source |
+|---|---|---|
+| `foreach`, `first()`/`next()` on integral keys | Numeric, signed or unsigned by the index type | §7.8.4 |
+| The same on string keys | Lexicographic by character code | §7.8.2 |
+| The same on class-handle keys | Deterministic but arbitrary | §7.8.3 |
+| The same on user-defined keys without relational operators | Can vary between runs of the same tool; stable within a run while no keys are added or deleted | §7.8.5 |
+| `find`, `find_index` results | Unspecified traversal order | §7.12.1 |
+| `find_first`, `find_last` | Defined: the match closest to the leftmost or rightmost index (for an associative array, to the index `first()` or `last()` returns) | §7.12.1 |
+| `unique()`, `unique_index()` results | Unrelated to the array order | §7.12.1 |
+| `min()`, `max()` with ties | One element; the LRM does not say which | §7.12.1 |
+| `sort()` on equal keys | Stability is not stated: tool-dependent | §7.12.2 |
+| `shuffle()` | Random, drawn from the calling thread's random number generator, so the same seed and the same code give the same order (random stability) | §7.12.2, §18.14, §18.14.2 |
+
+Logs you compare across simulators must not depend on the open rows, and a `shuffle()` result repeats only for the same seed on the same simulator. Print integral- or string-keyed tables with `foreach`, sort a locator result before you print it, and key by an ID rather than by a class handle.
+
+### Expert: Traversal and allocation corner cases
+
+- **A narrow traversal variable truncates.** The argument to `first()`, `last()`, `next()` and `prev()` must be assignment compatible with the index type. If it is a smaller integral type, the method returns −1 and truncates: with `string aa[int]; byte ix;` and `aa[1000] = "a";`, `aa.first(ix)` returns −1 and leaves the low 8 bits of 1000 in `ix` (§7.9.8). The LRM calls that value 232; because `byte` is signed, `%0d` prints it as −24. Declare the traversal variable with exactly the index type.
+- **A narrow key type aliases keys.** An integral index expression is cast to the index type (§7.8.4). With `int aa[byte];`, `aa[300] = 1;` writes key 44, and `aa[44]` reads it back.
+- **x and z keys are invalid.** A read with an x/z key warns and returns the missing-element value; a write is ignored with a warning (§7.8.4, §7.8.6).
+- **Wildcard arrays are nearly unusable for traversal.** An `[*]` array cannot be used with `foreach`, with `first`/`last`/`next`/`prev`, or with any array method that returns an index or an array of values (§7.8.1, §7.9.4–§7.9.7).
+- **Allocation hides in read-modify-write.** `aa[k]++`, `aa[k] += 2` and passing `aa[k]` to a `ref` argument all allocate a missing entry first (§7.8.7). A plain read never does (§7.8.6).
+- **A default changes reads, not methods.** With `'{default: v}`, a missing key reads `v` without a warning, but `exists()` still returns 0 and `num()` still counts only written keys (§7.9.11).
+- **Deleting during a `first()`/`next()` walk is defined.** `next()` finds the smallest index greater than its argument, whether or not that index still exists (§7.9.6). For integral and string keys this one-pass cleanup is well-defined, unlike the same deletes inside `foreach` (§12.7.3). For user-defined keys without relational operators, the order may change after a delete (§7.8.5).
+
+```systemverilog
+// snippet: one pass with first()/next(), legal for integral and string keys
+function automatic void drop_empty_ids();
+  int id;
+  int found;
+  found = exp_by_id.first(id);
+  while (found) begin
+    if (exp_by_id[id].size() == 0) exp_by_id.delete(id);
+    found = exp_by_id.next(id);  // smallest key above id, even if id is gone
+  end
+endfunction
+```
+
+Traced on keys 1, 4 and 9, where only key 1 still holds items:
+
+| Pass | `id` on entry | Action | `next(id)` | Keys afterwards |
+|---|---|---|---|---|
+| 1 | 1 | Queue not empty: keep | Returns 1; `id` becomes 4 | 1, 4, 9 |
+| 2 | 4 | Queue empty: `delete(4)` | Returns 1; `id` becomes 9, the smallest key above 4 | 1, 9 |
+| 3 | 9 | Queue empty: `delete(9)` | Returns 0; `id` stays 9 and the loop ends | 1 |
+
+### Expert: Stale references and hidden copies
+
+- **What an outdated reference is.** A task that holds an array element by `ref` keeps that element alive until it returns, but if the element was removed or the array was resized meanwhile, its writes are no longer visible in the array (§13.5.2). These operations outdate references: a dynamic array resized by `new[]` (even `new[N](a)`) or emptied by `delete()`; deleting the referenced associative entry; assigning to the whole queue or dynamic array; and deleting the referenced queue element with a method (§13.5.2, §7.5.1).
+- **Queue methods are gentler than assignment.** `push_*`, `pop_*`, `insert` and `delete(i)` leave references to surviving items valid. `q = {q, x}` gives the same value as `push_back(x)` but outdates every reference (§7.10.3, §7.10.4). On a bounded queue, a `push_front` or `insert` that pushes the last item out outdates that item (§7.10.3).
+- **By value copies, always.** Every array kind is copied when passed by value, associative arrays included (§7.7, §7.9.10). A function called per transaction with a 10,000-item queue by value copies it every time; use `const ref`.
+- **`ref` is strict.** It needs an `automatic` subroutine and an equivalent type (§13.5.2). A queue is not equivalent to a dynamic array, because they are different kinds of array (§6.22.2), so a queue cannot bind to `ref int a[]` even though it binds to `int a[]` by value (§7.7).
+- **Handles in containers alias.** A queue of class handles holds handles (§8.12): store a new object or a copy per transaction, as the aliasing trace in Build Your Mental Model shows.
+
+### Expert: Result types and widths of array methods
+
+- **Reductions take the `with` type.** A reduction returns the element type, or the type of the `with` expression (§7.12.3). `bytes.sum() with (item > 0)` on `'{200, 100}` returns 0: the relational expression is 1 bit wide (§11.4.4), so 1 + 1 wraps to 0. Count with `int'(item > 0)`.
+- **Reductions need values the operation is defined for.** Without a `with` clause, the element type itself must support the addition, multiplication or bitwise operation; with one, the `with` expression's type must (§7.12.3). An array of structs therefore needs a `with` clause that picks a member: `pkts.sum() with (int'(item.len))`.
+- **Index locators return the index type.** `find_index` and friends return a queue of `int`, except on an associative array, where they return a queue of the index type (§7.12.1). `item.index` follows the same rule, and `item.index(2)` asks for the index in dimension 2 (§7.12.4).
+- **New in IEEE 1800-2023: `index_argument`.** If the element type has a member named `index`, rename the index method with a second argument: `arr.find(item, iter_index) with (item.index != item.iter_index)` (§7.12, §7.12.4).
+- **New in IEEE 1800-2023: `map()`.** `A.map() with (item + 1'b1)` returns an array of the same shape whose element type is the self-determined type of the `with` expression (§7.12.5). Support in simulators is still uneven: tool-dependent.
+- **No side effects in `with`.** If the `with` expression has side effects, the results may be unpredictable (§7.12).
+
+### Expert: Memory and performance at scale
+
+Only the queue's constant-time ends and element access are stated in the LRM (§7.10). The rest of this table is typical simulator behaviour, labelled implementation-dependent:
+
+| Operation | Dynamic array | Queue | Associative array |
+|---|---|---|---|
+| Read or write `[i]` | Constant time, typically | Constant time (§7.10) | Typically logarithmic (tree) or amortized constant (hash) |
+| `push_back`, `push_front` | Not available | Constant time (§7.10) | Not available |
+| `insert(i)`, `delete(i)` in the middle | Not available | Typically proportional to the items moved | `delete(key)` costs about one lookup |
+| Growing | `new[N](a)` copies every element | One item per push | One entry per write |
+| `foreach`, `find*`, `sum`, `unique` | Linear | Linear | Linear, in key order |
+
+- **Searches multiply.** A checker that calls `find_first_index` on a long queue for every response does work proportional to the queue for each one, so the whole test slows quadratically. Key the data by ID.
+- **"Leaks" are references you still hold.** SystemVerilog reclaims memory automatically, but only for data nothing refers to (§8.29). An expected table you never delete from grows for the whole test: delete matched entries and empty per-ID queues, and cap the outstanding count per ID.
+- **Handles keep objects alive.** A container of class handles keeps every object it refers to. IEEE 1800-2023 adds `weak_reference#(T)`, which refers to an object without keeping it alive (§8.30); simulator support varies, so it is tool-dependent.
+- **Copies cost.** Pass large arrays to per-transaction helpers by `const ref`, not by value (§7.7, §13.5.2).
+
+### Expert: The same structures inside UVM
+
+- **`uvm_pool` is a class-based associative array** (IEEE 1800.2-2020 §11.2). Its `get(key)` allocates a missing key with the Table 7-1 value (§11.2.2.4), which a native read never does (IEEE 1800-2023 §7.8.6). That is where "phantom entries" come from: they belong to `uvm_pool`, not to the language.
+- **Deleting a missing key differs too.** In uvm-core 2020.3.1 (`uvm_pool.svh`), `uvm_pool::delete(key)` on a missing key issues a `POOLDEL` warning, while native `delete(k)` is silent (§7.9.2).
+- **`uvm_queue`** (IEEE 1800.2-2020 §11.3) wraps a queue in an object, so components can share it by handle. [I-UVM-5](/curriculum/T2_Intermediate/I-UVM-5_UVM_Container_Classes/index) covers both classes.
+- **The configuration database is built from these structures.** In uvm-core 2020.3.1 (`uvm_resource_pool.svh`), the resource pool keeps an associative array keyed by name (`rtab[string]`) and one keyed by type handle (`ttab[uvm_resource_base]`); each entry is a handle to an object that holds a queue of resources. The handle-keyed table is a real use of a class index type.
+- **Where the end-of-test check goes.** A UVM scoreboard uses the same associative array of queues as Make It Work, but checks for leftovers in `check_phase`, not in `final`. In uvm-core 2020.3.1 (`uvm_root.svh`), `run_test` prints the report summary and then calls `$finish`, so an error raised in a `final` block is missing from the summary's counts ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)).
+
+### Expert: Interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: scoreboard at scale"
+  question="An AXI read checker sees 64 IDs, up to 16 outstanding reads per ID and 10 million transactions per test. Which structure holds the expected data, what do you delete and when, and what makes the test fail at the end?"
+  options={[
+    { text: "bit [31:0] exp_by_id [int][$]: push on each request, pop_front() on each response, delete a key when its queue empties, and fail the test unless the pending count is 0 at the end.", isCorrect: true, feedback: "Right. A keyed lookup, FIFO order within an ID, memory bounded by what is actually outstanding, and an end-of-test check that treats leftovers as failures. On a mid-test reset, flush the table on purpose and account for every item you flushed." },
+    { text: "One queue of all expected reads, searched with find_first_index for the response ID.", isCorrect: false, feedback: "Every response scans up to 1,024 waiting items (64 IDs × 16), so the checker slows quadratically over the test, and each item must also carry its ID." },
+    { text: "bit [31:0] exp [int]: one entry per ID, overwritten by each new request.", isCorrect: false, feedback: "With 16 reads outstanding per ID, 15 expectations are overwritten and lost." },
+    { text: "An associative array keyed by the expected data value.", isCorrect: false, feedback: "Two reads can return the same data, and the key says nothing about the ID or the order." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: print order"
+  question="Two simulators print the same associative array in different orders. When is that legal, and when is it a bug in your code?"
+  options={[
+    { text: "Legal for class-handle keys and for user-defined keys without relational operators. For integral and string keys the order is defined, so a difference means the code printed something unordered, such as unique() or find() results.", isCorrect: true, feedback: "Right (§7.8.3, §7.8.5, §7.12.1). Locators traverse in an unspecified order, and unique() results are unrelated to the array order." },
+    { text: "Always legal: associative arrays are hash tables.", isCorrect: false, feedback: "The LRM requires no hashing. Integral keys iterate numerically and string keys lexicographically on every compliant simulator (§7.8.2, §7.8.4)." },
+    { text: "Never legal: every index type has a defined order.", isCorrect: false, feedback: "Class-handle keys are deterministic but arbitrary (§7.8.3), and unordered user-defined keys may even change between runs (§7.8.5)." },
+    { text: "Legal only for a wildcard [*] index.", isCorrect: false, feedback: "A wildcard index orders numerically (§7.8.1). The class and user-defined index types are the ones that leave the order open." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: the 1-bit sum"
+  question="bit [7:0] b[$] = '{200, 100}; Why does b.sum() with (item > 0) return 0, although both items are positive?"
+  options={[
+    { text: "The with expression item > 0 is 1 bit wide, so the sum is computed in 1 bit and 1 + 1 wraps to 0.", isCorrect: true, feedback: "Right. A reduction takes the type of its with expression (§7.12.3), and a relational expression is 1 bit (§11.4.4). Write int'(item > 0) to count." },
+    { text: "sum() with a relational expression returns 0 when any comparison is false.", isCorrect: false, feedback: "There is no such rule. The with clause only changes which values are summed and their type." },
+    { text: "200 is negative in 8 bits, so item > 0 is false for it.", isCorrect: false, feedback: "bit [7:0] is unsigned: 200 is 200, and the comparison is true for both items." },
+    { text: "The element sum 300 wraps to 44 first, and the with clause then compares 44 with 0.", isCorrect: false, feedback: "With a with clause, the values summed are the with expression's values (1 and 1), not the elements." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: ref or value"
+  question="Passing a queue to a function compiles when the formal is int a[] (by value), but not when it is ref int a[]. Why?"
+  options={[
+    { text: "By value only needs assignment compatibility, which a queue has with a dynamic array. ref needs an equivalent type, and a queue and a dynamic array are different kinds of array.", isCorrect: true, feedback: "Right (§7.7, §13.5.2, §6.22.2). Declare ref int a[$] for a queue, or keep by value and accept the copy." },
+    { text: "ref is only legal for fixed-size arrays.", isCorrect: false, feedback: "ref works with any array kind, as long as the types are equivalent and the subroutine is automatic (§13.5.2)." },
+    { text: "The function must be declared static to take a ref argument.", isCorrect: false, feedback: "The opposite: ref is illegal in a subroutine with a static lifetime (§13.5.2)." },
+    { text: "Queues cannot be passed to subroutines at all.", isCorrect: false, feedback: "They can: by value to any compatible unpacked-array formal (§7.7), or by ref to a queue formal." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: the slow regression"
+  question="A long regression slows down over time and finally runs out of memory. The scoreboard keeps expected items in an associative array. What is the likely cause, and where does the end-of-test check belong?"
+  options={[
+    { text: "Matched entries are never deleted, so the table grows for the whole test. Delete on every match, and check that nothing is left: in check_phase in UVM, or in a final block in plain SystemVerilog.", isCorrect: true, feedback: "Right. Automatic memory management reclaims only data nothing refers to (§8.29), and the table refers to everything. Keep the UVM check in check_phase: in uvm-core 2020.3.1, run_test prints the report summary before $finish, so an error raised in a final block is missing from the summary." },
+    { text: "Associative arrays have a fixed capacity; declare a larger one.", isCorrect: false, feedback: "There is no capacity to declare: entries are allocated as you write them (§7.8)." },
+    { text: "The simulator's hash table degrades; switch to a queue.", isCorrect: false, feedback: "A queue makes every lookup a search and does nothing about the growth. The data you never delete is the problem." },
+    { text: "Call delete() on the whole array every 1,000 transactions.", isCorrect: false, feedback: "That throws away expectations that are still outstanding. Delete exactly the entries that matched." }
+  ]}
+/>
 
 ## Practice & Reinforce
-Six scenarios, one container each. Answer before you read the options twice: the feedback explains every wrong choice, and the score is simply how many you got right.
+
+### Quiz
+
+In the code questions, declarations that have an initial value sit at module level, and the statements after them run in order inside one `initial` block. (Inside a procedural block, an initialized declaration needs `static` or `automatic`, §6.21.)
+
+<Quiz questions={[
+  {
+    question: "logic [7:0] mem[] = {1, 2, 3}; mem = new[5]; What does mem hold now?",
+    objective: 2,
+    answers: [
+      { text: "'{x, x, x, x, x}", correct: true, feedback: "Right. new[5] without an initializer allocates five fresh elements at the 4-state default x; the old values are discarded (§7.5.1)." },
+      { text: "'{1, 2, 3, x, x}", correct: false, feedback: "That is mem = new[5](mem). Plain new[N] copies nothing." },
+      { text: "'{1, 2, 3, 0, 0}", correct: false, feedback: "Two mistakes: new[N] does not keep the old values, and logic is 4-state, so new elements start as x, not 0." },
+      { text: "'{0, 0, 0, 0, 0}", correct: false, feedback: "0 is the default for 2-state types such as int or bit. logic [7:0] is 4-state, so new elements are x (Table 6-7)." }
+    ],
+    explanation: "new[N] builds a new array of N default-valued elements; it is not a resize (§7.5.1). Only new[N](mem) copies the old contents and pads the rest with the default. The default depends on the element type: x for 4-state logic, 0 for 2-state int (Table 6-7)."
+  },
+  {
+    question: "int q[$] = '{1, 2, 3}; int x; q.push_front(0); q.insert(2, 9); x = q.pop_back(); q.push_back(7); What does q hold?",
+    objective: 2,
+    answers: [
+      { text: "'{0, 1, 9, 2, 7}", correct: true, feedback: "Right: '{0, 1, 2, 3} after push_front, '{0, 1, 9, 2, 3} after insert(2, 9), '{0, 1, 9, 2} after pop_back (x = 3), then 7 at the back." },
+      { text: "'{0, 1, 2, 9, 7}", correct: false, feedback: "insert(2, 9) puts 9 at index 2 and moves the old index-2 item up one; it does not insert after index 2 (§7.10.2.2)." },
+      { text: "'{1, 9, 2, 3, 7}", correct: false, feedback: "pop_back removes the last item (3), not the front item (§7.10.2.5)." },
+      { text: "'{0, 1, 9, 2, 3, 7}", correct: false, feedback: "pop_back removes the item it returns; it is not a peek. Read q[$] if you only want to look." }
+    ],
+    explanation: "Track the queue after every call: push_front(0) gives '{0, 1, 2, 3}; insert(2, 9) places 9 at index 2, giving '{0, 1, 9, 2, 3}; pop_back() removes and returns 3; push_back(7) gives '{0, 1, 9, 2, 7}. The wrong answers come from reading insert as 'after index 2', pop_back as 'the front', and a pop as a peek."
+  },
+  {
+    question: "int bq[$:2] = '{5, 6, 7}; bq.push_front(4); What happens?",
+    objective: 2,
+    answers: [
+      { text: "bq becomes '{4, 5, 6}: the 7 is discarded and a warning is issued", correct: true, feedback: "Right. The write behaves as if the queue were unbounded, giving '{4, 5, 6, 7}, then everything beyond index 2 is discarded with a warning (§7.10.5)." },
+      { text: "bq stays '{5, 6, 7}: a full queue rejects the new item", correct: false, feedback: "That is what push_back on a full queue looks like, because there the new item is the one past the bound. push_front shifts everything up, so the old last item falls off." },
+      { text: "The call blocks until another process pops an item", correct: false, feedback: "Queues never block. A bound is not backpressure; a bounded mailbox would block." },
+      { text: "bq becomes '{4, 5, 6, 7}: only push_back checks the bound", correct: false, feedback: "Every write is checked against the bound, push_front and insert included (§7.10.5)." }
+    ],
+    explanation: "[$:2] means the last legal index is 2, so the queue holds at most 3 items. After any write, items beyond index 2 are discarded with a required warning. Which item is lost depends on where the write went: the new one for push_back, the old last one for push_front and insert. Nothing ever blocks."
+  },
+  {
+    question: "int hits[string]; int n; n = hits[\"ack\"]; No code has written hits[\"ack\"]. What are n and hits.num() afterwards?",
+    objective: 5,
+    answers: [
+      { text: "n is 0, a warning is issued, and hits.num() is 0", correct: true, feedback: "Right. A read of a nonexistent entry returns the Table 7-1 value (0 for int) with a warning and allocates nothing (§7.8.6)." },
+      { text: "n is 0 and hits.num() is 1: the read created the entry", correct: false, feedback: "That is C++ std::map or uvm_pool::get() behaviour. A native SystemVerilog read never allocates; only writes, ref arguments and read-modify-writes such as hits[k]++ do (§7.8.7)." },
+      { text: "n is x, because the key does not exist", correct: false, feedback: "int is 2-state and cannot hold x; the missing-element value for int is 0. For a logic element type it would be x." },
+      { text: "The simulation stops with an index error", correct: false, feedback: "It is a warning, not an error. That is exactly why this bug hides: the code carries on with a plausible 0." }
+    ],
+    explanation: "A missing-key read is legal: it returns the type's missing-element value (0 for int, x for logic) with a required warning, and num() stays 0 because reads never allocate (§7.8.6, §7.8.7). Call exists() first, or declare a default such as '{default: 0}, which returns 0 without a warning (§7.9.11)."
+  },
+  {
+    question: "bit [7:0] pay[$] = '{200, 100}; int total; total = pay.sum(); What is total?",
+    objective: 3,
+    answers: [
+      { text: "44", correct: true, feedback: "Right. sum() returns the element type, bit [7:0], so 300 wraps to 44 before it is assigned to total (§7.12.3)." },
+      { text: "300", correct: false, feedback: "That needs pay.sum() with (int'(item)). Assigning to an int afterwards cannot restore bits the 8-bit sum already lost." },
+      { text: "255", correct: false, feedback: "SystemVerilog arithmetic wraps to the result width; it never saturates." },
+      { text: "Nothing: it does not compile without a with clause", correct: false, feedback: "The with clause is optional when addition is defined for the element type, which it is for bit [7:0] (§7.12.3)." }
+    ],
+    explanation: "A reduction method returns a value of the element type, or of the with expression's type when there is a with clause (§7.12.3). For bit [7:0] elements, 200 + 100 = 300 is computed in 8 bits: 300 - 256 = 44. Write pay.sum() with (int'(item)) to sum in 32 bits."
+  },
+  {
+    question: "int q[$] = '{3, 9, 4}; Which code compiles and leaves 9 in the int variable m?",
+    objective: 3,
+    answers: [
+      { text: "int r[$]; r = q.max(); m = r[0];", correct: true, feedback: "Right. max() is a locator: it returns a queue holding the largest element (§7.12.1)." },
+      { text: "m = q.max();", correct: false, feedback: "max() returns a queue, not an int, so this assignment does not compile." },
+      { text: "q.rsort(); m = q[$];", correct: false, feedback: "rsort() sorts in descending order, giving '{9, 4, 3}, so q[$] is 3. q[0] would be 9." },
+      { text: "m = q.sum() with (int'(item == 9));", correct: false, feedback: "That counts how many items equal 9, which gives 1." }
+    ],
+    explanation: "Locator methods (find*, min, max, unique) always return a queue, even when the answer is one element (§7.12.1). Assign the result to a queue and read element 0. rsort() is void and reorders q in place (§7.12.2), and a with clause on sum() changes what is summed (§7.12.3)."
+  },
+  {
+    question: "In a module: int jobs_q[$] = '{1, 2, 3}; function automatic void clear_all(int a[$]); a.delete(); endfunction. After clear_all(jobs_q), jobs_q still holds all three items. Why, and what fixes it?",
+    objective: 3,
+    answers: [
+      { text: "a is a copy, because arrays pass by value; declare the formal as ref int a[$]", correct: true, feedback: "Right. Passing by value copies every kind of array (§7.7). ref passes the queue itself; the function is automatic, as ref requires, and the types are equivalent (§13.5.2)." },
+      { text: "Queues always pass by reference, so the bug is elsewhere", correct: false, feedback: "That is the C or Java model. In SystemVerilog an array argument is copied unless the formal is ref (§7.7)." },
+      { text: "Declare the formal const ref int a[$] so the caller sees the change", correct: false, feedback: "const ref shares the array but forbids writes, so a.delete() would not compile (§13.5.2)." },
+      { text: "Declare the formal ref int a[] so that any array can be passed", correct: false, feedback: "ref needs an equivalent type, and a queue is not equivalent to a dynamic array (§6.22.2), so a queue cannot bind to ref int a[]." }
+    ],
+    explanation: "By value, the function gets its own copy and empties that copy (§7.7). ref int a[$] passes the caller's queue itself, which needs an automatic subroutine and an equivalent actual type (§13.5.2, §6.22.2). const ref would avoid the copy but forbids writes, and a dynamic-array ref formal would not accept a queue."
+  },
+  {
+    question: "A memory model must cover a 32-bit address space, and a test writes a few hundred scattered addresses. Which declaration fits?",
+    objective: 1,
+    answers: [
+      { text: "logic [31:0] mem [bit [31:0]];", correct: true, feedback: "Right. An associative array allocates an entry only for each address written, and its key is the address itself (§7.8)." },
+      { text: "logic [31:0] mem []; sized with new[] to cover every address", correct: false, feedback: "A dynamic array allocates every element up front: billions of entries for a few hundred writes." },
+      { text: "logic [31:0] mem [$]; searched with find_first_index", correct: false, feedback: "A queue index is a position, not an address, and every lookup becomes a linear search." },
+      { text: "logic [31:0] mem [0:32'hFFFF_FFFF];", correct: false, feedback: "A fixed-size array of 2^32 entries is allocated at elaboration, and the LRM guarantees support for only 2^24 elements per array (§7.4.2)." }
+    ],
+    explanation: "Sparse data wants an associative array: memory is used only for written keys, the key is the address, and exists() tells you whether an address was ever written (§7.8, §7.9.3). Dynamic and fixed-size arrays allocate every element, and a queue indexes by position, which turns each lookup into a search."
+  },
+  {
+    question: "A DUT may answer requests with different IDs in any order, but answers for one ID come back in request order, with up to 16 outstanding per ID. Where should the checker keep the expected data?",
+    objective: 1,
+    answers: [
+      { text: "bit [31:0] exp_by_id [int][$]; with one queue per ID", correct: true, feedback: "Right. The key finds the ID's queue directly, and pop_front() enforces the order within the ID (§7.8, §7.10)." },
+      { text: "bit [31:0] exp [int]; with one entry per ID", correct: false, feedback: "A second outstanding request for the same ID overwrites the first, so the checker loses expectations." },
+      { text: "bit [31:0] exp_q [$]; with one queue in request order", correct: false, feedback: "That is right only for an in-order DUT. A legal overtake between IDs would be reported as a mismatch." },
+      { text: "bit [31:0] exp [16]; indexed by the outstanding count", correct: false, feedback: "The count says how many items wait, not which ID they belong to, so the lookup by ID is lost." }
+    ],
+    explanation: "Two orders are in play: none across IDs, strict within an ID. An associative array of queues expresses both: the key gives the ID's queue, and pop_front() takes the oldest item of that ID. One entry per ID loses items, and a single queue assumes a global order the DUT does not promise."
+  },
+  {
+    question: "This cleanup sometimes leaves empty IDs behind: foreach (exp_by_id[id]) if (exp_by_id[id].size() == 0) exp_by_id.delete(id); Why, and what is the fix?",
+    objective: 5,
+    answers: [
+      { text: "Changing the array's size inside a foreach over it is undefined; collect the keys first, then delete them in a second loop", correct: true, feedback: "Right (§12.7.3). find_index with (item.size() == 0) collects the keys without changing the array." },
+      { text: "foreach takes a snapshot of the keys, so the bug must be elsewhere", correct: false, feedback: "The LRM gives no snapshot guarantee: the results are undefined when the array changes size during the loop (§12.7.3)." },
+      { text: "delete(id) is illegal inside any loop", correct: false, feedback: "delete(id) is legal anywhere. A first()/next() loop may even delete the key it is on, because next() looks for the next larger key (§7.9.6)." },
+      { text: "delete() works only on queues, not on associative arrays", correct: false, feedback: "Associative arrays have delete(index) and delete() (§7.9.2)." }
+    ],
+    explanation: "foreach walks the array while you change it, and the LRM leaves the result undefined (§12.7.3): keys can be skipped or visited twice. Make the first pass read-only, collecting the keys with find_index, and delete in a second pass, or use a first()/next() loop, which stays well-defined for integral and string keys."
+  },
+  {
+    question: "A regression passes a test when its log contains mismatches=0. One test lost the response for ID 3, yet it passed. Which end-of-test design catches this?",
+    objective: 4,
+    answers: [
+      { text: "Count the items still pending, raise an error per pending ID, and pass only when the summary shows mismatches=0 and pending=0", correct: true, feedback: "Right. A lost response is a missing match, not a mismatch, so only a pending count catches it." },
+      { text: "Nothing extra: the simulator reports a non-empty associative array as an error at the end", correct: false, feedback: "Simulators say nothing about data left in your containers. Only your own check does." },
+      { text: "Print the pending IDs with $display in the final block", correct: false, feedback: "A printed list fails nothing: the search for mismatches=0 still passes." },
+      { text: "Call exp_by_id.delete() at the end so the run finishes clean", correct: false, feedback: "That deletes the evidence. The test still passes with a lost response." }
+    ],
+    explanation: "Leftover expectations are failures: something the DUT should have produced never came. Raise an error for each pending ID and make the pass criterion include the pending count, as in SCB_SUMMARY matches=N mismatches=0 pending=0. A printed list or a cleanup does not change the verdict."
+  },
+  {
+    question: "int aa[string]; aa[\"beta\"] = 1; aa[\"Gamma\"] = 2; aa[\"alpha\"] = 3; In which order does foreach (aa[k]) visit the keys?",
+    objective: 2,
+    answers: [
+      { text: "\"Gamma\", \"alpha\", \"beta\"", correct: true, feedback: "Right. String keys are ordered lexicographically by character code, and uppercase letters come first (§7.8.2)." },
+      { text: "\"beta\", \"Gamma\", \"alpha\"", correct: false, feedback: "That is the write order. Associative arrays do not remember it; they iterate in index order (§7.8)." },
+      { text: "\"alpha\", \"beta\", \"Gamma\"", correct: false, feedback: "That is dictionary order, which ignores case. SystemVerilog compares character codes, and G (71) is smaller than a (97)." },
+      { text: "It depends on the simulator's hash function", correct: false, feedback: "For integral and string keys the order is defined (§7.8.2, §7.8.4); only class-handle and some user-defined keys leave it open." }
+    ],
+    explanation: "The index type sets the order: string keys sort by character code, so keys that start with an uppercase letter come before lowercase ones (§7.8.2), and integral keys sort numerically (§7.8.4). Insertion order is never kept."
+  }
+]} />
+
+### Practice: pick the container
+
+Six testbench jobs, one container each. Answer before you read the options twice: every option explains itself after you answer, and the score is how many you got right.
 
 <PacketSorterGame />
 
-- Drill built-in methods: `find_index()` on associative arrays (it returns keys), `sum() with (int'(item))` on narrow element types, and `sort()` only on queues, dynamic and fixed-size arrays.
+One naming caveat for the bounded-queue scenario: the game calls its queue `buf`, but `buf` is a reserved keyword in SystemVerilog (a gate primitive, Annex B), so real code needs another name, such as `item_t pend_q[$:7]`.
 
-## Interview Questions
+### Kata: an in-order checker and a by-ID tracker on the same traffic
 
-<Card className="mt-8">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">Compare dynamic arrays, queues, and associative arrays. When would you use each in a UVM testbench?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p><strong>Dynamic arrays</strong> (IEEE 1800-2023 §7.5): use when size is known after construction and random access is needed (e.g., pre-built stimulus sequences, coverage bins).</p>
-        <p><strong>Queues</strong> (§7.10): use for FIFO/LIFO ordering with constant-time push/pop at the ends (e.g., driver stimulus queues, monitor output buffers). A bounded queue <code>[$:N]</code> models a fixed depth, but it discards overflow with a warning rather than applying backpressure.</p>
-        <p><strong>Associative arrays</strong> (§7.8): use for sparse key-value lookup (e.g., scoreboard tracking outstanding TXNs by ID, config DB implementations). Always delete completed entries to avoid memory leaks.</p>
-      </div>
-    </details>
+**Goal:** see why the container must match the ordering rule the DUT promises (objectives 1 and 4).
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is the performance difference between queue push_back vs. insert in the middle?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>§7.10 describes queue insertion and removal at either end, and access to any element, as constant-time. It says nothing about <code>insert()</code> in the middle, which simulators typically implement by moving elements, so expect it to scale with queue length.</p>
-        <p>In a scoreboard processing millions of transactions, mid-queue inserts can become a simulation bottleneck. If you need ordered insertion, consider an associative array with a sortable key instead.</p>
-      </div>
-    </details>
+**Start from** the `tb_top` in Make It Work.
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">Your regression slows down over time and eventually runs out of memory. The scoreboard uses an associative array. What's the likely cause?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>The associative array is never cleaned up — matched or timed-out entries aren't being <code>delete()</code>'d. Over millions of transactions the array grows without bound, consuming memory and slowing every lookup and iteration.</p>
-        <p><strong>Fix:</strong> Call <code>expected_txns.delete(id)</code> after every successful comparison. Add a <code>check_phase()</code> check that flags non-zero <code>.num()</code> as an error. For very long tests, periodically sweep and delete entries that have timed out, collecting their keys first so you never delete inside a <code>foreach</code> over the same array.</p>
-      </div>
-    </details>
+1. Add checker A: one queue, `bit [31:0] exp_q [$];`. `add_expected` also pushes onto it, and `check_actual` also pops its front item and compares, counting matches and mismatches.
+2. In the `final` block, print a second summary line for checker A that counts its leftover items.
+3. Run with `INJECT_BUGS = 0`, then with `INJECT_BUGS = 1`.
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">How do array manipulation methods like find_index, sort, and sum work? Give a practical verification use case.</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>IEEE 1800-2023 §7.12 defines three families. Locator and reduction methods work on any unpacked array; ordering methods work on every unpacked array except associative arrays.</p>
-        <ul className="list-disc pl-5 mt-2 space-y-1">
-          <li><code>find_index with (item &gt; threshold)</code> — returns a <em>queue</em> of matching indices (keys, for an associative array). Use in coverage analysis to find which bins are uncovered. <code>min()</code>, <code>max()</code> and <code>unique()</code> also return queues.</li>
-          <li><code>sort()</code> / <code>rsort()</code> — void, in-place ordering. Use to normalize transaction queues before comparison in an out-of-order scoreboard.</li>
-          <li><code>sum()</code> — reduction whose result has the element type. Summing a byte payload for a checksum needs <code>sum() with (int'(item))</code>, or it wraps at 8 bits.</li>
-        </ul>
-      </div>
-    </details>
-  </CardContent>
-</Card>
+**Acceptance:**
+
+- With `INJECT_BUGS = 0`, the by-ID tracker passes (`mismatches=0 pending=0`) and checker A reports 2 mismatches. Explain in one sentence why they are false alarms.
+- With `INJECT_BUGS = 1`, both checkers report one item still pending: the request for ID 3.
+- No missing-key warning appears in either run.
+
+**Extension:** cap each ID at 4 outstanding items with `bit [31:0] exp_by_id [int][$:3]`, and count the drops yourself before each push instead of relying on the bound's warning.
+
+<details>
+<summary>Worked solution</summary>
+
+The sparse-memory lines are left out to keep the focus on the two checkers.
+
+```systemverilog
+// compile
+module tb_top;
+  localparam bit INJECT_BUGS = 0;
+
+  bit [31:0] exp_by_id [int][$];  // checker B: one queue per ID
+  bit [31:0] exp_q [$];           // checker A: one queue in request order
+  int a_match, a_mismatch;
+  int b_match, b_mismatch, b_pending;
+
+  function automatic void add_expected(int id, bit [31:0] data);
+    if (!exp_by_id.exists(id)) exp_by_id[id] = {};
+    exp_by_id[id].push_back(data);
+    exp_q.push_back(data);
+  endfunction
+
+  function automatic void check_actual(int id, bit [31:0] data);
+    bit [31:0] expected;
+    // Checker A assumes one global order.
+    if (exp_q.size() == 0) begin
+      $error("A: UNEXPECTED id=%0d data=%h", id, data);
+      a_mismatch++;
+    end else begin
+      expected = exp_q.pop_front();
+      if (expected !== data) begin
+        $error("A: MISMATCH id=%0d exp=%h act=%h", id, expected, data);
+        a_mismatch++;
+      end else a_match++;
+    end
+    // Checker B keeps order only within an ID.
+    if (!exp_by_id.exists(id)) begin
+      $error("B: UNEXPECTED id=%0d data=%h", id, data);
+      b_mismatch++;
+      return;
+    end
+    expected = exp_by_id[id].pop_front();
+    if (expected !== data) begin
+      $error("B: MISMATCH id=%0d exp=%h act=%h", id, expected, data);
+      b_mismatch++;
+    end else b_match++;
+    if (exp_by_id[id].size() == 0) exp_by_id.delete(id);
+  endfunction
+
+  initial begin
+    add_expected(1, 32'hA1);
+    add_expected(2, 32'hB1);
+    add_expected(1, 32'hA2);
+    add_expected(3, 32'hC1);
+    check_actual(2, 32'hB1);
+    if (INJECT_BUGS) begin
+      check_actual(1, 32'hA2);
+      check_actual(1, 32'hA1);
+    end else begin
+      check_actual(1, 32'hA1);
+      check_actual(1, 32'hA2);
+      check_actual(3, 32'hC1);
+    end
+  end
+
+  final begin
+    foreach (exp_by_id[id]) begin
+      $error("B: PENDING id=%0d count=%0d", id, exp_by_id[id].size());
+      b_pending += exp_by_id[id].size();
+    end
+    if (exp_q.size() > 0) $error("A: PENDING count=%0d", exp_q.size());
+    $display("A: SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
+             a_match, a_mismatch, exp_q.size());
+    $display("B: SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
+             b_match, b_mismatch, b_pending);
+  end
+endmodule
+```
+
+**Expected output with `INJECT_BUGS = 0`** (illustrative; `Error:` stands for each tool's own prefix):
+
+```text
+Error: A: MISMATCH id=2 exp=000000a1 act=000000b1
+Error: A: MISMATCH id=1 exp=000000b1 act=000000a1
+A: SCB_SUMMARY matches=2 mismatches=2 pending=0
+B: SCB_SUMMARY matches=4 mismatches=0 pending=0
+```
+
+**Expected output with `INJECT_BUGS = 1`** (illustrative):
+
+```text
+Error: A: MISMATCH id=2 exp=000000a1 act=000000b1
+Error: A: MISMATCH id=1 exp=000000b1 act=000000a2
+Error: B: MISMATCH id=1 exp=000000a1 act=000000a2
+Error: A: MISMATCH id=1 exp=000000a2 act=000000a1
+Error: B: MISMATCH id=1 exp=000000a2 act=000000a1
+Error: B: PENDING id=3 count=1
+Error: A: PENDING count=1
+A: SCB_SUMMARY matches=0 mismatches=3 pending=1
+B: SCB_SUMMARY matches=1 mismatches=2 pending=1
+```
+
+**Why checker A false-alarms:** the DUT may legally answer ID 2 before ID 1, but checker A compares against one global order, so a legal overtake looks like two mismatches.
+
+**Extension hint:** before the push, `if (exp_by_id.exists(id) && exp_by_id[id].size() == 4)` counts a drop and skips the push; the `&&` stops the read when the key does not exist yet.
+
+</details>
+
+### Debug challenge: four silent bugs
+
+Each of these helpers compiles and runs without stopping the simulation, and each one is wrong. For each bug, name the symptom, the cause and the fix before you open the answer.
+
+```systemverilog
+// snippet: inside a module
+logic [7:0] samples [];
+bit   [7:0] payload [$];
+bit  [31:0] exp_by_addr [int];
+int         chk;
+
+function automatic void collect(logic [7:0] s);
+  samples = new[samples.size() + 1];                // bug 1
+  samples[samples.size() - 1] = s;
+endfunction
+
+function automatic bit check_read(int addr, bit [31:0] act);
+  return exp_by_addr[addr] == act;                  // bug 2
+endfunction
+
+function automatic void checksum();
+  chk = payload.sum();                              // bug 3
+endfunction
+
+function automatic void drop_zero_entries();
+  foreach (exp_by_addr[a])
+    if (exp_by_addr[a] == 0) exp_by_addr.delete(a); // bug 4
+endfunction
+```
+
+<details>
+<summary>Answers</summary>
+
+| Bug | Symptom | Cause | Fix | Log |
+|---|---|---|---|---|
+| 1 | Every earlier sample reads back as `x`; only the newest survives | `new[N]` without `(samples)` allocates a fresh array (§7.5.1) | `samples = new[samples.size() + 1](samples);`, or better a queue with `push_back` | Nothing |
+| 2 | A read from an address the test never wrote passes when the DUT returns 0 | A missing key reads the 2-state default 0 (§7.8.6), which matches `act` | `return exp_by_addr.exists(addr) && exp_by_addr[addr] == act;` and report the missing key as an error | One warning per missing-key read |
+| 3 | The checksum is wrong whenever the bytes add up to 256 or more | `sum()` returns `bit [7:0]` and wraps before the assignment (§7.12.3) | `chk = payload.sum() with (int'(item));` | Nothing |
+| 4 | Some zero entries survive, or the loop misbehaves on another simulator | Deleting inside a `foreach` over the same array is undefined (§12.7.3) | Collect first: `dead = exp_by_addr.find_index with (item == 0);` then `foreach (dead[i]) exp_by_addr.delete(dead[i]);` with `int dead [$];` declared | Nothing, or tool-specific warnings |
+
+The `&&` in fix 2 short-circuits, so the missing key is never read (§11.3.5).
+
+</details>
 
 ## References & Next Topics
-- IEEE 1800-2023 §7.4 (packed and unpacked arrays, Table 7-1), §7.5 (dynamic arrays), §7.6 (array assignment), §7.8–§7.9 (associative arrays), §7.10 (queues), §7.12 (array manipulation methods), §12.7.3 (`foreach`)
-- Next: [Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index)
+
+**Primary sources**
+
+- IEEE 1800-2023:
+  - §4.7 (nondeterminism: process interleaving), §6.8 (variable declarations, Table 6-7 default values), §6.21 (scope and lifetime), §6.22.2 (equivalent types)
+  - §7.4.2 (unpacked arrays), §7.4.5 (indexing and slicing, Table 7-1), §7.4.6 (operations on arrays, including whole-array equality), §7.5 (dynamic arrays: §7.5.1 `new[]`, §7.5.2 `size()`, §7.5.3 `delete()`), §7.6 (array assignments), §7.7 (arrays as arguments to subroutines)
+  - §7.8 (associative arrays: §7.8.1–§7.8.5 index types, §7.8.6 invalid indices, §7.8.7 allocation), §7.9 (associative array methods, §7.9.1–§7.9.11)
+  - §7.10 (queues: §7.10.1 operators, §7.10.2 methods, §7.10.3 persistence of references, §7.10.4 updates by assignment, §7.10.5 bounded queues)
+  - §7.11, §20.7 and §20.7.1 (array querying functions), §7.12 (array manipulation methods: §7.12.1 locator, §7.12.2 ordering, §7.12.3 reduction, §7.12.4 iterator index querying, §7.12.5 `map()`)
+  - §8.12 (assignment, renaming and copying), §8.29 (memory management), §8.30 (weak references), §9.2.3 (final procedures), §9.4.2 and §9.4.3 (event control and `wait`), §10.10 (unpacked array concatenation), §11.3.5 (short-circuit evaluation), §11.4.4 (relational operators), §11.4.14.4 (streaming dynamically sized data), §12.7.3 (`foreach`), §13.5.2 (pass by reference), §15.4.5 (mailbox `get()`), §18.4 (random variables), §18.14 and §18.14.2 (random stability, including `shuffle()`), §20.10 (severity tasks), §21.2.1.6 (`%p` format), Annex B (Table B.1, reserved keywords)
+- IEEE 1800.2-2020: §11.2 (`uvm_pool`), §11.2.2.4 (`get`), §11.3 (`uvm_queue`)
+- uvm-core 2020.3.1 (implementation, not the standard): `src/base/uvm_pool.svh` (`get`, `delete`), `src/base/uvm_root.svh` (`run_test`), `src/base/uvm_resource_pool.svh` (`rtab`, `ttab`)
+
+**Prerequisites:** [F2A: Core Data Types](/curriculum/T1_Foundational/F2A_Core_Data_Types/index)
+
+**Related**
+
+- [F2A: Structs, Unions and Enums](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums): struct elements, and `sort() with (item.field)`
+- [F2A: Operators and Expressions](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions): streaming operators that resize a dynamic target
+- [F2C: Procedural Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/flow-control): `foreach` and `do`…`while`
+- [F2D: Tasks and Functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions): argument directions, `ref` and `const ref` in general
+- [F2E: Your First Self-Checking Testbench](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index): an expected-value queue inside a complete bench
+- [I-SV-1: Object-Oriented Programming](/curriculum/T2_Intermediate/I-SV-1_OOP/index) and [copying and cloning](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning): handles in containers
+- [I-SV-2A: Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index): randomizing array sizes
+- [I-SV-5: Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes): FIFOs that block between threads
+- [I-UVM-5: UVM Container Classes](/curriculum/T2_Intermediate/I-UVM-5_UVM_Container_Classes/index): `uvm_pool` and `uvm_queue`
+- [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): the tracker inside a UVM scoreboard
+- [B-AXI-3: AXI Ordering and IDs](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index): ordering rules per ID
+
+<NextLesson />

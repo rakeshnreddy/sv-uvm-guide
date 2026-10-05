@@ -1,71 +1,143 @@
 ---
 title: "F3C: Delta Cycles and Race Conditions"
-description: "Explore delta cycles, race conditions, and the critical differences between blocking and non-blocking assignments."
+description: "Predict, reproduce and fix SystemVerilog race conditions by tracing delta cycles and the ordering freedom IEEE 1800-2023 allows."
 flashcards: "F3C_Delta_Cycles"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
 ## Quick Take
 
-- **What it is:** A **time slot** is everything the simulator does at one simulation time. Inside it, the scheduler works through ordered **regions**, looping back whenever new events appear. Each loop back is a **delta cycle**: more work, zero simulated time.
-- **Why it matters:** When two processes wake on the same event, IEEE 1800 lets the simulator run them in **any order** (§4.7). If your result depends on that order, you have a **race condition**. It may pass on one simulator and fail on the next, or after a harmless-looking file reorder.
-- **The rule you will apply all career:** A flop reads in **Active** and writes in **NBA** (`<=`). A testbench drives through a **clocking block**, so its writes land in **Re-NBA** and its reads come from **Preponed** samples.
-- **The Analogy:** A time slot is a stage play with a strict act order. Actors who enter in the same act may speak in any order. If the plot depends on who speaks first, the script is broken.
+- **What it is:** A **time slot** is everything the simulator does at one simulation time. Inside it, the scheduler works through ordered **regions** and loops back to the Active region whenever new events appear (IEEE 1800-2023 §4.5). Each loop back is a **delta cycle**: more work, zero simulated time. A **race condition** is code whose result depends on the order in which the simulator runs processes that are ready at the same time, an order the standard deliberately leaves open (§4.7).
+- **Why it matters:** A race can pass on one simulator and fail on the next, or flip after a harmless-looking file reorder, and the waveform looks innocent because everything happens at one time stamp. The race that costs verification engineers the most sits between the testbench (TB) and the design under test (DUT), which wake on the same clock edge. The cure is a rule you will apply for your whole career: a flop reads in Active and writes in the NBA region (`<=`), and a testbench writes where the flops' reads cannot see it on that edge.
+- **The Analogy:** A time slot is a stage play with a strict act order. Actors who enter in the same act may speak in any order, and if the plot depends on who speaks first, the script is broken. *Where it breaks:* a real play never returns to an earlier act, but the scheduler goes back to Active many times in the same instant (the §4.5 loop), and it may even pause an actor in mid-speech to let another one speak (§4.7).
+
+**You will be able to:**
+1. Trace one clock edge through its delta cycles and predict every variable's final value, including what `$display` and `$strobe` print.
+2. Diagnose a read-write or write-write race: show that the result depends on the order of processes woken in the same time slot (§4.7, §4.8), and prove it by exploring every legal order.
+3. Debug testbench races from their symptoms: blocking drives at the active clock edge, `#0` workarounds, and reads of DUT signals written by blocking code.
+4. Choose a hardware-faithful fix (nonblocking drives, opposite-edge drives, clocking blocks or program blocks) and justify it by its trade-offs.
+5. Write race-free code: flops with `<=`, one writer per variable, and testbench drives with `<=` today and through a clocking block from F4C.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
+**How to read this lesson.** The core path is the ladder, one traced clock edge, what a race is, the testbench race and the table of which testbench patterns race. Practitioner depth follows: the classic races, choosing a fix, and the pitfalls. Make It Work turns all of it into a bench you can run and a debugging procedure, and Push Further holds the expert corner cases.
+
+Two notes first. **Delta cycle** is industry usage: IEEE 1800-2023 never uses the word and describes iterations of the §4.5 loop instead. [F3A](/curriculum/T1_Foundational/F3A_Simulation_Semantics/index) introduced the idea and [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) named the regions. And this lesson shows interfaces and clocking blocks only for their timing; their syntax is taught in [F4B](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index) and [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index).
+
 ### Picture a ladder, not an instant
 
-When you read `@(posedge clk)`, do not picture one moment. Picture this ladder. The clock edge drops an event into **Active**. The scheduler drains Active, then promotes the next non-empty region and loops, all at the same simulation time. Select each rung and ask yourself: *which of my statements land here?*
+When you read `@(posedge clk)`, do not picture one moment. Picture this ladder. The clock edge drops an event into **Active**. The scheduler drains Active, then moves the events of the next non-empty region back into Active and loops, all at the same simulation time (§4.5). Select each rung and, before you read its card, name one statement from your own code that lands there.
 
 <TimeSlotRegionMap />
 
 Three things to burn in:
 
-1. **Preponed** and **Postponed** are read-only. Preponed holds the "before" photo of every value. Assertions and clocking-block inputs read that photo (§4.4.2.1, §16.5.1).
-2. Blocking assignments (`=`) write **immediately, in Active**. Nonblocking assignments (`<=`) read their right side in Active but write in **NBA** (§10.4.1, §10.4.2).
-3. Ready processes in one region run in **any order** (§4.7). Statements *inside* one `begin…end` always run in source order (§4.6).
+1. **Preponed** and **Postponed** are read-only. Preponed holds the "before" photo of every value; concurrent assertions and clocking-block inputs use that photo (§4.4.2.1, §16.5.1, §14.13). Postponed is where `$strobe` prints the settled values (§4.4.2.9, §21.2.2).
+2. A blocking assignment (`=`) writes **at once**, in the region its process runs in: Active, for module code. A nonblocking assignment (`<=`) reads its right side when it executes but writes later, in **NBA** (§10.4.1, §10.4.2, §4.9.4).
+3. Processes that are ready in one region run in **any order** (§4.7). Statements *inside* one `begin`…`end` always run in source order (§4.6).
+
+**A delta cycle, precisely.** When the NBA region applies an update and that change wakes a process, for example `assign y = ~q`, the scheduler returns to Active in the same time slot (§4.5, §4.9.1). Each such return is one delta cycle; the visualizer below counts them as Δ. A slot may need many, and none of them advances `$time`. (F3B explains three simplified cards on the map: the Preponed assertion example, the Reactive program example and the Re-NBA wording.)
 
 ### Watch one clock edge, step by step
 
-Step through the scheduler below. Watch three things move together: the highlighted line of code, the ▶ marker on the ladder, and the waveform cursor. The waveform's horizontal axis is **scheduler steps**, not time. A real waveform viewer would draw all of it at `t = 10 ns`.
+Step through the scheduler below. Three things move together: the highlighted line of code, the ▶ marker on the ladder, and the waveform cursor. The waveform's horizontal axis is **scheduler steps**, not time; a real waveform viewer would draw all of it at `t = 10 ns`.
 
-Try this order:
+**Predict first.** For each scenario, write down the final `q2`, or the printed values, for every process order before you press play. Then work through the scenarios in this order:
 
 1. **Shift register · `=`** with *Stage A → Stage B*.
-2. The same scenario with *Stage B → Stage A*. Same code, different q2.
+2. The same scenario with *Stage B → Stage A*. Same code, a different `q2`.
 3. **Shift register · `<=`**. Both orders now agree.
 4. **$display vs $strobe**. One process prints two different values of `q` in one time slot.
+5. **TB drive · `=`**, **TB drive · `<=`** and **TB · clocking block**: the same story at the boundary between testbench and DUT, which the rest of this section explains.
 
-<TimeSlotTraceVisualizer scenario="shift-blocking" scenarios={["shift-blocking", "shift-nba", "display-vs-strobe", "tb-blocking-drive", "tb-clocking-block"]} />
+<TimeSlotTraceVisualizer scenario="shift-blocking" scenarios={["shift-blocking", "shift-nba", "display-vs-strobe", "tb-blocking-drive", "tb-nba-drive", "tb-clocking-block"]} />
 
 What you just saw, in words:
 
-- With `=`, Stage A's write to `q1` is visible the instant it happens. Whether Stage B sees it depends only on who ran first.
+- With `=`, Stage A's write to `q1` is visible the instant it happens. Whether Stage B sees it depends only on which stage ran first.
 - With `<=`, both stages read in Active **before** either write lands in NBA. Order cannot leak into the result, which is exactly how two physical flip-flops behave.
-- `$display` prints during Active, before NBA updates land. `$strobe` waits for Postponed and prints the settled value (§21.2.2).
+- `$display` prints during Active, before the NBA update lands. `$strobe` prints at the end of the time slot, after every update (§21.2.2).
+- Every step happened at one simulation time. That is why a race hides in a waveform: both orders produce the same time stamp.
+
+### What a race is
+
+A **race condition** needs three things:
+
+1. Two or more processes are ready in the same time slot, usually because one event, such as a clock edge, woke them all. The standard lets the simulator consider the processes woken by an update in an arbitrary order (§4.3), and take ready events from the Active region in any order (§4.7).
+2. They share a variable: one writes it, and another reads it or writes it too.
+3. The result depends on which one runs first.
+
+Take away any one of the three and the race is gone. The standard states the consequence itself (§4.8): races are possible, and a simulator that picks either order is correct. So code that is right in only one order is wrong, even if your simulator always happens to pick that order.
+
+Races come in two shapes:
+
+| Shape | What happens | Example | Cure |
+|---|---|---|---|
+| **Read-write** | One process writes a variable with `=`; another process woken by the same event reads it and sees the old or the new value | The blocking shift register above | Write with `<=`, so every read on this edge comes before the write lands |
+| **Write-write** | Two processes write the same variable in the same time slot. The last write decides the value (§6.5), and which write is last depends on their order | Two `always` blocks that both assign `cnt` on one clock edge | One writer per variable |
+
+The **testbench race** is a read-write race across the boundary between testbench and DUT; it gets its own section below.
+
+**A write-write race, traced.** Even `<=` does not save two writers:
+
+```systemverilog
+// snippet: inside a module with logic clk, clr; logic [3:0] cnt;
+always @(posedge clk) cnt <= cnt + 4'd1;      // P1: count
+always @(posedge clk) if (clr) cnt <= 4'd0;   // P2: clear
+```
+
+With `cnt` = 5 and `clr` = 1 before the edge:
+
+| Order in Active | NBA updates, in execution order (§4.6) | `cnt` after the slot |
+|---|---|---|
+| P1, then P2 | 6, then 0 | 0 |
+| P2, then P1 | 0, then 6 | 6 |
+
+Both rows are legal (§4.7). §10.4.2 describes exactly this case: when two blocks that execute concurrently assign one variable with `<=`, its final value is indeterminate. The fix is a single writer, `always_ff @(posedge clk) cnt <= clr ? 4'd0 : cnt + 4'd1;`. With `always_ff`, a second process that writes `cnt` is illegal (§9.2.2.4, which applies the rule of §9.2.2.2), so the tool reports this race as an error instead of letting it run.
 
 ### Experiment: make and break the race yourself
 
-Flip any assignment between `=` and `<=`, predict, then let the model run **every** legal order. Open *advanced experiment* to see why `#0` is not a fix: it only moves a process to the Inactive region, where the next `#0` process races it again.
+Flip any assignment between `=` and `<=`, predict, then let the model run **every** legal order. Two experiments are worth doing:
+
+- On **Two-flop shift register**, make one stage `<=` and leave the other `=`. Predict which of the two mixes still races before you look.
+- On **TB drives the DUT input**, set the testbench drive to `<=` and flip the DUT's `<=` to `=`. The flop now captures correctly, but the testbench's read of `q` into `seen` races: that is a read of a signal written by blocking RTL.
+
+Open *advanced experiment* to see why `#0` is not a fix: it moves a process to the Inactive region, where the next process that also uses `#0` races it again.
 
 <RaceConditionDebugger />
 
+**What the experiments show.**
+
+- A race needs a blocking write that another process reads on the same edge. In the shift register, `q1 <= d` with `q2 = q1` is safe: Stage B reads `q1` in Active, before Stage A's update lands. The other mix, `q1 = d` with `q2 <= q1`, still races, because Stage B's read of `q1` may come after Stage A's blocking write.
+- *Deterministic* is not the same as *correct*. With `#0` at the start of one stage, every order can agree and still differ from what real flops do: `#0` changed *when* a process reads, not whether the code models hardware.
+- **Limits of the model.** It varies only the order of ready processes. It does not model nets with several drivers, `force` and `release`, nonzero clocking skews, a process paused between its own statements (§4.7), or a woken process running between two updates of one NBA batch (Push Further covers the last two). Those only add more legal orders, so a race the model shows is always a real race; the katas use a real simulator for the rest.
+
 ### The race that bites testbenches
 
-Design engineers learn "use `<=` in flops". Verification engineers have a second problem. **The testbench and the DUT wake on the same clock edge.** If the testbench drives a DUT input with `=`, the DUT's flop may sample the *new* value. That is a race even though the DUT code is perfect.
+Design engineers learn "use `<=` in flops". Verification engineers have a second problem: **the testbench and the DUT wake on the same clock edge.** If the testbench drives a DUT input with `=` right after `@(posedge clk)`, the DUT's flop may sample the *new* value instead of the value from before the edge. That is a race even though the DUT code is perfect.
+
+The comparison below runs three driving styles through every legal order. Before you look at the results, answer its question: which styles make the flop capture the pre-edge value in every order?
 
 <TestbenchDriveComparison />
 
-This is why every reusable UVM interface declares a **clocking block** for its driver and monitor:
+**What the comparison showed.** `din = 7` writes in Active, the region where the flop reads `din`, so the flop captures 3 or 7 depending on the order. `din <= 7` and the clocking-block drive both put the write after the flop's read: in NBA for the first, in Re-NBA for the second (§14.16). Look at the testbench's read of `q` as well. The plain read sees the old `q` only because the DUT writes `q` with `<=`; the clocking-block read returns the Preponed sample, which stays correct even against blocking RTL (§14.13).
+
+**Preview: interfaces and clocking blocks.** A testbench usually reaches the DUT through an **interface** (F4B), a named bundle of signals. Most reusable interfaces also declare **clocking blocks** (F4C), which fix when the driver writes and when the monitor samples (common practice, not a rule of the standard). You only need their timing here:
 
 ```systemverilog
+// snippet: preview of F4B and F4C syntax; no DUT or top module
 interface fifo_if (input logic clk);
   logic [7:0] din;
   logic [7:0] q;
   logic       push;
 
-  // Driver: outputs land in Re-NBA (#0 output skew, §14.16).
-  // Monitor: inputs are the Preponed sample (#1step input skew, §14.13).
+  // Driver view: outputs land in Re-NBA (#0 output skew, §14.16).
+  // Monitor view: inputs are Preponed samples (#1step input skew, §14.13).
   clocking drv_cb @(posedge clk);
     default input #1step output #0;
     output din, push;
@@ -81,50 +153,469 @@ endinterface
 
 <VisualRecap
   title="Read in Active, write later"
-  rule="Anything another process reads on this edge must be written with <= (design) or through a clocking block (testbench). Same region plus a blocking write means order decides."
-  code={`always_ff @(posedge clk) q <= din;      // DUT: reads Active, writes NBA
-@(vif.drv_cb) vif.drv_cb.din <= 8'h07;  // TB: writes Re-NBA
-@(vif.mon_cb) seen = vif.mon_cb.q;      // TB: reads Preponed sample`}
-  mistake="Driving DUT inputs with = right after @(posedge clk). It passes on one simulator and fails on another, and the waveform looks innocent because everything happens at one timestamp."
-  inTestbench="Every UVM driver and monitor touches the DUT through vif.<clocking_block>. Code review rule: no raw vif.signal = value in run_phase."
+  rule="Anything another process reads on this edge must be written with <= (design, and testbenches before F4C) or through a clocking block (testbench). A blocking write in the same region as the read means the order decides."
+  code={`always_ff @(posedge clk) q <= din;      // DUT: reads in Active, writes in NBA
+@(vif.drv_cb) vif.drv_cb.din <= 8'h07;  // TB: the write lands in Re-NBA
+@(vif.mon_cb) seen = vif.mon_cb.q;      // TB: reads the Preponed sample`}
+  mistake="Driving DUT inputs with = right after @(posedge clk). It passes on one simulator and fails on another, and the waveform looks innocent because everything happens at one time stamp."
+  inTestbench="Most UVM drivers and monitors touch the DUT only through vif.<clocking_block> (practice). A useful code-review rule: no raw vif.signal = value at a clock edge."
 >
-  <svg viewBox="0 0 320 150" role="img" aria-label="Within one time slot: Preponed sample, Active reads, NBA design writes, Re-NBA testbench drives." style={{ width: "100%", maxWidth: 360 }}>
+  <svg viewBox="0 0 320 182" role="img" aria-label="Within one time slot: clocking-block inputs are sampled in Preponed, every flop reads din in Active, the design writes q in NBA, the @(cb) event wakes the testbench in Observed, and the testbench drives din in Re-NBA." style={{ width: "100%", maxWidth: 360 }}>
     <rect x="8" y="10" width="300" height="24" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="4 3" />
-    <text x="16" y="27" fontSize="11" fill="currentColor">Preponed · monitors read cb inputs</text>
+    <text x="16" y="27" fontSize="11" fill="currentColor">Preponed · cb inputs sampled (#1step)</text>
     <rect x="8" y="40" width="300" height="24" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
     <text x="16" y="57" fontSize="11" fill="currentColor">▼ Active · every flop reads din</text>
     <rect x="8" y="70" width="300" height="24" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
     <text x="16" y="87" fontSize="11" fill="currentColor">◆ NBA · design writes q</text>
-    <rect x="8" y="100" width="300" height="24" rx="8" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
-    <text x="16" y="117" fontSize="11" fill="currentColor">◆ Re-NBA · testbench drives din</text>
-    <text x="16" y="143" fontSize="10" fill="currentColor" fillOpacity="0.7">Reads always finish before writes land → no race</text>
+    <rect x="8" y="100" width="300" height="24" rx="8" fill="rgba(14,165,233,0.12)" stroke="rgb(14,165,233)" />
+    <text x="16" y="117" fontSize="11" fill="currentColor">Observed · @(cb) wakes the testbench</text>
+    <rect x="8" y="130" width="300" height="24" rx="8" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+    <text x="16" y="147" fontSize="11" fill="currentColor">◆ Re-NBA · testbench drives din</text>
+    <text x="16" y="174" fontSize="10" fill="currentColor" fillOpacity="0.7">Every read finishes before the writes land → no race</text>
   </svg>
 </VisualRecap>
 
+### Which testbench patterns race?
+
+Assume the usual setup: the clock is generated with a blocking assignment, `always #5 clk = ~clk;`, and the DUT input `din` feeds a flop, `always_ff @(posedge clk) q <= din;`. Read each row as "the testbench does this; is the result fixed?"
+
+| Testbench code | Result | Why | Source |
+|---|---|---|---|
+| `@(posedge clk); din = v;` | **Race** | The testbench's write and the flop's read of `din` are both in Active, in either order | §4.7 |
+| `@(posedge clk); din <= v;` | Deterministic: the flop captures the old `din` | The write waits for NBA, after every Active read | §4.9.4, §4.5 |
+| `@(negedge clk); din = v;` | Deterministic, for a DUT that samples on the rising edge only | The write happens in a different time slot from the read | practice |
+| `#10 din = v;` while `clk` also rises at 10 ns | **Race** | The testbench and the clock process resume in the same Active region | §4.7 |
+| `@(posedge clk); seen = q;` with `q <= din` (and only `assign` after it) | Deterministic: `seen` gets the old `q` | The read is in Active; the DUT's update of `q` waits for NBA | §4.5, §4.9.1, §10.4.2 |
+| `@(posedge clk); seen = q;` with a DUT that writes `q = din` | **Race** | The DUT's blocking write and the testbench's read are both in Active | §4.7 |
+| `@(vif.cb); seen = vif.cb.q;` (F4C) | Deterministic: the Preponed sample | `@(cb)` wakes only after the clocking block has stored its samples | §14.10, §14.13 |
+| `@(posedge clk); seen = vif.cb.q;` (F4C) | **Race** | The read may run before or after the clocking block updates its sample | §14.13 |
+| `@(vif.cb); vif.cb.din <= v;` (F4C) | Deterministic | The drive matures in Re-NBA, after the flop's read | §14.16 |
+
+**The deterministic-read rule.** A testbench read right after `@(posedge clk)` sees the old value of a DUT signal as long as every write on that signal's path on this edge goes through NBA, for example `q <= din` followed by `assign out = q`. Any blocking write on the path makes the read a race. Clocking-block inputs (F4C) remove the question, because they return the Preponed sample whatever the DUT does.
+
+### Classic races you will meet
+
+Most races you will debug have one of these shapes. The first four appeared above; the rest show that a race needs neither a clock nor two writers.
+
+| Race | Code shape | Why it races | Fix |
+|---|---|---|---|
+| Blocking flops | `always @(posedge clk) q1 = d;` and `always @(posedge clk) q2 = q1;` | Stage B reads `q1` before or after Stage A writes it (§4.7) | `<=` in every flop |
+| Two writers | Two processes assign `cnt` on the same edge, even with `<=` | The last write wins, and either process can be last (§4.6, §4.7) | One writer; `always_ff` |
+| Testbench drive at the edge | `@(posedge clk); din = v;` against a flop that reads `din` | Same Active region as the flop's read (§4.7) | `<=`, opposite edge or clocking block |
+| Testbench read of blocking RTL | DUT `q = din` at the edge; testbench `@(posedge clk); seen = q;` | Same Active region as the DUT's write (§4.7) | Clocking-block input (F4C) |
+| Delay-timed stimulus | `#10 din = v;` while the clock also rises at 10 ns | The testbench and the clock process resume in one Active region (§4.7) | Time stimulus from clock edges, not absolute delays |
+| A read right after a write that propagates | `assign y = a;`, then `a = 0; $display(y);` | The update of `y` and the `$display` may run in either order (§4.8) | `$strobe`, or read at a later, defined point |
+| Time 0 | `initial a = 0;` against `always @(a)` | `initial` and `always` procedures start in no defined order (§9.2) | A declaration initializer (F3A) |
+| Event trigger and wait | `-> done;` and `@(done);` in one time slot | A trigger that runs before the wait is missed (§15.5.2) | `wait (done.triggered)` (§15.5.3) |
+
+**A race with no clock, traced.** IEEE 1800-2023 §4.8 uses this shape as its own example of a race:
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  logic a = 1'b1;
+  logic y;
+  assign y = a;                          // a process, evaluated again whenever a changes
+
+  initial begin
+    #1 a = 1'b0;                         // t = 1: the update of y is now pending
+    $display("t=%0d y=%0d", $time, y);   // races that update (§4.8)
+    $strobe ("t=%0d y=%0d settled", $time, y);
+  end
+endmodule
+```
+
+| At t = 1, after `a = 0` | The simulator updates `y` first | The simulator continues the `initial` first |
+|---|---|---|
+| `$display` prints | `t=1 y=0` | `t=1 y=1` |
+| `$strobe` prints | `t=1 y=0 settled` | `t=1 y=0 settled` |
+
+Both columns are correct behavior (§4.8). Nothing is scheduled after t = 1, so the run then ends by itself. The fix depends on what you need: `$strobe` for the settled value (§21.2.2), or a check at a later, defined point such as a clock edge. Time-zero and event races are covered in Push Further.
+
+### Choosing a fix
+
+Every real fix does the same thing: it moves a write, or a read, to a place where the other process cannot see it on that edge. The picture shows where each testbench drive style writes `din`, relative to the flop's read at a rising edge. Before you read the caption, find the one write that shares a region with the read.
+
+<figure className="not-prose my-6">
+<svg viewBox="0 0 360 336" role="img" aria-labelledby="f3c-drive-title f3c-drive-desc" style={{ width: "100%", maxWidth: 520, height: "auto" }}>
+  <title id="f3c-drive-title">Where each testbench drive style writes din, relative to the flop's read at a rising edge</title>
+  <desc id="f3c-drive-desc">At 10 ns, the falling edge, a blocking write of din after @(negedge clk) happens in its own time slot. At 15 ns, the rising edge: clocking-block inputs are sampled in Preponed; in Active the flop reads din, and a blocking write of din after @(posedge clk) shares that region, so it races; a nonblocking write lands in NBA, after the read; @(cb) wakes the driver in Observed; a clocking-block drive lands in Re-NBA; Postponed shows the settled values. Writes made at or after the rising edge are captured at the next rising edge.</desc>
+  <defs>
+    <marker id="f3c-drive-arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L8,4 L0,8 z" fill="currentColor" />
+    </marker>
+  </defs>
+  <rect x="8" y="6" width="344" height="46" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+  <text x="16" y="23" fontSize="11" fill="currentColor">t = 10 ns · falling edge, a time slot of its own</text>
+  <text x="16" y="42" fontSize="11" fill="currentColor">◆ @(negedge clk) din = v; ✓ another time slot</text>
+  <path d="M180 52 V70" stroke="currentColor" strokeWidth="1.2" fill="none" markerEnd="url(#f3c-drive-arrow)" />
+  <text x="190" y="66" fontSize="10" fill="currentColor" fillOpacity="0.8">time advances to 15 ns</text>
+  <text x="8" y="88" fontSize="11" fontWeight="600" fill="currentColor">t = 15 ns · rising edge: the flop reads din here</text>
+  <rect x="8" y="96" width="344" height="24" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+  <text x="16" y="112" fontSize="11" fill="currentColor">Preponed · ▼ cb inputs sampled (#1step)</text>
+  <rect x="8" y="124" width="344" height="40" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <text x="16" y="140" fontSize="11" fill="currentColor">Active · ▼ flop reads din {"(q <= din)"}</text>
+  <text x="16" y="157" fontSize="11" fill="currentColor">◆ @(posedge clk) din = v; ✕ race</text>
+  <rect x="8" y="168" width="344" height="24" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <text x="16" y="184" fontSize="11" fill="currentColor">NBA · ◆ @(posedge clk) din {"<="} v; ✓</text>
+  <rect x="8" y="196" width="344" height="24" rx="8" fill="rgba(14,165,233,0.12)" stroke="rgb(14,165,233)" />
+  <text x="16" y="212" fontSize="11" fill="currentColor">Observed · @(cb) wakes the driver</text>
+  <rect x="8" y="224" width="344" height="24" rx="8" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+  <text x="16" y="240" fontSize="11" fill="currentColor">Re-NBA · ◆ cb.din {"<="} v; ✓ (F4C)</text>
+  <rect x="8" y="252" width="344" height="24" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="4 3" />
+  <text x="16" y="268" fontSize="11" fill="currentColor">Postponed · $strobe sees the settled values</text>
+  <text x="8" y="294" fontSize="10" fill="currentColor" fillOpacity="0.8">▼ read · ◆ write · ✓ deterministic · ✕ race</text>
+  <text x="8" y="310" fontSize="10" fill="currentColor" fillOpacity="0.8">The flop captures writes made at or after this edge</text>
+  <text x="8" y="324" fontSize="10" fill="currentColor" fillOpacity="0.8">at the next rising edge; the falling-edge write at this one.</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Only the blocking write right after the rising edge shares the Active region with the flop's read of din, so only it races. The nonblocking write lands in NBA, the clocking-block drive in Re-NBA (§14.16), and the falling-edge write in another time slot: all three are out of the read's reach on that edge.</figcaption>
+</figure>
+
+| Fix | Why the race disappears | Trade-off | Source |
+|---|---|---|---|
+| Design: `always_ff` with `<=` | Every flop reads in Active; every write waits for NBA | None for flop-to-flop transfers; it does not cure two writers | §10.4.2 |
+| Testbench: `<=` after `@(posedge clk)` | The testbench's write lands in NBA, after the flop's read | Raw testbench reads of DUT outputs stay exposed to blocking RTL | §4.9.4 |
+| Testbench: drive after `@(negedge clk)` | The write is in another time slot, half a cycle before the sampling edge | Inputs get half a cycle to settle in gate-level simulation; designs that use the falling edge or several clocks race again | practice |
+| Testbench: clocking block (F4C) | Drives land in Re-NBA; reads return Preponed samples; `@(cb)` wakes in Observed | Read clockvars only after `@(cb)`; one more construct to learn | §14.10, §14.13, §14.16 |
+| Testbench: program block (F4C) | Testbench code runs in the Reactive region set, after the design's events, including clocks written with `<=` | Program threads still race each other; the run ends when every program `initial` has finished; modules cannot call program subroutines | §24.3, §24.3.1, §24.4, §24.5 |
+| `#0` (not a fix) | It does not: the process only moves to Inactive in the same slot | The next `#0` on that path races it there, and the intent is hidden | §4.4.2.3 |
+
+**A practical default.** In RTL, use `always_ff` with `<=` for every flop and `always_comb` with `=` for combinational logic. In a testbench written before F4C, drive DUT inputs with `<=` right after the clock edge, or on the opposite edge, and say why in a comment. From F4C on, drive and sample only through clocking blocks. Never use `#0` to order processes, and never change the DUT to suit the testbench. Push Further weighs the testbench options against each other.
+
+### Pitfalls and misconceptions
+
+1. **"`<=` everywhere removes all races."** It removes read-write races between flops, and between a testbench drive and the flops it feeds. It does not help two processes that write one variable (the NBA executed last wins, §4.6, §4.7), a testbench that reads a signal written by blocking RTL, or a flop clocked by a clock that is itself written with `<=` (Push Further).
+2. **"Simulators run same-event processes in source order."** The standard leaves the order open (§4.3, §4.7). Your simulator may happen to use source order today and another order after an upgrade, a new optimization option or a file reorder (tool-dependent). Code that is right in only one order is wrong.
+3. **"`#0` reliably fixes a race."** `#0` moves the rest of the process to the Inactive region of the same time slot (§4.4.2.3). It works until another process on that path also uses `#0`; then the two race in Inactive. It hides the ordering assumption instead of removing it.
+4. **"If the waveform looks right, there is no race."** Every step of a time slot shares one time stamp, so a waveform viewer draws both orders as one instant. The evidence is in the log and in what each process read.
+5. **"Two statements in one `begin`…`end` can race."** They cannot: statements in one sequential block run in source order (§4.6). `begin q1 = d; q2 = q1; end` always gives `q2` the new `q1`. That is a design bug if you meant a two-stage shift register, but it is deterministic.
+6. **"A clocking block fixes races inside the DUT."** It removes the race between the testbench and the DUT. Two DUT processes that communicate through `=` still race each other, and the testbench samples whichever result the DUT produced.
+
+### Recap
+
+- A time slot runs its regions in a fixed order and loops back to Active whenever an update wakes a process. Each loop back is a delta cycle, and none advances time (§4.5).
+- A race is a result that depends on the order of processes ready in the same time slot, which the standard leaves open (§4.7, §4.8). A read-write race needs a write that another process reads in the same region; a write-write race needs two writers.
+- Flops use `<=`, every variable has one writer, and testbench writes land where the flops' reads cannot see them: in NBA, on the opposite edge or, from F4C, in Re-NBA through a clocking block.
+- A raw testbench read right after `@(posedge clk)` is deterministic only while every write on that path goes through NBA. Clocking-block inputs return the Preponed sample.
+- `#0` is never a fix, and changing the DUT to suit the testbench is never a fix.
+
 ## Make It Work
+
+### A race you can run
+
+This bench contains the testbench race and two fixes, selected at run time by a plusarg (F2D). One process drives `din`; a flop captures it; a checker compares `q` at every falling edge with the value the flop should have captured. Read it, predict what each of the three runs prints, then check the trace.
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  logic       clk = 1'b0;
+  logic [7:0] din = 8'd3;      // initializers run before any process starts (§6.8)
+  logic [7:0] q;
+  logic [7:0] expected[$];     // what the flop must capture at each rising edge
+  string      drive = "blocking";
+  int         pass_n = 0, fail_n = 0;
+
+  always #5 clk = ~clk;        // rising edges at 5, 15, 25 and 35 ns
+
+  // DUT: one flop. It reads din in Active and writes q in NBA.
+  always_ff @(posedge clk) q <= din;
+
+  // Driver: the only process that writes din.
+  initial begin
+    void'($value$plusargs("DRIVE=%s", drive));
+    for (int i = 4; i < 8; i++) begin
+      @(posedge clk);
+      expected.push_back(din);           // din before any write at this edge
+      if (drive == "nba") begin
+        din <= i;                        // FIX 1: the write waits for NBA
+      end else if (drive == "negedge") begin
+        @(negedge clk);                  // FIX 2: change din half a cycle early
+        din = i;
+      end else begin
+        din = i;                         // BUG: a write in Active races the flop
+      end
+    end
+    @(negedge clk);
+    #1 $finish;
+  end
+
+  // Checker: at each falling edge, q holds what the flop captured at the rising edge.
+  initial forever begin
+    @(negedge clk);
+    if (expected.size() > 0) begin
+      if (q === expected.pop_front()) pass_n++;
+      else                            fail_n++;
+    end
+  end
+
+  final $display("drive=%s PASS=%0d FAIL=%0d", drive, pass_n, fail_n);
+endmodule
+```
+
+Two details keep the checker itself free of races. The driver records `din` before it writes, and no other process writes `din`, so `expected` always holds the pre-edge value (§4.6). And the checker runs at the falling edge, when nothing it reads changes.
+
+**Expected output** for the two fixed runs. It is illustrative: it was traced by hand from the IEEE 1800-2023 rules on this page, not captured from a simulator run, and your simulator adds its own banner and `$finish` message.
+
+```text
+drive=nba PASS=4 FAIL=0
+drive=negedge PASS=4 FAIL=0
+```
+
+The run with no plusarg is the race. IEEE 1800-2023 allows every one of these results, and which one you get is tool-dependent:
+
+| At each rising edge, your simulator runs… | Last line of the log |
+|---|---|
+| the DUT flop before the driver, every time | `drive=blocking PASS=4 FAIL=0` |
+| the driver before the DUT flop, every time | `drive=blocking PASS=0 FAIL=4` |
+| different orders at different edges | `drive=blocking PASS=n FAIL=m`, with n + m = 4 |
+
+The first row is the dangerous one: the bench passes today and fails on the next simulator, or after the next file reorder.
+
+**The racy edge at t = 5, traced.** Before the edge, `din` = 3 and `q` is unknown (x).
+
+| Step | Order A: flop first | Order B: driver first |
+|---|---|---|
+| Active, first process | The flop reads `din` = 3 and schedules `q <= 3` | The driver pushes 3 into `expected`, then writes `din` = 4 |
+| Active, second process | The driver pushes 3 into `expected`, then writes `din` = 4 | The flop reads `din` = 4 and schedules `q <= 4` |
+| NBA | `q` becomes 3 | `q` becomes 4 |
+| Checker at t = 10 | 3 matches 3: PASS | 4 against 3: FAIL |
+
+With `+DRIVE=nba`, the driver's write becomes an NBA update, so the flop reads 3 in both orders. With `+DRIVE=negedge`, the driver writes `din` at t = 10, in another time slot, and the flop reads it at t = 15.
+
+**What the two legal runs look like in a waveform viewer.** Each column shows a value just before a rising edge: edge 0 is 5 ns, edge 1 is 15 ns, and so on.
+
+<TimingDiagram
+  title="The racy run in a waveform viewer: order A and order B"
+  caption="Run A ran the flop before the driver at every edge; run B ran the driver first. In run B, q takes the value driven at the same edge, so q equals din in every column after the first: a flop with no latency. That is the waveform signature of this race, and both runs are legal for the racy bench."
+  edges={5}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "din", kind: "bus", values: [3, 4, 5, 6, 7] },
+    { name: "q (A)", kind: "bus", values: [undefined, 3, 4, 5, 6] },
+    { name: "q (B)", kind: "bus", values: [undefined, 4, 5, 6, 7] }
+  ]}
+  markers={[
+    { edge: 1, tone: "fail", label: "In the cycle before edge 1, run B's q is already 4: the flop captured din one cycle early, so the checker at 10 ns expects 3 and fails" }
+  ]}
+/>
+
+**Run it.** Save the code as `tb_top.sv` and compile it once with any IEEE 1800 simulator; `tb_top` is the top level. Then run it three times: with no plusarg, with `+DRIVE=nba` and with `+DRIVE=negedge`. The compile and run commands are the same as for the [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index) bench, and where you type plusargs is tool-specific. A given simulator usually picks the same order on every run (tool-dependent), so the racy result may look stable on your tool; step 3 below tries for the other order.
+
+**How to work through it:**
+
+1. **Predict.** Before running anything, write down what each of the three runs should print, and which results the standard leaves open.
+2. **Run the fixes.** `+DRIVE=nba` and `+DRIVE=negedge` must both print `PASS=4 FAIL=0`. If either does not, check that the driver is still the only process that writes `din`.
+3. **Run the race.** With no plusarg, note the result. Then swap the textual order of the `always_ff` and the driver's `initial`, rebuild and run again. A flip proves the race on one simulator. No flip proves nothing: the code still allows both orders (§4.7), and the Race Condition Debugger above shows the one your tool did not pick.
+4. **Break the DUT instead.** Restore the order, change the flop to `always @(posedge clk) q = din;` and run with `+DRIVE=nba`. The bench still passes, because the testbench's write still lands after the DUT's read. But any testbench read of `q` right after `@(posedge clk)` would now race (see "Which testbench patterns race?").
+5. **Explain every line** of every log with a region and a clause, not with "the simulator did it".
+6. **After F4C,** replace the three drive styles with one clocking-block drive, `@(vif.cb); vif.cb.din <= i;`, and keep the checker unchanged.
 
 ### Debug a real-looking failure
 
-You will meet this race as a scoreboard error that only some runs show. Find the culprit line, then choose a fix. The model reruns every legal order and grades the fix twice: is it deterministic, and does it behave like real hardware?
+You will meet this race as a scoreboard error that only some runs show. Find the culprit line, then choose a fix. The model reruns every legal order and grades the fix twice: is it deterministic, and does it behave like real hardware? Its log lines and the driver code it shows imitate a UVM bench, a preview of Tier 2.
 
 <RaceDebugChallenge />
+
+**What to take from it.** The culprit is the testbench's `din = 7`, not the DUT. Two fixes pass review: `din <= 7`, and the clocking-block drive, which is the one to prefer once you know F4C. `#0` in the DUT is deterministic, but the flop then always captures the new value, which no real flop does, and you edited the design to suit the testbench. `#0` in the driver passes this model and fails review, because the next `#0` elsewhere brings the race back.
+
+### How to debug a suspected race
+
+Races show up as symptoms, not as messages. Match the symptom first:
+
+| Symptom | Likely cause | How to confirm | Fix |
+|---|---|---|---|
+| A test passes on one simulator and fails on another, or flips after a file reorder, a simulator upgrade or a new optimization option | A same-slot race (§4.7), or different random stimulus on the two runs | Rerun the same stimulus on one simulator with the processes or files reordered | Find the shared variable (procedure below) |
+| The scoreboard's actual value is one cycle early: the DUT captured the value driven on the same edge | The testbench writes a DUT input with `=` at the edge the DUT samples on | Print the input with `$display` in the driver and with `$strobe`; swap the process order | `<=`, opposite edge or clocking block |
+| A monitor sometimes records a DUT output's new value on the edge where it changes | A raw read after `@(posedge clk)` of a signal written by blocking RTL | Find the RTL that writes the signal | Clocking-block input (F4C) |
+| A counter or state variable sometimes ignores a clear or a load | Two processes write it on the same edge | Search for every writer; `always_ff` turns a second writer into an error | One writer per variable |
+| Adding a `#0`, or moving code around, makes the failure go away | The race was moved, not removed | Look for any other `#0` on that path; reorder again | Remove the `#0` and apply a real fix |
+| A flop on a divided or generated clock captures data one cycle early in RTL simulation only | A clock written with `<=` changes in the same NBA pass as its data | Check how the clock is generated; trace the edge | Clock enable (Push Further) |
+| An immediate assertion in combinational code fails at a time where the settled waveform is correct | A zero-delay glitch: the block ran on a transient value | Check whether the block ran twice at that time stamp | Deferred assertion (Push Further) |
+
+Then work the procedure:
+
+1. **Fix the stimulus.** Reproduce the failure with the same stimulus on one simulator: a directed test, or the same simulator and seed. The same seed on two simulators is not the same stimulus (Push Further).
+2. **Find the time stamp.** Take the first failing time from the log and open the waveform at that time.
+3. **List the suspects.** Write down every process woken at that time (the same clock edge, the same `#` delay, the same event) and every variable that two of them share.
+4. **Match a shape.** Look for a variable written with `=` by one process and read by another (read-write), a variable written by two processes (write-write), or a testbench read or write of a DUT signal without `<=` or a clocking block.
+5. **Prove it.** Print the variable with `$display` inside the reading process and with `$strobe`, reorder the processes or files, or rebuild the shape in the Race Condition Debugger and let it run every order.
+6. **Fix it** by moving the write or the read out of the other process's reach: `<=`, an opposite-edge drive or a clocking block. Never `#0`.
+7. **Prevent it.** Use `always_ff` and `always_comb` in design code, so a second writer is an error. Add a code-review rule against raw `vif.signal = value` at a clock edge, and use lint that flags blocking assignments in edge-triggered blocks (tool-dependent).
 
 ### A race-free checklist for every testbench you write
 
 1. **Design flops:** `always_ff` with `<=` only. Combinational logic: `always_comb` with `=`.
-2. **One writer per variable.** Two processes writing the same variable on the same edge is a race, even with `<=`: the last NBA executed wins (§4.6).
-3. **Testbench drives** go through a clocking block (`vif.cb.sig <= v`). As a stopgap, use `<=`. Never use `=`.
-4. **Testbench samples** come from a clocking block input (`vif.cb.sig`), which returns the Preponed value.
+2. **One writer per variable.** Two processes writing the same variable on the same edge race, even with `<=`: whichever NBA executes last wins (§4.6, §4.7). `always_ff` and `always_comb` make a second writer illegal (§9.2.2.2, §9.2.2.4).
+3. **Testbench drives** go through a clocking block (F4C). Before F4C, use `<=` right after the edge or drive on the opposite edge. Never use `=` at the edge the DUT samples on, and time stimulus from clock edges rather than from absolute delays.
+4. **Testbench samples:** prefer clocking-block inputs, which return the Preponed value. A raw read after `@(posedge clk)` is deterministic only while every write on that signal's path on this edge goes through NBA; any blocking write on the path makes it a race.
 5. **Never "fix" ordering with `#0`.** It only moves the race to the Inactive region.
-6. **Prove it:** run the same seed on two simulators, or reorder files. Results that change point to a race.
+6. **Prove it on one simulator:** reorder processes or files and rerun the same stimulus. Across simulators, first rule out different random stimulus: the same seed does not give the same values on two tools.
+
+**Checklist before moving on:**
+- [ ] I can trace the shift register through one edge with `=` and with `<=`, and name the region of every read and write.
+- [ ] I can tell a read-write race from a write-write race, and show both legal orders of each.
+- [ ] I ran or traced the bench in all three drive styles and can explain every line of each log.
+- [ ] I can say which testbench patterns race and which are deterministic, and why.
+- [ ] I can choose a fix for a testbench race and explain why `#0` is not one.
 
 ## Push Further
 
-- **Delta cycles you can count:** When an NBA update changes a value that a combinational `always_comb` reads, the scheduler moves back to Active. Each move is one more Δ in the visualizer. Long Δ chains are a debugging clue for zero-delay feedback loops.
-- **Program blocks and the reactive set:** Code in `program` blocks runs in the Reactive region set (§4.4.2.6), another way to separate testbench and design. UVM classes are not program blocks: they execute in the active set, which is why clocking blocks carry the race-avoidance burden in UVM benches.
-- **`@(cb)` is later than `@(posedge clk)`:** A clocking-block event is triggered in the Observed region (§14.10). A driver that waits on `@(vif.drv_cb)` therefore wakes after the design's NBA updates for that edge, never in competition with the flops. Switch the trace above to **TB · clocking block** and watch for the `@(cb) event` in the Observed queue.
-- **Assertions see the past:** A concurrent assertion clocked on `posedge clk` evaluates in Observed, but on values sampled in Preponed (§16.5.1). In the shift-register scenario it would see `q1 = 0` even after NBA has written 1.
-- **What the model does not cover:** It does not model nets with multiple drivers, `force`/`release`, nonzero skews, or interleaving inside a process (§4.7 permits it; it only adds orders). Use a real simulator for those. The katas below require one.
+These items go beyond the core path: corner cases from the standard, tool-dependent behavior (labelled as such), and the trade-offs a senior engineer weighs.
+
+### Expert: counting delta cycles and what they cost
+
+- **Where the passes come from.** Each return to Active is caused by an update that wakes a process (§4.5): an NBA update that feeds combinational logic, a continuous assignment whose input changed (§4.9.1), or a port connection, which is an implicit continuous assignment (§4.9.6). A flop that feeds three levels of `assign` needs several passes in one slot. The visualizer's Δ counter shows the passes; a simulator never reports them in `$time`.
+- **Zero-delay loops.** Logic that keeps waking itself without a delay, such as a combinational loop whose value keeps changing, holds the scheduler in one time slot forever, so time never advances. Simulators stop such a run with an iteration-limit error; the limit, the message and any option to change it are tool-dependent. A long chain of passes at one time stamp is the clue for zero-delay feedback.
+- **Cost.** Delta cycles take no simulated time, but they do take simulator time. Polling loops, `#0` chains and long zero-delay chains slow a run; by how much is implementation-dependent, and the standard says nothing about speed. [E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index) covers measuring it.
+
+### Expert: glitches and assertions
+
+- **Zero-delay glitches.** A combinational process can run more than once in a time slot while its inputs settle, so it can see a mix of old and new values that never exists once the slot has settled. Take `assign a_n = ~a;` and an `always_comb` block that checks `a_n != a`. When `a` changes, the block may run first with the new `a` and the old `a_n`, then again after `a_n` follows (§4.5).
+- **Immediate assertions report glitches; deferred ones do not.** An immediate `assert (a_n != a);` in that block can fail on the first, transient run. An observed deferred `assert #0 (a_n != a);` queues its report instead, and the queue is flushed when the block runs again, so only the settled result is reported (§16.4, §16.4.2, which discusses this very shape). The `assert final` form reports at the end of the time slot (§16.4.1). F3B's item on [where assertion messages come from](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index#expert-where-assertion-messages-come-from) compares all four assertion forms.
+- **Concurrent assertions do not race with the flops.** They are evaluated in Observed on the values sampled in Preponed (§16.5.1), so a value written on this edge cannot reach them. In the shift-register trace above, an assertion clocked on that edge would see `q1 = 0` even after NBA has written 1. Their action blocks run in Reactive with current values, which is a different surprise: print `$sampled(x)` to report what the property checked (§16.9.3).
+
+### Expert: interleaving inside one process
+
+§4.7 names a second source of nondeterminism: statements without a timing control need not run as one uninterrupted event. The simulator may suspend a process between statements, run other processes, and resume it later. Source order inside the process still holds (§4.6); what changes is that other processes can see it halfway through.
+
+```systemverilog
+// snippet: inside a module with logic a = 1'b0, b = 1'b0;
+initial begin
+  #1 a = 1'b1;                                 // wakes the always block below
+  b = 1'b1;                                    // no timing control in between
+end
+always @(a) $display("a=%0d b=%0d", a, b);     // b=0 and b=1 are both legal at t = 1
+```
+
+Many simulators run a process until it reaches a timing control, so you may never see `b=0` on your tool (tool-dependent), but code that depends on it is not portable. The scheduler model on this page never interleaves; that only removes orders, so every race it shows is still real. The fix is to make readers wait for a defined point, such as a clock edge or an event triggered after the last write, never for an intermediate value.
+
+### Expert: write-write races, single writers and multiple drivers
+
+- **Variables: the last write wins.** A variable can be written by several procedural statements, and the last write decides its value (§6.5). Two processes that write it in one time slot race on which write is last, with `=` or with `<=`: NBAs are performed in execution order (§4.6), but the two processes are not ordered (§4.7). §10.4.2 also shows the converse: nonblocking writes from two blocks are determinate when they execute at different times, even if they mature in the same slot.
+- **`always_ff` and `always_comb` turn the race into an error.** Variables they assign must not be written by any other process (§9.2.2.2, §9.2.2.4), so the tool reports a second writer instead of letting it race. A variable written by a continuous assignment cannot also be written procedurally (§6.5).
+- **Nets resolve; they do not race.** A net with several drivers takes the value its net type's resolution gives: conflicting values of equal strength on a `wire` give `x` (§6.6.1), in every order. That is deterministic but almost always a bug. Declare single-driver nets as `uwire` to make a second driver an error (§6.6.2).
+- **Clocking drives.** When two synchronous drives to the same clocking-block output mature in the same Re-NBA region, only the last value is driven (§14.16.2). From two testbench threads, that is a write-write race on a DUT input. A clocking output can also glitch when the scheduler passes through Re-NBA more than once in a time slot and different values are driven in each pass (§14.16.2).
+- **In a UVM bench** (practice): exactly one driver owns each interface signal, and monitors never write.
+
+### Expert: clocks generated inside the simulation
+
+A clock written with `<=` changes in the NBA region, together with every other `<=` update of that pass. §4.6 orders those updates only among themselves. After one of them wakes a process, §4.5 lets the scheduler take any event next: the woken process or the next update. So a flop on such a clock can see some data updates of the same pass and not others.
+
+```systemverilog
+// snippet: inside a module with logic clk, clk_div; logic [3:0] cnt, cap;
+always @(posedge clk)     clk_div <= ~clk_div;   // divide-by-2 clock, written with <=
+always @(posedge clk)     cnt     <= cnt + 4'd1; // data, launched by clk
+always @(posedge clk_div) cap     <= cnt;        // capture flop on the divided clock
+```
+
+| At a `clk` edge where `clk_div` rises… | `cap` gets |
+|---|---|
+| `cnt` is updated before `clk_div`, because its process ran first in Active | the new `cnt` |
+| `clk_div` is updated first, and the capture flop runs before the `cnt` update | the old `cnt` |
+| `clk_div` is updated first, but the `cnt` update is applied before the capture flop runs | the new `cnt` |
+
+The intended behavior, and what the circuit does once its hold timing is closed, is to capture the value from before the edge. A simulator that captures the new value captures it one cycle early, and RTL simulation then disagrees with the hardware; which outcome you get is tool-dependent. The scheduler model on this page applies a whole batch of NBA updates before any process they wake, so it never shows the middle row.
+
+- **Fix in RTL** (practice): do not clock logic with a flop output. Run the capture flop on `clk` with an enable that toggles like `clk_div`: `always_ff @(posedge clk) if (!en_div) cap <= cnt;`. Kata 3 builds both versions.
+- **Fix in a testbench** (practice): generate clocks with a blocking assignment, `always #5 clk = ~clk;`. The edge then happens in Active, every flop it clocks reads its inputs in that pass, and every `<=` of the slot lands later, in NBA. A clock written with `<=` gives up that guarantee: `#10 din <= v;` timed to land on its edge races the edge, because both updates sit in the same NBA pass.
+- **Why programs exist.** §24.4 names exactly this problem: with several clocks, or clocks driven by nonblocking assignments, input sampling alone cannot order everything, so program code is scheduled in the Reactive region, after all design events of the slot have been processed.
+
+### Expert: choosing between opposite-edge drives, clocking blocks and program blocks
+
+All three make testbench-to-DUT timing deterministic. They differ in what else they buy and what they cost.
+
+- **Opposite-edge drives** (practice). The write happens in another time slot, so no ordering question arises for a design that samples on the rising edge only. The costs: the DUT's inputs get half a clock period to settle, which matters in gate-level and timing simulation; designs that also use the falling edge, or several clocks, race again; and drive and check points are spread over two edges, which makes waveforms harder to read.
+- **Clocking blocks** (§14). Inputs are sampled before the edge (`#1step`, Preponed, §14.13), the `@(cb)` event is triggered in Observed after the samples are updated (§14.10), and zero-skew drives mature in Re-NBA (§14.16). Timing is declared once, in the interface, and skews can model input and output delays. The traps: a clockvar read after `@(posedge clk)` instead of `@(cb)` races the clocking block's own update (§14.13); a drive executed between clocking events takes effect at the next one (§14.16); and two drives to one clockvar in the same cycle keep only the last value (§14.16.2).
+- **Program blocks** (§24). All program code runs in the Reactive region set (§24.3.1). A program that reads design values only through clocking blocks clocked by design signals is insensitive to read-write races, and programs also handle several simultaneous clocks and clocks driven by `<=`, which sampling alone does not (§24.4). The costs: program threads still race each other (§4.7); the whole run ends by an implicit `$finish` once every program `initial` thread has finished (§24.3); modules cannot call program subroutines (§24.5); and class code has no region of its own, because it inherits the region of the thread that calls it (§24.3.1).
+- **What UVM benches do** (practice, not a rule of the standard). Most call `run_test()` from a module `initial`, so their classes run in the active region set, and they get race freedom from clocking blocks in their interfaces, not from program blocks. Program blocks are not deprecated. F3B compares the two constructs region by region in [program blocks versus clocking blocks](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index#expert-program-blocks-versus-clocking-blocks), and F4C teaches the syntax.
+
+### Expert: time-zero and event races
+
+Two classic races need no clock at all:
+
+- **Time 0.** `initial` and `always` procedures start in no defined order (§9.2), so an `initial` that assigns a variable at time 0 races an `always @(a)` that may not be waiting yet. Declaration initializers run before any procedure starts (§6.8), which is why they are the fix. F3A traces both legal outputs and lists everything the standard fixes at time 0 in [time zero, step by step](/curriculum/T1_Foundational/F3A_Simulation_Semantics/index#expert-time-zero-step-by-step).
+- **Named events.** A process blocked on `@(done)` wakes only if it was already waiting when `-> done;` executed (§15.5.2). When the trigger and the wait happen in the same time slot, their order decides whether the waiter hangs. `wait (done.triggered)` reads the event's triggered state, which persists until simulation time advances, so it unblocks in either order (§15.5.3). [I-SV-5: Events](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/events) owns named events in depth, including `->>`.
+
+### Expert: reproducing a race across tools, seeds and builds
+
+- **Rule out different stimulus first.** The standard requires a seed to repeat the same random sequence on one simulator (§18.13.1), but the generator's state is implementation dependent (§18.13.4). The same seed on two simulators therefore normally gives different constrained-random stimulus (tool-dependent), and a result that differs across tools proves nothing until the stimulus is the same. Compare a directed test, or stimulus recorded on one tool and replayed on the other.
+- **Reproduce on one simulator.** The order a simulator picks can change with source order, file order, compilation-unit grouping, optimization options or the simulator version (tool-dependent). Reordering processes or files and rerunning the same stimulus is the cheapest proof; Kata 1 does exactly that.
+- **Ask the tools.** Some simulators can report races, or vary the order of same-time processes; whether yours can, and the option names, are tool-dependent, so check its documentation. Lint tools commonly flag blocking assignments in edge-triggered blocks and variables with several writers (tool-dependent), and `always_ff` and `always_comb` make a second writer illegal everywhere (§9.2.2.2, §9.2.2.4).
+- **Debug at one time stamp.** The log and the waveform show one time for the whole slot. Print the suspect variable with `$display` inside the reading process and with `$strobe`: `$display` shows what that process saw, and `$strobe` what the slot settled to (§21.2.2). If changing the process order changes the `$display` line, you have found the race.
+
+### Expert: interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: why nonblocking assignments stop flop races"
+  question="Explain how nonblocking assignments prevent races between flip-flops that share a clock."
+  options={[
+    { text: "They make the simulator run the flops in source order.", isCorrect: false, feedback: "Process order stays free (§4.7). What changes is when the writes land, not which flop runs first." },
+    { text: "Every flop woken by the edge reads its inputs in Active, and every update waits for the NBA region, so no flop can see another flop's new value on that edge.", isCorrect: true, feedback: "Correct (§10.4.2, §4.4.2.4). The reads finish before the writes land, whatever the order of the flops." },
+    { text: "They delay each update by one time unit, so the next flop sees it one tick later.", isCorrect: false, feedback: "The update happens in the same time slot (§4.9.4); no simulated time passes." },
+    { text: "They stop two processes from writing the same variable on one edge.", isCorrect: false, feedback: "Two nonblocking writes to one variable still race on which executes last (§4.6, §4.7)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: one block, two blocking assignments"
+  question="Is begin q1 = d; q2 = q1; end inside one always @(posedge clk) block a race?"
+  options={[
+    { text: "Yes: blocking assignments always race.", isCorrect: false, feedback: "A race needs two processes. Inside one block, statements run in source order (§4.6)." },
+    { text: "Yes: the simulator may execute q2 = q1 before q1 = d.", isCorrect: false, feedback: "That would break source order, which the standard guarantees inside one begin-end block (§4.6)." },
+    { text: "No: the statements run in source order, so q2 always gets the new q1. Both capture d on the same edge, so it is not a two-stage shift register.", isCorrect: true, feedback: "Correct. It is deterministic, and it is a design bug if you wanted two stages." },
+    { text: "No, because blocking assignments inside an always block are applied in the NBA region.", isCorrect: false, feedback: "Blocking assignments update at once, in the region of their process (§4.9.3)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: passes on one simulator, fails on another"
+  question="Your test passes on simulator A and fails on simulator B with the same seed. What do you check first, and how do you confirm a race?"
+  options={[
+    { text: "Nothing to check: a seed fully determines a run, so simulator B has a bug.", isCorrect: false, feedback: "A seed repeats a sequence on one simulator (§18.13.1), but generator state is implementation dependent (§18.13.4), so two tools rarely produce the same random stimulus." },
+    { text: "First make sure both runs got the same stimulus. Then reproduce the difference on one simulator by reordering processes or files, and look for a variable that one process writes with = while another reads it on the same edge.", isCorrect: true, feedback: "Correct. Rule out the stimulus, prove the order dependence on one tool, then find the shared variable. In testbenches, look first at raw vif.signal = value at a clock edge and at raw reads after @(posedge clk)." },
+    { text: "Add #0 to the driver and rerun until both simulators agree.", isCorrect: false, feedback: "#0 moves the race into the Inactive region; it neither locates nor removes it." },
+    { text: "Convert every assignment in the bench to <= and rerun.", isCorrect: false, feedback: "That hides some read-write races, but not write-write races or reads of blocking RTL, and it does not explain the failure." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: why #0 is a bad fix"
+  question="A senior engineer rejects a race fix that adds #0 before a testbench drive. Why?"
+  options={[
+    { text: "#0 advances time by one precision step, so it changes the waveform.", isCorrect: false, feedback: "#0 does not advance time; the process resumes in the same time slot (§4.4.2.3)." },
+    { text: "#0 waits until the NBA updates are done, which is too late for the flops.", isCorrect: false, feedback: "Inactive comes before NBA, so code after #0 still sees the values from before the <= updates." },
+    { text: "It only moves the process to the Inactive region of the same slot; another process that also uses #0 races it there, and reviewers cannot see the intended timing.", isCorrect: true, feedback: "Correct. Use <= or a clocking block: both state the intent and hold in every order." },
+    { text: "#0 is not allowed in testbench code.", isCorrect: false, feedback: "It is legal; it is a fragile fix, not a syntax error." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the divided clock that captures early"
+  question="A flop clocked by a divide-by-2 clock captures data one cycle early in RTL simulation, while timing analysis of the circuit is clean. The divided clock is a flop output written with <=. What is going on?"
+  options={[
+    { text: "The simulator has a bug in how it orders nonblocking assignments.", isCorrect: false, feedback: "The behavior is legal: §4.6 orders the NBA updates only among themselves, and §4.5 lets a woken process run between them." },
+    { text: "The divided clock changes in the same NBA pass as the data it should capture, so the capture flop may run after the data update. Use one clock with an enable instead.", isCorrect: true, feedback: "Correct. Which value the flop takes is tool-dependent; an enable on the original clock removes the question." },
+    { text: "The capture flop should use = instead of <=.", isCorrect: false, feedback: "The capture flop's own write is not the problem; the moment it runs, relative to the data update, is." },
+    { text: "Divided clocks cannot be simulated at RTL; only gate-level simulation is accurate.", isCorrect: false, feedback: "They simulate fine when generated so that the clock edge cannot overtake the data, or replaced by an enable." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: a missed event"
+  question="One process executes -> done; and another executes @(done); in the same time slot. Sometimes the waiting process hangs forever. Why, and what is the fix?"
+  options={[
+    { text: "Named events are queued, so a waiter cannot miss one; the hang is elsewhere.", isCorrect: false, feedback: "A trigger wakes only the processes already waiting (§15.5.2); nothing is queued." },
+    { text: "If the trigger runs before the wait, the waiter misses it. Wait on done.triggered, which stays set for the rest of the time slot.", isCorrect: true, feedback: "Correct (§15.5.2, §15.5.3). wait (done.triggered) unblocks whichever process runs first." },
+    { text: "Put #0 before the trigger so the waiter always arrives first.", isCorrect: false, feedback: "That holds only until the waiter also gets a #0; it moves the race instead of removing it." },
+    { text: "Trigger the event twice so the waiter catches the second trigger.", isCorrect: false, feedback: "Both triggers happen in the same slot: a late waiter misses both, and an early one wakes on the first." }
+  ]}
+/>
 
 ## Practice & Reinforce
 
@@ -133,110 +624,366 @@ You will meet this race as a scoreboard error that only some runs show. Find the
 <Quiz
   questions={[
     {
-      question: "Two always @(posedge clk) blocks: A does q1 = d; B does q2 = q1. Before the edge d=1, q1=0, q2=0. Which final values of q2 are possible?",
+      question: "Two always @(posedge clk) blocks: A does q1 = d; B does q2 = q1. Before the edge d = 1, q1 = 0 and q2 = 0. Which final values of q2 are possible?",
       answers: [
-        { text: "Only 0", correct: false },
-        { text: "Only 1", correct: false },
-        { text: "Either 0 or 1, depending on which block runs first", correct: true },
-        { text: "X, because both blocks run at the same time", correct: false }
+        { text: "Only 0", correct: false, feedback: "That is the result when B runs before A. Nothing forces that order: both blocks are ready in Active together (§4.7)." },
+        { text: "Only 1, because block A is written first in the file", correct: false, feedback: "Source order decides nothing between processes. Your simulator may follow it today, but the standard leaves the order open (§4.3, §4.7)." },
+        { text: "Either 0 or 1, depending on which block runs first", correct: true, feedback: "Right. A first: B reads the new q1 (1). B first: B reads the old q1 (0). Both orders are legal." },
+        { text: "X, because both blocks run at the same time", correct: false, feedback: "Simulators do not produce X here. They run the blocks one after the other, in an order they choose." }
       ],
-      explanation: "Both blocks are ready in Active together and §4.7 allows either order. A first means B reads the new q1 (1); B first means B reads the old q1 (0). Simulators do not produce X here: they pick an order."
+      explanation: "Both blocks wake on the same edge and are ready in Active together; §4.7 lets the simulator take them in any order. With a blocking write, the order leaks into q2. Writing q1 <= d instead makes every order give q2 = 0, the value two real flops produce.",
+      objective: 2
     },
     {
-      question: "Inside one block: begin q <= d; $display(q); $strobe(q); end with q=0, d=5 before the edge. What prints?",
+      question: "Inside one block: begin q <= d; $display(q); $strobe(q); end with q = 0 and d = 5 before the edge. What prints?",
       answers: [
-        { text: "$display 5, $strobe 5", correct: false },
-        { text: "$display 0, $strobe 5", correct: true },
-        { text: "$display 0, $strobe 0", correct: false },
-        { text: "$display 5, $strobe 0", correct: false }
+        { text: "$display 5, $strobe 5", correct: false, feedback: "The nonblocking update has not happened when $display runs; it waits for the NBA region." },
+        { text: "$display 0, $strobe 5", correct: true, feedback: "Right. $display runs in Active, before the update; $strobe prints at the end of the time slot." },
+        { text: "$display 0, $strobe 0", correct: false, feedback: "$strobe evaluates its arguments when it prints, at the end of the time slot, after the NBA update (§21.2.2)." },
+        { text: "$display 5, $strobe 0", correct: false, feedback: "That reverses both: the update lands between the two prints, not before the first one." }
       ],
-      explanation: "$display runs in Active, before the NBA update. $strobe runs in Postponed, after the time slot settles."
+      explanation: "Statements in one begin-end run in source order (§4.6). q <= d reads d now and schedules the write for NBA, so $display prints the current q (0), and $strobe prints after every region of the slot has settled (5).",
+      objective: 1
     },
     {
-      question: "A UVM driver does @(posedge vif.clk); vif.din = 7; and the DUT has always_ff @(posedge clk) q <= din. Which change removes the race without changing the DUT?",
+      question: "A flop does q <= d, and assign y = ~q reads its output. Before a rising edge d = 1, q = 0 and y = 1. What is true at the end of that time slot?",
       answers: [
-        { text: "Add #0 before the DUT's assignment", correct: false },
-        { text: "Drive vif.drv_cb.din <= 7 after @(vif.drv_cb)", correct: true },
-        { text: "Change the DUT to q = din", correct: false },
-        { text: "Use $strobe in the driver", correct: false }
+        { text: "q = 1 and y = 0; y changed in a later Active pass of the same time slot", correct: true, feedback: "Right. The NBA update of q wakes the continuous assignment, and the scheduler returns to Active (a delta cycle) without advancing time (§4.5, §4.9.1)." },
+        { text: "q = 1 and y = 1; y follows q one time unit later", correct: false, feedback: "A continuous assignment without a delay updates in the same time slot. Delta cycles take no simulated time." },
+        { text: "q = 1 and y = 0; y changed in the NBA region together with q", correct: false, feedback: "NBA applies only the scheduled <= updates. Logic woken by them runs in Active again." },
+        { text: "q = 0 and y = 1; the NBA update waits for the next edge", correct: false, feedback: "The update of q happens in the NBA region of this same time slot (§4.9.4), not at the next edge." }
       ],
-      explanation: "The clocking-block drive lands in Re-NBA, after the flop has read din in Active. Editing the DUT is the wrong fix, and #0 moves the race instead of removing it."
+      explanation: "The flop reads d in Active and schedules q <= 1. In NBA, q becomes 1; that update wakes assign y = ~q, so the scheduler goes back to Active and sets y to 0. Both changes carry the same time stamp, and a waveform viewer draws them at one instant.",
+      objective: 1
     },
     {
-      question: "Why does a monitor reading vif.mon_cb.q never see a value the DUT changed on the same edge?",
+      question: "Two processes run on the same edge: always @(posedge clk) cnt <= cnt + 1; and always @(posedge clk) if (clr) cnt <= 0; Before the edge clr = 1 and cnt = 5. Is the result deterministic?",
       answers: [
-        { text: "Clocking-block inputs are sampled in Preponed (#1step), before anything in the slot changes", correct: true },
-        { text: "Monitors always run after NBA", correct: false },
-        { text: "Clocking blocks add a 1 ns delay", correct: false },
-        { text: "The DUT updates q in Postponed", correct: false }
+        { text: "Yes: nonblocking assignments are race-free", correct: false, feedback: "Nonblocking assignments put reads before writes. They do not decide which of two writes to one variable comes last." },
+        { text: "Yes: the clear wins, because it is written later in the file", correct: false, feedback: "File order does not order processes (§4.7). Either process may run last." },
+        { text: "No: whichever NBA executes last wins, and either process may execute last", correct: true, feedback: "Right. NBAs are performed in execution order (§4.6), and the order of the two processes is free (§4.7). cnt ends as 0 or 6." },
+        { text: "No: the two updates collide and cnt becomes X", correct: false, feedback: "Variables do not resolve conflicting writes; the last write simply wins (§6.5)." }
       ],
-      explanation: "The default #1step input skew returns the value sampled in the Preponed region (§14.13). #1step is not a 1 ns delay."
+      explanation: "This is a write-write race, the case §10.4.2 calls indeterminate: two concurrently executing blocks assign one variable with <=. Give cnt one writer: always_ff @(posedge clk) cnt <= clr ? 0 : cnt + 1; with always_ff, a second writer is illegal (§9.2.2.4).",
+      objective: 5
+    },
+    {
+      question: "A module has assign y = a; and an initial block that runs #1 a = 0; $display(y); with a and y both 1 before t = 1. What can the $display print?",
+      answers: [
+        { text: "Either 1 or 0", correct: true, feedback: "Right. After a = 0, the simulator may update y first or run the $display first. Both are correct (§4.8)." },
+        { text: "Only 0, because a continuous assignment updates y the instant a changes", correct: false, feedback: "The update of y is a separate event, which the simulator may process after the $display (§4.8)." },
+        { text: "Only 1, because $display always runs before any update", correct: false, feedback: "The simulator may also process the update of y before it continues the initial block." },
+        { text: "X, because y is between two values", correct: false, feedback: "y is always 1 or 0; the question is only which of the two the $display sees." }
+      ],
+      explanation: "This is the shape of the standard's own race example (§4.8): no clock and one writer, yet the output depends on whether the update of y is processed before the $display. Use $strobe to print the settled value, or read y at a later, defined point.",
+      objective: 2
+    },
+    {
+      question: "A testbench task does @(posedge clk); din = 7; and the DUT has always_ff @(posedge clk) q <= din. Which change removes the race without changing the DUT?",
+      answers: [
+        { text: "Add #0 at the start of the DUT's always_ff", correct: false, feedback: "That changes the DUT, and the flop would then always capture 7, which no real flop does." },
+        { text: "Drive din <= 7 instead of din = 7", correct: true, feedback: "Right. The write lands in NBA, after the flop has read din in Active, so every order captures the pre-edge value." },
+        { text: "Change the DUT to q = din", correct: false, feedback: "That changes the DUT too, and a blocking flop races every process that reads q on that edge." },
+        { text: "Print din with $strobe in the testbench", correct: false, feedback: "$strobe changes what the log shows, not the order in which the flop and the testbench run." }
+      ],
+      explanation: "The testbench's blocking write and the flop's read of din are both in Active, in an order the standard leaves open (§4.7). A nonblocking drive, a drive on the opposite edge or, from F4C, a clocking-block drive moves the write where the read cannot see it. Editing the DUT to suit the testbench is never the fix.",
+      objective: 3
+    },
+    {
+      question: "The DUT has always_ff @(posedge clk) q <= din. A testbench does @(posedge clk); seen = q; Is seen deterministic?",
+      answers: [
+        { text: "No: any raw read of a DUT signal races", correct: false, feedback: "Only reads of signals written with = on this edge race. Here q changes in NBA, after the read." },
+        { text: "Yes: seen always gets the value q had before the edge", correct: true, feedback: "Right. The testbench reads q in Active, and the DUT's update of q waits for NBA." },
+        { text: "Yes, and seen always gets the new value", correct: false, feedback: "The new value appears only in the NBA region, after every Active read." },
+        { text: "No: seen is X until the NBA region", correct: false, feedback: "q keeps its old value until the NBA update; nothing turns it into X." }
+      ],
+      explanation: "The read and the DUT's write are in different regions: the read in Active, the write in NBA (§4.5, §10.4.2). As long as every write on q's path on this edge goes through NBA, the read is deterministic. A clocking-block input (F4C) stays safe even when that is not true.",
+      objective: 3
+    },
+    {
+      question: "Now the DUT is written always @(posedge clk) q = din; and the testbench still does @(posedge clk); seen = q; What is true?",
+      answers: [
+        { text: "seen always gets the old q, because testbench code runs after design code", correct: false, feedback: "Module-based testbench code and the DUT run in the same Active region, in either order (§4.7)." },
+        { text: "seen always gets the new q, because blocking assignments update immediately", correct: false, feedback: "The DUT's write is immediate, but the testbench may run before the DUT does." },
+        { text: "seen may get the old or the new q; read it through a clocking-block input instead", correct: true, feedback: "Right. The DUT's write and the testbench's read are both in Active. A clocking-block input returns the Preponed sample whatever the DUT does (F4C)." },
+        { text: "Changing the read to seen <= q removes the race", correct: false, feedback: "seen <= q still reads q when it executes, in Active; only the write of seen is deferred." }
+      ],
+      explanation: "This is the read-of-blocking-RTL race: the read's result depends on whether the DUT process ran first (§4.7). The robust testbench-side fix is a clocking-block input, sampled in Preponed (§14.13); the design-side fix is <= in the flop.",
+      objective: 3
+    },
+    {
+      question: "A colleague fixes a testbench race by writing @(posedge clk); #0 din = 7; and the test now passes on every simulator you have. What is wrong with the fix?",
+      answers: [
+        { text: "Nothing: #0 makes the write happen after the NBA updates", correct: false, feedback: "#0 resumes the process in Inactive, which comes before NBA (§4.4.2.3)." },
+        { text: "It only moves the write to the Inactive region; another process on that path that also uses #0 races it there, and the timing intent is hidden", correct: true, feedback: "Right. It passes until the next #0. din <= 7 states the same intent in a way every reader and every simulator understands." },
+        { text: "#0 advances time by one precision step, so the waveform no longer matches", correct: false, feedback: "#0 does not advance time; the process resumes in the same time slot." },
+        { text: "#0 is illegal in testbench code", correct: false, feedback: "#0 is legal everywhere; it is a poor fix, not a syntax error." }
+      ],
+      explanation: "The flop reads din in Active and the driver now writes it in Inactive, so this pair happens to be deterministic. Add a monitor that also uses #0 before it reads din, and the two race again in Inactive. Use <= or a clocking block to say what you mean.",
+      objective: 4
+    },
+    {
+      question: "A team drives every DUT input with blocking assignments right after @(negedge clk). The DUT samples only on the rising edge. Which statement is correct?",
+      answers: [
+        { text: "It races, because blocking drives always race", correct: false, feedback: "A blocking write races only a reader in the same time slot. The rising-edge reads happen half a cycle later." },
+        { text: "It is deterministic, but inputs get only half a cycle to settle in gate-level simulation, and it breaks if the design also uses the falling edge", correct: true, feedback: "Right. Opposite-edge driving works for designs that sample on one edge; its costs are timing realism and portability." },
+        { text: "It is the same as a clocking block with default skews", correct: false, feedback: "A default clocking block drives just after the rising edge (Re-NBA, §14.16) and samples just before it (§14.13), not half a cycle away." },
+        { text: "It is illegal, because a testbench must drive on the edge the DUT samples on", correct: false, feedback: "Nothing in the standard requires that; it is a style choice with trade-offs." }
+      ],
+      explanation: "The falling-edge write and the rising-edge reads are in different time slots, so no process order can make the flop see the new value early. The price is practical: half a period of settling time for the inputs, and a style that fails for designs that use both edges or several clocks.",
+      objective: 4
+    },
+    {
+      question: "What does moving testbench code into a program block change?",
+      answers: [
+        { text: "Its code runs in the Reactive region set, after the design's events of the slot, including clocks written with <=; program threads can still race each other, and the run ends when every program initial block finishes", correct: true, feedback: "Right (§24.3, §24.3.1, §24.4). Programs help with simultaneous and NBA-generated clocks; they do not order testbench threads among themselves." },
+        { text: "It makes every testbench race-free, so clocking blocks become unnecessary", correct: false, feedback: "Reactive-region processes also run in any order (§4.7), and the standard pairs programs with clocking blocks (§24.4)." },
+        { text: "Its code runs in Active before the design, so its drives reach the flops on the same edge", correct: false, feedback: "Program code runs after the design's active-set work, in the Reactive region set (§24.3.1)." },
+        { text: "Nothing: program blocks are deprecated in IEEE 1800-2023 and behave like modules", correct: false, feedback: "Program blocks are part of IEEE 1800-2023 (Clause 24), and they schedule their code differently from modules." }
+      ],
+      explanation: "A program schedules its code in the Reactive region set (§24.3.1), so it sees the design's settled state, including clocks driven by nonblocking assignments (§24.4). It is not a cure-all: its threads race each other, the run ends by an implicit $finish once every program initial block has finished (§24.3), and modules cannot call program subroutines (§24.5).",
+      objective: 4
+    },
+    {
+      question: "Why does a monitor that reads vif.mon_cb.q after @(vif.mon_cb) never see a value the DUT changed on that same edge?",
+      answers: [
+        { text: "Clocking-block inputs return the value sampled in Preponed (#1step), before anything in the slot changed", correct: true, feedback: "Right (§14.13). @(mon_cb) wakes after the samples are stored (§14.10), so the read returns the pre-edge value in every order." },
+        { text: "Monitors always run after the NBA region", correct: false, feedback: "Module code woken by a clock edge runs in Active, before NBA. It is the sample, not the monitor, that is safe." },
+        { text: "Clocking blocks add a 1 ns delay to every input", correct: false, feedback: "#1step is not 1 ns: it names the value just before the clocking event (§4.4.2.1)." },
+        { text: "The DUT updates q in Postponed", correct: false, feedback: "Nothing may change a value in Postponed (§4.4.2.9). The DUT updates q in NBA or in Active." }
+      ],
+      explanation: "The default input skew is #1step, which samples in the Preponed region of the clocking event's time slot (§14.3, §14.13). The clocking-block event is triggered in Observed after the samples are updated, so a process that waits on it always reads this edge's samples, never a half-updated value.",
+      objective: 5
     }
   ]}
 />
 
 ### Kata 1 (guided): reproduce the race on a real simulator
 
-**Objective:** Make a race visible in a real tool, then remove it.
+**Objective:** make the testbench race visible in a real tool, prove it on one simulator, then remove it.
+
+Start from the Make It Work bench. In the driver, right after `@(posedge clk)` and before `expected.push_back(din)`, add these two lines:
+
+```systemverilog
+// snippet: the first two statements after @(posedge clk) in the driver
+$display("%0t display din=%0d q=%0d", $time, din, q);
+$strobe ("%0t strobe  din=%0d q=%0d", $time, din, q);
+```
 
 **Requirements:**
-- Write `tb_race.sv` with a free-running clock and a DUT flop `always_ff @(posedge clk) q <= din;`.
-- In a testbench `initial` block, drive `din` with `=` immediately after `@(posedge clk)`, for 4 cycles of distinct values.
-- Log `$display("%0t din=%0d q=%0d", $time, din, q)` with `$strobe` on the same line set.
-- Run it on two simulators (for example on EDA Playground), or swap the textual order of the DUT and testbench processes.
-- **Observable artifact:** a log in which `q` sometimes equals the value driven on the *same* edge.
-- Change the drive to a clocking block (`drv_cb.din <= v`). Show that the logs now agree across simulators and orders.
+1. Run the bench with no plusarg and keep the log.
+2. Swap the textual order of the `always_ff` and the driver's `initial`, rebuild and rerun. Compare the two logs line by line.
+3. If neither log ever shows a strobed `q` equal to the value the driver wrote on that same edge, your simulator kept one order. Set up the same shape in the Race Condition Debugger (*TB drives the DUT input*) to see the other order; the code still races (§4.7).
+4. Run with `+DRIVE=nba` in both file orders and show that the two logs are identical.
+5. **Observable artifact:** a log in which, on some edge, the strobed `q` equals the value the driver wrote on that same edge.
 
-**What to Reflect On:**
-- Which region did the original drive land in, and which region did the flop read in?
-- Why does the waveform viewer show nothing suspicious at the failing timestamp?
+**What to reflect on:**
+- In which region did the original drive land, and in which region did the flop read `din`?
+- Why does the `display` line never show this edge's new `q`, while the `strobe` line can?
+- Why does the waveform viewer show nothing suspicious at the failing time stamp?
 - How would you explain this bug to a designer who says "the DUT is fine"? (They are right.)
+
+<details>
+<summary>Worked solution (try the kata first)</summary>
+
+The first two edges of the racy run, in the two legal orders (`x` is the unknown value of `q` before the first capture):
+
+| Log line | Order A: flop first | Order B: driver first |
+|---|---|---|
+| t = 5, display | `5 display din=3 q=x` | `5 display din=3 q=x` |
+| t = 5, strobe | `5 strobe  din=4 q=3` | `5 strobe  din=4 q=4` |
+| t = 15, display | `15 display din=4 q=3` | `15 display din=4 q=4` |
+| t = 15, strobe | `15 strobe  din=5 q=4` | `15 strobe  din=5 q=5` |
+| last line | `drive=blocking PASS=4 FAIL=0` | `drive=blocking PASS=0 FAIL=4` |
+
+In order B every strobed `q` equals the strobed `din`: the flop took the value the driver wrote on that same edge, one cycle early. With `+DRIVE=nba`, both orders print the order-A lines with `drive=nba`.
+
+- **Regions.** The blocking drive wrote `din` in Active (§4.9.3), the same region in which the flop's `<=` read it, and the order of the two processes is free (§4.7).
+- **Display versus strobe.** The `$display` runs before the driver's write and before any NBA update, so it always shows the values from before the edge. The `$strobe` prints at the end of the slot (§21.2.2), after the flop's update, so it shows what the flop captured.
+- **The waveform.** In both orders `din` and `q` change at the edge's time stamp. A viewer draws one time slot as one instant and cannot show which process ran first; order B just looks like a flop with no latency.
+- **The designer.** The DUT is correct. The testbench changed `din` in the same region in which the flop samples it; real hardware changes its inputs after the clock edge, which `<=` or a clocking block models.
+
+</details>
 
 ### Kata 2 (independent): race-proof a monitor
 
-**Objective:** Build an interface and monitor that sample correctly even when the design is badly written.
+**Objective:** build an interface and a monitor that sample correctly even when the DUT is written badly.
 
 **Requirements:**
-- Write a DUT that uses `=` inside its clocked block (deliberately bad).
-- Write an interface with a `mon_cb` clocking block and a monitor that collects `{din, q}` pairs every cycle.
-- Prove with logs that the monitor's samples are identical whichever process runs first. Change the source order of the DUT's processes to test this.
-- No hints this time. Decide which clocking-block defaults you need and justify them in a comment that cites the clause.
+- Write a DUT with a single clocked process that uses `=`: `always @(posedge clk) q = din;` (deliberately bad). Keep it to one process. A DUT whose own processes talk through `=` races internally, and no testbench can fix that.
+- Write an interface with a `mon_cb` clocking block, and a monitor that records `{din, q}` pairs every cycle. The monitor must wait on `@(vif.mon_cb)`, never on `@(posedge clk)`, before it reads `vif.mon_cb` (§14.13).
+- Add a naive second monitor that reads the raw `vif.din` and `vif.q` after `@(posedge clk)`.
+- Prove with logs that the clocking-block monitor records the same pairs whichever order the DUT and the monitors run in: swap their order in the source. Show that the naive monitor's `q` can change.
+- Choose the clocking-block defaults yourself, and justify them in a comment that cites the clause. Give every design element in the file a time unit.
 
-**What to Reflect On:**
-- What does the monitor observe for `q` on the edge where `q` changes, and why is that the right answer for a scoreboard?
+**What to reflect on:**
+- What does the monitor record for `q` on the edge where `q` changes, and why is that the right answer for a scoreboard?
+- Why can't a clocking block fix a race inside the DUT?
 - Which part of your solution would move unchanged into a UVM agent?
 
-### Interview questions
+<details>
+<summary>Worked solution (try the kata first)</summary>
 
-<Card className="mt-6">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details>
-      <summary>How do nonblocking assignments prevent races between flops?</summary>
-      <p>Every flop triggered by the edge evaluates its right-hand side in the Active region, reading the old values. The updates are deferred to the NBA region, which only runs after Active is empty. No order of the ready processes can let one flop see another's new value on the same edge (§10.4.2, §4.4.2.4).</p>
-    </details>
-    <details>
-      <summary>Is `begin q1 = d; q2 = q1; end` inside one always block a race?</summary>
-      <p>No. Statements inside one begin-end execute in source order (§4.6), so `q2` always receives the new `q1`. Simulation behaves like one flop whose output feeds a wire, and synthesis infers the same. It is a design bug if you wanted a two-stage shift register, but it is deterministic. The race only appears when the two assignments sit in **different** processes woken by the same edge.</p>
-    </details>
-    <details>
-      <summary>Your test passes on simulator A and fails on simulator B with the same seed. What is your first hypothesis, and how do you confirm it?</summary>
-      <p>A scheduling race: the result depends on an order that IEEE 1800 leaves to the tool (§4.7). Confirm it by reordering source files or processes on a single simulator. Then look for a variable that one process writes with `=` while another process reads it on the same event. In testbenches, look first at any raw `vif.signal = value` in drivers and any raw `vif.signal` reads in monitors.</p>
-    </details>
-    <details>
-      <summary>Why is `#0` a bad fix for a race?</summary>
-      <p>It moves the delayed process to the Inactive region. It only works until a second process also uses `#0`, and then the two race again in Inactive. It hides the ordering assumption instead of removing it, and reviewers cannot see the intended timing. Use `<=` or clocking blocks to state the intent.</p>
-    </details>
-  </CardContent>
-</Card>
+```systemverilog
+// compile
+interface pipe_if (input logic clk);
+  timeunit 1ns; timeprecision 1ns;
+  logic [7:0] din;
+  logic [7:0] q;
+
+  // Preponed samples (#1step, §14.13); @(mon_cb) fires in Observed (§14.10).
+  clocking mon_cb @(posedge clk);
+    default input #1step;
+    input din, q;
+  endclocking
+endinterface
+
+module bad_dut (input logic clk, input logic [7:0] din, output logic [7:0] q);
+  timeunit 1ns; timeprecision 1ns;
+  always @(posedge clk) q = din;   // deliberately bad: a blocking write at the edge
+endmodule
+
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  logic clk = 1'b0;
+  always #5 clk = ~clk;            // rising edges at 5, 15, 25, 35 and 45 ns
+
+  pipe_if vif (clk);
+  bad_dut dut (.clk(clk), .din(vif.din), .q(vif.q));
+
+  // Driver: a new value after each rising edge, written with <= (lands in NBA).
+  initial begin
+    vif.din = 8'd0;                // time 0: no clock edge yet, so nothing races
+    for (int i = 1; i <= 3; i++) begin
+      @(posedge clk);
+      vif.din <= 8'(i);
+    end
+    repeat (2) @(posedge clk);
+    #1 $finish;
+  end
+
+  // Clocking-block monitor: wait on the clocking event, then read clockvars only.
+  initial forever begin
+    @(vif.mon_cb);
+    $display("%0t CB  din=%0d q=%0d", $time, vif.mon_cb.din, vif.mon_cb.q);
+  end
+
+  // Naive monitor, for comparison: raw reads after the raw edge race the DUT.
+  initial forever begin
+    @(posedge clk);
+    $display("%0t RAW din=%0d q=%0d", $time, vif.din, vif.q);
+  end
+endmodule
+```
+
+**Expected output** (illustrative, traced by hand; shown for the order in which the DUT runs before the naive monitor):
+
+```text
+5 RAW din=0 q=0
+5 CB  din=0 q=x
+15 RAW din=1 q=1
+15 CB  din=1 q=0
+25 RAW din=2 q=2
+25 CB  din=2 q=1
+35 RAW din=3 q=3
+35 CB  din=3 q=2
+45 RAW din=3 q=3
+45 CB  din=3 q=3
+```
+
+At each time the RAW line prints first, because the naive monitor runs in the first Active pass and the clocking-block monitor resumes only after Observed (§14.10). Swap the order and the CB lines do not change. The RAW lines at 5 to 35 ns can then show the old `q` (`x`, 0, 1, 2): the naive read races the DUT's blocking write. At 45 ns `q` does not change, so both orders agree there.
+
+- **The value on the changing edge.** The monitor records the old `q`, the Preponed sample. That is what a flop in the monitor's place would capture, and it makes the scoreboard rule simple: `q` sampled at one edge equals `din` sampled at the edge before.
+- **Races inside the DUT.** A clocking block only decides when the testbench samples. If two DUT processes race each other, the DUT itself produces either result, and the sample faithfully records whichever one it produced.
+- **Into UVM.** The interface with its clocking block moves unchanged; the monitor loop becomes a UVM monitor's `run_phase` reading through a virtual interface (Tier 2).
+
+</details>
+
+### Kata 3 (expert, optional): the divided clock that captures early
+
+**Objective:** reproduce the clock-generated-with-`<=` race from Push Further, then remove it without changing what the design captures.
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  logic       clk = 1'b0, clk_div = 1'b0;
+  logic [3:0] cnt = 4'd0, cap = 4'd0;
+
+  always #5 clk = ~clk;                            // rising edges at 5, 15, 25, ...
+
+  always @(posedge clk)     clk_div <= ~clk_div;   // divide by 2 with <=: the suspect
+  always @(posedge clk)     cnt     <= cnt + 4'd1;
+  always @(posedge clk_div) cap     <= cnt;        // capture flop on the divided clock
+
+  always @(posedge clk_div) $strobe("%0t cap=%0d cnt=%0d", $time, cap, cnt);
+
+  initial begin
+    repeat (4) @(posedge clk_div);
+    #1 $finish;
+  end
+endmodule
+```
+
+**Requirements:**
+1. Predict both legal logs before you run, using the table in Push Further.
+2. Run it and say which outcome your simulator produced.
+3. Replace the divider and the capture flop with an enable on `clk` that captures at the same edges, run again and show that the log is the intended one.
+4. Explain why your fix cannot depend on the simulator.
+
+<details>
+<summary>Worked solution (try the kata first)</summary>
+
+The divided clock rises at 5, 25, 45 and 65 ns. At each of those edges `cnt` also changes, from 0 to 1, from 2 to 3, and so on. The two legal logs (illustrative, traced by hand):
+
+| Intended: the capture flop takes the old `cnt` | Early: it takes the new `cnt` |
+|---|---|
+| `5 cap=0 cnt=1` | `5 cap=1 cnt=1` |
+| `25 cap=2 cnt=3` | `25 cap=3 cnt=3` |
+| `45 cap=4 cnt=5` | `45 cap=5 cnt=5` |
+| `65 cap=6 cnt=7` | `65 cap=7 cnt=7` |
+
+Which column you get depends on the order in which your simulator applies the two NBA updates and runs the capture flop (tool-dependent). The fix replaces the divider, the capture flop and the print, and changes the `initial` to `repeat (8) @(posedge clk); #1 $finish;`:
+
+```systemverilog
+// snippet: replaces the three clk_div processes in the bench above
+logic en_div = 1'b0;
+always @(posedge clk) en_div <= ~en_div;           // an enable, not a clock
+always @(posedge clk) if (!en_div) cap <= cnt;     // same clock as cnt
+always @(posedge clk) if (!en_div) $strobe("%0t cap=%0d cnt=%0d", $time, cap, cnt);
+```
+
+`clk_div` rose at the edges where its old value was 0, so `!en_div` selects the same edges. The log is now always the intended column. The capture flop runs on `clk`, like the flop that launches `cnt`, so it reads `cnt` in Active before the NBA update, in every order (§4.5, §10.4.2). No clock is written with `<=`, so no clock edge can appear in the middle of an NBA pass.
+
+</details>
+
+The flashcards for this lesson follow below, under "Reinforce the essentials".
 
 ## References & Next Topics
 
-- IEEE 1800-2023 §4.4.2 (event regions), §4.5 (reference scheduling algorithm), §4.6 (determinism), §4.7 (nondeterminism)
-- IEEE 1800-2023 §10.4.1 (blocking) and §10.4.2 (nonblocking procedural assignments)
-- IEEE 1800-2023 §14.4 (input and output skews), §14.13 (input sampling), §14.16 (synchronous drives)
-- IEEE 1800-2023 §16.5.1 (sampling for concurrent assertions), §21.2.2 (strobed monitoring)
-- Previous: [Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)
-- Next: [Modules and Packages](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index)
+**Primary sources** (IEEE 1800-2023)
+- §4.3 Event simulation; §4.4.2 Simulation regions (§4.4.2.1 to §4.4.2.9)
+- §4.5 SystemVerilog simulation reference algorithm; §4.6 Determinism; §4.7 Nondeterminism; §4.8 Race conditions
+- §4.9.1 Continuous assignment; §4.9.3 Blocking assignment; §4.9.4 Nonblocking assignment; §4.9.6 Port connections
+- §6.5 Nets and variables; §6.6.1 Wire and tri nets; §6.6.2 Unresolved nets; §6.8 Variable declarations
+- §9.2 Structured procedures; §9.2.2.2 Combinational logic always_comb procedure; §9.2.2.4 Sequential logic always_ff procedure
+- §10.4.1 Blocking procedural assignments; §10.4.2 Nonblocking procedural assignments
+- §14.3 Clocking block declaration; §14.10 Clocking block events; §14.13 Input sampling; §14.16 Synchronous drives; §14.16.2 Driving clocking output signals
+- §15.5.1 Triggering an event; §15.5.2 Waiting for an event; §15.5.3 Persistent trigger: triggered built-in method
+- §16.4 Deferred assertions; §16.4.1 Deferred assertion reporting; §16.4.2 Deferred assertion flush points; §16.5.1 Sampling; §16.9.3 Sampled value functions
+- §18.13.1 $urandom; §18.13.4 get_randstate()
+- §21.2.2 Strobed monitoring; §21.6 Command line input
+- §24.3 The program construct; §24.3.1 Scheduling semantics of code in program constructs; §24.4 Eliminating testbench races; §24.5 Blocking tasks in cycle/event mode
+
+**Prerequisites:** [F3B Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) for the regions, and [F3A Simulation Semantics](/curriculum/T1_Foundational/F3A_Simulation_Semantics/index) for time slots and the event-driven model. Previews: [F4B Interfaces and Modports](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index) and [F4C Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index).
+
+**Related**
+- [F2C Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index): blocking and nonblocking assignments, first met.
+- [F4C Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): clocking-block syntax, skews and program blocks, and the race-free bench of milestone M1.
+- [I-SV-4A SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): why concurrent assertions use Preponed samples.
+- [I-SV-5: Events](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/events): named events, `->>` and `.triggered`.
+- [E-PERF-1 UVM Performance](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index): what scheduler work costs at scale.
+
+<NextLesson />

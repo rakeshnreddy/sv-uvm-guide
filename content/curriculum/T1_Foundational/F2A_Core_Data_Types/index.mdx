@@ -1,49 +1,168 @@
 ---
 title: "F2A: Core Data Types"
-description: "Dive deep into SystemVerilog nets, variables, and value systems with interactive explorers grounded in IEEE 1800-2023."
+description: "Choose the right SystemVerilog data type by predicting how 4-state values, nets and variables, literals, widths and signedness behave in testbench and RTL code."
 flashcards: "F2_Data_Types"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
 ## Quick Take
-- **What it is:** Nets, variables, and the four-value system (0, 1, `x`, `z`) that decide how a signal is driven, stored and resolved.
-- **Why it matters:** 2-state types silently turn `x` and `z` into 0 and hide reset bugs. Declaring a variable where several drivers meet is a compile error; declaring a net gives strength-based resolution. Knowing which one you have tells you what an `x` in a waveform means.
-- **The Analogy:** A net is a copper trace: it shows whatever its drivers fight out, and it floats when nobody drives it. A variable is a labelled box: it keeps whatever was written into it last.
-- **The Standard:** IEEE 1800-2023 §6 (Data Types) and §7 (Aggregate Data Types).
+
+- **What it is:** Every SystemVerilog signal is declared as a **net** or a **variable**, and with a **data type**. Together they fix four things: which values each bit can hold (0, 1, `x` and `z` for a **4-state** type, only 0 and 1 for a **2-state** type), who may write it, how many bits it has, and whether it is signed.
+- **Why it matters:** The wrong type compiles and then hides bugs. A 2-state copy turns an unknown `x` into a clean 0. `==` and `!=` return `x` when unknown bits make the answer ambiguous, and `if` treats that `x` as false. An 8-bit sum silently drops its carry. Each of these turns a broken design into a passing test.
+- **The Analogy:** A net is a copper trace: it shows whatever its drivers fight out, and it floats (`z`) when nobody drives it. A variable is a labelled box: it holds whatever was written into it last. *Where it breaks:* a `trireg` net keeps its last value like a box, `tri0` and `tri1` nets never float, and a variable may also be fed by exactly one continuous assignment, like a trace with a single driver.
+
+**You will be able to:**
+1. Predict the result of `==`, `===`, `==?`, `inside`, and `if` or `case` decisions when operands hold `x` or `z`.
+2. Choose a net or a variable for a signal from its drivers, and explain why two `assign` statements to a `logic` variable fail to elaborate while two on a `wire` resolve by strength.
+3. Predict the width, signedness and stored value of an expression after extension or truncation.
+4. Write declarations with literals, `logic`, 2-state types, packed and unpacked arrays, `typedef`, enums and structs, and cast between types safely with `type'(…)` and `$cast`.
+5. Debug a reset bug that a 2-state type or an `==`/`!=` check hides.
+
+You also need digital-logic basics (gates, flip-flops, tri-state buffers) and some experience with any programming language.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
-### Picture four values, then predict how they behave
+This lesson builds the type system in the order you meet it: values, then who drives them, then widths and signs, then the types you declare every day. Two lessons follow in this module. [Structs, Unions and Enums](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums) goes deeper into aggregate types and enums, and [Operators and Expressions](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions) covers precedence, shifts, streaming and the rest of the operators.
 
-Every bit of a 4-state type holds 0, 1, `x` or `z`. An `x` is not a voltage: it is the simulator saying "I cannot tell whether this bit is 0 or 1". A `z` means nothing drives the net. Start with the picture at the top of the explorer, then work through each tab and commit to a prediction before you reveal the answer.
+### Four values: 0, 1, x and z
+
+Every bit of a **4-state** type holds one of four values (IEEE 1800-2023 §6.3.1):
+
+- `0` and `1`: logic zero and logic one.
+- `x`: **unknown**. It is not a voltage. It is the simulator saying "I cannot tell whether this bit is 0 or 1", for example in a register that reset never assigned.
+- `z`: **high impedance**. Nothing drives the net. At the input of a gate or inside an expression, `z` usually behaves like `x` (§6.3.1).
+
+The 4-state types are `logic` (and its older name `reg`), `integer`, `time` and every net. The **2-state** types `bit`, `byte`, `shortint`, `int` and `longint` store only 0 and 1 (§6.11.2).
+
+Start with the picture at the top of the explorer, then work through the four tabs. In each tab, commit to a prediction before you reveal the answer.
 
 <LogicStateDiagram />
 
-What the four tabs show, one line each:
+What each tab showed, and the rule behind it:
 
 1. **Operator tables:** an `x` input does not always give `x`. A controlling value decides (`x & 0` is 0, `x | 1` is 1); without one the result is `x` (Tables 11-11 to 11-15).
-2. **`==` vs `===`:** `==` gives `x` only when the comparison is genuinely ambiguous. A known bit that differs makes it a definite 0, so `4'b1x00 == 4'b0000` is 0 (§11.4.5). `===` compares `x` and `z` literally and always returns 0 or 1.
-3. **`if` and `case`:** an `x` condition is not true, so `if (a)` takes the else branch, and so does `if (!a)` because `!x` is still `x` (§12.4, §11.4.7). `casex` treats an `x` in the select as a do-not-care and runs a real branch (§12.5.1).
+2. **`==` vs `===`:** `==` gives `x` only when the comparison is ambiguous. A known bit that differs makes it a definite 0, so `4'b1x00 == 4'b0000` is 0 (§11.4.5). `===` compares `x` and `z` as values and always returns 0 or 1. The tab also computes `a ==? b`: load **1011 vs 1x1z** and watch the `x` and `z` bits of `b` act as wildcards (§11.4.6).
+3. **if / case with x:** an `x` condition is not true, so `if (a)` takes the else branch, and so does `if (!a)`, because `!x` is still `x` (§12.4, §11.4.7). With `sel = x0`, `case` and `casez` fall through to `default`, while `casex` treats the `x` as a do-not-care and runs branch A (§12.5, §12.5.1).
 4. **Into 2-state:** assigning to `bit`, `int` or `byte` turns every `x` and `z` bit into 0 (§6.11.2).
 
-| System | Values | Starting value | Integral types | When to use |
-|--------|--------|----------------|----------------|-------------|
-| **4-state** | 0, 1, `x`, `z` | `'x` for variables (Table 6-7); `'z` for nets, `x` for `trireg` (§6.7.1) | `logic`, `reg`, `integer`, `time`; nets such as `wire` and `tri` | DUT interfaces, reset logic, anything where an unknown must stay visible |
-| **2-state** | 0, 1 | `'0` (Table 6-7) | `bit`, `byte`, `shortint`, `int`, `longint` | Scoreboard math, counters, loop indices, randomization |
+### Where x disappears: starting values and 2-state types
 
-`real`, `shortreal` and `realtime` are not integral types, so they are neither 2-state nor 4-state. They start at 0.0 (Table 6-7).
+Every variable holds a default value until something assigns it (Table 6-7), and a net with no driver floats (§6.7.1):
+
+| Declaration | Starts as | Source |
+|---|---|---|
+| 4-state variable: `logic`, `reg`, `integer`, `time` | `'x` in every bit | Table 6-7 |
+| 2-state variable: `bit`, `byte`, `shortint`, `int`, `longint` | `'0` | Table 6-7 |
+| Enum variable | the default of its base type | Table 6-7 |
+| `real`, `shortreal`, `realtime` (not integral, so neither 2-state nor 4-state) | `0.0` | Table 6-7, §6.3.1 |
+| `string` | `""` (empty) | Table 6-7 |
+| Net with no driver: `wire`, `tri`, `wand`, `wor`, `uwire` | `z` | §6.7.1 |
+| `trireg` net | `x`, then it holds its last driven value | §6.7.1, §6.6.4 |
+| `tri0` / `tri1` net with no driver | 0 / 1 at pull strength | §6.6.5 |
+
+When a 4-state value is assigned to a 2-state variable, every `x` and `z` bit becomes 0 (§6.11.2). That one rule causes some of the most expensive false passes in verification.
 
 > [!WARNING]
-> **The X-masking trap (IEEE 1800-2023 §6.11.2):** When a 4-state value containing `x` or `z` is assigned to a 2-state variable, those bits silently become 0. A DUT output that nothing drove after reset turns into a clean-looking 0 in your testbench:
+> **X-masking.** A DUT register that reset never assigned still holds `'x`. Copy it into a 2-state variable and the testbench sees a clean 0:
 > ```systemverilog
-> logic [7:0] dut_data;          // DUT output nobody drove after reset: still 'x
+> // snippet
+> logic [7:0] dut_data;          // DUT register that reset never assigned: 'x
 > bit   [7:0] tb_data;
-> tb_data = dut_data;            // tb_data becomes 8'h00: the bug is masked
+> initial tb_data = dut_data;    // tb_data = 8'h00: the bug is masked
 > ```
-> **Best practice:** check `$isunknown()` (§20.9) before crossing the boundary, and compare with `===`/`!==` when an `x` must count as a mismatch.
+> Check `$isunknown()` (§20.9) before crossing into 2-state, and compare with `===` or `!==` whenever an `x` must count as a mismatch.
 
-### Who may drive a signal: nets vs. variables
+2-state types are still the right choice for data that should never be unknown: loop indices, testbench counters, scoreboard arithmetic and random stimulus fields. The standard says 2-state types "can simulate faster, take less memory" (§6.11.2); how much faster is tool-dependent.
 
-This is the rule behind most "why is my signal `x`?" questions (§6.5). Nets and variables differ in who may write them and in what happens when several writers disagree.
+### Writing values: literals
+
+You need to write values before you can compare them. An integer literal (§5.7.1) is either a **simple decimal number** such as `12`, or a **based literal**: an optional size, an apostrophe, a base letter (`b`, `o`, `d` or `h`, optionally preceded by `s` for signed) and the digits.
+
+- Simple decimal numbers are signed. Based numbers are unsigned unless they use `s` (`8'sh80`), so the sized decimal `8'd200` is unsigned.
+- A number with no size has at least 32 bits.
+- An `x` or `z` digit sets 4 bits in hex, 3 in octal and 1 in binary; `?` is another way to write `z`.
+- If the digits are narrower than the size, the literal is padded on the left with 0, or with `x` or `z` when the leftmost digit is `x` or `z`. An **unsized** literal whose leftmost digit is `x` or `z` extends that value across the whole expression it sits in.
+- `'0`, `'1`, `'x` and `'z` (no size, no base) are unsigned and set **every** bit of their context to that value. On their own, in a self-determined context, they are 1 bit wide.
+
+Cover the right-hand columns and trace each literal first:
+
+| Literal | Width | Signed? | Value or bits |
+|---|---|---|---|
+| `12` | 32 (at least) | yes | 12 |
+| `8'hFF` | 8 | no | `1111_1111` = 255 |
+| `8'shFF` | 8 | yes | `1111_1111` = −1 |
+| `4'b10x1` | 4 | no | `1`, `0`, `x`, `1` |
+| `8'bx` | 8 | no | `xxxx_xxxx`: a leading `x` pads with `x` |
+| `12'h3x` | 12 | no | `0000_0011_xxxx` |
+| `'hx` assigned to `logic [15:0] v` | unsized: the `x` extends to the context | no | 16 bits of `x` |
+| `4'bx` assigned to `logic [15:0] v` | 4, then zero-extended | no | `16'h000x` |
+| `'1` assigned to `logic [15:0] v` | fills the context | no | `16'hFFFF` |
+| `1` assigned to `logic [15:0] v` | 32, truncated to 16 | yes | `16'h0001` |
+
+Three mistakes this table prevents:
+
+- `v = 1` sets only bit 0. Write `v = '1` to set every bit.
+- `v = 4'bx` leaves the upper 12 bits at 0, because a sized unsigned value is zero-extended (§10.7, §11.8.3). Write `v = 'x` to make every bit unknown.
+- An unsized constant cannot appear in a concatenation: `{a, 1}` is illegal, so write `{a, 1'b1}` (§11.4.12).
+
+In testbenches the fill literals do daily work: `'0` for reset values, `'1` for all-ones masks, `'x` to mark a field as not yet known, and `'z` to release a tri-state bus. [Operators and Expressions](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions) applies the same sizing rules to every operator.
+
+### Comparing values that may hold x
+
+SystemVerilog has four families of equality. They differ only in what `x` and `z` do:
+
+| Operators | Name | What `x` and `z` do | With `a = 4'b10x1` |
+|---|---|---|---|
+| `==` and `!=` | logical equality | The result is `x` when unknown bits make it ambiguous; a known bit that differs decides it (§11.4.5) | `a == 4'b10x1` is `x`; `a == 4'b00x1` is 0 |
+| `===` and `!==` | case equality | `x` and `z` are compared as ordinary values; the result is always 0 or 1 (§11.4.5) | `a === 4'b10x1` is 1 |
+| `==?` and `!=?` | wildcard equality | `x`, `z` and `?` bits in the **right** operand match anything; an `x` on the left can still make the result `x` (§11.4.6) | `a ==? 4'b10?1` is 1 |
+| `inside` | set membership | Compares integral values with `==?`, so `x` and `z` bits in a set member are wildcards; returns `x` if nothing matches but some comparison was `x` (§11.4.13) | `a inside {4'b10?1, 4'd0}` is 1 |
+
+The explorer below opens on the **Equality** family with `a = 4'b1x10` and `b = 4'b1x10`. Write down your predictions for `a == b`, `a === b` and `a ==? b` first. Then:
+
+1. Pick each operator and reveal its result.
+2. Change the leftmost bit of `b` to 0 and predict `a == b` again.
+3. Switch the operator family to **inside** and predict `a inside {b, c}` for its starting values.
+
+<OperatorExplorer family="equality" />
+
+What you should have seen:
+
+- `a == b` is `x`: the two unknown bits might differ, so the relation is ambiguous. `a === b` is 1, because `===` compares the two `x` bits as identical symbols. `a ==? b` is 1, because the `x` in `b` is a wildcard.
+- With `b = 4'b0x10`, `a == b` became a definite 0. Bit 3 is known and differs, which settles the answer whatever the unknown bit is.
+- `inside` returned 1 because the member `4'b1x1x` has wildcard bits. An `x` in `a` itself is never a wildcard.
+
+> [!TIP]
+> **The checker rule.** `if (got != exp) err++;` silently skips any `got` whose known bits match `exp` and whose other bits are `x`, including an all-`x` `got`: `!=` returns `x` and `if` treats `x` as false (§12.4). Write `if (got !== exp)`, or test `$isunknown(got)` first (§20.9). For the same reason `sig == 'x` is never true: use `sig === 'x` to test for all-`x`, or `$isunknown(sig)` to test for any unknown bit.
+
+### x in decisions: if, case and the conditional operator
+
+The same `x` behaves differently depending on where it lands. Constructs that choose a branch are **X-optimistic**: they run a real branch, so the result looks valid. Operators that compute a value are **X-pessimistic**: they keep the `x` visible.
+
+| Construct | What happens with `x` or `z` | Effect |
+|---|---|---|
+| `if (a)` and `if (!a)` | The first branch runs only for a known nonzero condition; `x` and `z` count as false (§12.4). `!x` is still `x` (§11.4.7), so both forms take else | X-optimistic: the else path looks like valid behaviour |
+| `case (sel)` | Items must match bit for bit, including `x` and `z`, like `===` (§12.5) | An `x` select usually falls to `default` |
+| `casez (sel)` | `z` and `?` bits in the select or in an item are do-not-cares; an `x` must still match exactly (§12.5.1) | A floating select matches items it should not |
+| `casex (sel)` | `x` and `z` bits in the select or in an item are do-not-cares (§12.5.1) | X-optimistic: an unknown select runs a real branch |
+| `a ? b : c` | With an `x` condition both sides are evaluated, and bits that differ become `x` (§11.4.11, Table 11-20) | X-pessimistic: the unknown stays visible |
+| `x + 1` and other arithmetic | Any `x` or `z` operand bit makes the whole result `x` (§11.4.3) | X-pessimistic: the unknown spreads |
+
+What follows for code you write:
+
+- Where an unknown select must stay visible, use `?:` or an assertion; an `if` hides it.
+- Use `unique case` or `priority case` in RTL: the simulator reports a violation when no item matches (§12.5.3), which catches an unknown select. [Procedural Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/flow-control) covers `unique`, `priority` and the other decision statements.
+- Avoid `casex` in RTL; prefer `casez` with `?` bits.
+- Prefer `always_comb` to `always @*`. It runs once at time zero, is also sensitive to variables read inside called functions, forbids blocking timing controls, and must be the only process that writes its outputs (§9.2.2.2.2).
+
+### Who may drive a signal: nets and variables
+
+This rule answers many "why does this not compile?" and "why is my signal `x`?" questions (§6.5). Nets and variables differ in who may write them and in what happens when several writers disagree.
 
 <div className="grid gap-4 grid-cols-[repeat(auto-fit,minmax(min(100%,260px),1fr))]">
   <Card className="bg-background">
@@ -51,10 +170,10 @@ This is the rule behind most "why is my signal `x`?" questions (§6.5). Nets and
       <CardTitle className="text-base">Nets (IEEE 1800-2023 §6.5, §6.6)</CardTitle>
     </CardHeader>
     <CardContent className="space-y-2 text-sm text-muted-foreground">
-      <p>Written only by continuous drivers: `assign`, module ports and gate outputs. A net cannot be assigned procedurally.</p>
-      <p>Any number of drivers is allowed. The net type's resolution combines them: the strongest driver wins, equal-strength drivers that disagree give `x` on `wire`/`tri`, and `wand`/`wor` AND/OR equal-strength drivers.</p>
-      <p>An undriven net reads `z`. A `trireg` starts at `x` and then keeps its last driven value as stored charge.</p>
-      <p>Examples: `wire`, `tri`, `wand`, `wor`, `tri0`, `tri1`, `trireg`, and `uwire` (exactly one driver).</p>
+      <p>Written only by continuous drivers: `assign`, gate outputs and module ports. A net cannot be assigned procedurally; a test can only override it with `force` and `release` (§10.6.2).</p>
+      <p>Any number of drivers is allowed, except on `uwire`, which takes exactly one (§6.6.2). The strongest driver wins. Equal-strength drivers that disagree give `x` on `wire` and `tri`, while `wand` and `wor` AND or OR them (§6.6.1, §6.6.3).</p>
+      <p>With no driver, `wire`, `tri`, `wand`, `wor` and `uwire` read `z`; `tri0` and `tri1` read 0 and 1; a `trireg` keeps its last driven value (§6.6.4, §6.6.5, §6.7.1).</p>
+      <p>Kinds: `wire`, `tri`, `wand`, `wor`, `tri0`, `tri1`, `trireg`, `supply0`, `supply1` and `uwire`.</p>
     </CardContent>
   </Card>
   <Card className="bg-background">
@@ -62,21 +181,41 @@ This is the rule behind most "why is my signal `x`?" questions (§6.5). Nets and
       <CardTitle className="text-base">Variables (IEEE 1800-2023 §6.5, §6.8)</CardTitle>
     </CardHeader>
     <CardContent className="space-y-2 text-sm text-muted-foreground">
-      <p>Written by any number of procedural statements, and the last write wins, or by exactly one continuous assignment or port. Two continuous drivers, or a mix of continuous and procedural writes, is a compile error.</p>
-      <p>A variable written in `always_comb`, `always_latch` or `always_ff` may not be written by any other process (§9.2.2.2, §9.2.2.4).</p>
-      <p>There is no resolution: a variable never turns a disagreement into `x`. It holds the last value written, or its starting value (`'x` for 4-state, `'0` for 2-state).</p>
-      <p>Examples: `logic`, `bit`, `int`, `byte`, and class properties.</p>
+      <p>Written by any number of procedural statements, where the last write wins, or by exactly one continuous assignment or port. Two continuous drivers, or a continuous driver mixed with procedural writes, is an error (§6.5).</p>
+      <p>A variable written in `always_comb`, `always_latch` or `always_ff` may not be written by any other process (§9.2.2.2 to §9.2.2.4).</p>
+      <p>There is no resolution: a variable never turns a disagreement into `x`. It holds the last value written, or its starting value.</p>
+      <p>Examples: `logic`, `bit`, `int`, `byte`, enums, structs and class properties.</p>
     </CardContent>
   </Card>
 </div>
 
-Now test the rule yourself. Pick a net type and two or three drivers with their strengths, predict what `y` reads, then switch to **Variable vs net**, declare `logic y` and give it two `assign` statements.
+**Strength, in one table.** Each driver carries a strength as well as a value (§28.11, Table 28-7). When drivers disagree, the stronger one dominates (§28.12.1). You rarely set strengths in RTL, but you meet them in nets, pull-ups and models of shared buses:
+
+| Strength | Level | Where you meet it |
+|---|---|---|
+| `supply` | 7 | `supply0` and `supply1` nets (§6.6.6) |
+| `strong` | 6 | the default for continuous assignments (§10.3.4) |
+| `pull` | 5 | `tri0` and `tri1` nets, `pullup` and `pulldown` (§6.6.5, §28.10) |
+| `large` | 4 | `trireg` charge (§6.6.4) |
+| `weak` | 3 | an explicit `assign (weak1, weak0) y = a;` (§10.3.4) |
+| `medium` | 2 | `trireg` charge, the default (§6.3.2.1) |
+| `small` | 1 | `trireg` charge (§6.6.4) |
+| `highz` | 0 | a driver that is switched off |
+
+Now test the rules. In **Drivers on a net**, use **Load a corner case** and predict `y` for **Bus fight**, then **Strong beats weak**, then **Weak 1 vs tri0**. Then switch the mode to **Variable vs net**, keep **logic y (variable)**, choose **two assign** and predict whether it compiles. Finally change the declaration to **wire y (net)** and predict again.
 
 <NetResolutionSimulator />
 
+What the simulator showed:
+
+- **Bus fight:** two strong drivers, 0 and 1, on a `wire` give `x`: equal strength, opposite values (§6.6.1, Table 6-2).
+- **Strong beats weak:** the strong 0 wins outright and the weak 1 does not matter (§28.12.1).
+- **Weak 1 vs tri0:** the `tri0` pull-down has pull strength, which beats the weak 1, so `y` reads 0 (§6.6.5).
+- **Variable vs net:** two `assign` statements to `logic y` do not compile, because a variable takes one continuous driver (§6.5). The same code on `wire y` compiles and resolves.
+
 <VisualRecap
-  title="X is the simulator's unknown"
-  rule="x means the simulator cannot tell 0 from 1. Operators pass it on unless a controlling value decides; if and casex quietly treat it as 'not this branch'; a 2-state type erases it to 0. Only nets create x from a fight, and only between equal-strength drivers."
+  title="x is the simulator's unknown"
+  rule="x means the simulator cannot tell 0 from 1. Operators pass it on unless a controlling value decides. if treats it as false and runs else; casex treats it as a do-not-care and runs the first item whose other bits match. A 2-state type erases it to 0. Only nets create x from a fight, and only between equal-strength drivers."
   code={`logic a, y;                      // a is never assigned: 'x
 bit   b;
 initial begin
@@ -86,7 +225,7 @@ initial begin
     $error("a is x/z");
 end`}
   mistake="Reading a clean 0 in a 2-state scoreboard field, or an else-branch result, as proof that the DUT is fine. The x was erased or hidden, not resolved."
-  inTestbench="Monitors sample DUT pins into 4-state logic fields, check !$isunknown(...) before converting to bit or int, and compare with === / !== so an unexpected x counts as a mismatch."
+  inTestbench="Monitors sample DUT pins into 4-state logic fields, check !$isunknown(...) before converting to bit or int, and compare with === or !== so an unexpected x counts as a mismatch."
 >
   <svg viewBox="0 0 320 150" role="img" aria-label="An x bit meets three places: an operator passes it on unless a controlling value decides, an if statement treats it as false and runs else, and a 2-state variable turns it into 0." style={{ width: "100%", maxWidth: 360 }}>
     <defs>
@@ -115,240 +254,842 @@ end`}
   </svg>
 </VisualRecap>
 
-### The `logic` vs. `wire` vs. `reg` Decision Tree
+Two mistakes to avoid:
 
-This is a classic interview question. Here's the complete decision tree:
+- **Assigning a `wire` in an `initial` or `always` block.** A net cannot be assigned procedurally (§6.5). Declare the signal `logic` if it has one writer, or use `force` for a test override.
+- **Expecting a `logic` bus to resolve.** Several tri-state drivers on a `logic` variable are an elaboration error, not a resolved bus. Declare the bus `wire` or `tri`.
 
-```
-Is the signal driven by multiple continuous sources (e.g., tri-state bus)?
-├─ YES → Use `wire` or `tri` (need resolution function)
-└─ NO → Is this in synthesizable RTL?
-    ├─ YES → Use `logic` everywhere (replaces both reg and single-driver wire)
-    └─ NO (testbench) → Is X/Z visibility needed?
-        ├─ YES → Use `logic` (4-state)
-        └─ NO → Use `bit` (2-state, faster sim)
-```
+### Choosing logic, wire or bit
+
+| Situation | Declare | Why |
+|---|---|---|
+| More than one continuous driver (a shared or tri-state bus), or an `inout` port | `wire` or `tri` (a net) | Only nets resolve several drivers, and an `inout` port must be a net (§6.5, §23.2.2.3) |
+| A net that must never get a second driver | `uwire` | A second driver is an error (§6.6.2) |
+| RTL state, combinational outputs, any signal with one writer | `logic` | 4-state, so a missing reset stays visible (§6.5, Table 6-7) |
+| DUT-facing testbench signals and monitor fields | `logic` | Keeps `x` and `z` visible to the checks |
+| Testbench loop indices, counters, scoreboard arithmetic, random stimulus fields | `int`, `bit`, `byte` | 2-state: nothing unknown to handle; may simulate faster (tool-dependent, §6.11.2) |
+| A line with a pull-up or pull-down | `tri1` or `tri0`, or a `pullup` | Reads 1 or 0 at pull strength when nobody drives it (§6.6.5, §28.10) |
 
 > [!TIP]
-> **One type, two names (IEEE 1800-2023 §6.11.2):** `logic` and `reg` denote the same type. A `logic` variable replaces `reg` everywhere, and replaces `wire` whenever there is exactly one continuous driver (§6.5). The name `reg` is misleading: it does not imply a hardware register.
+> **One type, two names.** `logic` and `reg` are the same type (§6.11.2). Prefer `logic`: the name `reg` suggests a hardware register, and it does not imply one. Note also that `logic` names a data type, not a kind of object. Declared on its own it makes a variable, but `wire logic w` is a net (§6.7.1), and so is an `input logic` port (§23.2.2.3). [Expert: Driver rules at bit level, port kinds and implicit nets](#expert-driver-rules-at-bit-level-port-kinds-and-implicit-nets) covers the traps.
 
-### The Complete Type Family
+### Integer types and signedness
 
-| Category | Types | Size | Signed? | Use Case |
-|----------|-------|------|---------|----------|
-| **4-state integral** | `logic`, `reg`, `integer`, `time` | variable, variable, 32b, 64b | unsigned, unsigned, signed, unsigned | RTL signals, DUT interfaces |
-| **2-state integral** | `bit`, `int`, `byte`, `shortint`, `longint` | variable, 32b, 8b, 16b, 64b | unsigned, signed, signed, signed, signed | TB arithmetic, counters |
-| **Real** | `real`, `shortreal`, `realtime` | 64b, 32b, 64b | — | Analog modeling, timing |
-| **String** | `string` | dynamic | — | Report formatting, path manipulation |
-| **Enum** | `enum` | user-defined base | depends on base | FSM states, opcode encoding |
-| **Net types** | `wire`, `tri`, `wand`, `wor`, `trireg`, `supply0/1` | variable | unsigned | Multi-driver signals |
+| Type | States | Bits | Signed by default? |
+|---|---|---|---|
+| `bit` | 2 | you choose (1 without a range) | no |
+| `byte` | 2 | 8 | yes |
+| `shortint` | 2 | 16 | yes |
+| `int` | 2 | 32 | yes |
+| `longint` | 2 | 64 | yes |
+| `logic` (same as `reg`) | 4 | you choose (1 without a range) | no |
+| `integer` | 4 | 32 | yes |
+| `time` | 4 | 64 | no |
 
-Integral sizes and signedness come from Table 6-8.
+Sizes and states come from Table 6-8, default signs from §6.11.3, and the 1-bit default from §6.9. Any of them can be declared explicitly `signed` or `unsigned` (`int unsigned ui;`, §6.11.3), and nets can be declared `signed` too (`wire signed [7:0] w;`, §6.7.1).
 
-> [!IMPORTANT]
-> **Signedness Trap (IEEE 1800-2023 §6.11.3):** `int` is **signed** but `bit` is **unsigned**. This catches people:
-> ```systemverilog
-> bit [7:0] counter = 8'hFF;  // unsigned: value is 255
-> int result = counter;        // signed: result is still 255 (zero-extended)
-> byte b = counter;            // signed: b is -1! (8'hFF reinterpreted as signed)
-> ```
-> Always be explicit about signedness when mixing types.
-
-### Operators and expression width
-
-Go beyond the four bitwise tables: pick any operator, set the operand bits to 0, 1, `x` or `z`, and predict the result before you reveal how the standard computes it.
-
-<OperatorExplorer />
-
-### Width and sign traps
-
-Pick a trap, change the operands and predict what the variable holds: an expression's width and sign come from all of its operands and from the context it is used in, so one unsigned operand or a narrow target changes the answer.
-
-<SignednessVisualizer />
-
-- Declare intent up front: `logic signed [WIDTH-1:0] data_s;`, or convert with `$signed()` (§11.7) or a cast such as `signed'(x)` (§6.24.1) when mixing arithmetic and packed busses.
-- Keep math in `int/longint` and only slice into packed logic at the edges. It keeps overflow and sign extension predictable.
-
-### Packed vs. Unpacked Arrays — The Memory Layout
-
-Understanding packed vs. unpacked is critical for correct bit manipulation:
+Signedness decides how a value is extended when it moves into a wider variable (§6.11.2):
 
 ```systemverilog
-// Packed: contiguous bits, can be sliced as a vector (IEEE 1800-2023 §7.4.1)
-logic [3:0][7:0] packed_data;    // 32 contiguous bits
-// Access: packed_data[2][3] or packed_data[23:16]
-
-// Unpacked: separate elements, each independently addressed (IEEE 1800-2023 §7.4.2)
-logic [7:0] unpacked_data [0:3]; // 4 separate 8-bit elements
-// Access: unpacked_data[2] — cannot slice across elements
+// snippet
+bit  [7:0] u = 8'hFF;    // unsigned: 255
+byte       b = 8'hFF;    // signed: the same bits mean -1
+int        i, j;
+initial begin
+  i = u;                 // 255: an unsigned value is zero-extended
+  j = b;                 // -1: a signed value is sign-extended
+end
 ```
 
-| Aspect | Packed | Unpacked |
-|--------|--------|----------|
-| **Memory layout** | Contiguous bits | Separate elements |
-| **Bit slicing** | Yes — treat as one wide vector | No — index by element only |
-| **Part select** | `data[15:8]` works | Illegal across elements |
-| **Typical use** | Bus lanes, protocol fields | Memories, register files |
-| **Casting** | Casts directly to an integral type | Bit-stream cast to a type of the same total size (§6.24.3), or the streaming operators (§11.4.14) |
-
-### Strings and Enums That Pull Their Weight
-
-Set the index past the end of the string and call `getc` and `putc`: string methods return a default or leave the string alone instead of raising an error.
-
-<StringMethodExplorer />
-
-- Strings are dynamic, which suits report formatting and path manipulation (IEEE 1800-2023 §6.16).
-
-Predict what an enum that was never reset holds, then call `next()` and `name()` on a value that is not a member.
-
-<EnumMethodVisualizer />
-
-- Enums give type safety and built-in iterators (`first()`, `next()`, `num()`, `name()`). They beat magic numbers for FSMs and coverage bins (IEEE 1800-2023 §6.19).
-
-> [!WARNING]
-> **Enum Gotcha: the default base type is 2-state.** An enum with no explicit base uses `int` (§6.19), which starts at 0 (Table 6-7). When the first member has the value 0, an FSM state variable that is never reset already looks like it sits in that state, so the missing reset is invisible. Give FSM enums a 4-state base:
-> ```systemverilog
-> typedef enum logic [1:0] { IDLE, RUN, DONE, ERROR } state_t;  // starts at 2'bxx
-> ```
-> With a 4-state base the state starts at `'x`, and `state.name()` returns `""` until a reset assigns a real state (§6.19.5.6).
-
-## Deeper Understanding
-
-### Why X-Pessimism and X-Optimism Matter
-
-The same `x` behaves differently depending on where it lands:
-
-| Construct | What happens with `x`/`z` | Effect |
-|-----------|---------------------------|--------|
-| `if (a)` and `if (!a)` | The condition is not known true, so the else branch runs (§12.4). `!x` is still `x` (§11.4.7), so both forms take else. | X-optimistic: the else path looks like valid behavior |
-| `case (sel)` | Items must match bit for bit including `x` and `z`, like `===` (§12.5). An `x` select only matches an item that spells out the same `x`. | Usually falls to `default` |
-| `casez (sel)` | `z` and `?` bits in the select or in an item are do-not-cares (§12.5.1). An `x` still has to match exactly. | A floating select matches items it should not |
-| `casex (sel)` | `x` and `z` bits in the select or in an item are do-not-cares (§12.5.1). | X-optimistic: an unknown select runs a real branch |
-| `a ? b : c` | With an `x` condition both sides are evaluated and bits that differ become `x` (§11.4.11, Table 11-20). | X-pessimistic: the unknown stays visible |
-| Arithmetic `x + 1` | Any `x` or `z` operand bit makes the whole result `x` (§11.4.3). | X-pessimistic: propagates the unknown |
-| `==` / `!=` | `x` only when the comparison is ambiguous; a known differing bit gives 0 (§11.4.5). | `if (a == b)` takes else when ambiguous |
-| `===` / `!==` | `x` and `z` compared literally; always 0 or 1 (§11.4.5). | Correct for TB checks: an unexpected `x` is a mismatch |
-
-**Best practice for RTL:**
-- Use `unique case` or `priority case`: the simulator reports a violation when no item matches (§12.5.3), which catches an unknown select falling through. Leave out the `default` item so the check can fire.
-- Use `always_comb` instead of `always @*` to get an inferred sensitivity list and the single-writer check (§9.2.2.2).
-- Avoid `casex` in RTL; prefer `casez` or `case ... inside`.
-- Many simulators offer an X-propagation mode that makes `if` and `case` more pessimistic. Check your tool's documentation before relying on it.
-
-### The `$cast` and Type Compatibility Rules
-
-When working with enum and class types, `$cast` (IEEE 1800-2023 §6.24.2) is essential:
-
-```systemverilog
-typedef enum { A, B, C } abc_t;
-int i = 1;
-abc_t e;
-
-// e = i;             // Compile error: an int needs a cast to become an enum (§6.19.4)
-
-// Static cast: compiles, but performs no range check
-e = abc_t'(i);        // If i=5, e holds a value that is not a member!
-
-// $cast: runtime check, returns 0 and leaves e unchanged on failure
-if (!$cast(e, i))
-  $error("Value %0d is not a valid abc_t", i);
-```
-
-### Real-World Corner Cases Interviewers Love
-
-1. **What is `trireg`?** — A net that keeps its last driven value when every driver goes to `z`, at its declared charge strength (`small`, `medium` or `large`) (§6.6.4). It models charge stored on a capacitive node. The **trireg holds charge** tab in the simulator above shows it next to a `wire`.
-
-2. **Can you assign to a `wire` in an `initial` block?** — No! A net cannot be procedurally assigned (§6.5). Use `force`/`release` for a test override, or declare the signal as `logic` if it has a single writer.
-
-3. **What happens when you `$display` an uninitialized `bit`?** — It prints `0` (2-state default, Table 6-7), making it look initialized. This is why 4-state types are safer for DUT signals: an uninitialized `logic` shows `x`, which is immediately visible.
-
-4. **What is the difference between `== 'x` and `=== 'x`?** — `sig == 'x` compares against an all-`x` value, so every bit is ambiguous and the result is always `x`: `if (sig == 'x)` never runs its then branch. In general, `==` gives `x` only when no known bit differs (§11.4.5). Use `sig === 'x` to test for all-`x`, or `$isunknown(sig)` to test for any `x`/`z` bit.
-
-## Make It Work
-- Use the sandbox to check each type's width, signedness and starting value, and to see what happens when you write `4'b1x0z` into it. It applies the standard's type tables; it is a model, not a simulator.
+Use the sandbox to check each type. Pick **int** and predict what it holds after **Write 4'b1x0z**, then do the same for **logic [3:0]**. Finally pick **wire [3:0]** and predict what an undriven net reads.
 
 <CurriculumDataTypeExplorer />
 
-- **Pattern:** 4-state at the interfaces, 2-state in math-heavy logic, cast when crossing the boundary.
-- **Guardrails:** Prefer `===`/`!==` for reset checks so `x`/`z` stays visible. Add assertions when collapsing 4-state to 2-state types.
-- **Audit:** Does every signal have a reason to be packed or unpacked? If not, clarify now to avoid later lint churn.
+What the sandbox showed: `int` kept only the known bits, so `4'b1x0z` became `4'b1000`, which is 8 (§6.11.2). `logic [3:0]` kept all four values. The undriven `wire [3:0]` read `zzzz` until you drove it (§6.7.1). The sandbox applies the standard's type tables; it is a model, not a simulator.
+
+### Expression width and sign
+
+"The result is as wide as the widest operand" is a common wrong model. SystemVerilog decides an expression's width and sign in five steps (§11.6, §11.8):
+
+1. **Size each operand.** A variable has its declared width; a literal has its own width (at least 32 bits if unsized).
+2. **Find the context width.** For arithmetic and bitwise operators it is the widest operand, **including the left-hand side of an assignment** (§11.6.1, §11.6.2). Comparison, reduction and logical operators produce 1 bit, and the operands of a comparison are sized only against each other (Table 11-21).
+3. **Find the sign.** It comes from the operands only. If any operand is unsigned, the whole expression is unsigned, and the left-hand side never changes that (§11.8.1).
+4. **Extend every operand to the context width** before the operation: sign-extended only if the expression is signed, otherwise zero-extended (§11.8.2).
+5. **Store the result.** A narrower target discards the extra most significant bits (§10.7).
+
+Two traced examples. First `logic [7:0] a = 200, b = 100;` added into targets of two widths:
+
+| Step | `logic [7:0] s8; s8 = a + b;` | `logic [8:0] s9; s9 = a + b;` |
+|---|---|---|
+| 1. operand widths | `a` 8, `b` 8 | `a` 8, `b` 8 |
+| 2. context width | max(8, 8, 8) = 8 | max(8, 8, 9) = 9 |
+| 3. sign | unsigned | unsigned |
+| 4. extend | nothing to extend | `a` and `b` zero-extended to 9 bits |
+| 5. add and store | 300 needs 9 bits: the carry is lost, `s8 = 44` | `s9 = 300` |
+
+Then a signed and an unsigned operand, with `logic signed [3:0] s = -4;` (bits `1100`), `logic [7:0] u = 10;` and a signed 8-bit target `r`:
+
+| Step | `r = s + u;` | `r = s + $signed(u);` |
+|---|---|---|
+| 2. context width | max(4, 8, 8) = 8 | 8 |
+| 3. sign | unsigned, because `u` is unsigned | signed: every operand is signed |
+| 4. extend `s` | zero-extended: `0000_1100` = 12 | sign-extended: `1111_1100` = −4 |
+| 5. add and store | 12 + 10, so `r = 22` | −4 + 10, so `r = 6` |
+
+The signed target `r` did not make the first sum signed. Now try the traps yourself. The lab opens on **the lost carry**: predict `s` for each code variant, including the two averages. Then switch the trap to **signed + unsigned** and predict **a + u**, **$signed(a) + u** and **a + $signed(u)**.
+
+<SignednessVisualizer scenario="lost-carry" />
+
+What the lab showed:
+
+- `(a8 + b8) >> 1` is 22, not 150: the 8-bit context drops the carry **before** the shift. Adding an unsized 0 widens the context to at least 32 bits, so `(a8 + b8 + 0) >> 1` gives 150. This is the standard's own example (§11.6.2).
+- `$signed(a) + u` is still 22. `a` was already signed; the unsigned operand is `u`, and one unsigned operand is enough to make the whole expression unsigned. Only `a + $signed(u)` is fully signed and gives 6.
+
+In practice:
+
+- Declare signed data as `logic signed [N-1:0]`, and convert at boundaries with `$signed()` or `signed'()` (§11.7, §6.24.1).
+- Size the target to hold the carry. When only an intermediate value needs the extra bit, as in an average, widen one operand with a size cast: `(9'(a8) + b8) >> 1` is 150.
+- Do testbench arithmetic in `int` or `longint`, and slice into packed fields only at the edges.
+
+### Fixed-size arrays: packed and unpacked
+
+- A **packed array** has its dimensions **before** the name. It is one contiguous vector of bits (§7.4.1), so used as a whole it behaves like a single number: you can add it, compare it and assign it in one step.
+- An **unpacked array** has its dimensions **after** the name. It is a collection of separate elements (§7.4.2), and `[4]` means `[0:3]`.
+
+```systemverilog
+// snippet
+logic [3:0][7:0] w;       // packed: four bytes in one 32-bit vector
+logic [7:0]      b [4];   // unpacked: four separate bytes, b[0] to b[3]
+```
+
+<figure className="not-prose my-6">
+  <svg viewBox="0 0 360 226" role="img" aria-label="Two layouts. Top: logic [3:0][7:0] w is one 32-bit vector in four byte lanes: w[3] is bits 31 to 24, w[2] is bits 23 to 16, w[1] is bits 15 to 8 and w[0] is bits 7 to 0. Bottom: logic [7:0] b [4] is four separate 8-bit elements, b[0] to b[3], with no bit numbering across them." style={{ width: "100%", maxWidth: 560 }}>
+    <text x="10" y="16" fontSize="12" fontFamily="ui-monospace, monospace" fill="currentColor">logic [3:0][7:0] w;</text>
+    <text x="350" y="16" fontSize="10" textAnchor="end" fill="currentColor" fillOpacity="0.75">one 32-bit vector</text>
+    <rect x="10" y="24" width="340" height="40" rx="6" fill="rgba(6,182,212,0.08)" stroke="rgb(6,182,212)" />
+    <rect x="95" y="24" width="85" height="40" fill="rgba(6,182,212,0.28)" />
+    <line x1="95" y1="24" x2="95" y2="64" stroke="currentColor" strokeOpacity="0.45" />
+    <line x1="180" y1="24" x2="180" y2="64" stroke="currentColor" strokeOpacity="0.45" />
+    <line x1="265" y1="24" x2="265" y2="64" stroke="currentColor" strokeOpacity="0.45" />
+    <text x="52.5" y="49" fontSize="13" fontWeight="700" textAnchor="middle" fontFamily="ui-monospace, monospace" fill="currentColor">w[3]</text>
+    <text x="137.5" y="49" fontSize="13" fontWeight="700" textAnchor="middle" fontFamily="ui-monospace, monospace" fill="currentColor">w[2]</text>
+    <text x="222.5" y="49" fontSize="13" fontWeight="700" textAnchor="middle" fontFamily="ui-monospace, monospace" fill="currentColor">w[1]</text>
+    <text x="307.5" y="49" fontSize="13" fontWeight="700" textAnchor="middle" fontFamily="ui-monospace, monospace" fill="currentColor">w[0]</text>
+    <text x="52.5" y="79" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.8">bits 31:24</text>
+    <text x="137.5" y="79" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.8">bits 23:16</text>
+    <text x="222.5" y="79" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.8">bits 15:8</text>
+    <text x="307.5" y="79" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.8">bits 7:0</text>
+    <text x="10" y="100" fontSize="10" fill="currentColor">w[2] is one byte · w[3:2] is two bytes · w[2][3] is bit 19</text>
+    <line x1="10" y1="112" x2="350" y2="112" stroke="currentColor" strokeOpacity="0.2" />
+    <text x="10" y="132" fontSize="12" fontFamily="ui-monospace, monospace" fill="currentColor">logic [7:0] b [4];</text>
+    <text x="350" y="132" fontSize="10" textAnchor="end" fill="currentColor" fillOpacity="0.75">four separate elements</text>
+    <rect x="10" y="140" width="76" height="36" rx="6" fill="rgba(139,92,246,0.10)" stroke="rgb(139,92,246)" />
+    <rect x="98" y="140" width="76" height="36" rx="6" fill="rgba(139,92,246,0.10)" stroke="rgb(139,92,246)" />
+    <rect x="186" y="140" width="76" height="36" rx="6" fill="rgba(139,92,246,0.10)" stroke="rgb(139,92,246)" />
+    <rect x="274" y="140" width="76" height="36" rx="6" fill="rgba(139,92,246,0.10)" stroke="rgb(139,92,246)" />
+    <text x="48" y="163" fontSize="13" fontWeight="700" textAnchor="middle" fontFamily="ui-monospace, monospace" fill="currentColor">b[0]</text>
+    <text x="136" y="163" fontSize="13" fontWeight="700" textAnchor="middle" fontFamily="ui-monospace, monospace" fill="currentColor">b[1]</text>
+    <text x="224" y="163" fontSize="13" fontWeight="700" textAnchor="middle" fontFamily="ui-monospace, monospace" fill="currentColor">b[2]</text>
+    <text x="312" y="163" fontSize="13" fontWeight="700" textAnchor="middle" fontFamily="ui-monospace, monospace" fill="currentColor">b[3]</text>
+    <text x="48" y="191" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.8">8 bits</text>
+    <text x="136" y="191" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.8">8 bits</text>
+    <text x="224" y="191" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.8">8 bits</text>
+    <text x="312" y="191" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.8">8 bits</text>
+    <text x="10" y="214" fontSize="10" fill="currentColor">b[1:2] is a slice of two elements · no bit range spans elements</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">The packed array is one vector, so its byte lanes have bit numbers; the highlighted lane is <code>w[2]</code>. The unpacked array is four separate elements with no bit numbering across them.</figcaption>
+</figure>
+
+Predict each value before you read the last column. Take `w = 32'hAABB_CCDD` and `b = '{8'h11, 8'h22, 8'h33, 8'h44}`, so `b[0]` is `8'h11`:
+
+| Expression | What it selects | Value |
+|---|---|---|
+| `w` | the whole 32-bit vector | `32'hAABB_CCDD` |
+| `w[2]` | one element of the outer dimension: a byte, bits 23:16 | `8'hBB` |
+| `w[3:2]` | two elements; a slice of a packed array is packed | `16'hAABB` |
+| `w[2][3]` | bit 3 of byte 2, which is bit 19 of the vector | `1'b1` |
+| `w[23:16]` | elements 23 down to 16, which do not exist | `x` when read (§11.5.1); many tools also warn or reject it at compile time (tool-dependent) |
+| `b[1]` | one element | `8'h22` |
+| `b[1:2]` | a slice of two elements; a slice of an unpacked array is unpacked | `'{8'h22, 8'h33}` |
+| `b[5]`, or `b[i]` while `i` is `x` | an invalid index | `'x` for this 4-state array; `'0` if it were `bit` (§7.4.5, Table 7-1) |
+
+The rules behind the table:
+
+- On a multidimensional packed array, the **first** index after the name selects an element of the leftmost dimension (§7.4.5). Bit numbers such as `[15:8]` apply only to a one-dimensional vector. To slice bits, select the element (`w[1]`), or copy the array into a `logic [31:0]` first.
+- On a one-dimensional vector, an **indexed part-select** gives a fixed-width field at a position that may vary at run time: `v[8*i +: 8]` counts up from the base and `v[15 -: 8]` counts down (§11.5.1).
+- Range direction matters. In `logic [0:15] up_vect`, bit 0 is the most significant bit, and `up_vect[0 +: 8]` is `up_vect[0:7]` (§11.5.1).
+- An out-of-range or unknown index reads `x` from a 4-state value and 0 from a 2-state one, and a write through an invalid index does nothing (§11.5.1, §7.4.5).
+- Packed and unpacked arrays are not interchangeable: a packed array cannot be assigned directly to an unpacked one without an explicit cast (§7.6), and an unpacked array is not a vector. [Operators and Expressions](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions) covers the bit-stream casts and streaming operators that convert between them (§6.24.3).
+
+In a testbench, packed arrays hold bus lanes and protocol fields (for example `logic [7:0][7:0] data` for a 64-bit bus with byte lanes), and unpacked arrays hold memories and register files (`logic [31:0] mem [1024]`). Containers that grow and shrink are the subject of [F2B: Dynamic Data Structures](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index).
+
+### Naming types: typedef and enums
+
+`typedef` gives a type a name (§6.18), so many objects can share exactly the same type:
+
+```systemverilog
+// snippet
+typedef logic [31:0] addr_t;    // a name for a 32-bit 4-state vector
+addr_t req_addr, rsp_addr;      // both have exactly the same type
+```
+
+Declare each shared type once, usually in a package that the DUT and the testbench both import ([F4A: Structuring Designs with Modules and Packages](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index)). Two separately written anonymous `enum` or `struct` declarations never match, even when they look identical (§6.22.1), so a `typedef` is what lets a value pass cleanly between modules, functions and classes.
+
+An **enum** declares a set of named integral constants (§6.19):
+
+- The default base type is `int`. Values count up from 0 unless you assign them.
+- Enums are strongly typed: assigning an `int` to an enum variable needs a cast (§6.19.3). In an expression, an enum is automatically cast to its base type (§6.19.4).
+- Built-in methods step through the members and name them: `first()`, `last()`, `next(N)`, `prev(N)`, `num()` and `name()` (§6.19.5).
+
+```systemverilog
+// snippet
+typedef enum logic [1:0] {IDLE, RUN, DONE} state_t;   // IDLE=0, RUN=1, DONE=2
+state_t st;                    // 4-state base: starts at 2'bxx
+initial begin
+  st = RUN;                    // legal: a member
+  // st = 1;                   // illegal: an int needs a cast (§6.19.3)
+  st = state_t'(1);            // a static cast compiles but checks nothing
+  $display("%s = %0d", st.name(), st);   // prints "RUN = 1"
+end
+```
+
+In the explorer, predict what an enum that was never reset holds with each base type. Then call `next()` and `name()` on a value that is not a member.
+
+<EnumMethodVisualizer />
+
+What the explorer showed:
+
+- With the default `int` base, the un-reset `s` starts at 0, which is the first member, so the missing reset is invisible. With a `logic [1:0]` base it starts at `'x`, and `name()` returns the empty string (Table 6-7, §6.19.5.6).
+- `next()` on a value that is not a member returns the enum's default starting value, not a neighbour (§6.19.5.3).
+
+> [!WARNING]
+> **The default base type is 2-state.** An enum with no explicit base uses `int` (§6.19), which starts at 0 (Table 6-7). That is the first member unless you gave the first member another value, so an FSM state variable that is never reset already looks like it sits in a legal state. Give FSM enums a 4-state base, such as `enum logic [1:0]`, so a missing reset shows up as `x`.
+
+Enums in depth continue in [Structs, Unions and Enums](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums).
+
+### Grouping fields: structs and unions, a first look
+
+A transaction or a protocol header is several fields that travel together. Structs keep them together as one value, so a whole command can be assigned, compared or passed to a task in one step.
+
+- A **struct** groups named members of different types (§7.2). By default it is **unpacked**: members may be any type (even a `string`), and the tool chooses the layout.
+- A **packed struct** is one vector. Its first member is the most significant, and the whole struct can be compared, assigned to a vector or selected as if it were declared `[n-1:0]` (§7.2.1).
+- A **union** gives several views of the same storage. A **packed union** lets you write one member and read another (§7.3, §7.3.1). A **tagged union** also records which member holds the value, and the value can be read only through that member (§7.3.2).
+
+```systemverilog
+// snippet
+typedef struct packed {
+  logic [3:0]  op;      // first member: the most significant bits
+  logic [11:0] addr;
+  logic [15:0] data;
+} cmd_t;                // 32 bits in all, one vector
+
+cmd_t c;
+initial begin
+  c.op   = 4'h2;
+  c.addr = 12'h0A0;
+  c.data = 16'hBEEF;
+  $display("%h", c);    // prints 20a0beef: op, then addr, then data
+end
+```
+
+| Member | Bits of `c` | Value after the writes |
+|---|---|---|
+| `op` | `c[31:28]` | `4'h2` |
+| `addr` | `c[27:16]` | `12'h0A0` |
+| `data` | `c[15:0]` | `16'hBEEF` |
+
+The classic mistake is to expect an unpacked struct to behave like a vector. It has no bit numbering, so it cannot be compared with a number, sliced or assigned to a `logic [31:0]` without a cast; choose a packed struct for anything that maps onto bits, such as a header. The next lesson, [Structs, Unions and Enums](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums), covers structs and unions in depth.
+
+### Strings
+
+A `string` is an ordered collection of characters whose length can change during simulation (§6.16). Index 0 is the leftmost character, each character is a `byte`, and an unassigned string is `""`. A string literal such as `"hi"` is different: it behaves like a packed array of 8-bit codes, and assigned to an integral variable it is right-justified and truncated or zero-filled (§6.16).
+
+- Methods: `len()`, `getc(i)`, `putc(i, c)`, `toupper()`, `tolower()`, `compare(s)`, `icompare(s)`, `substr(i, j)`, and conversions such as `atoi()` and `atohex()` (§6.16.1 to §6.16.9).
+- Operators: `==`, `!=`, `<`, `>` (lexicographic), concatenation `{a, b}` and replication (Table 6-9).
+- Out-of-range indices do not raise errors: `getc` returns 0, `putc` leaves the string unchanged, and `substr` returns `""` (§6.16.2, §6.16.3, §6.16.8).
+
+In the explorer, set `i` to 20, past the end of `"SystemVerilog"` (its `len()` is 13), and predict what `getc(20)` returns and what `putc(20, "s")` does to `s`. Then try `substr(0, 5)`.
+
+<StringMethodExplorer />
+
+What the explorer showed: `getc(20)` returned 0 and `putc(20, "s")` left `s` unchanged, with no error. `substr(i, j)` includes both ends, so `substr(0, 5)` is `"System"`. Silent defaults like these let string bugs survive, so check `len()` before you index. In testbenches, strings carry messages, report IDs and file names; [F2D: System Tasks and File I/O](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index) builds them with `$sformatf`.
+
+### Casting at a glance
+
+A **cast** converts a value to another type, size or sign:
+
+| Cast | What it does | Example |
+|---|---|---|
+| `type'(expr)` | Static cast: returns what a variable of that type would hold after assignment (§6.24.1) | `int'(2.5)` is 3: reals round to the nearest integer (§6.12.1) |
+| `N'(expr)` | Size cast: pads or truncates to `N` bits and keeps the signedness of `expr` (§6.24.1) | `8'(12'hABC)` is `8'hBC` |
+| `signed'(expr)`, `unsigned'(expr)` | Changes the sign and keeps the bits; `$signed()` and `$unsigned()` give the same results (§6.24.1, §11.7) | `signed'(4'b1100)` is −4 |
+| `enum_t'(expr)` | Static cast to an enum: no range check, so the result may not be a member (§6.19.4) | `state_t'(3)` holds 3, and `name()` is `""` |
+| `$cast(dest, src)` used as a function | Checks the value: assigns and returns 1, or returns 0 and leaves `dest` unchanged (§6.24.2) | `if (!$cast(st, i)) $error(...)` |
+| `$cast(dest, src);` used as a task | Checks the value: an invalid cast is a run-time error, and `dest` is unchanged (§6.24.2) | `$cast(st, i);` |
+
+Trace a static cast and a checked one for `typedef enum {A, B, C} abc_t;`, starting each time from `e = A`:
+
+| `i` | `e = abc_t'(i);` | `ok = $cast(e, i);` |
+|---|---|---|
+| 1 | `e` is `B` | `ok` is 1 and `e` is `B` |
+| 5 | `e` holds 5, which is not a member, and `e.name()` is `""` | `ok` is 0 and `e` stays `A` |
+
+Use a static cast when you know the value is valid, and `$cast` when it may not be. Bit-stream casts between unpacked and packed types are covered in [Operators and Expressions](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions), and `$cast` on class handles in [Polymorphism Pitfalls and Type Casting](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls).
+
+### Recap: five mistakes everyone makes
+
+1. **Trusting a 2-state copy.** Copying a DUT value into `bit` or `int` turns `x` into 0, so a missing reset reads as a clean value (§6.11.2).
+2. **Checking with `==` or `!=`.** They return `x` on unknown bits and `if` treats `x` as false. Use `!==`, or `$isunknown()` first (§11.4.5, §12.4).
+3. **Two `assign` statements on a `logic`.** A variable takes one continuous driver. Use a net for a shared bus (§6.5).
+4. **Losing the carry or the sign.** The target is part of the width context, and one unsigned operand makes the whole expression unsigned (§11.6.1, §11.8.1).
+5. **Flat bit numbers on a multidimensional packed array.** `w[15:8]` on `logic [3:0][7:0] w` selects elements that do not exist. Select `w[1]` (§7.4.5).
+
+## Make It Work
+
+### Worked example: one bench that proves every rule
+
+The bench below checks one rule per numbered block and prints a summary line. Each block hands a comparison to `check()`. Most comparisons use `===`, which treats `x` as a value, and `check()` takes the result as a 2-state `bit`, so a comparison that comes back `x` counts as a failure, never as a pass.
+
+> [!NOTE]
+> **Run it.** Save the code as `tb_top.sv`, then compile, elaborate and simulate `tb_top` with any simulator that implements the IEEE 1800 4-state semantics, from the command line or in an online sandbox such as EDA Playground. Verilator is a 2-state simulator, so the `x` lines will not match there (tool-dependent).
+
+```systemverilog
+// compile
+// tb_top.sv: one self-checking bench that proves each rule in this lesson.
+`timescale 1ns/1ps
+module tb_top;
+  // FSM state type with a 4-state base, so a missing reset stays visible
+  typedef enum logic [1:0] {IDLE, RUN, DONE} state_t;
+  // A command as one 32-bit vector: op in the top bits, data in the bottom bits
+  typedef struct packed {
+    logic [3:0]  op;
+    logic [11:0] addr;
+    logic [15:0] data;
+  } cmd_t;
+
+  logic [7:0]        dut_q;                 // a DUT register that reset never set
+  bit   [7:0]        copy2;                 // a careless 2-state monitor field
+  logic [7:0]        copy4;                 // the 4-state field it should have been
+  state_t            st;                    // never reset
+  logic [3:0][7:0]   word = 32'hAABB_CCDD;  // four bytes in one 32-bit vector
+  logic [7:0]        a8 = 8'd200, b8 = 8'd100;
+  logic [7:0]        sum8;
+  logic [8:0]        sum9;
+  logic signed [3:0] s4 = -4;
+  logic [7:0]        u8 = 8'd10;
+  logic signed [7:0] r_mix, r_fix;
+  cmd_t              cmd;
+  int                pass_cnt, fail_cnt;
+
+  // A net with two continuous drivers. As logic, this would not compile (§6.5).
+  logic drv_a = 1'b0, drv_b = 1'b1, en_b = 1'b0;
+  wire  bus;
+  assign bus = drv_a;                     // driver 1: always on
+  assign bus = en_b ? drv_b : 1'bz;       // driver 2: tri-state, off while en_b is 0
+
+  // Count one check and print only the failures.
+  function automatic void check(string what, bit ok);
+    if (ok) pass_cnt++;
+    else begin
+      fail_cnt++;
+      $display("FAIL: %s", what);
+    end
+  endfunction
+
+  initial begin
+    // 1. A 2-state copy erases x (§6.11.2)
+    copy2 = dut_q;
+    copy4 = dut_q;
+    $display("copy2=%h copy4=%h", copy2, copy4);
+    check("2-state copy reads 00", copy2 === 8'h00);
+    check("4-state copy keeps xx", copy4 === 8'hxx);
+
+    // 2. == cannot see x; !== and $isunknown can (§11.4.5, §20.9)
+    $display("==:%b  !==:%b  isunknown:%b",
+             dut_q == 8'h5A, dut_q !== 8'h5A, $isunknown(dut_q));
+    check("== returns x", (dut_q == 8'h5A) === 1'bx);
+    check("!== returns 1", (dut_q !== 8'h5A) === 1'b1);
+    check("$isunknown returns 1", $isunknown(dut_q) === 1'b1);
+
+    // 3. An un-reset enum with a 4-state base reads x and has no name (§6.19.5.6)
+    $display("st=%b name=\"%s\"", st, st.name());
+    check("state starts at xx", st === 2'bxx);
+    check("name() is empty", st.name() == "");
+
+    // 4. A multidimensional packed array is indexed by element (§7.4.5)
+    $display("word[1]=%h word[3:2]=%h word[2][3]=%b",
+             word[1], word[3:2], word[2][3]);
+    check("word[1] is cc", word[1] === 8'hCC);
+    check("word[3:2] is aabb", word[3:2] === 16'hAABB);
+
+    // 5. The target is part of the width context (§11.6.1, §10.7)
+    sum8 = a8 + b8;
+    sum9 = a8 + b8;
+    $display("sum8=%0d sum9=%0d", sum8, sum9);
+    check("8-bit sum drops the carry", sum8 === 8'd44);
+    check("9-bit sum keeps it", sum9 === 9'd300);
+
+    // 6. One unsigned operand makes the expression unsigned (§11.8.1)
+    r_mix = s4 + u8;               // s4 is zero-extended: 12 + 10
+    r_fix = s4 + $signed(u8);      // every operand signed: -4 + 10
+    $display("r_mix=%0d r_fix=%0d", r_mix, r_fix);
+    check("mixed signs give 22", r_mix === 8'sd22);
+    check("all signed gives 6", r_fix === 8'sd6);
+
+    // 7. A static cast never checks; $cast does (§6.19.4, §6.24.2)
+    st = state_t'(3);              // 3 is not a member: no error, no warning
+    $display("static cast: st=%0d name=\"%s\"", st, st.name());
+    check("static cast stores 3", st === 2'd3);
+    st = RUN;
+    if (!$cast(st, 3)) $display("$cast(st, 3) failed: st is still %s", st.name());
+    check("$cast left st unchanged", st == RUN);
+
+    // 8. A packed struct is one vector, first member in the MSBs (§7.2.1)
+    cmd.op   = 4'h2;
+    cmd.addr = 12'h0A0;
+    cmd.data = 16'hBEEF;
+    $display("cmd=%h cmd[31:28]=%h", cmd, cmd[31:28]);
+    check("cmd packs op, addr, data", cmd === 32'h20A0_BEEF);
+
+    // 9. A net resolves its continuous drivers (§6.6.1, Table 6-2)
+    #1 $display("one driver on: bus=%b", bus);
+    check("bus follows the only active driver", bus === 1'b0);
+    en_b = 1'b1;
+    #1 $display("two drivers on: bus=%b", bus);
+    check("strong 0 against strong 1 gives x", bus === 1'bx);
+
+    $display("PASS=%0d FAIL=%0d", pass_cnt, fail_cnt);
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative: derived from the IEEE 1800-2023 rules cited in the comments, not captured from a simulator run; spacing can differ between tools):
+
+```text
+copy2=00 copy4=xx
+==:x  !==:1  isunknown:1
+st=xx name=""
+word[1]=cc word[3:2]=aabb word[2][3]=1
+sum8=44 sum9=300
+r_mix=22 r_fix=6
+static cast: st=3 name=""
+$cast(st, 3) failed: st is still RUN
+cmd=20a0beef cmd[31:28]=2
+one driver on: bus=0
+two drivers on: bus=x
+PASS=18 FAIL=0
+```
+
+How to use it:
+
+1. Before you run anything, read each numbered block and write down what you expect it to print.
+2. Run the bench and compare its output line by line with your predictions and with the expected output.
+3. For every difference, find the rule in this lesson that explains it, and say it in one sentence ("the target is part of the width context").
+4. Break it on purpose. Change `copy4 === 8'hxx` to `copy4 == 8'hxx` and predict which check fails, and why: the `x` from `==` becomes 0 when it is passed as a `bit`.
+5. Keep the pattern: compare with `===` or `!==`, count every check, and end with one `PASS=<n> FAIL=<m>` line that a script can grade. [F2E: Your First Self-Checking Testbench](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index) builds a full bench on it.
+
+### Debugging: symptom, cause, fix
+
+| Symptom | Likely cause | Fix |
+|---|---|---|
+| A signal stays `x` long after reset | No assignment in the reset branch, so it keeps its starting `'x` (Table 6-7) | Reset it, and add a check such as `!$isunknown(sig)` after reset |
+| An elaboration error about multiple or illegal drivers | A second continuous driver (an `assign` or a port connection) on a `logic` variable (§6.5) | Declare a real shared bus as `wire`, or remove the extra driver |
+| The checker never reports a mismatch, but the waveform shows `x` | `if (got != exp)` returned `x` and took else (§11.4.5, §12.4), or a 2-state field erased the `x` (§6.11.2) | Compare with `!==`, keep monitor fields 4-state, check `$isunknown` |
+| A sum or average is wrong by a power of two | The context was too narrow, so the carry was dropped (§11.6.1, §10.7) | Widen the target; for an intermediate value, widen an operand: `(9'(a) + b) >> 1` |
+| A vector you meant to fill with ones, or with `x`, has only its low bits set | `v = 1` and `v = 4'bx` are narrow values that are zero-extended (§5.7.1, §10.7) | Use the fill literals `'1`, `'0`, `'x` and `'z` |
+| A negative value compares or adds wrongly | One unsigned operand made the expression unsigned, so the signed operand was zero-extended (§11.8.1) | Make every operand signed (`$signed(u)`), or compare with a signed constant |
+| The wrong byte, or `x`, comes out of a packed array | A flat bit range on a multidimensional packed array selects elements, not bits (§7.4.5, §11.5.1) | Select the element (`w[1]`), or use an indexed part-select on a one-dimensional vector (`v[8*i +: 8]`) |
+| An enum prints an empty name | It holds a value that is not a member: never reset, or set by an unchecked static cast (§6.19.5.6) | Reset it; use `$cast` where the value can be out of range |
+| A `bit` memory read returns 0 at an unknown address | An invalid index on a 2-state array reads `'0` (Table 7-1) | Check the address with `$isunknown` first, or use a 4-state array |
+
+### Where these types live in a real testbench
+
+- **At the DUT boundary**, interface signals are `logic` (4-state), and only real multi-driver or bidirectional lines are nets. [F4B: Bundling Signals with Interfaces and Modports](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index) puts them in an interface.
+- **Monitors** sample DUT pins into 4-state fields, report any unknown bit with `$isunknown`, and only then convert to 2-state.
+- **Transactions** use `logic` for fields that mirror pins, enums for opcodes and states, and packed structs for protocol headers.
+- **Scoreboards and reference models** do their arithmetic in `int`, `longint` or `int unsigned`, and compare with `!==` or `===`.
+- **Stimulus** uses 2-state random fields (`rand bit [7:0] len;`), because a random value is never unknown.
+
+**Checklist before moving on:**
+
+- [ ] For any signal, I can say whether it is a net or a variable and who may drive it.
+- [ ] I sample DUT outputs into 4-state types and check `$isunknown` before converting to 2-state.
+- [ ] I compare with `!==` or `===` when an `x` must count as a failure.
+- [ ] I size targets to hold the carry, and I keep signed arithmetic fully signed.
+- [ ] I select bytes of a packed array by element (`w[1]`) or with `+:`, never with flat bit numbers on a multidimensional array.
+- [ ] I give FSM enums a 4-state base and use `$cast` when a value may be out of range.
+
+## Push Further
+
+### Expert: Driver rules at bit level, port kinds and implicit nets
+
+- **The driver rule is per bit, not per variable.** It is an error to have more than one continuous driver, or a continuous driver plus procedural writes, on any term of a variable's longest static prefix, and every bit of a packed type counts as its own element (§6.5, §11.5.3). So `assign v[0] = a; assign v[1] = b;` on `logic [1:0] v` is legal, and so is one struct member assigned continuously while another is written in an `always` block.
+- **A declaration initializer counts as a procedural write** for that rule (§6.5): `logic y = 1'b0;` together with `assign y = a;` is an error.
+- **Procedures own their outputs.** A variable written by `always_comb`, `always_latch` or `always_ff` cannot be written by any other process. Independent elements whose longest static prefixes do not overlap are the exception, so two `always_comb` blocks may drive two different struct members (§9.2.2.2, §9.2.2.3, §9.2.2.4).
+- **Port kinds.** In an ANSI port list, an `input` or `inout` port with no explicit kind is a net, and an `output` declared with an explicit data type is a variable (§23.2.2.3). So `input logic a` is `input wire logic a`, while `output logic y` is a variable. An `inout` port cannot be a variable (§6.5, §23.2.2.3), and a variable connected to an instance's output port receives an implied continuous assignment, so nothing else may drive it (§6.5).
+- **Initializer or continuous assignment?** `wire y = a & b;` is a continuous assignment. `logic y = a & b;` only initializes `y` once, before any `initial` or `always` procedure starts, and never follows `a` or `b` afterwards (§10.3.1, §10.5).
+- **Implicit nets.** An undeclared name in a port connection, or on the left of a continuous assignment, silently becomes a 1-bit net of the default net type, normally `wire` (§6.10, §22.8). A typo in a port connection therefore compiles into a dangling wire. `` `default_nettype none `` turns it into an error. Input ports also take the default net type (§23.2.2.3), so under `none` give ports an explicit kind (`input wire logic a`); how strictly tools enforce this varies (tool-dependent).
+- **`uwire`** makes "exactly one driver" a checked rule for a net (§6.6.2).
+
+### Expert: Strength and resolution corner cases
+
+- The strongest driver dominates; only drivers that tie at the top strength are combined by the net's truth table (§28.12.1). Two equal-strength drivers that disagree give `x` on `wire` and `tri` (Table 6-2), 0 on `wand` and 1 on `wor` (Tables 6-3 and 6-4).
+- `tri0` and `tri1` behave like a `wire` with a constant pull-strength 0 or 1 driver: any strong driver overrides the pull, and with every driver off the net reads the pull value (§6.6.5).
+- A `trireg` never makes a transition to `z`. When all its drivers turn off it keeps its last value at its charge strength, which is `small`, `medium` (the default) or `large` (§6.3.2.1, §6.6.4). If its declaration gives a charge decay time, as the third delay in `trireg #(d1, d2, d3) n;`, a stored 0 or 1 becomes `x` once that time has passed without a driver (§28.16.2). The simulator's **trireg holds charge** mode shows the stored value.
+- `supply0` and `supply1` drive at supply strength, the top of the scale (§6.6.6, Table 28-7).
+- **Open-drain lines in a testbench.** Strengths model a pulled-up line with several devices that can only pull it low:
+
+  ```systemverilog
+  // snippet
+  tri1 sda;                                        // pull-up: reads 1 when idle
+  assign (strong0, highz1) sda = ~dev_a_pull_low;  // a 1 means "let go"
+  assign (strong0, highz1) sda = ~dev_b_pull_low;
+  ```
+
+  Either device pulls `sda` low with a strong 0. When both let go, they drive at `highz` and the pull-up makes `sda` read 1 (§10.3.4, §6.6.5).
+- An `x` on the enable of a tri-state driver produces an ambiguous strength rather than a single level, and §28.12.2 defines how such signals combine. Awareness is enough unless you model switch-level circuits.
+
+### Expert: Literal and expression-size corner cases
+
+- Unsized numbers are "at least 32" bits (§5.7.1), and IEEE 1800-2023 adds that an unsized number that needs more bits gets at least the width it needs: `'h7_0000_0000` has at least 35 bits. For values that fit, most tools use exactly 32 (tool-dependent), so code that depends on the exact width of an unsized constant is fragile: size your constants.
+- `sig == 1'bx` zero-extends the 1-bit operand to the width of `sig` (§11.4.5). The result is a definite 0 when any upper bit of `sig` is a known 1, and `x` otherwise. It is never 1, so the then-branch never runs. `sig == 'x` fills every bit with `x` and is always `x`.
+- `8'd-6` is a syntax error; `-8'd6` is the two's complement of 6 held in 8 bits (§5.7.1).
+- `'1` is 1 bit wide in a self-determined context (§5.7.1). A `$display` argument is one (the standard's example in §11.6.3), so `$display("%b", '1)` prints `1`, not a row of ones.
+- Unsized constants are illegal in concatenations (§11.4.12): `{a, 1}` does not compile.
+- Bit-selects, part-selects, concatenations and comparison results are unsigned even when their operands are signed (§11.8.1). The standard's own example: with a signed `b`, `a = b[7:0];` zero-extends.
+- `>>>` fills with the sign bit only when the expression is signed (§11.4.10). On an unsigned operand it behaves like `>>`.
+- When a signed operand is extended and its sign bit is `x` or `z`, the new bits are `x` or `z` too (§11.8.4).
+- Converting a `real` to an integer rounds to the nearest integer, with .5 rounded away from zero: `int'(2.5)` is 3 and `int'(-1.5)` is −2 (§6.12.1).
+
+### Expert: X-propagation beyond the standard (tool-dependent)
+
+- **What the standard fixes.** `if`, `case` and `casex` are X-optimistic: an unknown condition still runs a real branch (§12.4, §12.5.1). `?:`, arithmetic and most operators are X-pessimistic (§11.4.11, §11.4.3). RTL that relies on `if` can therefore look healthy while the hardware it describes is not.
+- **Vector conditions.** `if (e)` means the same as `if (e != 0)` (§12.4). A vector with one known 1 bit is nonzero even when its other bits are `x`, so `if (4'b1x00)` runs the then-branch. Only a condition that is not known to be nonzero takes else.
+- **Simulator X-propagation modes (tool-dependent).** Many commercial simulators offer options that evaluate an `if` or `case` with an unknown condition more pessimistically, for example by merging both branches. These modes are outside IEEE 1800, and their names, defaults and semantics differ by tool. Treat them as a tool feature, and keep standard checks (`$isunknown`, `!==`) in the testbench.
+- **Gate-level simulation (tool- and library-dependent).** After synthesis, the RTL's `if` and `case` optimism is gone and unknowns flow through the cell models. A netlist can therefore show `x` where RTL simulation showed a clean value; flops without reset and uninitialized memories are the classic sources. Power-aware simulation adds `x` from powered-down domains ([Power-Aware UVM Verification Strategy](/curriculum/T4_Expert/E-PWR-1_Power_Aware_Verification/index)).
+- **Make unknowns fail loudly.** An assertion turns an `x` into a failure instead of a silent else-branch ([I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index)):
+
+  ```systemverilog
+  // snippet
+  a_valid_known: assert property (@(posedge clk) disable iff (!rst_n) !$isunknown(valid));
+  ```
+
+  `$countbits(bus, 'x, 'z)` counts the unknown bits when you need more than yes or no (§20.9).
+
+### Expert: 2-state and 4-state at scale
+
+- **Speed.** The standard says only that 2-state types "can simulate faster, take less memory" (§6.11.2). The gain depends on the tool and the design, so measure before you trade visibility for it.
+- **Mixing saves nothing.** An operator applied to a mix of 2-state and 4-state values gives the same result as if all were 4-state (§11.3.4).
+- **Coverage ignores unknowns.** Automatically created coverage bins consider only 2-state values; sampled values containing `x` or `z` are excluded (§19.5.3). An `x` on a monitored field silently adds nothing ([I-SV-3A: Functional Coverage Fundamentals](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index)).
+- **2-state memories hide bad addresses.** Reading an unpacked array with an invalid index, including an address that contains `x`, returns `'0` for a 2-state array and `'x` for a 4-state one (§7.4.5, Table 7-1). A `bit` memory model therefore answers an unknown address with clean zeros.
+- **A team policy that follows from these rules.** 4-state at the DUT boundary and in monitors; 2-state for arithmetic, indices and random fields; one conversion point, guarded by `$isunknown`; `!==` in every check.
+
+### Expert: Interview angles
+
+Answer each one before you look at the options.
+
+<InterviewQuestionPlayground
+  title="Interview: the scoreboard that never fails"
+  question="The scoreboard has never failed, yet the waveform shows the DUT driving x on rdata after reset. The monitor copies vif.rdata into a bit [7:0] field named rdata, and the checker does if (rdata != exp) err++; What is the most complete explanation?"
+  options={[
+    { text: "The bit copy turns x into 0, and even a logic copy would not help, because != returns x and the if then takes else. Sample into logic, check $isunknown, and compare with !==.", correct: true, feedback: "Correct. Two independent mechanisms hide the x: the 2-state conversion (§6.11.2) and the ambiguous != result that if treats as false (§11.4.5, §12.4). Fixing only one leaves the bug hidden." },
+    { text: "!= returns 1 when either operand has x, so the error is counted but the scoreboard filters it out.", correct: false, feedback: "!= returns x when unknown bits make the result ambiguous, not 1 (§11.4.5). And here the x never reaches the comparison: the bit copy already made it 0." },
+    { text: "Simulators optimize x away in testbench code; enable the simulator's X-propagation mode.", correct: false, feedback: "Nothing optimizes x away: the bit declaration converts it by rule (§6.11.2). X-propagation modes change how RTL if and case behave; they do not restore a value the testbench has already erased." },
+    { text: "The DUT needs a default branch in its case statement; the testbench is fine.", correct: false, feedback: "That changes the DUT, not the testbench's ability to see x. A testbench that erases unknowns will miss the next x bug too." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: one bit, one driver"
+  question="In one module, logic [1:0] v; is driven by assign v[0] = a; and assign v[1] = b; Is this legal?"
+  options={[
+    { text: "Yes: each bit of a packed variable is an independent element, so each bit may have one continuous driver.", correct: true, feedback: "Correct. The single-driver rule applies to each term of the longest static prefix, and each bit of a packed type counts separately (§6.5, §11.5.3)." },
+    { text: "No: a variable may have only one continuous assignment in total.", correct: false, feedback: "The rule is per element, not per variable (§6.5). Two assignments to the same bit, or to the whole vector plus one bit, would be the error." },
+    { text: "Yes, and v resolves like a wire if a and b disagree.", correct: false, feedback: "Legal, but nothing resolves: each bit has exactly one driver, and variables never resolve contention (§6.5)." },
+    { text: "Only if v is declared bit [1:0] instead of logic [1:0].", correct: false, feedback: "The driver rules are the same for 2-state and 4-state variables; what matters is variable versus net (§6.5)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: which ports are nets?"
+  question="module m (input logic a, output logic y); Which of these ports are nets?"
+  options={[
+    { text: "a is a net (input wire logic) and y is a variable.", correct: true, feedback: "Correct. An input port with no explicit kind defaults to a net of the default net type, while an output with an explicit data type such as logic defaults to a variable (§23.2.2.3)." },
+    { text: "Both are variables, because both are declared logic.", correct: false, feedback: "logic is a data type, not a kind. The port kind comes from the direction and the declaration rules (§23.2.2.3), so input logic a is a net." },
+    { text: "Both are nets, because ports are always nets.", correct: false, feedback: "An output port declared with an explicit data type is a variable (§23.2.2.3). That is why it can be written from an always_ff block." },
+    { text: "a is a variable and y is a net.", correct: false, feedback: "It is the other way round. Inputs default to nets; outputs with an explicit data type default to variables (§23.2.2.3)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: an initializer is not an assign"
+  question="At module scope someone writes logic y = a & b; and expects y to follow a and b. What does y actually do when a changes later?"
+  options={[
+    { text: "Nothing: the declaration assignment initializes y once, before any initial or always procedure starts, and is not a continuous assignment.", correct: true, feedback: "Correct. A variable declaration assignment is an initialization (§10.5). wire y = a & b; would be a continuous assignment (§10.3.1). For a variable that follows its inputs, write assign y = a & b; or use always_comb." },
+    { text: "y follows a & b, exactly like wire y = a & b;", correct: false, feedback: "Only a net declaration assignment is continuous (§10.3.1). On a variable the same syntax is a one-time initialization (§10.5)." },
+    { text: "It does not compile: variables cannot have initializers at module scope.", correct: false, feedback: "Static variables may be initialized in their declaration (§10.5). It compiles, which is exactly why the bug survives." },
+    { text: "y follows a & b in simulation, but synthesis ignores the initializer.", correct: false, feedback: "Simulation also evaluates it only once (§10.5). How synthesis treats initial values is tool-dependent, but neither makes y follow a & b." }
+  ]}
+/>
 
 ## Practice & Reinforce
-- Run the quiz before moving on. Every option has its own feedback, so a wrong answer tells you which rule you misapplied.
+
+### Scenario quiz: choose the declaration
+
+Each scenario asks which declaration fits. Every option has its own feedback, so a wrong answer tells you which rule you misapplied.
 
 <CurriculumDataTypeQuiz />
 
-## Interview Questions
+### Retrieval quiz: predict and debug
 
-<Card className="mt-8">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is the difference between `logic`, `reg`, and `wire`? When do you use each?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p><code>wire</code> is a net: it is written by continuous drivers and resolves several of them by strength. <code>reg</code> and <code>logic</code> denote the same 4-state variable type (IEEE 1800-2023 §6.11.2). A variable accepts any number of procedural writes (the last one wins) or exactly one continuous assignment or port (§6.5).</p>
-        <p><strong>Use <code>wire</code></strong> only when multiple drivers exist (tri-state buses). <strong>Use <code>logic</code></strong> everywhere else in modern code. <strong>Avoid <code>reg</code></strong> — the name is misleading and exists only for backward compatibility.</p>
-      </div>
-    </details>
+<Quiz
+  questions={[
+    {
+      question: "logic [3:0] a = 4'b10x1; What do a == 4'b10x1, a === 4'b10x1 and a ==? 4'b10?1 return, in that order?",
+      objective: 1,
+      answers: [
+        { text: "x, 1, 1", correct: true, feedback: "Right. == cannot know whether two unknown bits are equal, === compares x as a value, and ==? treats the ? in the right operand as a wildcard, which also covers the x on the left." },
+        { text: "1, 1, 1", correct: false, feedback: "The same pattern does not make == true: two x bits might hold different values, so == returns x (§11.4.5)." },
+        { text: "x, x, x", correct: false, feedback: "=== never returns x: it compares x and z literally (§11.4.5). And ==? ignores every position where the right operand has x, z or ? (§11.4.6)." },
+        { text: "x, 1, x", correct: false, feedback: "An x on the left makes ==? unknown only when it faces a non-wildcard bit. Here it faces the ? in the right operand, so it matches (§11.4.6)." }
+      ],
+      explanation: "== returns x whenever unknown bits make the relation ambiguous; === always returns 0 or 1; ==? treats x, z and ? in its right operand as wildcards (§11.4.5, §11.4.6)."
+    },
+    {
+      question: "rdata holds 8'hxx and exp is 8'h5A. The checker runs if (rdata != exp) err_count++; Does err_count increase?",
+      objective: 5,
+      answers: [
+        { text: "No: != returns x, if treats x as false, and the mismatch is skipped silently.", correct: true, feedback: "Right. Use if (rdata !== exp), or test $isunknown(rdata) first." },
+        { text: "Yes: x is different from 5A, so != returns 1.", correct: false, feedback: "!= returns 1 only when a known bit differs. Every bit of rdata is unknown, so the relation is ambiguous and the result is x (§11.4.5)." },
+        { text: "It is a compile error to compare a value that holds x.", correct: false, feedback: "x is an ordinary 4-state value. Comparisons with it compile and run; they just return x when the answer is ambiguous." },
+        { text: "No, but the simulator prints a warning about comparing x.", correct: false, feedback: "The standard requires no warning: the if simply takes the else path (§12.4). That silence is why this bug survives regressions." }
+      ],
+      explanation: "A partly or wholly unknown value makes == and != return x (§11.4.5), and an if condition that is not a known nonzero value takes else (§12.4). Case inequality !== always returns 0 or 1."
+    },
+    {
+      question: "logic y; assign y = a; assign y = b; with a = 0 and b = 1. What happens?",
+      objective: 2,
+      answers: [
+        { text: "The design fails to elaborate: a variable may have only one continuous driver.", correct: true, feedback: "Right. Declare y as a wire if it really is a shared bus (§6.5)." },
+        { text: "y reads x, because the two drivers fight as they would on a wire.", correct: false, feedback: "Only nets resolve several drivers. A variable has no resolution function, so the second continuous driver is an error (§6.5)." },
+        { text: "y reads 1, because the last assign wins.", correct: false, feedback: "Continuous assignments have no order. Last write wins applies to procedural writes to a variable (§6.5)." },
+        { text: "It compiles because y is logic; it would fail only if y were bit.", correct: false, feedback: "logic and bit are both variables when declared alone. The rule is about variables versus nets, not 4-state versus 2-state (§6.5)." }
+      ],
+      explanation: "A variable accepts any number of procedural writes, or exactly one continuous assignment or port. Two continuous drivers on a variable are an error; on a wire they resolve by strength (§6.5, §6.6.1)."
+    },
+    {
+      question: "logic [7:0] a = 200, b = 100, s8; logic [8:0] s9; s8 = a + b; s9 = a + b; What are s8 and s9?",
+      objective: 3,
+      answers: [
+        { text: "s8 = 44 and s9 = 300", correct: true, feedback: "Right. The 9-bit target widens the context, so the carry survives; the 8-bit target does not." },
+        { text: "s8 = 300 and s9 = 300", correct: false, feedback: "s8 has only 8 bits. The assignment discards the extra most significant bit, so 300 becomes 300 - 256 = 44 (§10.7)." },
+        { text: "s8 = 44 and s9 = 44", correct: false, feedback: "The width is not just the widest operand: the assignment target is part of the context (§11.6.1). With a 9-bit target the sum is computed in 9 bits." },
+        { text: "s8 = 255 and s9 = 300", correct: false, feedback: "SystemVerilog arithmetic wraps; it never saturates." }
+      ],
+      explanation: "The context width is the widest operand including the left-hand side (§11.6.1, §11.6.2). In 8 bits 200 + 100 wraps to 44; in 9 bits it is 300."
+    },
+    {
+      question: "logic signed [3:0] s = -4; logic [7:0] u = 10; logic signed [7:0] r; r = s + u; What is r?",
+      objective: 3,
+      answers: [
+        { text: "22", correct: true, feedback: "Right. u is unsigned, so the whole expression is unsigned and s (4'b1100) is zero-extended to 12 before the add." },
+        { text: "6", correct: false, feedback: "That would be the signed result. The target r is signed, but the target never sets the sign: one unsigned operand makes the expression unsigned (§11.8.1)." },
+        { text: "Compile error: signed and unsigned operands cannot be mixed", correct: false, feedback: "Mixing is legal. The rules decide the type silently, which is the danger." },
+        { text: "x, because the signs conflict", correct: false, feedback: "A sign mismatch never creates x; only x or z operand bits do (§11.4.3)." }
+      ],
+      explanation: "Expression type depends only on the operands (§11.8.1). With u unsigned, s is zero-extended to 8'b0000_1100 = 12, and 12 + 10 = 22. Write s + $signed(u) to get 6."
+    },
+    {
+      question: "logic [3:0][7:0] w = 32'hAABB_CCDD; What does w[1] return?",
+      objective: 4,
+      answers: [
+        { text: "8'hCC", correct: true, feedback: "Right. The first index selects an element of the outer dimension: byte 1, bits 15:8 of the vector." },
+        { text: "8'hBB", correct: false, feedback: "Index 1 counts from the right: w[3] is the leftmost byte (AA) and w[0] the rightmost (DD) (§7.4.5)." },
+        { text: "1'b0, bit 1 of the vector", correct: false, feedback: "On a multidimensional packed array, a single index selects a whole element of the leftmost dimension, here a byte (§7.4.5)." },
+        { text: "Illegal: write w[15:8] to get that byte", correct: false, feedback: "w[15:8] asks for elements 15 to 8 of a dimension that has only elements 3 to 0, so it reads x (§11.5.1). Select the element: w[1]." }
+      ],
+      explanation: "A packed array is one vector subdivided into elements; w[k] is byte k, counted from the least significant end (§7.4.1, §7.4.5)."
+    },
+    {
+      question: "typedef enum {A, B, C} abc_t; abc_t e = B; What happens with e = abc_t'(5); and, separately, with ok = $cast(e, 5);?",
+      objective: 4,
+      answers: [
+        { text: "The static cast stores 5, a value that is not a member, with no error; $cast returns 0 and leaves e as B.", correct: true, feedback: "Right. A static cast never checks the range; $cast checks and refuses an invalid value (§6.19.4, §6.24.2)." },
+        { text: "Both clamp e to C, the last member.", correct: false, feedback: "No cast clamps. The static cast stores the value unchecked, and $cast refuses it." },
+        { text: "The static cast causes a run-time error, and $cast stores 5.", correct: false, feedback: "It is the other way round: the static cast never checks, while $cast checks and does not assign an invalid value." },
+        { text: "Both store 5, because 5 fits in the int base type.", correct: false, feedback: "$cast checks enum membership, not the width of the base type. 5 is not a member, so it returns 0 and does not assign (§6.24.2)." }
+      ],
+      explanation: "A static cast to an enum always succeeds and does not check the value (§6.19.4). $cast called as a function returns 0 and leaves the destination unchanged when the value is invalid (§6.24.2)."
+    },
+    {
+      question: "A monitor copies vif.q into a bit [7:0] field, and the scoreboard never flags a DUT that drives x after reset. Which change lets the testbench catch it?",
+      objective: 5,
+      answers: [
+        { text: "Sample into logic, check $isunknown(vif.q), and compare with !==", correct: true, feedback: "Right. Keep the 4-state value, flag unknown bits explicitly, and use a comparison that treats x as a mismatch." },
+        { text: "Compare with != instead of ==", correct: false, feedback: "!= is as blind to x as ==: it returns x and the if takes else. In this monitor the x is already gone anyway, erased by the bit copy." },
+        { text: "Declare q as int instead of bit", correct: false, feedback: "int is also 2-state: x still becomes 0 (§6.11.2)." },
+        { text: "Add a default branch to the DUT's case statement", correct: false, feedback: "That changes the DUT, not the testbench. The monitor must keep 4-state values to see unknowns at all." }
+      ],
+      explanation: "A 2-state copy erases x (§6.11.2), and == or != cannot report it (§11.4.5). Keep monitor fields 4-state, check $isunknown (§20.9), and compare with !==."
+    },
+    {
+      question: "logic [15:0] v; Which assignment sets all 16 bits to 1?",
+      objective: 4,
+      answers: [
+        { text: "v = '1;", correct: true, feedback: "Right. An unbased unsized literal sets every bit of its context (§5.7.1)." },
+        { text: "v = 1;", correct: false, feedback: "1 is a 32-bit signed number with value 1; truncated to 16 bits it is 16'h0001." },
+        { text: "v = 1'b1;", correct: false, feedback: "A 1-bit unsigned value is zero-extended to the target width: 16'h0001 (§10.7)." },
+        { text: "v = 'h1;", correct: false, feedback: "'h1 is an unsized number with the value 1, so v becomes 16'h0001. Only a leading x or z digit extends across the whole width." }
+      ],
+      explanation: "'0, '1, 'x and 'z fill every bit of their context (§5.7.1). Every other form is a number that is zero-extended or truncated to the target width."
+    }
+  ]}
+/>
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What happens when you assign a 4-state value with X to a 2-state variable?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>X and Z bits are silently converted to 0 (IEEE 1800-2023 §6.11.2). This is dangerous because it masks reset bugs and uninitialized signals. The testbench sees a clean 0 where the DUT has an unknown state.</p>
-        <p><strong>Mitigation:</strong> Use <code>$isunknown()</code> before the conversion, or keep DUT-facing signals as 4-state <code>logic</code> throughout the testbench.</p>
-      </div>
-    </details>
+### Debug challenge: the reset bug nobody saw
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">Explain packed vs. unpacked arrays. When would you choose each?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p><strong>Packed</strong> (IEEE 1800-2023 §7.4.1): bits are contiguous. Can be sliced as a vector. Use for protocol fields, bus data lanes, and anywhere you need bit-level manipulation across the entire array.</p>
-        <p><strong>Unpacked</strong> (IEEE 1800-2023 §7.4.2): elements are independent. Cannot slice across boundaries. Use for memories, register files, and collections of distinct elements.</p>
-        <p><strong>Key difference:</strong> <code>logic [3:0][7:0] data</code> (packed) is 32 contiguous bits you can part-select as <code>data[31:0]</code>. <code>logic [7:0] data [0:3]</code> (unpacked) is 4 separate bytes — <code>data[31:0]</code> is illegal.</p>
-      </div>
-    </details>
+A status register sets `err` when `set_err` pulses. The regression log says `PASS=3 FAIL=0`, yet the waveform shows `err` as `x` from the first edge. Find the three lines that hide the bug before you open the solution.
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">Why does `if (signal == 1'bx)` never evaluate true?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>Comparing with <code>1'bx</code> leaves the relation ambiguous whatever <code>signal</code> holds, so <code>==</code> returns <code>1'bx</code>, and <code>if</code> treats <code>x</code> as false (IEEE 1800-2023 §11.4.5, §12.4). Note that <code>==</code> does not return <code>x</code> just because an <code>x</code> appears: <code>4'b1x00 == 4'b0000</code> is 0, because bit 3 is known and differs. To detect X, use:</p>
-        <ul className="list-disc pl-5 mt-2 space-y-1">
-          <li><code>===</code> (case equality) — treats X as a literal matchable value</li>
-          <li><code>$isunknown(signal)</code> — returns 1 if any bit is X or Z (§20.9)</li>
-        </ul>
-        <p>This is one of the most common interview trick questions for verification engineers.</p>
-      </div>
-    </details>
+<TimingDiagram
+  title="The reset bug nobody saw"
+  caption="values[k] is the value sampled at rising edge k. dut.err (hatched) is x at every edge: reset never assigns it and set_err stays 0. The 2-state copy err_bit reads a clean 0, so the checks at edges 2, 3 and 4 all pass. ✕ at edge 2 marks the first false pass; ✓ at edge 3 marks where a 4-state check, $isunknown(dut.err), would catch the bug."
+  edges={5}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rst_n", kind: "bit", values: [0, 0, 1, 1, 1] },
+    { name: "dut.err", kind: "bus", values: [undefined, undefined, undefined, undefined, undefined] },
+    { name: "err_bit", kind: "bus", values: ["0", "0", "0", "0", "0"] }
+  ]}
+  markers={[
+    { edge: 2, tone: "fail", label: "False pass: err_bit reads 0 although dut.err is x (§6.11.2)" },
+    { edge: 3, tone: "pass", label: "Caught: a 4-state check sees $isunknown(dut.err) return 1 and reports the bug (§20.9)" }
+  ]}
+/>
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is the signedness of `int`, `bit`, `byte`, and `logic`? Why does it matter?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p><code>int</code>: signed. <code>bit</code>: unsigned. <code>byte</code>: signed. <code>logic</code>: unsigned (IEEE 1800-2023 §6.11.3, Table 6-8).</p>
-        <p>It matters because mixing signed and unsigned in arithmetic causes silent sign extension or truncation bugs:</p>
-        <p><code>byte b = 8'hFF;</code> → b is -1 (signed). <code>bit [7:0] u = 8'hFF;</code> → u is 255 (unsigned). Comparing them or using them in expressions can produce surprising results.</p>
-      </div>
-    </details>
-  </CardContent>
-</Card>
+```systemverilog
+// compile
+`timescale 1ns/1ps
+module status_reg (
+  input  logic clk, rst_n, set_err,
+  output logic err, busy
+);
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n) busy <= 1'b0;             // (A)
+    else begin
+      busy <= 1'b1;
+      if (set_err) err <= 1'b1;
+    end
+endmodule
+
+module tb_top;
+  logic clk = 0, rst_n = 0, set_err = 0;
+  logic err, busy;
+  bit   err_bit;                          // (B) the monitor's copy of the flag
+  int   pass_cnt, fail_cnt;
+
+  status_reg dut (.*);
+
+  always #5 clk = ~clk;
+
+  initial begin
+    repeat (2) @(posedge clk);
+    rst_n <= 1'b1;                        // nonblocking: the DUT samples the old value
+    repeat (3) begin
+      @(posedge clk);
+      err_bit = dut.err;
+      if (err_bit != 1'b0) begin          // (C) the check
+        fail_cnt++;
+        $error("err is set");
+      end else pass_cnt++;
+    end
+    $display("PASS=%0d FAIL=%0d", pass_cnt, fail_cnt);
+    $finish;
+  end
+endmodule
+```
+
+Your tasks:
+
+1. Name the line that creates the `x`.
+2. Name the line that erases it.
+3. Name the line that would still hide it after you fix the second one.
+4. Write the corrected monitor check, and predict the log with the testbench fixed but the DUT still broken.
+
+<details>
+<summary>Solution</summary>
+
+- **(A) creates the `x`.** The reset branch never assigns `err`, and `set_err` stays 0, so `err` keeps its starting value `'x` (Table 6-7). Fix the DUT: `if (!rst_n) begin busy <= 1'b0; err <= 1'b0; end`.
+- **(B) erases it.** `bit err_bit` turns the `x` into 0 (§6.11.2). Fix: `logic err_q;`.
+- **(C) would still hide it.** With a 4-state copy, `err_q != 1'b0` returns `x`, and the `if` takes the else branch (§11.4.5, §12.4). Fix: compare with `!==`.
+
+The corrected check:
+
+```systemverilog
+// snippet
+logic err_q;                                     // 4-state copy keeps the x
+// ...
+err_q = dut.err;
+if ($isunknown(err_q) || err_q !== 1'b0) begin   // an x is a failure
+  fail_cnt++;
+  $error("err is %b", err_q);
+end else pass_cnt++;
+```
+
+`err_q !== 1'b0` already fails on `x`; the `$isunknown` test makes the intent explicit, and the message prints the `x`. With the testbench fixed and the DUT still broken, all three checks fail: three error messages, then `PASS=0 FAIL=3`. After the DUT fix, `err` is 0 and the log returns to `PASS=3 FAIL=0`, this time honestly.
+
+</details>
+
+### Kata: predict, then prove
+
+Write a prediction for each line, then check it in the expression trap lab in [Expression width and sign](#expression-width-and-sign): choose the named scenario and code variant. All variables are as declared in the lab.
+
+| # | Trap lab scenario | Code | Your prediction |
+|---|---|---|---|
+| 1 | the lost carry | 8-bit `s = (a8 + b8) >> 1;` with `a8 = 200`, `b8 = 100`, then `s = (a8 + b8 + 0) >> 1;` | |
+| 2 | signed + unsigned | `r = $signed(a) + u;` with `a = -4` (4-bit signed) and `u = 10` (8-bit unsigned) | |
+| 3 | signed vs unsigned compare | `pos = a > 4'd0;` and `pos = a > 0;` with `a = -4` (4-bit signed) | |
+| 4 | `>>` vs `>>>` | `r = -4'sd1 >> 1;` and `r = -4'sd1 >>> 1;` with a 4-bit signed `r` | |
+| 5 | int vs logic [31:0] | `lt = i < w;` and `lt = i < $signed(w);` with `int i = -1` and `logic [31:0] w = 1` | |
+| 6 | x in arithmetic | `p + q` into a 4-bit `logic` and into a 4-bit `bit`, then `p \| q`, with `p = 4'b10x1` and `q = 1` | |
+
+<details>
+<summary>Answers and the rule behind each one</summary>
+
+1. **22, then 150.** The 8-bit context drops the carry before the shift; the unsized `0` widens the context to at least 32 bits (§11.6.2).
+2. **22.** `$signed(a)` changes nothing, because `a` was already signed. `u` is still unsigned, so the expression is unsigned and `a` is zero-extended (§11.8.1).
+3. **1, then 0.** `4'd0` is unsigned, so the compare is unsigned and `4'b1100` reads as 12. The unsized `0` is signed, so the second compare is signed: −4 is not greater than 0 (§11.8.1, §5.7.1).
+4. **7, then −1.** `>>` always fills with 0 (`4'b0111`); `>>>` fills with the sign bit because the expression is signed (§11.4.10).
+5. **0, then 1.** `w` is unsigned, so `i` is compared as `32'hFFFF_FFFF`, which is larger than 1. With `$signed(w)` both operands are signed (§11.8.1).
+6. **`4'bxxxx`, `4'b0000`, `4'b10x1`.** Any unknown bit makes an arithmetic result entirely `x` (§11.4.3), a 2-state target turns every `x` into 0 (§6.11.2), and bitwise OR works bit by bit, so only bit 1 stays unknown (Table 11-12).
+
+</details>
+
+**Lab:** `common-1` (structs, enums and arrays) is planned for this module and is not available yet.
 
 ## References & Next Topics
-- IEEE 1800-2023 §6.5 (Nets and variables), §6.6 (Net types), §6.7–§6.8 (Net and variable declarations, Table 6-7), §6.11 (Integer data types, Table 6-8), §6.16 (Strings), §6.19 (Enumerations), §6.22 (Type compatibility), §6.24 (Casting), §7 (Aggregate Data Types)
-- IEEE 1800-2023 §11.4 (Operators), §12.4–§12.5 (`if`, `case`), §28.11–§28.15 (Strength modeling)
-- Next: [Dynamic Structures](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index)
+
+**Primary sources** (IEEE 1800-2023):
+
+- §5.7.1 integer literals; §6.3.1 logic values; §6.3.2.1 charge strength; §6.5 nets and variables; §6.6.1 to §6.6.6 net types (Tables 6-2 to 6-4); §6.7.1 net declarations; §6.8 variable declarations and Table 6-7 default values; §6.9 vectors; §6.10 implicit declarations
+- §6.11.2 and §6.11.3 with Table 6-8, 2-state and 4-state integer types and their signedness; §6.12.1 real conversion; §6.16 strings; §6.18 `typedef`; §6.19 enumerations; §6.22.1 matching types; §6.24.1 to §6.24.3 casting, `$cast` and bit-stream casting
+- §7.2 and §7.3 structures and unions; §7.4.1 to §7.4.5, §7.6 and Table 7-1 packed and unpacked arrays
+- §9.2.2.2 to §9.2.2.4 `always_comb`, `always_latch` and `always_ff`; §10.3.1, §10.3.4, §10.5, §10.6.2 and §10.7 assignments
+- §11.3.4 2-state and 4-state operands; §11.4.3, §11.4.5 to §11.4.7 and §11.4.10 to §11.4.13 operators; §11.5.1 and §11.5.3 selects; §11.6.1 to §11.6.3 and Table 11-21 expression bit lengths; §11.7 and §11.8.1 to §11.8.4 signed expressions and evaluation
+- §12.4, §12.5, §12.5.1 and §12.5.3 `if` and `case`; §19.5.3 automatic coverage bins; §20.9 `$isunknown` and `$countbits`; §21.2.1.3 printing `x` and `z`; §22.8 `` `default_nettype ``; §23.2.2.3 port kinds; §28.10 to §28.12.2 and Table 28-7 strengths
+
+**Related:**
+
+- [Structs, Unions and Enums](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums): structs, unions and enums in depth.
+- [Operators and Expressions](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions): precedence, shifts, streaming and the remaining operators.
+- [F2B: Dynamic Data Structures](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index): dynamic arrays, queues and associative arrays.
+- [Procedural Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/flow-control): `unique`, `priority` and the other decision statements.
+- [F2D: System Tasks and File I/O](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index): `$display` formats and `$sformatf`.
+- [F2E: Your First Self-Checking Testbench](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index): `!==` checks and pass/fail counts in a complete bench.
+- [F4A: Structuring Designs with Modules and Packages](/curriculum/T1_Foundational/F4A_Modules_and_Packages/index): ports, and typedefs shared through packages.
+- [Polymorphism Pitfalls and Type Casting](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls): `$cast` on class handles.
+- [I-SV-3A: Functional Coverage Fundamentals](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index): coverpoints and bins.
+- [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): writing assertions such as a never-unknown check.
+- [Power-Aware UVM Verification Strategy](/curriculum/T4_Expert/E-PWR-1_Power_Aware_Verification/index): `x` from powered-down domains.
+
+<NextLesson />

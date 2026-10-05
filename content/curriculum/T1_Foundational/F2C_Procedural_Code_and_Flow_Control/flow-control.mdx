@@ -1,241 +1,811 @@
 ---
 title: "Procedural Flow Control"
-description: "Guide decisions with if, case, and loop constructs to steer simulation flow."
+description: "Predict which branch or loop iteration runs, including with x or z values, and choose plain, unique, unique0 or priority decisions that report real bugs."
 flashcards: "F2C_Procedural_Constructs"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
-import { InteractiveCode, Card, CardContent, CardHeader, CardTitle, Quiz } from '@/components/ui';
-
 ## Quick Take
-- **Conditionals:** Use `if/else` for binary checks and `case` for multi-way branching.
-- **Safety:** Prefer `unique case` or `priority case` over plain `case` to catch missing branches and unintended latches (IEEE 1800-2023 §12.5).
-- **Loops:** `foreach` is your workhorse for arrays; `repeat` is great for simple delays; `for` handles standard iteration.
 
-## Decision Making: `if` vs. `case`
+- **What it is:** **Flow control** statements decide which statements in a procedure run, and how often: `if`–`else`; `case`, `casez`, `casex` and `case … inside`; the `unique`, `unique0` and `priority` qualifiers; the loops `for`, `repeat`, `while`, `do … while`, `foreach` and `forever`; and the jumps `break`, `continue` and `return` (IEEE 1800-2023 Clause 12).
+- **Why it matters:** Every decision has to handle two values your software habits never meet: x and z. An `if` with an x condition quietly takes the `else` branch, a plain `case` with no matching item quietly does nothing, and a `repeat` with an x count quietly never runs. The qualifiers turn the worst of these silent cases into run-time violation reports.
+- **The Analogy:** A railway junction. `if` and `case` are switches that send the train, the flow of execution, down one track; a loop is a turntable that sends it round again; `unique` and `priority` are signal inspectors who report a switch set to no track or to two tracks. *Where it breaks:* a real switch in an unknown position would derail the train. In SystemVerilog an unknown condition quietly takes the `else` track, and an unmatched `case` takes no track at all, with no alarm unless an inspector is posted.
 
-SystemVerilog provides two primary ways to make decisions. While they often compile to similar logic, their intent differs.
+**You will be able to:**
+1. Predict which branch of an `if`, `case`, `casez`, `casex` or `case … inside` runs when the condition or case expression has x or z bits.
+2. Choose between plain, `unique`, `unique0` and `priority` decisions, and predict when each reports a violation, with and without `default`.
+3. Write `for`, `repeat`, `while`, `do … while`, `foreach` and `forever` loops with `break` and `continue`, and predict how many times they run.
+4. Debug decisions and loops that fail silently: an unknown select, a violation report at time 0, a loop that never runs or never lets time advance.
 
-### The `if-else` Ladder
-Best for checking ranges, boolean flags, or prioritized conditions.
+<BeforeYouStart />
+
+## Build Your Mental Model
+
+This lesson builds on the procedures and timing controls of [the previous lesson](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) and on the four values 0, 1, x and z from [F2A: Core Data Types](/curriculum/T1_Foundational/F2A_Core_Data_Types/index). Every statement on this page runs inside a procedure.
+
+### if–else and unknown conditions
+
+An `if` runs its first statement only when the condition is **true**, which means a known, nonzero value. A condition of 0, x or z is **false**, so the `else` branch runs if there is one (§12.4). This is **X-optimism**: the code takes a clean-looking branch even though the value is unknown.
+
+| `a` | `if (a)` runs | `if (!a)` runs | `a ? 1'b1 : 1'b0` gives |
+|---|---|---|---|
+| 0 | `else` | then | 0 |
+| 1 | then | `else` | 1 |
+| x | `else` | `else` | x |
+| z | `else` | `else` | x |
+
+`if (!a)` does not rescue you: `!x` is x, which is not true either (§11.4.7). The conditional operator `?:` behaves differently. With an unknown condition it evaluates both results and merges them bit by bit, so bits that disagree become x and the unknown stays visible (§11.4.11).
+
+Two more rules:
+
+- An `else` belongs to the nearest earlier `if` that has no `else`. Use `begin … end` to attach it elsewhere (§12.4).
+- In an `if`–`else if` chain the conditions are tested in order and the first true one wins. A final `else` catches everything left (§12.4.1).
+
+**Predict first.** The explorer below is F2A's four-state model. Open the **if / case with x** tab, keep `a` at x, and predict `y` for `if (a)`, then `if (!a)`, then `a ? 1 : 0`.
+
+<LogicStateDiagram />
+
+What the model showed: both `if` forms ran `else` and produced a clean 0; only `?:` produced x. Stay on the tab for the next section, because its case panel runs the `case` rules below.
+
+### case, casez and casex
+
+A `case` statement evaluates its case expression once, compares it with each item **in source order**, and runs the **first** item that matches; `default` runs only if no item matches (§12.5). Two rules surprise newcomers:
+
+- The comparison is exact over all four values, like `===`. An x in the case expression matches only an x in the item.
+- If no item matches and there is no `default`, **nothing runs and nothing is reported** (§12.5).
+
+`casez` and `casex` add **don't-care** bits, which are skipped in the comparison (§12.5.1):
+
+| Statement | Don't-care bits, in the case expression **and** the items | An x in the case expression |
+|---|---|---|
+| `case` | none | must match an x in the item |
+| `casez` | z and `?` | must still match exactly |
+| `casex` | x, z and `?` | is skipped, so a real item can match |
+
+The last cell is the hazard. An unknown select under `casex` runs a real branch, and the bug hides. Prefer `casez` for don't-care decoding, or `case … inside`, below.
+
+**Predict first.** In the explorer's case panel, set `sel` to x0, then predict the branch under `case`, `casez` and `casex` before revealing each answer. The items are A `2'b00`, B `2'b1?` and C `2'bx1`, with a default D.
+
+What the model showed: `case` and `casez` both fall through to the default D, because the x bit has to match exactly, while `casex` skips the x and runs A. Same input, two different answers.
+
+A constant case expression turns `case` into a chain of conditions: `case (1'b1)` runs the first item whose expression is 1 (§12.5.2). The one-hot select in the next section uses it.
+
+### unique, unique0 and priority
+
+The keywords `unique`, `unique0` and `priority` in front of an `if` or a `case` add **violation checks**, which the simulator must run every time the statement executes (§12.4.2, §12.5.3). They never change which branch runs: every form runs the first matching item.
+
+| Form | Reports when **no** item matches and there is no `default` or final `else` | Reports when **more than one** item matches |
+|---|---|---|
+| plain `case` or `if` | no: nothing runs | no: the first match runs |
+| `unique` | yes | yes |
+| `unique0` | no | yes |
+| `priority` | yes | no: overlaps are allowed, the first match wins |
+
+A traced example. Run this decoder with each qualifier in turn by replacing `unique` with nothing, `unique0` or `priority`:
 
 ```systemverilog
-if (!reset_n) begin
-  state <= IDLE;
-end else if (enable && ready) begin
-  state <= ACTIVE;
-end else begin
-  state <= WAIT;
+// snippet
+always_comb begin
+  y = 4'b0000;                 // seed: y is assigned on every path
+  unique case (sel)            // no default, on purpose
+    2'b00: y = 4'b0001;
+    2'b01: y = 4'b0010;
+    2'b10: y = 4'b0100;
+  endcase
 end
 ```
 
-### The `case` Statement
-Best for checking a single expression against multiple discrete values, like a state machine or an opcode decoder.
+| `sel` | plain `case` | `unique` | `unique0` | `priority` | `unique` with a `default` |
+|---|---|---|---|---|---|
+| `2'b01` | item 01 runs | item 01 runs | item 01 runs | item 01 runs | item 01 runs |
+| `2'b11` | nothing runs, silent | nothing runs, **report** | nothing runs, silent | nothing runs, **report** | `default` runs, silent |
+| `2'bxx` | nothing runs, silent | nothing runs, **report** | nothing runs, silent | nothing runs, **report** | `default` runs, silent |
 
-<div className="grid gap-6 md:grid-cols-2 my-6">
-  <Card className="border-red-400/20 bg-red-500/5">
-    <CardHeader>
-      <CardTitle>Legacy `case` (Avoid)</CardTitle>
-    </CardHeader>
-    <CardContent>
-      <p className="text-sm text-muted-foreground mb-2">
-        Standard `case` does not enforce completeness. If you miss a value, it might infer a latch or do nothing.
-      </p>
-      <pre className="overflow-x-auto rounded bg-muted p-2 text-xs text-foreground">
-{`case (state) // Dangerous!
-  IDLE: next = START;
-  // Missing other states...
-endcase`}
-      </pre>
-    </CardContent>
-  </Card>
+Overlaps behave the other way round. With `casez` items `2'b1?` and `2'b?1` and `sel` = `2'b11`, both items match. Every form runs the first one, `2'b1?`; `unique` and `unique0` also report the overlap, while plain `casez` and `priority` stay silent.
 
-  <Card className="border-emerald-400/20 bg-emerald-500/5">
-    <CardHeader>
-      <CardTitle>Modern `unique case` (Prefer)</CardTitle>
-    </CardHeader>
-    <CardContent>
-      <p className="text-sm text-muted-foreground mb-2">
-        `unique` tells the tool: "I promise one and only one branch matches." It warns if you miss a case or have overlaps.
-      </p>
-      <pre className="overflow-x-auto rounded bg-muted p-2 text-xs text-foreground">
-{`unique case (state)
-  IDLE: next = START;
-  RUN:  next = STOP;
-  default: next = IDLE;
-endcase`}
-      </pre>
-    </CardContent>
-  </Card>
-</div>
-
-### `unique` vs. `priority`
-- **`unique case`**: Assumes parallel evaluation. No overlaps allowed. Great for one-hot decoders.
-- **`priority case`**: Assumes sequential evaluation (like an if-else ladder). First match wins.
-
-## Looping Constructs
-
-Verification often involves iterating over data. SystemVerilog adds powerful loops on top of the standard C-style `for`.
-
-### The `foreach` Loop
-The MVP of verification. It automatically iterates over every element of an array, queue, or associative array.
+The same qualifiers work on an `if`–`else if` chain, where a final `else` plays the part of `default` (§12.4.2):
 
 ```systemverilog
-int payload_q[$] = {10, 20, 30, 40};
-
-// "i" is automatically declared as the index type
-foreach (payload_q[i]) begin
-  $display("Packet %0d: Data = %0h", i, payload_q[i]);
+// snippet
+always_comb begin
+  grant = 2'b00;               // seed: grant is assigned on every path
+  unique if (req[0]) grant = 2'b01;
+  else if (req[1])   grant = 2'b10;
 end
 ```
 
-### `repeat` and `forever`
-Simplified loops for testbench timing.
+| `req` | plain `if` | `unique if` | `unique0 if` | `priority if` |
+|---|---|---|---|---|
+| `2'b10` | second branch | second branch | second branch | second branch |
+| `2'b11` | first branch, silent | first branch, **report** (overlap) | first branch, **report** (overlap) | first branch, silent |
+| `2'b00` | nothing runs, silent | nothing runs, **report** | nothing runs, silent | nothing runs, **report** |
 
-- **`repeat (N)`**: Execute exactly N times. Perfect for driving clocks or waiting for cycles.
-- **`forever`**: Infinite loop. Must contain a timing control (`#` or `@`) to avoid hanging the simulation.
+With `req` = `2'b11` both conditions are true. A `unique if` still runs the branch of the first true condition, but it reports that the conditions were not mutually exclusive.
+
+Rules that follow:
+
+- **A `default` silences the no-match check.** It matches every leftover value, so "no match" can never happen (§12.5.3, NOTE). Leave it out when an unmatched value is a bug, and seed the outputs at the top of the block instead, so that no path infers a latch.
+- **Not just a synthesis hint.** Simulators must report violations. The wording and severity of the report are tool-specific.
+- **Reports wait for the time slot to settle.** The check runs when the statement executes, but the report is held until the Observed region of that time slot, and is discarded if the procedure runs again first (§12.4.2.1, §12.5.3.1). So a zero-delay glitch that makes an `always_comb` run again within the time slot is not reported, while a bad select seen by the procedure's last run in that time slot is.
+
+When to use which:
+
+- `unique` for decoders where exactly one item must match: state decoders and one-hot selects.
+- `unique0` where "nothing matches" is legal but two matches would be a bug, such as optional enables.
+- `priority` where order matters and overlaps are expected, but "nothing matches" is a bug: priority encoders.
+- Plain `case` with a `default` where every leftover value has a sensible meaning.
 
 ```systemverilog
-initial begin
-  clk = 0;
-  forever #5 clk = ~clk; // 100MHz clock
+// snippet
+// One-hot select: exactly one bit of gnt may be 1.
+always_comb begin
+  data_out = '0;
+  unique case (1'b1)           // constant case expression (§12.5.2)
+    gnt[0]: data_out = data0;
+    gnt[1]: data_out = data1;
+    gnt[2]: data_out = data2;
+  endcase
 end
 
-task drive_bus;
-  repeat (10) @(posedge clk); // Wait 10 cycles
-  enable = 1;
+// Priority encoder: the lowest set bit wins; req == 0 is a bug here.
+always_comb begin
+  idx = '0;
+  priority casez (req)
+    4'b???1: idx = 2'd0;       // these items overlap on purpose:
+    4'b??1?: idx = 2'd1;       // priority allows it, and the first match wins
+    4'b?1??: idx = 2'd2;
+    4'b1???: idx = 2'd3;
+  endcase
+end
+```
+
+With `gnt` = 3'b011, the `unique case (1'b1)` finds two matching items: it runs `data_out = data0` and reports an overlap. With `req` = 4'b0110, the `priority casez` runs the `4'b??1?` item (`idx` = 1) silently, and with `req` = 0 it reports that nothing matched.
+
+<VisualRecap
+  title="What unique, unique0 and priority add"
+  rule="Every form runs the first matching item. unique reports overlaps and no match; unique0 reports overlaps only; priority reports no match only. A default, or a final else, removes the no-match report."
+  code={`always_comb begin
+  y = '0;                  // seed: no latch
+  unique case (sel)        // no default on purpose
+    2'b00: y = 4'b0001;
+    2'b01: y = 4'b0010;
+    2'b10: y = 4'b0100;
+  endcase
+end`}
+  mistake="Adding a default to make a unique case quiet. The default matches every leftover value, so the no-match check can never fire again, including for the x select you wanted to catch."
+  inTestbench="State and opcode decoders in the DUT, and decode logic in monitors and checkers: a free run-time check that an unexpected value reached the decision."
+>
+  <svg viewBox="0 0 330 162" role="img" aria-label="Outcome by number of matching items. No match: plain case is silent, unique reports, unique0 is silent, priority reports. One match: every form runs it. Two or more matches: every form runs the first; unique and unique0 also report." style={{ width: "100%", maxWidth: 380 }}>
+    <text x="8" y="16" fontSize="10" fill="currentColor" fillOpacity="0.75">items matching</text>
+    <text x="120" y="16" fontSize="10" textAnchor="middle" fill="currentColor">none</text>
+    <text x="195" y="16" fontSize="10" textAnchor="middle" fill="currentColor">one</text>
+    <text x="272" y="16" fontSize="10" textAnchor="middle" fill="currentColor">two or more</text>
+    <line x1="8" y1="24" x2="322" y2="24" stroke="currentColor" strokeOpacity="0.4" />
+    <text x="8" y="44" fontSize="11" fill="currentColor">case</text>
+    <text x="120" y="44" fontSize="10" textAnchor="middle" fill="currentColor">silent</text>
+    <text x="195" y="44" fontSize="10" textAnchor="middle" fill="currentColor">runs it</text>
+    <text x="272" y="44" fontSize="10" textAnchor="middle" fill="currentColor">runs first</text>
+    <line x1="8" y1="54" x2="322" y2="54" stroke="currentColor" strokeOpacity="0.15" />
+    <text x="8" y="72" fontSize="11" fill="currentColor">unique</text>
+    <text x="120" y="72" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">✕ report</text>
+    <text x="195" y="72" fontSize="10" textAnchor="middle" fill="currentColor">runs it</text>
+    <text x="272" y="72" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">first + ✕ report</text>
+    <line x1="8" y1="82" x2="322" y2="82" stroke="currentColor" strokeOpacity="0.15" />
+    <text x="8" y="100" fontSize="11" fill="currentColor">unique0</text>
+    <text x="120" y="100" fontSize="10" textAnchor="middle" fill="currentColor">silent</text>
+    <text x="195" y="100" fontSize="10" textAnchor="middle" fill="currentColor">runs it</text>
+    <text x="272" y="100" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">first + ✕ report</text>
+    <line x1="8" y1="110" x2="322" y2="110" stroke="currentColor" strokeOpacity="0.15" />
+    <text x="8" y="128" fontSize="11" fill="currentColor">priority</text>
+    <text x="120" y="128" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">✕ report</text>
+    <text x="195" y="128" fontSize="10" textAnchor="middle" fill="currentColor">runs it</text>
+    <text x="272" y="128" fontSize="10" textAnchor="middle" fill="currentColor">runs first</text>
+    <text x="8" y="154" fontSize="10" fill="currentColor" fillOpacity="0.75">With a default, "none" runs the default, silently.</text>
+  </svg>
+</VisualRecap>
+
+### case inside
+
+`case (expr) inside` compares the case expression with each item through the set-membership operator `inside` (§12.5.4, §11.4.13). Items can be single values, lists and ranges:
+
+```systemverilog
+// snippet
+always_comb begin
+  kind = 2'd3;                       // seed: 3 means "not a known opcode"
+  unique0 case (opcode) inside       // opcode is logic [3:0]
+    [4'd0:4'd7]:      kind = 2'd0;   // a range: ALU operations
+    4'b10??:          kind = 2'd1;   // wildcard bits in the item: loads
+    4'b1100, 4'b1101: kind = 2'd2;   // a list: stores
+  endcase
+end
+```
+
+The decoder classifies 4'b1110 and 4'b1111 as unknown opcodes, so "no match" is legal here, and `unique0` checks only that no two items overlap. If an unlisted opcode could only come from a bug, `unique` would report it instead. The price of `unique0` is that an unknown `opcode`, such as 4'bxxxx, also lands silently on kind 3; an immediate assertion such as `assert (!$isunknown(opcode))` catches that ([I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index)).
+
+The wildcards are **asymmetric** (§11.4.6). An x, z or `?` in an **item** is a wildcard that matches any value; an x or z in the **case expression** is not a wildcard, so it matches only a wildcard bit of the item. An item matches when the `inside` comparison returns 1; a result of 0 or x is no match (§12.5.4). So an unknown select never silently matches an ordinary item:
+
+| `sel` | `casex`, items `2'b10` and `2'b11` | `case inside`, items `2'b10` and `2'b11` | `case inside`, item `2'b1?` |
+|---|---|---|---|
+| `2'b10` | `2'b10` runs | `2'b10` runs | `2'b1?` runs |
+| `2'b1x` | `2'b10` runs (both items match) | no match | `2'b1?` runs |
+| `2'bx1` | `2'b11` runs | no match | no match |
+| `2'bxx` | `2'b10` runs (both items match) | no match | no match |
+
+This is why style guides prefer `case … inside` to `casex`: the don't-care bits stay where you wrote them, in the items. F2A's sub-lesson on operators covers `inside` and `==?` as expressions: [Operators and Expressions](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions).
+
+### Loops
+
+| Loop | Runs its body | Key rules |
+|---|---|---|
+| `for (int i = 0; i < n; i++)` | while the condition is true | A variable declared in the header is automatic and local to the loop. An x or z condition ends the loop (§12.7.1). |
+| `repeat (n)` | n times | `n` is evaluated once, before the first pass. A negative, x or z count runs zero times (§12.7.2). |
+| `while (cond)` | zero or more times | The condition is tested before each pass (§12.7.4). |
+| `do … while (cond);` | one or more times | The condition is tested after each pass (§12.7.5). |
+| `foreach (arr[i])` | once per element | Loop variables are automatic and read-only, typed like the index. Do not resize the array inside the loop (§12.7.3). |
+| `forever` | until disabled or the run ends | Needs a timing control, or simulated time stops (§12.7.6). |
+
+A traced example with both jumps:
+
+```systemverilog
+// snippet
+for (int i = 0; i < 5; i++) begin
+  if (i == 1) continue;        // skip the rest of this pass, then run i++
+  if (i == 3) break;           // leave the loop at once
+  $display("i = %0d", i);
+end
+```
+
+| Pass | `i` | `i == 1` | `i == 3` | Prints |
+|---|---|---|---|---|
+| 1 | 0 | no | no | `i = 0` |
+| 2 | 1 | yes: `continue` | not tested | nothing |
+| 3 | 2 | no | no | `i = 2` |
+| 4 | 3 | no | yes: `break` | nothing |
+| none | 4 | not reached | not reached | the loop has ended |
+
+Three more one-line traces to remember:
+
+- `repeat (n)` while `n` is still x: zero passes, and no message.
+- `while (0) …` runs zero passes; `do … while (0);` runs exactly one.
+- `forever x = ~x;` with no timing control loops forever at one simulation time, so time never advances.
+
+### break, continue and return
+
+- `continue` jumps to the end of the loop body and runs the loop's step; `break` leaves the loop (§12.8). Both are legal only inside a loop.
+- In a multi-dimensional `foreach`, `break` leaves the whole loop, not just the innermost dimension, and `continue` moves to the next combination of indices (§12.8).
+- Neither can reach a loop outside a `fork … join`: a child process cannot break its parent's loop (§12.8).
+- `return` leaves a task or function, not a loop. F2D covers it: [Tasks and Functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions).
+
+### Testbench patterns
+
+These are the loops a directed testbench uses every day:
+
+```systemverilog
+// snippet
+initial begin                       // clock: set a start value, then toggle
+  clk <= 1'b0;                      // <= at time 0, like the standard's own example
+  forever #5 clk = ~clk;            // a forever loop always needs a timing control
+end
+
+task automatic drive_bus();
+  repeat (10) @(posedge clk);       // wait for 10 rising edges
+  enable <= 1'b1;                   // <=: the DUT samples the old value on this edge
 endtask
+
+task automatic wait_ready(input int max_cycles, output bit ok);
+  int n = 0;                        // automatic task: an initializer is fine here
+  while (ready !== 1'b1 && n < max_cycles) begin
+    @(posedge clk);                 // poll once per clock, never in zero time
+    n++;
+  end
+  ok = (ready === 1'b1);            // === so that an x ready counts as not ready
+endtask
+
+initial begin                       // visit every expected value in a queue
+  foreach (expected_q[i])
+    $display("expected_q[%0d] = %0h", i, expected_q[i]);
+end
 ```
 
-## Interactive Example: Traffic Light Controller
-This example combines `unique case` for the state machine and `repeat` for timing delays.
+`wait_ready` polls a level once per clock and gives up after `max_cycles`, so a DUT that never answers ends the loop instead of hanging the test. When you wait for an event instead of polling a level, use the isolation wrapper from the previous lesson. Queues and dynamic arrays are F2B's topic: [Dynamic Data Structures](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index).
 
-<InteractiveCode
-  language="systemverilog"
-  fileName="traffic_light.sv"
-  code={`
+### Pitfalls and misconceptions
+
+| Misconception | Why it is wrong |
+|---|---|
+| "`unique` is only a synthesis hint." | Simulators must check it and report violations (§12.5.3). |
+| "A `default` makes a `unique case` safer." | The `default` matches every leftover value, so the no-match check can never fire (§12.5.3, NOTE). |
+| "`priority` means first match wins, and a plain `case` does not." | A plain `case` also runs the first match (§12.5). `priority` adds the no-match report and allows overlaps. |
+| "A `case` with no matching item reports something." | A plain `case` silently runs nothing (§12.5). |
+| "`if (a)` with `a` = x is undefined." | It is defined: x is false, so `else` runs (§12.4). |
+| "`casex` is fine for don't-care decoding." | It also skips x bits in the select, so an unknown select runs a real branch (§12.5.1). Use `case … inside` or `casez`. |
+| "`repeat (n)` with an unknown `n` runs some arbitrary number of times." | It runs zero times, silently (§12.7.2). |
+| "A `forever` loop without a delay is fine in a testbench." | Simulated time stops (§12.7.6). |
+
+### Recap
+
+- An x or z condition is false: `if` takes `else`, and `!x` is still x.
+- `case` matches all four values exactly, runs the first match, and does nothing when nothing matches; `casez` and `casex` skip don't-care bits on both sides.
+- `unique` reports overlaps and no match, `unique0` overlaps only, `priority` no match only; a `default` removes the no-match report.
+- `case … inside` treats x and z as wildcards only in the items, so an unknown select does not match.
+- Count loop passes from the rules: `repeat` evaluates its count once, x gives zero passes, `do … while` runs at least once, and `forever` needs a timing control.
+
+## Make It Work
+
+### Worked example: a traffic-light controller and its self-checking bench
+
+The controller cycles red, green and yellow, holding each state for a number of clock edges set by a down-counter. Its decoders use `unique case` without a `default`, and the bench checks the light at every edge against an expected sequence. Read the code, then the walk-through.
+
+```systemverilog
+// compile
+// traffic_light_tb.sv: a traffic-light controller and its bench in one file.
+
 module traffic_light (
-  input logic clk,
-  input logic reset,
-  output logic [2:0] light // R, Y, G
+  input  logic       clk,
+  input  logic       rst_n,      // active-low asynchronous reset
+  output logic [2:0] light       // {red, yellow, green}
 );
+  timeunit 1ns;                  // if one module in a design declares a time unit,
+  timeprecision 1ps;             // every module must (§3.14.2.3)
 
   typedef enum logic [1:0] {RED, GREEN, YELLOW} state_t;
-  state_t state, next_state;
-  int timer;
+  state_t     state, next_state;
+  logic [3:0] timer;             // edges left in this state, counting down to 0
 
-  // State Transition Logic
+  // Next state: move on when the timer reaches 0.
   always_comb begin
-    unique case (state)
-      RED:    next_state = (timer == 0) ? GREEN : RED;
-      GREEN:  next_state = (timer == 0) ? YELLOW : GREEN;
-      YELLOW: next_state = (timer == 0) ? RED : YELLOW;
-      default: next_state = RED;
+    next_state = state;          // seed: assigned on every path, so no latch
+    unique case (state)          // no default: an x or illegal state is reported
+      RED:    if (timer == 4'd0) next_state = GREEN;
+      GREEN:  if (timer == 4'd0) next_state = YELLOW;
+      YELLOW: if (timer == 4'd0) next_state = RED;
     endcase
   end
 
-  // Output Logic
+  // Output decode.
   always_comb begin
+    light = 3'b100;              // seed with red, the safe value
     unique case (state)
       RED:    light = 3'b100;
-      YELLOW: light = 3'b010;
       GREEN:  light = 3'b001;
-      default: light = 3'b100; // Safe default
+      YELLOW: light = 3'b010;
     endcase
   end
 
-  // Timer & State Update
-  always_ff @(posedge clk or posedge reset) begin
-    if (reset) begin
+  // State and timer registers.
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
       state <= RED;
-      timer <= 50;
-    end else begin
+      timer <= 4'd3;             // red lasts 4 edges: timer 3, 2, 1, 0
+    end else if (next_state != state) begin
       state <= next_state;
-      if (state != next_state) begin
-        // Reset timer on transition
-        priority case (next_state)
-          GREEN:  timer <= 40;
-          YELLOW: timer <= 5;
-          default: timer <= 50;
-        endcase
-      end else if (timer > 0) begin
-        timer <= timer - 1;
-      end
+      unique case (next_state)   // load the length of the new state
+        RED:    timer <= 4'd3;
+        GREEN:  timer <= 4'd2;
+        YELLOW: timer <= 4'd0;
+      endcase
+    end else begin
+      timer <= timer - 4'd1;
     end
   end
-
 endmodule
-  `}
-  explanationSteps={[
-    { target: "12-17", title: "Unique Case", explanation: "Using `unique case` ensures we've covered all state transitions and that states are mutually exclusive." },
-    { target: "39-43", title: "Priority Case", explanation: "Here we use `priority case` to assign timer values. It behaves like an if-else if chain." },
-    { target: "30-46", title: "Timer Logic", explanation: "A countdown timer drives the state transitions, demonstrating how data path and control path interact." }
+
+module tb_top;
+  timeunit 1ns;
+  timeprecision 1ps;
+
+  logic       clk;
+  logic       rst_n;
+  logic [2:0] light;
+  int         pass_count, fail_count;   // 2-state: they start at 0
+
+  // The light expected at each rising edge after reset is released:
+  // red for 4 edges, green for 3, yellow for 1, then red again.
+  logic [2:0] expected_light [12] = '{3'b100, 3'b100, 3'b100, 3'b100,
+                                      3'b001, 3'b001, 3'b001,
+                                      3'b010,
+                                      3'b100, 3'b100, 3'b100, 3'b100};
+
+  traffic_light dut (.clk(clk), .rst_n(rst_n), .light(light));
+
+  initial begin
+    clk <= 1'b0;                 // <= at time 0, like the standard's own clock example
+    forever #5 clk = ~clk;       // rising edges at 5, 15, 25, ... ns
+  end
+
+  // Report every change of the light once reset is over.
+  always @(light)
+    if (rst_n === 1'b1) $display("t=%0d ns: light=%b", $time, light);
+
+  initial begin
+    rst_n <= 1'b0;               // assert reset at time 0 with <=
+    repeat (2) @(posedge clk);
+    rst_n <= 1'b1;               // release just after an edge
+    foreach (expected_light[i]) begin
+      @(posedge clk);            // light is stable here: it changes after NBA updates
+      if (light !== expected_light[i]) begin
+        fail_count++;
+        $error("edge %0d: light=%b, expected %b", i, light, expected_light[i]);
+      end else begin
+        pass_count++;
+      end
+    end
+    @(negedge clk);              // let the last edge's updates and prints finish
+    $finish;
+  end
+
+  final $display("PASS=%0d FAIL=%0d", pass_count, fail_count);
+endmodule
+```
+
+**Expected output** (worked out by hand from the rules on this page, not captured from a simulator run; your simulator also prints its own start-up and `$finish` lines):
+
+```text
+t=55 ns: light=001
+t=85 ns: light=010
+t=95 ns: light=100
+t=135 ns: light=001
+PASS=12 FAIL=0
+```
+
+<TimingDiagram
+  title="Traffic light after reset: state, timer and light"
+  caption="Column k is rising edge k after reset is released (t = 25 + 10k ns), the edge where the bench checks expected_light[k]. Each value is the one sampled at that edge. When timer is 0, next_state moves on, so state changes just after edges 3, 6, 7 and 11."
+  edges={12}
+  cycleWidth={48}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "state", kind: "bus", values: ["RED", "RED", "RED", "RED", "GREEN", "GREEN", "GREEN", "YELLOW", "RED", "RED", "RED", "RED"] },
+    { name: "timer", kind: "bus", values: [3, 2, 1, 0, 2, 1, 0, 0, 3, 2, 1, 0] },
+    { name: "light", kind: "bus", values: ["100", "100", "100", "100", "001", "001", "001", "010", "100", "100", "100", "100"] }
+  ]}
+  markers={[
+    { edge: 3, tone: "info", label: "timer is 0 in RED: next_state is GREEN" },
+    { edge: 6, tone: "info", label: "timer is 0 in GREEN: next_state is YELLOW" },
+    { edge: 7, tone: "info", label: "timer is 0 in YELLOW: next_state is RED" }
   ]}
 />
 
-## Practice Prompts
-1.  **Refactor**: Take a nested `if-else` block and convert it to a `priority case`.
-2.  **Iterate**: Create a dynamic array of random integers and use `foreach` to find the maximum value.
-3.  **Debug**: Write a `case` statement without a `default` and see if your tool warns you (it should!).
+How it works, step by step:
 
-## Interview Questions
+1. **Seeded decoders.** Both `always_comb` blocks assign their output before the `case`, so every path assigns it. The `unique case` has no `default`, so a `state` that matches no item is reported instead of silently decoded.
+2. **No report at time 0.** Before reset, `state` is x and both decoders match nothing. The bench drives `rst_n` with `<=` at time 0, so the flop resets `state` within time slot 0, the decoders run again, and the queued reports are discarded before they mature.
+3. **The timer.** On a change of state, the `always_ff` loads the new state's length through a `unique case` on `next_state`; otherwise it counts `timer` down. A state lasts one edge more than the value loaded: red 4, green 3, yellow 1.
+4. **The clock.** A `forever` loop with a delay toggles `clk`, and its time-0 start value is set with `<=`.
+5. **Checking.** `foreach` visits the 12 expected values, one per rising edge, and compares with `!==`, so an x light fails the check. At the rising edge, `light` still holds the value decoded after the previous edge, and the DUT updates it later in the time slot.
+6. **Logging.** `always @(light)` prints every change once reset is over: after edges 3, 6, 7 and 11, at 55, 85, 95 and 135 ns.
+7. **Ending.** After the last check, the bench waits for a falling edge so the change at 135 ns is printed, then calls `$finish`, and `final` prints the summary.
 
-<Card className="mt-8">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is the difference between `case`, `casex`, and `casez`?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p><strong>`case`</strong> matches bits exactly (0, 1, X, Z).</p>
-        <p><strong>`casez`</strong> treats `Z` (and `?`) as "don't care". It is useful for priority encoders.</p>
-        <p><strong>`casex`</strong> treats both `X` and `Z` as "don't care". <strong>Avoid `casex`</strong> in synthesizable code because it can mask X-propagation bugs (treating an unknown X as a match).</p>
-      </div>
-    </details>
+### Run it
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">Why is `unique case` preferred over `parallel_case` pragmas?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>`unique case` is part of the language standard, meaning simulators can check it and issue warnings if multiple cases match or if no case matches. Pragmas like `// synopsys parallel_case` are ignored by simulators, leading to dangerous mismatches between simulation (sequential priority) and synthesis (parallel logic).</p>
-      </div>
-    </details>
-  </CardContent>
-</Card>
+1. Save the code as `traffic_light_tb.sv`.
+2. Compile and elaborate it with `tb_top` as the top module, using any simulator that supports IEEE 1800 SystemVerilog. On EDA Playground, pick a simulator listed with SystemVerilog support.
+3. Run until the bench calls `$finish`, and compare the log with Expected output.
+4. Break it on purpose, then predict the log before you run it:
+   - Replace `rst_n <= 1'b0;` with a delayed reset, `#1 rst_n <= 1'b0;`. Now `state` is still x when time slot 0 ends, so both decoders report a no-match violation at t = 0, in your simulator's own wording. The rest of the log is unchanged.
+   - Keep the delayed reset and add `default: next_state = RED;` to the first decoder. Its time-0 report disappears, and so does its ability to catch a corrupted `state` later in the run; the output decoder still reports.
 
-## References
-- IEEE Std 1800-2023 §12.4 (Conditional if-else)
-- IEEE Std 1800-2023 §12.5 (Case statements)
-- IEEE Std 1800-2023 §12.7 (Loop statements)
+### Debugging table
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| A decoder output keeps its default or old value, with no message | A plain `case` with no matching item and no `default` (§12.5) | Use `unique case` without a `default`, so that the miss is reported |
+| One violation report at t = 0, then none | The select is still x when time slot 0 settles: the register is reset synchronously, or a time-0 reset reached the flop too early or too late (§12.5.3.1) | Reset with `<=` at time 0, or switch the reports off during reset with `$assertcontrol` (see Push Further). Never add a `default` to hide it. |
+| The model takes a real branch while the select is x | `casex` skips x bits in the select (§12.5.1) | Use `case … inside` or `casez` |
+| A wait or retry loop never runs | The `repeat` count is x, z or negative, or a `for` or `while` condition is x (§12.7.1, §12.7.2, §12.7.4) | Initialize it, and check it with `$isunknown` before the loop (§20.9) |
+| Simulated time stops and the simulator seems to hang | A `forever` or `while` loop with no timing control (§12.7.6) | Put `@(posedge clk)` or a delay inside the loop |
+| Out-of-range or stale values inside a `foreach` | The array was resized during the loop (§12.7.3) | Collect the changes and apply them after the loop |
+| An `else` runs for the wrong `if` | The `else` attached to the nearest `if` (§12.4) | Add `begin … end` |
+
+**Checklist before moving on:**
+
+- [ ] You can predict the branch an `if`, `case`, `casez`, `casex` or `case … inside` takes for a select with x or z bits.
+- [ ] You can say, for plain, `unique`, `unique0` and `priority`, whether no match and overlap are reported, and what a `default` changes.
+- [ ] Your state decoders use `unique case` with seeded outputs and no `default`, and you can say when `unique0`, `priority` or a `default` fits a decision better.
+- [ ] You can count the passes of `for`, `repeat`, `while`, `do … while` and `foreach` loops, including `break` and `continue`.
+- [ ] Every `forever` and polling loop in your bench has a timing control and, where it waits on the DUT, a bound.
+
+## Push Further
+
+### Expert: When violation reports appear, and how to control them
+
+- **Deferred, then confirmed.** A `unique`, `unique0` or `priority` check runs when the statement executes, but the report waits in a per-process queue for the Observed region of that time slot (§12.4.2.1, §12.5.3.1). If the procedure resumes after an event control or `wait` first, or an `always_comb` or `always_latch` is re-triggered by an input change, the queued report is discarded. These are the flush points. A zero-delay glitch that re-runs the procedure therefore produces no report, while the result of the procedure's last run in the time slot matures in the Observed region and can no longer be flushed.
+- **Per process.** A report belongs to the process that executed the check. A function containing a `unique if`, called by two `always_comb` blocks, can report twice in one time slot, once per caller (§12.4.2.2, §12.5.3.2).
+- **Compile time is allowed.** A tool may report a violation at compile time if it can already prove it; otherwise it reports at run time (§12.5.3).
+- **Controlling the reports.** The assertion control tasks also control these reports (§20.11). `$assertcontrol(4, 224)` turns reporting off for unique (32), unique0 (64) and priority (128) checks, and `$assertcontrol(3, 224)` turns it on again (Tables 20-5 and 20-6). `$assertoff` does **not** reach them: it is defined as `$assertcontrol(4, 15, 7)`, which covers concurrent and immediate assertions only.
+- **A time-0 corner.** At time 0, a decoder's `always_comb` may run before the `initial` block that calls `$assertcontrol(4, 224)`, because procedures start in no promised order (§9.2). The standard does not say whether Off discards a violation report that is already queued (for deferred assertions, queued reports may still mature), so whether that one report still appears is tool-dependent. Every check after the call is silenced.
+- **Wording and severity are tool-specific.** Make your regression scripts treat the report as an error. Adding a `default` to silence it hides real bugs.
+
+```systemverilog
+// snippet
+initial begin
+  $assertcontrol(4, 224);          // Off: unique, unique0 and priority reports
+  @(posedge rst_n);                // wait for the end of reset
+  $assertcontrol(3, 224);          // On again for the rest of the test
+end
+```
+
+### Expert: X and the case family
+
+- **Don't-cares on both sides.** `casez` and `casex` skip don't-care bits in the case expression as well as in the items (§12.5.1). So `unique casex (sel)` with `sel` = 2'b1x and the items 2'b10 and 2'b11 finds **two** matches: it runs the 2'b10 item and reports an overlap.
+- **`case inside` is asymmetric.** An x, z or `?` in an item is a wildcard; an x or z in the case expression is not (§11.4.6). The standard's own example uses `priority case (status) inside` with the item `3'b0?0`, which matches 'b000, 'b010, 'b0x0 and 'b0z0; values such as 'b00x and 'bxxx match no item and are reported (§12.5.4). An x in the select is accepted only where the item has a wildcard.
+- **Detecting x on purpose.** A plain `case` compares x and z literally, so `case (sig) 1'bz: … 1'bx: … default: … endcase` can tell a floating signal from an unknown one (§12.5).
+- **Item evaluation order.** In `unique` and `unique0` forms, items may be evaluated and compared in any order, so item expressions with side effects give nondeterministic results (§12.5.3). One item that lists several expressions which all match is not an overlap.
+- **Synthesis is tool-dependent.** How synthesis tools read `unique`, `unique0` and `priority`, and the older `full_case` and `parallel_case` pragmas, is tool-dependent: the standard defines only the simulation checks. In intent, `unique` corresponds to both pragmas together, `unique0` to `parallel_case` alone and `priority` to `full_case` alone.
+
+### Expert: Loop corner cases
+
+- **for:** a variable declared in the header is automatic and lives in an implicit block around the loop. Declare either all or none of the control variables in the header. Two parallel loops that share one module-level control variable can corrupt each other's count, which header declarations prevent (§12.7.1).
+- **repeat:** the count is evaluated once; a negative, x or z count runs zero times (§12.7.2). Signedness decides what "negative" means: a 4-bit unsigned variable holding 4'b1101 is 13, not −3.
+- **foreach:** loop variables are automatic and read-only, take the type of the index, and with several indices the rightmost one changes fastest. Resizing the array inside the loop gives undefined results (§12.7.3).
+- **while and do … while:** a `while` loop may run zero times; a `do … while` loop always runs at least once (§12.7.4, §12.7.5).
+- **forever:** without a timing control it is a zero-delay infinite loop, and simulated time never advances (§12.7.6). `while (1)` without a timing control behaves the same.
+- **break in foreach:** in a multi-dimensional `foreach`, `break` leaves the whole loop, and `continue` moves to the next index combination (§12.8).
+
+### Interview angles
+
+Answer each one before you look at the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: the time-0 report"
+  question="A colleague says: our unique case reports a violation at time 0 in every test, so I added a default to silence it. What do you say?"
+  options={[
+    { text: "Good fix: a default is the standard way to make a unique case safe.", isCorrect: false, feedback: "A default silences the no-match check for every value, for the whole run, including real bugs later in the test (§12.5.3)." },
+    { text: "Bad fix: the report means state is still x when time slot 0 ends. Fix the reset timing, or, if the report is expected during reset, switch the checks off with $assertcontrol(4, 224) and on again with $assertcontrol(3, 224).", isCorrect: true, feedback: "Right. 224 selects the unique, unique0 and priority reports (32 + 64 + 128, Table 20-6); 4 is Off and 3 is On (Table 20-5). The check stays active for the rest of the run." },
+    { text: "Replace unique with unique0; it is the same check without the noise.", isCorrect: false, feedback: "unique0 drops the no-match check entirely, so it loses the same bugs a default would hide." },
+    { text: "Call $assertoff during reset; it switches off every assertion and violation report.", isCorrect: false, feedback: "$assertoff is defined as $assertcontrol(4, 15, 7): concurrent and immediate assertions only, not unique, unique0 or priority reports (§20.11)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: unique versus the parallel_case pragma"
+  question="Why do teams replace the synthesis pragmas full_case and parallel_case with unique and priority?"
+  options={[
+    { text: "unique guarantees identical synthesis results in every tool.", isCorrect: false, feedback: "The standard defines the simulation checks, not synthesis results. Synthesis mapping is tool-dependent." },
+    { text: "Pragmas are illegal in IEEE 1800-2023.", isCorrect: false, feedback: "Comments are always legal; the standard simply gives the pragmas no meaning." },
+    { text: "unique case simulates faster because the items are compared in parallel.", isCorrect: false, feedback: "Any speed difference is tool-dependent. The point is the checking." },
+    { text: "Pragmas are comments that simulators ignore, so simulation and synthesis can disagree; unique and priority are keywords that every simulator checks at run time.", isCorrect: true, feedback: "Right. unique checks overlap and no match, priority checks no match, and unique0 checks overlap only (§12.4.2, §12.5.3). How a synthesis tool maps the keywords and the pragmas is tool-dependent." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: break inside a fork"
+  question="A loop forks one process per iteration, and the child calls break when it sees an error. What happens?"
+  options={[
+    { text: "The child's break ends the parent's loop at once.", isCorrect: false, feedback: "A child is a separate process, and jump statements cannot cross the fork boundary." },
+    { text: "break ends only the child process.", isCorrect: false, feedback: "break is a loop jump, not process control. Inside a fork with no loop of its own, it is illegal." },
+    { text: "The code is illegal: break and continue cannot control a loop outside the fork that contains them.", isCorrect: true, feedback: "Right (§12.8). Let the child set a flag that the loop checks, or let the parent end the threads with disable fork." },
+    { text: "The loop ends after every child has finished.", isCorrect: false, feedback: "There is no deferred break. Tools reject the code." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
 
 <Quiz
   questions={[
     {
-      question: 'What is the main advantage of `unique case` over standard `case`?',
+      question: "a is a 1-bit logic holding 1'bx. What does if (a) y = 1; else y = 0; assign to y?",
+      objective: 1,
       answers: [
-        { text: 'It runs faster in simulation', correct: false },
-        { text: 'It warns if multiple cases match or if no case matches', correct: true },
-        { text: 'It allows overlapping case items', correct: false },
-        { text: 'It is required for synthesis', correct: false }
+        { text: "y = 1: x is not zero", correct: false, feedback: "x is not a known nonzero value, so the then branch does not run." },
+        { text: "y = x: the if passes the unknown on", correct: false, feedback: "An if statement must run one branch; it never assigns x by itself. The conditional operator a ? 1 : 0 is the construct that produces x here." },
+        { text: "y = 0: the else branch runs", correct: true, feedback: "Right: an if condition is true only if it is a known, nonzero value. x counts as false (§12.4)." },
+        { text: "Neither branch runs, so y keeps its old value", correct: false, feedback: "With an else present, one branch always runs, and x simply selects the else." }
       ],
-      explanation:
-        '`unique case` adds safety checks. It asserts that exactly one case item matches the expression, catching bugs early.'
+      explanation: "x and z conditions are false, so else runs, and if (!a) takes else as well because !x is x (§11.4.7). This X-optimism hides unknowns; the conditional operator keeps them visible."
     },
     {
-      question: 'Which loop is best suited for iterating over a dynamic array?',
+      question: "sel = 2'b1x. One block uses casex (sel) and another uses case (sel) inside, both with the items 2'b10 and 2'b11 and no default. Which items run?",
+      objective: 1,
       answers: [
-        { text: '`repeat`', correct: false },
-        { text: '`forever`', correct: false },
-        { text: '`foreach`', correct: true },
-        { text: '`do...while`', correct: false }
+        { text: "casex runs the 2'b10 item; case inside runs neither", correct: true, feedback: "Right: casex skips the x in the select, so 2'b10 matches first. case inside compares like ==?, where an x in the select is not a wildcard, so both comparisons give 1'bx, which is no match (§12.5.1, §12.5.4)." },
+        { text: "Both run the 2'b10 item", correct: false, feedback: "case inside does not skip unknown bits in the select; only wildcard bits in an item are skipped." },
+        { text: "casex runs neither; case inside runs the 2'b10 item", correct: false, feedback: "This is reversed: casex is the one that skips x bits in the select." },
+        { text: "Neither block runs an item", correct: false, feedback: "casex does match: it skips the x bit on both sides of the comparison." }
       ],
-      explanation:
-        '`foreach` automatically handles array bounds and index variable declaration, making it the safest choice for collections.'
+      explanation: "Wildcards in case inside are asymmetric: x, z and ? in an item are wildcards, x and z in the case expression are not, unless the item has a wildcard in that bit (§11.4.6). That is why case inside does not silently decode an unknown select."
+    },
+    {
+      question: "sel is 2'b11 when it reaches unique case (sel) with the items 2'b00, 2'b01 and 2'b10 and no default. What happens?",
+      objective: 2,
+      answers: [
+        { text: "The 2'b10 item runs because it is the closest value", correct: false, feedback: "Case items match exactly; there is no nearest match." },
+        { text: "No item runs, and a violation is reported", correct: true, feedback: "Right: unique, like priority, reports when no item matches and there is no default (§12.5.3). The report is deferred to the Observed region of that time slot." },
+        { text: "No item runs and nothing is reported", correct: false, feedback: "That is a plain case, or unique0. unique adds the no-match report." },
+        { text: "Compile error: a unique case must list every value", correct: false, feedback: "The case does not have to list every value. The check runs when the statement executes; a tool may report earlier only if it can prove the violation at compile time." }
+      ],
+      explanation: "Plain case: nothing runs and nothing is reported. unique and priority: nothing runs and a violation is reported. unique0: nothing runs and nothing is reported (§12.5, §12.5.3)."
+    },
+    {
+      question: "The same unique case now has a default item. sel is again 2'b11. What happens?",
+      objective: 2,
+      answers: [
+        { text: "The default runs, and a violation is still reported", correct: false, feedback: "With a default, every value matches something, so there is no no-match violation to report." },
+        { text: "A violation is reported, and nothing runs", correct: false, feedback: "default runs whenever no other item matches (§12.5)." },
+        { text: "Nothing runs: default only applies to x and z values", correct: false, feedback: "default applies to every unmatched value, 2'b11 included." },
+        { text: "The default item runs, and nothing is reported", correct: true, feedback: "Right: the default matches every value that no other item matches, so the no-match check can never fail (§12.5.3, NOTE)." }
+      ],
+      explanation: "A default silences the no-match check. Leave it out when an unmatched value is a bug, and seed every output at the top of the block so that no path infers a latch."
+    },
+    {
+      question: "What does the unique keyword add to a case statement in simulation?",
+      objective: 2,
+      answers: [
+        { text: "Nothing: unique is only a hint for synthesis", correct: false, feedback: "Simulators check unique and report violations. That checking is its main value in verification." },
+        { text: "It evaluates the items in parallel, so simulation runs faster", correct: false, feedback: "The items may be compared in any order, but that is a permission, not a speed-up you can rely on." },
+        { text: "Run-time violation reports when more than one item matches, or when none matches and there is no default", correct: true, feedback: "Right: simulators must report these violations (§12.5.3), and the first matching item still runs." },
+        { text: "It runs a randomly chosen item when several items match", correct: false, feedback: "The first matching item in source order runs, and an overlap violation is reported." }
+      ],
+      explanation: "unique checks overlap and no match; unique0 checks overlap only; priority checks no match only. All three still run the first matching item (§12.4.2, §12.5.3)."
+    },
+    {
+      question: "for (int i = 0; i < 5; i++) begin if (i == 1) continue; if (i == 3) break; $display(\"%0d\", i); end — what does it print?",
+      objective: 3,
+      answers: [
+        { text: "0 2 4", correct: false, feedback: "break leaves the whole loop, so i = 4 never runs." },
+        { text: "0 2", correct: true, feedback: "Right: i = 1 skips its print, i = 3 leaves the loop, and i = 4 never runs." },
+        { text: "0 1 2", correct: false, feedback: "continue skips the rest of the body for i = 1, including the print." },
+        { text: "0 2 3", correct: false, feedback: "break executes before the print for i = 3." }
+      ],
+      explanation: "continue jumps to the end of the body and runs the step, i++; break leaves the loop at once (§12.8)."
+    },
+    {
+      question: "logic [3:0] n was never assigned, so it is 4'bxxxx. How many times does repeat (n) count++; run?",
+      objective: 3,
+      answers: [
+        { text: "15 times: x bits count as ones", correct: false, feedback: "x is not read as 1. The count is unknown, so the body does not run at all." },
+        { text: "Forever: the count never reaches zero", correct: false, feedback: "repeat evaluates its count once, before the first pass. An unknown count gives zero passes." },
+        { text: "The simulator stops with a run-time error", correct: false, feedback: "No error is required, and that silence is what makes this bug hard to find." },
+        { text: "Zero times, with no message", correct: true, feedback: "Right: repeat treats a negative, x or z count as zero (§12.7.2). The loop silently does nothing." }
+      ],
+      explanation: "Guard counts that come from DUT outputs or uninitialized variables: initialize them, or check them with $isunknown or === before the loop."
+    },
+    {
+      question: "Every test logs one unique case violation from the DUT's state decoder at t = 0, and none after that. What is the most likely cause?",
+      objective: 4,
+      answers: [
+        { text: "state is still x when time slot 0 ends: the state register gets its reset value only at the first clock edge", correct: true, feedback: "Right: always_comb checks at time 0, and the report matures in the Observed region unless the block runs again first (§12.5.3.1). A synchronous reset, or an asynchronous reset the flop missed at time 0, leaves state x until the first edge." },
+        { text: "A unique case always reports at time 0; it is harmless noise", correct: false, feedback: "There is nothing special about time 0. The report means the select really matched nothing when the time slot ended." },
+        { text: "The case items overlap", correct: false, feedback: "An overlap would be reported whenever the overlapping value appears, not only at time 0, and as an overlap rather than a missing match." },
+        { text: "The decoder needs a default item", correct: false, feedback: "A default would hide this report and every real no-match bug after it. Look at the reset instead." }
+      ],
+      explanation: "With an asynchronous reset driven with <= at time 0, state becomes legal inside time slot 0, the decoder runs again and the queued report is discarded. With a synchronous reset, state stays x until the first clock edge; if that report is expected, switch the checks off during reset with $assertcontrol (Push Further)."
     }
   ]}
 />
+
+### Kata C (guided): make the decoder complain
+
+**Objectives 1 and 2.** A `unique case` decoder sees an unknown select at time 0. Predict what happens, then change the qualifier and the items and predict again.
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns;
+  timeprecision 1ps;
+
+  logic [1:0] sel;                 // not assigned until t = 10 ns, so x before that
+  logic [3:0] y;
+
+  always_comb begin
+    y = 4'b0000;                   // seed: y is assigned on every path
+    unique case (sel)              // no default
+      2'b00: y = 4'b0001;
+      2'b01: y = 4'b0010;
+      2'b10: y = 4'b0100;
+      2'b11: y = 4'b1000;
+    endcase
+  end
+
+  initial begin
+    #10 sel = 2'b01;
+    #1  $display("t=%0d sel=%b y=%b", $time, sel, y);
+    $finish;
+  end
+endmodule
+```
+
+1. Predict: at t = 0, which item runs, what is `y`, and is a violation reported? Then run it.
+2. Add `default: y = 4'b0000;` and predict again. Explain why the report disappears.
+3. Remove the `default` and change `unique` to `unique0`. Predict again.
+4. Change the decision to `unique case (sel) inside` with two items, `2'b0?: y = 4'b0011;` and `2'b1?: y = 4'b1100;`. Then make the `initial` block drive `sel = 2'b1x;` at 10 ns and `sel = 2'bx1;` at 20 ns, printing `y` after each. Predict `y`, and any report, for both values.
+
+<details>
+<summary>Worked solution</summary>
+
+1. At t = 0, `always_comb` runs once with `sel` = 2'bxx. A plain comparison treats x literally, so no item matches: no item runs, `y` keeps its seed 4'b0000, and `unique` queues a no-match violation. Nothing runs the block again before time slot 0 ends, so the report appears at t = 0, worded the way your simulator words it. At t = 10 ns `sel` = 01 selects the second item, so the log ends with `t=11 sel=01 y=0010`.
+2. With a `default`, every value matches something, so there is no no-match violation. The report disappears, and so does your detector for an unknown select (§12.5.3).
+3. `unique0` never reports a missing match, so it is silent too. It would still report an overlap.
+4. `2'b1x` matches `2'b1?`: the item's `?` makes bit 0 a wildcard, so the select's x in that bit is accepted, and `y` = 4'b1100 with no report. For `2'bx1`, bit 1 is x in the select and a fixed 0 or 1 in both items, so both comparisons give 1'bx, which is no match. Nothing runs, `y` stays 4'b0000, and `unique` reports a violation at 20 ns (§12.5.4, §11.4.6). The time-0 report remains too, because 2'bxx matches neither item.
+
+</details>
+
+### Debug challenge D: the enable that arrived early
+
+**Objectives 3 and 4.** A counter should start counting on the eleventh rising edge after reset is released. Depending on process order, it can start one edge early.
+
+```systemverilog
+// compile
+module counter (
+  input  logic       clk,
+  input  logic       rst_n,
+  input  logic       enable,
+  output logic [7:0] count
+);
+  timeunit 1ns;                    // every module declares a time unit (§3.14.2.3)
+  timeprecision 1ps;
+
+  always_ff @(posedge clk or negedge rst_n)
+    if (!rst_n)      count <= '0;
+    else if (enable) count <= count + 8'd1;
+endmodule
+
+module tb_top;
+  timeunit 1ns;
+  timeprecision 1ps;
+
+  logic       clk = 1'b0;
+  logic       rst_n, enable;
+  logic [7:0] count;
+
+  counter dut (.clk(clk), .rst_n(rst_n), .enable(enable), .count(count));
+
+  always #5 clk = ~clk;            // rising edges at 5, 15, 25, ... ns
+
+  task automatic drive_bus();
+    repeat (10) @(posedge clk);    // wait for 10 rising edges
+    enable = 1'b1;                 // the suspect line
+  endtask
+
+  initial begin
+    rst_n  <= 1'b0;
+    enable <= 1'b0;
+    @(posedge clk);
+    rst_n  <= 1'b1;                // release reset just after the first edge
+    drive_bus();
+    repeat (3) @(posedge clk);
+    #1 $display("t=%0d count=%0d", $time, count);
+    $finish;
+  end
+endmodule
+```
+
+1. `drive_bus` returns at the tenth rising edge after reset is released. At which time is that, and at which edge does the counter first count if the bench runs before the DUT at that edge? If the DUT runs first?
+2. Predict both possible logs.
+3. Fix the bench, not the DUT, and predict the one log every simulator must print.
+
+<details>
+<summary>Worked solution</summary>
+
+1. Reset is released just after the edge at 5 ns, and `repeat (10)` counts the edges at 15, 25 … 105 ns, so `drive_bus` returns at 105 ns. Its blocking `enable = 1'b1;` runs in the Active region of that time slot, together with the DUT's flop. If the bench runs first, the flop already sees `enable` = 1 and counts at 105 ns. If the DUT runs first, it sees 0 and first counts at 115 ns (§4.7).
+2. The three more edges end at 135 ns, and the print is at 136 ns. Bench first: counts at 105, 115, 125 and 135 ns, so the log is `t=136 count=4`. DUT first: counts at 115, 125 and 135 ns, so the log is `t=136 count=3`.
+3. Drive with a nonblocking assignment, `enable <= 1'b1;`. The update now lands in the NBA region, after the flop has read the old value, so every simulator first counts at 115 ns and prints `t=136 count=3`. F3C traces this race step by step: [Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index).
+
+</details>
+
+The module flashcards follow at the end of this section, under **Reinforce the essentials**. The deck is shared by both lessons of the module: six cards cover decisions and loops, and nine review procedures, assignments and threads from the previous lesson.
+
+## References & Next Topics
+
+**Primary sources**
+
+- IEEE 1800-2023 §12.4 `if`–`else` (§12.4.1 `if`–`else if` chains; §12.4.2 `unique`, `unique0` and `priority` `if`; §12.4.2.1 violation reports; §12.4.2.2 reports and multiple processes).
+- IEEE 1800-2023 §12.5 `case` (§12.5.1 `casez` and `casex`; §12.5.2 constant case expressions; §12.5.3 `unique`, `unique0` and `priority` `case`; §12.5.3.1 violation reports; §12.5.3.2 reports and multiple processes; §12.5.4 `case inside`).
+- IEEE 1800-2023 §12.7 loops (§12.7.1 `for`, §12.7.2 `repeat`, §12.7.3 `foreach`, §12.7.4 `while`, §12.7.5 `do … while`, §12.7.6 `forever`); §12.8 `break`, `continue` and `return`.
+- IEEE 1800-2023 §11.4.6 wildcard equality, §11.4.7 logical operators, §11.4.11 conditional operator, §11.4.13 set membership; §3.14.2.3 time unit precedence; §20.9 `$isunknown`; §20.11 assertion control, Tables 20-5 and 20-6.
+
+**Related**
+
+- [F2C: Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index): procedures, assignments, timing controls and threads.
+- [F2A: Core Data Types](/curriculum/T1_Foundational/F2A_Core_Data_Types/index): four-state values and X-optimism.
+- [Operators and Expressions](/curriculum/T1_Foundational/F2A_Core_Data_Types/operators-and-expressions): `inside`, `==?` and `===`.
+- [F2B: Dynamic Data Structures](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index): the arrays and queues that `foreach` visits.
+- [F3C: Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index): why the bench drives with `<=`.
+- [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): immediate assertions such as `assert (!$isunknown(sel))`.
+
+<NextLesson />

@@ -1,123 +1,589 @@
 ---
 title: "F1C: Why SystemVerilog?"
-description: "Discover why SystemVerilog replaced Verilog as the industry standard for verification."
+description: "Explain how Verilog, SystemVerilog and UVM relate, match verification problems to SystemVerilog features, and predict whether legacy Verilog compiles as SystemVerilog."
 flashcards: "F1C_Why_SystemVerilog"
 ---
 
 ## Quick Take
-- **What it is:** SystemVerilog (IEEE 1800) is the industry-standard hardware design and verification language. It extended Verilog's RTL capabilities with design features from Co-Design Automation's Superlog and verification features largely from Synopsys's OpenVera (Vera) donation.
-- **Why it matters:** Before SystemVerilog, designers and verifiers spoke different languages. SV eliminated the language gap and enabled reusable, scalable verification methodologies like UVM.
-- **The Standard:** IEEE 1800-2023 is the current revision. Since IEEE 1800-2009, the Verilog standard (IEEE 1364-2005) has been merged into it, so SystemVerilog contains all of Verilog. It also reserves new keywords, so a few legacy files need `` `begin_keywords `` to compile (§22.14).
 
-## The Evolution of a Language
+- **What it is:** SystemVerilog, IEEE 1800-2023, is one language for hardware design, specification and verification (§1.1). It contains all of Verilog (IEEE 1364) and adds design features, such as `logic`, `always_ff` and enums, and verification features: classes, constrained randomization, functional coverage and assertions. UVM (Universal Verification Methodology) is a separate standard, IEEE 1800.2-2020: a class library written in SystemVerilog.
+- **Why it matters:** Every lesson from F2A onward uses these features. Knowing which standard defines what tells you where to look things up, why a legacy file suddenly fails to compile, and why `uvm_component` is not in the SystemVerilog standard.
+- **The Analogy:** SystemVerilog is to Verilog roughly what C++ is to C: almost all old code still compiles, but new reserved words (`class`, `new`) break a few legal old files. *Where it breaks:* SystemVerilog absorbed the Verilog standard into one document in 2009, and UVM, unlike C++'s standard library, is not part of the language standard at all.
 
-In the 1990s, Verilog was king. It was great for describing hardware (RTL) but weak for verifying it. Verification engineers often used separate hardware verification languages such as **e** (Specman) or **Vera** for complex testbenches. This created a "language gap": designers spoke Verilog, verifiers spoke something else.
+**You will be able to:**
+1. Explain how IEEE 1364 (Verilog), IEEE 1800-2023 (SystemVerilog), IEEE 1800.2-2020 (UVM) and Accellera's uvm-core 2020.3.1 library relate.
+2. Match a verification problem to the SystemVerilog feature and clause that solves it: classes (Clause 8), constrained randomization (Clause 18), functional coverage (Clause 19) and assertions (Clause 16).
+3. Predict whether a legacy Verilog file compiles as SystemVerilog, and fix it with `` `begin_keywords `` (§22.14), a rename or an escaped identifier.
+4. Name the design features SystemVerilog adds, and explain why it is one language for design and verification.
 
-**SystemVerilog** closed that gap. Accellera built it from donations, and IEEE standardized it as IEEE 1800-2005. It combined:
-1.  **Hardware description:** All of Verilog, plus design extensions from Co-Design Automation's **Superlog** donation.
-2.  **Verification features:** Classes, constrained randomization and functional coverage, largely based on Synopsys's **OpenVera** (Vera) donation. Assertions (SVA) grew from the **OpenVera Assertions** donation.
-3.  **C-like types:** `typedef`, structs, enums, 2-state `int` and `bit`.
+<BeforeYouStart />
 
-The **e** language was not merged into SystemVerilog. It was standardized separately as IEEE 1647.
+## Build Your Mental Model
 
-The result is one language for both design and verification.
+### From Verilog to SystemVerilog
 
-## Verilog vs. SystemVerilog
+In the 1990s Verilog (IEEE 1364) was the standard language for describing hardware, but it was weak for building testbenches. Verification engineers often wrote testbenches in separate hardware verification languages such as **e** (Specman) and **Vera**. Designers and verifiers spoke different languages.
 
-Why did we switch? Compare the two side by side, then test the claim that every Verilog file compiles unchanged as SystemVerilog.
+**SystemVerilog** closed that gap in steps, and the standards record the steps precisely:
+- **Accellera**, an industry standards body, built SystemVerilog as extensions to Verilog. Its SystemVerilog 3.1a manual was the precursor to IEEE 1800-2005 (IEEE 1800-2023 §1.4). Industry accounts credit Co-Design Automation's Superlog as the starting point for the design extensions and Synopsys's OpenVera donation for most verification features; those donor details come from industry history, not from the IEEE text.
+- **IEEE 1800-2005 held only the extensions.** It relied on IEEE 1364-2005 for the base Verilog language and was not a self-contained standard (§1.3 NOTE, §1.4 NOTE).
+- **IEEE 1800-2009 merged the two** into one document. Since 2009, SystemVerilog contains all of Verilog (§1.3 NOTE).
+- Revisions followed in 2012, 2017 and 2023. **IEEE 1800-2023** is current.
+- The e language was not merged. It was standardized separately as IEEE 1647.
 
-<VerilogVsSystemVerilog />
+UVM has its own line, which the next sections explain. Both lines are shown here:
 
-## Key Superpowers
+<ArchitectureDiagram
+  title="How Verilog, SystemVerilog and UVM standards relate"
+  caption="Rows show order within each column, not exact years. Language column: IEEE 1800-2023 §1.3 and §1.4. UVM column: IEEE 1800.2-2020's front matter and Introduction, and the uvm-core 2020.3.1 README."
+  cellHeight={52}
+  gapY={36}
+  nodes={[
+    { id: "v95", label: "IEEE 1364-1995", sublabel: "Verilog", kind: "generic", col: 0, row: 0 },
+    { id: "e", label: "e (Specman)", sublabel: "later IEEE 1647, separate", kind: "generic", col: 1, row: 0 },
+    { id: "v01", label: "IEEE 1364-2001", sublabel: "Verilog-2001", kind: "generic", col: 0, row: 1 },
+    { id: "sv31a", label: "SystemVerilog 3.1a", sublabel: "Accellera, precursor", kind: "generic", col: 1, row: 1 },
+    { id: "v05", label: "IEEE 1364-2005", sublabel: "last Verilog standard", kind: "generic", col: 0, row: 2 },
+    { id: "sv05", label: "IEEE 1800-2005", sublabel: "extensions only", kind: "generic", col: 1, row: 2 },
+    { id: "sv09", label: "IEEE 1800-2009", sublabel: "merged: one language", kind: "generic", col: 0, row: 3 },
+    { id: "ovm", label: "OVM and VMM", sublabel: "methodology libraries", kind: "generic", col: 1, row: 3 },
+    { id: "sv12", label: "IEEE 1800-2012", kind: "generic", col: 0, row: 4 },
+    { id: "auvm", label: "Accellera UVM", sublabel: "pre-IEEE class reference", kind: "generic", col: 1, row: 4 },
+    { id: "sv17", label: "IEEE 1800-2017", kind: "generic", col: 0, row: 5 },
+    { id: "u17", label: "IEEE 1800.2-2017", sublabel: "first UVM standard", kind: "generic", col: 1, row: 5 },
+    { id: "sv23", label: "IEEE 1800-2023", sublabel: "current SystemVerilog", kind: "generic", col: 0, row: 6 },
+    { id: "u20", label: "IEEE 1800.2-2020", sublabel: "current UVM standard", kind: "generic", col: 1, row: 6 },
+    { id: "core", label: "uvm-core 2020.3.1", sublabel: "Accellera library", kind: "generic", col: 1, row: 7 }
+  ]}
+  edges={[
+    { from: "v95", to: "v01", style: "causal", label: "revised" },
+    { from: "v01", to: "v05", style: "causal", label: "revised" },
+    { from: "sv31a", to: "sv05", style: "causal", label: "precursor of" },
+    { from: "v05", to: "sv09", style: "causal", label: "merged into" },
+    { from: "sv05", to: "sv09", style: "causal", label: "merged into" },
+    { from: "sv09", to: "sv12", style: "causal", label: "revised" },
+    { from: "sv12", to: "sv17", style: "causal", label: "revised" },
+    { from: "sv17", to: "sv23", style: "causal", label: "revised" },
+    { from: "ovm", to: "auvm", style: "causal", label: "basis of" },
+    { from: "auvm", to: "u17", style: "causal", label: "source for" },
+    { from: "u17", to: "u20", style: "causal", label: "revised" },
+    { from: "u20", to: "core", style: "causal", label: "implemented by" }
+  ]}
+/>
 
-### 1. Object-Oriented Programming (OOP)
-SystemVerilog introduced **Classes** (IEEE 1800-2023 §8). This allowed verification engineers to build reusable testbench components (Drivers, Monitors, Scoreboards) that could be instantiated dynamically. This is the foundation of **UVM**.
+A common pitfall is saying "SystemVerilog replaced Verilog." It did not: it absorbed it. A Verilog file is SystemVerilog code, with the keyword exceptions explained below.
 
-### 2. Constrained Randomization
-Instead of writing a loop to generate 1,000 packets, you define a class with random variables and constraints (IEEE 1800-2023 §18).
+### One language for design and verification
+
+IEEE 1800-2023 §1.1 describes SystemVerilog as a unified hardware design, specification and verification language. The design half matters as much as the verification half:
+
+| Design feature | Problem it fixes | IEEE 1800-2023 |
+|---|---|---|
+| `logic` | One 4-state type for what Verilog split between `reg` and `wire` uses; `logic` and `reg` are the same type. [F2A](/curriculum/T1_Foundational/F2A_Core_Data_Types/index) teaches the rules for driving it. | §6.11.2 |
+| `always_comb`, `always_ff` | State the intent; tools should warn when the code does not match it, for example an inferred latch in `always_comb` | §9.2.2.2, §9.2.2.4 |
+| `unique` and `priority` on `if` and `case` | State that conditions are exclusive or ordered; violations are reported | §12.4.2, §12.5.3 |
+| `enum` | Named states instead of magic numbers | §6.19 |
+| `struct` and `typedef` | Bundle related fields into one type | §7.2, §6.18 |
+| Packages | Share types and functions between the RTL and the testbench | §26.2 |
+| Interfaces | Bundle a bus's signals once; used by both the RTL and testbenches | Clause 25 |
+
+Packages and interfaces are where the two halves meet:
+
+<ArchitectureDiagram
+  title="One compile serves design and testbench"
+  caption="An illustration; the names are examples. One package of shared types and one interface serve both the RTL and the testbench, compiled together by one tool. Tags: DUT = design under test, IF = interface."
+  nodes={[
+    { id: "c", label: "one SystemVerilog compile", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "pkg", label: "types_pkg", sublabel: "package: shared types", kind: "generic", col: 0, row: 0, colSpan: 2 },
+    { id: "dut", label: "dut", sublabel: "design: always_ff, enum", kind: "dut", col: 0, row: 1 },
+    { id: "tb", label: "tb_top", sublabel: "testbench: classes", kind: "generic", col: 1, row: 1 },
+    { id: "bus", label: "bus_if", sublabel: "interface: signal bundle", kind: "interface", col: 0, row: 2, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "pkg", to: "dut", style: "structural", label: "import" },
+    { from: "pkg", to: "tb", style: "structural", label: "import" },
+    { from: "dut", to: "bus", style: "structural", label: "port" },
+    { from: "tb", to: "bus", style: "structural", label: "drives, samples" }
+  ]}
+/>
+
+Two opposite mistakes, both wrong: "SystemVerilog is only a verification language, so RTL stays in Verilog," and "SystemVerilog is a design language, and testbenches are written in UVM." The RTL in this course is written in SystemVerilog, and UVM is SystemVerilog code.
+
+### Four verification features and the problems they solve
+
+Each verification feature answers one testbench problem that Verilog left to hand-written code:
+
+| Testbench problem | Feature | IEEE 1800-2023 |
+|---|---|---|
+| Reuse one driver or checker across tests and projects | Classes, with inheritance and polymorphism | Clause 8 |
+| Generate many legal stimuli without hand-writing each one | Constrained randomization | Clause 18 |
+| Know whether every interesting case actually happened | Functional coverage (covergroups) | Clause 19 |
+| Check timing rules on every clock, automatically | Assertions (SVA) | Clause 16 |
+
+Here are tiny previews. You do not need to follow every keyword yet: I-SV-1, I-SV-2A, I-SV-3A and I-SV-4A teach the syntax.
+
+**Classes and constrained randomization.** Instead of hand-writing 1,000 packets, you state the legal values once and call `randomize()` in a loop. Always check its result: it returns 0 when the constraints cannot be met.
+
 ```systemverilog
+// snippet: preview of Clauses 8 and 18
 class Packet;
   rand bit [7:0] length;
-  constraint c_len { length > 0; length < 100; }
+  constraint c_len { length inside {[1:99]}; }   // the legal range, stated once
 endclass
-```
-The solver does the hard work for you.
 
-### 3. Functional Coverage
-You can define "Covergroups" to track what values a variable has taken (IEEE 1800-2023 §19). A covergroup embedded in a class can see the class's fields and is created in `new()` (§19.4):
+initial begin
+  Packet p;
+  p = new();
+  repeat (1000) begin
+    if (!p.randomize()) $fatal(1, "randomize failed");
+    // ...send p to the DUT
+  end
+end
+```
+
+**Functional coverage.** A covergroup records which values actually occurred. One declared inside a class can see the class's fields, and it is created in the class's `new()` (§19.4). This one has no clocking event, so the testbench calls `sample()` after each randomization.
+
 ```systemverilog
+// snippet: preview of Clause 19
 class Packet;
   rand bit [7:0] length;
-  constraint c_len { length > 0; length < 100; }
+  constraint c_len { length inside {[1:99]}; }
 
-  covergroup cg_len;          // embedded covergroup: sees length
+  covergroup cg_len;                 // embedded covergroup: it can see length
     coverpoint length {
       bins low  = {[1:32]};
-      bins high = {[33:99]};  // length < 100, so 100 is never legal
+      bins high = {[33:99]};
     }
   endgroup
 
   function new();
-    cg_len = new();           // embedded covergroups are created in new()
+    cg_len = new();                  // an embedded covergroup is created in new()
   endfunction
 endclass
 
-// After each p.randomize(), record the value:
+// After each successful p.randomize(), record the value:
 // p.cg_len.sample();
 ```
-This covergroup has no clocking event, so the testbench calls `sample()` explicitly after each randomization.
 
-### 4. Assertions (SVA)
-A concise way to specify temporal behavior (IEEE 1800-2023 §16).
-`assert property (@(posedge clk) req |-> ##2 gnt);`
-(If `req` is high, `gnt` *must* be high 2 cycles later).
+**Assertions.** One line states a timing rule, and the simulator checks it on every clock:
 
-## Interview Questions
+```systemverilog
+// snippet: preview of Clause 16
+a_req_gnt: assert property (@(posedge clk) req |-> ##2 gnt);
+```
 
-<Card className="mt-8">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">Is SystemVerilog backward compatible with Verilog?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>Mostly. IEEE 1364-2005 Verilog was merged into IEEE 1800-2009, so every Verilog construct is part of SystemVerilog. But SystemVerilog reserves new keywords (such as <code>logic</code>, <code>bit</code>, <code>int</code>, <code>class</code>), and a keyword cannot be used as an identifier. Legacy code such as <code>reg [7:0] logic;</code> fails to compile with a SystemVerilog keyword set. Wrap such files in <code>&#96;begin_keywords "1364-2005"</code> … <code>&#96;end_keywords</code> (IEEE 1800-2023 §22.14), or rename the signals.</p>
-      </div>
-    </details>
+Read it as: at every rising edge of `clk` where `req` is sampled 1, `gnt` must be sampled 1 exactly two rising edges later. `|->` means "if the left side matches, check the right side starting from the same edge", and `##2` means "two clock cycles later". Values are sampled at the clock edge, and nothing is checked about `gnt` in between.
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is the difference between `reg`, `wire`, and `logic`?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>In Verilog, <code>wire</code> is for connections (driven by assign/gates) and <code>reg</code> is for storage (driven by procedural blocks). This was confusing because <code>reg</code> doesn't always imply a register.</p>
-        <p>SystemVerilog introduced <strong><code>logic</code></strong> as a clearer name for the same 4-state type as <code>reg</code> (IEEE 1800-2023 §6.11.2). A <code>logic</code> variable can be written by procedural code <em>or</em> driven by a continuous assignment or port, so you rarely need to switch types when refactoring. The precise rule (§6.5): a variable can be written by any number of procedural statements (the last write wins), <em>or</em> by exactly one continuous assignment or one port. It is an error to have two continuous drivers, or to mix continuous and procedural writes. When a signal truly needs several continuous drivers (a tri-state bus, for example), use a net such as <code>wire</code>, whose resolution function combines them.</p>
-      </div>
-    </details>
+<TimingDiagram
+  title="req |-> ##2 gnt, one passing and one failing attempt"
+  caption="Each value is the one sampled at the rising edge above it. The attempt from edge 1 (req sampled 1) passes at edge 3, where gnt is sampled 1. The attempt from edge 4 fails at edge 6, where gnt is sampled 0. Edges where req is 0 start attempts that succeed vacuously."
+  edges={8}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "req", kind: "bit", values: [0, 1, 0, 0, 1, 0, 0, 0] },
+    { name: "gnt", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0, 0] }
+  ]}
+  highlights={[
+    { from: 1, to: 3, tone: "pass", label: "attempt from edge 1" },
+    { from: 4, to: 6, tone: "fail", label: "attempt from edge 4" }
+  ]}
+  markers={[
+    { edge: 3, tone: "pass", label: "attempt from edge 1: gnt sampled 1 at edge 3" },
+    { edge: 6, tone: "fail", label: "attempt from edge 4: gnt sampled 0 at edge 6" }
+  ]}
+/>
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">Name the four key verification features SystemVerilog adds over Verilog.</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p><strong>1. OOP</strong> — classes with inheritance and polymorphism for reusable testbench components.</p>
-        <p><strong>2. Constrained Randomization</strong> — solver-driven stimulus generation with declarative constraints.</p>
-        <p><strong>3. Functional Coverage</strong> — covergroups and coverpoints to measure verification completeness.</p>
-        <p><strong>4. Assertions (SVA)</strong> — temporal property checking that runs every clock cycle automatically.</p>
-        <p>Together, these enable the UVM methodology and modern constrained-random verification.</p>
-      </div>
-    </details>
-  </CardContent>
-</Card>
+### Verilog vs SystemVerilog side by side
+
+Compare the two languages feature by feature. Then answer the visual's question about a legacy file before you read its answer.
+
+<VerilogVsSystemVerilog />
+
+What the comparison shows:
+- The **Data Types** tab is the design side; the **Object Oriented Programming**, **Assertions** and **Randomization** tabs are the verification side.
+- **The legacy-file question:** a legal Verilog-2001 file that names a signal `logic` fails under a SystemVerilog keyword set, because `logic` is reserved. IEEE 1800-2023 §22.14 uses exactly this example. The fix selects the keyword set for that file: the standard's example uses `"1364-2001"`, and says `"1364-1995"` or `"1364-2005"` would also work.
+- **With no directive**, the keyword set is the tool's default, which the standard leaves implementation dependent (§22.14). Many tools choose it from the file extension or a command-line option; that is tool-dependent.
+- The last classic mistake is "Verilog code cannot run in a SystemVerilog simulator." It does run, because SystemVerilog contains all of Verilog. The exceptions are identifiers that became keywords and a few changed semantics, such as declaration initializers (Push Further).
+
+### UVM: a separate standard and a library
+
+**UVM** (Universal Verification Methodology) is not part of IEEE 1800:
+- **The standard.** IEEE 1800.2-2020 defines UVM as a set of application programming interfaces (APIs) for a base class library, built on IEEE 1800 (IEEE 1800.2-2020 §1.1; its Clause 2 lists IEEE 1800 as its normative reference). It is a revision of IEEE 1800.2-2017.
+- **Its roots.** The standard's informative Introduction says UVM is built on the Open Verification Methodology (OVM), which combined the Advanced Verification Methodology (AVM) and the Universal Reuse Methodology (URM) with concepts from the e Reuse Methodology (eRM). UVM also adds concepts and code from the Verification Methodology Manual (VMM), and its transaction-level modeling (TLM) is based on the Open SystemC Initiative's (OSCI) work for SystemC.
+- **The library.** A standard defines an API; code implements it. Accellera's **uvm-core 2020.3.1** is a SystemVerilog library "matching the requirements of IEEE 1800.2-2020", under the Apache-2.0 license. Its deviations from the standard are listed in its `DEVIATIONS.md` file (uvm-core README).
+- **How you use it.** Like any SystemVerilog package: all of UVM is exported through `uvm_pkg` (IEEE 1800.2-2020 §1.4.5). It needs an IEEE 1800-compliant simulator; check your vendor's supported versions.
+
+```systemverilog
+// snippet: how UVM code starts (taught from I-UVM-1A)
+`include "uvm_macros.svh"   // uvm-core's file of UVM macros, such as `uvm_component_utils
+import uvm_pkg::*;          // every UVM class, from the library
+```
+
+<ArchitectureDiagram
+  title="Where UVM lives in a SystemVerilog simulation"
+  caption="Everything inside the outer box is SystemVerilog, compiled by one simulator. uvm_pkg is a library (Accellera's uvm-core) that implements the API IEEE 1800.2-2020 defines. Your classes extend its base classes after import uvm_pkg::*;, and tb_top starts the test with run_test(). IEEE 1800-2023 defines none of the uvm_ classes."
+  gapX={84}
+  nodes={[
+    { id: "sim", label: "simulator (IEEE 1800-2023)", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "dut", label: "dut", sublabel: "your RTL", kind: "dut", col: 0, row: 0 },
+    { id: "top", label: "tb_top", sublabel: "your top module", kind: "generic", col: 1, row: 0 },
+    { id: "myitem", label: "my_item", sublabel: "your class", kind: "generic", col: 0, row: 1 },
+    { id: "mytest", label: "my_test", sublabel: "your class", kind: "test", col: 1, row: 1 },
+    { id: "pkg", label: "uvm_pkg = uvm-core 2020.3.1", kind: "generic", col: 0, row: 2, colSpan: 2, container: true },
+    { id: "item", label: "uvm_sequence_item", sublabel: "IEEE 1800.2 §14.1", kind: "generic", col: 0, row: 2 },
+    { id: "test", label: "uvm_test", sublabel: "IEEE 1800.2 §13.2", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "myitem", to: "item", style: "structural", label: "extends" },
+    { from: "mytest", to: "test", style: "structural", label: "extends" },
+    { from: "top", to: "mytest", style: "causal", label: "run_test()" },
+    { from: "top", to: "dut", style: "structural", label: "instantiates" }
+  ]}
+/>
+
+The second classic mistake is "UVM is part of IEEE 1800." `uvm_component`, `uvm_test` and every other `uvm_` class are defined by IEEE 1800.2 and shipped as a library; a SystemVerilog simulator knows nothing about them until you compile `uvm_pkg`.
+
+### Recap
+
+- IEEE 1800-2009 merged Verilog (IEEE 1364-2005) into SystemVerilog, so SystemVerilog contains all of Verilog; IEEE 1800-2023 is current.
+- SystemVerilog is one language for design (`logic`, `always_ff`, `unique`, enums, structs, packages, interfaces) and verification (classes, constraints, coverage, assertions).
+- Classes (Clause 8) give reuse, constrained randomization (Clause 18) gives stimulus breadth, functional coverage (Clause 19) gives measurement, and assertions (Clause 16) give timing checks.
+- UVM is a separate standard (IEEE 1800.2-2020) implemented by a library (uvm-core) that you import as `uvm_pkg`.
+- New keywords can break legal legacy files; `` `begin_keywords ``, a rename or an escaped identifier fixes them.
+
+## Make It Work
+
+### Worked example: bring a legacy Verilog file into a SystemVerilog bench
+
+A legacy Verilog-2001 counter names its output port `logic`. That was legal in Verilog-2001; it is a keyword in SystemVerilog. The first file keeps the legacy code unchanged and selects the Verilog-2001 keyword set for it alone.
+
+```systemverilog
+// compile
+// legacy_cnt.v: legal IEEE 1364-2001 Verilog. 'logic' is an ordinary name there.
+`timescale 1ns/1ps
+`begin_keywords "1364-2001"
+module legacy_cnt (clk, rst, logic);
+  input        clk;
+  input        rst;
+  output [7:0] logic;
+  reg    [7:0] logic;
+
+  always @(posedge clk)
+    if (rst) logic <= 8'd0;
+    else     logic <= logic + 8'd1;
+endmodule
+`end_keywords
+```
+
+The second file is an ordinary SystemVerilog testbench. It cannot write `.logic(q)`, because `logic` is a keyword here; it names the port with an escaped identifier instead.
+
+```systemverilog
+// compile
+// tb_top.sv: compiled with SystemVerilog keywords.
+`timescale 1ns/1ps
+module tb_top;
+  logic       clk = 1'b0;
+  logic       rst = 1'b1;
+  logic [7:0] q;
+
+  // .logic(q) would be a syntax error here: logic is a keyword in SystemVerilog.
+  // An escaped identifier names the port; the space before '(' ends it.
+  legacy_cnt u_cnt (.clk(clk), .rst(rst), .\logic (q));
+
+  always #5 clk = ~clk;
+
+  initial begin
+    @(posedge clk);              // reset is sampled at this edge
+    rst <= 1'b0;                 // nonblocking: released after the edge, so no race
+    repeat (3) @(posedge clk);   // three increments
+    @(negedge clk);              // check mid-cycle, when q is stable
+    if (q !== 8'd3) $error("q=%0d, expected 3", q);  // self-checking, as in F1B
+    else            $display("PASS q=%0d", q);
+    $finish;
+  end
+endmodule
+```
+
+Expected output (traced by hand; not from a simulator run):
+
+```text
+PASS q=3
+```
+
+Why it works, line by line:
+- `` `begin_keywords "1364-2001" `` reserves only the Verilog-2001 keywords for the code that follows, and the matching `` `end_keywords `` restores the previous set, so the testbench file is unaffected (§22.14). The directives must sit outside any module.
+- `\logic ` is an **escaped identifier**: it starts with a backslash and ends at white space. An escaped keyword is treated as a user-defined identifier (§5.6.1), so it names the port called `logic`.
+- Both files carry `` `timescale ``, because it is an error for some design elements to have a time unit and others not (§3.14.2.3).
+- The counter resets at the first edge (5 ns), then counts at the next three edges (15, 25 and 35 ns). The testbench checks at the falling edge at 40 ns, when `q` is stable at 3.
+- Remove the `` `begin_keywords `` pair and compile the legacy file with SystemVerilog keywords, and it fails: that is the clash the pair fixes. Which keywords a tool uses for a `.v` file with no directive is tool-dependent, which is exactly why the explicit pair is safer.
+
+**How to bring any legacy file in:**
+1. Compile it as SystemVerilog and read the errors: they name the identifiers that became keywords.
+2. Wrap the legacy file in a `` `begin_keywords `` pair naming the Verilog version it was written for, and leave its contents unchanged.
+3. In the SystemVerilog files that connect to it, name each clashing port with an escaped identifier (`\logic `, with the space) or connect by position.
+4. When the legacy file can be edited, rename the identifier and drop the directives.
+
+To run it, compile both files with an IEEE 1800-compliant simulator, with `tb_top` as the top module. How a tool decides which files are SystemVerilog, and its exact commands, are tool-dependent.
+
+**Checklist before moving on:**
+- [ ] I can say which standard defines `uvm_component`, and which library implements it.
+- [ ] I can fix a keyword clash three ways: a `` `begin_keywords `` pair, a rename or an escaped identifier.
+- [ ] I can say since which revision IEEE 1800 contains all of Verilog, and what IEEE 1800-2005 contained.
+- [ ] I can match classes, constraints, covergroups and assertions to the problem each solves and its clause.
+
+## Push Further
+
+### Expert: How a tool picks the keyword set
+
+- With no directive, the reserved keyword list is the implementation's default set, and that default is implementation dependent (§22.14). The standard mentions invocation options and source file extensions as possible ways to choose it; what your tool does is tool-dependent.
+- `` `begin_keywords `` can appear only outside a design element. It affects all source that follows, even across file boundaries, until the matching `` `end_keywords ``; `` `resetall `` does not affect it; and pairs can nest, each `` `end_keywords `` restoring the set that was in effect before (§22.14).
+- An implementation that does not recognize the version specifier must report an error, and implementations may add their own specifiers (§22.14).
+- The directives change only which identifiers are reserved. They do not change the language's semantics (§22.14), so `` `begin_keywords "1364-2001" `` does not make a file behave like a Verilog-2001 simulator.
+
+### Expert: Keywords by revision
+
+- Each version specifier reserves the keywords of its revision: 1364-1995 (Table 22-1), plus Table 22-2 for 1364-2001, Table 22-3 for 1364-2005, Table 22-4 for 1800-2005 (which brought `bit`, `logic`, `class` and `final`), Table 22-5 for 1800-2009 (`checker`, `let`, `until` and others) and Table 22-6 for 1800-2012 (`implements`, `interconnect`, `nettype`, `soft`). IEEE 1800-2017 and 1800-2023 add no new reserved keywords (§22.14.2 to §22.14.9).
+- IEEE 1800-2023 Annex B lists every keyword of the current revision.
+- A `"1364-2001-noconfig"` specifier also exists: it removes the configuration keywords, such as `config` and `library`, from the 1364-2001 list (§22.14.4).
+- An escaped keyword, such as `\logic `, is a user-defined identifier (§5.6.1); keywords are only ever the nonescaped, lowercase forms (§5.6.2).
+
+### Expert: Not only keywords
+
+Keywords are not the only difference legacy code can meet. In IEEE 1364-2005, a declaration initializer ran as if it were an assignment in an initial procedure, after simulation started. In SystemVerilog, a static variable's initial value is set before any initial or always procedure starts (IEEE 1800-2023 §6.8 and its NOTE).
+
+```systemverilog
+// snippet
+reg ready = 1'b1;   // Verilog-2005: like "initial ready = 1'b1;" at time 0
+always @(ready) $display("ready changed to %b", ready);
+```
+
+Under the Verilog-2005 rule, the change from X to 1 at time 0 could wake the `always` block, depending on which process ran first. Under SystemVerilog, `ready` is already 1 before the `always` block starts waiting, so it never sees a change at time 0. Legacy code that relied on that time-0 event behaves differently.
+
+### Expert: What IEEE 1800-2023 added
+
+The 2023 revision added no keywords, but it did add features. Four that testbench writers notice:
+- **Triple-quoted strings** (`"""…"""`) that can contain unescaped quotes and newlines (§5.9).
+- **The array `map()` method**, which returns a new array with each element replaced by an expression (§7.12.5).
+- **`:initial`, `:extends` and `:final` method specifiers** (§8.20). `:initial` says the method must not override a virtual method, `:extends` says it must override one, and `:final` says no subclass may override it. The tool reports an error when the code breaks the promise, so an accidental override, or a missing one, no longer passes silently.
+- **Weak references** (`weak_reference#(T)`), which refer to an object without preventing its garbage collection (§8.30).
+
+Simulator support for each 2023 feature arrives at different times (tool-dependent). Check every tool in your flow before a shared testbench depends on one.
+
+### Expert: Standard vs implementation
+
+- IEEE 1800.2-2020 is a revision of IEEE 1800.2-2017 and defines the UVM API (front matter, §1.1). Accellera's uvm-core 2020.3.1 implements it and lists where it deviates in `DEVIATIONS.md` (README).
+- Code can test which UVM it is compiled with. The standard requires `` `UVM_VERSION `` (defined as 2020; Annex B.7.1), a `UVM_VERSION_STRING` string parameter in `uvm_pkg` that identifies the implementation (B.7.2), and `` `UVM_VERSION_POST_2017 `` for versions after IEEE 1800.2-2017 (B.7.3).
+- uvm-core also defines `` `UVM_POST_VERSION_1_2 ``, so code written for Accellera's older UVM 1.2 can test for it. That macro is uvm-core implementation, not standard (uvm-core 2020.3.1, `src/macros/uvm_version_defines.svh`).
+- Which UVM version a simulator ships precompiled, and how to point it at a different uvm-core, is tool-dependent.
+
+```systemverilog
+// snippet
+`ifdef UVM_VERSION_POST_2017
+  // code that needs an IEEE 1800.2-based UVM
+`else
+  // fallback for an older Accellera UVM
+`endif
+```
+
+### Interview angles
+
+Answer each one before you look at the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: is UVM part of SystemVerilog?"
+  question="Is UVM part of the SystemVerilog standard?"
+  options={[
+    { text: "Yes. The UVM classes are defined in IEEE 1800-2023 Clause 8, with the other built-in classes.", correct: false, feedback: "Clause 8 defines what a class is. No uvm_ class appears anywhere in IEEE 1800." },
+    { text: "No. UVM is IEEE 1800.2-2020, a class library written in SystemVerilog and imported from uvm_pkg.", correct: true, feedback: "Right. A strong answer adds that the standard defines the API and a library, such as Accellera's uvm-core, supplies the code." },
+    { text: "No. UVM is a separate verification language, with its own compiler and runtime.", correct: false, feedback: "UVM is ordinary SystemVerilog code, compiled with the rest of your testbench." },
+    { text: "Partly. UVM is a simulator feature that each vendor adds to its SystemVerilog tool.", correct: false, feedback: "Simulators often ship a precompiled copy, but it is still a library compiled from SystemVerilog source." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: a port named logic"
+  question="Your SystemVerilog testbench must connect to a legacy Verilog module whose output port is named logic. What do you do?"
+  options={[
+    { text: "Write .logic(q): the port is declared in the legacy file, so the name is legal everywhere.", correct: false, feedback: "Keywords are reserved per region of source. In the testbench, logic is a keyword, so .logic(q) is a syntax error." },
+    { text: "Compile the whole project, testbench included, with the Verilog-2001 keyword set.", correct: false, feedback: "Then the testbench's own SystemVerilog keywords, such as logic and class, stop being keywords and it fails to compile." },
+    { text: "Nothing: the tool renames identifiers that clash with keywords automatically.", correct: false, feedback: "Tools do not rename identifiers. A keyword used as a name is a syntax error until you fix it." },
+    { text: "Wrap the legacy file in a begin_keywords pair, and connect with .\\logic (q) or by position.", correct: true, feedback: "Right. The directive protects the legacy file; the escaped identifier lets SystemVerilog code name the port. Rename the port when the legacy file can be edited." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: adopting 2023 features"
+  question="Your team wants to use IEEE 1800-2023 features, such as triple-quoted strings and weak references, in a shared testbench. What do you check first?"
+  options={[
+    { text: "Nothing: every simulator supports each new IEEE revision from the day it is published.", correct: false, feedback: "Support for each new feature is tool-dependent and often arrives over several releases." },
+    { text: "Whether begin_keywords \"1800-2023\" turns the new features on for the shared files.", correct: false, feedback: "Keyword sets only reserve words; they do not enable or disable language features (§22.14). IEEE 1800-2023 added no keywords at all." },
+    { text: "Whether every tool in the flow supports each feature, at the versions the team actually uses.", correct: true, feedback: "Right. Language support arrives feature by feature, and a shared testbench is only as portable as its least-supported construct. Decide whether the code must still build with older tools, and fall back to IEEE 1800-2017 constructs where it must." },
+    { text: "Only that the simulator comes from a large vendor, since large vendors track the standard.", correct: false, feedback: "Vendor size says nothing about which 2023 features a given release supports." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
+    {
+      question: "Where is uvm_component defined?",
+      objective: 1,
+      answers: [
+        { text: "IEEE 1800-2023 Clause 8, alongside the other built-in classes", correct: false, feedback: "Clause 8 defines classes in general. IEEE 1800 defines no uvm_ classes: UVM is a separate standard." },
+        { text: "IEEE 1800.2-2020 (§13.1); the uvm-core library implements it", correct: true, feedback: "Right. The UVM standard defines the API, Accellera's uvm-core supplies the code, and you import it from uvm_pkg." },
+        { text: "Nowhere in a standard: it is a reserved SystemVerilog keyword", correct: false, feedback: "It is not in the keyword list (IEEE 1800-2023 Annex B). It is an ordinary class name from a library." },
+        { text: "IEEE 1364-2005, which SystemVerilog absorbed in 2009", correct: false, feedback: "Verilog has no classes at all." }
+      ],
+      explanation: "UVM is IEEE 1800.2-2020, a class library standard built on IEEE 1800. uvm-core 2020.3.1 is Accellera's implementation of it."
+    },
+    {
+      question: "Since which revision has IEEE 1800 contained the whole Verilog language?",
+      objective: 1,
+      answers: [
+        { text: "IEEE 1800-2005, the first IEEE SystemVerilog standard", correct: false, feedback: "IEEE 1800-2005 held only the extensions and relied on IEEE 1364-2005 for the base language (§1.4 NOTE)." },
+        { text: "IEEE 1800-2023, the revision that added no new keywords", correct: false, feedback: "The merge happened three revisions earlier, in 2009." },
+        { text: "IEEE 1800-2009, which merged IEEE 1364-2005 into it", correct: true, feedback: "Right (IEEE 1800-2023 §1.3 NOTE)." },
+        { text: "Never: Verilog is still maintained as a separate standard", correct: false, feedback: "IEEE 1364-2005 was the last Verilog standard; its contents live on inside IEEE 1800." }
+      ],
+      explanation: "Accellera's SystemVerilog 3.1a led to IEEE 1800-2005 (extensions only); IEEE 1800-2009 merged Verilog in, so SystemVerilog contains all of Verilog."
+    },
+    {
+      question: "A legacy file declares wire soft; and is compiled inside `begin_keywords \"1800-2009\". What happens?",
+      objective: 3,
+      answers: [
+        { text: "It compiles: soft became a keyword only in IEEE 1800-2012", correct: true, feedback: "Right (Table 22-6). Under the 1800-2009 set, soft is an ordinary identifier." },
+        { text: "Error: soft is a SystemVerilog keyword in every version", correct: false, feedback: "It is a keyword from 1800-2012 on, but this file selected the 1800-2009 keyword set." },
+        { text: "Error: `begin_keywords cannot select an older SystemVerilog version", correct: false, feedback: "It can: \"1800-2009\" is one of the listed version specifiers (§22.14)." },
+        { text: "It compiles only under a Verilog (1364) keyword set", correct: false, feedback: "Every keyword set before 1800-2012 accepts it, including 1800-2005 and 1800-2009." }
+      ],
+      explanation: "Each version specifier reserves only that revision's keywords. IEEE 1800-2012 added implements, interconnect, nettype and soft (Table 22-6)."
+    },
+    {
+      question: "legacy_cnt.v compiles inside `begin_keywords \"1364-2001\" and has a port named logic. Your SystemVerilog testbench writes .logic(q). What happens?",
+      objective: 3,
+      answers: [
+        { text: "It compiles: the `begin_keywords pair applies to every file compiled after it", correct: false, feedback: "It applies only until the matching `end_keywords, which closes the legacy file (§22.14)." },
+        { text: "It compiles: a named port connection may use any keyword as the port name", correct: false, feedback: "A keyword is never an ordinary identifier, in a port connection or anywhere else. Only the escaped form \\logic is a user-defined identifier (§5.6.1)." },
+        { text: "A syntax error in legacy_cnt.v, until it selects `begin_keywords \"1800-2023\"", correct: false, feedback: "The legacy file is fine as it is. Switching it to 1800-2023 keywords would make logic a keyword there too and break it." },
+        { text: "A syntax error: logic is a keyword in the testbench; use .\\logic (q) or connect by position", correct: true, feedback: "Right. An escaped keyword is a user-defined identifier (§5.6.1), so .\\logic (q) names the port." }
+      ],
+      explanation: "Keyword sets are chosen per region of source. The legacy file keeps its Verilog-2001 set; the testbench uses SystemVerilog keywords, so it needs an escaped identifier or a positional connection."
+    },
+    {
+      question: "You must check that every request gets a grant within 4 cycles, on every cycle of every test. Which feature fits?",
+      objective: 2,
+      answers: [
+        { text: "A covergroup (Clause 19)", correct: false, feedback: "Coverage records what happened; it never fails." },
+        { text: "A constraint (Clause 18)", correct: false, feedback: "Constraints shape the stimulus you generate. They check nothing about the design's response." },
+        { text: "A concurrent assertion (Clause 16)", correct: true, feedback: "Right. It states the timing rule once and is checked at every clock." },
+        { text: "A class hierarchy (Clause 8)", correct: false, feedback: "Classes organize testbench code; they do not check timing by themselves." }
+      ],
+      explanation: "Classes give reuse, constraints give stimulus breadth, coverage gives measurement, and assertions give automatic timing checks."
+    },
+    {
+      question: "You need to know whether every burst length from 1 to 16 was actually exercised in the regression. Which feature fits?",
+      objective: 2,
+      answers: [
+        { text: "A constraint that allows lengths 1 to 16 (Clause 18)", correct: false, feedback: "A constraint makes those lengths legal to generate; it does not record which ones were generated." },
+        { text: "A covergroup with a bin per burst length (Clause 19)", correct: true, feedback: "Right. Coverage measures which values occurred, across every test and seed." },
+        { text: "An assertion that the burst length is 1 to 16 (Clause 16)", correct: false, feedback: "An assertion checks a rule and fails when it is broken; it does not count which values occurred." },
+        { text: "A burst base class with a length field (Clause 8)", correct: false, feedback: "A class organizes the burst data; it measures nothing." }
+      ],
+      explanation: "Generating a value and knowing it was generated are different jobs: constraints do the first, functional coverage the second."
+    },
+    {
+      question: "Which statement about SystemVerilog is accurate?",
+      objective: 4,
+      answers: [
+        { text: "A verification language only: the RTL itself stays in plain Verilog", correct: false, feedback: "SystemVerilog adds design features too, and the RTL in this course is written in it." },
+        { text: "A design language: testbenches are written in UVM, a separate language", correct: false, feedback: "UVM is a class library written in SystemVerilog, not a separate language." },
+        { text: "A synthesis subset of Verilog: only synthesizable constructs are standardized", correct: false, feedback: "IEEE 1800 standardizes the whole language, including classes, coverage and assertions." },
+        { text: "One language for both: always_ff for design, classes and covergroups for verification", correct: true, feedback: "Right. IEEE 1800-2023 §1.1 calls it a unified design, specification and verification language; unique case is another design feature." }
+      ],
+      explanation: "One language serves both sides: logic, always_ff, unique, enums, structs, packages and interfaces on the design side; classes, constraints, coverage and assertions on the verification side."
+    }
+  ]}
+/>
+
+### Drill: problem to feature
+
+For each testbench or design problem, name the SystemVerilog feature and its clause.
+
+1. Reuse one driver across several projects.
+2. Generate only legal bursts.
+3. Know whether every burst length was tried.
+4. `gnt` must follow `req` within 3 cycles.
+5. One type for what Verilog split between `reg` and `wire` uses.
+6. Catch an accidental latch in combinational code.
+7. Bundle a bus's signals once, for both RTL and testbench.
+8. Share types between the RTL and the testbench.
+
+<details>
+<summary>Worked solution</summary>
+
+| # | Feature | IEEE 1800-2023 |
+|---|---|---|
+| 1 | Classes, with inheritance | Clause 8 |
+| 2 | Constrained randomization | Clause 18 |
+| 3 | Functional coverage (covergroups) | Clause 19 |
+| 4 | Concurrent assertions | Clause 16 |
+| 5 | `logic` | §6.11.2 |
+| 6 | `always_comb` (tools should warn when latched behaviour is inferred) | §9.2.2.2 |
+| 7 | Interfaces | Clause 25 |
+| 8 | Packages | §26.2 |
+
+Items 1 to 4 are the verification half and items 5 to 8 the design half; interfaces and packages serve both.
+
+</details>
+
+### Drill: will this Verilog line compile as SystemVerilog?
+
+Each line sits inside a module in a file wrapped in `` `begin_keywords "1800-2023" ``. Predict whether it compiles. If it does not, name the oldest keyword set that would accept it.
+
+1. `reg [7:0] logic;`
+2. `wire bit;`
+3. `integer final;`
+4. `wire until;`
+5. `wire soft;`
+6. `wire rand_en;`
+
+<details>
+<summary>Worked solution</summary>
+
+| # | Compiles under "1800-2023"? | Why | Accepted under |
+|---|---|---|---|
+| 1 | No | `logic` became a keyword in 1800-2005 (Table 22-4); this is the §22.14 example | "1364-2005" and older Verilog sets |
+| 2 | No | `bit` became a keyword in 1800-2005 (Table 22-4) | "1364-2005" and older |
+| 3 | No | `final` became a keyword in 1800-2005 (Table 22-4) | "1364-2005" and older |
+| 4 | No | `until` became a keyword in 1800-2009 (Table 22-5) | "1800-2005" and older |
+| 5 | No | `soft` became a keyword in 1800-2012 (Table 22-6) | "1800-2009" and older |
+| 6 | Yes | `rand_en` is not a keyword; only `rand` is | Every set |
+
+Since 1800-2017 and 1800-2023 added no keywords (§22.14.9), the answers are the same under `"1800-2012"` and `"1800-2017"`.
+
+</details>
+
+The flashcards below cover the standards, the four features with their clauses, the keyword fixes and the 2023 additions.
 
 ## References & Next Topics
-- IEEE 1800-2023 SystemVerilog Language Reference Manual
-- IEEE 1364-2005 Verilog (predecessor standard, merged into IEEE 1800 in 2009)
-- IEEE 1647 (the *e* verification language, standardized separately from SystemVerilog)
-- Next: [Core Data Types](/curriculum/T1_Foundational/F2A_Core_Data_Types/index)
+
+- IEEE 1800-2023: §1.1 (scope), §1.3 and §1.4 with their NOTEs (the 2009 merger; SystemVerilog 3.1a), §3.14.2.3 (time unit rules), §5.6.1 and §5.6.2 (escaped identifiers, keywords), §5.9 (string literals), §6.8 and its NOTE (variable initializers), §6.11.2 (`logic` and `reg`), §6.18, §6.19, §7.2, §7.12.5 (`map()`), Clause 8 (classes; §8.20 and §8.30), §9.2.2.2 and §9.2.2.4, §12.4.2 and §12.5.3, Clause 16 (assertions), Clause 18 (constrained randomization), Clause 19 (functional coverage; §19.4), §22.14 with §22.14.1 to §22.14.9 (`` `begin_keywords ``), Clause 25 (interfaces), §26.2 (packages), Annex B (keywords).
+- IEEE 1800.2-2020: front matter (revision of IEEE 1800.2-2017), Introduction (informative; UVM's roots), §1.1 (scope), §1.4.5 (`uvm_pkg`), Clause 2 (normative reference to IEEE 1800), §13.1 (`uvm_component`), §13.2 (`uvm_test`), §14.1 (`uvm_sequence_item`), Annex B.7.1 to B.7.3 (version macros).
+- Accellera uvm-core 2020.3.1: `README.md` and `src/macros/uvm_version_defines.svh`, at [github.com/accellera-official/uvm-core](https://github.com/accellera-official/uvm-core) (tag `2020.3.1`).
+- IEEE 1647, the e verification language, named for the history only.
+
+**Related:**
+- [F1B: The Verification Mindset](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index): why these features exist (review).
+- [I-SV-1: Object-Oriented Programming for Verification](/curriculum/T2_Intermediate/I-SV-1_OOP/index): classes.
+- [I-SV-2A: Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index): constraints.
+- [I-SV-3A: Functional Coverage Fundamentals](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index): covergroups.
+- [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): assertions.
+- [I-SV-6: Compiler Directives and Generates](/curriculum/T2_Intermediate/I-SV-6_Compiler_Directives_and_Generates/index): directives in depth.
+- [I-SV-9: Why UVM](/curriculum/T2_Intermediate/I-SV-9_Why_UVM/index): UVM's history and purpose in depth.
+
+F2A starts with the 4-state values behind `logic` and `bit`.
+
+<NextLesson />

@@ -1,94 +1,1173 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import { Quiz, InteractiveCode, InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Semaphores: Keys, Mutual Exclusion and Deadlock"
+description: "Guard shared resources with single- and multi-key semaphores, predict key counts and wake-up order, and diagnose leaked keys, lock-order deadlocks and starvation from their symptoms."
+flashcards: "I-SV-5_Semaphores"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+---
 
-export const metadata = {
-  title: "Semaphores | Advanced SystemVerilog for Verification",
-  description: "Control access to shared resources using semaphore keys.",
-};
+## Quick Take
 
-<InfoPage
-  title="Semaphores"
-  sv_concept_tags={["semaphores"]}
->
+- **What it is:** A **semaphore** is a built-in SystemVerilog class that hands out keys from a bucket (IEEE 1800-2023 §15.3). A process takes keys with `get()` before it touches a shared resource and returns them with `put()` afterwards. When the bucket holds too few keys, `get()` makes the process wait, and the process resumes by itself as soon as another process returns enough keys.
+- **Why it matters:** Testbench threads share things that only one of them, or only a few, may use at a time: a bus model, a memory port, the requests a target can accept. Without a semaphore, two threads drive the same signals in the same time slot and the damage looks like a design bug. With one, three new bugs become possible: a key that is never returned, two threads that each hold the key the other needs, and a thread that never gets a turn. None of them prints an error by itself. The test stops early, hangs, or quietly never finishes part of its work.
+- **The Analogy:** A key cabinet outside a workshop with one machine. You take the key to use the machine; if the cabinet is empty, you join the queue at the door; when you hang the key back, the person at the front of the queue takes it. *Where it breaks:* the keys carry no names, so anyone can hang a key back, even one they never took, and the cabinet can end up holding more keys than it started with. A worker sent home mid-job (a killed process) takes the key along, and nobody notices. And the queue protects only the people already standing in it.
 
-  ## Level 1: The Big Idea
-  *IEEE 1800-2023, Clause 15.3: Semaphores*
+**You will be able to:**
+1. Predict the key count and the process that runs next after any sequence of `new`, `get`, `put` and `try_get` calls, including `new()` with no argument, a multi-key `get(n)` and a `put()` that raises the count above its starting value.
+2. Write mutual exclusion for a shared bus driver and a credit limit with a multi-key semaphore, with every exit path returning its keys and an end-of-test check that proves it.
+3. Debug a leaked key, from an early exit or a killed holder, starting from its symptom in the log.
+4. Diagnose a lock-order deadlock between two semaphores from its symptoms, and fix it with one acquisition order or an all-or-nothing acquire.
+5. Explain which wake-up order the standard guarantees to semaphore waiters and which it leaves open, and fix a waiter that starves.
 
-  A **semaphore** is like a set of keys. Processes must take a key (`get`) before using a shared resource and return it (`put`) when done. If no keys are available, the process waits.
+<BeforeYouStart />
 
-  ## Level 2: Practical Usage
+## Build Your Mental Model
 
-  ### Getting and Putting Keys
+### A semaphore is a bucket of keys
 
-  -   `semaphore sem = new(1);` creates a semaphore with one key.
-  -   `sem.get(n);` acquires `n` keys, blocking until `n` are free at once. Waiters are queued first-in first-out and resume by themselves (IEEE 1800-2023 §15.3.3).
-  -   `sem.put(n);` releases keys. It never checks who took them, and it can raise the count above the initial value (§15.3.1).
-  -   `sem.try_get(n);` attempts to get keys without blocking: positive if it got them, 0 otherwise (§15.3.4).
+The standard describes a semaphore as a bucket of keys (§15.3). `new(n)` creates the bucket with n keys. A process calls `get(1)` to take a key before it uses the shared resource, and `put(1)` to return it afterwards. If the bucket is empty, `get(1)` **blocks**: the process stops at that line and joins a waiting queue. It resumes by itself when a key comes back. Nobody polls.
 
-  <InteractiveCode>
-  ```systemverilog
-  semaphore bus_sem = new(1);
+The code between a process's `get()` and its `put()` is its **critical section**. With one key, at most one process can be inside its critical section at any moment; that guarantee is called **mutual exclusion**. With n keys, at most n processes can be inside at once.
 
-  // automatic: each concurrent call gets its own copy of name.
-  // A static task (the module default) would share one `name` between both calls.
-  task automatic master(string name);
-    bus_sem.get(1);        // wait for access
-    $display("%s using bus at %0t", name, $time);
-    #10;
-    bus_sem.put(1);        // release
+`semaphore` is a class (§15.2), so a `semaphore` variable holds a **handle** to the object, as in [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index). Every process that uses the same handle shares the same bucket. Declare it with its initializer at module scope, `semaphore bus_lock = new(1);`, and the object exists before any `initial` procedure starts (§6.8).
+
+<figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
+  <svg viewBox="0 0 360 212" role="img" aria-label="The semaphore bus_lock, created with new(1), at t = 5 ns. Process A holds the only key and is running its critical section. The bucket holds 0 free keys. B and C are blocked in get(1) and wait in arrival order: B first, waiting since 2 ns, then C, waiting since 4 ns. When A calls put(1), the key goes to B, the oldest waiter." style={{ width: "100%", maxWidth: 520 }}>
+    <text x="70" y="14" textAnchor="middle" fontSize="11" fill="currentColor" fillOpacity="0.75">holds the key</text>
+    <rect x="10" y="22" width="120" height="70" rx="10" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="70" y="45" textAnchor="middle" fontSize="16" fontWeight="600" fill="currentColor">A</text>
+    <circle cx="58" cy="61" r="5" fill="none" stroke="rgb(245,158,11)" strokeWidth="2" />
+    <line x1="63" y1="61" x2="84" y2="61" stroke="rgb(245,158,11)" strokeWidth="2" />
+    <line x1="78" y1="61" x2="78" y2="66" stroke="rgb(245,158,11)" strokeWidth="2" />
+    <line x1="83" y1="61" x2="83" y2="66" stroke="rgb(245,158,11)" strokeWidth="2" />
+    <text x="70" y="84" textAnchor="middle" fontSize="11" fill="currentColor">running</text>
+    <line x1="132" y1="57" x2="190" y2="57" stroke="currentColor" strokeOpacity="0.8" strokeWidth="1.5" />
+    <path d="M190,53 L197,57 L190,61 Z" fill="currentColor" fillOpacity="0.8" />
+    <text x="162" y="49" textAnchor="middle" fontSize="11" fontFamily="ui-monospace, monospace" fill="currentColor">put(1)</text>
+    <text x="271" y="14" textAnchor="middle" fontSize="11" fontFamily="ui-monospace, monospace" fill="currentColor">bus_lock = new(1)</text>
+    <path d="M200,22 L208,92 L334,92 L342,22" fill="rgba(245,158,11,0.06)" stroke="currentColor" strokeOpacity="0.6" strokeWidth="1.5" />
+    <text x="271" y="50" textAnchor="middle" fontSize="13" fontWeight="600" fill="currentColor">0 free keys</text>
+    <rect x="246" y="60" width="50" height="20" rx="5" fill="none" stroke="currentColor" strokeOpacity="0.5" strokeDasharray="3 3" />
+    <text x="271" y="74" textAnchor="middle" fontSize="11" fill="currentColor" fillOpacity="0.75">empty</text>
+    <line x1="271" y1="94" x2="271" y2="120" stroke="currentColor" strokeOpacity="0.8" strokeWidth="1.5" strokeDasharray="4 3" />
+    <path d="M267,120 L271,127 L275,120 Z" fill="currentColor" fillOpacity="0.8" />
+    <text x="279" y="114" fontSize="11" fill="currentColor">next key</text>
+    <text x="182" y="146" textAnchor="end" fontSize="11" fill="currentColor" fillOpacity="0.75">wait queue (FIFO):</text>
+    <text x="182" y="160" textAnchor="end" fontSize="11" fill="currentColor" fillOpacity="0.75">oldest first</text>
+    <rect x="192" y="128" width="158" height="36" rx="8" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" strokeDasharray="5 3" />
+    <text x="271" y="143" textAnchor="middle" fontSize="12" fontWeight="600" fill="currentColor">1. B</text>
+    <text x="271" y="158" textAnchor="middle" fontSize="10.5" fill="currentColor">in get(1) since 2 ns</text>
+    <rect x="192" y="172" width="158" height="36" rx="8" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" strokeDasharray="5 3" />
+    <text x="271" y="187" textAnchor="middle" fontSize="12" fontWeight="600" fill="currentColor">2. C</text>
+    <text x="271" y="202" textAnchor="middle" fontSize="10.5" fill="currentColor">in get(1) since 4 ns</text>
+    <rect x="10" y="180" width="14" height="10" rx="2" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="30" y="189" fontSize="10.5" fill="currentColor">running</text>
+    <rect x="10" y="196" width="14" height="10" rx="2" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" strokeDasharray="3 2" />
+    <text x="30" y="205" fontSize="10.5" fill="currentColor">blocked in get()</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">The key bucket at 5 ns in the example below. A (solid box, running) holds the only key, so the bucket is empty. B and C (dashed boxes, blocked) wait in <code>get(1)</code> in the order they arrived. When A calls <code>put(1)</code> at 10 ns, the key goes to B, the oldest waiter, and B resumes by itself; C waits for the next <code>put(1)</code>.</figcaption>
+</figure>
+
+The example the picture freezes: three masters share one bus through one task.
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  semaphore bus_lock = new(1);          // one key: one master on the bus at a time
+
+  // automatic: each concurrent call gets its own copy of who
+  task automatic use_bus(string who);
+    bus_lock.get(1);                    // take the key, or wait in line for it
+    $display("[%0t] %s drives the bus", $time, who);
+    #10;                                // the critical section lasts 10 ns
+    $display("[%0t] %s releases the bus", $time, who);
+    bus_lock.put(1);                    // return the key: the oldest waiter takes it
   endtask
 
   initial begin
     fork
-      master("A");
-      master("B");
+      use_bus("A");
+      begin #2; use_bus("B"); end       // asks at 2 ns, while A holds the key
+      begin #4; use_bus("C"); end       // asks at 4 ns, and queues behind B
+    join
+    $display("[%0t] all done", $time);
+  end
+endmodule
+```
+
+**Expected output** (illustrative: traced by hand from §15.3.2–§15.3.3, not from a simulator run):
+
+```text
+[0] A drives the bus
+[10] A releases the bus
+[10] B drives the bus
+[20] B releases the bus
+[20] C drives the bus
+[30] C releases the bus
+[30] all done
+```
+
+Read the log against the rules. B asks at 2 ns while A holds the key, so B waits; C asks at 4 ns and queues behind B. When A calls `put(1)` at 10 ns, B, the oldest waiter, takes the key and resumes by itself. Each "releases" line prints before `put(1)`, so the next "drives" line can never come first, and the three transfers never overlap.
+
+### The four methods and their key counts
+
+The class has exactly four methods (Annex G.3):
+
+| Call | Prototype | What happens to the count | Blocks? |
+|---|---|---|---|
+| `new(n)` | `function new(int keyCount = 0);` | The bucket starts with n keys. **`new()` alone starts with 0.** | Never |
+| `get(n)` | `task get(int keyCount = 1);` | Takes n keys in one step, once n keys are free at the same time (§15.3.3). | Until n keys are free |
+| `put(n)` | `function void put(int keyCount = 1);` | Adds n keys, with no upper limit. A waiting process whose request now fits continues (§15.3.2). | Never |
+| `try_get(n)` | `function int try_get(int keyCount = 1);` | Takes n keys and returns a positive value, or takes nothing and returns 0 (§15.3.4). | Never |
+
+Rules to carry into every bench, each with the mistake it prevents:
+
+- **`new()` is an empty bucket.** The default count is 0 (§15.3.1), while `get()` and `put()` default to one key. A lock created with `new()` blocks its very first `get(1)`, and the bench stalls unless some process happens to call `put()` first. Write `new(1)`.
+- **`put()` can push the count above where it started** (§15.3.1). The standard gives keys no owner: §15.3.2 lets any process call `put()`, with no check that it ever took a key. A stray second `put(1)` therefore creates an extra key, and two processes can then be inside a one-key critical section together.
+- **`try_get()` never waits, and never joins the queue** (§15.3.4). Check its result. Code that ignores a 0 and uses the resource anyway has no protection, and its later `put(1)` adds a key nobody took.
+- **Negative counts are errors.** `get(-1)` and `put(-1)` are errors; `try_get(-1)` returns 0 and is an error too (§15.3.2–§15.3.4).
+- **Nothing reads the count.** There is no method that returns how many keys are free (Annex G.3). Make It Work shows how to check the count at the end of a test with `try_get()` and `put()`.
+- **`get()` is a task; `put()` and `try_get()` are functions.** A function cannot call `get()` directly (§13.4), but it can return keys or try for them.
+
+### Predict the queue, then drive it yourself
+
+The interactive lab below runs the course's process model, a tested model of the §15.3 rules; its assumptions are listed in its frame. Start with the **FIFO wake-up** program. A takes the only key at 0 ns and returns it at 10 ns; B asks at 2 ns and keeps the key for 5 ns once it has it; C asks at 4 ns. **Predict:** when does C print "C got the key"? Then switch to the **get(2)** program: B asks for two keys from `new(0)` at 0 ns, and A, which holds no key, calls `put(1)` at 5 ns and again at 10 ns. **Predict:** when does B continue?
+
+<MailboxSemaphoreGame mode="semaphore" />
+
+**What the runs show.**
+- A blocked `get()` resumes by itself as soon as `put()` returns enough keys (§15.3.2). The model never needs a click to wake it, and neither does a simulator.
+- B joined the queue before C, so A's key went to B at 10 ns, and C waited for B's `put(1)` at 15 ns. Arrival order is preserved (§15.3.3).
+- `get(2)` ignored the single key at 5 ns. It takes its keys in one step, so B continued only at 10 ns, when two keys were free together.
+- In the sandbox, call `put(1)` from a process that holds nothing. The bucket gains a key and the model warns you, because SystemVerilog does not.
+- One behaviour you will see is the model's choice, not the standard's: with `new(2)`, a new `get(1)` takes a free key even while an older `get(2)` is still waiting. The standard leaves that case open; "Who gets the key next" below explains why it matters.
+
+### Mistake 1: the leaked key
+
+A **leaked key** is a key that a process took and never returned. With a one-key lock, every later `get()` then waits forever; with more keys, the bucket is one key short for the rest of the run. SystemVerilog has no exceptions and no `finally` block (Annex B reserves no `try`, `catch` or `finally` keyword), so nothing ever returns a key on your behalf. The usual ways out of a critical section without `put()`:
+
+- **An early exit** in the code between `get()` and `put()`: a `return`, a `break` or an error path that skips the rest. A `return` inside a task that the critical section *calls* ends only that task (§12.8), and the caller still reaches its `put()`.
+- **The holder is stopped.** `p.kill()`, `disable fork` and `disable` of a block or task end the code that would have called `put()` (§9.6.2, §9.6.3, §9.7). The [module overview](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index) shows how a `process` handle reaches and kills another thread.
+- **The holder never gets there.** It waits inside the critical section for something that never comes, such as a response or an event, and keeps the key while it waits.
+
+```systemverilog
+// snippet: broken: the error path leaves with the key
+bus_lock.get(1);
+if (pkt.bad) return;                    // skips put(1): the key is gone for good
+drive(pkt);
+bus_lock.put(1);
+```
+
+```systemverilog
+// snippet: fixed: one exit after get(1), whatever happens inside
+bus_lock.get(1);
+if (!pkt.bad) drive(pkt);               // the error path skips the work, not the put
+bus_lock.put(1);
+```
+
+**Debug it.** In the debug tab below, the test should send four packets, but only the first completes. **Predict** which line loses the key before you click, then choose a fix. The model reruns the whole test and checks three things: no process is left blocked, two senders never share the bus, and the bus ends with all its keys.
+
+<MailboxSemaphoreGame mode="debug" />
+
+**What the debug run shows.** `send(2)` returns on its error path while it holds the key. The driver's next `get(1)` and the checker's `get(1)` then wait forever, and the run simply stops at 12 ns. Simulation ends by itself when nothing is left to run (§9.6.1), so the symptom is a missing line, not an error. Only putting the key back on the error path passes all three checks. Moving `put(1)` up to just after `get(1)` breaks mutual exclusion. `try_get(1)` without checking its result drives the bus without the key. `new(2)` ends the hang, but the run still finishes one key short (1 of 2): the leak is hidden, not fixed, and a bus with two free keys lets two senders drive it together. The `ipc-deadlock` lab at the end of this page hides the same bug in a bigger bench, next to a lock-order deadlock.
+
+### Mistake 2: the lock-order deadlock
+
+A **deadlock** is a set of processes in which each waits for something only another member of the set can provide, so none of them can ever continue. With semaphores, the classic case is **lock-order inversion**: two processes need the same two semaphores and take them in opposite orders.
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  semaphore s1 = new(1);                // guards resource 1, say the bus
+  semaphore s2 = new(1);                // guards resource 2, say a memory port
+
+  initial begin : proc_a                // takes s1, then s2
+    s1.get(1);
+    $display("[%0t] proc_a holds s1, wants s2", $time);
+    #1;
+    s2.get(1);                          // waits forever: proc_b holds s2
+    $display("[%0t] proc_a holds s1 and s2", $time);
+    s2.put(1);
+    s1.put(1);
+  end
+
+  initial begin : proc_b                // takes s2, then s1: the opposite order
+    s2.get(1);
+    $display("[%0t] proc_b holds s2, wants s1", $time);
+    #1;
+    s1.get(1);                          // waits forever: proc_a holds s1
+    $display("[%0t] proc_b holds s1 and s2", $time);
+    s1.put(1);
+    s2.put(1);
+  end
+endmodule
+```
+
+**Expected output** (illustrative; the two lines may print in either order, because both initial procedures start at 0 ns and the standard leaves their order open, §9.2, §4.7):
+
+```text
+[0] proc_a holds s1, wants s2
+[0] proc_b holds s2, wants s1
+```
+
+Nothing else prints. At 1 ns both processes block, nothing is left to run, and the simulation ends by itself with no error (§9.6.1).
+
+Picture it two ways. The sequence diagram shows how the processes got here.
+
+<SequenceDiagram
+  title="How proc_a and proc_b deadlock"
+  caption="At 0 ns each process takes a key from a different semaphore, so both succeed. At 1 ns each asks for the key the other one holds. Neither get(1) can return, so neither process ever reaches its put(1)."
+  columnWidth={120}
+  participants={[
+    { id: "a", label: "proc_a", kind: "generic" },
+    { id: "s1", label: "s1", sublabel: "new(1)", kind: "generic" },
+    { id: "s2", label: "s2", sublabel: "new(1)", kind: "generic" },
+    { id: "b", label: "proc_b", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "t = 0 ns" },
+    { from: "a", to: "s1", label: "s1.get(1)" },
+    { kind: "return", from: "s1", to: "a", label: "key taken" },
+    { from: "b", to: "s2", label: "s2.get(1)" },
+    { kind: "return", from: "s2", to: "b", label: "key taken" },
+    { kind: "divider", label: "#1, t = 1 ns" },
+    { from: "a", to: "s2", label: "s2.get(1): blocks", tone: "error" },
+    { from: "b", to: "s1", label: "s1.get(1): blocks", tone: "error" },
+    { kind: "note", from: "a", to: "b", label: "proc_a holds s1 and waits for s2; proc_b holds s2 and waits for s1. The put(1) calls that would free them come after the blocked get(1) calls." }
+  ]}
+/>
+
+The **wait-for graph** shows why they can never leave. Draw an arrow from each waiting process to the semaphore it waits for, and from each semaphore to the process that holds its key. With one-key semaphores, a loop of arrows means the processes in it are deadlocked. (A semaphore with several keys can have holders outside the loop who may still return a key; Push Further covers that case.)
+
+<ArchitectureDiagram
+  title="Wait-for graph of the deadlock at t = 1 ns"
+  caption="Follow the arrows: proc_a waits for s2, s2 is held by proc_b, proc_b waits for s1, and s1 is held by proc_a. The arrows close a cycle, so no put(1) can ever run."
+  legend={false}
+  cellWidth={130}
+  nodes={[
+    { id: "a", label: "proc_a", sublabel: "blocked in s2.get(1)", kind: "generic", col: 0, row: 0, state: "error" },
+    { id: "s2", label: "s2", sublabel: "0 of 1 keys free", kind: "generic", col: 1, row: 0 },
+    { id: "b", label: "proc_b", sublabel: "blocked in s1.get(1)", kind: "generic", col: 1, row: 1, state: "error" },
+    { id: "s1", label: "s1", sublabel: "0 of 1 keys free", kind: "generic", col: 0, row: 1 }
+  ]}
+  edges={[
+    { from: "a", to: "s2", style: "causal", label: "waits for" },
+    { from: "s2", to: "b", style: "control", label: "held by" },
+    { from: "b", to: "s1", style: "causal", label: "waits for" },
+    { from: "s1", to: "a", style: "control", label: "held by" }
+  ]}
+/>
+
+**Symptoms.** Each process printed that it holds one semaphore and wants the other, and nothing follows. No error appears. With nothing else scheduled, the run ends at 1 ns; with a free-running clock or a watchdog, it runs on until the watchdog fires.
+
+**Fixes**, best first:
+
+1. **One global order.** Every process that needs both semaphores takes s1 before s2. Whoever gets s1 first also gets s2; the other waits for s1 while holding nothing, so no cycle can form.
+
+   ```systemverilog
+   // snippet: the fix: proc_b now takes s1 first, like proc_a
+   initial begin : proc_b
+     s1.get(1);                          // one global order: s1, then s2
+     #1;
+     s2.get(1);
+     $display("[%0t] proc_b holds s1 and s2", $time);
+     s2.put(1);                          // any release order is safe
+     s1.put(1);
+   end
+   ```
+
+2. **All or nothing.** When no fixed order is possible, for example because the resources are picked at run time, take the first key, try the second with `try_get()`, and if that fails, give the first one back and retry after a random pause.
+
+   ```systemverilog
+   // snippet: take both keys or neither, then retry after a random pause
+   task automatic get_both(semaphore first, semaphore second);
+     forever begin
+       first.get(1);
+       if (second.try_get(1)) return;    // got both: done
+       first.put(1);                     // give back what you hold...
+       #($urandom_range(5, 1));          // ...and retry after a random pause
+     end
+   endtask
+   ```
+
+   Without the random pause, two processes that back off for equal times can keep colliding forever. That is a **livelock**: both keep running, and neither makes progress.
+
+3. **One counting semaphore**, when the resources are interchangeable. With `semaphore ports = new(2);`, a process that needs two calls `ports.get(2)`, which takes both keys in one step, so nobody ever holds one key while waiting for another.
+
+**Not fixes:**
+- `s2 = new(2)`: proc_b gets in, but two processes can now hold s2 at once, so s2 no longer protects anything.
+- Killing one process: the deadlock ends, but the killed process's key is never returned (§9.7), so the next user of that semaphore hangs instead.
+- `try_get()` in a loop while still holding the other key: the process spins, and its partner stays blocked.
+
+**A deadlock can hide.** Delete both `#1` delays and the run usually passes, because each process takes both keys before the other one starts. But the standard lets a simulator suspend a process between any two statements (§4.7), so the opposite orders can still deadlock on a conforming simulator. A passing run proves nothing here: fix the order.
+
+### Multi-key semaphores: counting and credits
+
+The sections above are the core. The ones below add practitioner depth; read this one before Make It Work, which uses credits.
+
+A semaphore with n keys counts n interchangeable things: n channels, n buffer slots, n requests a target can accept. Each user takes as many keys as it needs and gives back the same number.
+
+**`get(n)` is all or nothing.** It waits until n keys are free at the same time and then takes them in one step (§15.3.3), as the get(2) program above showed. Two `get(1)` calls are not the same thing. With `new(2)`, two processes that each call `get(1)` twice can each end up holding one key and waiting forever for a second.
+
+**Credits.** A **credit** is a key that stands for permission to have one request outstanding. The requester takes one before each request, and whoever finishes the request returns it. That is often a different process, such as the one that receives the response, and it is legal because keys have no owner.
+
+```systemverilog
+// snippet: credits limit how many requests are outstanding
+semaphore credits = new(4);             // the target can queue 4 requests
+
+task automatic send_request(int unsigned id);
+  credits.get(1);                       // waits while 4 requests are outstanding
+  issue(id);                            // drive the request (not shown)
+endtask
+
+task automatic on_response(int unsigned id);   // runs in the response process
+  retire(id);                           // check the response (not shown)
+  credits.put(1);                       // a different process returns the credit
+endtask
+```
+
+Two rules keep credits honest. Return a credit on every path, including a request that the target refuses, because no response will come to return it. And never wait for a credit while holding a lock that the returning process needs (Interview angles). Make It Work builds a bench that follows both rules.
+
+### Who gets the key next: FIFO, fairness and starvation
+
+**What the standard guarantees.** The waiting queue is first-in first-out (FIFO): processes blocked in `get()` are served in the order in which they arrived (§15.3.3).
+
+**What it leaves open.** The same clause says the FIFO rule does not decide the order in which processes reach the queue; it only keeps the order in which they arrived. In practice:
+
+- **Same-slot arrivals.** If two processes call `get()` in the same time slot, the scheduler decides which one arrives first (§4.7).
+- **`try_get()` has no place in line.** It never waits, so it never queues (§15.3.4). A task that polls with `try_get()` while other processes wait in `get()` can be passed over forever.
+- **Small requests overtaking a large one.** The text of `get()` says it takes the keys whenever enough are free. Whether a later `get(1)` may do that while an older `get(2)` is still waiting is not spelled out. The course model allows it; a simulator may instead queue the `get(1)` behind the `get(2)`. This is tool-dependent.
+- **Hand-off.** Whether the keys that `put()` returns are reserved for the woken waiter before it runs is not spelled out either (Push Further).
+
+<figure className="not-prose my-6 rounded-xl border border-border/70 bg-background/40 p-3">
+  <svg viewBox="0 0 360 258" role="img" aria-label="At 5 ns: W0 holds one key of chans, which was created with new(2), so one key is free. flush is first in the wait queue and needs 2 keys. W1 now calls get(1). On the course model, W1 takes the free key at once and flush keeps waiting. On a simulator that queues new callers behind earlier waiters, W1 waits behind flush, which gets both keys at 10 ns. The standard does not say which one is right." style={{ width: "100%", maxWidth: 480 }}>
+    <text x="62" y="14" textAnchor="middle" fontSize="11" fill="currentColor" fillOpacity="0.75">holds keys</text>
+    <rect x="10" y="22" width="104" height="62" rx="10" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="62" y="44" textAnchor="middle" fontSize="13" fontWeight="600" fill="currentColor">W0</text>
+    <text x="62" y="61" textAnchor="middle" fontSize="10.5" fill="currentColor">holds 1 key</text>
+    <text x="62" y="76" textAnchor="middle" fontSize="10.5" fill="currentColor">since 0 ns</text>
+    <text x="180" y="14" textAnchor="middle" fontSize="11" fontFamily="ui-monospace, monospace" fill="currentColor">chans = new(2)</text>
+    <path d="M128,22 L134,84 L226,84 L232,22" fill="rgba(245,158,11,0.06)" stroke="currentColor" strokeOpacity="0.6" strokeWidth="1.5" />
+    <text x="180" y="46" textAnchor="middle" fontSize="12" fontWeight="600" fill="currentColor">1 free key</text>
+    <circle cx="170" cy="64" r="4.5" fill="none" stroke="rgb(245,158,11)" strokeWidth="2" />
+    <line x1="174.5" y1="64" x2="193" y2="64" stroke="rgb(245,158,11)" strokeWidth="2" />
+    <line x1="188" y1="64" x2="188" y2="69" stroke="rgb(245,158,11)" strokeWidth="2" />
+    <text x="298" y="14" textAnchor="middle" fontSize="11" fill="currentColor" fillOpacity="0.75">wait queue (FIFO)</text>
+    <rect x="246" y="22" width="104" height="62" rx="8" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" strokeDasharray="5 3" />
+    <text x="298" y="43" textAnchor="middle" fontSize="12" fontWeight="600" fill="currentColor">1. flush</text>
+    <text x="298" y="60" textAnchor="middle" fontSize="10.5" fill="currentColor">needs 2 keys</text>
+    <text x="298" y="75" textAnchor="middle" fontSize="10.5" fill="currentColor">since 2 ns</text>
+    <rect x="100" y="104" width="160" height="28" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="180" y="122" textAnchor="middle" fontSize="11" fill="currentColor">W1 calls get(1) at 5 ns</text>
+    <line x1="130" y1="133" x2="130" y2="153" stroke="currentColor" strokeOpacity="0.8" strokeWidth="1.5" strokeDasharray="4 3" />
+    <path d="M126,153 L130,160 L134,153 Z" fill="currentColor" fillOpacity="0.8" />
+    <line x1="230" y1="133" x2="230" y2="153" stroke="currentColor" strokeOpacity="0.8" strokeWidth="1.5" strokeDasharray="4 3" />
+    <path d="M226,153 L230,160 L234,153 Z" fill="currentColor" fillOpacity="0.8" />
+    <rect x="10" y="162" width="164" height="70" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="92" y="181" textAnchor="middle" fontSize="11" fontWeight="600" fill="currentColor">Course model:</text>
+    <text x="92" y="198" textAnchor="middle" fontSize="10.5" fill="currentColor">W1 takes the free key</text>
+    <text x="92" y="213" textAnchor="middle" fontSize="10.5" fill="currentColor">now; flush keeps waiting</text>
+    <rect x="186" y="162" width="164" height="70" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="268" y="181" textAnchor="middle" fontSize="11" fontWeight="600" fill="currentColor">Strict FIFO policy:</text>
+    <text x="268" y="198" textAnchor="middle" fontSize="10.5" fill="currentColor">W1 waits behind flush;</text>
+    <text x="268" y="213" textAnchor="middle" fontSize="10.5" fill="currentColor">flush gets both at 10 ns</text>
+    <text x="180" y="252" textAnchor="middle" fontSize="10.5" fill="currentColor" fillOpacity="0.8">The standard does not say which one is right.</text>
+  </svg>
+  <figcaption className="mt-2 text-sm text-muted-foreground">The question FIFO does not answer. The standard keeps waiters in arrival order (§15.3.3), but it does not say whether W1's <code>get(1)</code> may take the free key past the older <code>get(2)</code>, so correct code must work with either outcome. The starvation example below runs this exact situation.</figcaption>
+</figure>
+
+**Starvation** is what an unfair order can cause: one process waits indefinitely while the others keep running. (In a deadlock, by contrast, nobody in the cycle runs.) Here a flush that needs both channels competes with two workers that each use one channel at a time.
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  semaphore chans = new(2);             // two identical channels
+  bit stop;                             // ends the workers after about 100 ns
+
+  // A worker uses one channel for 10 ns, then asks again at once.
+  task automatic worker();
+    while (!stop) begin
+      chans.get(1);
+      #10;
+      chans.put(1);
+    end
+  endtask
+
+  initial begin
+    fork
+      worker();                         // W0 starts at 0 ns
+      begin #5; worker(); end           // W1 starts at 5 ns
+      begin
+        #2;
+        chans.get(2);                   // the flush needs both channels at once
+        $display("[%0t] flush got both channels", $time);
+        chans.put(2);
+      end
+      begin #103; stop = 1; end
     join
   end
-  ```
-  </InteractiveCode>
+endmodule
+```
 
-  ## Failure Modes: Key Leaks and Deadlock
+Trace it on the course model, which lets a smaller request take free keys past a waiting larger one:
 
-  **The Lost Key / Leak:** 
-  The most common semaphore bug is acquiring a key and failing to return it. If a thread takes an early `return`, or is killed by `disable fork` or `process::kill()` before it calls `sem.put(...)`, that key is gone forever. SystemVerilog has no exceptions and no automatic cleanup: nothing returns the key for you. Subsequent threads calling `get()` will hang, starving the system. To avoid this, make every exit path of the critical section call `put()`.
+| t (ns) | What happens | Free keys after | flush |
+|---|---|---|---|
+| 0 | W0 takes a key | 1 | — |
+| 2 | flush asks for 2; only 1 is free | 1 | waiting |
+| 5 | W1 takes the free key | 0 | waiting |
+| 10 | W0 returns its key, then takes one again at once | 1, then 0 | waiting: never 2 free |
+| 15 | W1 returns its key, then takes one again | 1, then 0 | waiting |
+| … | the pattern repeats every 5 ns | 0 or 1 | waiting |
+| 103 | `stop` is set | 0 | waiting |
+| 105 | W1 returns its key and leaves | 1 | waiting |
+| 110 | W0 returns its key and leaves | 2, then 0 | gets both keys |
 
-  Find the line that loses the key, then choose a fix. The model reruns the whole test and checks three things: nobody is left blocked, two senders never share the bus, and the bus ends with all its keys.
+**Expected output** (illustrative, course model):
 
-  <MailboxSemaphoreGame mode="debug" />
+```text
+[110] flush got both channels
+```
 
-  **Deadlock (Circular Wait):**
-  If Thread A holds Semaphore 1 and waits for Semaphore 2, while Thread B holds Semaphore 2 and waits for Semaphore 1, the simulation halts indefinitely. 
-  
-  **The Fix:** Always acquire multiple semaphores in a strict, globally agreed-upon order, or use `try_get` with timeouts and randomized backoffs to break the cycle.
+On the course model the flush waited 108 ns and ran only because the workers stopped; with `forever` loops it would never run. On a simulator that queues a new `get()` behind an older waiter, W1's `get(1)` at 5 ns waits behind the flush, and the line reads `[10] flush got both channels` instead. You can watch the course-model behaviour in the sandbox of the semaphore lab above: choose `new(2)`, click A `get(1)`, B `get(2)`, C `get(1)`, then repeat A `put(1)`, A `get(1)`, C `put(1)`, C `get(1)`. B stays first in the queue and never wakes, because the bucket never holds two keys at once.
 
-  **Coordinating Random Stimulus:** When multiple threads generate randomized transactions, semaphores ensure only a safe number run concurrently. For more on stimulus generation, revisit [Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index).
+**Fix it on every simulator** by making the small users step aside while a large request waits:
 
-  ## Quiz
+```systemverilog
+// snippet: a gate that lets a waiting flush in first
+bit flush_pending;                      // workers take no new keys while it is set
 
-  <Quiz questions={[
-    {
-      question: "Which method acquires a semaphore key without blocking?",
-      answers: [
-        { text: "`get`", correct: false },
-        { text: "`put`", correct: false },
-        { text: "`try_get`", correct: true },
-        { text: "`wait`", correct: false }
-      ],
-      explanation: "`try_get` attempts to get keys and returns immediately if none are available."
-    }
-  ]} />
+task automatic worker();
+  while (!stop) begin
+    wait (!flush_pending);              // step aside for a waiting flush
+    chans.get(1);
+    #10;
+    chans.put(1);
+  end
+endtask
 
-  <div className="mt-8">
-    <InterviewQuestionPlayground
-      question="A junior engineer complains that their testbench hangs forever. They are using a semaphore to guard a shared memory bus: `bus_sem.get(1); write_to_bus(); bus_sem.put(1);`. What is the most likely way this code can cause a deadlock?"
-      options={[
-        { text: "There is no issue; `get()` and `put()` handles queuing automatically.", isCorrect: false, feedback: "Under normal conditions, yes, but what if something interrupts the flow between the get and the put?" },
-        { text: "The `write_to_bus()` task threw a fatal error, crashing the simulator.", isCorrect: false, feedback: "A fatal error stops simulation, it doesn't cause a hang/deadlock." },
-        { text: "SystemVerilog semaphores are not thread-safe.", isCorrect: false, feedback: "They are specifically designed to be thread-safe built-in primitives." },
-        { text: "The thread leaves before reaching `put(1)`: an early `return` on an error path, or a `disable fork` (or `disable` of its block) that kills it while it holds the key.", isCorrect: true, feedback: "Correct! The 'lost key' problem. SystemVerilog has no exceptions or automatic cleanup, so a thread that returns early or is killed while holding a semaphore key never returns it. All other threads waiting for that bus will hang forever." }
-      ]}
-    />
-  </div>
+// in the flush branch:
+//   flush_pending = 1;  chans.get(2);  flush_pending = 0;
+```
 
-</InfoPage>
+Once `flush_pending` is set at 2 ns, no worker starts a new `get(1)`, so the bucket fills as soon as W0 returns its key, and the line reads `[10] flush got both channels` on any simulator. Other fixes, by cause: a polling task should wait in `get()`, so that the FIFO queue covers it; keep critical sections short; and when the order of service matters, for example round-robin between masters, do not leave it to a semaphore. Let one arbiter process grant the requests in the order you choose.
 
+### Diagnosing a hang from its symptoms
+
+Synchronization bugs rarely print an error. Read the log for what is missing, then confirm the cause before you change code.
+
+| Symptom in the log | Likely cause | How to confirm | Fix |
+|---|---|---|---|
+| The last "granted" line has no matching "released"; later requesters stop in `get()` | Leaked key: an early exit, a kill or a stuck callee between `get()` and `put()` | Log every `get()` and `put()` with the process name; at the end, `try_get(N)` fails | One exit after `get()`; restore keys where processes are killed |
+| Two "holds X, wants Y" lines, then nothing | Lock-order deadlock | Draw the wait-for graph: the arrows close a cycle | One global order, or all or nothing |
+| One process never gets the resource while the others keep running | Starvation | Count grants per process; look for `try_get()` polling, or a large request behind small ones | Wait in `get()`; gate new requests; use an arbiter when order matters |
+| A process stops in `get()` while it already holds the only key | Self-deadlock: a nested `get()` on a semaphore that is not re-entrant | The same process logs "granted" and then blocks on the same semaphore | Take the key once, at the outermost level (Push Further) |
+| Two holders at once, and no hang | Surplus key: a second `put()`, or a `put()` by a process that never took a key | At the end, `try_get(N + 1)` succeeds | One `put()` per `get()` (Kata 2) |
+| A waiter is stuck at `@ev`, but the trigger line printed earlier in the same time slot | Lost event | Print `$time` before the wait and after the trigger | `wait (ev.triggered)`; see [Events](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/events) |
+| A consumer is stuck in `get()` on an empty mailbox | The producer finished, was killed, or never started | Count `put()` and `get()` calls per mailbox | See [Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes) |
+| A producer is stuck in `put()` on a full mailbox | The consumer was killed, for example by `disable fork`, or stalled | Check which process should have called `get()` | See [Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes) |
+| Simulation time stops advancing while memory grows | A zero-delay loop writing an unbounded mailbox | Time is stuck at one value in every message | Bound the mailbox or add timing; see [Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes) |
+
+**Quiet end or hang?** Simulation ends by itself when no activity of any kind remains (§9.6.1). A bench with no clock and no watchdog therefore ends quietly at its last activity, often with no error, which can look like a pass. A free-running clock or a watchdog keeps the run alive, so the same bug becomes a hang that ends only when the watchdog fires. In a UVM test, a blocked process that keeps an objection raised holds the run phase open until the global timeout ends it ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+
+**Make the log point at the culprit.** Give every test a watchdog that ends with `$fatal`, print a PASS/FAIL line only after the last expected step, and name every wait:
+
+```systemverilog
+// snippet: name every wait, so a hang points at its semaphore
+task automatic get_logged(semaphore sem, string sem_name, string who, int n = 1);
+  $display("[%0t] %s waits for %0d key(s) of %s", $time, who, n, sem_name);
+  sem.get(n);
+  $display("[%0t] %s got %0d key(s) of %s", $time, who, n, sem_name);
+endtask
+```
+
+After a hang, the last "waits for" line with no matching "got" line names every blocked process and the semaphore it waits on.
+
+### Semaphores in real testbenches
+
+- **Where they belong.** A bus model, memory port or shared interface that several bench threads drive: wrap every access in one task with `get()` and `put()`. A limit on outstanding requests: credits. A pool of identical resources: one key per resource.
+- **Where they do not.** To pass data, use a mailbox. To say "it happened now", use an event. To impose an order of service, use an arbiter: a semaphore serves only its waiters, in arrival order, and promises nothing else.
+- **In UVM.** Inside one agent, the sequencer already decides which sequence's item goes to the driver next, and a sequence that needs exclusive use calls `lock()` or `grab()` ([Sequence arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration)). Semaphores remain the tool for resources that no sequencer owns. UVM itself uses one: the register model gives every register a one-key semaphore, so that concurrent `read()`, `write()`, `mirror()`, `peek()` and `poke()` calls on one register run one at a time (uvm-core 2020.3.1 implementation, `src/reg/uvm_reg.svh`).
+
+<VisualRecap
+  title="One key, one exit"
+  rule="A semaphore is a bucket of keys with no owner. get() waits until enough keys are free, put() returns keys whoever calls it, and only processes already waiting in get() are served in arrival order."
+  code={`semaphore bus_lock = new(1); // new() alone gives 0 keys
+bus_lock.get(1);              // wait in line for the key
+if (!pkt.bad) drive(pkt);     // one exit: no return here
+bus_lock.put(1);              // every path ends here`}
+  mistake="Leaving the critical section by return, disable or kill() without put(): the key is gone and every later get() waits forever. The mirror image, a second put(), silently lets two processes in."
+  inTestbench="A shared bus or memory model driven by several threads; a credit limit on outstanding requests; a pool of identical channels. In UVM, share one driver through sequencer lock() and grab(); uvm_reg serializes accesses to each register with a one-key semaphore."
+>
+  <svg viewBox="0 0 320 128" role="img" aria-label="get(1) leads into the critical section, which leads to put(1). An error or refusal path leaves the critical section early but is routed into the same put(1), so every path returns the key." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="6" y="14" width="66" height="30" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="39" y="34" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, monospace" fill="currentColor">get(1)</text>
+    <line x1="72" y1="29" x2="92" y2="29" stroke="currentColor" strokeOpacity="0.7" />
+    <path d="M92,25 L99,29 L92,33 Z" fill="currentColor" fillOpacity="0.7" />
+    <rect x="100" y="14" width="118" height="30" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="159" y="34" textAnchor="middle" fontSize="12" fill="currentColor">critical section</text>
+    <line x1="218" y1="29" x2="242" y2="29" stroke="currentColor" strokeOpacity="0.7" />
+    <path d="M242,25 L249,29 L242,33 Z" fill="currentColor" fillOpacity="0.7" />
+    <rect x="250" y="14" width="64" height="30" rx="8" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="282" y="34" textAnchor="middle" fontSize="12" fontFamily="ui-monospace, monospace" fill="currentColor">put(1)</text>
+    <path d="M159,44 L159,66 L282,66 L282,52" fill="none" stroke="currentColor" strokeOpacity="0.7" strokeDasharray="5 3" />
+    <path d="M278,52 L282,45 L286,52 Z" fill="currentColor" fillOpacity="0.7" />
+    <text x="220" y="82" textAnchor="middle" fontSize="11" fill="currentColor">error or refusal path</text>
+    <text x="6" y="106" fontSize="11" fill="currentColor">Every path out of the critical section</text>
+    <text x="6" y="122" fontSize="11" fill="currentColor">passes through the same put(1).</text>
+  </svg>
+</VisualRecap>
+
+## Make It Work
+
+### Two masters share one bus driver
+
+This bench has the parts of a real shared-bus driver, in plain SystemVerilog:
+
+- `bus_lock = new(1)` guards the bus, so the two masters' transfers never overlap;
+- `credits = new(2)` allows at most two requests outstanding at the target, and the target's response process returns each credit;
+- the target refuses request 11, an early-exit path that must still return both keys;
+- an end-of-test check proves that each semaphore holds exactly its starting keys, and a watchdog with `$fatal` turns any leak into a loud failure.
+
+Every process takes `credits` before `bus_lock`. That one order is what keeps the bench free of deadlock (Mistake 2, and Interview angles).
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  semaphore bus_lock = new(1);          // one key: one master on the bus at a time
+  semaphore credits  = new(2);          // two keys: at most two requests outstanding
+
+  int unsigned busy, collisions, completed, nacks;
+  int unsigned pass_count, fail_count;
+
+  // The target refuses request 11: a stand-in for any early-exit path.
+  function automatic bit target_refuses(int unsigned id);
+    return id == 11;
+  endfunction
+
+  // The shared bus driver: exactly one exit after get(1), so the key always returns.
+  task automatic drive_on_bus(string who, int unsigned id, int unsigned xfer_ns,
+                              output bit ok);
+    bus_lock.get(1);                    // wait in line for the bus
+    busy++;
+    if (busy > 1) collisions++;         // proves mutual exclusion
+    $display("[%0t] %s: bus granted, req %0d", $time, who, id);
+    ok = !target_refuses(id);
+    if (ok) #(xfer_ns);                 // data phase
+    else    nacks++;                    // refused: no data phase
+    busy--;
+    $display("[%0t] %s: req %0d %s, bus released", $time, who, id,
+             ok ? "done" : "NACK");
+    bus_lock.put(1);                    // the single exit: every path gets here
+  endtask
+
+  // The target answers 25 ns after a transfer and returns the credit itself.
+  task automatic respond(int unsigned id);
+    #25;
+    $display("[%0t] target: req %0d response, credit returned", $time, id);
+    completed++;
+    credits.put(1);                     // a different process returns the key
+  endtask
+
+  task automatic master(string who, int unsigned first_id, int unsigned n,
+                        int unsigned xfer_ns);
+    for (int unsigned i = 0; i < n; i++) begin
+      bit ok;
+      credits.get(1);                   // always credits first, then the bus
+      drive_on_bus(who, first_id + i, xfer_ns, ok);
+      if (ok) begin
+        fork
+          automatic int unsigned id = first_id + i;  // copy now: the child runs later
+          respond(id);
+        join_none
+      end else begin
+        credits.put(1);                 // refused: no response will return it
+      end
+    end
+  endtask
+
+  // Returns 1 when sem holds exactly n free keys, and leaves the count unchanged.
+  function automatic bit holds_exactly(semaphore sem, int n);
+    if (!sem.try_get(n)) return 0;      // fewer than n: a key leaked
+    if (sem.try_get(1)) begin           // more than n: a key was returned twice
+      sem.put(n + 1);
+      return 0;
+    end
+    sem.put(n);
+    return 1;
+  endfunction
+
+  function automatic void check(bit ok, string what);
+    if (ok) pass_count++;
+    else begin
+      fail_count++;
+      $error("CHECK FAILED: %s", what);
+    end
+  endfunction
+
+  initial begin
+    fork
+      master("A", 1, 3, 10);            // req 1..3, 10 ns transfers
+      begin #4; master("B", 10, 2, 6); end  // req 10..11, 6 ns transfers
+    join
+    credits.get(2);                     // drain: wait until both credits are back
+    credits.put(2);
+    check(collisions == 0, "never two masters on the bus");
+    check(holds_exactly(bus_lock, 1), "bus_lock ends with exactly 1 key");
+    check(holds_exactly(credits, 2), "credits ends with exactly 2 keys");
+    check(completed + nacks == 5, "every request completed or was refused");
+    $display("[%0t] PASS=%0d FAIL=%0d", $time, pass_count, fail_count);
+    $finish;
+  end
+
+  initial begin                         // a leaked key ends the run here, loudly
+    #1000;
+    $fatal(1, "WATCHDOG at %0t: a process is still blocked in get()", $time);
+  end
+endmodule
+```
+
+**Run it.** Save the code as `tb_top.sv`, compile it on its own with any simulator that supports IEEE 1800-2023 semaphores, and run `tb_top`. It needs no plusargs. Compiled on its own, the design's only time unit and precision is 1 ns, so `%0t` prints whole nanoseconds (§20.4.3 gives the `%t` defaults). No simulator was run for this page, so the log below was traced by hand from the rules on this page.
+
+**Expected output** (illustrative, traced by hand):
+
+```text
+[0] A: bus granted, req 1
+[10] A: req 1 done, bus released
+[10] B: bus granted, req 10
+[16] B: req 10 done, bus released
+[35] target: req 1 response, credit returned
+[35] A: bus granted, req 2
+[41] target: req 10 response, credit returned
+[45] A: req 2 done, bus released
+[45] B: bus granted, req 11
+[45] B: req 11 NACK, bus released
+[45] A: bus granted, req 3
+[55] A: req 3 done, bus released
+[70] target: req 2 response, credit returned
+[80] target: req 3 response, credit returned
+[80] PASS=4 FAIL=0
+```
+
+Every line that shares a time with another is ordered by cause: a "released" line prints before its `put(1)`, and the next grant cannot happen until that `put(1)`. So every conforming simulator should print this same log.
+
+**Trace the keys.** Read this table next to the log. "Waiting" lists the processes blocked on each semaphore, oldest first.
+
+| t (ns) | What happens | `credits` free | `bus_lock` free | Waiting |
+|---|---|---|---|---|
+| 0 | A takes a credit and the bus; drives req 1 | 1 | 0 | — |
+| 4 | B takes the last credit and asks for the bus | 0 | 0 | B on `bus_lock` |
+| 10 | A releases the bus, so the key goes to B. A asks for a credit | 0 | 0 | A on `credits` |
+| 16 | B releases the bus and asks for a credit | 0 | 1 | A, B on `credits` |
+| 35 | `respond(1)` returns a credit; it goes to A, first in line. A takes the bus | 0 | 0 | B on `credits` |
+| 41 | `respond(10)` returns a credit to B. B asks for the bus | 0 | 0 | B on `bus_lock` |
+| 45 | A releases the bus to B and asks for a credit. B is refused, releases the bus and returns its own credit, which goes to A. A takes the bus | 0 | 0 | — |
+| 55 | A releases the bus. The test's `credits.get(2)` starts to wait | 0 | 1 | test on `credits` |
+| 70 | `respond(2)` returns a credit: one is not enough for `get(2)` | 1 | 1 | test on `credits` |
+| 80 | `respond(3)` returns the second; the drain succeeds, then the checks run | 2 | 1 | — |
+
+Three things to notice:
+- At 10 ns A has just freed the bus but must wait anyway: both credits are out. Between 16 and 35 ns the bus sits idle, because the credit limit, not the bus, throttles A.
+- At 35 ns the returned credit goes to A, not B. A has been waiting since 10 ns and B only since 16 ns (§15.3.3).
+- At 45 ns request 11 is refused. B still releases the bus through the same exit and returns its own credit, which lets A start request 3 at once.
+
+### Break it on purpose
+
+Replace the single exit with an early return on the refusal path:
+
+```systemverilog
+// snippet: the bug: an early exit inside drive_on_bus
+ok = !target_refuses(id);
+if (!ok) begin
+  nacks++;
+  busy--;
+  return;                               // leaves while still holding the bus key
+end
+#(xfer_ns);
+```
+
+**Expected output** (illustrative; the first six lines are unchanged):
+
+```text
+[41] target: req 10 response, credit returned
+[45] A: req 2 done, bus released
+[45] B: bus granted, req 11
+[70] target: req 2 response, credit returned
+WATCHDOG at 1000: a process is still blocked in get()
+```
+
+The last line follows the tool's own fatal-error header, which names the file, line, scope and time (§20.10). Read the log the way you would in a regression:
+
+1. B's grant for request 11 has no matching "bus released" line: B is the holder.
+2. B still returned its credit, so A took it and is now blocked in `bus_lock.get(1)`. Request 3 never starts, and no PASS line appears.
+3. Remove the watchdog and the run ends quietly at 70 ns instead, with no error at all: the last response was the last activity (§9.6.1).
+
+### How to add a semaphore to a testbench
+
+1. **Name the shared thing and how many users it can serve at once.** Create one semaphore for it with exactly that many keys: `new(1)` for a lock, `new(N)` for N credits or N channels. Never rely on `new()` alone.
+2. **Put `get()` and `put()` in one task** that every user calls, so the pair appears in exactly one place.
+3. **Hold the key only as long as the resource is busy:** take it just before the first shared signal changes, and return it as soon as the resource is idle again.
+4. **Give the task one exit after `get()`.** Use a status flag instead of `return`, and never kill or disable a process that may hold a key.
+5. **Write down one acquisition order** for any process that needs two semaphores (here: `credits`, then `bus_lock`) and keep it everywhere.
+6. **Return credits** from the process that finishes the request, and from the requester on every path where no response will come.
+7. **At the end of the test,** drain counting semaphores with `get(N)` then `put(N)`, and check that each semaphore holds exactly its starting keys: `try_get(N)` must succeed and `try_get(1)` must then fail.
+8. **Keep a watchdog** that ends with `$fatal`, and print the PASS/FAIL line only after the last check, so a hang is never mistaken for a pass.
+
+**Checklist before moving on:**
+- [ ] Every `get()` has exactly one `put()` on every path, including error and refusal paths.
+- [ ] Nothing can return from, disable or kill a process between its `get()` and its `put()`, or the code that kills it restores the keys.
+- [ ] Every process that needs two semaphores takes them in the same order.
+- [ ] Credits come back from the responder, or from the requester when no response will come.
+- [ ] The end-of-test check catches both a missing key and a surplus key.
+- [ ] No `try_get()` result is ignored.
+- [ ] The watchdog ends with `$fatal`, and a passing run prints `PASS=<n> FAIL=0`.
+
+## Push Further
+
+### Expert: What FIFO leaves open
+
+The FIFO rule of §15.3.3 leaves gaps that every implementation must fill somehow: the course model fills them one way, and your simulator may fill them another. Three are worth knowing, and all three are **tool-dependent**:
+
+- **Hand-off or barging.** §15.3.2 says a waiting process shall continue once enough keys are returned, but not whether those keys are reserved for it before it runs. If they are not, a process that calls `put(1)` and then `get(1)` again in the same time slot can take its own key straight back ("barging"), and a tight `forever` loop of `get(1)`, work, `put(1)` can starve every waiter. The course model hands the keys to the woken waiter inside `put()`, so it cannot show this.
+- **Head-of-line blocking.** Whether a `get(2)` at the head of the queue holds back a later `get(1)` that would fit, new or already waiting, is not spelled out. The course model lets every request that fits proceed, oldest waiter first, which is why the flush example starves on it.
+- **Same-slot arrivals.** Two `get()` calls in one time slot reach the queue in scheduler order (§4.7).
+
+Write code whose correctness and progress depend on none of these. If other processes must get a turn, do not `put()` and `get()` the same semaphore back to back in one time slot; gate new requests while a large one waits; and use an explicit arbiter when the order of service matters.
+
+### Expert: Key counts at the edges
+
+- **A negative start.** The starting count may be negative, and keys must climb above zero before `get()` or `try_get()` can take any (§15.3.1). `new(1 - N)` therefore lets one `get(1)` through after N `put(1)` calls. `new(0)` followed by `get(N)` says the same thing more clearly.
+- **Negative arguments** are errors: `get(-1)` and `put(-1)` report one, and `try_get(-1)` returns 0 and reports one (§15.3.2–§15.3.4).
+- **Functions and final procedures.** `put()` and `try_get()` are functions and `get()` is a task (Annex G.3), so only `put()` and `try_get()` can appear in a function or in a `final` procedure, which allows only the statements a function allows (§13.4, §9.2.3). That makes a `final` procedure a natural home for the exact-count check. Final procedures run when simulation ends, before any callback that reports the end (§9.2.3), and the standard names two ways to end: a `$finish`, including the one that `$fatal` makes implicitly (§20.10), and an event queue with nothing left in it (§9.6.1; `cbEndOfSimulation` in §38.36.3). Read together, these clauses mean a `final` check also reports on a run that stopped quietly.
+- **The exact-count check** has two halves: `try_get(N)` must succeed (no leak) and `try_get(1)` must then fail (no surplus). Checking only the first half misses the extra key a double `put()` creates.
+
+### Expert: Keys survive a kill, so reset must restore them
+
+`p.kill()`, `disable fork` and `disable` stop a process without running the rest of its code (§9.6.2, §9.6.3, §9.7), and there is no `try`/`finally` to run cleanup. A mid-test reset that kills driver threads therefore also deletes the keys they held. Two patterns work:
+
+- **Account for holdings.** Each holder records what it took, for example in a per-process count. After the kill, the reset code puts back exactly what the killed processes held.
+- **Rebuild once everyone is gone.** Kill every process that uses the semaphore, then assign a fresh object: `bus_lock = new(1);`. Do it only after the kills. A process still blocked in the old object's `get()` keeps waiting on that old object, which nobody will ever `put()` to again.
+
+uvm-core shows both the cost and the cure. Its register model records which process holds a register's key; when a later access finds that holder KILLED, it reports a `UVM/REG/ZOMBIE` error saying the register is locked for good, and then waits like any other caller (task `XatomicX`). The register's `reset()` function puts the key back, with a comment that a thread may have been killed during an access: it calls `void'(m_atomic.try_get(1))` and then `m_atomic.put(1)`, so the count ends at exactly one whether or not the key was missing (uvm-core 2020.3.1 implementation, `src/reg/uvm_reg.svh`). A reset handler that calls the register model's `reset()` therefore repairs those keys too; your own semaphores need the same treatment.
+
+### Expert: Ownership and re-entry are your job
+
+A semaphore does not know who holds its keys, so it cannot stop two classic mistakes:
+
+- **Self-deadlock.** A process that holds the only key and calls `get(1)` again, for example from a nested task, waits forever for its own key.
+- **Stray release.** A `put(1)` from a process that holds nothing adds a key.
+
+When you need those guarantees, wrap the semaphore. uvm-core does exactly this for every register: it records the holder with `process::self()`, lets the holder re-enter with a counter instead of a second `get()`, and releases with `void'(m_atomic.try_get(1))` before `m_atomic.put(1)`, so the count can never exceed one (uvm-core 2020.3.1 implementation, `XatomicX`). The same pattern as a small class:
+
+```systemverilog
+// snippet: a lock that knows its owner (the pattern of uvm_reg's XatomicX)
+class owned_lock;
+  local semaphore key = new(1);
+  local process   owner;                // null while the lock is free
+  local int       depth;                // extra lock() calls by the owner
+
+  task lock();
+    process me = process::self();
+    if (owner == me) begin              // re-entry: never a second get()
+      depth++;
+      return;
+    end
+    if (owner != null && owner.status() inside {process::FINISHED, process::KILLED})
+      $error("lock held by a process that has ended: restore it in the reset code");
+    key.get(1);
+    owner = me;
+  endtask
+
+  function void unlock();
+    if (owner != process::self()) begin // only the holder may release
+      $error("unlock() by a process that does not hold the lock");
+      return;
+    end
+    if (depth > 0) begin
+      depth--;
+      return;
+    end
+    owner = null;
+    void'(key.try_get(1));              // clamp: the count can never exceed 1
+    key.put(1);
+  endfunction
+endclass
+```
+
+`unlock()` can be a function because `try_get()` and `put()` are functions; `lock()` must be a task because it calls `get()`. The ended-holder check goes one step beyond `XatomicX`, which checks only for KILLED: a holder that FINISHED without calling `unlock()` has leaked the key just as surely, and `kill()` can race with normal completion, so a killed holder may even read FINISHED (§9.7).
+
+### Expert: Deadlock conditions and system-scale cycles
+
+General concurrency theory (not part of IEEE 1800; Coffman, Elphick and Shoshani, 1971) names four conditions that must all hold for a deadlock: mutual exclusion, hold and wait, no preemption, and a circular wait. Each fix on this page breaks one of them. A global order breaks the circular wait. One `get(n)` on a counting semaphore breaks hold and wait. `try_get()` with release and back-off gives up the hold voluntarily, at the risk of livelock. Mutual exclusion is the reason the semaphore exists, so it stays.
+
+**A loop is proof only with one key per semaphore.** When a semaphore has several keys, a loop in the wait-for graph is necessary for a deadlock but not sufficient: another holder of the same semaphore, outside the loop, may still return a key and break it. Before you call a counting-semaphore hang a deadlock, follow the arrows from every holder of every semaphore in the loop: if any of them can still run and return a key, the loop can still break.
+
+The same reasoning scales up. AXI interconnects deadlock when the dependencies between channels form a cycle, and the simulator in [B-AXI-5](/curriculum/T3_Advanced/B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index) draws that dependency graph with the cycle highlighted. When someone asks you to show that a design cannot deadlock, show the global order or the broken condition, not a passing regression: a latent deadlock can pass on every simulator you try (§4.7).
+
+### Expert: Semaphore or sequencer lock in UVM
+
+Inside one agent, the sequencer already serializes items to its driver, and a sequence that needs exclusive use of that driver calls `lock()` or `grab()` on the sequencer (IEEE 1800.2-2020 §14.2.5.5, §14.2.5.6; see [Sequence arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration)). A semaphore inside such a driver adds nothing the sequencer does not already do. Use a semaphore when several drivers or threads, possibly in different agents, share something that no sequencer owns: a bus model, a memory model's port, a shared interface. The leak, deadlock and starvation rules on this page apply there unchanged. In a UVM test the same bugs usually surface as a run that ends only at its global timeout ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+
+### Interview angles
+
+Attempt each question before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: the key that never came back"
+  question="A junior engineer's test stops after a few transfers with no error. The bus code is: bus_sem.get(1); write_to_bus(pkt); bus_sem.put(1); Which explanation fits a key that never comes back?"
+  options={[
+    { text: "Nothing can go wrong here: get() and put() queue the callers automatically.", isCorrect: false, feedback: "The queue only orders processes that wait in get(). It cannot return a key that the holder never puts back." },
+    { text: "write_to_bus() returns early on an error path, so the caller never reaches put(1).", isCorrect: false, feedback: "A return inside write_to_bus() ends only write_to_bus() (§12.8); the caller then runs put(1) as usual. A leak needs an exit between get() and put() in the caller itself." },
+    { text: "The holding thread is killed (disable fork, a disable of its block, or p.kill()) while it holds the key, or write_to_bus() never returns because it waits for something that never happens.", isCorrect: true, feedback: "Right. A killed process never runs its put() (§9.6.2, §9.6.3, §9.7), and a process stuck inside write_to_bus() keeps its key while it waits. SystemVerilog has no exceptions or finally block to clean up." },
+    { text: "SystemVerilog semaphores are not safe when several threads call them.", isCorrect: false, feedback: "Semaphores exist to be shared by concurrent processes; the waiting queue is part of the built-in class (§15.3)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: one seed in 500 hangs"
+  question="One seed in 500 hangs at the end of a test. Three threads share bus_lock. What is your first move to find which thread holds the key and why it never put it back?"
+  options={[
+    { text: "Rerun that seed with a log line before every get() and after every put() that names the thread, and have the watchdog list the threads still waiting. The last 'got' with no matching 'put' names the holder.", isCorrect: true, feedback: "Right. A semaphore records no owner and has no method that reads its count (Annex G.3), so the evidence must come from your own logging. Then look at that thread's path for an early exit, a kill, or a call that never returned." },
+    { text: "Read the semaphore's owner and key count in the debugger.", isCorrect: false, feedback: "The class has only new(), get(), put() and try_get() (Annex G.3), and keys have no owner. There is nothing to read." },
+    { text: "Create bus_lock with new(2) so the hang cannot happen.", isCorrect: false, feedback: "The hang may move to a rarer seed, and two threads can now drive the bus at once. The leaked key is still leaked." },
+    { text: "Switch every thread to try_get() so nothing can block.", isCorrect: false, feedback: "try_get() returns 0 instead of waiting. Code that ignores the 0 drives the bus without the key, and code that loops on it can starve." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: credits and a shared bus"
+  question="Requests need a credit (credits = new(4)) and the shared bus (bus_lock). Responses come back over the same bus, and the response thread returns the credit after it has used the bus. Which acquisition order can deadlock?"
+  options={[
+    { text: "A requester takes bus_lock and then waits for a credit while still holding the bus.", isCorrect: true, feedback: "Right. With all four credits out, that requester holds the bus and waits for a credit, while every response thread that would return one waits for the bus: a circular wait. Take the credit first, then the bus, as the Make It Work bench does." },
+    { text: "A requester takes a credit and then waits for the bus.", isCorrect: false, feedback: "Safe: a response thread needs only the bus, which this requester does not hold, and its put() of the credit never blocks." },
+    { text: "Neither order: put() never blocks, so credits cannot be part of a deadlock.", isCorrect: false, feedback: "put() never blocks, but the response thread reaches its put() only after it gets the bus. A requester that holds the bus while it waits for a credit closes the cycle." },
+    { text: "Only a bench with more than four requesters can deadlock.", isCorrect: false, feedback: "One requester is enough: it sends four requests, then takes the bus for a fifth and waits for a credit that only a response, which needs the bus, can return." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+Answer from the rules, not from the visuals. Every question maps to one objective. The flashcards under **Reinforce the essentials**, at the end of this section, cover the same rules.
+
+<Quiz questions={[
+  {
+    question: "semaphore s = new(); Process P calls s.get(1) at 0 ns. Process Q calls s.put(2) at 5 ns. Process R calls s.get(2) at 6 ns. Nothing else touches s. Which process is still waiting at 10 ns?",
+    answers: [
+      { text: "P: new() created no keys, so P waits forever", correct: false, feedback: "new() does create 0 keys (§15.3.1), but Q's put(2) at 5 ns brings two, and P, the waiter, takes one." },
+      { text: "R: P took one of Q's two keys at 5 ns, so only one is free when R asks for two", correct: true, feedback: "Right. 0 keys at the start; put(2) makes 2 and P takes 1; R's get(2) needs two keys at the same time and finds one (§15.3.1, §15.3.3)." },
+      { text: "Nobody: new() gives one key, P takes it at 0 ns, and Q's two keys are left for R", correct: false, feedback: "new() with no argument creates 0 keys, not 1 (§15.3.1). P cannot take a key at 0 ns." },
+      { text: "P and R: put(2) is an error because it raises the count above the starting value of 0", correct: false, feedback: "There is no cap: the count can grow past the value given to new() (§15.3.1). put(2) is legal." }
+    ],
+    explanation: "Count the keys step by step. new() starts at 0, so P blocks. Q's put(2) adds two keys and P, waiting, takes one: 1 left. R's get(2) needs two keys at once, so it blocks and is still waiting at 10 ns. put() can raise the count above the starting value, and get(n) takes all n keys in one step or none.",
+    objective: 1
+  },
+  {
+    question: "s = new(1); then one process runs s.get(1); s.put(1); s.put(1); ok = s.try_get(2); What is ok, and how many keys are left?",
+    answers: [
+      { text: "ok is 0: the second put(1) is ignored because the count cannot exceed new(1)", correct: false, feedback: "There is no cap: put() can raise the count above the initial value (§15.3.1)." },
+      { text: "ok is positive and 0 keys are left: the second put(1) raised the count to 2", correct: true, feedback: "Right. get 1 to 0, put 0 to 1, put 1 to 2, and try_get(2) takes both and returns a positive value (§15.3.1, §15.3.4)." },
+      { text: "The second put(1) is a run-time error, because this process holds no key", correct: false, feedback: "Nothing checks who calls put(); only a negative key count is an error (§15.3.2)." },
+      { text: "try_get(2) blocks until a second key arrives", correct: false, feedback: "try_get() never blocks: it returns 0 when there are not enough keys (§15.3.4). Here there are enough." }
+    ],
+    explanation: "Keys have no owner and no upper limit. A stray second put() silently creates an extra key, and two processes can then share a one-key critical section. That is why the end-of-test check tests for surplus keys as well as missing ones.",
+    objective: 1
+  },
+  {
+    question: "One key. A holds it from 0 ns. B calls get(1) at 2 ns and C calls get(1) at 4 ns. A calls put(1) at 10 ns. Which process continues at 10 ns?",
+    answers: [
+      { text: "C, the most recent caller", correct: false, feedback: "The waiting queue is first-in first-out, not last-in first-out (§15.3.3)." },
+      { text: "B, because it arrived first and the waiting queue is first-in first-out", correct: true, feedback: "Right. B and C arrived at different times, so their order in the queue is fixed, and the semaphore preserves it (§15.3.3)." },
+      { text: "Both B and C, because put() wakes every waiter", correct: false, feedback: "Only one key came back, and each get(1) needs one, so only the oldest waiter can continue. C keeps waiting." },
+      { text: "Either one: the standard leaves the order open", correct: false, feedback: "The open case is two get() calls in the same time slot, where the scheduler decides who arrives first (§4.7). Here B and C arrived 2 ns apart." }
+    ],
+    explanation: "§15.3.3 preserves arrival order among waiters. It does not decide the arrival order inside one time slot, and it says nothing about try_get(), which never queues.",
+    objective: 5
+  },
+  {
+    question: "A test stops after three transfers. The log shows one $error about a bad packet and then nothing more: no further error and no PASS line. bus_lock was created with new(1), and the bus task is: bus_lock.get(1); if (pkt.bad) begin $error(...); return; end drive(pkt); bus_lock.put(1); Which explanation fits?",
+    answers: [
+      { text: "The return leaves the task while it still holds the key, so every later get(1) waits forever", correct: true, feedback: "Right. return exits the task (§12.8) and skips put(1). Nothing returns the key, so the next requester waits forever and the run ends quietly, or at the watchdog." },
+      { text: "Harmless: SystemVerilog returns a task's keys when the task exits", correct: false, feedback: "There is no automatic cleanup and no finally block in SystemVerilog. Keys come back only through put()." },
+      { text: "The blocked get(1) will report a timeout error after a while", correct: false, feedback: "get() has no timeout and reports nothing; it simply waits (§15.3.3). That is why the log is silent." },
+      { text: "The semaphore notices that the holder's task ended and frees the key", correct: false, feedback: "A semaphore has no owner, so it cannot know who holds a key or whether that process is still running." }
+    ],
+    explanation: "Give the task one exit: let the error path skip the work, not the put(1). The $error line is a clue, but the hang appears later, in a different process, which is why leaks are hard to spot from the first error.",
+    objective: 3
+  },
+  {
+    question: "Process A runs s1.get(1); #1; s2.get(1); and process B runs s2.get(1); #1; s1.get(1); Both are stuck and no error is printed. Which change removes the deadlock and keeps both resources exclusive?",
+    answers: [
+      { text: "Create s2 with new(2)", correct: false, feedback: "B gets in, but two processes can now hold s2 at once, so s2 no longer protects its resource. It hides the bug." },
+      { text: "Make B take s1 before s2, the same order as A", correct: true, feedback: "Right. With one global order, whoever gets s1 first also gets s2; the other waits on s1 holding nothing, so no cycle can form." },
+      { text: "Detect the hang and kill B with p.kill()", correct: false, feedback: "kill() ends B but never returns the s2 key that B holds (§9.7), so A now waits for s2 forever." },
+      { text: "Have B retry s1 with try_get(1) in a loop while it keeps holding s2", correct: false, feedback: "B spins while still holding s2, so A stays blocked. Release what you hold before you retry, or fix the order." }
+    ],
+    explanation: "A lock-order deadlock needs a cycle of processes that each hold one key and wait for another. One acquisition order for every process removes the cycle. Releasing everything before a retry also works, but it costs more and can livelock without a random back-off.",
+    objective: 4
+  },
+  {
+    question: "Two masters start at 0 ns and keep a one-key bus busy: each waits in get(1), holds the bus for 10 ns and asks again at once. A background task polls with try_get(1) every 4 ns, starting at 3 ns. It never gets the bus while the masters run. Why?",
+    answers: [
+      { text: "try_get() never waits, so it never joins the queue, and at every put(1) a master takes the key again in the same time slot", correct: true, feedback: "Right. The key is never free at 3, 7, 11 ns and so on, and the FIFO order protects only processes that wait in get() (§15.3.3, §15.3.4)." },
+      { text: "The FIFO rule guarantees every caller a turn, so this must be a simulator bug", correct: false, feedback: "FIFO applies to the waiting queue. A process that calls try_get() is never in it." },
+      { text: "try_get() can only succeed the first time it is called", correct: false, feedback: "try_get() succeeds whenever enough keys are free at that moment. Here none ever are." },
+      { text: "Polling every 1 ns instead of every 4 ns would fix it", correct: false, feedback: "Polling faster only adds attempts in the same time slot as a put(1). Who wins there depends on process order (§4.7) and on whether the simulator reserves the returned key for the waiting master, so nothing is guaranteed. Wait in get() instead, so that the FIFO queue covers the task." }
+    ],
+    explanation: "This is starvation: the masters make progress and the poller never does. A task that must get a turn should wait in get(); one that must never block needs a design that guarantees it a slot, such as an arbiter.",
+    objective: 5
+  },
+  {
+    question: "In the Make It Work bench, the target refuses request 11 (a NACK), so no response will ever come for it. What keeps the credit count right?",
+    answers: [
+      { text: "Nothing extra: the target's response always returns the credit", correct: false, feedback: "A refused request gets no response, so no response process will ever call put(1) for it." },
+      { text: "The requester calls credits.put(1) itself on the refusal path", correct: true, feedback: "Right. Every path that took a credit must return it: the response process on success, the requester when no response will come." },
+      { text: "bus_lock.put(1) returns the credit too", correct: false, feedback: "bus_lock and credits are separate buckets. Returning a key to one never touches the other." },
+      { text: "Top the count up at the end of the test with credits.put(2)", correct: false, feedback: "That hides a leak during the test, and on a correct run it creates surplus credits that let more requests out than the target can accept." }
+    ],
+    explanation: "Count keys per path: each get() needs exactly one put() on every path, success or refusal. The end-of-test check, exactly 1 bus key and exactly 2 credits, proves it.",
+    objective: 2
+  },
+  {
+    question: "semaphore s = new(2); Processes P and Q each run s.get(1); #1; s.get(1); and then use two keys. Both start at 0 ns. What happens?",
+    answers: [
+      { text: "Both finish: two keys are enough for two processes", correct: false, feedback: "Each process needs two keys at the same time, and there are only two in total." },
+      { text: "P and Q each take one key at 0 ns and then wait forever for a second one", correct: true, feedback: "Right. Each holds a key the other needs: a deadlock built from one semaphore. A single get(2) is all or nothing and cannot end this way (§15.3.3)." },
+      { text: "P finishes first, because the FIFO queue serves the earliest caller", correct: false, feedback: "FIFO decides who gets a returned key, but neither process ever returns one: both are stuck holding a key." },
+      { text: "Each second get(1) returns 0", correct: false, feedback: "get() returns no value; it waits. Only try_get() returns 0." }
+    ],
+    explanation: "Taking keys one at a time while holding others is hold and wait. Ask for everything you need in one get(n), or take a single lock first.",
+    objective: 4
+  }
+]} />
+
+### Kata 1 (guided): untangle a lock-order deadlock
+
+**Objective:** reproduce a lock-order deadlock, read it from the log, and fix it with one global order.
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  semaphore bus_lock = new(1);
+  semaphore mem_lock = new(1);
+  int unsigned copies;
+
+  // Copies a block from memory onto the bus: memory port first, then the bus.
+  task automatic dma_copy(int unsigned id);
+    mem_lock.get(1);
+    #3;                                 // read the source block
+    bus_lock.get(1);
+    $display("[%0t] dma copy %0d on the bus", $time, id);
+    #5;
+    bus_lock.put(1);
+    mem_lock.put(1);
+    copies++;
+  endtask
+
+  // Fills memory from the bus: the bus first, then the memory port.
+  task automatic cpu_fill(int unsigned id);
+    bus_lock.get(1);
+    #2;                                 // fetch the data from the bus
+    mem_lock.get(1);
+    $display("[%0t] cpu fill %0d into memory", $time, id);
+    #5;
+    mem_lock.put(1);
+    bus_lock.put(1);
+    copies++;
+  endtask
+
+  initial begin
+    fork
+      dma_copy(1);
+      begin #1; cpu_fill(2); end
+    join
+    $display("[%0t] PASS=%0d FAIL=%0d", $time, copies, 2 - copies);
+    $finish;
+  end
+
+  initial begin
+    #200;
+    $fatal(1, "WATCHDOG at %0t: copies=%0d, a process is stuck in get()", $time, copies);
+  end
+endmodule
+```
+
+**Tasks:**
+1. Before running anything, predict the log. Which lines print, and when does the run end?
+2. Draw the wait-for graph at 3 ns: two processes, two semaphores, "waits for" and "held by" arrows.
+3. Fix the deadlock by changing only one task, so that both tasks use one global order.
+4. Confirm that both copy lines print, the run ends with `PASS=2 FAIL=0`, and the watchdog stays silent.
+
+<details>
+<summary>Reveal the worked solution</summary>
+
+**Prediction.** `dma_copy` takes `mem_lock` at 0 ns and `cpu_fill` takes `bus_lock` at 1 ns. At 3 ns each asks for the other's key: `cpu_fill` waits for `mem_lock`, held by `dma_copy`, and `dma_copy` waits for `bus_lock`, held by `cpu_fill`. The arrows close a cycle. No copy line prints; the run ends at 200 ns with the watchdog's fatal message (after the tool's header):
+
+```text
+WATCHDOG at 200: copies=0, a process is stuck in get()
+```
+
+**Fix.** Choose one order, memory port first and then the bus, and make `cpu_fill` follow it:
+
+```systemverilog
+// snippet: cpu_fill now uses the same global order as dma_copy
+task automatic cpu_fill(int unsigned id);
+  mem_lock.get(1);                      // memory port first, like dma_copy
+  bus_lock.get(1);                      // then the bus
+  #2;                                   // fetch the data from the bus
+  $display("[%0t] cpu fill %0d into memory", $time, id);
+  #5;
+  bus_lock.put(1);
+  mem_lock.put(1);
+  copies++;
+endtask
+```
+
+`cpu_fill` now waits for `mem_lock` at 1 ns while holding nothing. `dma_copy` takes the bus at 3 ns, finishes at 8 ns and returns both keys; `cpu_fill` then takes both and finishes at 15 ns.
+
+**Expected output after the fix** (illustrative, traced by hand):
+
+```text
+[3] dma copy 1 on the bus
+[10] cpu fill 2 into memory
+[15] PASS=2 FAIL=0
+```
+
+**Reflect.** `cpu_fill` now holds the memory port during its bus fetch, a little longer than it needs. That is the usual price of a global order: some resources are held earlier than strictly necessary, in exchange for a bench that cannot deadlock.
+
+</details>
+
+### Kata 2 (debug challenge): the bus that lets two masters in
+
+**Objective:** find a surplus key, the mirror image of a leaked key.
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  semaphore bus_lock = new(1);
+  int unsigned busy, collisions;
+
+  task automatic send(string who, int unsigned id);
+    bus_lock.get(1);
+    busy++;
+    if (busy > 1) begin
+      collisions++;
+      $display("[%0t] COLLISION: %s req %0d shares the bus", $time, who, id);
+    end
+    if (id == 2) begin                  // the target rejects request 2
+      $display("[%0t] %s req %0d rejected", $time, who, id);
+      bus_lock.put(1);                  // "make sure the key goes back"
+    end else begin
+      #10;                              // transfer
+    end
+    busy--;
+    bus_lock.put(1);
+  endtask
+
+  initial begin
+    fork
+      begin send("A", 1); send("A", 2); send("A", 3); end
+      begin #15; send("B", 7); end
+    join
+    if (bus_lock.try_get(2)) begin      // more than one key left?
+      $display("[%0t] bus_lock holds 2 keys: one put() too many", $time);
+      bus_lock.put(2);
+    end
+    $display("[%0t] collisions=%0d", $time, collisions);
+  end
+endmodule
+```
+
+**Tasks:**
+1. Predict the log before you read the solution.
+2. Find the line that creates the extra key.
+3. Fix it without adding a second exit.
+4. Explain why this bug never hangs, while its mirror image, a missing `put()`, does.
+
+<details>
+<summary>Reveal the worked solution</summary>
+
+**Prediction** (illustrative, traced by hand):
+
+```text
+[10] A req 2 rejected
+[15] COLLISION: B req 7 shares the bus
+[25] bus_lock holds 2 keys: one put() too many
+[25] collisions=1
+```
+
+At 10 ns `send(2)` takes one key and returns two, once in the rejection branch and once at the shared exit, so the bucket now holds 2 keys (§15.3.1). `send(3)` takes one key at 10 ns, and at 15 ns B takes the other while A is still on the bus.
+
+**Fix.** Delete the `bus_lock.put(1)` in the rejection branch. The single `put(1)` at the end already serves both paths:
+
+```systemverilog
+// snippet: the rejection path skips the transfer, not the shared exit
+if (id == 2) begin
+  $display("[%0t] %s req %0d rejected", $time, who, id);
+end else begin
+  #10;                                  // transfer
+end
+busy--;
+bus_lock.put(1);                        // the only put(1): exactly one per get(1)
+```
+
+**Expected output after the fix** (illustrative): B now waits for A's key and runs from 20 to 30 ns.
+
+```text
+[10] A req 2 rejected
+[30] collisions=0
+```
+
+**Why it never hangs.** A surplus key makes `get()` succeed more often, never less, so it cannot cause a hang; instead, mutual exclusion silently breaks. A missing `put()` does the opposite. That is why the end-of-test check tests both directions: `try_get(N)` must succeed and `try_get(1)` must then fail.
+
+</details>
+
+### Lab: two semaphore hangs in one bench
+
+The `ipc-deadlock` lab puts this page's two classic bugs into one self-checking bench. Part 1 leaks the bus key on an early exit; Part 2 deadlocks two threads that take two locks in opposite orders. Read each watchdog report, draw its wait-for graph, fix both bugs, and finish with `PASS=2 FAIL=0`. The harness also rejects fixes that only hide a bug, such as an extra key or a `try_get()` retry loop that keeps the first key.
+
+<LabLink labId="ipc-deadlock" />
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023 unless stated):
+
+- §15.3 semaphores: §15.3.1 `new()` (default 0 keys; the count may exceed it), §15.3.2 `put()`, §15.3.3 `get()` (the FIFO waiting queue and what it does not guarantee), §15.3.4 `try_get()`.
+- §15.2 semaphores and mailboxes as built-in classes in the `std` package; Annex G.3 the `semaphore` prototype.
+- §4.7 nondeterminism; §6.8 static initializers run before any procedure starts; §9.2 no implied order between procedures; §9.2.3 final procedures; §9.6.1 simulation ends when no activity remains; §9.6.2 `disable`; §9.6.3 `disable fork`; §9.7 the `process` class and `kill()`.
+- §12.8 `return`; §13.4 functions cannot enable tasks; §20.4.3 `%t` defaults; §20.10 `$error` and `$fatal`; §38.36.3 `cbEndOfSimulation` (the two ways a simulation ends); Annex B reserved keywords.
+- IEEE 1800.2-2020 §14.2.5.5 `lock()` and §14.2.5.6 `grab()`.
+- uvm-core 2020.3.1, `src/reg/uvm_reg.svh`: task `XatomicX` and function `reset()`, a one-key semaphore per register and how it is restored (implementation detail, not part of IEEE 1800.2-2020); `src/reg/uvm_reg_block.svh`: `reset()` resets every register in the block.
+- General concurrency theory, not IEEE 1800: E. G. Coffman, M. J. Elphick and A. Shoshani, "System Deadlocks", *ACM Computing Surveys* 3(2), 1971 (the four conditions for deadlock).
+
+**Prerequisites:** [Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes), the previous lesson; [F2C: Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) for `fork`-`join_none`, `disable fork` and timeouts; [I-SV-1: Object-Oriented Programming](/curriculum/T2_Intermediate/I-SV-1_OOP/index) for handles and `new`; the [module overview](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index) for `process` handles and `kill()`.
+
+**Related:**
+
+- [I-SV-5: Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index): choosing between the module's tools, and the wait-for graph applied to mailboxes and events as well.
+- [Events](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/events) and [Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes): the other two tools, and the hang rows they own.
+- [F2D: Interprocess Communication](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/ipc): the first look at semaphores, from Tier 1.
+- [Sequence arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration): `lock()` and `grab()`, the UVM way to share a driver.
+- [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index): objections and the global timeout that ends a hung UVM test.
+- [B-AXI-5: AXI Pitfalls and Interconnect Deadlocks](/curriculum/T3_Advanced/B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks/index): circular waits at system scale.
+- [E-DBG-1: Hang Lab](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab): hang triage in a full UVM environment.
+
+<NextLesson />

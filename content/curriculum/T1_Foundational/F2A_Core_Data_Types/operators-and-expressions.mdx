@@ -1,9 +1,942 @@
 ---
 title: "Operators and Expressions"
-description: "Predict what SystemVerilog expressions return: precedence, bit widths and signedness, 4-state equality, wildcard matching, streaming and shifts."
+description: "Predict what SystemVerilog expressions return: precedence, bit widths and signedness, 4-state equality and wildcard matching, concatenation, shifts and streaming."
 flashcards: "F2A_Operators_and_Expressions"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
 ## Quick Take
 
-This lesson is being written.
+- **What it is:** An **expression** combines operands with operators to produce a value. Beyond the C operator set, SystemVerilog has 4-state equality (`===`, `==?`), set membership (`inside`), reduction operators, concatenation and replication, arithmetic shifts, and **streaming operators** that pack and unpack bits in a chosen order (IEEE 1800-2023 Clause 11).
+- **Why it matters:** Checkers, reference models and monitors are built from expressions. Most expression bugs compile cleanly and print a plausible number: a sum that lost its carry, a negative value treated as a huge positive one, a precedence surprise, bytes in the wrong order, or an `x` that a comparison quietly turned into "not equal". Predicting the result before the simulator does is the skill this lesson builds.
+- **The Analogy:** Evaluating an expression is like a kitchen where each recipe uses one bowl size. The chef picks the bowl from the largest ingredient and from the serving dish (the **context**), pours every ingredient into that bowl, cooks, and serves into the dish, spilling whatever does not fit. Precedence is the order of the steps on the recipe card. *Where it breaks:* some ingredients are always prepared in their own small bowl, whatever the recipe (self-determined operands such as concatenation members and shift amounts), and this kitchen stocks an "unknown" ingredient, `x`, with rules of its own.
+
+**You will be able to:**
+1. Predict the result of logical, bitwise, reduction and equality operators (`==`, `===`, `==?`) and of `inside` and `case inside` when operands hold `x` or `z`.
+2. Calculate the width and signedness of an expression from its operands and its context, and predict the value stored after extension or truncation.
+3. Predict how precedence and associativity group an expression written without parentheses, and add the parentheses that state the intent.
+4. Write concatenation, replication, shift and streaming expressions that pack and unpack bits and bytes in a chosen order.
+5. Debug expression bugs: a lost carry, a sign lost to an unsigned operand, a `>>>` that fills with 0, and an `x` hidden by `if` or merged by `?:`.
+
+<BeforeYouStart />
+
+## Build Your Mental Model
+
+### The operator families at a glance
+
+An **operator** acts on **operands**; together they form an expression, and every expression has a width (a number of bits), a signedness, and a value that may contain `x` or `z`. This table is the map for the rest of the lesson. You will meet each row again with its rules and a picture.
+
+| Family | Operators | Result width | With `x` or `z` in an operand | Clause |
+|---|---|---|---|---|
+| Arithmetic | `+ - * / % **` | the context width | the whole result is `x`; dividing by 0 also gives `x` | §11.4.3 |
+| Relational | `< <= > >=` | 1 bit | `x` | §11.4.4 |
+| Logical equality | `== !=` | 1 bit | `x` only when the answer is ambiguous | §11.4.5 |
+| Case equality | `=== !==` | 1 bit | never `x`: `x` and `z` are compared as values | §11.4.5 |
+| Wildcard equality | `==? !=?` | 1 bit | `x`/`z` in the right operand match anything | §11.4.6 |
+| Logical | `&& \|\| ! -> <->` | 1 bit | `x` when a truth value is ambiguous | §11.4.7 |
+| Bitwise | `& \| ^ ~^ ~` | the context width | bit by bit; a 0 still decides `&`, a 1 still decides `\|` | §11.4.8 |
+| Reduction (unary) | `& ~& \| ~\| ^ ~^` | 1 bit | folds all bits with the bitwise tables | §11.4.9 |
+| Shift | `<< >> <<< >>>` | the left operand's width, in context | an `x`/`z` shift amount gives all `x` | §11.4.10 |
+| Conditional | `c ? a : b` | the wider of `a` and `b` | an `x` condition merges both branches bit by bit | §11.4.11 |
+| Concatenation, replication | `{a, b}`, `{n{a}}` | the sum of the operand widths | bits are copied | §11.4.12 |
+| Set membership | `inside` | 1 bit | members compared with `==?` | §11.4.13 |
+| Streaming | `{<< n {…}}`, `{>> {…}}` | the width of the stream | bits are copied | §11.4.14 |
+
+### Precedence and associativity: how the compiler groups what you wrote
+
+**Precedence** decides which operator takes its operands first when an expression has no parentheses; **associativity** decides the grouping among operators of the same precedence. Table 11-2 of the standard, highest precedence first (§11.3.2):
+
+| Rank | Operators | Associativity |
+|---|---|---|
+| 1 | `()` `[]` `::` `.` | left |
+| 2 | unary `+ - ! ~ & ~& \| ~\| ^ ~^ ^~ ++ --` | — |
+| 3 | `**` | left |
+| 4 | `* / %` | left |
+| 5 | binary `+ -` | left |
+| 6 | `<< >> <<< >>>` | left |
+| 7 | `< <= > >= inside dist` | left |
+| 8 | `== != === !== ==? !=?` | left |
+| 9 | binary `&` | left |
+| 10 | binary `^ ~^ ^~` | left |
+| 11 | binary `\|` | left |
+| 12 | `&&` | left |
+| 13 | `\|\|` | left |
+| 14 | `?:` | right |
+| 15 | `-> <->` | right |
+| 16 | assignment operators `= += -= <<= …` | none |
+| 17 | concatenation `{}` `{{}}` | lowest |
+
+All operators group left to right except `?:`, `->` and `<->`, which group right to left (§11.3.2). The groupings that cause real bugs:
+
+- `flags & mask == 0` means `flags & (mask == 0)`. Equality (rank 8) binds tighter than the binary `&`, `^` and `|` (ranks 9 to 11), as in C.
+- `x << 1 + y` means `x << (1 + y)`: addition binds tighter than shifts.
+- `!a == b` means `(!a) == b`: unary operators bind tightest.
+- `a < b < c` means `(a < b) < c`, which compares a 1-bit result with `c`.
+- `a || b && c` means `a || (b && c)`.
+- `s ? x : t ? y : z` means `s ? x : (t ? y : z)`: a right-associative priority chain.
+
+**Predict before you look at the picture:** with `flags = 4'b0101` and `mask = 4'b0010`, does `if (flags & mask == 0)` run its branch? Bit 1 of `flags` is clear, so the author expected yes.
+
+<figure>
+<svg viewBox="0 0 360 214" role="img" aria-label="Two expression trees for flags = 4'b0101 and mask = 4'b0010. Left, what the compiler builds from flags & mask == 0: an AND whose right input is the comparison mask == 0, which is 0, so the AND gives 4'b0000 and the if is false. Right, what was meant: (flags & mask) == 0, where flags & mask is 4'b0000, so the comparison gives 1 and the if is true." style={{ width: "100%", maxWidth: 440 }}>
+  <text x="90" y="14" fontSize="10.5" fontWeight="600" textAnchor="middle" fill="currentColor">{"what the compiler builds"}</text>
+  <text x="270" y="14" fontSize="10.5" fontWeight="600" textAnchor="middle" fill="currentColor">{"what you meant"}</text>
+  <line x1="180" y1="22" x2="180" y2="190" stroke="currentColor" strokeOpacity="0.25" />
+  <line x1="90" y1="50" x2="45" y2="92" stroke="currentColor" strokeOpacity="0.6" />
+  <line x1="90" y1="50" x2="135" y2="92" stroke="currentColor" strokeOpacity="0.6" />
+  <line x1="135" y1="114" x2="110" y2="148" stroke="currentColor" strokeOpacity="0.6" />
+  <line x1="135" y1="114" x2="160" y2="148" stroke="currentColor" strokeOpacity="0.6" />
+  <rect x="68" y="28" width="44" height="22" rx="6" fill="rgba(139,92,246,0.14)" stroke="rgb(139,92,246)" />
+  <text x="90" y="43" fontSize="11" textAnchor="middle" fill="currentColor">{"&"}</text>
+  <rect x="20" y="92" width="50" height="22" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="45" y="107" fontSize="10" textAnchor="middle" fill="currentColor">{"flags"}</text>
+  <rect x="113" y="92" width="44" height="22" rx="6" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <text x="135" y="107" fontSize="11" textAnchor="middle" fill="currentColor">{"=="}</text>
+  <rect x="88" y="148" width="44" height="22" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="110" y="163" fontSize="10" textAnchor="middle" fill="currentColor">{"mask"}</text>
+  <rect x="146" y="148" width="28" height="22" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="160" y="163" fontSize="10" textAnchor="middle" fill="currentColor">{"0"}</text>
+  <text x="140" y="88" fontSize="9" fill="currentColor" fillOpacity="0.85">{"= 0"}</text>
+  <text x="90" y="186" fontSize="9.5" textAnchor="middle" fill="currentColor">{"flags & 4'b0000 = 4'b0000"}</text>
+  <text x="90" y="200" fontSize="9.5" textAnchor="middle" fill="currentColor">{"if (...) is false"}</text>
+  <line x1="270" y1="50" x2="225" y2="92" stroke="currentColor" strokeOpacity="0.6" />
+  <line x1="270" y1="50" x2="315" y2="92" stroke="currentColor" strokeOpacity="0.6" />
+  <line x1="225" y1="114" x2="200" y2="148" stroke="currentColor" strokeOpacity="0.6" />
+  <line x1="225" y1="114" x2="250" y2="148" stroke="currentColor" strokeOpacity="0.6" />
+  <rect x="248" y="28" width="44" height="22" rx="6" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <text x="270" y="43" fontSize="11" textAnchor="middle" fill="currentColor">{"=="}</text>
+  <rect x="203" y="92" width="44" height="22" rx="6" fill="rgba(139,92,246,0.14)" stroke="rgb(139,92,246)" />
+  <text x="225" y="107" fontSize="11" textAnchor="middle" fill="currentColor">{"&"}</text>
+  <rect x="301" y="92" width="28" height="22" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="315" y="107" fontSize="10" textAnchor="middle" fill="currentColor">{"0"}</text>
+  <rect x="175" y="148" width="50" height="22" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="200" y="163" fontSize="10" textAnchor="middle" fill="currentColor">{"flags"}</text>
+  <rect x="228" y="148" width="44" height="22" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="250" y="163" fontSize="10" textAnchor="middle" fill="currentColor">{"mask"}</text>
+  <text x="196" y="88" fontSize="9" fill="currentColor" fillOpacity="0.85">{"= 4'b0000"}</text>
+  <text x="270" y="186" fontSize="9.5" textAnchor="middle" fill="currentColor">{"4'b0000 == 0 is 1"}</text>
+  <text x="270" y="200" fontSize="9.5" textAnchor="middle" fill="currentColor">{"if (...) is true"}</text>
+</svg>
+<figcaption>The same characters, two trees, opposite answers, for `flags = 4'b0101` and `mask = 4'b0010`. Parentheses cost nothing; write them whenever a bitwise operator meets a comparison.</figcaption>
+</figure>
+
+The left tree is the answer: `mask == 0` is 0, which is extended to `4'b0000` before the `&`, so the condition is `4'b0000` and the branch does not run, although the bit being tested is clear. The fix is `if ((flags & mask) == 0)`. Both versions are legal code, which is why this bug survives until a test happens to need the branch.
+
+### Four-state truth: logical, bitwise and reduction operators
+
+Three families treat a vector in three different ways:
+
+- A **bitwise** operator (`&`, `|`, `^`, `~^`, `~`) works bit by bit and returns a vector. A **controlling value** decides a bit even next to an `x`: `0 & x` is 0 and `1 | x` is 1. Without one the bit is `x`, and `^` with any `x` or `z` input is always `x` (§11.4.8, Tables 11-11 to 11-15).
+- A **reduction** operator is the unary form: `&a`, `|a`, `^a` and their inverted versions `~&a`, `~|a`, `~^a` fold all the bits of one operand into 1 bit, using the same tables (§11.4.9).
+- A **logical** operator (`&&`, `||`, `!`) first turns each operand into a **truth value**: true if it has a known 1 bit, false if every bit is 0, and ambiguous (`x`) otherwise. It is the same test `if` applies, `operand != 0` (§11.4.7, §12.4). The result is 1 bit.
+
+Traced on `a = 4'b1x10` and `b = 4'b0000`:
+
+| Expression | Result | Why |
+|---|---|---|
+| `a & b` | `4'b0000` | 0 controls AND in every bit |
+| `a \| b` | `4'b1x10` | 0 is neutral for OR, so the `x` survives |
+| `&a` | `1'b0` | bit 0 is 0, and one 0 decides AND |
+| `\|a` | `1'b1` | one known 1 decides OR |
+| `^a` | `1'bx` | parity needs every bit |
+| `a && b` | `1'b0` | `b` is false, so `&&` is false whatever `a` is |
+| `a \|\| b` | `1'b1` | `a` has a known 1, so it is true |
+| `!a` | `1'b0` | `a` is true |
+| `a + 4'd1` | `4'bxxxx` | arithmetic: any `x` bit makes the whole result `x` (§11.4.3) |
+
+Two mistakes everyone makes once:
+- **`&` for `&&`.** `4'b0100 & 4'b0010` is `4'b0000`, which is false, while `4'b0100 && 4'b0010` is 1. Use `&&` to combine conditions.
+- **`~` for `!`.** `~4'b0001` is `4'b1110`, which is true. `!4'b0001` is 0. Use `!` to negate a condition.
+
+The explorer below opens on the reduction operators with `a = 4'b1x11`. **Predict** `&a`, `|a` and `^a`, then reveal. Change the `x` bit to 0 and predict `&a` again. Then switch the operator family to **Logical** and predict `a && b` and `a || b` for its starting values.
+
+<OperatorExplorer family="reduction" />
+
+What the explorer showed:
+- `&a` is `x` for `4'b1x11`: no bit is 0, and the `x` could be either value. As soon as one bit is 0 the answer is a definite 0.
+- `|a` is 1 because one known 1 decides OR, and `^a` is `x` because parity depends on every bit.
+- In the Logical family, `a = 4'b0x00` has no known 1 bit and one unknown bit, so its truth value is `x`. With `b = 0`, `a && b` is 0 (false decides AND) and `a || b` is `x`.
+
+In a testbench, reduction operators compute parity (`^data`), "any bit set" (`|irq_vec`) and "all ones" (`&mask`). To ask "does this value contain `x` or `z`?", use `$isunknown(v)` (§20.9): it says what it means.
+
+### Equality: `==`, `===` and the wildcard `==?`
+
+The module index introduced these operators ([F2A: Core Data Types](/curriculum/T1_Foundational/F2A_Core_Data_Types/index)). This section gives the complete rules and the two details that still catch experienced engineers: wildcards work in one direction only, and operands of different widths are extended first. There are three pairs of equality operators, and they differ only in how they treat `x` and `z`:
+
+- **`==` and `!=`** compare bit by bit. If a known bit differs, the answer is a definite 0 (or 1 for `!=`). If no known bit differs but an `x` or `z` makes the relation ambiguous, the answer is `x` (§11.4.5).
+- **`===` and `!==`** compare `x` and `z` as values, like the `case` statement, and always return 0 or 1 (§11.4.5).
+- **`==?` and `!=?`** treat `x` and `z` bits **in the right operand** as wildcards that match any value. `x` and `z` in the left operand are not wildcards, so they can still make the result `x` (§11.4.6).
+
+If the operands differ in width, the narrower one is zero-extended, or sign-extended when both are signed (§11.4.5). Traced on `a = 4'b1x10`:
+
+| Expression | Result | Why |
+|---|---|---|
+| `a == 4'b1x10` | `x` | bit 2 is `x` on both sides: ambiguous |
+| `a == 4'b0x10` | `0` | bit 3 is a known mismatch, which decides |
+| `a === 4'b1x10` | `1` | `x` matches `x` as a value |
+| `a !== 4'b1010` | `1` | `x` is not 0 |
+| `4'b1010 ==? a` | `1` | `a` is now the right operand, so its `x` is a wildcard |
+| `a ==? 4'b1010` | `x` | the `x` is in the left operand: not a wildcard |
+| `a ==? 4'b1??0` | `1` | `?` means `z`; both `?` bits are wildcards |
+
+The explorer starts with `a = 4'b1x10` and `b = 4'b1x10`. This time, test the direction of the wildcard: change bit 2 of `b` to 0, so that `b = 4'b1010`, and **predict** `a ==? b` and `a !=? b`. Then move the unknown to the other side: set bit 2 of `a` to 0 and bit 2 of `b` to `x`, and predict `a ==? b` again.
+
+<OperatorExplorer family="equality" />
+
+What the explorer showed:
+- With `a = 4'b1x10` and `b = 4'b1010`, `a ==? b` is `x`, and so is `a !=? b`: the only unknown sits in the left operand, where it is not a wildcard.
+- With the unknown moved into `b`, `a ==? b` is 1. **`==?` is not symmetric.** Put the pattern, with its don't-care bits, on the right.
+
+In a testbench:
+- Compare DUT outputs with `!==` or `===`, so an unexpected `x` counts as a mismatch (see [F2A: Core Data Types](/curriculum/T1_Foundational/F2A_Core_Data_Types/index)).
+- Use `==?` when the expected value has don't-care bits, for example reserved status bits. Put the pattern on the right, and test the result with `!== 1'b1`: an `x` in the DUT's value makes `==?` return `x`, which a plain `if` would treat as false.
+
+```systemverilog
+// snippet: check bits 7 and 3:0 of status, ignore bits 6:4
+if ((status ==? 8'b1???_0000) !== 1'b1)   // a mismatch (0) or an unknown (x) both report
+  $error("bad status %b", status);
+```
+
+### Set membership: `inside` and `case inside`
+
+**`inside`** asks whether a value belongs to a set (§11.4.13):
+
+- The set is a list of values, ranges written `[lo:hi]` (inclusive; `$` stands for the smallest or largest value of the left operand's type), and unpacked arrays, which contribute every element.
+- For integral values each member is compared with `==?`, so `x` and `z` bits **in a member** are wildcards, and `x` and `z` in the value on the left are not.
+- The result is the OR of all the comparisons: 1 if any member matches, 0 if none does, and `x` if none matches but at least one comparison was `x`.
+- Non-integral values, such as strings, are compared with `==`.
+
+```systemverilog
+// snippet
+logic [7:0] addr;
+logic [2:0] op;
+bit         legal, is_rw;
+
+legal = addr inside {[8'h00:8'h3F], 8'h80, [8'hF0:$]};  // two ranges and one value
+is_rw = op inside {3'b00?};                             // matches 3'b000 and 3'b001
+```
+
+**`case inside`** is the statement form (§12.5.4). Each case item is a list of values and ranges, and the case expression is compared with each item using `inside`. An item matches only when `inside` returns 1; an `x` result counts as no match. As in every `case`, the first matching item wins.
+
+```systemverilog
+// snippet
+typedef enum {NOP, RW, ALU, JUMP, ILLEGAL} cls_e;
+cls_e cls;
+
+always_comb begin
+  case (op) inside
+    3'b000:          cls = NOP;
+    3'b001, 3'b010:  cls = RW;
+    [3'b100:3'b110]: cls = ALU;
+    3'b11?:          cls = JUMP;     // 3'b110 already matched ALU: first match wins
+    default:         cls = ILLEGAL;  // 3'b011, and x/z values that no item matches
+  endcase
+end
+```
+
+`case inside` treats `x` and `z` as wildcards only in the items, never in the case expression. That makes it the safer replacement for `casez` and `casex`, which ignore `z` bits (`casez`) or `x` and `z` bits (`casex`) in the case expression as well as in the items (§12.5.1). [Procedural Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/flow-control) covers `case`, `casez`, `casex`, `unique` and `priority`.
+
+The explorer starts with `a = 4'b1010`, `b = 4'b1x1x` and `c = 4'b0000`. **Predict** `a inside {b, c}`, then reveal. Then change bit 1 of `a` to `x` and predict again.
+
+<OperatorExplorer family="inside" />
+
+What the explorer showed:
+- `a inside {b, c}` is 1: the `x` bits of `b` are wildcards, and the known bits of `b` (1 at bits 3 and 1) match `a`. If `inside` used `===`, the answer would be 0. This is the most common misconception about `inside`.
+- With `a = 4'b10x0`, the comparison with `b` is `x` (an unknown bit on the left faces a known 1) and the comparison with `c` is 0 (bit 3 differs), so the OR is `x`.
+
+### Expression width: context-determined and self-determined operands
+
+The module index walked through the five steps the simulator uses to size an assignment, with the 200 + 100 example ([F2A: Core Data Types](/curriculum/T1_Foundational/F2A_Core_Data_Types/index)). In short: the expression is evaluated at the width of its widest **context-determined** operand, **including the assignment target**; every such operand is extended to that width before any operator runs; and the result is truncated or extended into the target (§11.6, §11.8.2, §10.7). This section adds what the short version leaves out: which operands take part in that context, and which do not.
+
+- An operand is **context-determined** when its width depends on the expression around it: the operands of `+ - * / % & | ^ ~^`, unary `+ - ~`, both branches of `?:`, the left operand of a shift, and the right-hand side of an assignment.
+- An operand is **self-determined** when its width depends only on itself: a shift amount, the exponent of `**`, every member of a concatenation, the condition of `?:`, and the operands of `&&`, `||` and the reduction operators. The context stops at these operands.
+- The operands of a comparison (`== != === !== < <= > >=`) form a context of their own. They are sized against each other, never against the rest of the expression, and the result is 1 bit (§11.8.2).
+
+The width rules of Table 11-21 (§11.6.1), where `L(i)` is the width of operand `i`:
+
+| Expression | Result width | Operands |
+|---|---|---|
+| unsized constant, such as `12` or `'hFF` | at least 32 bits | — |
+| sized constant, such as `8'd200` | as written | — |
+| `i + j`, and likewise `- * / % & \| ^ ^~ ~^` | max(L(i), L(j)) | context-determined |
+| unary `+i`, `-i`, `~i` | L(i) | context-determined |
+| `i == j`, and `!= === !== > >= < <=` | 1 bit | sized to max(L(i), L(j)) against each other |
+| `i && j`, `i \|\| j`, `->`, `<->` | 1 bit | self-determined |
+| unary `&i`, `~&i`, `\|i`, `~\|i`, `^i`, `~^i`, `!i` | 1 bit | self-determined |
+| `i << j`, and `>> <<< >>> **` | L(i) | `j` is self-determined |
+| `i ? j : k` | max(L(j), L(k)) | `i` is self-determined |
+| `{i, …, j}` | L(i) + … + L(j) | self-determined |
+| `{i{j, …, k}}` | i × (L(j) + … + L(k)) | self-determined |
+
+Traced with `logic [7:0] a = 8'd200, b = 8'd100;`, a 9-bit `s9`, an 8-bit `s8` and a 1-bit `flag`:
+
+| Statement | Width used | Result | Why |
+|---|---|---|---|
+| `s9 = a + b;` | 9 | 300 | the target is part of the context |
+| `s9 = {a + b};` | 8 inside `{}` | 44 | a concatenation member is self-determined: the target cannot reach it |
+| `{carry, s8} = a + b;` | 9 | `carry` = 1, `s8` = 44 | the concatenated target is 9 bits wide |
+| `s8 = (a + b) >> 1;` | 8 | 22 | the shift's left operand is in the 8-bit context, so the sum wraps first (§11.6.2) |
+| `s8 = (a + b + 0) >> 1;` | 32 | 150 | the unsized `0` is 32 bits wide and widens the whole context |
+| `s8 = (a + b + 1'b0) >> 1;` | 8 | 22 | a 1-bit constant widens nothing |
+| `flag = (a + b > 255);` | 32 | 1 | comparison operands size each other, and `255` is 32 bits |
+| `flag = (a + b > 8'd255);` | 8 | 0 | the sum wraps to 44 |
+
+`$bits` returns the width of any expression without evaluating it: `$bits(a + b)` is 8 and `$bits({a, b})` is 16 (§20.6.2).
+
+The lab below opens on a trap that combines width, sign and shift: `-4'sd1 >> 1` stored into a 4-bit signed `r`, then the same expression stored into an `int`. **Predict** `r` for all three code variants before you reveal them: the logical shift into 4 bits, the arithmetic shift into 4 bits, and the logical shift into an `int`.
+
+<SignednessVisualizer scenario="shift-fill" />
+
+What the lab showed: into 4 bits, `-4'sd1 >> 1` is 7 (`4'b0111`) and `-4'sd1 >>> 1` is −1. Into an `int` the same `>>` gives 2147483647: the 32-bit target widened the context, so `-4'sd1` was sign-extended to 32 ones **before** the shift moved a 0 into the top bit. The target never changes the sign of an expression, but it does change its width, and the width decides which bits an operator sees. The misconception "the width is the widest operand" misses both effects: the target counts, and self-determined operands never see it.
+
+### Signedness: one unsigned operand makes the expression unsigned
+
+The sign of an expression decides how its operands are extended and how comparisons and divisions behave. The module index showed the headline case, a signed plus an unsigned operand giving 22 instead of 6. The complete rules (§11.8.1):
+
+- The sign of an expression depends **only on its operands**, never on the target.
+- Simple decimal numbers such as `12` and `-4` are signed. Based numbers such as `8'd12` and `'hFF` are unsigned unless written with `s`, as in `4'sd12`.
+- Bit-selects, part-selects (even of the whole vector), concatenations, and the results of comparison and reduction operators are unsigned.
+- If any context-determined operand is unsigned, the whole expression is unsigned. Only when all of them are signed is the expression signed.
+- Operands are sign-extended only when the expression is signed (§11.8.2).
+
+`$signed()` and `$unsigned()`, or the casts `signed'()` and `unsigned'()`, change the signedness of an operand without changing its bits (§11.7, §6.24.1). Traced with `logic signed [3:0] s = -4;` (`4'b1100`), `logic signed [7:0] sb = -8;` (`8'hF8`) and a signed 16-bit `w`:
+
+| Expression | Signed? | Result | Why |
+|---|---|---|---|
+| `s > 4'd0` | no | 1 (true) | `4'd0` is unsigned, so `s` is read as 12 |
+| `s > 0` | yes | 0 | `0` is a simple decimal, so both operands are signed |
+| `s[3:0] > 0` | no | 1 | a part-select is unsigned, even of the whole vector |
+| `$signed(s[3:0]) > 0` | yes | 0 | `$signed` restores the sign |
+| `w = sb;` | yes | −8 (`16'hFFF8`) | a signed value is sign-extended into the wider target |
+| `w = sb[7:0];` | no | 248 (`16'h00F8`) | the part-select is unsigned, so it is zero-extended; the signed `w` does not help |
+| `-12 / 3` | yes | −4 | a simple decimal is signed |
+| `-'d12 / 3` | no | 1431655761 | `'d12` is an unsigned 32-bit based number (§11.3.3) |
+
+The lab below opens on a signed compare: `a` is a signed 4-bit `-4`. **Predict** `a > 4'd0`, `a > 0` and `a > 4'sd0`, then reveal each. Afterwards, choose the `int vs logic [31:0]` scenario from the scenario list and predict `i < w` for `i = -1` and `w = 1`.
+
+<SignednessVisualizer scenario="signed-compare" />
+
+What the lab showed: `a > 4'd0` is true, because the unsigned literal makes the comparison unsigned and `4'b1100` reads as 12. `a > 0` and `a > 4'sd0` compare signed values and are false: one letter, `s`, or the choice between a sized and an unsized literal decides the answer. In the `int vs logic [31:0]` scenario, `i < w` is false for `i = -1`, because the unsigned `logic [31:0]` turns the comparison unsigned and −1 reads as 4294967295.
+
+### Concatenation and replication
+
+A **concatenation** `{a, b, c}` joins its operands into one vector, the first operand in the most significant bits (§11.4.12). Each operand keeps its own width (self-determined), and the result is unsigned. A **replication** `{n{a}}` repeats a concatenation `n` times; `n` must be a non-negative constant without `x` or `z` bits (§11.4.12.1).
+
+```systemverilog
+// snippet
+logic [7:0]  hi = 8'h12, lo = 8'h34;
+logic [15:0] word;
+logic [31:0] fill;
+logic [3:0]  n = 4'b1010;     // -6 as a signed 4-bit number
+logic [7:0]  b;
+
+word     = {hi, lo};          // 16'h1234: hi lands in the MSBs
+{hi, lo} = 16'hBEEF;          // a concatenation as a target: hi = 8'hBE, lo = 8'hEF
+fill     = {4{8'hA5}};        // 32'hA5A5_A5A5
+b        = {{4{n[3]}}, n};    // sign-extend by hand: 8'hFA, still -6
+```
+
+| Statement | Result |
+|---|---|
+| `word = {hi, lo};` | `16'h1234` |
+| `{hi, lo} = 16'hBEEF;` | `hi = 8'hBE`, `lo = 8'hEF` |
+| `fill = {4{8'hA5}};` | `32'hA5A5_A5A5` |
+| `b = {{4{n[3]}}, n};` | `8'hFA` |
+| `word = {hi, 1};` | compile error: unsized constants are not allowed in a concatenation |
+
+Rules worth remembering:
+- **No unsized constants inside.** `{hi, 1}` is illegal because `1` has no defined width; write `{hi, 1'b1}` (§11.4.12).
+- **A concatenation can be a target**, as in `{carry, sum} = a + b;`. A replication cannot, and it cannot connect to an output or inout port (§11.4.12.1).
+- **A zero replication** `{0{a}}` is allowed only inside a concatenation that has at least one operand of positive width, which is useful in parameterized code (§11.4.12.1).
+- **`{}` is not `'{}`.** Braces with an apostrophe are an assignment pattern, which builds structs and arrays member by member (§11.4.12, §10.9).
+
+### Shifts: logical versus arithmetic
+
+There are two kinds of shift (§11.4.10):
+
+- **Logical shifts** `<<` and `>>` fill the vacated bits with 0.
+- **Arithmetic shifts**: `<<<` is identical to `<<`, while `>>>` fills with copies of the sign bit **only when the result type is signed**. In an unsigned expression it fills with 0, just like `>>`.
+- The shift amount is self-determined and always treated as unsigned. If it contains `x` or `z`, every bit of the result is `x`. The result has the width of the left operand, extended to the context.
+
+Traced with `logic signed [7:0] s = -8;` (`8'hF8`), `logic [7:0] u8 = 8'hF8;` and 8-bit targets:
+
+| Expression | Result | Why |
+|---|---|---|
+| `s >>> 1` | `8'hFC` (−4) | signed: the sign bit is copied in |
+| `s >> 1` | `8'h7C` (124) | logical: 0 is shifted in |
+| `u8 >>> 1` | `8'h7C` | unsigned, so `>>>` fills with 0 |
+| `s << 1` | `8'hF0` | left shifts always fill with 0 |
+| `s >> k`, with `k = 2'bx1` | `8'hxx` | an unknown shift amount makes the whole result unknown |
+
+The explorer starts on the shift family with a signed `a = 4'b1000` (−8) and `n = 1`. Choose `a >>> n` and **predict** the result, then clear the "declare a as logic signed" box and predict it again. Try `a >> n` and `a << n` the same way.
+
+<OperatorExplorer family="shift" />
+
+What the explorer showed: with `a` signed, `a >>> n` is `4'b1100`, because the sign bit fills the vacated position. Unsigned, the same operator gives `4'b0100`. Nothing in the operator changed, only the type of the expression. The marked bits show which positions were vacated and how they were filled.
+
+### Streaming operators: pack and unpack in a chosen order
+
+A **streaming concatenation** turns data into a **stream** of bits and can reorder it on the way (§11.4.14):
+
+1. **Pack:** the operands are concatenated into one stream, left operand first. A packed value contributes its bits; a struct contributes its members in declaration order; an unpacked array contributes its elements in order (§11.4.14.1).
+2. **Reorder:** `{>> {…}}` streams left to right and never reorders; any slice size is ignored. `{<< n {…}}` cuts the stream into **slices** of `n` bits, starting from the right (least significant) end, and reverses the order of the slices. Bits inside a slice keep their order. The slice size defaults to 1, which reverses every bit, and may be a type such as `byte` (§11.4.14.2).
+
+<figure>
+<svg viewBox="0 0 360 162" role="img" aria-label="Streaming with a slice size of 8: w = 32'h1234_5678 is cut into the bytes 12, 34, 56 and 78, counted from the right, and the slice order is reversed, giving 78, 56, 34, 12, which is 32'h7856_3412. The bits inside each byte keep their order." style={{ width: "100%", maxWidth: 440 }}>
+  <defs>
+    <marker id="ops-stream-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 z" fill="currentColor" />
+    </marker>
+  </defs>
+  <text x="8" y="14" fontSize="10.5" fill="currentColor">{"w = 32'h1234_5678, cut into 8-bit slices from the right"}</text>
+  <rect x="40" y="22" width="70" height="26" fill="rgba(139,92,246,0.14)" stroke="rgb(139,92,246)" />
+  <rect x="110" y="22" width="70" height="26" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <rect x="180" y="22" width="70" height="26" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+  <rect x="250" y="22" width="70" height="26" fill="rgba(16,185,129,0.12)" stroke="rgb(16,185,129)" />
+  <text x="75" y="40" fontSize="12" fontFamily="monospace" textAnchor="middle" fill="currentColor">{"12"}</text>
+  <text x="145" y="40" fontSize="12" fontFamily="monospace" textAnchor="middle" fill="currentColor">{"34"}</text>
+  <text x="215" y="40" fontSize="12" fontFamily="monospace" textAnchor="middle" fill="currentColor">{"56"}</text>
+  <text x="285" y="40" fontSize="12" fontFamily="monospace" textAnchor="middle" fill="currentColor">{"78"}</text>
+  <line x1="75" y1="48" x2="283" y2="98" stroke="currentColor" strokeOpacity="0.55" markerEnd="url(#ops-stream-arrow)" />
+  <line x1="145" y1="48" x2="215" y2="98" stroke="currentColor" strokeOpacity="0.55" markerEnd="url(#ops-stream-arrow)" />
+  <line x1="215" y1="48" x2="145" y2="98" stroke="currentColor" strokeOpacity="0.55" markerEnd="url(#ops-stream-arrow)" />
+  <line x1="285" y1="48" x2="77" y2="98" stroke="currentColor" strokeOpacity="0.55" markerEnd="url(#ops-stream-arrow)" />
+  <rect x="40" y="100" width="70" height="26" fill="rgba(16,185,129,0.12)" stroke="rgb(16,185,129)" />
+  <rect x="110" y="100" width="70" height="26" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+  <rect x="180" y="100" width="70" height="26" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+  <rect x="250" y="100" width="70" height="26" fill="rgba(139,92,246,0.14)" stroke="rgb(139,92,246)" />
+  <text x="75" y="118" fontSize="12" fontFamily="monospace" textAnchor="middle" fill="currentColor">{"78"}</text>
+  <text x="145" y="118" fontSize="12" fontFamily="monospace" textAnchor="middle" fill="currentColor">{"56"}</text>
+  <text x="215" y="118" fontSize="12" fontFamily="monospace" textAnchor="middle" fill="currentColor">{"34"}</text>
+  <text x="285" y="118" fontSize="12" fontFamily="monospace" textAnchor="middle" fill="currentColor">{"12"}</text>
+  <text x="8" y="146" fontSize="10.5" fill="currentColor">{"{<< 8 {w}} = 32'h7856_3412: slice order reversed, bits kept"}</text>
+</svg>
+<figcaption>A byte swap is a slice reversal with 8-bit slices. With 1-bit slices the same operator reverses every bit, which is a different value for almost every input.</figcaption>
+</figure>
+
+```systemverilog
+// snippet
+logic [31:0]  w = 32'h1234_5678, r;
+byte unsigned q[$];
+
+r = {<< 8 {w}};      // 32'h7856_3412: byte swap (endianness change)
+r = {<< 4 {w}};      // 32'h8765_4321: nibble order reversed
+r = {<< {w}};        // 32'h1E6A_2C48: every bit reversed (slice size 1)
+r = {>> 8 {w}};      // 32'h1234_5678: >> never reorders
+q = {>> {w}};        // q holds 8'h12, 8'h34, 8'h56, 8'h78: q[0] gets the MSB byte
+{>> {r}} = q;        // unpack: r is filled from the MSB end of the stream
+```
+
+How the stream meets its target (§11.4.14, §11.4.14.3):
+- **As a source**, the target must be at least as wide as the stream. A wider fixed-size target is filled with zeros **on the right**, because the stream is left-aligned; a narrower one is an error. A queue or dynamic array target is resized to hold the stream.
+- **As a target** (unpacking), `{>> {a, b, c}} = src;` fills `a`, then `b`, then `c` from the most significant end of `src`. If `src` has too few bits it is an error; extra low bits are ignored.
+- **Not as an operand.** A streaming concatenation can be the source or target of an assignment, the operand of a bit-stream cast, or part of another streaming concatenation, but not an operand of another operator. Assign it to a variable first.
+
+**Bit-stream casting** is the other way to change shape. A cast such as `pkt_t'(bits)` converts between **bit-stream types** (integral and packed types, strings, and unpacked arrays and structs built from them) without reordering anything. When either type is unpacked, the total sizes must match: for fixed-size types a mismatch is a compile error (§6.24.3). Use a cast when only the shape changes, and streaming when the order changes or the sizes differ.
+
+The explorer starts on the streaming family with `a = 16'hA55A`. **Predict** `{<< {a}}` and `{<< 8 {a}}` for this value. Then load `a = 16'h1234` and predict all four operators again.
+
+<OperatorExplorer family="stream" />
+
+What the explorer showed: for `16'hA55A` a bit reversal and a byte swap give the same result, `16'h5AA5`, so that value cannot tell you which operator ran. With `16'h1234`, `{<< 8 {a}}` is `16'h3412`, `{<< 4 {a}}` is `16'h4321`, `{<< {a}}` is `16'h2C48`, and `{>> {a}}` is unchanged. Test streaming code with asymmetric patterns such as `16'h1234` or `32'h1234_5678`.
+
+In a testbench, streaming converts between bus beats and byte queues in monitors and scoreboards, changes endianness at a protocol boundary, and serializes packed headers and payloads.
+
+### The conditional operator and `x` merging
+
+`c ? a : b` returns `a` when `c` is true and `b` when it is false, and evaluates only the chosen branch. When `c` is `x` or `z`, it evaluates **both** branches. If they are equal (`==` returns 1), that value is the result; otherwise, for integral values, they are **merged bit by bit**: bits that agree keep their value and bits that differ become `x` (§11.4.11, Table 11-20). The result is as wide as the wider branch, the condition is self-determined, and the operator groups right to left.
+
+Traced with `sel = 1'bx` and `y = sel ? 4'b1100 : 4'b1010;`:
+
+| Bit | `?` branch | `:` branch | `y` |
+|---|---|---|---|
+| 3 | 1 | 1 | 1 |
+| 2 | 1 | 0 | `x` |
+| 1 | 0 | 1 | `x` |
+| 0 | 0 | 0 | 0 |
+
+So `y = 4'b1xx0`. The same choice written as `if (sel) y = 4'b1100; else y = 4'b1010;` produces `4'b1010`: `if` treats an `x` condition as false and runs `else`, which hides the unknown (§12.4). The 1-bit version of this contrast is the "if / case with x" tab of the explorer in [F2A: Core Data Types](/curriculum/T1_Foundational/F2A_Core_Data_Types/index).
+
+Table 11-20 merges `z` with anything into `x`, so a tri-state model `assign bus = en ? data : 'z;` drives `x`, not `z`, when `en` is unknown. A reference model written with `?:` propagates unknowns honestly; when it disagrees with a DUT written with `if` only on cycles where a control input is `x`, look for the `x` before blaming either side.
+
+<VisualRecap
+  title="Width, sign, grouping, order"
+  rule="The width comes from the context, including the target; the sign comes from the operands alone; precedence groups == before &; ==? and inside wildcard only the right side; << n reverses slices, not bits inside them."
+  code={`s8 = (a + b) >> 1;      // 8-bit context: carry lost
+s8 = (a + b + 0) >> 1;  // 32-bit context: carry kept
+r  = s + u;             // unsigned: s zero-extended
+if ((flags & mask) == 0) ...    // parenthesize
+w2 = {<< 8 {w}};        // byte swap; {<< {w}} reverses bits`}
+  mistake="Assuming the widest operand sets the width, or that a signed target makes the arithmetic signed. Neither is true; both bugs compile cleanly."
+  inTestbench="Reference models and scoreboards: size sums for their carry, keep signed math fully signed, compare with !== or ==? (pattern on the right), and convert byte order with streaming."
+>
+  <svg viewBox="0 0 320 128" role="img" aria-label="An 8-bit bowl holds a + b = 300 only as 44; a 9-bit bowl holds 300. Below, the stream 12 34 56 78 becomes 78 56 34 12 under a slice size of 8." style={{ width: "100%", maxWidth: 360 }}>
+    <text x="8" y="14" fontSize="10" fill="currentColor">{"a + b = 300"}</text>
+    <rect x="8" y="22" width="128" height="22" fill="rgba(244,63,94,0.10)" stroke="rgb(244,63,94)" />
+    <text x="72" y="37" fontSize="9.5" textAnchor="middle" fill="currentColor">{"8-bit context: 44"}</text>
+    <rect x="160" y="22" width="144" height="22" fill="rgba(16,185,129,0.12)" stroke="rgb(16,185,129)" />
+    <text x="232" y="37" fontSize="9.5" textAnchor="middle" fill="currentColor">{"9-bit context: 300"}</text>
+    <text x="8" y="70" fontSize="10" fill="currentColor">{"{<< 8 {w}}"}</text>
+    <rect x="8" y="78" width="36" height="20" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="44" y="78" width="36" height="20" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="80" y="78" width="36" height="20" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="116" y="78" width="36" height="20" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="26" y="92" fontSize="9.5" textAnchor="middle" fill="currentColor">{"12"}</text>
+    <text x="62" y="92" fontSize="9.5" textAnchor="middle" fill="currentColor">{"34"}</text>
+    <text x="98" y="92" fontSize="9.5" textAnchor="middle" fill="currentColor">{"56"}</text>
+    <text x="134" y="92" fontSize="9.5" textAnchor="middle" fill="currentColor">{"78"}</text>
+    <text x="168" y="92" fontSize="11" fill="currentColor">{"→"}</text>
+    <rect x="188" y="78" width="29" height="20" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="217" y="78" width="29" height="20" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="246" y="78" width="29" height="20" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="275" y="78" width="29" height="20" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="202" y="92" fontSize="9.5" textAnchor="middle" fill="currentColor">{"78"}</text>
+    <text x="231" y="92" fontSize="9.5" textAnchor="middle" fill="currentColor">{"56"}</text>
+    <text x="260" y="92" fontSize="9.5" textAnchor="middle" fill="currentColor">{"34"}</text>
+    <text x="289" y="92" fontSize="9.5" textAnchor="middle" fill="currentColor">{"12"}</text>
+    <text x="8" y="120" fontSize="9" fill="currentColor" fillOpacity="0.8">{"Size the bowl first; reverse slices, not the bits inside them"}</text>
+  </svg>
+</VisualRecap>
+
+**Debugging: symptom, cause, fix.**
+
+| What you see | Likely cause | Fix |
+|---|---|---|
+| A sum or average wraps for large inputs (200 + 100 gives 44) | the context is only as wide as the operands and the target (§11.6) | a wider target, `{carry, sum} = a + b`, or a wider operand such as `+ 9'd0` |
+| A negative value compares as larger than a positive one | one unsigned operand made the comparison unsigned (§11.8.1) | declare both signed, or use `$signed()` |
+| `>>>` fills with 0 | the expression is unsigned: an unsigned operand or a part-select (§11.4.10, §11.8.1) | make every operand signed, or shift into a signed variable first |
+| A condition with `&` and `==` behaves oddly | `==` binds tighter than `&` (Table 11-2) | parentheses |
+| A checker never reports a mismatch on `x` data | `!=` returned `x` and `if` took the else branch (§11.4.5, §12.4) | `!==`, or `$isunknown()` first |
+| `inside` or `==?` matches values you did not expect | `x`, `z` or `?` bits in a member or in the right operand are wildcards (§11.4.6, §11.4.13) | write those bits explicitly, or compare with `===` |
+| Bytes arrive reversed, or a value is bit-reversed | `{>>}` versus `{<< 8}`, or a slice size of 1 where 8 was meant (§11.4.14.2) | choose by endianness; test with `32'h1234_5678` |
+| Compile error on an expression containing `{<< …}` | a streaming concatenation used as an operand (§11.4.14) | assign it to a variable first |
+| A model output shows `1xx0` where `if`-based code shows a clean value | `?:` merged the branches under an `x` condition (§11.4.11) | find the `x` on the condition; the model is telling the truth |
+
+## Make It Work
+
+This self-checking file runs every rule of the lesson once: width, sign, shifts, precedence, 4-state equality and `inside`, the `x` condition, and streaming through a byte queue.
+
+```systemverilog
+// compile
+module tb_top;
+  // A 32-bit header; the first member is the most significant byte.
+  typedef struct packed {
+    logic [7:0]  len;
+    logic [15:0] addr;
+    logic [7:0]  kind;
+  } hdr_t;
+
+  int pass_count = 0;
+  int fail_count = 0;
+
+  // Callers compute ok with ===, so an x counts as a failure, never a pass.
+  function automatic void check(string what, bit ok);
+    if (ok) pass_count++;
+    else begin
+      fail_count++;
+      $display("FAIL: %s", what);
+    end
+  endfunction
+
+  logic        [7:0] a = 8'd200, b = 8'd100;
+  logic        [7:0] s8, avg8, avg32;
+  logic        [8:0] s9;
+  logic              carry;
+  logic signed [3:0] sn  = -4;          // 4'b1100
+  logic        [7:0] u   = 8'd10;
+  logic signed [7:0] r_mixed, r_signed;
+  logic signed [7:0] neg = -8;          // 8'hF8
+  logic signed [7:0] r_ashr, r_lshr;
+  logic        [3:0] flags = 4'b0101, mask = 4'b0010;
+  logic        [3:0] nib = 4'b1x10;
+  logic              sel;               // never assigned: x
+  logic        [3:0] y_cond, y_if;
+  logic       [31:0] word = 32'h1234_5678, w_byte, w_bit;
+  hdr_t              hdr, back;
+  byte unsigned      wire_q[$];
+
+  initial begin
+    // 1. Width: the target joins the context; an 8-bit context drops the carry.
+    s8          = a + b;
+    s9          = a + b;
+    {carry, s8} = a + b;
+    avg8        = (a + b) >> 1;
+    avg32       = (a + b + 0) >> 1;    // the unsized 0 makes the context 32 bits
+    $display("width : s8=%0d s9=%0d carry=%b avg8=%0d avg32=%0d", s8, s9, carry, avg8, avg32);
+    check("8-bit target wraps",         s8 === 8'd44);
+    check("9-bit target keeps carry",   s9 === 9'd300);
+    check("{carry, s8} catches it",     carry === 1'b1);
+    check("8-bit average",              avg8 === 8'd22);
+    check("32-bit average",             avg32 === 8'd150);
+    s9 = {a + b};                      // a concatenation member is self-determined
+    check("{a + b} is self-determined", s9 === 9'd44);
+
+    // 2. Sign: one unsigned operand makes the expression unsigned.
+    r_mixed  = sn + u;
+    r_signed = sn + $signed(u);
+    $display("sign  : sn + u = %0d, sn + $signed(u) = %0d", r_mixed, r_signed);
+    check("mixed is unsigned", r_mixed === 8'sd22);
+    check("all signed",        r_signed === 8'sd6);
+
+    // 3. Shifts: >>> copies the sign bit only in a signed expression.
+    r_ashr = neg >>> 1;
+    r_lshr = neg >> 1;
+    $display("shift : neg >>> 1 = %0d, neg >> 1 = %0d", r_ashr, r_lshr);
+    check(">>> keeps the sign", r_ashr === -8'sd4);
+    check(">> fills with 0",    r_lshr === 8'sd124);
+
+    // 4. Precedence: == binds tighter than the binary &.
+    $display("prec  : flags & mask == 0 -> %b, (flags & mask) == 0 -> %b",
+             flags & mask == 4'b0000, (flags & mask) == 4'b0000);
+    check("groups as flags & (mask == 0)", (flags & mask == 4'b0000) === 4'b0000);
+    check("parentheses state the intent",  ((flags & mask) == 4'b0000) === 1'b1);
+
+    // 5. Four-state equality, wildcards and inside.
+    $display("equal : == %b, === %b, 4'b1010 ==? nib %b, nib ==? 4'b1010 %b, inside %b",
+             nib == 4'b1x10, nib === 4'b1x10, 4'b1010 ==? nib, nib ==? 4'b1010,
+             4'b1010 inside {nib, 4'b0000});
+    check("== with an x bit is x",   (nib == 4'b1x10) === 1'bx);
+    check("=== matches x literally", (nib === 4'b1x10) === 1'b1);
+    check("==? wildcards the right", (4'b1010 ==? nib) === 1'b1);
+    check("but not the left",        (nib ==? 4'b1010) === 1'bx);
+    check("inside uses ==?",         (4'b1010 inside {nib, 4'b0000}) === 1'b1);
+
+    // 6. An x condition: ?: merges both branches, if runs the else branch.
+    y_cond = sel ? 4'b1100 : 4'b1010;
+    if (sel) y_if = 4'b1100;
+    else     y_if = 4'b1010;
+    $display("cond  : sel ? 1100 : 1010 = %b, if/else gives %b", y_cond, y_if);
+    check("?: merges to 1xx0", y_cond === 4'b1xx0);
+    check("if (x) runs else",  y_if === 4'b1010);
+
+    // 7. Streaming: reorder slices, then pack and unpack through a byte queue.
+    w_byte = {<< 8 {word}};
+    w_bit  = {<< {word}};
+    $display("stream: {<< 8} %h, {<< 1} %h", w_byte, w_bit);
+    check("byte swap",    w_byte === 32'h7856_3412);
+    check("bit reversal", w_bit === 32'h1E6A_2C48);
+    hdr    = '{len: 8'd4, addr: 16'hBEEF, kind: 8'h01};
+    wire_q = {>> {hdr}};               // big-endian: wire_q[0] is the MSB byte
+    {>> {back}} = wire_q;              // unpack: back is filled from the MSB end
+    $display("bytes : %h %h %h %h", wire_q[0], wire_q[1], wire_q[2], wire_q[3]);
+    check("four bytes",     wire_q.size() == 4);
+    check("len byte first", wire_q[0] == 8'd4);
+    check("round trip",     back === hdr);
+    wire_q = {<< 8 {hdr}};             // little-endian: the kind byte comes first
+    check("little-endian",  wire_q[0] == 8'h01);
+
+    $display("PASS=%0d FAIL=%0d", pass_count, fail_count);
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** (illustrative: derived from the IEEE 1800-2023 rules cited in the comments, not captured from a simulator run; your simulator adds its own `$finish` message):
+
+```text
+width : s8=44 s9=300 carry=1 avg8=22 avg32=150
+sign  : sn + u = 22, sn + $signed(u) = 6
+shift : neg >>> 1 = -4, neg >> 1 = 124
+prec  : flags & mask == 0 -> 0000, (flags & mask) == 0 -> 1
+equal : == x, === 1, 4'b1010 ==? nib 1, nib ==? 4'b1010 x, inside 1
+cond  : sel ? 1100 : 1010 = 1xx0, if/else gives 1010
+stream: {<< 8} 78563412, {<< 1} 1e6a2c48
+bytes : 04 be ef 01
+PASS=25 FAIL=0
+```
+
+**Run it.** Save the file as `tb_top.sv`, then compile and run it with any simulator that supports IEEE 1800-2023 and 4-state values; `tb_top` is the top module. Verilator models only 2-state values, so the `x` checks in sections 5 and 6 cannot pass there (tool-dependent).
+
+**How to work through it:**
+1. Cover the expected output and write your own prediction for every `$display` line, using the traced tables in this lesson.
+2. Run the file and compare. For every difference, name the rule and its clause before you change anything.
+3. Make `u` signed (`logic signed [7:0] u = 8'sd10;`) and predict the `sign` line and the failing check. (Both sums become 6, so "mixed is unsigned" fails.)
+4. Change `avg32` to `(a + b + 1'b0) >> 1` and predict the result. (22, and "32-bit average" fails: `1'b0` is 1 bit wide, so the context stays at 8 bits.)
+5. Replace `{<< 8 {word}}` with `{>> 8 {word}}` and predict which checks fail. (The byte swap check: `>>` never reorders.)
+
+**Checklist before moving on:**
+- [ ] I can find the width of an expression from its context-determined operands and its target.
+- [ ] I can name the operand that makes an expression unsigned, and I know a signed target does not help.
+- [ ] I put parentheses around a bitwise operation that is compared with `==`.
+- [ ] I compare DUT values with `===`/`!==`, and I put wildcard patterns on the right of `==?` and inside `inside`.
+- [ ] I can predict `{<< 8 {w}}`, `{<< {w}}` and `{>> {w}}` for `32'h1234_5678`.
+- [ ] I know that `?:` merges branches under an `x` condition while `if` takes the else branch.
+
+## Push Further
+
+### Expert: Comparison operands size each other, and constants decide the width
+
+The operands of relational and equality operators are neither fully self-determined nor fully context-determined. They are sized against each other, to the wider of the two, independently of the rest of the expression, and the result is always 1 bit unsigned (§11.8.2). Three consequences:
+
+- `if (a + b > 255)` evaluates the sum in 32 bits because the unsized `255` is 32 bits wide, so the carry survives. `if (a + b > 8'd255)` evaluates it in 8 bits and is never true. Changing how a constant is written changes the width of an addition.
+- In `sig == 1'bx` with a 4-bit `sig`, the 1-bit constant is zero-extended to `4'b000x`. Any 1 in `sig[3:1]` makes the result a definite 0 rather than `x` (§11.4.5). The branch never runs either way, because `if` treats 0 and `x` alike; test with `$isunknown(sig)` (§20.9).
+- Unsized constants are "at least 32 bits" (Table 11-21). Simulators commonly use exactly 32, but code that depends on the exact width of an unsized constant relies on the implementation (tool-dependent).
+
+Two grouping corner cases from Table 11-2: `**` groups left to right, so `2 ** 3 ** 2` is `(2 ** 3) ** 2` = 64, not 512; and unary minus binds tighter than `**`, so `-2 ** 2` is `(-2) ** 2` = 4.
+
+### Expert: Sign traps that survive code review
+
+- **`>>>` inside an unsigned expression.** In `r = (s >>> 1) + u;` with `u` unsigned, the whole expression is unsigned, so `s` is converted to unsigned before the shift and `>>>` fills with 0 (§11.8.1, §11.8.2, §11.4.10). Shift into a signed variable first, or make `u` signed.
+- **Part-selects and concatenations are unsigned**, even `s[7:0]` covering all of `logic signed [7:0] s`, and `{s}` (§11.8.1). `s[7:0] >>> 1` therefore fills with 0.
+- **Extension of an unknown sign bit.** Resizing a signed value whose sign bit is `x` fills the new bits with `x`; a `z` sign bit fills with `z` (§11.8.4).
+- **Mixed 2-state and 4-state operands** evaluate as if all were 4-state (§11.3.4): `i + l` is all `x` when the `logic` operand `l` holds an `x`, even though `i` is an `int`. Stored into an `int`, that `x` silently becomes 0 (§6.11.2).
+- **Literal signedness.** `-4'sd12 / 3` is 1: `4'sd12` is the 4-bit pattern `1100`, which is −4, and negating it gives 4 (§11.3.3). Write negative constants as simple decimals, or size them generously.
+
+### Expert: Streaming aggregates and byte order at scale
+
+- **What gets streamed** (§11.4.14.1): structs member by member in declaration order; unpacked arrays element by element (associative arrays in index order); queues and dynamic arrays with element 0 first; an untagged union through its first-declared member; a class object through its data members, base class first. Null class handles are skipped.
+- **Whole-struct reversal.** `{<< byte {pkt}}` reverses every byte of the whole struct, so the fields swap order as well as their bytes. If only the byte order inside each field should change, stream each field on its own.
+- **Variable-length fields.** In an unpack, `with` limits how much of an array is filled: `{>> {hdr, payload with [0 +: n]}} = stream;` fills `n` elements of `payload`, where `n` can come from data unpacked earlier in the same operation (§11.4.14.4).
+- **Cast or stream?** A bit-stream cast keeps the order and, when either type is unpacked, needs equal total sizes (§6.24.3); streaming can reorder, left-aligns into a wider target, and resizes dynamic targets (§11.4.14).
+
+### Expert: Evaluation order, side effects and short-circuits
+
+Precedence and associativity decide how operands are grouped, not when each operand is evaluated:
+
+- An expression that both updates and reads a variable has an undefined order. After `i = 10; j = i++ + (i = i - 1);`, `j` may be 18, 19 or 20 (§11.4.2).
+- Only `&&`, `||`, `->` and `?:` short-circuit: the right operand of `&&`, `||` and `->` is not evaluated when the left operand decides the result (§11.3.5, §11.4.7). Every other operator evaluates all of its operands, so `if (ptr_valid & f(ptr))` calls `f` even when `ptr_valid` is 0, and any side effect of `f` happens (§11.3.5).
+- `?:` evaluates only the selected branch, unless the condition is `x` or `z`, when both branches are evaluated (§11.4.11). A function with side effects in a branch can then run unexpectedly.
+- An assignment operator such as `a[i] += 2` evaluates the index expression once (§11.4.1).
+
+IEEE 1800-2023 also added tolerance ranges to `inside`: `[A +/- B]` and `[A +%- B]` (percent) (§11.4.13). Simulator support for these is **tool-dependent**; check it before using them in shared code.
+
+### Expert: Interview angles
+
+Commit to an answer before you check it.
+
+<InterviewQuestionPlayground
+  title="Interview: wildcard direction"
+  question={"What do 4'b1010 ==? 4'b1x1x and 4'b1x1x ==? 4'b1010 return?"}
+  options={[
+    { text: "1, then x: only x and z bits in the right operand are wildcards.", isCorrect: true, feedback: "Correct. In the first, the x bits are on the right and match anything; in the second they are on the left, where they are not wildcards, so the relation is ambiguous (§11.4.6)." },
+    { text: "1 and 1: ==? ignores x in either operand.", isCorrect: false, feedback: "x and z in the left operand are not wildcards and can make the result x (§11.4.6). ==? is not symmetric." },
+    { text: "x and x: any x makes an equality unknown.", isCorrect: false, feedback: "That is the behaviour of == when the x bits make the relation ambiguous. ==? treats the right operand's x bits as don't-cares (§11.4.6)." },
+    { text: "0 and 0: x never equals 0 or 1.", isCorrect: false, feedback: "That would be ===, which compares x as a value (§11.4.5). ==? uses x on the right as a wildcard." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the average that fails for big inputs"
+  question={"A reference model computes avg = (a + b) >> 1 with 8-bit a, b and avg. The scoreboard reports mismatches only when a + b exceeds 255. The DUT averages correctly. What is wrong, and what is the smallest fix?"}
+  options={[
+    { text: "The model's context is 8 bits, so the sum loses its carry before the shift. Widen it, for example (a + b + 9'd0) >> 1.", isCorrect: true, feedback: "Correct. The width is the largest of the operands and the target, all 8 bits, so the carry is lost at the addition (§11.6, §11.6.2). Any 9-bit or wider operand fixes it; the standard's own example adds an unsized 0." },
+    { text: "The DUT must be wrong, because the model is the reference.", isCorrect: false, feedback: "A reference model is code too. Here the model loses the carry for every sum above 255 (§11.6.2)." },
+    { text: "Use >>> instead of >>, so the shift keeps the carry.", isCorrect: false, feedback: ">>> differs from >> only in signed expressions, and the carry is lost at the addition, before the shift (§11.4.10, §11.6.2)." },
+    { text: "Cast the result: avg = 8'((a + b) >> 1).", isCorrect: false, feedback: "A size cast returns what an 8-bit variable would hold after being assigned the expression (§6.24.1), so the sum is still evaluated in 8 bits and the carry is still lost." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
+    {
+      question: "logic [3:0] a = 4'b1x10; What do a == 4'b1x10, a === 4'b1x10 and a ==? 4'b1010 return?",
+      answers: [
+        { text: "x, 1, x", correct: true, feedback: "Right. == is ambiguous on bit 2, === matches x as a value, and the x in the left operand of ==? is not a wildcard." },
+        { text: "1, 1, 1", correct: false, feedback: "== cannot prove two unknown bits equal, so it returns x (§11.4.5). And ==? only wildcards the right operand (§11.4.6)." },
+        { text: "x, 1, 1", correct: false, feedback: "This treats the left operand's x as a wildcard. Only x and z bits in the right operand are wildcards for ==? (§11.4.6)." },
+        { text: "x, x, x", correct: false, feedback: "=== never returns x: it compares x and z as values (§11.4.5)." }
+      ],
+      explanation: "== returns x when unknown bits make the relation ambiguous; === always returns 0 or 1; ==? treats x and z only in its right operand as wildcards (§11.4.5, §11.4.6).",
+      objective: 1
+    },
+    {
+      question: "What does 4'b1010 inside {4'b1x1x, 4'b0000} return?",
+      answers: [
+        { text: "1", correct: true, feedback: "Right. inside compares with ==?, so the x bits of the member 4'b1x1x are wildcards, and its known bits match." },
+        { text: "0", correct: false, feedback: "That would be true if inside used ===. It uses ==? for integral values, so x and z bits in a member are wildcards (§11.4.13)." },
+        { text: "x", correct: false, feedback: "inside returns x only when nothing matches and some comparison was x. Here the first member matches (§11.4.13)." },
+        { text: "A compile error: x is not allowed in a set", correct: false, feedback: "Set members may contain x, z and ? bits; that is how inside expresses don't-care patterns (§11.4.13)." }
+      ],
+      explanation: "inside is the OR of ==? comparisons with each member; x and z in a member are wildcards, x and z on the left are not (§11.4.13).",
+      objective: 1
+    },
+    {
+      question: "logic [7:0] a = 200, b = 100; logic [8:0] s; s = {a + b}; What does s hold?",
+      answers: [
+        { text: "44", correct: true, feedback: "Right. A concatenation member is self-determined, so a + b is evaluated in 8 bits and wraps to 44 before the 9-bit target sees it." },
+        { text: "300", correct: false, feedback: "That is the result of s = a + b, where the 9-bit target joins the context. Inside braces the sum is self-determined (§11.6.1, Table 11-21)." },
+        { text: "255", correct: false, feedback: "Integer arithmetic does not saturate; it keeps the low bits (§11.6, §10.7)." },
+        { text: "A compile error: a concatenation needs two operands", correct: false, feedback: "A concatenation with one operand is legal, and a common way to force a self-determined width (§11.4.12)." }
+      ],
+      explanation: "Concatenation members are self-determined (Table 11-21): a + b is 8 bits inside the braces, giving 44, which is then zero-extended into s.",
+      objective: 2
+    },
+    {
+      question: "logic signed [3:0] s = -4; logic [7:0] u = 10; logic signed [7:0] r; r = s + u; What is r?",
+      answers: [
+        { text: "22", correct: true, feedback: "Right. u is unsigned, so the expression is unsigned: s is zero-extended from 4'b1100 to 12, and 12 + 10 = 22." },
+        { text: "6", correct: false, feedback: "That needs a signed expression. A signed target does not make the math signed; the operands decide (§11.8.1). Write s + $signed(u)." },
+        { text: "A compile error: signed and unsigned cannot be mixed", correct: false, feedback: "Mixing is legal; the expression simply becomes unsigned (§11.8.1)." },
+        { text: "x, because the signs conflict", correct: false, feedback: "Signedness never produces x; it only decides how operands are extended (§11.8.2)." }
+      ],
+      explanation: "One unsigned operand makes the whole expression unsigned, so the signed operand is zero-extended; the target's signedness plays no part (§11.8.1, §11.8.2).",
+      objective: 2
+    },
+    {
+      question: "flags = 4'b0101, MASK = 4'b0010. Does the branch of if (flags & MASK == 0) run?",
+      answers: [
+        { text: "No: it means flags & (MASK == 0), which is flags & 4'b0000 = 0", correct: true, feedback: "Right. Equality binds tighter than the binary & (Table 11-2). Write if ((flags & MASK) == 0)." },
+        { text: "Yes: flags & MASK is 0, so the comparison is true", correct: false, feedback: "That is the intended grouping, but without parentheses == is applied first (Table 11-2)." },
+        { text: "Yes: & binds tighter than ==", correct: false, feedback: "The binary & has lower precedence than the equality operators (Table 11-2), as in C." },
+        { text: "It does not compile: the operand widths differ", correct: false, feedback: "Different widths are legal; the 1-bit comparison result is simply extended to 4 bits (§11.6)." }
+      ],
+      explanation: "Equality operators rank above the binary bitwise operators, so the expression groups as flags & (MASK == 0) (§11.3.2, Table 11-2).",
+      objective: 3
+    },
+    {
+      question: "logic [31:0] w = 32'h1234_5678; What is the value of {<< 8 {w}}?",
+      answers: [
+        { text: "32'h7856_3412", correct: true, feedback: "Right. The stream is cut into bytes from the right and the byte order is reversed; bits inside each byte keep their order." },
+        { text: "32'h1E6A_2C48", correct: false, feedback: "That is {<< {w}}, a bit reversal with the default slice size of 1 (§11.4.14.2)." },
+        { text: "32'h8765_4321", correct: false, feedback: "That is {<< 4 {w}}, which reverses 4-bit slices (§11.4.14.2)." },
+        { text: "32'h3456_7800", correct: false, feedback: "That is w << 8, a shift. The streaming operator << reorders slices; it does not shift (§11.4.14.2)." }
+      ],
+      explanation: "{<< n {…}} reverses the order of n-bit slices, counted from the right, and keeps the bits inside each slice (§11.4.14.2).",
+      objective: 4
+    },
+    {
+      question: "logic signed [7:0] s = -8; logic [7:0] u = 0, r; r = (s >>> 1) + u; What is r?",
+      answers: [
+        { text: "8'h7C (124)", correct: true, feedback: "Right. u is unsigned, so the whole expression is unsigned, s is treated as unsigned, and >>> fills with 0." },
+        { text: "8'hFC (252, the bits of -4)", correct: false, feedback: ">>> copies the sign only when the result type is signed, and one unsigned operand makes the expression unsigned (§11.4.10, §11.8.1)." },
+        { text: "8'hF8, because an arithmetic shift keeps negative numbers unchanged", correct: false, feedback: "Any shift by 1 moves every bit; the question is only what fills the vacated MSB (§11.4.10)." },
+        { text: "x, because signed and unsigned operands conflict", correct: false, feedback: "Mixing signedness never produces x; it decides how operands are extended and shifted (§11.8.1)." }
+      ],
+      explanation: "The type of the whole expression flows down to its operands: with an unsigned u, s >>> 1 is evaluated as an unsigned shift and fills with 0 (§11.8.1, §11.8.2, §11.4.10).",
+      objective: 5
+    },
+    {
+      question: "sel is 1'bx. What does y = sel ? 4'b1100 : 4'b1010 produce?",
+      answers: [
+        { text: "4'b1xx0", correct: true, feedback: "Right. Both branches are evaluated and merged: bits that agree keep their value, bits that differ become x." },
+        { text: "4'b1010", correct: false, feedback: "That is what if (sel) ... else ... produces, because if treats x as false. ?: merges the branches instead (§11.4.11)." },
+        { text: "4'bxxxx", correct: false, feedback: "Only the bits where the branches differ become x; bits 3 and 0 agree (Table 11-20)." },
+        { text: "4'b1100", correct: false, feedback: "An x condition is not true. ?: neither picks the first branch nor the second when the condition is unknown (§11.4.11)." }
+      ],
+      explanation: "With an ambiguous condition, ?: evaluates both branches and combines them bit by bit with Table 11-20: equal bits are kept, differing bits become x (§11.4.11).",
+      objective: 5
+    }
+  ]}
+/>
+
+### Kata: fix the packet checker
+
+**Objective:** Find five expression bugs in a checker that compiles cleanly, fix each one, and prove the fixes with self-checks.
+
+The code under review:
+
+```systemverilog
+// snippet: the checker under review; inside a module that declares
+// ok_count and err_count, every line is legal and compiles
+logic        [7:0]  len_a, len_b;   // two fragment lengths from the DUT
+logic        [7:0]  total;
+logic        [3:0]  status;         // bit 3: error flag
+logic signed [7:0]  temp_c;         // a signed sensor reading
+logic        [7:0]  limit_c = 8'd50;
+logic        [31:0] payload, swapped, expected;
+
+total = len_a + len_b;                       // 1
+if (status & 4'b1000 == 0) ok_count++;       // 2: count frames with the error flag clear
+if (temp_c > limit_c) $error("too hot");     // 3
+swapped = {<< {payload}};                    // 4: little-endian to big-endian
+if (payload != expected) err_count++;        // 5
+```
+
+**Requirements:**
+- For each numbered line, predict the wrong behaviour for these inputs: `len_a = 200`, `len_b = 100`, `status = 4'b0101`, `temp_c = -10`, `payload = 32'h1234_5678`, and for line 5 a `payload` of `32'h1234_56xx` with `expected = 32'h1234_5678`.
+- Name the rule and its clause for each bug.
+- Write a `tb_top` that applies the fixes to those inputs and self-checks every result with `===`, ending with `PASS=<n> FAIL=0`.
+
+<details>
+<summary>Worked solution</summary>
+
+| Line | What goes wrong | Rule | Fix |
+|---|---|---|---|
+| 1 | `total` is 44, not 300 | the context is 8 bits (§11.6) | make `total` 9 bits |
+| 2 | never counts: `4'b1000 == 0` is 0, and `status & 4'b0000` is 0 | `==` binds tighter than `&` (Table 11-2) | `if ((status & 4'b1000) == 0)` |
+| 3 | `-10 > 50` is true: `limit_c` is unsigned, so `temp_c` is compared as 246 | one unsigned operand (§11.8.1) | declare `limit_c` signed, or use `$signed(limit_c)` |
+| 4 | the value is bit-reversed, `32'h1E6A_2C48`, not byte-swapped | slice size 1 (§11.4.14.2) | `{<< 8 {payload}}` |
+| 5 | an `x` payload is never counted: `!=` returns `x` and `if` takes else | §11.4.5, §12.4 | `!==` |
+
+```systemverilog
+// compile
+module tb_top;
+  int pass_count = 0;
+  int fail_count = 0;
+
+  function automatic void check(string what, bit ok);
+    if (ok) pass_count++;
+    else begin
+      fail_count++;
+      $display("FAIL: %s", what);
+    end
+  endfunction
+
+  logic        [7:0]  len_a = 8'd200, len_b = 8'd100;
+  logic        [8:0]  total;                    // fix 1: room for the carry
+  logic        [3:0]  status = 4'b0101;         // error flag (bit 3) clear
+  logic signed [7:0]  temp_c = -10;
+  logic signed [7:0]  limit_c = 8'sd50;         // fix 3: signed, like temp_c
+  logic        [31:0] payload = 32'h1234_5678, swapped;
+  logic        [31:0] bad = 32'h1234_56xx, expected = 32'h1234_5678;
+  bit                 frame_ok, too_hot, mismatch;
+
+  initial begin
+    total = len_a + len_b;
+    check("total keeps the carry", total === 9'd300);
+
+    frame_ok = ((status & 4'b1000) == 0);       // fix 2: parentheses
+    check("error flag clear", frame_ok === 1'b1);
+
+    too_hot = (temp_c > limit_c);
+    check("-10 is not above 50", too_hot === 1'b0);
+
+    swapped = {<< 8 {payload}};                 // fix 4: 8-bit slices
+    check("byte swap", swapped === 32'h7856_3412);
+
+    mismatch = (bad !== expected);              // fix 5: x counts as a mismatch
+    check("x is a mismatch", mismatch === 1'b1);
+
+    $display("PASS=%0d FAIL=%0d", pass_count, fail_count);
+    $finish;
+  end
+endmodule
+```
+
+Expected output (illustrative):
+
+```text
+PASS=5 FAIL=0
+```
+
+</details>
+
+## References & Next Topics
+
+**Primary sources (IEEE 1800-2023):**
+- §11.3.2 operator precedence and associativity (Table 11-2); §11.3.3 integer literals in expressions; §11.3.4 operations on 2-state and 4-state types; §11.3.5 short-circuit evaluation
+- §11.4.1 assignment operators; §11.4.2 increment and decrement; §11.4.3 arithmetic; §11.4.4 relational
+- §11.4.5 equality; §11.4.6 wildcard equality; §11.4.7 logical; §11.4.8 bitwise (Tables 11-11 to 11-15); §11.4.9 reduction (Tables 11-16 to 11-19)
+- §11.4.10 shift; §11.4.11 conditional (Table 11-20); §11.4.12 concatenation and §11.4.12.1 replication; §11.4.13 set membership
+- §11.4.14 streaming operators, with §11.4.14.1 concatenation of stream expressions, §11.4.14.2 re-ordering, §11.4.14.3 unpacking, §11.4.14.4 dynamically sized data
+- §11.6 expression bit lengths, §11.6.1 rules (Table 11-21), §11.6.2 bit-length example; §11.7 signed expressions; §11.8.1–§11.8.4 evaluation rules; §10.7 assignment extension and truncation
+- §12.4 if–else; §12.5.1 `casez` and `casex`; §12.5.4 set membership case statement (`case inside`)
+- §6.11.2 4-state to 2-state conversion; §6.24.1 cast operator; §6.24.3 bit-stream casting; §10.9 assignment patterns; §20.6.2 `$bits`; §20.9 `$isunknown`
+
+**Related:**
+- [F2A: Core Data Types](/curriculum/T1_Foundational/F2A_Core_Data_Types/index): 4-state values, literals, and `x` in `if` and `case`.
+- [Structs, Unions and Enums](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums): the packed types that streaming packs and unpacks.
+- [Procedural Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/flow-control): `case`, `casez`, `casex`, `unique` and `priority`.
+- [F2E: Your First Self-Checking Testbench](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index): comparing DUT outputs with `!==` in a complete bench.
+- [I-SV-2A: Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index): `inside` in constraints.
+- [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): the same operators inside assertions, and `$isunknown` checks.
+- [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): reference-model arithmetic and compares at scale.
+
+<NextLesson />

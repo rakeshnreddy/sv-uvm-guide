@@ -1,269 +1,895 @@
 ---
 title: "F1B: The Verification Mindset"
-description: "Adopt the destructive testing philosophy and explore the methodologies used to break designs."
+description: "Plan a block's verification, choose between directed, constrained-random and formal methods, measure progress with coverage, and prove your checks can fail."
 flashcards: "F1B_Verification_Mindset"
 ---
 
 ## Quick Take
-- **What it is:** The mindset shift from "make it work" (design) to "make it fail" (verification) — and the systematic methodologies that make destructive thinking productive.
-- **Why it matters:** Bugs hide where designers don't look. Verification engineers are paid to think adversarially and measure their progress quantitatively.
-- **The Analogy:** A designer builds a bridge to carry 10 tons. A verifier asks: what happens at 10.001 tons? What about 10 tons with wind and an earthquake at the same time? What if the bridge was built with the wrong steel grade?
 
-## Constructive vs. Destructive Thinking
+- **What it is:** The verifier's way of thinking. Assume the design is broken, plan how to show it, check every result against an independent model, and measure honestly how much of the plan you have exercised. A designer asks "how do I make this work?"; a verifier asks "how can this fail, and would my test notice?"
+- **Why it matters:** A test that cannot fail proves nothing, and coverage that looks complete can hide features nobody checked. These habits decide whether the verification effort you met in F1A finds bugs or only produces green results.
+- **The Analogy:** A designer builds a bridge to carry 10 tons. A verifier asks about 10.001 tons, about 10 tons during an earthquake, and about the wrong grade of steel. *Where it breaks:* a bridge has a handful of load cases, while a chip's inputs form billions of sequences. Imagination is not enough: a verifier needs a written plan, automatic checks and measurements.
 
-The most important tool in verification isn't SystemVerilog—it's your mindset.
+**You will be able to:**
+1. Explain why a self-checking test must be able to fail, and prove it by injecting a bug and watching the check fire.
+2. Compare directed, constrained-random and formal verification by strength, cost and fit, and choose a method or a mix for a given scenario.
+3. Evaluate a "100% coverage" claim: tell code coverage (statement, branch, condition or expression, toggle, finite state machine) from functional coverage, and explain why neither alone means "done".
+4. Write a feature-level verification-plan row (feature, scenario, check, coverage item, method) for a small block from a spec excerpt.
+5. Debug a check that can never fail: a vacuous antecedent, a tautology, a `cover` used where `assert` was meant, or a compare that is blind to X.
 
-*   **Designers are Constructive:** They build pathways for data to flow. They ask, "How do I make this work?"
-*   **Verifiers are Destructive:** They look for cracks in the pavement. They ask, "How can I make this fail?"
+<BeforeYouStart />
+
+## Build Your Mental Model
+
+### The words you need
+
+Every testbench, from a 30-line module to a full UVM environment, has the same parts:
+
+- **DUT (design under test):** the design being verified. IEEE 1800.2-2020 §3.2 and IEEE 1800-2023 §14.2 expand DUT as "device under test"; both names mean the same thing.
+- **Testbench (TB):** everything that verifies the DUT. It applies inputs, watches outputs and decides pass or fail. IEEE 1800.2-2020 §3.1 also calls it the verification environment.
+- **Stimulus:** the input values and sequences the testbench applies.
+- **Reference model:** code that computes what the spec says the DUT should produce, written independently of the RTL.
+- **Checker:** code that compares the DUT's actual output with the expected value and reports a mismatch. This is not the SystemVerilog `checker` construct, a language feature for packaging assertions (IEEE 1800-2023 Clause 17).
+- **Scoreboard:** a checker for whole transactions. IEEE 1800.2-2020 §3.1 defines it as the mechanism that predicts the design's response and checks the observed response against the prediction.
+- **Coverage:** a measurement of what the stimulus exercised. IEEE 1800-2023 §19.2 defines coverage as the percentage of verification objectives that have been met. It records what happened; it never decides pass or fail.
+
+Here is how the parts connect in the small bench you will run in Make It Work:
+
+<ArchitectureDiagram
+  title="Anatomy of a self-checking testbench"
+  caption="The parts of the Make It Work bench. Tags: DUT = design under test, REF = reference model, SCB = scoreboard (the checker). Solid arrows carry values; the dashed arrow is the test loop stepping the model after each check. The coverage counter records what happened; only the compare decides PASS or FAIL."
+  gapX={90}
+  nodes={[
+    { id: "tb", label: "tb_top", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "stim", label: "clk, rst", sublabel: "always #5 and the initial block", kind: "generic", col: 0, row: 0 },
+    { id: "model", label: "expected", sublabel: "reference model", kind: "model", col: 1, row: 0 },
+    { id: "dut", label: "dut", sublabel: "up_counter", kind: "dut", col: 0, row: 1 },
+    { id: "chk", label: "count !== expected", sublabel: "the compare", kind: "scoreboard", col: 1, row: 1 },
+    { id: "cov", label: "seen_max", sublabel: "coverage counter", kind: "generic", col: 0, row: 2 },
+    { id: "sum", label: "$display", sublabel: "PASS=n FAIL=m", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "stim", to: "dut", style: "data", label: "clk, rst" },
+    { from: "stim", to: "model", style: "causal", label: "steps it" },
+    { from: "dut", to: "chk", style: "data", label: "count" },
+    { from: "model", to: "chk", style: "data", label: "expected" },
+    { from: "dut", to: "cov", style: "data", label: "count" },
+    { from: "chk", to: "sum", style: "data", label: "pass_cnt, fail_cnt" },
+    { from: "cov", to: "sum", style: "data", label: "seen_max" }
+  ]}
+/>
+
+### Constructive vs destructive thinking
+
+The most important tool in verification is not a language; it is a mindset.
+
+- **Designers think constructively.** They build paths for data to flow and ask, "How do I make this work?"
+- **Verifiers think destructively.** They look for cracks and ask, "How can I make this fail?"
 
 <Card className="my-6 border-l-4 border-l-purple-500">
   <CardHeader>
-    <CardTitle className="text-lg text-purple-700 dark:text-purple-300">The Conflict of Interest</CardTitle>
+    <CardTitle className="text-lg text-purple-700 dark:text-purple-300">The conflict of interest</CardTitle>
   </CardHeader>
   <CardContent className="grid gap-4 md:grid-cols-2">
     <div>
-      <h4 className="mb-2 font-semibold text-sky-700 dark:text-sky-300">Designer's View</h4>
-      <p className="text-sm text-muted-foreground">"The spec says the burst length is 4, 8, or 16. I implemented logic for those."</p>
+      <h4 className="mb-2 font-semibold text-sky-700 dark:text-sky-300">Designer's view</h4>
+      <p className="text-sm text-muted-foreground">"The spec says the burst length is 4, 8 or 16. I implemented logic for those."</p>
     </div>
     <div>
-      <h4 className="mb-2 font-semibold text-amber-700 dark:text-amber-300">Verifier's View</h4>
-      <p className="text-sm text-muted-foreground">"What happens if I send a burst length of 5? Or 0? Or 255? Does the controller hang? Does it corrupt memory?"</p>
+      <h4 className="mb-2 font-semibold text-amber-700 dark:text-amber-300">Verifier's view</h4>
+      <p className="text-sm text-muted-foreground">"What happens with a burst length of 5? Or 0? Or 255? Does the controller hang? Does it corrupt memory?"</p>
     </div>
   </CardContent>
 </Card>
 
-### The Verification Engineer's Checklist for Any Feature
+When you are handed any feature or block, ask these six questions in order:
 
-When handed any new feature or block to verify, systematically ask:
+1. **What is the normal operation?** Understand the intended path first.
+2. **What are the boundary values?** Minimum, maximum and one past the maximum.
+3. **What happens on illegal inputs?** Should the design ignore them, flag them or recover?
+4. **What are the concurrent interactions?** What if two features fire in the same cycle?
+5. **What are the reset and power-on behaviours?** Does the block come up clean, and does reset work in the middle of activity?
+6. **What does the spec not say?** Unspecified behaviour is where bugs breed.
 
-1. **What is the normal operation?** — Understand the golden path first.
-2. **What are the boundary values?** — Test min, max, and one-past-max.
-3. **What happens on illegal inputs?** — Should the design ignore, flag, or reset?
-4. **What are the concurrent interactions?** — What if two features fire at the same time?
-5. **What are the reset and power-on behaviors?** — Does the block come up clean?
-6. **What does the spec NOT say?** — Unspecified behavior is where bugs breed.
+Here are the six questions traced on the 3-bit counter from the bug hunt below. Its spec: after reset, `count` goes up by 1 on every rising clock edge, and 7 wraps to 0.
 
-> [!TIP]
-> **Interview Gold:** When asked "How would you verify X?", use this checklist structure. It shows systematic thinking, not just listing random test scenarios.
-
-## Verification Methodologies
-
-How do we systematically break things? Step through the methods below and notice which design representation each one runs on. Emulation, for example, runs the RTL, not the gate-level netlist.
-
-<VerificationMethodologiesDiagram />
-
-### 1. Directed Testing
-Manually writing a test for a specific scenario.
-*   **Pros:** Easy to write, deterministic, good for basic sanity checks.
-*   **Cons:** Cannot scale. You only find the bugs you can imagine.
-*   **When to use:** Bring-up, smoke tests, specific protocol compliance checks.
-
-### 2. Constrained Random Verification (CRV)
-The industry standard (and the focus of this course). You define the *rules* (constraints) and let the solver generate the *scenarios*.
-*   **Pros:** Finds bugs you never thought of. Covers massive state space.
-*   **Cons:** Harder to debug. Requires functional coverage to know what happened.
-*   **When to use:** The backbone of any production verification environment.
-
-### 3. Formal Verification
-Using mathematical proofs to verify properties.
-*   **Pros:** Exhaustive. Proves absence of bugs for specific properties.
-*   **Cons:** Doesn't scale to large full-chip designs. Requires assertions.
-*   **When to use:** Critical control logic, arbiters, FSM deadlock freedom, protocol compliance.
-
-### How They Work Together
-
-In practice, all three methods are used together:
-
-| Method | Strengths | Weaknesses | Ideal For |
-|--------|-----------|------------|-----------|
-| Directed | Deterministic, easy debug | Low coverage, doesn't scale | Smoke tests, bring-up |
-| CRV | High coverage, finds unexpected bugs | Hard to debug, needs infrastructure | Bulk regression |
-| Formal | Exhaustive proof | State explosion, limited scope | Critical properties, protocols |
-
-> [!IMPORTANT]
-> **A Common Interview Mistake:** Candidates often say "I'd use constrained random for everything." The correct answer acknowledges that different methods solve different problems. Formal proves properties exhaustively. Directed tests verify specific protocol sequences. CRV fills the gaps between them.
-
-## Coverage: The Scoreboard
-
-If you are generating random tests, how do you know when you are done?
-
-*   **Code Coverage:** Did I execute every line of RTL code? (Automatic — measured by the simulator)
-*   **Functional Coverage:** Did I see every interesting scenario defined in the test plan? (Manual — defined by the verification engineer)
+| Question | Answer for the counter |
+|---|---|
+| Normal operation | 0, 1, 2 and so on after reset, one step per edge |
+| Boundary values | The wrap from 7 to 0, and the first value after reset |
+| Illegal inputs | An unknown (X) value on `rst` before the testbench drives it |
+| Concurrent interactions | Reset asserted in the same cycle as the wrap |
+| Reset and power-on | `count` is X until the first reset edge; reset in the middle of counting |
+| What the spec does not say | The value before reset, and whether reset is synchronous (the RTL makes it synchronous: write that into the spec) |
 
 > [!TIP]
-> **Code Coverage is Necessary but Not Sufficient**
-> You can have 100% code coverage and still miss a major bug if the feature was never implemented in the RTL! Functional coverage checks the *intent*, not just the *implementation*.
+> **In interviews:** when asked "How would you verify X?", walk through these six questions. It shows systematic thinking instead of a list of random tests.
 
-### The Coverage Closure Trap
+### A test must be able to fail
 
-Coverage closure follows a classic diminishing-returns curve. The stages below show its typical shape; where the boundaries fall varies by project:
+A **self-checking test** compares every output with an expected value from a reference model and counts failures, so nobody has to read waveforms to know whether it passed. Its check is only worth something if it **can fail**: if the design were wrong, the test would say so. A green result from a check that cannot fail is the most dangerous output a testbench can produce.
 
-- **The first large chunk (often most of the goals):** reached quickly with basic random stimulus.
-- **The middle stretch:** needs constrained sequences that target specific scenarios.
-- **The last few percent:** demand targeted directed sequences, constraint tuning, or formal proofs. This "last mile" consumes a disproportionate share of the schedule.
+There are four common ways a check silently never fails. Each has a symptom, a cause and a fix:
 
-Understanding this curve is critical for planning. Teams that don't plan for the last mile end up scrambling at tape-out.
+1. **The compare is missing or disabled.**
+   - Symptom: everything passes, even after you break the DUT on purpose.
+   - Cause: the compare was commented out, sits behind a flag that is off, or compares the DUT with a copy of its own output.
+   - Fix: inject a known bug and confirm that the test fails.
+2. **The trigger never happens (a vacuous success).**
+   - Symptom: an assertion such as `count == 3'd7 |=> count == 3'd0` never fails, and nothing shows that it ever checked anything.
+   - Cause: an implication whose left side (the **antecedent**) never matches succeeds without checking its right side (IEEE 1800-2023 §16.12.7). Such an attempt is a **vacuous success**: neither a pass nor a failure (§16.14.8).
+   - Fix: add a `cover property` on the antecedent. A count of 0 means the check never ran.
+3. **The check is a tautology, or it is only a `cover`.**
+   - Symptom: it never fails on any design.
+   - Cause: `count <= 3'd7` on a 3-bit counter is true for every known value. A `cover property` only counts matches; it never fails.
+   - Fix: check behaviour the spec constrains, with `assert`.
+4. **The compare is blind to X.**
+   - Symptom: an output stuck at X still passes.
+   - Cause: `count != expected` gives `1'bx` when `count` is X (§11.4.5), and an `if` whose condition is x does not run its first statement (§12.4). The failure branch is skipped.
+   - Fix: compare with `!==`, which treats X as a value and returns 1 or 0 (§11.4.5).
 
-## Interactive: Your First Bug Hunt
-
-You are the verifier. The designer has handed you a 3-bit up counter and a one-line spec. Compare the spec with the waveform before you look at the code: find the first edge that is wrong, then the line that caused it, then pick the assertion that would have caught it.
+Now be the verifier. The designer has handed you a 3-bit up counter and a one-line spec. Compare the spec with the waveform before you look at the code: find the first edge that is wrong, then the line that caused it, then pick the assertion that would have caught it. Before step 3, predict which of the offered assertions can never fail on this counter, and why.
 
 <FirstBugHuntGame />
 
-## Deeper Understanding
+What the hunt showed:
+- **The debug workflow** is always the same: spec, then the first divergent sample, then the line that caused it, then a check that would have failed. Debug from the first divergence: every later value is wrong too, but only the first one points at the cause.
+- **Two of the four assertions can never fail** on the buggy counter. The wrap check `count == 3'd7 |=> count == 3'd0` is a vacuous success at every attempt, because the counter never reaches 7. `count <= 3'd7` is a tautology.
+- **One assertion is a false alarm:** `count == 3'd6 |-> count == 3'd7` checks the same cycle, so it fails even on a correct counter.
+- **Only `count == 3'd6 |=> count == 3'd7`** fails on the bug and stays silent on the fix. "Apply the fix" is the mutation idea in reverse: a good check separates the broken design from the fixed one.
 
-### The Bug Taxonomy
+### Directed, constrained-random and formal
 
-Not all bugs are created equal. Understanding bug categories helps prioritize verification effort:
+There are three ways to look for bugs, and each explores a different part of the design's behaviour:
 
-| Category | Example | Severity | Detection Method |
-|----------|---------|----------|-----------------|
-| **Functional** | Wrong ALU output for specific operands | Critical | Scoreboard comparison |
-| **Protocol** | AXI VALID drops before READY handshake | Critical | Protocol assertions (SVA) |
-| **Corner case** | FIFO overflow on simultaneous read+write at full | High | Constrained random + coverage |
-| **Reset** | Register doesn't return to spec'd reset value | High | RAL reset test sequences |
-| **Clock domain** | Metastability on async FIFO pointer crossing | Critical | CDC formal analysis |
-| **Performance** | Arbiter starvation under heavy load | Medium | Performance counters + assertions |
-| **Power** | Retention register corruption after power-down | Critical | Power-aware simulation (UPF) |
+1. **Directed testing.** You write each scenario by hand.
+   - Strengths: easy to write, deterministic, easy to debug. Ideal for bring-up, smoke tests and specific protocol sequences.
+   - Weaknesses: you only find the bugs you can imagine, and the number of tests does not scale.
+2. **Constrained-random verification (CRV).** You write the rules (**constraints**) and a solver generates legal scenarios, a new set for every random **seed**. Functional coverage then shows which scenarios actually happened.
+   - Strengths: finds bugs nobody imagined. One test samples a huge space of legal scenarios.
+   - Weaknesses: harder to debug (you reproduce a failure with its seed), and it needs checking and coverage infrastructure before it is useful. It samples the space; it does not exhaust it.
+3. **Formal verification.** A tool explores every reachable state to prove that a property (written as an assertion) always holds, or returns a **counterexample**: a short trace that breaks it.
+   - Strengths: exhaustive within its assumptions, so it finds corner cases simulation rarely reaches.
+   - Weaknesses: a proof holds only under its input assumptions, and an over-constrained assumption hides real bugs. Large designs can exceed tool capacity, so a run can end with a bounded or inconclusive result (tool-dependent).
 
-### War Story (composite): The One-Hot FSM Bug
+To see what each method explores, take a counter slightly bigger than the bug hunt's. It has a synchronous reset, an increment enable `en`, and a load `ld` with data `d`: `count` becomes `d` when `ld` is 1 (load wins), otherwise `count + 1` when `en` is 1, otherwise it holds. The bug: when `ld` and `en` are both 1 while `count` is 7, the RTL increments to 0 instead of loading `d`. If `d` happens to be 0 the bug is invisible, because 7 + 1 also wraps to 0.
 
-A verification team achieved 100% code coverage on an FSM. All states were visited, all transitions exercised. The chip taped out.
+The three directed tests a busy engineer might write are: count from 0 through the wrap back to 0; load 5 right after reset, then count on; and hold with `en` low right after reset. The random test draws `en` high half the time, `ld` high one cycle in ten, and `d` uniformly.
 
-In the lab, the FSM occasionally entered an **illegal state**: two bits of the one-hot encoding were set at once. Why didn't code coverage catch it?
+Predict before you look: with a budget of 20 cycles after reset, which of these find the bug: the three directed tests, one random test, a formal tool?
 
-Because code coverage measures what the *existing* code does. The FSM had no default or illegal-state handler, so there was no code *to cover*. One concurrent assertion, `assert property (@(posedge clk) $onehot(state));`, would have flagged the illegal state the moment any simulation produced it. A formal tool, which explores every reachable state, could also have proved it unreachable or shown how to reach it. (`$onehot` is a built-in system function, IEEE 1800-2023 §20.9. A concurrent assertion also needs a clock, given here by `@(posedge clk)`.)
+<figure>
+<svg viewBox="0 0 340 504" role="img" aria-labelledby="f1b-methods-title f1b-methods-desc" style={{ width: "100%", maxWidth: 520 }}>
+  <title id="f1b-methods-title">What directed, random and formal verification explore on the same bug</title>
+  <desc id="f1b-methods-desc">Three grids of the same 32 situations: the counter value 0 to 7 across, and what the inputs ask for down: hold, increment, load, or load and increment together. The bug lives in one cell: count 7 with load and increment requested together, and only when the loaded value d is not 0. Directed: three tests visit the whole increment row, plus load and hold at count 0; the bug cell is never visited, so the bug is missed. Random: the hold and increment rows are visited often, about 5.6 percent of cycles per cell, and the load rows rarely, about 0.6 percent per cell; the bug cell with d not 0 comes up about 0.55 percent of cycles, so the bug is found within 20 cycles only about 8 percent of the time, and within 1,000 cycles about 99.6 percent of the time. Formal: every cell is reachable, and the tool finds the bug with a three-edge counterexample: reset, load 7, then load and increment together with d not 0. If an assumption forbids load and increment together, that whole row is excluded and the proof passes with the bug hidden.</desc>
+  <text x="4" y="16" fontSize="12" fill="currentColor" fontWeight="600">{"Directed: three hand-written tests"}</text>
+  <text x="4" y="32" fontSize="9.5" fill="currentColor" fillOpacity="0.8">{"count value:"}</text>
+  <text x="106.5" y="32" fontSize="10" fill="currentColor" textAnchor="middle">{"0"}</text>
+  <text x="135.5" y="32" fontSize="10" fill="currentColor" textAnchor="middle">{"1"}</text>
+  <text x="164.5" y="32" fontSize="10" fill="currentColor" textAnchor="middle">{"2"}</text>
+  <text x="193.5" y="32" fontSize="10" fill="currentColor" textAnchor="middle">{"3"}</text>
+  <text x="222.5" y="32" fontSize="10" fill="currentColor" textAnchor="middle">{"4"}</text>
+  <text x="251.5" y="32" fontSize="10" fill="currentColor" textAnchor="middle">{"5"}</text>
+  <text x="280.5" y="32" fontSize="10" fill="currentColor" textAnchor="middle">{"6"}</text>
+  <text x="309.5" y="32" fontSize="10" fill="currentColor" textAnchor="middle">{"7"}</text>
+  <text x="4" y="51" fontSize="9.5" fill="currentColor">{"hold"}</text>
+  <rect x="93" y="38" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="106.5" y="51" fontSize="10" fill="currentColor" textAnchor="middle">{"●"}</text>
+  <rect x="122" y="38" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="151" y="38" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="180" y="38" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="209" y="38" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="238" y="38" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="267" y="38" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="296" y="38" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="4" y="71" fontSize="9.5" fill="currentColor">{"increment"}</text>
+  <rect x="93" y="58" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="106.5" y="71" fontSize="10" fill="currentColor" textAnchor="middle">{"●"}</text>
+  <rect x="122" y="58" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="135.5" y="71" fontSize="10" fill="currentColor" textAnchor="middle">{"●"}</text>
+  <rect x="151" y="58" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="164.5" y="71" fontSize="10" fill="currentColor" textAnchor="middle">{"●"}</text>
+  <rect x="180" y="58" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="193.5" y="71" fontSize="10" fill="currentColor" textAnchor="middle">{"●"}</text>
+  <rect x="209" y="58" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="222.5" y="71" fontSize="10" fill="currentColor" textAnchor="middle">{"●"}</text>
+  <rect x="238" y="58" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="251.5" y="71" fontSize="10" fill="currentColor" textAnchor="middle">{"●"}</text>
+  <rect x="267" y="58" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="280.5" y="71" fontSize="10" fill="currentColor" textAnchor="middle">{"●"}</text>
+  <rect x="296" y="58" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="309.5" y="71" fontSize="10" fill="currentColor" textAnchor="middle">{"●"}</text>
+  <text x="4" y="91" fontSize="9.5" fill="currentColor">{"load"}</text>
+  <rect x="93" y="78" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="106.5" y="91" fontSize="10" fill="currentColor" textAnchor="middle">{"●"}</text>
+  <rect x="122" y="78" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="151" y="78" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="180" y="78" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="209" y="78" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="238" y="78" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="267" y="78" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="296" y="78" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="4" y="111" fontSize="9.5" fill="currentColor">{"load + increment"}</text>
+  <rect x="93" y="98" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="122" y="98" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="151" y="98" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="180" y="98" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="209" y="98" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="238" y="98" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="267" y="98" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="296" y="98" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.0" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="309.5" y="111" fontSize="10" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <rect x="295" y="97" width="29" height="20" rx="3" fill="none" stroke="currentColor" strokeWidth="2.2" />
+  <text x="4" y="132" fontSize="10" fill="currentColor">{"● = visited. No test asks for load and increment"}</text>
+  <text x="4" y="145" fontSize="10" fill="currentColor">{"together at 7: the bug is missed."}</text>
+  <text x="4" y="178" fontSize="12" fill="currentColor" fontWeight="600">{"Random: en 50%, ld 10%, d uniform"}</text>
+  <text x="4" y="194" fontSize="9.5" fill="currentColor" fillOpacity="0.8">{"count value:"}</text>
+  <text x="106.5" y="194" fontSize="10" fill="currentColor" textAnchor="middle">{"0"}</text>
+  <text x="135.5" y="194" fontSize="10" fill="currentColor" textAnchor="middle">{"1"}</text>
+  <text x="164.5" y="194" fontSize="10" fill="currentColor" textAnchor="middle">{"2"}</text>
+  <text x="193.5" y="194" fontSize="10" fill="currentColor" textAnchor="middle">{"3"}</text>
+  <text x="222.5" y="194" fontSize="10" fill="currentColor" textAnchor="middle">{"4"}</text>
+  <text x="251.5" y="194" fontSize="10" fill="currentColor" textAnchor="middle">{"5"}</text>
+  <text x="280.5" y="194" fontSize="10" fill="currentColor" textAnchor="middle">{"6"}</text>
+  <text x="309.5" y="194" fontSize="10" fill="currentColor" textAnchor="middle">{"7"}</text>
+  <text x="4" y="213" fontSize="9.5" fill="currentColor">{"hold"}</text>
+  <rect x="93" y="200" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="122" y="200" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="151" y="200" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="180" y="200" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="209" y="200" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="238" y="200" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="267" y="200" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="296" y="200" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="4" y="233" fontSize="9.5" fill="currentColor">{"increment"}</text>
+  <rect x="93" y="220" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="122" y="220" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="151" y="220" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="180" y="220" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="209" y="220" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="238" y="220" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="267" y="220" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="296" y="220" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.32" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="4" y="253" fontSize="9.5" fill="currentColor">{"load"}</text>
+  <rect x="93" y="240" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="122" y="240" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="151" y="240" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="180" y="240" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="209" y="240" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="238" y="240" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="267" y="240" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="296" y="240" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="4" y="273" fontSize="9.5" fill="currentColor">{"load + increment"}</text>
+  <rect x="93" y="260" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="122" y="260" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="151" y="260" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="180" y="260" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="209" y="260" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="238" y="260" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="267" y="260" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="296" y="260" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.07" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="309.5" y="273" fontSize="10" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <rect x="295" y="259" width="29" height="20" rx="3" fill="none" stroke="currentColor" strokeWidth="2.2" />
+  <text x="4" y="294" fontSize="10" fill="currentColor">{"Shading = how often a cycle lands there. The bug needs"}</text>
+  <text x="4" y="307" fontSize="10" fill="currentColor">{"this cell and d ≠ 0: about 0.55% of cycles. Found within"}</text>
+  <text x="4" y="320" fontSize="10" fill="currentColor">{"20 cycles: ~8%; within 1,000: ~99.6%."}</text>
+  <text x="4" y="342" fontSize="12" fill="currentColor" fontWeight="600">{"Formal: every reachable state, within assumptions"}</text>
+  <text x="4" y="358" fontSize="9.5" fill="currentColor" fillOpacity="0.8">{"count value:"}</text>
+  <text x="106.5" y="358" fontSize="10" fill="currentColor" textAnchor="middle">{"0"}</text>
+  <text x="135.5" y="358" fontSize="10" fill="currentColor" textAnchor="middle">{"1"}</text>
+  <text x="164.5" y="358" fontSize="10" fill="currentColor" textAnchor="middle">{"2"}</text>
+  <text x="193.5" y="358" fontSize="10" fill="currentColor" textAnchor="middle">{"3"}</text>
+  <text x="222.5" y="358" fontSize="10" fill="currentColor" textAnchor="middle">{"4"}</text>
+  <text x="251.5" y="358" fontSize="10" fill="currentColor" textAnchor="middle">{"5"}</text>
+  <text x="280.5" y="358" fontSize="10" fill="currentColor" textAnchor="middle">{"6"}</text>
+  <text x="309.5" y="358" fontSize="10" fill="currentColor" textAnchor="middle">{"7"}</text>
+  <text x="4" y="377" fontSize="9.5" fill="currentColor">{"hold"}</text>
+  <rect x="93" y="364" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="122" y="364" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="151" y="364" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="180" y="364" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="209" y="364" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="238" y="364" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="267" y="364" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="296" y="364" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="4" y="397" fontSize="9.5" fill="currentColor">{"increment"}</text>
+  <rect x="93" y="384" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="122" y="384" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="151" y="384" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="180" y="384" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="209" y="384" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="238" y="384" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="267" y="384" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="296" y="384" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="4" y="417" fontSize="9.5" fill="currentColor">{"load"}</text>
+  <rect x="93" y="404" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="122" y="404" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="151" y="404" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="180" y="404" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="209" y="404" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="238" y="404" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="267" y="404" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="296" y="404" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="4" y="437" fontSize="9.5" fill="currentColor">{"load + increment"}</text>
+  <rect x="93" y="424" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="122" y="424" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="151" y="424" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="180" y="424" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="209" y="424" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="238" y="424" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="267" y="424" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <rect x="296" y="424" width="27" height="18" rx="3" fill="currentColor" fillOpacity="0.3" stroke="currentColor" strokeOpacity="0.35" />
+  <text x="309.5" y="437" fontSize="10" fill="currentColor" textAnchor="middle">{"✕"}</text>
+  <rect x="295" y="423" width="29" height="20" rx="3" fill="none" stroke="currentColor" strokeWidth="2.2" />
+  <rect x="90" y="421" width="236" height="24" rx="4" fill="none" stroke="currentColor" strokeDasharray="4 3" strokeWidth="1.4" />
+  <text x="4" y="458" fontSize="10" fill="currentColor">{"Every cell is reachable. Counterexample: reset, load 7,"}</text>
+  <text x="4" y="471" fontSize="10" fill="currentColor">{"then load + increment with d ≠ 0. Assume !(ld && en)"}</text>
+  <text x="4" y="484" fontSize="10" fill="currentColor">{"and the dashed row is excluded: the proof passes and"}</text>
+  <text x="4" y="497" fontSize="10" fill="currentColor">{"the bug is hidden."}</text>
+</svg>
+<figcaption>Each grid shows the same 32 situations: the counter's value across, what the inputs ask for down. The bug lives in the outlined cell. Random-stimulus shading shows the long-run share of cycles; the percentages are exact for this model, computed from the stated input probabilities.</figcaption>
+</figure>
 
-**Lesson:** Code coverage tells you what you exercised. Functional coverage and assertions tell you whether the behaviour you *intended* was checked.
+What the picture shows: **directed tests find what you imagine**, and none of the three asks for load and increment together. **Random stimulus finds what is probable**: the bug needs a situation that comes up in about 0.55% of cycles, so a 20-cycle run finds it only about 8% of the time, while a 1,000-cycle run almost always does. **Formal finds what is possible within your assumptions**: a three-edge counterexample, unless an assumption such as `!(ld && en)` rules the situation out, in which case the proof passes with the bug inside.
 
+The methods also run at different points of the design flow. Step through the methods below and notice which design representation each one runs on. Then answer its question before you read the feedback.
 
-### Retrieval check
+<VerificationMethodologiesDiagram />
+
+Two points from the tour matter later:
+- **Emulation runs the RTL**, compiled onto hardware, so it belongs to pre-silicon work. That is why it answers the diagram's question: simulation is too slow to boot an operating system on a full chip, and lab validation needs chips that do not exist before tape-out. Running real software on an emulator is **pre-silicon validation**: checking that the product does what users need, before silicon exists.
+- **Equivalence checking runs after synthesis.** It proves that the gate-level netlist matches the RTL. It cannot tell you whether the RTL itself is right.
+
+### How the methods combine
+
+No single method is enough. Here is how a team would split the verification of a 4-requester arbiter:
+- **Formal:** prove mutual exclusion (never two grants in one cycle) and no starvation (every request is eventually granted), under assumptions that match how the real requesters behave.
+- **Constrained-random simulation:** run long, mixed request patterns with back-pressure. A scoreboard checks every grant against a model; coverage shows which request patterns and grant orders happened.
+- **Directed tests:** bring the block up with a single request, then all four at once, and check reset behaviour.
+
+| Method | Strengths | Weaknesses | Typical cost | Ideal for |
+|---|---|---|---|---|
+| Directed | Deterministic, easy debug | Only what you imagine; does not scale | Low to start; grows with every test you write | Bring-up, smoke tests, specific sequences |
+| Constrained-random | Finds unexpected bugs; one test, many scenarios | Harder debug; needs checks and coverage first | High setup; then mostly compute time | Bulk regression of data paths and protocols |
+| Formal | Exhaustive within its assumptions | Capacity limits; assumptions can hide bugs | Specialist skills and tool licences; cheap per property on small blocks | Control logic, arbiters, protocol rules, deadlock freedom |
+
+The cost column describes typical practice; it is not measured data.
+
+> [!IMPORTANT]
+> **A common interview mistake:** "I'd use constrained random for everything." A strong answer says which method answers which question. Formal proves properties of blocks, directed tests check specific sequences, and constrained-random simulation explores the space between them.
+
+### Coverage: measuring what you exercised
+
+IEEE 1800-2023 §19.2 describes two kinds of coverage. **Code coverage** is extracted automatically from the design code. **Functional coverage** is user-defined: it measures how much of the design specification, as listed by features in the test plan, has been exercised. Both measure; neither checks. A test with 100% coverage and a disabled compare proves nothing.
+
+The code-coverage metrics you will meet:
+
+| Metric | What it counts | What it misses |
+|---|---|---|
+| Statement (line) | Each statement executed at least once | Whether the result was right; behaviour that has no code |
+| Branch | Each branch of an `if` or `case` taken | Combinations of conditions |
+| Condition or expression | Each operand of a condition seen true and false | Whether the outcome was right |
+| Toggle | Each bit seen at both 0 and 1 | When and why it changed |
+| FSM (finite state machine) | The states reached and transitions taken | States and transitions the RTL never encodes |
+
+IEEE 1800-2023 §40.2.1 requires a tool's coverage interface to support at least statement, toggle, FSM (states and transitions) and assertion coverage, and §40.2.2 defines statement, toggle and FSM coverage. Branch and condition coverage are defined by each tool.
+
+Here is a coverage report for the Make It Work run, traced by hand. Read it before the bench: it is the picture of what code coverage can and cannot see.
+
+```text
+Code coverage of up_counter for one run
+(traced by hand; real report formats are tool-dependent)
+hits  line
+  20  always_ff @(posedge clk) begin
+   1    if (rst)                   count <= '0;
+   2    else if (count == WRAP_AT) count <= '0;
+  17    else                       count <= count + 3'd1;
+statements 3 of 3; branches: rst true and false, wrap true and false
+toggle: every bit of count, rst and clk seen at 0 and at 1
+
+Functional coverage against the plan
+  reset to 0 ............  1   (only at the first edge)
+  increment ............. 17
+  wrap 7 -> 0 ...........  2
+  reset mid-count .......  0   <- a hole: no test asserts rst while counting
+  checks with !== ....... 20
+```
+
+Every line and branch ran, yet one planned feature, reset in the middle of counting, was never exercised. The reset branch counts as covered because of the reset at the first edge. Code coverage cannot tell the two situations apart; the plan can. (Under §40.2.2, `rst` counts as toggled because it was seen at 1 and at 0. Tools that count 0-to-1 and 1-to-0 transitions may report it as only partly toggled.)
+
+**A war story (composite).** A team reached 100% code coverage on a one-hot state machine (one flip-flop per state, exactly one set at a time), and the chip taped out. In the lab, the state machine occasionally held two set bits. The cause was two next-state conditions that could be true in the same cycle, so the RTL set two bits at once; no test happened to make both conditions true together. Code coverage measures the code that exists, and there was no illegal-state handler, so there was nothing to cover. One concurrent assertion would have flagged the state the moment any simulation produced it:
+
+```systemverilog
+// snippet
+a_state_onehot: assert property (@(posedge clk) disable iff (!rst_n) $onehot(state));
+```
+
+`$onehot` is a built-in system function (IEEE 1800-2023 §20.9), the assertion's clock is `@(posedge clk)`, and `disable iff (!rst_n)` stops it firing on the unknown state before reset. A formal tool, which explores every reachable state, would also have shown how to reach it. Had the cause been an unsynchronized asynchronous input instead, RTL simulation would not show it at all: that is the job of clock-domain-crossing (CDC) analysis.
+
+The lesson: code coverage tells you what code ran. Assertions and scoreboards check the intended behaviour; functional coverage shows whether the planned scenarios happened.
+
+### The coverage closure trap
+
+**Coverage closure** is driving coverage up to its goals. It follows a diminishing-returns curve: common scenarios fill quickly, and rare ones can take far more random stimulus than the rest put together.
+
+<figure>
+<svg viewBox="0 0 340 214" role="img" aria-labelledby="f1b-closure-title f1b-closure-desc" style={{ width: "100%", maxWidth: 520 }}>
+  <title id="f1b-closure-title">Expected coverage against the number of random samples, for 16 common bins and one rare bin</title>
+  <desc id="f1b-closure-desc">Exact model, not project data. 17 coverage bins: 16 common bins share 99.9 percent of the probability and one rare bin gets 0.1 percent. Expected coverage, with the sample count on a logarithmic axis: 10 samples 44.8 percent, 20 samples 68.3 percent, 50 samples 90.7 percent, 100 samples 94.5 percent, then a plateau near 16 of 17 bins (94.1 percent): 200 samples 95.2 percent, 500 samples 96.4 percent, 1,000 samples 97.8 percent, 2,000 samples 99.2 percent, 5,000 samples 99.96 percent. The common bins close after about 54 samples on average; all 17 take about 1,002. A directed test for the rare bin needs one run.</desc>
+  <line x1="44" y1="168" x2="318" y2="168" stroke="currentColor" strokeOpacity="0.6" />
+  <line x1="44" y1="168" x2="44" y2="16" stroke="currentColor" strokeOpacity="0.6" />
+  <line x1="41" y1="168.0" x2="44" y2="168.0" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="38" y="171.5" fontSize="9.5" fill="currentColor" textAnchor="end">{"0%"}</text>
+  <line x1="41" y1="92.0" x2="44" y2="92.0" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="38" y="95.5" fontSize="9.5" fill="currentColor" textAnchor="end">{"50%"}</text>
+  <line x1="41" y1="16.0" x2="44" y2="16.0" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="38" y="19.5" fontSize="9.5" fill="currentColor" textAnchor="end">{"100%"}</text>
+  <line x1="44.0" y1="168" x2="44.0" y2="171" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="44.0" y="182" fontSize="9.5" fill="currentColor" textAnchor="middle">{"1"}</text>
+  <line x1="118.1" y1="168" x2="118.1" y2="171" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="118.1" y="182" fontSize="9.5" fill="currentColor" textAnchor="middle">{"10"}</text>
+  <line x1="192.1" y1="168" x2="192.1" y2="171" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="192.1" y="182" fontSize="9.5" fill="currentColor" textAnchor="middle">{"100"}</text>
+  <line x1="266.2" y1="168" x2="266.2" y2="171" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="266.2" y="182" fontSize="9.5" fill="currentColor" textAnchor="middle">{"1,000"}</text>
+  <line x1="318.0" y1="168" x2="318.0" y2="171" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="318.0" y="182" fontSize="9.5" fill="currentColor" textAnchor="middle">{"5,000"}</text>
+  <text x="181.0" y="198" fontSize="10" fill="currentColor" textAnchor="middle">{"random samples (log scale)"}</text>
+  <line x1="44" y1="24.9" x2="318" y2="24.9" stroke="currentColor" strokeOpacity="0.45" strokeDasharray="4 3" />
+  <text x="200" y="36.9" fontSize="9.5" fill="currentColor">{"16 of 17 bins: the plateau"}</text>
+  <text x="328" y="51.9" fontSize="9.5" fill="currentColor" textAnchor="end">{"rare bin: about 1,000 samples"}</text>
+  <path d="M44.0,159.1 L46.5,158.4 L49.0,157.6 L51.4,156.8 L53.9,156.0 L56.4,155.1 L58.9,154.1 L61.3,153.0 L63.8,151.9 L66.3,150.7 L68.8,149.4 L71.2,148.0 L73.7,146.5 L76.2,145.0 L78.7,143.3 L81.1,141.5 L83.6,139.6 L86.1,137.6 L88.6,135.5 L91.0,133.2 L93.5,130.8 L96.0,128.3 L98.5,125.7 L100.9,122.9 L103.4,119.9 L105.9,116.9 L108.4,113.7 L110.8,110.3 L113.3,106.9 L115.8,103.3 L118.3,99.6 L120.8,95.8 L123.2,92.0 L125.7,88.0 L128.2,84.0 L130.7,80.0 L133.1,75.9 L135.6,71.8 L138.1,67.8 L140.6,63.9 L143.0,60.0 L145.5,56.3 L148.0,52.6 L150.5,49.2 L152.9,46.0 L155.4,42.9 L157.9,40.1 L160.4,37.6 L162.8,35.3 L165.3,33.3 L167.8,31.5 L170.3,30.0 L172.7,28.7 L175.2,27.6 L177.7,26.7 L180.2,26.0 L182.6,25.5 L185.1,25.1 L187.6,24.7 L190.1,24.5 L192.6,24.3 L195.0,24.1 L197.5,24.0 L200.0,23.9 L202.5,23.8 L204.9,23.7 L207.4,23.6 L209.9,23.5 L212.4,23.4 L214.8,23.3 L217.3,23.2 L219.8,23.1 L222.3,22.9 L224.7,22.8 L227.2,22.6 L229.7,22.5 L232.2,22.3 L234.6,22.1 L237.1,22.0 L239.6,21.8 L242.1,21.6 L244.5,21.4 L247.0,21.2 L249.5,20.9 L252.0,20.7 L254.4,20.5 L256.9,20.2 L259.4,20.0 L261.9,19.7 L264.4,19.5 L266.8,19.2 L269.3,19.0 L271.8,18.7 L274.3,18.5 L276.7,18.2 L279.2,18.0 L281.7,17.8 L284.2,17.6 L286.6,17.4 L289.1,17.2 L291.6,17.0 L294.1,16.8 L296.5,16.7 L299.0,16.6 L301.5,16.4 L304.0,16.4 L306.4,16.3 L308.9,16.2 L311.4,16.2 L313.9,16.1 L316.3,16.1 L318.0,16.1" fill="none" stroke="currentColor" strokeWidth="2.2" />
+  <circle cx="169.9" cy="30.2" r="3" fill="currentColor" />
+  <text x="58" y="41" fontSize="9.5" fill="currentColor">{"50 samples: 90.7%"}</text>
+  <line x1="150" y1="38" x2="165.9" y2="32.2" stroke="currentColor" strokeOpacity="0.6" />
+</svg>
+<figcaption>An exact model, not project data: 17 bins, 16 of them sharing 99.9% of the probability and one rare bin getting 0.1%. The 16 common bins close after about 54 random samples on average; all 17 take about 1,002. A directed test aimed at the rare bin needs one run.</figcaption>
+</figure>
+
+The **coverage closure trap** is coverage that looks closed while proving little:
+- bins hit while the checks were off or vacuous, so they were counted but nothing was checked;
+- holes waived without review;
+- a coverage model that misses items in the plan, so 100% means 100% of an incomplete model;
+- more seeds of the same random stimulus thrown at a plateau, instead of a targeted test or formal.
+
+The guards: review the coverage model against the plan, count coverage only from runs whose checks are live (and proven able to fail), review every waiver with a reason, and close rare bins with targeted stimulus or formal.
+
+### From spec to plan
+
+A **verification plan (vplan)** turns each feature in the spec into rows. Each row has five fields:
+
+| Field | Question it answers | Example for the counter's wrap |
+|---|---|---|
+| Feature | What does the spec promise? | 7 wraps to 0 |
+| Scenario | What stimulus exercises it? | Run at least 9 cycles after reset |
+| Check | What decides pass or fail? | Compare `count` with the model every cycle |
+| Coverage item | How do we know it happened? | The 7-to-0 transition was seen |
+| Method | Directed, random or formal? | Directed |
+
+A row is complete when it can fail: it names a check, not just a scenario, and its coverage item proves the scenario ran. Make It Work writes the full plan for the counter. Linking each plan row to coverage, so every bin traces back to a feature, is taught in [I-SV-3B: linking coverage to the plan](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/linking-coverage).
+
+### Bug taxonomy
+
+Naming the kind of bug tells you which method is most likely to catch it:
+
+| Category | Example | Typical detection |
+|---|---|---|
+| Functional | Wrong ALU output for specific operands | Scoreboard against a reference model |
+| Protocol | An AXI (Arm AMBA bus) VALID that drops before READY (IHI0022E §A3.2.1 requires VALID to stay asserted until the handshake) | SystemVerilog Assertions (SVA) on the protocol rules |
+| Corner case | FIFO overflow on a simultaneous read and write while full | Constrained random plus functional coverage |
+| Reset | A register that does not return to its specified reset value | Register reset tests with a register abstraction layer (RAL, taught in [A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index)) |
+| Clock domain | Metastability on an asynchronous FIFO pointer crossing | CDC structural analysis and formal |
+| Performance | Arbiter starvation under heavy load | Performance counters plus assertions |
+| Power | A retention register corrupted after power-down | Power-aware simulation driven by a power-intent file in UPF (Unified Power Format, IEEE 1801) |
+
+Severity belongs to each bug, not to its category: any category can be critical in the wrong product.
+
+### Recap
+
+- A test must be able to fail. Prove it with a deliberate bug, and watch for the four silent failures: a missing compare, a vacuous antecedent, a tautology or `cover`, and an X-blind `!=`.
+- Directed tests find what you imagine, random stimulus finds what is probable, and formal finds what is possible within its assumptions. Real projects combine them.
+- Coverage measures; only checks decide. Code coverage cannot see missing features, and functional coverage is only as complete as the plan.
+- A plan row names a feature, a scenario, a check, a coverage item and a method.
+
+## Make It Work
+
+### Worked example: plan the counter, then prove the check can fail
+
+**Step 1: the plan.** Five rows for the bug-hunt counter. The last column traces each row to the bench below; one row is deliberately not in the bench yet.
+
+| Plan row | Scenario | Check | Coverage item | In the bench below |
+|---|---|---|---|---|
+| Reset to 0 | `rst` high at the first edge | First check expects 0 | Reset seen | `rst` starts at 1; `expected` starts at 0 |
+| Increment | Count for 20 cycles | `count` equals the model every cycle | Increments checked | The `repeat (20)` loop and the `!==` compare |
+| Wrap 7 to 0 | Run at least 9 cycles after reset | The cycle after 7 shows 0 | `seen_max` greater than 0 | `expected + 3'd1` wraps; `seen_max` counts the 7s |
+| Reset mid-count | Assert `rst` while counting | `count` is 0 on the next cycle | Reset seen at a nonzero count | **Not in this bench yet:** a known hole the kata fills |
+| No X after reset | Every check after reset | `!==` fails on X | All checks | `count !== expected` |
+
+**Step 2: the bench.** This is a preview: read it now, and you will write your own in [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index) after F2A to F2D teach the syntax. The comments say why each line is there.
+
+```systemverilog
+// compile
+`timescale 1ns/1ps
+
+// DUT: the bug-hunt counter. The wrap value is a parameter only so that a bug
+// can be injected from the testbench without editing the RTL.
+module up_counter #(parameter int WRAP_AT = 7) (
+  input  logic       clk,
+  input  logic       rst,      // synchronous, active-high
+  output logic [2:0] count
+);
+  always_ff @(posedge clk) begin
+    if (rst)                   count <= '0;
+    else if (count == WRAP_AT) count <= '0;
+    else                       count <= count + 3'd1;
+  end
+endmodule
+
+module tb_top;
+  logic       clk = 1'b0;
+  logic       rst = 1'b1;
+  logic [2:0] count;
+  logic [2:0] expected;          // reference model: what the spec says count is
+  int         pass_cnt = 0;
+  int         fail_cnt = 0;
+  int         seen_max = 0;      // coverage: how many checks saw count == 7
+
+  // Mutant: change WRAP_AT(7) to WRAP_AT(6) and rerun. The test must fail.
+  up_counter #(.WRAP_AT(7)) dut (.clk(clk), .rst(rst), .count(count));
+
+  always #5 clk = ~clk;
+
+  initial begin
+    @(posedge clk);              // the DUT samples rst = 1 at this edge
+    rst <= 1'b0;                 // nonblocking: released after the edge, so no race
+    expected = 3'd0;
+    repeat (20) begin
+      @(negedge clk);            // check mid-cycle, when count is stable
+      if (count === 3'd7) seen_max++;
+      if (count !== expected) begin  // !== so an X can never pass
+        fail_cnt++;
+        $error("count=%0d expected=%0d", count, expected);
+      end else begin
+        pass_cnt++;
+      end
+      expected = expected + 3'd1;    // 3-bit add: 7 + 1 wraps to 0, as the spec says
+    end
+    $display("PASS=%0d FAIL=%0d", pass_cnt, fail_cnt);
+    $display("COVERAGE seen_max=%0d", seen_max);
+    $finish;
+  end
+endmodule
+```
+
+Expected output (traced by hand and with a cycle model; not from a simulator run):
+
+```text
+PASS=20 FAIL=0
+COVERAGE seen_max=2
+```
+
+**Step 3: prove the check can fail.** Change the instance to `up_counter #(.WRAP_AT(6))` and rerun. The counter now wraps at 6, the bug from the bug hunt. Expected output (traced the same way), showing only the message text of each `$error` line:
+
+```text
+count=0 expected=7
+count=1 expected=0
+count=2 expected=1
+count=3 expected=2
+count=4 expected=3
+count=5 expected=4
+count=6 expected=5
+count=0 expected=6
+count=1 expected=7
+count=2 expected=0
+count=3 expected=1
+count=4 expected=2
+count=5 expected=3
+PASS=7 FAIL=13
+COVERAGE seen_max=0
+```
+
+The first seven checks pass (0 to 6). The first failure is the check at 80 ns, where 7 was expected, and every later check fails because the counter is now out of step with the model. Coverage agrees from a different angle: `seen_max=0` says the wrap scenario never happened. `$error` reports and lets the run continue, so you see every failure. A real simulator adds its own prefix to each `$error` line, with the severity, file, line, scope and time; that format is tool-specific (IEEE 1800-2023 §20.10).
+
+**How to do it on any block:**
+1. Write the plan row: feature, scenario, check, coverage item, method.
+2. Write the check against a model, never against a copy of the DUT's own output.
+3. Run the test and see PASS.
+4. Inject the bug the row is meant to catch, rerun, and see FAIL.
+5. Revert the mutant and rerun to see PASS again.
+6. Record which row caught the mutant, and look for plan rows whose coverage is still 0.
+
+To run it, compile both modules with an IEEE 1800-compliant simulator and make `tb_top` the top module. The exact commands are tool-dependent.
+
+**Checklist before moving on:**
+- [ ] Every row of my plan has a scenario, a check and a coverage item.
+- [ ] I have seen my check fail on a mutant, and pass again after reverting it.
+- [ ] I compare with `!==`, so an X output fails.
+- [ ] I can name four ways a check never fails.
+- [ ] I can say which plan row this bench does not exercise yet.
+
+## Push Further
+
+### Expert: `$onehot` and X
+
+- `$onehot(e)` returns 1 when `$countbits(e, '1) == 1` (IEEE 1800-2023 §20.9). It counts only bits that are 1, so a vector with one 1 and some X bits, such as `4'b01x0`, passes.
+- An all-X state, before reset, has no bits at 1, so `$onehot` is false there. An ungated assertion fires at every edge before reset; gate it with `disable iff`.
+- When X must fail too, add `!$isunknown(state)`. §20.9 itself shows a one-hot check built from `$countones(v) == 1` and `$countbits(v, 'x, 'z) == 0` for the same reason.
+- `$onehot` returns type `bit`, so it never returns X itself.
+
+```systemverilog
+// snippet
+a_state_onehot_known: assert property (@(posedge clk) disable iff (!rst_n)
+  $onehot(state) && !$isunknown(state));
+```
+
+### Expert: Vacuity in practice
+
+- An implication with no antecedent match succeeds (§16.12.7), and that vacuous success is neither a pass nor a failure (§16.14.8). §16.14.8 also notes that vacuous success on every attempt may indicate a problem in the design or in the property.
+- A `cover property` reports the number of times the property succeeded because of vacuity, alongside attempts and successes (§16.14.3).
+- By default the pass action of an assertion also runs on vacuous success. `$assertvacuousoff` stops that, and none of the action-control tasks changes the assertion statistics (§20.11).
+- How a simulator lists vacuous successes in logs and coverage reports is tool-dependent.
+- Practice: give every important implication a `cover property` on its antecedent, and review the "never triggered" list before sign-off.
+
+### Expert: A proof is only as good as its assumptions
+
+- For formal analysis, `assume` properties are hypotheses: a formal tool is not obliged to verify that they hold. A simulator must check them and report failures, like assertions (§16.14.2, §16.2).
+- A `restrict` property constrains formal analysis only; simulators do not check it (§16.2).
+- Over-constraint hides bugs. In the methods figure, assuming `!(ld && en)` made the proof pass with the bug inside.
+- Two guards: write `cover` properties for scenarios that must stay reachable and confirm the tool can still cover them under the assumptions; and run the same assumptions as checks in simulation, where a violation shows an environment that breaks them.
+- Bounded proofs, inconclusive results and capacity limits are tool-dependent. [E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index) covers formal flows next to UVM.
+
+### Expert: Qualifying the testbench
+
+- Who checks the checker? **Mutation testing**: inject one deliberate bug per plan row, as `WRAP_AT(6)` did, and confirm some check fails. A mutant that survives points at a missing or weak check.
+- Keep a small set of mutants in the regression, so a later change that silently disables a check is caught.
+- A scoreboard must also report what it never matched: items still pending at the end of the test are failures, not passes ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)).
+- Commercial mutation-analysis tools automate mutant generation; what they support is tool-dependent.
+
+### Expert: Coverage at sign-off
+
+- Coverage from many tests and seeds is merged into one database before sign-off. IEEE 1800-2023 §40.3.2 provides system functions such as `$coverage_merge` and `$coverage_save`, but how a tool merges and stores coverage is tool-dependent.
+- Every exclusion or waiver is reviewed and carries a reason. A waived bin is a decision, not a fix.
+- The coverage model itself is reviewed against the plan, because 100% of an incomplete model is the commonest false closure.
+- Code coverage (§40.2.2 metrics plus each tool's branch and condition metrics) is read alongside functional coverage: an unexercised line is a question to answer, not a number to push.
+
+### Interview angles
+
+Answer each one before you look at the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: is 100% code coverage done?"
+  question="Your regression reports 100% code coverage on a block. Are you done?"
+  options={[
+    { text: "Yes. Every line ran, so every behaviour in the block was exercised and tested.", correct: false, feedback: "Code coverage shows that code ran, not that its results were checked, and it cannot see features that have no code." },
+    { text: "No. You also need 100% toggle coverage and 100% FSM coverage on the block.", correct: false, feedback: "Those are more code metrics with the same blind spots: they see what changed, not whether it was right." },
+    { text: "No. You also need functional coverage of the plan, and checks proven able to fail.", correct: true, feedback: "That is the full answer, with one more step: even 100% functional coverage is only as complete as the plan. A strong follow-up is to ask which plan items have no coverage item at all." },
+    { text: "Yes, provided the same regression also passes with no errors reported.", correct: false, feedback: "Passing checks cover only the scenarios that ran and the checks that exist. Missing features and missing checks stay invisible." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: prove your bench can fail"
+  question="How do you prove that your testbench can actually catch bugs?"
+  options={[
+    { text: "Check that the log ends with PASS and reports no errors or warnings.", correct: false, feedback: "A bench that cannot fail also ends with PASS. That is exactly the case you are trying to rule out." },
+    { text: "Inject a known bug per plan row, expect FAIL, then revert and expect PASS.", correct: true, feedback: "Right: mutation testing. A mutant that survives points at a missing, disabled, vacuous or X-blind check." },
+    { text: "Run many more random seeds and confirm that none of them fails.", correct: false, feedback: "More seeds of a bench that cannot fail still cannot fail." },
+    { text: "Reach 100% functional coverage, so that every check has been exercised.", correct: false, feedback: "Coverage counts scenarios even when no check ran on them." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: split an arbiter"
+  question="How would you split the verification of a 4-requester arbiter between formal and simulation?"
+  options={[
+    { text: "Simulation only, with enough random seeds to cover every request pattern that matters.", correct: false, feedback: "Random sampling makes 'never two grants at once' likely, not proven. A formal proof covers every reachable state." },
+    { text: "Formal only: once mutual exclusion is proven, simulation adds nothing for an arbiter.", correct: false, feedback: "Formal proves block properties, but you still need end-to-end checking, performance and integration in simulation." },
+    { text: "One directed test for each request pattern the team can think of, reviewed by the designer.", correct: false, feedback: "That finds only the patterns you imagine, and an arbiter's interesting cases are the ones nobody listed." },
+    { text: "Formal for exclusion and starvation; random simulation with a scoreboard; directed for bring-up.", correct: true, feedback: "Right. Each method answers the question it is best at. Write the formal assumptions to match the real requesters, and check the same assumptions in simulation." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: verification or validation?"
+  question="What is the difference between verification and validation?"
+  options={[
+    { text: "Verification is always pre-silicon, and validation is always post-silicon in the lab.", correct: false, feedback: "Pre-silicon validation on emulators and FPGA prototypes is standard practice." },
+    { text: "They are two names for the same activity, used differently by different companies.", correct: false, feedback: "They answer different questions: built right, versus the right thing built." },
+    { text: "Verification checks the design against its spec; validation checks it meets real needs.", correct: true, feedback: "Right: built right versus the right thing. The split is about the question asked, not the project phase: validation starts before silicon, for example by running software on an emulator. A design can pass verification and still fail validation when the spec itself was wrong." },
+    { text: "Validation means checking timing and power; verification means checking function.", correct: false, feedback: "Timing is checked by static timing analysis. Validation is about whether the product meets its users' needs." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
 
 <Quiz
   questions={[
     {
-      question: "A team reports 100% code coverage on an FSM. What can they conclude?",
+      question: "You change the counter's wrap constant from 7 to 6, rerun the test, and it still prints PASS. What does that tell you?",
+      objective: 1,
       answers: [
-        { text: "Every line that exists ran at least once; behaviour with no code, such as a missing illegal-state handler, is invisible to this metric", correct: true },
-        { text: "The FSM is bug-free", correct: false },
-        { text: "Every requirement in the spec has been tested", correct: false },
-        { text: "Functional coverage is also 100%", correct: false }
+        { text: "The mutation is harmless, because a counter that wraps at 6 still counts correctly", correct: false, feedback: "The mutant breaks the spec: 7 never appears. A passing test means the bench missed it." },
+        { text: "The bench cannot detect this bug: some check is missing, disabled or never triggers", correct: true, feedback: "Right. A mutant that survives is a finding about the testbench, not about the design. The check may also compare the wrong thing." },
+        { text: "The DUT is robust: its other logic absorbs the change before it reaches the output", correct: false, feedback: "The DUT now violates its spec. Robustness is not the question; detection is." },
+        { text: "The test is right to pass, because the spec only requires the count to increase", correct: false, feedback: "The spec says 0 to 7, then wrap. A check that passes on 0 to 6 is too weak." }
       ],
-      explanation: "Code coverage measures the implementation that exists. Missing features and unchecked intent need functional coverage and assertions."
+      explanation: "A self-checking test is only useful if it can fail. Injecting a known bug and seeing FAIL is the proof; seeing PASS is a bug in the bench."
     },
     {
-      question: "Which line checks, on every clock, that state is one-hot?",
+      question: "Predict: the Make It Work bench is rerun with up_counter #(.WRAP_AT(6)). What do its last two lines print?",
+      objective: 1,
       answers: [
-        { text: "assert property (@(posedge clk) $onehot(state));", correct: true },
-        { text: "assert property (one_hot(state));", correct: false },
-        { text: "cover property (@(posedge clk) $onehot(state));", correct: false },
-        { text: "assert (state == 1);", correct: false }
+        { text: "PASS=19 FAIL=1 and COVERAGE seen_max=0", correct: false, feedback: "After the first miss the counter stays out of step with the model, so every later check fails too." },
+        { text: "PASS=20 FAIL=0 and COVERAGE seen_max=2", correct: false, feedback: "That is the correct design's output. The mutant must change it, or the bench cannot catch this bug." },
+        { text: "PASS=0 FAIL=20 and COVERAGE seen_max=0", correct: false, feedback: "The counter still matches the model from 0 to 6, so the first seven checks pass." },
+        { text: "PASS=7 FAIL=13 and COVERAGE seen_max=0", correct: true, feedback: "Right. Checks 0 to 6 pass; from 80 ns the counter is out of step with the model, and 7 is never seen." }
       ],
-      explanation: "$onehot is the built-in system function (§20.9), and a concurrent assertion needs a clock. There is no built-in one_hot(). cover only records that the property happened; it never fails. state == 1 checks one specific value, not one-hotness."
+      explanation: "The mutant wraps 0 to 6 while the model wraps 0 to 7: checks k = 0 to 6 match, and checks 7 to 19 all differ. seen_max counts checks that saw 7, which never happens."
+    },
+    {
+      question: "A 4-requester arbiter must never grant two requesters in the same cycle, under any request pattern. What gives the strongest evidence?",
+      objective: 2,
+      answers: [
+        { text: "A formal proof of the property, under assumptions that match the real requesters", correct: true, feedback: "Right. 'Never, under any pattern' is a property over every reachable state: exactly what formal proves." },
+        { text: "Ten thousand more random seeds, each running a long mix of request patterns", correct: false, feedback: "Random stimulus samples the space; it cannot show that no pattern breaks the property." },
+        { text: "A directed test for every request pattern the team can list in a review", correct: false, feedback: "That covers only the patterns you imagined." },
+        { text: "A cover property on two grants in one cycle, reviewed at the end of the regression", correct: false, feedback: "A cover only counts matches; it never fails. This one would just report 0 hits, which proves nothing about unexplored patterns." }
+      ],
+      explanation: "Directed finds what you imagine, random finds what is probable, and formal finds what is possible within its assumptions. 'Never' needs a proof."
+    },
+    {
+      question: "Which job is directed testing best at?",
+      objective: 2,
+      answers: [
+        { text: "Finding the bugs that nobody thought to look for", correct: false, feedback: "That is constrained-random stimulus: it generates scenarios nobody wrote." },
+        { text: "Proving that a property holds in every reachable state", correct: false, feedback: "That is formal verification." },
+        { text: "Bringing up a new block one known transaction at a time", correct: true, feedback: "Right. Deterministic and easy to debug: the first tests every block gets." },
+        { text: "Measuring which of the planned scenarios actually happened", correct: false, feedback: "That is functional coverage, a measurement rather than a test method." }
+      ],
+      explanation: "Each method answers a different question. Directed tests are cheap to start and easy to debug, but they only cover what you write."
+    },
+    {
+      question: "A team reports 100% code coverage on an FSM. What can they conclude?",
+      objective: 3,
+      answers: [
+        { text: "The FSM is bug-free, because every state and transition in the code was exercised", correct: false, feedback: "Lines that ran can still produce wrong results, and missing logic has no lines to cover." },
+        { text: "Every requirement in the spec was tested, because each one is implemented by some line", correct: false, feedback: "Requirements are measured by functional coverage against the plan, not by code coverage." },
+        { text: "Functional coverage is also 100%, because it is measured from the same lines of code", correct: false, feedback: "The two are independent. Functional coverage is defined by the user from the plan, not extracted from the code." },
+        { text: "Every line ran at least once; logic that was never written, such as a missing handler, is invisible", correct: true, feedback: "Right. Code coverage measures the implementation that exists, not the intent." }
+      ],
+      explanation: "Code coverage tells you what code ran. Missing features and unchecked intent need functional coverage, assertions and scoreboards."
+    },
+    {
+      question: "Which code-coverage metric tells you that the condition in if (a && b) was evaluated with a = 1 and b = 0?",
+      objective: 3,
+      answers: [
+        { text: "Statement (line) coverage", correct: false, feedback: "It only says the if statement ran, not with which operand values." },
+        { text: "Condition (expression) coverage", correct: true, feedback: "Right. It tracks each operand of a condition seen true and false. Its exact definition is tool-defined." },
+        { text: "Toggle coverage", correct: false, feedback: "Toggle coverage says each bit was seen at 0 and 1, not in which combinations." },
+        { text: "FSM coverage", correct: false, feedback: "FSM coverage tracks states and transitions of a state machine." }
+      ],
+      explanation: "Statement, branch, condition or expression, toggle and FSM coverage each count something different. IEEE 1800-2023 §40.2.2 defines statement, toggle and FSM coverage; branch and condition coverage are defined by each tool."
+    },
+    {
+      question: "Functional coverage reaches 100%, but a bug disabled the scoreboard's compare for the whole regression. What do you know about correctness?",
+      objective: 3,
+      answers: [
+        { text: "Nothing from the scoreboard: the scenarios ran, but no compare checked them", correct: true, feedback: "Right. Coverage records what happened; only checks decide pass or fail. Other live checks, such as assertions, still give evidence." },
+        { text: "The design is correct for every covered scenario, since all of them were exercised", correct: false, feedback: "Covered means the scenario happened, not that its result was checked." },
+        { text: "Only the uncovered scenarios can hide bugs, and there are none of those left", correct: false, feedback: "Every covered scenario can hide a bug when no check looked at it." },
+        { text: "DUT code coverage would have flagged the disabled compare as unexecuted code", correct: false, feedback: "DUT code coverage measures the design's code. The compare lives in the testbench, so the DUT's numbers look exactly the same." }
+      ],
+      explanation: "IEEE 1800-2023 §19.2 defines coverage as a measure of what was exercised. A coverage number only counts as evidence when the checks behind it were live and able to fail."
+    },
+    {
+      question: "Which verification-plan row for the counter's wrap is complete enough to implement?",
+      objective: 4,
+      answers: [
+        { text: "Run 9+ cycles after reset with random stimulus; cover the 7-to-0 step; random", correct: false, feedback: "There is no check, so this row can never fail. Stimulus and coverage alone only show that the wrap happened." },
+        { text: "Run 9+ cycles after reset; compare with the model each cycle; directed", correct: false, feedback: "There is no coverage item, so nothing proves that a wrap actually occurred during the run." },
+        { text: "Run 9+ cycles after reset; compare with the model each cycle; cover the 7-to-0 step; directed", correct: true, feedback: "Right. It names a scenario, a check that can fail, a coverage item and a method." },
+        { text: "Compare with the model each cycle; reach 100% line coverage; directed", correct: false, feedback: "There is no scenario, and line coverage is a metric, not a coverage item: it cannot show that 7 wrapped to 0." }
+      ],
+      explanation: "A plan row has five fields: feature, scenario, check, coverage item and method. The check is what lets the row fail; the coverage item proves the scenario ran."
+    },
+    {
+      question: "Which line checks, on every clock edge after reset, that state is one-hot?",
+      objective: 5,
+      answers: [
+        { text: "assert property (@(posedge clk) disable iff (!rst_n) one_hot(state));", correct: false, feedback: "There is no built-in one_hot() function. The system function is $onehot (§20.9)." },
+        { text: "assert property (@(posedge clk) disable iff (!rst_n) $onehot(state));", correct: true, feedback: "Right. $onehot is the built-in system function (§20.9), the property has a clock, and disable iff skips the unknown state before reset." },
+        { text: "cover property (@(posedge clk) disable iff (!rst_n) $onehot(state));", correct: false, feedback: "A cover only records that the property happened; it never fails." },
+        { text: "always @(posedge clk) assert ($countones(state) >= 1);", correct: false, feedback: "At least one bit set also allows two or more, which is exactly the illegal state. One-hot means exactly one." }
+      ],
+      explanation: "$onehot(e) is true when exactly one bit of e is 1 (IEEE 1800-2023 §20.9). Use assert to check, and gate it during reset."
     },
     {
       question: "In the bug hunt, the counter wraps at 6 and never reaches 7. Why does assert property (@(posedge clk) disable iff (rst) count == 3'd7 |=> count == 3'd0); never fail on it?",
+      objective: 5,
       answers: [
-        { text: "Its antecedent never matches, so every attempt passes vacuously", correct: true },
-        { text: "|=> checks the consequent in the same cycle", correct: false },
-        { text: "disable iff (rst) hides every failure", correct: false },
-        { text: "The property is not valid SystemVerilog", correct: false }
+        { text: "|=> checks the consequent in the same cycle, where count is still 7", correct: false, feedback: "|=> checks one cycle later; |-> checks the same cycle. And count never reaches 7 here." },
+        { text: "disable iff (rst) abandons every attempt, so no failure can be reported", correct: false, feedback: "It only abandons attempts while rst is 1. After reset the property is live." },
+        { text: "The property is not legal SystemVerilog, so the tool silently ignores it", correct: false, feedback: "It is legal, and it states a real spec rule. It just never triggers on this counter." },
+        { text: "Its antecedent never matches, so every attempt is a vacuous success", correct: true, feedback: "Right (§16.12.7, §16.14.8): a vacuous success is neither a pass nor a failure. Pair it with a cover property on count == 3'd7 to see that it never ran." }
       ],
-      explanation: "No antecedent match means the implication succeeds vacuously (§16.12.7, §16.14.8). A checker that never triggers proves nothing, so pair important assertions with cover property on their antecedent."
+      explanation: "No antecedent match means the implication succeeds without checking the consequent (§16.12.7); IEEE 1800-2023 calls that a vacuous success (§16.14.8). A check that never triggers proves nothing."
     },
     {
-      question: "Which statement about verification and validation is accurate?",
+      question: "A testbench compares with if (count != expected) fail_cnt++; and the DUT's count output is stuck at X. What happens?",
+      objective: 5,
       answers: [
-        { text: "Verification checks the design against its spec; validation checks that the product meets real needs, and it starts before silicon, for example by running software on an emulator", correct: true },
-        { text: "Verification is always pre-silicon and validation is always post-silicon", correct: false },
-        { text: "They are two names for the same activity", correct: false },
-        { text: "Validation only checks timing", correct: false }
+        { text: "No failure is counted: != returns 1'bx, and the if skips its statement", correct: true, feedback: "Right (§11.4.5, §12.4). Compare with !==, which returns 1 when count is X and expected is not." },
+        { text: "Every check fails, because an X can never equal a known number", correct: false, feedback: "That is what !== does. With != the result is x, and the if treats x as false." },
+        { text: "The simulator stops with a run-time error when the compare sees X", correct: false, feedback: "Nothing stops: the X flows through the compare silently." },
+        { text: "Only the first check passes; after that the X is counted as a mismatch", correct: false, feedback: "The if skips the failure statement on every check where count is X." }
       ],
-      explanation: "The split is about the question asked (built right vs. right thing to build), not about the phase. Pre-silicon validation on emulators and FPGA prototypes is standard practice."
+      explanation: "The logical equality operators give 1'bx when an operand has x or z bits (§11.4.5), and an if statement runs its first statement only for a known nonzero condition (§12.4). Testbench compares use !== so X fails."
     }
   ]}
 />
 
-## Interview Questions
+### Kata: plan a 4-bit counter
 
-<Card className="mt-8">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is the difference between Verification and Validation?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p><strong>Verification</strong> answers "Are we building the product right?" (Does RTL match Spec?).</p>
-        <p><strong>Validation</strong> answers "Are we building the right product?" (Does the chip meet the customer's needs in the real world?).</p>
-        <p><strong>Deeper point:</strong> Verification is mostly pre-silicon (simulation, formal, emulation). Validation is not only post-silicon: teams validate before tape-out by running real software on emulators and FPGA prototypes, then continue in the lab on real chips. A design can pass verification perfectly but fail validation if the specification itself was wrong.</p>
-      </div>
-    </details>
+Write a verification plan for this spec excerpt. Aim for at least six rows. For each row, also name a **mutant**: a small deliberate bug that only that row's check would catch.
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">If you have 100% Code Coverage, are you done?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>No. Code coverage only tells you that the tests exercised the code that <em>exists</em>. It cannot tell you about missing features (code that <em>should</em> be there but isn't). You need <strong>Functional Coverage</strong> to verify that all requirements from the spec have been tested.</p>
-        <p><strong>Follow-up trap:</strong> An interviewer may ask "What about 100% functional coverage?" Even that isn't sufficient — your coverage model might have gaps if the test plan missed requirements from the spec.</p>
-      </div>
-    </details>
+> `cnt4` has a 4-bit output `count`. A synchronous, active-low reset `rst_n` sets `count` to 0. A synchronous load `ld` loads `d[3:0]` and has priority over the increment enable `en`. With `en` high and `ld` low, `count` increases by 1 and wraps from 15 to 0. With both low, `count` holds.
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">When would you use formal verification instead of simulation?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>Formal verification is ideal for:</p>
-        <ul className="list-disc pl-5 mt-2 space-y-1">
-          <li><strong>Protocol compliance:</strong> Proving VALID/READY handshake rules are never violated.</li>
-          <li><strong>Deadlock freedom:</strong> Proving an arbiter or FSM cannot enter a stuck state.</li>
-          <li><strong>Security properties:</strong> Proving data isolation between privilege levels.</li>
-          <li><strong>Small, critical blocks:</strong> Arbiters, FIFOs, CDC logic where exhaustive proof is feasible.</li>
-        </ul>
-        <p className="mt-2">Simulation is better for large designs, end-to-end data path validation, and performance testing where formal tools hit state explosion limits.</p>
-      </div>
-    </details>
+<details>
+<summary>Worked solution</summary>
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">How would you approach verifying a block you've never seen before?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>Systematic approach:</p>
-        <ol className="list-decimal pl-5 mt-2 space-y-1">
-          <li><strong>Read the spec</strong> — understand the intended behavior and all the interfaces.</li>
-          <li><strong>Write the test plan</strong> — map every spec requirement to a verification strategy.</li>
-          <li><strong>Define coverage</strong> — functional coverage goals for every feature and interesting scenario.</li>
-          <li><strong>Build infrastructure</strong> — UVM environment with scoreboard, assertions, coverage.</li>
-          <li><strong>Run regressions</strong> — start with directed bring-up, then constrained random.</li>
-          <li><strong>Close coverage</strong> — track coverage, write targeted tests for gaps.</li>
-        </ol>
-        <p className="mt-2">This systematic answer demonstrates maturity. Avoid jumping straight to "I'd write random tests."</p>
-      </div>
-    </details>
+| Feature | Scenario | Check | Coverage item | Method | Mutant it catches |
+|---|---|---|---|---|---|
+| Reset | Pull `rst_n` low in the middle of counting | `count` is 0 on the next edge | Reset seen at a nonzero count | Directed | Reset clears only bit 0 |
+| Increment | `en` high from every value 0 to 15 | `count` equals the previous value + 1 | Every value seen with `en` high | Random | Adds 2 at odd values |
+| Hold | `en` and `ld` low | `count` unchanged | Hold seen at several values | Random | Ignores `en` and counts anyway |
+| Load | `ld` high with every `d` | `count` equals `d` on the next edge | Every `d` value loaded | Random | Ignores `d[3]` |
+| Load priority | `ld` and `en` high together, including at 15 | `count` equals `d`, not the increment | `ld` with `en` seen, including at 15 | Directed and random | Increment wins over load |
+| Wrap | Count up to 15 with `en` high | 15 is followed by 0 | The 15-to-0 transition seen | Directed | Wraps at 14 |
+| Reset priority (expert row) | `rst_n` low while `ld` is high | `count` is 0, not `d` | Reset seen with `ld` high | Directed | Load wins over reset |
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What's the difference between a bug found by simulation vs. an assertion?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>A <strong>simulation-found bug</strong> requires checking infrastructure (scoreboard) to compare actual vs. expected outputs — it catches wrong results but often after the damage propagates through the design.</p>
-        <p>An <strong>assertion-caught bug</strong> fires at the exact point of violation — it catches protocol/timing errors immediately at the source, making debugging faster. Assertions are also reusable: they check every cycle, every seed, without extra test code.</p>
-      </div>
-    </details>
-  </CardContent>
-</Card>
+Two habits to notice. Every check compares with a model written from the spec, never with the DUT's own output. And the load-priority row is the one a hand-written test list usually forgets, which is exactly where the methods figure's bug lived. F2E builds the bench for a plan like this one.
+
+</details>
+
+### Debug challenge: which checks can never fail?
+
+All of these run against the bug hunt's buggy counter (it wraps at 6). Which ones can never fail on it, and why? One of them is a good check.
+
+1. `assert property (@(posedge clk) disable iff (rst) count == 3'd7 |=> count == 3'd0);`
+2. `assert property (@(posedge clk) disable iff (rst) count <= 3'd7);`
+3. `cover property (@(posedge clk) count == 3'd7);`
+4. `if (count != expected) fail_cnt++;` in a testbench, with `count` stuck at X
+5. `assert property (@(posedge clk) disable iff (rst) count == 3'd6 |=> count == 3'd7);`
+
+<details>
+<summary>Worked solution</summary>
+
+1. **Never fails: vacuous.** The counter never reaches 7, so the antecedent never matches and every attempt is a vacuous success (§16.12.7, §16.14.8). A cover on `count == 3'd7` would show 0 hits.
+2. **Never fails: a tautology.** A 3-bit value is at most 7 whenever it is known, so the property checks nothing. Without the `disable iff (rst)` gate it would fire only on the unknown value before reset: an X compared with `<=` gives x, and an assertion treats x as false (§11.4.4, §16.6).
+3. **Never fails: it is a cover.** A cover counts matches; it reports 0 here, which is useful information, but it never fails.
+4. **Never fails: X-blind.** `!=` gives `1'bx` when `count` is X (§11.4.5), and the `if` skips its statement (§12.4). Use `!==`.
+5. **Fails, correctly.** `count` is 6 at one edge and 0 instead of 7 at the next, so the assertion fails exactly where the bug is, and it stays silent on the fixed counter.
+
+</details>
+
+The flashcards below cover the terms, the four ways a check never fails, the coverage metrics and the plan row.
 
 ## References & Next Topics
-- Siemens EDA and Wilson Research Group, [2022 IC/ASIC Functional Verification Trend Report](https://verificationacademy.com/topics/planning-measurement-and-analysis/wrg-industry-data-and-trends/2022-siemens-eda-and-wilson-research-group-ic-asic-functional-verification-trend-report/)
-- IEEE 1800-2023: §16 (assertions, including implication and vacuity), §20.9 (`$onehot`)
-- Next: [Why SystemVerilog?](/curriculum/T1_Foundational/F1C_Why_SystemVerilog/index)
+
+- IEEE 1800-2023: §11.4.4 (relational operators with x), §11.4.5 (equality operators), §12.4 (`if` with an x condition), §16.2 (`assert`, `assume`, `cover`, `restrict`), §16.6 (an x boolean is false), §16.12.7 (implication), §16.14.2 (`assume`), §16.14.3 (`cover`), §16.14.8 (vacuous and nonvacuous evaluations), Clause 17 (the `checker` construct), §19.2 (coverage overview), §20.9 (`$onehot`, `$countbits`, `$isunknown`), §20.10 (severity tasks), §20.11 (assertion control), §40.2.1 and §40.2.2 (coverage API and nomenclature), §40.3.2 (coverage system functions).
+- IEEE 1800.2-2020: §3.1 (testbench, scoreboard), §3.2 (DUT).
+- Arm IHI0022E §A3.2.1 (the AXI handshake rule in the bug taxonomy).
+
+**Related:**
+- [F1A: The Cost of Bugs](/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index): why late bugs cost so much (review).
+- [F2E: Your First Self-Checking Testbench](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index): the bench you build from a plan like the kata's.
+- [I-SV-2A: Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index): writing constraints.
+- [I-SV-3A: Functional Coverage Fundamentals](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index): covergroups and bins.
+- [I-SV-3B: Closure workflow](/curriculum/T2_Intermediate/I-SV-3B_Advanced_Functional_Coverage/closure-workflow): closing coverage holes.
+- [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): writing assertions.
+- [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): scoreboards at scale.
+- [E-INT-1: Integrating UVM with Formal Verification](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index): formal flows.
+
+<NextLesson />

@@ -1,112 +1,1042 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import { Quiz, InteractiveCode, InterviewQuestionPlayground } from "@/components/ui";
+---
+title: "Mailboxes: Typed, Bounded Channels Between Threads"
+description: "Pass transactions between testbench threads through typed, bounded mailboxes: predict when each call waits and what it returns, choose each channel's depth, and avoid the shared-handle bug."
+flashcards: "I-SV-5_Mailboxes"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+---
 
-export const metadata = {
-  title: "Mailboxes | Advanced SystemVerilog for Verification",
-  description: "Use mailboxes for thread-safe communication between processes.",
-};
+## Quick Take
 
-<InfoPage
-  title="Mailboxes"
-  sv_concept_tags={["mailboxes"]}
->
+- **What it is:** A **mailbox** is a built-in SystemVerilog class that passes messages from one process to another in first-in, first-out (FIFO) order (IEEE 1800-2023 §15.4, §15.4.3). `put()` adds a message and `get()` removes the oldest one. Both calls suspend the calling process when they cannot complete: `get()` while the mailbox is empty, and `put()` while a **bounded** mailbox is full.
+- **Why it matters:** A class-based testbench is a set of threads that run at different speeds: a generator, a driver, a monitor and a scoreboard. Mailboxes are the channels between them. Choose the wrong depth and the generator races ahead, or the monitor stalls and misses bus traffic. Put one object into a mailbox twice and the driver sends repeated data that still looks plausible in the log.
+- **The Analogy:** An in-tray with N slots on a colleague's desk. You drop forms in and your colleague takes the oldest one out; when the tray is full you wait, and when it is empty they wait. *Where it breaks:* a mailbox of class handles holds references to forms, not photocopies, so if you keep editing a form after dropping it in, your colleague reads your latest edits. And an unbounded tray, made with `new()`, never fills, so nobody ever waits for room.
 
-  ## Level 1: The Big Idea
-  *IEEE 1800-2023, Clause 15.4: Mailboxes*
+**You will be able to:**
+1. Predict when `put()`, `get()`, `peek()` and their `try_` forms wait, and what each `try_` call returns, for empty, full, bounded and unbounded mailboxes.
+2. Choose the type and the depth of each testbench channel (typed or typeless, bounded or unbounded), and say when a UVM `uvm_tlm_fifo` replaces a mailbox.
+3. Write a generator → bounded, typed mailbox → driver pipeline with backpressure, plus a monitor → scoreboard path that never blocks the monitor.
+4. Debug the shared-handle bug, where queued messages show repeated or later values, and fix it with a new object or a copy per message.
 
-  A **mailbox** is a built-in message queue. One process `put`s an item into the mailbox while another `get`s it out. It's like dropping a letter into a box for someone else to pick up later.
+<BeforeYouStart />
 
-  ## Level 2: Practical Usage
+## Build Your Mental Model
 
-  ### Basic Operations
+### Why threads need a mailbox
 
-  | Call | Blocking? | Use it when |
-  | --- | --- | --- |
-  | `put(item)` | Blocks while a bounded mailbox is full | Backpressure producer threads until consumers catch up. |
-  | `try_put(item)` | Never; returns 0 if full and stores nothing | Drop low-priority work instead of stalling. |
-  | `get(item)` | Blocks until something arrives | Classic producer/consumer handshakes. |
-  | `try_get(item)` | Never; returns 0 if empty (negative on a type mismatch) | Check for work without blocking a monitor. |
-  | `peek(item)` | Blocks until something arrives; copies without removing | Look at the next transaction while leaving it queued. |
-  | `try_peek(item)` | Never; returns 0 if empty | Look ahead without blocking. |
-  | `num()` | Instant | Inspect queue depth; the value is stale after the next put or get by any process (§15.4.2). |
+A class-based testbench starts its components as separate processes, usually with `fork … join_none` ([F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index)). A **generator** creates transactions, a **driver** turns each one into pin activity, a **monitor** turns pin activity back into transactions, and a **scoreboard** checks them. These processes run at different speeds. The driver can take the next transaction only when the bus is free, and the scoreboard can check only what the monitor has seen.
 
-  Blocked callers are woken first-in first-out (IEEE 1800-2023 §15.4.5). Predict when the producer gets past a full mailbox, then drive a producer and two consumers yourself — and watch who receives the first message when both consumers are waiting.
+Without a channel you would share a queue and poll it, for example with `while (q.size() == 0) #1;`. Polling wakes the consumer every interval even when there is nothing to do, delays every hand-off by up to one interval, and gives you no way to slow a fast producer down. A mailbox fixes all three. A consumer that calls `get()` on an empty mailbox is suspended and resumes by itself when a message arrives. A producer that calls `put()` on a full bounded mailbox is suspended until there is room. That automatic slowing of the producer is called **backpressure**.
 
-  <MailboxSemaphoreGame mode="mailbox" />
+### The picture: one FIFO, two waiting lines
 
-  <InteractiveCode>
-  ```systemverilog
-  typedef struct { int id; bit [7:0] data; } packet_t;
-  mailbox #(packet_t) mbx = new(4); // depth-limited queue
+<figure className="not-prose my-6">
+<svg viewBox="0 0 340 292" role="img" aria-labelledby="isv5-mbx-queue-title" style={{ width: "100%", maxWidth: 520, height: "auto" }}>
+  <title id="isv5-mbx-queue-title">Two snapshots of a mailbox created with new(3). Top, full: messages t2, t1 and t0 fill the three slots, t0 the oldest; producers gen_a and gen_b are suspended in put(); the driver's next get() takes t0. Bottom, empty: no messages; consumers c1, waiting since 10 ns, and c2, waiting since 12 ns, are suspended in get(); the next put() goes to c1.</title>
+  <defs>
+    <marker id="isv5-mbx-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 Z" fill="currentColor" />
+    </marker>
+  </defs>
+  <rect x="1" y="1" width="338" height="144" rx="10" fill="none" stroke="currentColor" strokeOpacity="0.25" />
+  <text x="12" y="20" fontSize="11.5" fontWeight="600" fill="currentColor">Full: mbx = new(3) holds 3 messages</text>
+  <rect x="12" y="30" width="84" height="32" rx="6" fill="rgba(217,119,6,0.12)" stroke="#d97706" strokeDasharray="4 3" />
+  <text x="54" y="44" textAnchor="middle" fontSize="10.5" fontWeight="600" fill="currentColor">gen_a waits</text>
+  <text x="54" y="57" textAnchor="middle" fontSize="9.5" fill="currentColor">in put(t3)</text>
+  <rect x="12" y="70" width="84" height="32" rx="6" fill="rgba(217,119,6,0.12)" stroke="#d97706" strokeDasharray="4 3" />
+  <text x="54" y="84" textAnchor="middle" fontSize="10.5" fontWeight="600" fill="currentColor">gen_b waits</text>
+  <text x="54" y="97" textAnchor="middle" fontSize="9.5" fill="currentColor">in put(t4)</text>
+  <line x1="96" y1="46" x2="109" y2="59" stroke="currentColor" strokeWidth="1.4" strokeDasharray="3 3" markerEnd="url(#isv5-mbx-arrow)" />
+  <line x1="96" y1="86" x2="109" y2="73" stroke="currentColor" strokeWidth="1.4" strokeDasharray="3 3" markerEnd="url(#isv5-mbx-arrow)" />
+  <rect x="112" y="49" width="120" height="34" rx="4" fill="none" stroke="currentColor" strokeWidth="1.4" />
+  <rect x="113" y="50" width="38" height="32" fill="rgba(99,102,241,0.18)" />
+  <rect x="153" y="50" width="38" height="32" fill="rgba(99,102,241,0.18)" />
+  <rect x="193" y="50" width="38" height="32" fill="rgba(99,102,241,0.18)" />
+  <line x1="152" y1="49" x2="152" y2="83" stroke="currentColor" strokeOpacity="0.6" />
+  <line x1="192" y1="49" x2="192" y2="83" stroke="currentColor" strokeOpacity="0.6" />
+  <text x="132" y="70" textAnchor="middle" fontSize="11" fontFamily="monospace" fill="currentColor">t2</text>
+  <text x="172" y="70" textAnchor="middle" fontSize="11" fontFamily="monospace" fill="currentColor">t1</text>
+  <text x="212" y="70" textAnchor="middle" fontSize="11" fontFamily="monospace" fill="currentColor">t0</text>
+  <text x="132" y="96" textAnchor="middle" fontSize="9.5" fill="currentColor" fillOpacity="0.75">newest</text>
+  <text x="212" y="96" textAnchor="middle" fontSize="9.5" fill="currentColor" fillOpacity="0.75">oldest</text>
+  <line x1="232" y1="66" x2="262" y2="66" stroke="currentColor" strokeWidth="1.4" markerEnd="url(#isv5-mbx-arrow)" />
+  <rect x="264" y="49" width="68" height="34" rx="6" fill="none" stroke="currentColor" />
+  <text x="298" y="63" textAnchor="middle" fontSize="10.5" fontWeight="600" fill="currentColor">drv runs</text>
+  <text x="298" y="76" textAnchor="middle" fontSize="9.5" fill="currentColor">get() takes t0</text>
+  <text x="12" y="123" fontSize="9.5" fill="currentColor">put() waits while the mailbox is full (§15.4.3).</text>
+  <text x="12" y="136" fontSize="9.5" fill="currentColor">Which waiting put() completes first is not specified.</text>
+  <rect x="1" y="153" width="338" height="137" rx="10" fill="none" stroke="currentColor" strokeOpacity="0.25" />
+  <text x="12" y="172" fontSize="11.5" fontWeight="600" fill="currentColor">Empty: consumers wait in get()</text>
+  <rect x="12" y="200" width="84" height="36" rx="6" fill="none" stroke="currentColor" />
+  <text x="54" y="215" textAnchor="middle" fontSize="10.5" fontWeight="600" fill="currentColor">gen runs</text>
+  <text x="54" y="229" textAnchor="middle" fontSize="9.5" fill="currentColor">next: put(t5)</text>
+  <line x1="96" y1="218" x2="109" y2="218" stroke="currentColor" strokeWidth="1.4" markerEnd="url(#isv5-mbx-arrow)" />
+  <rect x="112" y="201" width="120" height="34" rx="4" fill="none" stroke="currentColor" strokeWidth="1.4" />
+  <line x1="152" y1="201" x2="152" y2="235" stroke="currentColor" strokeOpacity="0.35" strokeDasharray="3 3" />
+  <line x1="192" y1="201" x2="192" y2="235" stroke="currentColor" strokeOpacity="0.35" strokeDasharray="3 3" />
+  <text x="172" y="222" textAnchor="middle" fontSize="10" fill="currentColor" fillOpacity="0.7">empty</text>
+  <rect x="264" y="180" width="68" height="34" rx="6" fill="rgba(217,119,6,0.12)" stroke="#d97706" strokeDasharray="4 3" />
+  <text x="298" y="194" textAnchor="middle" fontSize="10.5" fontWeight="600" fill="currentColor">c1 waits</text>
+  <text x="298" y="207" textAnchor="middle" fontSize="9.5" fill="currentColor">since 10 ns</text>
+  <rect x="264" y="222" width="68" height="34" rx="6" fill="rgba(217,119,6,0.12)" stroke="#d97706" strokeDasharray="4 3" />
+  <text x="298" y="236" textAnchor="middle" fontSize="10.5" fontWeight="600" fill="currentColor">c2 waits</text>
+  <text x="298" y="249" textAnchor="middle" fontSize="9.5" fill="currentColor">since 12 ns</text>
+  <line x1="232" y1="212" x2="262" y2="199" stroke="currentColor" strokeWidth="1.4" markerEnd="url(#isv5-mbx-arrow)" />
+  <text x="240" y="197" fontSize="9.5" fill="currentColor">1st</text>
+  <line x1="232" y1="224" x2="262" y2="237" stroke="currentColor" strokeWidth="1.4" strokeDasharray="3 3" markerEnd="url(#isv5-mbx-arrow)" />
+  <text x="240" y="247" fontSize="9.5" fill="currentColor">2nd</text>
+  <text x="12" y="270" fontSize="9.5" fill="currentColor">The next put() goes to c1: get() waiters keep arrival order.</text>
+  <text x="12" y="282" fontSize="9.5" fill="currentColor">Two get() calls in one time slot arrive in any order (§4.7).</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Two snapshots of one mailbox created with <code>new(3)</code>. Dashed amber boxes are processes suspended inside a mailbox call; solid boxes are running. Producers wait only on a full mailbox and consumers only on an empty one, so the two cases are drawn separately.</figcaption>
+</figure>
 
-  task automatic produce_packet(int id);
-    packet_t p = '{id: id, data: $urandom_range(0, 255)};
-    mbx.put(p);   // blocks while 4 packets are queued: this IS the backpressure
-  endtask
+Read the picture top to bottom:
 
-  task automatic produce_optional(int id);   // low-priority traffic
-    packet_t p = '{id: id, data: 8'hFF};
-    if (!mbx.try_put(p))
-      $display("[%0t] dropped optional packet %0d: mailbox full", $time, id);
-  endtask
+- Messages enter at the tail and leave from the head in strict FIFO order (§15.4.3). The next `get()` takes `t0`.
+- A **bounded** mailbox, created with `new(N)`, is full when it holds N messages. Then `put()` suspends the caller until a `get()` frees a slot (§15.4, §15.4.3).
+- An **unbounded** mailbox, created with `new()`, is never full, so `put()` never waits (§15.4.1).
+- `get()` and `peek()` suspend the caller while the mailbox is empty (§15.4.5, §15.4.7).
+- A suspended process resumes **by itself**, in the time slot where room or a message appears. Nobody polls.
 
-  initial begin
-    for (int idx = 0; idx < 8; idx++) begin
-      produce_packet(idx);
+### Your first mailbox: predict, then watch
+
+This complete example has one producer and one consumer. The consumer takes a message every 10 ns; the producer tries to send four at once.
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  mailbox #(int) mbx = new(2);          // bounded: at most 2 messages wait inside
+
+  initial begin : producer
+    for (int i = 0; i < 4; i++) begin
+      mbx.put(i);                       // waits while mbx already holds 2 messages
+      $display("[%0t] sent %0d", $time, i);
     end
   end
 
-  initial begin
-    packet_t pkt;
-    forever begin
-      mbx.get(pkt);
-      $display("[%0t] Consumer saw id=%0d depth=%0d", $time, pkt.id, mbx.num());
+  initial begin : consumer
+    int v;
+    repeat (4) begin
+      #10 mbx.get(v);                   // waits while mbx is empty
+      $display("[%0t] got %0d", $time, v);
     end
   end
-  ```
-  </InteractiveCode>
+endmodule
+```
 
-  Mailboxes often carry randomized transactions. For generating those transactions, see [Constrained Randomization](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index).
+**Predict before you look:** at what time does the producer print `sent 2`? Write your answer down. Then predict again for `new(1)` and for `new()`.
 
-  ## Failure Modes: Leaks and Backpressure
+The visual below runs this program on a tested model of the SystemVerilog scheduler. On the **Mailbox** tab, choose the `new(2)` program, lock in your prediction and step through the lanes. Then repeat with `new(1)` and `new()`.
 
-  **The Infinite Queue (Memory Leak):** 
-  Calling `new()` with no arguments creates an unbounded (infinite) mailbox. If your producer thread (e.g., a fast transaction generator) pushes items faster than your consumer thread (e.g., a slow APB driver) can pull them, the mailbox will grow infinitely. This will eventually exhaust the simulator's memory and crash the process. 
-  
-  **The Fix (Backpressure):** Always use bounded mailboxes `new(DEPTH)` for driver queues. When the mailbox is full, the producer's `put()` will naturally block, creating *backpressure* that forces the generator to wait for the hardware to catch up. Do not build your own backpressure with `try_put` plus `wait (mbx.num() < DEPTH)`: `put()` already waits for room. Worse, the wait's only operand is the `mbx` handle, which never changes; whether a simulator re-evaluates a method call like `mbx.num()` when the mailbox's contents change is tool-dependent, so this pattern can hang.
+<MailboxSemaphoreGame mode="mailbox" />
 
-  **The Shared Handle:** For class objects, `put(tr)` stores the **handle**, not a copy. A producer that reuses one object — `tr.randomize(); mbx.put(tr);` in a loop — fills the mailbox with several handles to the same object, and the consumer sees only the last values. Call `tr = new();` (or copy the object) before every `put()`.
+**What the runs showed:**
 
-  **Mailboxes vs. TLM/FIFOs:** 
-  In modern UVM environments, raw SystemVerilog mailboxes are rarely used. UVM’s `uvm_tlm_fifo` wraps a mailbox with analysis ports, standard reset control, and comprehensive blocking/non-blocking APIs. You should transition to TLM FIFOs when bridging IPC into UVM testbench architecture.
+- With `new(2)`, messages 0 and 1 fill the mailbox at 0 ns and `put(2)` suspends the producer. The consumer's first `get()` at 10 ns frees a slot, and the producer resumes by itself in the same time slot: `sent 2` prints at 10 ns (§15.4.3).
+- With `new(1)`, every `put()` waits for the previous message to be taken: `sent 1` prints at 10 ns and `sent 2` at 20 ns.
+- With `new()`, `put()` never waits. All four `sent` lines print at 0 ns, and the messages pile up until the consumer drains them (§15.4.1).
+- Now use the sandbox under the scripted run. Make **consumer 1** and then **consumer 2** call `get(v)` on the empty mailbox, then click `put(1)`: consumer 1, the first to wait, receives the message (§15.4.5). Repeat with `peek(v)`: the message is copied and stays in the mailbox.
 
-  **One-to-one only:** Mailboxes always deliver each message to a single consumer. When you need broadcast semantics, rely on [analysis ports](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index#monitors-scoreboards-and-the-analysis-fabric) or register callbacks.
+**Expected output** for `new(2)` (illustrative: traced by hand from §15.4, not captured from a simulator run):
 
-  ## Quiz
+```text
+[0] sent 0
+[0] sent 1
+[10] got 0
+[10] sent 2
+[20] got 1
+[20] sent 3
+[30] got 2
+[40] got 3
+```
 
-  <Quiz questions={[
+At 10 ns and 20 ns two processes print in the same time slot. Which line comes first depends on which process the simulator runs first (§4.7). This listing assumes that the consumer keeps running until its next delay, as the visual's model does.
+
+### Every method, and exactly what it returns
+
+A mailbox has eight methods, declared in Annex G.4 of the standard. The three tasks can wait; the functions never do.
+
+| Method (Annex G.4) | Waits? | What it returns or does |
+|---|---|---|
+| `task put(T message)` | while a bounded mailbox is full; never if unbounded | adds the message at the tail (§15.4.3) |
+| `function int try_put(T message)` | never | a positive integer when the message was stored; 0 when the mailbox was full and nothing was stored (§15.4.4) |
+| `task get(ref T message)` | while the mailbox is empty | removes the oldest message into the variable; in a typeless mailbox, a type mismatch is a run-time error (§15.4.5) |
+| `function int try_get(ref T message)` | never | positive: the oldest message was removed into the variable; 0: empty; negative: type mismatch, nothing removed (§15.4.6) |
+| `task peek(ref T message)` | while the mailbox is empty | copies the oldest message into the variable and leaves it queued; type mismatch: run-time error (§15.4.7) |
+| `function int try_peek(ref T message)` | never | positive: copied; 0: empty; negative: type mismatch (§15.4.8) |
+| `function int num()` | never | the number of messages right now, valid only until the next `put()` or `get()` by any process (§15.4.2) |
+| `function new(int bound = 0)` | never | creates the mailbox: bound 0, the default, is unbounded; a positive bound is the capacity; a negative bound is illegal (§15.4.1) |
+
+Three rules follow from the table:
+
+- **Test a `try_` result with `> 0`.** The standard promises a positive integer on success, not the value 1, and a negative result is a failure that `if (m.try_get(v))` would take for success.
+- **Nothing is ever overwritten.** No call replaces or drops a stored message. On a full mailbox, `put()` waits and `try_put()` returns 0.
+- **Inside a function, only the functions are available.** A function cannot call a task (§13.4), so function code can use `try_put()`, `try_get()`, `try_peek()` and `num()`, but not `put()`, `get()` or `peek()`. You will meet this in UVM, where an analysis `write()` method is a function.
+
+### A mailbox carries handles, not objects
+
+A message can be any **singular** value, meaning one value or one handle: an `int`, a packed struct or, most often, a class handle (§15.4.3). For a class, `put(t)` stores a copy of the **handle** held in `t`, not a copy of the object it refers to (§8.12). If the producer reuses one object, every queued message refers to that one object, and the consumer reads whatever the producer wrote last.
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  class txn;
+    int unsigned id;
+    bit [7:0]    data;
+  endclass
+
+  mailbox #(txn) gen2drv = new();       // unbounded: all three puts finish at 0 ns
+
+  initial begin : generator
+    txn t;
+    t = new();                          // BUG: one object for all three messages
+    for (int i = 0; i < 3; i++) begin
+      t.id   = i;
+      t.data = 8'hA0 + 8'(i);
+      gen2drv.put(t);                   // queues a copy of the handle, not of the object
+    end
+  end
+
+  initial begin : driver
+    txn d;
+    #1;                                 // let the generator finish first, so the output
+                                        // does not depend on process order
+    repeat (3) begin
+      gen2drv.get(d);
+      $display("drv got id=%0d data=%h", d.id, d.data);
+    end
+  end
+endmodule
+```
+
+**Expected output** (illustrative):
+
+```text
+drv got id=2 data=a2
+drv got id=2 data=a2
+drv got id=2 data=a2
+```
+
+The trace shows why. `txn@1` names the first `txn` object created, as in the I-SV-1 handle visualizer.
+
+| After this step | `t` refers to | `txn@1` holds | Messages queued in `gen2drv` |
+|---|---|---|---|
+| `t = new();` | `txn@1` | id=0, data=00 | none |
+| i = 0: write the fields, `put(t)` | `txn@1` | id=0, data=a0 | `txn@1` |
+| i = 1: write the fields, `put(t)` | `txn@1` | id=1, data=a1 | `txn@1`, `txn@1` |
+| i = 2: write the fields, `put(t)` | `txn@1` | id=2, data=a2 | `txn@1`, `txn@1`, `txn@1` |
+| at 1 ns: three `get(d)` calls | | id=2, data=a2 | each `get()` returns `txn@1` |
+
+<ArchitectureDiagram
+  title="Three queued messages, one object: the shared-handle bug and its fix"
+  caption="Top: new ran once, so the three messages in gen2drv are three copies of one handle, and every get() returns the object as the generator last left it. Bottom: new runs once per message, so each handle refers to its own object."
+  className="mx-auto max-w-md"
+  cellWidth={100}
+  cellHeight={48}
+  gapX={28}
+  gapY={60}
+  legend={false}
+  nodes={[
+    { id: "bug", label: "BUG: t = new() before the loop", kind: "generic", col: 0, row: 0, colSpan: 3, rowSpan: 2, container: true },
+    { id: "m1", label: "1st message", sublabel: "handle", kind: "fifo", col: 0, row: 0 },
+    { id: "m2", label: "2nd message", sublabel: "handle", kind: "fifo", col: 1, row: 0 },
+    { id: "m3", label: "3rd message", sublabel: "handle", kind: "fifo", col: 2, row: 0 },
+    { id: "o1", label: "txn@1", sublabel: "id=2, data=a2", kind: "generic", col: 0, row: 1, colSpan: 3, state: "error" },
+    { id: "fix", label: "FIX: t = new() inside the loop", kind: "generic", col: 0, row: 2, colSpan: 3, rowSpan: 2, container: true },
+    { id: "f1", label: "1st message", sublabel: "handle", kind: "fifo", col: 0, row: 2 },
+    { id: "f2", label: "2nd message", sublabel: "handle", kind: "fifo", col: 1, row: 2 },
+    { id: "f3", label: "3rd message", sublabel: "handle", kind: "fifo", col: 2, row: 2 },
+    { id: "g1", label: "txn@1", sublabel: "id=0, data=a0", kind: "generic", col: 0, row: 3, state: "ok" },
+    { id: "g2", label: "txn@2", sublabel: "id=1, data=a1", kind: "generic", col: 1, row: 3, state: "ok" },
+    { id: "g3", label: "txn@3", sublabel: "id=2, data=a2", kind: "generic", col: 2, row: 3, state: "ok" }
+  ]}
+  edges={[
+    { from: "m1", to: "o1", style: "data" },
+    { from: "m2", to: "o1", style: "data" },
+    { from: "m3", to: "o1", style: "data" },
+    { from: "f1", to: "g1", style: "data" },
+    { from: "f2", to: "g2", style: "data" },
+    { from: "f3", to: "g3", style: "data" }
+  ]}
+/>
+
+**The fix:** create the object inside the loop, so that each message refers to its own object. The driver then prints ids 0, 1 and 2 with data a0, a1 and a2.
+
+```systemverilog
+// snippet: the generator loop above, fixed
+for (int i = 0; i < 3; i++) begin
+  t      = new();                       // one object per message
+  t.id   = i;
+  t.data = 8'hA0 + 8'(i);
+  gen2drv.put(t);
+end
+```
+
+If a producer must keep its own object, for example a template it edits between items, put a copy instead. `c = new t;` makes a shallow copy (§8.12), which is enough when the class holds only values; a class with nested handles needs a deep copy ([I-SV-1: Copying and Cloning](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning)).
+
+The same bug runs the other way. A consumer that keeps a received handle, such as a scoreboard that stores expected items, sees every later change made through another handle to that object. The rule for every channel is: **producers send a new object for each message, and consumers that keep a message copy it first.** The [I-SV-1 module page](/curriculum/T2_Intermediate/I-SV-1_OOP/index) has a debugging challenge with the queue version of this bug.
+
+That is the core of mailboxes. The rest of this section is practitioner depth: the depth and type of each channel, the ordering guarantees, the UVM equivalent, and debugging.
+
+### Bounded or unbounded: where backpressure belongs
+
+`new()` and `new(0)` create an unbounded mailbox; `new(N)` with a positive N holds at most N messages (§15.4.1). A mailbox variable is a class handle, so it is `null` until `new` runs. Calling a mailbox method through a null handle is illegal, its result is indeterminate, and simulators may report a null-object error at that line (§8.4).
+
+The right depth depends on the direction of the channel:
+
+| Channel | Depth | Why |
+|---|---|---|
+| generator → driver | bounded and small, `new(1)` or `new(2)` | Backpressure: the generator stays one or two items ahead of the driver, so it never floods memory and creates each item close to the time it is driven. |
+| monitor → scoreboard | unbounded, `new()` | The bus does not wait. A monitor suspended in `put()` stops sampling and misses transactions. |
+| generator or predictor → scoreboard (expected items) | unbounded, `new()` | Whoever produces the expected values must not stall behind a slow checker. |
+
+Two traps:
+
+- **Do not build your own backpressure** with `try_put()` plus `wait (mbx.num() < N)`. `put()` already waits for room (§15.4.3), and `num()` is only a snapshot (§15.4.2). Worse, the standard requires an expression that calls a method to be re-evaluated when data members that the method reads change (§9.4.2), but it does not describe a mailbox's internals, so whether such a wait ever wakes is tool-dependent.
+- **An unbounded mailbox has no memory limit.** Queued handles keep their objects reachable, so the objects cannot be reclaimed while they wait (§8.29). A `forever` generator with no delay that feeds an unbounded mailbox never waits at all: it is a zero-delay loop, simulation time stops advancing, and whether the driver ever gets to run depends on the simulator (§4.7).
+
+> [!TIP]
+> Keep the bound in a named parameter, such as `GEN_DEPTH`. The mailbox has no method that reports its bound (Annex G.4), so the parameter is the only place your end-of-test checks and debug prints can read it from.
+
+### Typed or typeless (§15.4.9)
+
+A mailbox comes in two kinds:
+
+- **Parameterized (typed):** `mailbox #(txn) m;` carries one type. The compiler checks that every argument of `put`, `try_put`, `get`, `try_get`, `peek` and `try_peek` has a type equivalent to `txn`, so mismatches are compile errors (§15.4.9).
+- **Typeless:** `mailbox m;` is the default `mailbox #(dynamic_type)`. One mailbox can carry any singular type: it records the type of each message and checks it at run time (§15.4.5, §15.4.9).
+
+The same calls behave differently in the two kinds. The variables are `int i = 5;`, `int x;` and `string s;`. Row 1 puts one message, and rows 2 to 4 are three separate alternatives, each starting with that message as the only one in the mailbox:
+
+| Step | Typeless: `mailbox m = new();` | Typed: `mailbox #(int) m = new();` |
+|---|---|---|
+| `m.put(i);` | stores 5 and records its type, `int` (§15.4.5) | stores 5 |
+| `m.get(s);` | compiles; a run-time error when the call executes (§15.4.5) | compile error: `s` is not an `int` (§15.4.9) |
+| `r = m.try_get(s);` | compiles; `r` is negative and nothing is removed (§15.4.6) | compile error |
+| `m.get(x);` | `x` becomes 5 | `x` becomes 5 |
+
+The rows put an `int` variable on purpose. A typeless mailbox checks the type that `put()` recorded, so put a variable of the type your consumer reads. The standard calls an unsized decimal literal such as `5` a signed integer (§5.7.1) without naming its exact type, so do not rely on how a typeless mailbox records one.
+
+Use typed mailboxes in testbench code. A typeless mailbox moves type errors from the compiler to the middle of a long run, and its negative `try_get()` results are easy to mistake for success. When one channel must carry several kinds of transaction, a typed `mailbox #(base_txn)` with a class hierarchy is clearer (Push Further shows how to read it back).
+
+Every message must be **singular**: one value or one handle (§15.4.3). An unpacked struct, union or array is not singular (Annex P), so it cannot be a message. Send a class handle, the usual choice, or a packed struct. Whether a particular simulator rejects an unpacked struct is tool-dependent, so do not rely on either outcome.
+
+### Who gets the next message?
+
+- **One producer, one consumer:** messages come out in exactly the order they went in (§15.4.3).
+- **Several producers:** messages are stored in the order in which their `put()` calls complete. Two producers that put in the same time slot are ordered by the scheduler, which the standard leaves open (§4.7), so the order can differ between simulators. If the consumer needs the source or the order, carry it in the transaction, as an id or a timestamp, or give each producer its own mailbox.
+- **Several consumers waiting in `get()`:** the mailbox keeps waiting processes in the order they arrived, and the first to arrive receives the next message (§15.4.5). The standard does not say which of two `get()` calls in the same time slot arrives first. In the picture, `c1` has waited since 10 ns, so it is ahead of `c2`.
+- **Each message goes to exactly one `get()`:** several consumers share the work; they do not each receive a copy. For broadcast, give each consumer its own mailbox, or in UVM use an analysis port ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)). Only `peek()` lets several processes see the same message, and for a class they all see the same handle.
+
+Never let a result depend on which of several equal waiters is served first. If the order matters, make it explicit, with one mailbox per consumer or a single thread that hands out the work.
+
+### Mailbox or `uvm_tlm_fifo`?
+
+In UVM, components normally do not share mailbox handles. They talk through TLM ports, and the channel between a producer and a consumer is a `uvm_tlm_fifo`, a UVM component that wraps a mailbox. [I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) teaches the connections; this table shows how the two compare.
+
+| | SystemVerilog `mailbox #(T)` | UVM `uvm_tlm_fifo #(T)` |
+|---|---|---|
+| What it is | a built-in class in the `std` package (§15.2) | a `uvm_component` that wraps a `mailbox #(T)` |
+| Default depth | `new()` is unbounded | the constructor's `size` defaults to 1, so it is bounded; `size` 0 means unbounded |
+| How the two ends reach it | both ends hold the same handle | each end connects a port to `put_export` or `get_peek_export` |
+| Non-blocking calls return | `int`: positive, 0 or negative | `bit`: 1 or 0; `can_put()`, `can_get()` and `can_peek()` ask first |
+| Inspecting it | `num()` | `used()`, `size()`, `is_empty()`, `is_full()` |
+| Emptying it | no method; drain with `try_get()` | `flush()` |
+| Watching its traffic | not built in | the `put_ap` and `get_ap` analysis ports publish every put and get |
+| Monitor-side form | `new()` | `uvm_tlm_analysis_fifo #(T)`: unbounded, written through its `analysis_export` |
+
+Sources: IEEE 1800.2-2020 §12.2.8.2 and §12.2.8.3; uvm-core 2020.3.1 `src/tlm1/uvm_tlm_fifos.svh` and `src/tlm1/uvm_tlm_fifo_base.svh`.
+
+Use mailboxes in a plain SystemVerilog testbench, like this module's examples and the layered bench of [I-SV-9](/curriculum/T2_Intermediate/I-SV-9_Why_UVM/index). Between UVM components, use a TLM FIFO with a port on each side, so that neither component needs a handle to the other. A mailbox is still a reasonable choice between two threads inside one component. The trap when porting: a `uvm_tlm_fifo` built with default arguments holds one item, whereas `new()` gave you an unbounded mailbox.
+
+### Failure modes: leaks and backpressure
+
+Mailbox bugs show up as a hang, a quiet early end, repeated data or missed transactions. Find the row that matches your log.
+
+| What you see | Likely cause | How to confirm | Fix |
+|---|---|---|---|
+| The driver repeats values or drives later items first; the scoreboard reports mismatches | One object queued several times: the shared handle | At the consumer, compare each handle with the previous one: `if (t == prev) $error(...)` | Create a new object per message, or put a copy |
+| The log stops at one timestamp, memory grows, the driver is silent | A `forever` producer with no delay feeding an unbounded mailbox: a zero-delay loop | Time never advances in the log | Bound the mailbox, or pace the producer |
+| The run ends quietly with fewer items than expected, or the watchdog fires | A consumer waits forever in `get()`: the producer finished or was killed, or the two ends hold different mailboxes | At the end, print `num()`; check that both ends hold the same handle, for example `gen.gen2drv == drv.gen2drv` | Create each mailbox once and pass the same handle to both ends; end the test on a count and add a watchdog |
+| The producer is stuck in `put()`; the monitor misses bus transactions | A bounded mailbox whose consumer is slow, stopped or killed | The producer's last log line comes just before a `put()` | Unbounded mailboxes on observation paths; keep consumers alive |
+| Two threads both stuck in `put()`, for example a requester and a responder; the run ends quietly or the watchdog fires | A loop of bounded mailboxes: each thread waits for room in a mailbox that only the other thread empties | Draw who waits for whom: each arrow leads to the thread that would have to call `get()` | Collect replies in their own thread, or size the mailboxes for the largest burst; the kata on the [module page](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index) walks through one |
+| A run-time type error at a `get()`, or `try_get()` returns a negative value | A typeless mailbox carrying another type | The error names the `get()` line | Use `mailbox #(T)` |
+| A null-object error at the first `put()` or `get()` | The mailbox was declared but never created | The handle is `null` at that line | Call `new` before starting the threads |
+| Memory grows steadily over a long test | An unbounded mailbox whose consumer fell behind or stopped; queued objects stay reachable (§8.29) | `num()` keeps rising | Find the stalled consumer; check `num() == 0` at the end of the test |
+
+When every process is suspended and nothing else is scheduled, simulation simply ends (§9.6.1), often with no error, which can look like a pass. A free-running clock or a watchdog turns the same bug into a hang that the watchdog reports. That is why every test should end on a condition, print a summary line, and have a `$fatal` watchdog.
+
+### Recap
+
+- A mailbox is a FIFO channel between processes: `mailbox #(txn) m = new(N);` holds at most N messages, and `new()` is unbounded.
+- `put()` waits only while a bounded mailbox is full; `get()` and `peek()` wait while it is empty; the `try_` functions never wait and return a positive value, 0 or, for `try_get()` and `try_peek()`, a negative value on a type mismatch.
+- A mailbox stores handles. Create a new object, or a copy, for every message.
+- Bound the stimulus path for backpressure; never let a monitor block.
+- Messages are FIFO, and processes waiting in `get()` are served in arrival order, but the standard leaves the order of same-time arrivals and of waiting `put()` callers open.
+
+## Make It Work
+
+### Worked example: mailbox plumbing for a layered bench
+
+This bench has a generator, a driver, a monitor and a scoreboard joined by three mailboxes. There is no design under test (DUT) yet: the monitor watches the same interface that the driver drives, so every item should come back intact one clock later. That keeps the focus on the plumbing; [I-SV-9](/curriculum/T2_Intermediate/I-SV-9_Why_UVM/index) puts a DUT between the two halves and grows this into the full layered testbench. The driver and the monitor reach the pins through a virtual interface and clocking blocks, as in [F4B](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index) and [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index).
+
+<ArchitectureDiagram
+  title="Mailbox plumbing of the worked example"
+  caption="Arrows show the direction the data moves, and each label is the call that moves it, named as in the code. The stimulus path on the left is bounded, so the generator waits for the driver. The observation path on the right is unbounded, so the monitor never waits. The scoreboard pairs each observed item with the oldest expected snapshot."
+  className="mx-auto max-w-md"
+  gapX={100}
+  legend={false}
+  nodes={[
+    { id: "gen", label: "gen", sublabel: "generator", kind: "generic", col: 0, row: 0 },
+    { id: "gen2scb", label: "gen2scb", sublabel: "mailbox #(txn), new()", kind: "fifo", col: 1, row: 0 },
+    { id: "gen2drv", label: "gen2drv", sublabel: "mailbox #(txn), new(2)", kind: "fifo", col: 0, row: 1 },
+    { id: "scb", label: "scb", sublabel: "scoreboard", kind: "scoreboard", col: 1, row: 1 },
+    { id: "drv", label: "drv", sublabel: "driver", kind: "driver", col: 0, row: 2 },
+    { id: "mon2scb", label: "mon2scb", sublabel: "mailbox #(txn), new()", kind: "fifo", col: 1, row: 2 },
+    { id: "bus", label: "bus", sublabel: "bus_if: drv_cb, mon_cb", kind: "interface", col: 0, row: 3 },
+    { id: "mon", label: "mon", sublabel: "monitor", kind: "monitor", col: 1, row: 3 }
+  ]}
+  edges={[
+    { from: "gen", to: "gen2drv", style: "data", label: "put(t)" },
+    { from: "gen2drv", to: "drv", style: "data", label: "get(t)" },
+    { from: "drv", to: "bus", style: "data", label: "drv_cb" },
+    { from: "bus", to: "mon", style: "data", label: "mon_cb" },
+    { from: "mon", to: "mon2scb", style: "data", label: "put(a)" },
+    { from: "mon2scb", to: "scb", style: "data", label: "get(a)" },
+    { from: "gen", to: "gen2scb", style: "data", label: "put(t.copy())" },
+    { from: "gen2scb", to: "scb", style: "data", label: "try_get(e)" }
+  ]}
+/>
+
+```systemverilog
+// compile
+`timescale 1ns/1ns
+
+// The bus that the driver drives and the monitor watches. There is no DUT yet:
+// the monitor sees what the driver drove one clock earlier.
+interface bus_if (input logic clk);
+  logic       valid = 1'b0;
+  logic [7:0] data  = '0;
+
+  clocking drv_cb @(posedge clk);   // default output skew #0: drives land in Re-NBA
+    output valid, data;
+  endclocking
+
+  clocking mon_cb @(posedge clk);   // default input skew #1step: values before the edge
+    input valid, data;
+  endclocking
+endinterface
+
+package tb_pkg;
+  class txn;
+    int unsigned id;
+    bit [7:0]    data;
+
+    function txn copy();            // shallow is enough: txn holds no handles
+      txn c = new();
+      c.id   = id;
+      c.data = data;
+      return c;
+    endfunction
+  endclass
+
+  class generator;
+    mailbox #(txn) gen2drv, gen2scb;
+    int unsigned   n;
+
+    function new(mailbox #(txn) gen2drv, mailbox #(txn) gen2scb, int unsigned n);
+      this.gen2drv = gen2drv;
+      this.gen2scb = gen2scb;
+      this.n       = n;
+    endfunction
+
+    task run();
+      txn t;
+      for (int unsigned i = 0; i < n; i++) begin
+        t      = new();               // a new object for every message
+        t.id   = i;
+        t.data = 8'hA0 + 8'(i);       // a real generator randomizes here (I-SV-2A)
+        gen2drv.put(t);               // waits while gen2drv is full: backpressure
+        gen2scb.put(t.copy());        // the scoreboard keeps its own snapshot
+        $display("[%0t] gen: put id=%0d", $time, t.id);
+      end
+    endtask
+  endclass
+
+  class driver;
+    virtual bus_if vif;
+    mailbox #(txn) gen2drv;
+
+    function new(virtual bus_if vif, mailbox #(txn) gen2drv);
+      this.vif     = vif;
+      this.gen2drv = gen2drv;
+    endfunction
+
+    task run();
+      txn t;
+      forever begin
+        gen2drv.get(t);               // waits while there is nothing to drive
+        @(vif.drv_cb);
+        vif.drv_cb.valid <= 1'b1;
+        vif.drv_cb.data  <= t.data;
+        $display("[%0t] drv: drive id=%0d data=%h", $time, t.id, t.data);
+        @(vif.drv_cb);
+        vif.drv_cb.valid <= 1'b0;     // one idle cycle between items
+      end
+    endtask
+  endclass
+
+  class monitor;
+    virtual bus_if vif;
+    mailbox #(txn) mon2scb;
+
+    function new(virtual bus_if vif, mailbox #(txn) mon2scb);
+      this.vif     = vif;
+      this.mon2scb = mon2scb;
+    endfunction
+
+    task run();
+      txn a;
+      forever begin
+        @(vif.mon_cb);
+        if (vif.mon_cb.valid) begin
+          a      = new();             // a new object for every observed item
+          a.data = vif.mon_cb.data;
+          mon2scb.put(a);             // unbounded: never waits, so no beat is missed
+        end
+      end
+    endtask
+  endclass
+
+  class scoreboard;
+    mailbox #(txn) gen2scb, mon2scb;
+    int unsigned   matches, mismatches;
+
+    function new(mailbox #(txn) gen2scb, mailbox #(txn) mon2scb);
+      this.gen2scb = gen2scb;
+      this.mon2scb = mon2scb;
+    endfunction
+
+    task run();
+      txn a, e;
+      forever begin
+        mon2scb.get(a);                    // waits for the next observed item
+        // Expected snapshots always arrive first in this bench, so 0 here
+        // means an extra, unexpected item.
+        if (gen2scb.try_get(e) > 0) begin
+          if (a.data == e.data) matches++;
+          else begin
+            mismatches++;
+            $error("[%0t] SCB: id=%0d expected data=%h, saw %h",
+                   $time, e.id, e.data, a.data);
+          end
+        end else begin
+          mismatches++;
+          $error("[%0t] SCB: saw data=%h with no expected item", $time, a.data);
+        end
+      end
+    endtask
+  endclass
+endpackage
+
+module tb_top;
+  import tb_pkg::*;
+
+  localparam int unsigned N_ITEMS = 5;
+
+  logic clk = 1'b0;
+  always #5 clk = ~clk;               // rising edges at 5, 15, 25, ... ns
+
+  bus_if bus (.clk(clk));
+
+  mailbox #(txn) gen2drv, gen2scb, mon2scb;
+  generator  gen;
+  driver     drv;
+  monitor    mon;
+  scoreboard scb;
+
+  initial begin
+    // Create each mailbox once, then hand the same handle to both of its ends.
+    gen2drv = new(2);                 // bounded: the generator stays close to the driver
+    gen2scb = new();                  // unbounded: expected snapshots
+    mon2scb = new();                  // unbounded: a monitor must never wait
+    gen = new(gen2drv, gen2scb, N_ITEMS);
+    drv = new(bus, gen2drv);
+    mon = new(bus, mon2scb);
+    scb = new(gen2scb, mon2scb);
+
+    fork
+      gen.run();
+      drv.run();
+      mon.run();
+      scb.run();
+    join_none
+
+    wait (scb.matches + scb.mismatches == N_ITEMS);
+    $display("[%0t] SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
+             $time, scb.matches, scb.mismatches, gen2scb.num());
+    $display("[%0t] PASS=%0d FAIL=%0d", $time, scb.matches, scb.mismatches);
+    $finish;
+  end
+
+  initial begin
+    #1000;
+    $fatal(1, "WATCHDOG: fewer than %0d items checked", N_ITEMS);
+  end
+endmodule
+```
+
+**Run it.** Save the block as one file, for example `tb_top.sv`, and compile and run it with a simulator that supports SystemVerilog classes, mailboxes, interfaces and clocking blocks; `tb_top` is the top module. The command line is tool-dependent, and your simulator may add its own banner and a note when `$finish` runs.
+
+**Expected output** (illustrative: traced by hand from the rules on this page, not captured from a simulator run):
+
+```text
+[0] gen: put id=0
+[0] gen: put id=1
+[0] gen: put id=2
+[5] drv: drive id=0 data=a0
+[15] gen: put id=3
+[25] drv: drive id=1 data=a1
+[35] gen: put id=4
+[45] drv: drive id=2 data=a2
+[65] drv: drive id=3 data=a3
+[85] drv: drive id=4 data=a4
+[95] SCB_SUMMARY matches=5 mismatches=0 pending=0
+[95] PASS=5 FAIL=0
+```
+
+**What to notice:**
+
+- `gen: put id=2` prints at 0 ns although `gen2drv` can hold only two messages. The driver took id 0 at 0 ns and is waiting for the first clock edge, so three `put()` calls complete before the generator has to wait.
+- `put id=3` completes at 15 ns and `put id=4` at 35 ns, each in the time slot where the driver takes the next item. That is backpressure, with no polling anywhere.
+- Each item is driven at one rising edge and observed at the next: the monitor's clocking block samples the value from just before the edge (§14.13), and the drive landed in the Re-NBA region of the previous edge (§14.16).
+- The test ends on a condition, five items checked, not on a delay. `pending=0` comes from `gen2scb.num()` and proves no expected item was left over. The watchdog fires only if something hangs.
+
+The trace below follows `gen2drv` through the same run. Read the last two columns together: whenever the mailbox is full, the generator waits, and it resumes in the time slot where the driver's `get()` frees a slot.
+
+| Time (ns) | What happens | `gen2drv` afterwards, oldest first | Generator |
+|---|---|---|---|
+| 0 | `put()` ids 0 and 1 fill the mailbox; the driver's `get()` takes id 0, so `put()` id 2 completes; `put()` id 3 must wait | 1, 2 | waiting in `put()` with id 3 |
+| 5 | first rising edge: the driver drives id 0 | 1, 2 | waiting |
+| 15 | the driver's `get()` takes id 1, so `put()` id 3 completes and `put()` id 4 waits; the monitor sees item 0 and the scoreboard matches it | 2, 3 | waiting in `put()` with id 4 |
+| 25 | the driver drives id 1 | 2, 3 | waiting |
+| 35 | `get()` takes id 2, so `put()` id 4 completes; item 1 matches | 3, 4 | finished |
+| 55 | `get()` takes id 3; item 2 matches | 4 | finished |
+| 75 | `get()` takes id 4; item 3 matches | empty | finished |
+| 95 | the driver waits in `get()` on the empty mailbox; item 4 matches, the fifth check, so `tb_top` prints the summary and calls `$finish` | empty | finished |
+
+At 0 ns the order of the first few steps depends on which process the simulator runs first (§4.7), but every legal order ends in the state shown: three items accepted, the driver holding id 0 and the generator waiting with id 3.
+
+### Break it on purpose: one object for every message
+
+Replace `generator::run()` with this version, which creates its object once:
+
+```systemverilog
+// snippet: generator::run() with the shared-handle bug
+task run();
+  txn t = new();                      // BUG: created once and reused for every message
+  for (int unsigned i = 0; i < n; i++) begin
+    t.id   = i;
+    t.data = 8'hA0 + 8'(i);
+    gen2drv.put(t);
+    gen2scb.put(t.copy());            // the expected snapshots are still correct
+    $display("[%0t] gen: put id=%0d", $time, t.id);
+  end
+endtask
+```
+
+**Expected output** (illustrative). `$error` lines start with your simulator's own prefix, which names the severity, file and line; it is shown here as `Error:`.
+
+```text
+[0] gen: put id=0
+[0] gen: put id=1
+[0] gen: put id=2
+[5] drv: drive id=3 data=a3
+Error: [15] SCB: id=0 expected data=a0, saw a3
+[15] gen: put id=3
+[25] drv: drive id=4 data=a4
+Error: [35] SCB: id=1 expected data=a1, saw a4
+[35] gen: put id=4
+[45] drv: drive id=4 data=a4
+Error: [55] SCB: id=2 expected data=a2, saw a4
+[65] drv: drive id=4 data=a4
+Error: [75] SCB: id=3 expected data=a3, saw a4
+[85] drv: drive id=4 data=a4
+[95] SCB_SUMMARY matches=1 mismatches=4 pending=0
+[95] PASS=1 FAIL=4
+```
+
+At 15 ns and 35 ns the scoreboard's error and the generator's line share a time slot, so they may print in the other order (§4.7).
+
+**Why the driver drives id 3 first.** At 0 ns the generator writes ids 0, 1, 2 and 3 into the same object before its fourth `put()` suspends it. When the first clock edge arrives at 5 ns, the driver's handle refers to that object, which now holds id 3. From then on the driver always reads whatever the generator wrote last, so id 4 repeats. The scoreboard's snapshots, taken with `copy()`, are still correct, so it reports four mismatches and one accidental match. The symptom depends on timing; the cause, one object, does not. Restore the `new()` inside the loop and the clean log returns.
+
+### How to add a channel to a bench
+
+1. Make the transaction a class, so that a handle is the message, and give it a `copy()` method.
+2. Declare the mailbox typed: `mailbox #(txn)`.
+3. Choose the depth by direction: a small bound on stimulus paths toward a driver; unbounded for anything a monitor writes or anything a scoreboard reads as expected values.
+4. Create the mailbox once, in the code that builds the bench, and pass the same handle to the producer's and the consumer's constructors.
+5. In the producer, create a new object for each message, or put a copy.
+6. In the consumer, wait in `get()`. Do not poll `num()` or loop on `try_get()` with a delay.
+7. Start every `run()` task with `fork … join_none`, end the test on a condition such as "N items checked", add a `$fatal` watchdog, and print a summary line.
+
+**Checklist before moving on:**
+- [ ] Every mailbox is typed, for example `mailbox #(txn)`.
+- [ ] The generator → driver mailbox is bounded and the monitor → scoreboard mailbox is unbounded.
+- [ ] Each mailbox is created once, and both of its ends hold the same handle.
+- [ ] Every message is a new object or a copy, and nothing modifies an object after putting it.
+- [ ] Consumers wait in `get()`; nothing polls `num()`.
+- [ ] Every `try_` result is tested with `> 0`.
+- [ ] The test ends on a condition, has a `$fatal` watchdog, and prints `SCB_SUMMARY` and `PASS`/`FAIL` lines.
+
+## Push Further
+
+### Expert: wake-up order the standard leaves open
+
+- The standard fixes FIFO order for messages (§15.4.3) and keeps processes waiting in `get()` in their arrival order (§15.4.5). It does not fix the order in which processes **reach** the waiting queue: two `get()` calls in one time slot are ordered by the scheduler (§4.7).
+- For producers suspended in `put()` on a full mailbox, the standard states no order at all. When a slot frees, which waiting producer completes first is tool-dependent. The visual on this page serves them first come, first served, and lists that choice among its modelling assumptions.
+- One message can release several processes waiting in `peek()`, because the message stays queued; a waiting `get()`, if there is one, then removes it. As long as a message remains, every process blocked in `peek()` or `get()` is released, and a process still waiting once no message remains keeps waiting (§15.4.7). So whether a `peek()` waiter sees a message can depend on whether a `get()` waiter ahead of it took it first.
+- Design consequence: fair or ordered service between equal waiters is not a mailbox feature. Build it explicitly, with one mailbox per consumer or a dispatcher thread.
+
+Sources: IEEE 1800-2023 §4.7, §15.4.3, §15.4.5, §15.4.7; the order of waiting `put()` callers is tool-dependent.
+
+### Expert: the three results of try_get and try_peek
+
+- `try_get()` and `try_peek()` return a positive integer on success, 0 when the mailbox is empty, and a negative integer when the message's type is not equivalent to the variable's type (§15.4.6, §15.4.8). `try_put()` returns a positive integer or 0 (§15.4.4).
+- `if (m.try_get(x))` treats the negative mismatch result as success, and the code then uses an `x` that was never written. Write `if (m.try_get(x) > 0)`. In a typed mailbox the compiler rules mismatches out (§15.4.9), one more reason to type every mailbox.
+- Draining a typeless mailbox with `while (m.try_get(x) > 0);` stops at the first message of another type and leaves the rest queued.
+- Functions, including UVM's analysis `write()` methods, cannot call tasks (§13.4), so they can use only the `try_` methods and `num()`. On an unbounded mailbox `try_put()` always succeeds, which is how `uvm_tlm_analysis_fifo::write()` stores every item without waiting (uvm-core 2020.3.1, `uvm_tlm_fifos.svh`).
+
+Sources: IEEE 1800-2023 §13.4, §15.4.4, §15.4.6, §15.4.8, §15.4.9; uvm-core 2020.3.1 `src/tlm1/uvm_tlm_fifos.svh`.
+
+### Expert: singular messages, ref arguments and class hierarchies
+
+- A message must be singular (§15.4.3), and the Annex G.4 prototype names the default type parameter `dynamic_singular_type`. Unpacked structs, unions and arrays are not singular (Annex P).
+- `get()`, `peek()`, `try_get()` and `try_peek()` take a `ref` argument, and an argument passed by reference must have a type equivalent to the formal, with no casting (§13.5.2). A `mailbox #(base_txn)` that carries objects of derived classes is therefore read into a `base_txn` handle and then `$cast` to the derived type (§6.24.2); passing a derived-class variable to `get()` does not compile. [I-SV-1: Polymorphism Pitfalls](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls) covers the cast.
+- `peek()` on a class message gives every peeking process the same handle, so they all share one object: the aliasing rule again.
+
+Sources: IEEE 1800-2023 §6.24.2, §13.5.2, §15.4.3 to §15.4.8, Annex G.4, Annex P.
+
+### Expert: extending the built-in mailbox class
+
+- `mailbox` is a class in the built-in `std` package, so you can extend it, and user code may declare its own `mailbox` in another scope; the built-in one stays reachable as `std::mailbox` (§15.2, §26.7).
+- The Annex G.4 prototype declares none of the methods `virtual`. A subclass that adds its own `put()`, for example to count messages or track a high-water mark, is called only through a handle of the subclass type. Code that holds a plain `mailbox #(T)` handle still calls the built-in `put()` (§8.14, §8.20).
+- For statistics, wrapping is often simpler than extending: a small class that owns a mailbox and forwards `put()` and `get()` controls every access point.
+
+Sources: IEEE 1800-2023 §8.14, §8.20, §15.2, §26.7, Annex G.4.
+
+### Expert: num() snapshots, draining and waiting without taking
+
+- `num()` is exact only until the next `put()` or `get()` by any process (§15.4.2). Use it for end-of-test accounting and debug prints, never to decide whether a `put()` or `get()` will wait.
+- There is no method that empties a mailbox or reports its bound (Annex G.4). On a reset, drain it with `while (m.try_get(x) > 0);` and keep the bound in a parameter.
+- To wait until a message exists without taking it, call `peek()`: it blocks while the mailbox is empty and leaves the message for the real consumer (§15.4.7). A `wait (m.num() > 0)` may never wake: the standard requires re-evaluation when data members that the method reads change (§9.4.2), but it does not describe a mailbox's internals, so the behaviour is tool-dependent.
+
+Sources: IEEE 1800-2023 §9.4.2, §15.4.2, §15.4.7, Annex G.4.
+
+### Expert: memory, polling and zero-time producers
+
+- A queued handle keeps its object reachable, so automatic memory management cannot reclaim it (§8.29). An unbounded mailbox whose consumer has stopped grows for the rest of the test; the `pending=0` field of an end-of-test summary, read with `num()`, catches it.
+- Polling with `try_get()` and a `#1` delay in a loop wakes the process at every interval even when there is nothing to do, and adds up to one interval of latency to each hand-off; a blocking `get()` costs nothing while it waits. This is general practice, not a rule of the standard.
+- A `forever` producer with no blocking statement that feeds an unbounded mailbox is a zero-delay loop: simulation time never advances, and whether any other process runs is up to the simulator (§4.7). Whether a tool detects the loop and stops is tool-dependent.
+
+Sources: IEEE 1800-2023 §4.7, §8.29; the polling cost is general practice.
+
+### Interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: should every mailbox be bounded?"
+  question="A reviewer writes: 'Always bound every mailbox. Unbounded mailboxes leak memory.' How do you answer?"
+  options={[
+    { text: "Agree: bound every mailbox, including the monitor-to-scoreboard path.", isCorrect: false, feedback: "A bounded observation path suspends the monitor in put() when the scoreboard falls behind, and the bus does not wait: transactions are missed, silently." },
+    { text: "Bound the stimulus paths for backpressure, keep observation paths unbounded, and check at the end of the test that every mailbox has drained.", isCorrect: true, feedback: "Right. Growth on an unbounded path is the symptom of a stalled consumer, and the end-of-test num() check reports it. A bound there would turn the same problem into missed transactions." },
+    { text: "Disagree: never bound mailboxes, because backpressure slows the test down.", isCorrect: false, feedback: "Without a bound the generator can run arbitrarily far ahead of the driver, holding every queued object in memory and creating stimulus long before it is driven." },
+    { text: "Use try_put() everywhere and ignore the result, so nothing ever waits.", isCorrect: false, feedback: "Ignoring a 0 from try_put() drops transactions without a trace: a false pass waiting to happen." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the FIFO between a UVM monitor and its scoreboard"
+  question="A UVM monitor publishes every observed transaction through an analysis port. Which channel should sit in front of the scoreboard, and why?"
+  options={[
+    { text: "A uvm_tlm_fifo with default arguments, so the monitor gets backpressure.", isCorrect: false, feedback: "A plain uvm_tlm_fifo has no analysis_export, so an analysis port cannot connect to it, and its default size of 1 would make a writer wait, which a monitor must never do. The analysis write() call is also a function, which cannot call a blocking put() (§13.4)." },
+    { text: "A uvm_tlm_analysis_fifo: write() is a function, so the FIFO must accept every item without waiting, and the analysis FIFO is unbounded and stores each item with try_put().", isCorrect: true, feedback: "Right. That is exactly how uvm-core 2020.3.1 implements it, and the scoreboard then pulls items with a blocking get() from its own thread." },
+    { text: "No FIFO: the scoreboard reads the monitor's latest transaction through a handle.", isCorrect: false, feedback: "The scoreboard would miss every item it had not read before the monitor overwrote the handle, and it would race with the monitor's updates." },
+    { text: "A SystemVerilog mailbox created with new(1), shared through a handle.", isCorrect: false, feedback: "A bound of 1 can make the monitor wait, and a shared handle couples the two components; TLM ports keep them independent." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
     {
-      question: "What happens when `get()` is called on an empty mailbox?",
+      question: "mailbox #(int) m = new(2); A producer calls m.put(0), m.put(1) and m.put(2) at time 0. The consumer's first m.get(v) runs at 10 ns. What happens to put(2)?",
       answers: [
-        { text: "It returns immediately with a default value", correct: false },
-        { text: "It blocks until an item is available", correct: true },
-        { text: "It deletes the mailbox", correct: false },
-        { text: "It throws a runtime error", correct: false }
+        { text: "It waits until 10 ns, then stores 2 after the consumer takes 0", correct: true, feedback: "Right. A bounded mailbox suspends put() while it is full; the consumer's get() frees a slot and the producer resumes by itself in the same time slot (§15.4.3)." },
+        { text: "It overwrites 0, the oldest message, so the mailbox still holds two", correct: false, feedback: "A mailbox never overwrites or drops a stored message. put() waits for room instead (§15.4.3)." },
+        { text: "It returns at once, and 2 is dropped because the mailbox is full", correct: false, feedback: "put() is a task that waits. Only try_put() returns at once on a full mailbox, and it returns 0 so that the caller knows nothing was stored (§15.4.4)." },
+        { text: "The mailbox grows to three messages until the consumer catches up", correct: false, feedback: "Only an unbounded mailbox, created with new() or new(0), grows. new(2) holds at most two messages (§15.4.1)." }
       ],
-      explanation: "`get()` blocks the calling process until data is present in the mailbox."
+      explanation: "new(2) holds two messages. put(0) and put(1) fill it at time 0, so put(2) suspends the producer until a get() removes 0 at 10 ns. Nothing is overwritten, dropped or grown.",
+      objective: 1
+    },
+    {
+      question: "A bounded mailbox m is full. What does ok = m.try_put(x) do?",
+      answers: [
+        { text: "Returns 0 and leaves the mailbox unchanged", correct: true, feedback: "Right. try_put() never waits: on a full mailbox it stores nothing and returns 0 (§15.4.4)." },
+        { text: "Waits until a slot frees, then returns 1", correct: false, feedback: "Waiting is what put() does. try_put() is a function and never waits." },
+        { text: "Returns 1 and replaces the oldest message", correct: false, feedback: "No mailbox call replaces a stored message. try_put() returns 0 when the mailbox is full." },
+        { text: "Returns a negative value to signal that the mailbox is full", correct: false, feedback: "Negative results come only from try_get() and try_peek(), for a type mismatch in a typeless mailbox (§15.4.6, §15.4.8). try_put() returns a positive value or 0." }
+      ],
+      explanation: "try_put() returns a positive integer when it stores the message and 0 when the mailbox is full; an unbounded mailbox is never full. Test the result with > 0 rather than == 1, because the standard promises only a positive value.",
+      objective: 1
+    },
+    {
+      question: "A mailbox holds exactly one message, M. Process A calls peek(v). Then process B calls get(w). Then process C calls r = try_get(u). What happens?",
+      answers: [
+        { text: "A copies M, B removes M, and C's try_get returns 0", correct: true, feedback: "Right. peek() copies the oldest message and leaves it queued (§15.4.7), get() removes it (§15.4.5), and try_get() on the now empty mailbox returns 0 (§15.4.6)." },
+        { text: "A removes M, so B waits and C's try_get returns 0", correct: false, feedback: "peek() never removes a message. It copies it and leaves it for a later get()." },
+        { text: "A and B both copy M, and C removes it", correct: false, feedback: "get() removes the message it returns. After B's get(), M is gone." },
+        { text: "B waits, because A's peek reserves M for A", correct: false, feedback: "Mailboxes have no reservations. peek() is a read-only look at the oldest message." }
+      ],
+      explanation: "peek() copies without removing, get() removes, and the try_ forms report an empty mailbox with 0. A process that wants a message to stay queued for someone else uses peek().",
+      objective: 1
+    },
+    {
+      question: "A generator calls t = new() once and then, in a loop, sets t.id = i and calls gen2drv.put(t). The driver, which takes the items later, logs the same id for every item. What is the cause and the fix?",
+      answers: [
+        { text: "put() stores the handle, so every message refers to one object. Create a new object for each message, or put a copy.", correct: true, feedback: "Right. Every message refers to the same object, so the driver sees whatever the generator wrote last (§8.12, §15.4.3)." },
+        { text: "The mailbox returned the messages out of order. Use a bounded mailbox so that the order holds.", correct: false, feedback: "Mailboxes are strictly FIFO (§15.4.3). The order is right; all the messages refer to one object." },
+        { text: "A typeless mailbox stores handles. Declare it mailbox #(txn), which stores a copy of each object.", correct: false, feedback: "No mailbox copies objects. A typed mailbox checks types at compile time and still stores the handle (§15.4.9)." },
+        { text: "The driver reads too late. Call peek() before get(), so it sees each item's original values.", correct: false, feedback: "peek() returns the same handle, so it shows the same overwritten object." }
+      ],
+      explanation: "A class variable holds a handle, and put(t) stores a copy of that handle, not of the object. With one new, every message refers to one object. Create the object inside the loop, or put a copy made with new t or a copy() method.",
+      objective: 4
+    },
+    {
+      question: "Under heavy traffic, a monitor that writes every observed transaction into mon2scb starts missing bus transactions. mon2scb was created with new(1). What is the best fix?",
+      answers: [
+        { text: "Create mon2scb with new(), so put() never suspends the monitor", correct: true, feedback: "Right. A monitor must sample every cycle. An unbounded mailbox never makes put() wait (§15.4.1), so the monitor keeps up and the scoreboard catches up later." },
+        { text: "Keep new(1) and poll: wait until num() is 0, then put()", correct: false, feedback: "The monitor still stops sampling while it waits, and num() is only a snapshot (§15.4.2)." },
+        { text: "Use try_put() and ignore its result, so the monitor never waits", correct: false, feedback: "That silently drops transactions whenever the mailbox is full: a false pass waiting to happen." },
+        { text: "Use new(2) on both the stimulus path and the monitor path, for symmetry", correct: false, feedback: "Any bound can fill under a burst. Backpressure belongs on the stimulus path; the observation path stays unbounded." }
+      ],
+      explanation: "Backpressure belongs on the stimulus side, where the generator can wait for the driver. A monitor cannot wait, because the bus keeps moving. Make the observation path unbounded and check at the end of the test that it drained.",
+      objective: 2
+    },
+    {
+      question: "A typeless mailbox, declared mailbox m = new();, holds the int 5. A process calls m.get(s), where s is a string. What happens, and what changes if m is declared mailbox #(int)?",
+      answers: [
+        { text: "A run-time error at the get(); with mailbox #(int), the compiler rejects m.get(s)", correct: true, feedback: "Right. A typeless mailbox checks types at run time (§15.4.5); a parameterized one checks them at compile time (§15.4.9)." },
+        { text: "s becomes the text 5 in both cases, because get() converts the message to the type of s", correct: false, feedback: "Mailboxes do not convert types. A typeless mailbox records each message's type and reports a mismatch (§15.4.5)." },
+        { text: "get() skips the int and waits for a string, in both cases", correct: false, feedback: "get() always takes the oldest message. It does not search the queue for a matching type." },
+        { text: "get() returns 0 and leaves s unchanged, in both cases", correct: false, feedback: "get() is a task and returns nothing. You are thinking of try_get(), which returns a negative value on a type mismatch (§15.4.6)." }
+      ],
+      explanation: "A typeless mailbox records the type of every message, so get() and peek() report a run-time error on a mismatch, and try_get() and try_peek() return a negative value. A parameterized mailbox moves the check to compile time.",
+      objective: 2
+    },
+    {
+      question: "In a class-based bench, the generator logs five successful put() calls, but the driver never logs anything and the run ends at time 0 without an error. The generator and the driver each declare mailbox #(txn) mbx; and each calls mbx = new(); in its own constructor. What is wrong?",
+      answers: [
+        { text: "They use two different mailboxes. Create one where the bench is built and pass the same handle to both constructors.", correct: true, feedback: "Right. Each new() creates a separate mailbox object. The generator fills one; the driver waits forever on the other, empty one, and with nothing else scheduled the simulation ends quietly (§9.6.1)." },
+        { text: "The mailbox needs a bound: without one, put() and get() never meet, so create it with new(2)", correct: false, feedback: "Bounded or not, the two ends must share one mailbox. The bound only decides when put() waits." },
+        { text: "get() must be called before put(), or the messages are lost. Start the driver first.", correct: false, feedback: "Messages wait in the mailbox until someone takes them; the order of the calls does not matter." },
+        { text: "The driver should poll with try_get() in a loop, because get() misses messages put before it was called", correct: false, feedback: "Polling its empty mailbox would never find the generator's messages either: they are in a different object." }
+      ],
+      explanation: "A mailbox is an object reached through a handle. Each connection needs exactly one mailbox object whose handle both ends hold, so create it in the code that builds the bench and pass it to both constructors. A quiet early end means every process is suspended and nothing else is scheduled.",
+      objective: 3
+    },
+    {
+      question: "You port the bench to UVM and replace gen2drv, an unbounded mailbox made with new(), by a uvm_tlm_fifo #(txn) constructed with only its name and parent arguments. What changes?",
+      answers: [
+        { text: "The FIFO holds one item by default, so the producer's next put waits until the consumer takes the previous item", correct: true, feedback: "Right. The uvm_tlm_fifo constructor's size argument defaults to 1, and 0 means unbounded (uvm-core 2020.3.1, uvm_tlm_fifos.svh)." },
+        { text: "Nothing changes: like a mailbox made with new(), a uvm_tlm_fifo is unbounded by default", correct: false, feedback: "Its default size is 1. The unbounded variant is uvm_tlm_analysis_fifo, made for monitor paths." },
+        { text: "Every consumer connected to the FIFO now receives its own copy of each item", correct: false, feedback: "That is broadcast, which analysis ports provide. A TLM FIFO hands each item to one get(), like a mailbox." },
+        { text: "put() now copies each transaction, so the shared-handle bug can no longer happen", correct: false, feedback: "uvm_tlm_fifo stores the handle in the mailbox it wraps. Each item still needs its own object." }
+      ],
+      explanation: "uvm_tlm_fifo is a uvm_component that wraps a mailbox #(T) and is reached through put_export and get_peek_export. Its size defaults to 1, unlike mailbox new(), and it stores handles, not copies (IEEE 1800.2-2020 §12.2.8.2).",
+      objective: 2
     }
-  ]} />
+  ]}
+/>
 
-  <div className="mt-8">
-    <InterviewQuestionPlayground
-      question="What is the potential danger of instantiating a mailbox with `mbx = new()` (no arguments) when passing transactions from a fast generator thread to a slow driver thread?"
-      options={[
-        { text: "It causes a syntax error because depth cannot be left unspecified.", isCorrect: false, feedback: "Leaving it empty creates an unbounded mailbox." },
-        { text: "It causes the driver thread to lock up waiting for a start signal.", isCorrect: false, feedback: "A driver reading from an unbounded mailbox still blocks if empty, but that's normal." },
-        { text: "The generator will run infinitely far ahead, exhausting simulator memory with queued objects.", isCorrect: true, feedback: "Correct! An unbounded block never blocks the `put()`. If the consumer is slower than the producer, the queue grows infinitely. You should always use bounded mailboxes `new(DEPTH)` to create backpressure on the producer." },
-        { text: "The mailbox will default to a depth of 1.", isCorrect: false, feedback: "It defaults to unbounded (infinite)." }
-      ]}
-    />
-  </div>
+### Kata: a bounded channel that knows when to stop
 
-</InfoPage>
+**Objective:** expose the shared-handle bug, fix it, and stop a driver cleanly once its generator has finished, using the isolated timeout idiom from [F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index).
+
+**Starter.** It compiles, and it has both bugs.
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  class txn;
+    int unsigned id;
+  endclass
+
+  mailbox #(txn) gen2drv = new(2);
+
+  initial begin : generator
+    txn t;
+    t = new();                          // reused for every message (task 2)
+    for (int i = 0; i < 4; i++) begin
+      t.id = i;
+      gen2drv.put(t);
+    end
+  end
+
+  initial begin : driver
+    txn t;
+    forever begin
+      gen2drv.get(t);                   // waits forever after the last item (task 3)
+      #20 $display("[%0t] drv: drove id=%0d", $time, t.id);
+    end
+  end
+
+  initial begin : watchdog
+    #1000 $fatal(1, "WATCHDOG: the driver never stopped");
+  end
+endmodule
+```
+
+**Tasks:**
+1. Predict the starter's log, then run it or trace it by hand. Explain why every line shows `id=3`, and why the run ends with the watchdog at 1000 ns.
+2. Fix the generator so that each message is its own object.
+3. Write `task automatic get_with_timeout(output txn t, input int unsigned budget_ns, output bit ok);` with the isolated `fork begin fork … join_any; disable fork; end join` idiom. Make the driver stop when 50 ns pass without an item, print a `PASS=` and `FAIL=` line, and call `$finish`.
+4. Add an aliasing check to the driver: report an error when the same handle arrives twice in a row.
+
+**Done when:**
+- the driver prints ids 0, 1, 2 and 3 in order, at 20, 40, 60 and 80 ns;
+- no aliasing error is reported;
+- exactly one timeout line appears, at 130 ns, after the last item;
+- the run ends with `PASS=4 FAIL=0` and `$finish`, not with the watchdog.
+
+<details>
+<summary>Worked solution (try the kata first)</summary>
+
+**Task 1.** The starter prints `id=3` four times, at 20, 40, 60 and 80 ns, and then the watchdog's `$fatal` ends the run at 1000 ns. At 0 ns the generator writes ids 0 to 3 into its one object: two messages fit in `gen2drv` and the driver takes a third, so the fourth `put()` suspends it only after `t.id` is already 3. Each `$display` runs 20 ns after a `get()`, when the object holds 3. After the last item the driver waits in `get()` forever, and only the watchdog's pending delay keeps the simulation alive; without it the run would end quietly (§9.6.1).
+
+**Tasks 2 to 4:**
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  class txn;
+    int unsigned id;
+  endclass
+
+  mailbox #(txn) gen2drv = new(2);
+
+  // Wait at most budget_ns for an item. ok is 1 when an item arrived.
+  task automatic get_with_timeout(output txn t, input int unsigned budget_ns,
+                                  output bit ok);
+    ok = 1'b0;
+    fork begin                          // isolation: disable fork reaches only these two
+      fork
+        begin
+          gen2drv.get(t);
+          ok = 1'b1;
+        end
+        #(budget_ns);
+      join_any
+      disable fork;
+    end join
+  endtask
+
+  initial begin : generator
+    txn t;
+    for (int i = 0; i < 4; i++) begin
+      t    = new();                     // fix: a new object for every message
+      t.id = i;
+      gen2drv.put(t);
+    end
+  end
+
+  initial begin : driver
+    txn t, prev;
+    bit ok;
+    int unsigned n_items, n_errors;
+    forever begin
+      get_with_timeout(t, 50, ok);
+      if (!ok) break;                   // 50 ns without an item: the generator is done
+      if (t == prev) begin              // the same object twice means aliasing
+        n_errors++;
+        $error("[%0t] drv: the same txn object arrived twice", $time);
+      end
+      prev = t;
+      #20 $display("[%0t] drv: drove id=%0d", $time, t.id);
+      n_items++;
+    end
+    $display("[%0t] drv: no item for 50 ns, stopping", $time);
+    $display("[%0t] PASS=%0d FAIL=%0d", $time, n_items - n_errors, n_errors);
+    $finish;
+  end
+
+  initial begin : watchdog
+    #1000 $fatal(1, "WATCHDOG: the driver never stopped");
+  end
+endmodule
+```
+
+**Expected output** (illustrative):
+
+```text
+[20] drv: drove id=0
+[40] drv: drove id=1
+[60] drv: drove id=2
+[80] drv: drove id=3
+[130] drv: no item for 50 ns, stopping
+[130] PASS=4 FAIL=0
+```
+
+**Why it works:**
+- Comparing handles with `==` tests whether two variables refer to the same object (§8.4), so the aliasing check needs no knowledge of the fields. Run it without the task 2 fix and it reports an error at 20 ns.
+- `disable fork` ends every descendant of the calling process (§9.6.3). The outer `fork begin … end join` gives the race its own parent, so the `disable fork` cannot reach other threads that the driver might own.
+- The 50 ns budget is longer than the longest gap between items (20 ns), so the timeout fires only after the generator has really stopped. If an item and the timeout could land in the same time slot, which branch of `join_any` finishes first would depend on process order (§4.7).
+
+</details>
+
+The flashcards for this lesson follow below, under "Reinforce the essentials".
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023)
+- §15.2 Overview (mailboxes and semaphores are built-in classes); §15.4 Mailboxes; §15.4.1 New(); §15.4.2 Num(); §15.4.3 Put(); §15.4.4 Try_put(); §15.4.5 Get(); §15.4.6 Try_get(); §15.4.7 Peek(); §15.4.8 Try_peek(); §15.4.9 Parameterized mailboxes
+- Annex G.4 Mailbox (the class prototype); Annex P Glossary (singular)
+- §4.7 Nondeterminism; §5.7.1 Integer literal constants; §6.24.2 $cast dynamic casting; §8.4 Objects (class instance); §8.12 Assignment, renaming, and copying; §8.14 Overridden members; §8.20 Virtual methods; §8.29 Memory management
+- §9.4.2 Event control; §9.6.1 Wait fork statement (simulation ends when no activity remains); §9.6.3 Disable fork statement; §13.4 Functions; §13.5.2 Pass by reference
+- §14.3 Clocking block declaration; §14.13 Input sampling; §14.16 Synchronous drives; §26.7 The std built-in package
+
+**UVM sources**
+- IEEE 1800.2-2020 §12.2.8.2 `uvm_tlm_fifo` and §12.2.8.3 `uvm_tlm_analysis_fifo`
+- uvm-core 2020.3.1 `src/tlm1/uvm_tlm_fifos.svh` and `src/tlm1/uvm_tlm_fifo_base.svh`
+
+**Prerequisites:** [Events](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/events), the previous lesson; [F2C Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) for `fork … join_none` and the timeout idiom; [I-SV-1 Object-Oriented Programming](/curriculum/T2_Intermediate/I-SV-1_OOP/index) for handles and `new`. Review [F4B Interfaces and Modports](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index) and [F4C Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) for the virtual interface and clocking blocks in Make It Work.
+
+**Related**
+- [Semaphores](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/semaphores): sharing a resource between threads, the next lesson.
+- [I-SV-5 module overview](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index): which synchronization tool fits which problem.
+- [F2D Interprocess Communication](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/ipc): the first look at mailboxes and semaphores.
+- [I-SV-1 Copying and Cloning](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning): shallow and deep copies of transactions.
+- [F4C Clocking Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): the driver and monitor timing used in Make It Work.
+- [I-SV-9 Why UVM](/curriculum/T2_Intermediate/I-SV-9_Why_UVM/index): the layered testbench built from this plumbing.
+- [I-UVM-2B TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index): TLM FIFOs and analysis FIFOs in UVM.
+- [A-UVM-6 Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): in-order and out-of-order checking.
+
+<NextLesson />

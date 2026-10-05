@@ -1,159 +1,1182 @@
 ---
 title: "F2D: System Tasks and File I/O"
-description: "Interact with the simulator kernel: print messages, cast types, generate random numbers, and read/write files."
+description: "Print, report, time, end and feed a simulation with system tasks, and predict what each one prints and when."
 flashcards: "F2D_System_Tasks"
 ---
 
-import { InteractiveCode, Quiz, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
-
 ## Quick Take
-- **What it is:** Built-in functions starting with `$` that perform system-level operations.
-- **Why it matters:** You can't verify what you can't see. System tasks are your window into the simulation (printing logs) and your bridge to the outside world (reading test vectors).
-- **The Analogy:** If SystemVerilog is the engine, system tasks are the dashboard gauges and the fuel port.
 
-<LabLink labId="basics-1" />
+- **What it is:** **System tasks** and **system functions** are the subroutines built into SystemVerilog. Their names start with `$` (IEEE 1800-2023 Clauses 20 and 21). A system task is a statement, such as `$display` or `$fclose`. A system function returns a value that you must use or check, such as `$fopen`, `$fscanf`, `$value$plusargs` or `$time`.
+- **Why it matters:** A testbench in a regression runs with nobody watching. It has to print what it saw, report each failure at the right severity, end itself, read its stimulus from files and take its options from the command line. Each of those jobs is a system task or function, and each one has a trap that makes the log lie.
+- **The Analogy:** System tasks are a car's dashboard and service ports. The gauges are `$display` and `$monitor`, the warning lights are `$warning` and `$error`, the ignition key is `$finish`, the fuel cap is files and plusargs, and the trip recorder is `$dumpvars`. *Where it breaks:* two gauges on this dashboard can show different values for the same instant, because `$display` and `$strobe` read at different points of one time step. And the red warning light (`$error`) does not stop the car. Only `$fatal` does.
+
+**You will be able to:**
+
+1. **Predict** the text that `$display`, `$write`, `$strobe` and `$monitor` print, including the format specifiers `%0d`, `%h`, `%b`, `%s`, `%p`, `%m` and `%t`, and the point in the time step at which each one prints.
+2. **Choose** a severity task for each check and predict its effect: `$info`, `$warning` and `$error` let the run continue, `$fatal` ends it, and `final` blocks still run.
+3. **Write** a test that takes its options from plusargs and its stimulus from files (`$fopen`, `$fscanf`, `$readmemh`), declares its variables legally and checks every return value.
+4. **Configure** how a run prints time, ends and records waveforms: `$time` and `$realtime`, `%t` with `$timeformat`, `$finish` and `$stop`, `$dumpfile` and `$dumpvars`.
+5. **Debug** a log that lies: a replaced `$monitor`, an unchecked `$fopen`, an end-of-file loop that repeats the last vector, and errors that never reach the PASS/FAIL line.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
-### 1. Printing and Formatting
-- **`$display`**: Prints a line to the console (like `printf` + `\n`).
-- **`$write`**: Prints without a newline.
-- **`$monitor`**: Prints *whenever* a signal in the argument list changes. (Use sparingly!).
-- **`$error`, `$fatal`**: Report severity levels.
+### The module at a glance
+
+F2D turns the procedural code you wrote in F2C into a testbench that reports on itself and can be reused. The module has three pages, in this order:
+
+| Page | What you learn | What it gives your testbench |
+|---|---|---|
+| System tasks and file I/O (this page) | the built-in `$` tasks and functions | logs, severity reports, a clean end, stimulus from files, options from the command line, waveforms |
+| [Tasks and Functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions) | your own subroutines, their lifetime and their arguments | reusable drive and check routines, and the `basics-1` lab |
+| [Interprocess Communication](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/ipc) | a first look at events, mailboxes and semaphores | threads that hand work to each other |
+
+After F2D, [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index) assembles these pieces into your first complete self-checking testbench, and [I-SV-5](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index) covers interprocess communication in depth.
+
+The picture below is the testbench you will build in Make It Work. Inputs arrive at the top and outputs leave at the bottom. Every labelled arrow is one system task or system function, called from the testbench's `initial` block.
+
+<ArchitectureDiagram
+  title="Where system tasks connect a testbench to the outside world"
+  caption="Inputs at the top, outputs at the bottom. The initial block of tb_top reads its options with $value$plusargs (and $test$plusargs for +DUMP), reads vectors.txt with $fopen and $fscanf, drives and checks u_dut, prints with $display and $error, and records waves.vcd with $dumpfile and $dumpvars."
+  legend={false}
+  gapX={84}
+  nodes={[
+    { id: "cli", label: "command line", sublabel: "+VECTORS=..., +DUMP", col: 0, row: 0 },
+    { id: "vec", label: "vectors.txt", sublabel: "a, b, expected sum", col: 1, row: 0 },
+    { id: "top", label: "tb_top", col: 0, row: 1, colSpan: 2, container: true },
+    { id: "init", label: "initial", sublabel: "drives and checks", col: 0, row: 1 },
+    { id: "dut", label: "u_dut", sublabel: "adder8", kind: "dut", col: 1, row: 1 },
+    { id: "log", label: "transcript", sublabel: "standard output", col: 0, row: 2 },
+    { id: "vcd", label: "waves.vcd", sublabel: "only with +DUMP", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "cli", to: "init", label: "$value$plusargs" },
+    { from: "vec", to: "init", label: "$fscanf" },
+    { from: "init", to: "dut", style: "structural", label: "a, b, sum" },
+    { from: "init", to: "log", label: "$display, $error" },
+    { from: "init", to: "vcd", label: "$dumpvars" }
+  ]}
+/>
+
+### System tasks and system functions
+
+The standard defines the `$` names in Clauses 20 and 21 (§20.1, §21.1), and a few more, such as `$urandom`, with the features they serve. Simulators may add their own `$` names; those are tool-dependent and not portable.
+
+| Kind | Used as | Examples on this page | Your job |
+|---|---|---|---|
+| **System task** | a statement | `$display`, `$strobe`, `$error`, `$finish`, `$fclose`, `$readmemh`, `$dumpvars` | call it |
+| **System function** | a value inside an expression | `$fopen`, `$fscanf`, `$fgets`, `$value$plusargs`, `$time`, `$urandom` | use or check the value it returns |
+
+The second row holds the rule that keeps logs honest. A system function that can fail reports the failure only through its return value, and the run carries on either way. `$fopen` returns 0 when it cannot open a file (§21.3.1), `$fscanf` returns -1 at the end of a file (§21.3.4.3), and `$value$plusargs` returns 0 when the option is absent (§21.6). Check every one. When you really mean to throw a value away, wrap the call in `void'(...)` so a reader can see that it was deliberate (§13.4.1).
+
+The families on this page are printing (§21.2), severity (§20.10), simulation control (§20.2), time (§20.3, §20.4), file I/O (§21.3), memory loading (§21.4), command-line input (§21.6), random numbers (§18.13) and waveform dumps (§21.7).
+
+### Printing: $display, $write and format specifiers
+
+`$display` prints its arguments followed by a newline. `$write` prints them without one, and `$display` with no arguments prints an empty line (§21.2.1). Inside the first string, each **format specifier**, a `%` followed by a letter, is replaced by the next argument in the list.
 
 ```systemverilog
+// compile
+`timescale 1ns/1ps
+module tb_top;
+  logic [11:0] r1;
+  logic [3:0]  n;
+  string       name;
+  int          scores [3];
+
+  initial begin
+    r1     = 12'd10;
+    n      = 4'b10x1;
+    name   = "adder8";
+    scores = '{7, 8, 9};
+    #10;
+    $display(":%d: :%0d: :%h: :%0h:", r1, r1, r1, r1);
+    $display("bin=%b hex=%h dec=%0d", n, n, n);
+    $display("name=%s scores=%p", name, scores);
+    $display("scope=%m");
+    $write("no newline, ");
+    $display("then one");
+    $display("t=[%t] [%0t]", $time, $time);
+  end
+endmodule
+```
+
+**Expected output** (illustrative: worked out from the IEEE 1800-2023 rules, not captured from a simulator; the spacing inside `%p` varies by tool):
+
+```text
+:  10: :10: :00a: :a:
+bin=10x1 hex=X dec=X
+name=adder8 scores='{7, 8, 9}
+scope=tb_top
+no newline, then one
+t=[               10000] [10000]
+```
+
+| Specifier and value | Prints | Rule |
+|---|---|---|
+| `%d` and `%0d` on `r1` (12 bits, value 10) | two spaces, then `10`; then just `10` | Decimal is padded with spaces to the width of the largest value the type can hold: 4095 needs 4 columns. A field width of 0 prints the minimum width (§21.2.1.2). |
+| `%h` and `%0h` on `r1` | `00a`, then `a` | Hex, binary and octal keep their leading zeros unless you write `%0` (§21.2.1.2). |
+| `%b`, `%h`, `%0d` on `4'b10x1` | `10x1`, `X`, `X` | `%b` prints every bit. A hex digit or a decimal value with some, but not all, bits unknown prints an uppercase `X`; all bits unknown prints a lowercase `x`. There is never a partial number (§21.2.1.3). |
+| `%s` and `%p` | `adder8`, `'{7, 8, 9}` | `%p` prints an unpacked array or struct as an assignment pattern (§21.2.1.6). |
+| `%m` | `tb_top` | The hierarchical name of the scope that called the task. It takes no argument (§21.2.1.5). |
+| `%t` and `%0t` on `$time` at 10 ns | 15 spaces, then `10000`; then `10000` | Time in the default `%t` unit, 1 ps here, at least 20 characters wide. See "Printing time" below. |
+
+Three more rules complete the practitioner's toolkit:
+
+- An unpacked argument with no specifier is illegal, except a `string` or an unpacked array of `byte`, which print as text (§21.2.1.1). Print arrays and structs with `%p`.
+- `$sformatf` returns the formatted string instead of printing it (§21.3.3). Build one message, then send it to `$display`, to a file and to `$error`.
+- `$displayh`, `$displayb` and `$displayo` change only the default radix of arguments that have no specifier.
+
+**In a real testbench:** print one line per event, with the time and, in shared code, `%m`. Use `%0d` and `%0h` so that logs can be searched and compared with tools. UVM benches print through `` `uvm_info `` instead, which adds verbosity control; T2 teaches it.
+
+### The static initializer rule
+
+You will often want a scratch variable inside an `initial` block. The obvious line does not compile:
+
+```systemverilog
+// snippet: illegal
 initial begin
-  int val = 42;
-  $display("Value is %0d", val); // %0d removes leading spaces
-  $display("Hex: %h, Bin: %b", val, val);
-  $error("Something went wrong!"); // Increments error count
+  int count = 0;    // error: a static variable declared with an initializer
+```
+
+A variable declared inside an `initial` or `always` block, or inside a module task or function that is not `automatic`, is **static**: one copy that lives for the whole simulation. A static variable's initializer runs once, at time 0, and not each time the block runs. Because that surprises people, the standard makes you say which behaviour you want. Write `static` to initialize once, or `automatic` to initialize every time the block is entered (§6.21). Declarations at module scope may keep a plain initializer. (Declaring the whole module as `module automatic` changes this default; Tasks and Functions covers lifetimes in full.)
+
+The difference only shows when a block runs more than once:
+
+```systemverilog
+// compile
+module tb_top;
+  int runs = 3;                    // module scope: an initializer is fine here
+
+  initial begin
+    for (int pass = 1; pass <= runs; pass++) begin
+      static    int kept  = 0;     // one variable, set to 0 once, at time 0
+      automatic int fresh = 0;     // a new variable, set to 0 on every pass
+      // int plain = 0;            // illegal: say static or automatic
+      kept++;
+      fresh++;
+      $display("pass %0d: kept=%0d fresh=%0d", pass, kept, fresh);
+    end
+  end
+endmodule
+```
+
+| Pass | `kept` (static) | `fresh` (automatic) | Line printed |
+|---|---|---|---|
+| 1 | 0 → 1 | 0 → 1 | `pass 1: kept=1 fresh=1` |
+| 2 | 1 → 2 | 0 → 1 | `pass 2: kept=2 fresh=1` |
+| 3 | 2 → 3 | 0 → 1 | `pass 3: kept=3 fresh=1` |
+
+The same rule decides how tasks and functions keep their local variables, which [Tasks and Functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions) builds on.
+
+### When does it print? $display, $strobe and $monitor
+
+So far every line printed at once. Two tasks wait instead. To see why that matters you need one fact from F3B: the simulator handles a single simulation time in ordered stages, and a nonblocking assignment (`<=`) updates its target in a later stage of the same time step than the one in which the statement runs.
+
+- `$display` and `$write` print when their statement runs, showing the values at that moment (§21.2.1).
+- `$strobe` prints at the end of the time step, just before simulation time advances, after every update of that time has happened (§21.2.2).
+- `$monitor` sets up a watch. It prints once at the end of the time step in which it is called, then at the end of every time step in which one of its arguments changed, showing the new values. Changes of `$time`, `$stime` and `$realtime` do not count (§21.2.3).
+
+`$strobe` and `$monitor` both run in the **Postponed** region, the read-only end of the time step (§4.4.2.9). F3B names every region; here you only need "now" versus "when the time step has settled".
+
+**Predict first.** The model below runs this process at one clock edge. Before the edge `q = 0` and `d = 5`. Write down what each print shows before you step through it.
+
+```systemverilog
+// snippet
+always @(posedge clk) begin
+  q <= d;
+  $display("q=%0d", q);
+  $strobe("q=%0d", q);
 end
 ```
 
-### 2. Dynamic Casting (`$cast`)
-Safely converts between types, especially useful for class polymorphism (Downcasting).
+<TimeSlotTraceVisualizer scenario="display-vs-strobe" scenarios={["display-vs-strobe"]} />
+
+**What you just saw.** `$display` printed `q=0`: when it ran, the update from `q <= d` was scheduled but had not happened. `$strobe` printed `q=5`, because it waited until the time step had settled. Neither line is wrong; they answer different questions. `$display` tells you what a process saw when it ran, which is what you need when you hunt a race ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)). `$strobe` tells you where the time step ended up. This is a preview: F3B names the regions the model steps through.
+
+`$monitor` needs a trace of its own, because it prints on changes and only one watch list can be active:
 
 ```systemverilog
-BaseClass base_h;
-DerivedClass derived_h;
+// compile
+`timescale 1ns/1ns
+module tb_top;
+  logic [3:0] a, b;
 
-if (!$cast(derived_h, base_h)) begin
-  $error("Cast failed! base_h does not point to a DerivedClass object");
+  initial begin
+    a = 0;
+    b = 0;
+    $monitor("t=%0d a=%0d", $time, a);
+    #10 a = 1;
+    #10 begin a = 2; a = 3; end   // two changes in one time step
+    #10 b = 5;                    // b is not in the list
+    #10 $monitor("t=%0d b=%0d", $time, b);
+    #10 begin a = 4; b = 6; end
+    #10 $finish;
+  end
+endmodule
+```
+
+| Time | What happens in the time step | Line printed at its end |
+|---|---|---|
+| 0 | `a` and `b` set to 0, then the first `$monitor` call | `t=0 a=0`: the call itself prints a first line |
+| 10 | `a = 1` | `t=10 a=1` |
+| 20 | `a = 2`, then `a = 3` | `t=20 a=3`: one line, with the final value |
+| 30 | `b = 5` | nothing: `b` is not watched, and `$time` does not count |
+| 40 | a second `$monitor` call | `t=40 b=5`: the new list replaced the old one |
+| 50 | `a = 4` and `b = 6` | `t=50 b=6`: `a` is no longer watched |
+| 60 | `$finish` | the tool's `$finish` report |
+
+`$monitoroff` pauses the watch and `$monitoron` resumes it, printing one line at once (§21.2.3). In a large bench a single global `$monitor` gets in the way, so most engineers print explicit `$display` lines at the events they care about.
+
+<VisualRecap
+  title="Print now, or print when the time step settles"
+  rule="$display and $write print when their statement runs. $strobe and $monitor print at the end of the time step, after nonblocking updates have landed."
+  code={`always @(posedge clk) begin
+  q <= d;               // lands later in this time step
+  $display("q=%0d", q); // prints 0: the old value
+  $strobe("q=%0d", q);  // prints 5: the settled value
+end`}
+  mistake="Debugging a flop with $display and concluding that the nonblocking update failed. It had not landed yet; $strobe shows the settled value."
+  inTestbench="Use $display for event logs, because it shows what a process saw. Use $strobe for end-of-step snapshots, and $monitor only in small benches."
+>
+  <svg viewBox="0 0 320 122" role="img" aria-label="One time step from top to bottom: in the Active region $display prints q equal to 0; in the NBA region q becomes 5; in the Postponed region $strobe and $monitor print q equal to 5." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="8" y="8" width="300" height="28" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="16" y="26" fontSize="11" fill="currentColor">{"▶ Active: $display prints q=0"}</text>
+    <rect x="8" y="46" width="300" height="28" rx="8" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
+    <text x="16" y="64" fontSize="11" fill="currentColor">{"◆ NBA: q <= d lands, q becomes 5"}</text>
+    <rect x="8" y="84" width="300" height="28" rx="4" fill="none" stroke="currentColor" strokeOpacity="0.45" strokeDasharray="4 3" />
+    <text x="16" y="102" fontSize="11" fill="currentColor">{"Postponed: $strobe and $monitor print q=5"}</text>
+  </svg>
+</VisualRecap>
+
+### Reporting severity: $info, $warning, $error and $fatal
+
+The four **severity tasks** print a message the way `$display` does, but the tool adds a severity label, the file name and line number of the call, the hierarchical scope and the simulation time (§20.10). The exact layout differs between simulators. The file and line are the ones that the `` `__FILE__ `` and `` `__LINE__ `` compiler directives give (§22.13), so a logging macro of your own can print the same location.
+
+| Task | Severity | Does the run continue? | Typical use |
+|---|---|---|---|
+| `$info` | informational | yes | progress milestones |
+| `$warning` | warning | yes | legal but suspicious: a margin nearly used up, an unusual configuration |
+| `$error` | error | **yes** | a failed check |
+| `$fatal(n, ...)` | fatal | **no**: it calls `$finish(n)` | the test cannot go on: a missing file, a hang |
+
+`$error` does not stop the simulation, and it does not update anything in your testbench. The standard defines no error counter, so the PASS/FAIL verdict has to come from counters that your checks increment. `$fatal` takes a first argument of 0, 1 or 2, with the same meaning as for `$finish`, so `$fatal(1, "msg")` is the usual form and `$fatal("msg")` does not match the syntax.
+
+```systemverilog
+// compile
+`timescale 1ns/1ns
+module tb_top;
+  int n_fail;
+
+  initial begin
+    $info("check started");
+    #5 $warning("response took %0d cycles", 9);
+    #5 begin
+      n_fail++;
+      $error("data 8'h%h, expected 8'h%h", 8'h3c, 8'hc3);
+    end
+    #5 $display("still running at t=%0d", $time);
+    #5 $fatal(1, "no response after %0d ns", $time);
+    $display("never printed");
+  end
+
+  final $display("final block: FAIL=%0d", n_fail);
+endmodule
+```
+
+**Expected output** (illustrative; each `<... prefix>` stands for the tool's own text with the file, the line, the scope `tb_top` and the time):
+
+```text
+<Info prefix, 0 ns>     check started
+<Warning prefix, 5 ns>  response took 9 cycles
+<Error prefix, 10 ns>   data 8'h3c, expected 8'hc3
+still running at t=15
+<Fatal prefix, 20 ns>   no response after 20 ns
+final block: FAIL=1
+```
+
+The run continued past the warning and the error, stopped inside `$fatal`, and still ran the `final` block. **In a real testbench:** `$error` for every failed check, together with a counter; `$fatal` for conditions that make the rest of the test meaningless; `$warning` sparingly, because warnings in a long regression log are rarely read. The summary line `PASS=<n> FAIL=<m>` that [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index) builds comes from those counters.
+
+### Ending the run: $finish, $stop and final
+
+- `$finish` ends the simulation and returns control to the operating system (§20.2). Its optional argument picks the diagnostic message: 0 prints nothing, 1 prints the time and location (the default), and 2 adds memory and CPU statistics (Table 20-1).
+- `$stop` only suspends the simulation, and an interactive simulator then waits for a command. What a batch run does at `$stop` is tool-dependent, so regression benches end with `$finish`.
+- `final` blocks run once, when the simulation ends through an explicit `$finish` or an implicit one such as the call inside `$fatal` (§9.2.3). They run in zero time and may contain only statements that are legal in a function, so a summary in `final` can print but cannot wait. F2C introduced `final`.
+
+<SequenceDiagram
+  title="How $error, $fatal and $stop end, or do not end, a run"
+  caption="Read it top to bottom. $error returns, so the initial block carries on. $fatal never returns: its implicit $finish runs the final blocks and ends the run. Where the $finish report (time and location) appears among these lines is tool-specific."
+  participants={[
+    { id: "tb", label: "initial", sublabel: "in tb_top" },
+    { id: "sim", label: "simulator" },
+    { id: "fin", label: "final", sublabel: "in tb_top" }
+  ]}
+  messages={[
+    { from: "tb", to: "sim", label: "$error(\"mismatch\")" },
+    { kind: "note", from: "sim", label: "prints an Error message with file, line, scope and time" },
+    { kind: "return", from: "sim", to: "tb", label: "returns: the run continues" },
+    { kind: "divider", label: "time passes" },
+    { from: "tb", to: "sim", label: "$fatal(1, \"timeout\")" },
+    { kind: "note", from: "sim", label: "prints a Fatal message and calls $finish(1)" },
+    { from: "sim", to: "fin", label: "run every final block" },
+    { kind: "note", from: "fin", label: "prints the summary in zero time" },
+    { kind: "return", from: "fin", to: "sim", label: "done" },
+    { kind: "note", from: "sim", tone: "error", label: "the simulation ends" },
+    { kind: "note", from: "tb", to: "fin", label: "$stop instead of $fatal: the simulation is suspended, final blocks do not run at that point, and an interactive tool waits for a command (tool-dependent)" }
+  ]}
+/>
+
+### Printing time: $time, $realtime, %t and $timeformat
+
+- `$time` returns a 64-bit integer: the current time in the time unit of the module that calls it, rounded to a whole number. `$realtime` returns the same time as a real number, and `$stime` returns it as a 32-bit unsigned value (§20.3). [F3A](/curriculum/T1_Foundational/F3A_Simulation_Semantics/index) explains time units, precision and rounding across modules.
+- `%t` prints a time value in the units chosen with `$timeformat`, converting from the unit of the calling module. By default the unit is the smallest time precision of every `` `timescale `` in the design, with no fractional digits, no suffix and a minimum width of 20 characters (§20.4.3, Table 20-3).
+- `$timeformat(units, precision, suffix, min_width)` sets that format for every `%t` in the design until the next call. The units are powers of ten: -9 is 1 ns and -12 is 1 ps (Table 20-2).
+
+```systemverilog
+// compile
+`timescale 1ns/1ps
+module tb_top;
+  initial begin
+    #10;
+    $display("a: %0d", $time);
+    $display("b: [%t]", $time);
+    $display("c: [%0t]", $time);
+    $timeformat(-9, 0, " ns", 8);
+    $display("d: [%t]", $time);
+    #2.4;
+    $display("e: %0d %.1f", $time, $realtime);
+  end
+endmodule
+```
+
+**Expected output** (illustrative, with this file compiled on its own):
+
+```text
+a: 10
+b: [               10000]
+c: [10000]
+d: [   10 ns]
+e: 12 12.4
+```
+
+| Line | Why |
+|---|---|
+| `a` | `$time` counts in the module's unit, 1 ns. |
+| `b` | `%t` converts to the default unit, 1 ps (the smallest precision in the design), and pads to 20 characters. |
+| `c` | The 0 in `%0t` drops the padding. |
+| `d` | After `$timeformat(-9, 0, " ns", 8)`: nanoseconds, no fraction, the suffix, at least 8 characters. |
+| `e` | After `#2.4` the time is 12.4 ns. `$time` rounds it to 12; `$realtime` keeps the fraction. |
+
+If one library in your build has a finer precision, line `b` changes, which is why benches call `$timeformat` once, at time 0, in the top module.
+
+### Feeding a test from files
+
+`$fopen(name, mode)` opens a file and returns a **file descriptor** (`fd`): an integer that you pass to every later call (§21.3.1). The common modes are `"r"` (read), `"w"` (create or empty the file, then write) and `"a"` (append). If the file cannot be opened, `$fopen` returns 0, and `$ferror` can report why (§21.3.7).
+
+| Call | What it does | What it returns |
+|---|---|---|
+| `$fdisplay(fd, ...)`, `$fwrite(fd, ...)` | write like `$display` and `$write` (§21.3.2) | nothing: these are tasks |
+| `$fgets(line, fd)` | read one line, newline included (§21.3.4.2) | the number of characters read; 0 on an error or at the end of the file |
+| `$fscanf(fd, fmt, args...)` | read and convert fields, skipping white space, newlines included (§21.3.4.3) | the number of items assigned; 0 if the first field does not match; -1 (EOF) if the input ends before the first conversion |
+| `$feof(fd)` | ask whether a read has hit the end of the file (§21.3.8) | nonzero only **after** a read has already hit the end |
+| `$fclose(fd)` | close the file (§21.3.1) | nothing |
+
+The safe read loop tests the return value of the read itself, never `$feof`:
+
+```systemverilog
+// snippet
+fd = $fopen("in.txt", "r");
+if (fd == 0) $fatal(1, "cannot open in.txt");
+forever begin
+  code = $fscanf(fd, "%h %h", x, y);   // x and y are logic [7:0]
+  if (code != 2) break;                // -1 at end of file, 0 or 1 on bad input
+  // use x and y here
+end
+$fclose(fd);
+```
+
+Trace it on a file of two lines, `0a 05` and `ff 01`, each ending in a newline. Watch `$feof`: it is still 0 after the last vector, because `$fscanf` leaves the final newline unread.
+
+| Step | Input consumed | Returns | `x`, `y` afterwards |
+|---|---|---|---|
+| `$fopen("in.txt", "r")` | none | a nonzero `fd` | X, X |
+| `$fscanf`, first call | `0a 05`; its newline stays unread | 2 | `8'h0a`, `8'h05` |
+| `$fscanf`, second call | that newline, then `ff 01` | 2 | `8'hff`, `8'h01` |
+| `$feof(fd)` | none | **0**: the last newline is still unread | unchanged |
+| `$fscanf`, third call | the last newline, then the end of the file | **-1** (EOF) | unchanged: `8'hff`, `8'h01` |
+| `$feof(fd)` | none | nonzero | unchanged |
+
+That third call explains a classic bug (Debug it, case 3, below). A `while (!$feof(fd))` loop makes the third call, ignores the -1 and processes `ff 01` a second time.
+
+**In a real testbench:** files carry golden vectors exported from a C, Python or MATLAB model, expected responses, and results for later analysis. The same calls appear inside UVM sequences and reference models later on.
+
+### Loading memories: $readmemh
+
+`$readmemh(file, mem)` reads hexadecimal numbers from a text file into an unpacked array, and `$readmemb` reads binary ones (§21.4). The file may hold only white space, comments and numbers written without a size or a base (`x`, `z` and `_` are allowed), plus address lines such as `@8`, which send the next number to address 8. Loading starts at the lowest address, or at an optional start address, and moves one address per number. Cells the file never reaches keep their old values.
+
+```systemverilog
+// compile
+module tb_top;
+  logic [7:0] rom [0:15];
+
+  initial begin
+    $readmemh("rom.hex", rom);
+    $display("%h %h %h %h", rom[0], rom[1], rom[2], rom[8]);
+  end
+endmodule
+```
+
+```text
+// rom.hex
+@0
+12 34     // addresses 0 and 1
+@8
+ff        // address 8
+```
+
+The run prints `12 34 xx ff`.
+
+| File content | Effect on `rom` |
+|---|---|
+| `// rom.hex` | ignored: a comment |
+| `@0` | the next number goes to address 0 |
+| `12 34` | `rom[0]` becomes `8'h12`, `rom[1]` becomes `8'h34` |
+| `@8` | the next number goes to address 8 |
+| `ff` | `rom[8]` becomes `8'hff` |
+| (end of file) | `rom[2]` to `rom[7]` and `rom[9]` to `rom[15]` are untouched; never written, they still hold X |
+
+Two details matter when you also pass a start and a finish address. If the file has no `@` lines and its word count differs from the range, the tool issues a warning. An `@` address outside the range is an error that stops the load (§21.4). **In a real testbench:** `$readmemh` preloads memory models and ROM images and loads tables of expected values.
+
+### Configuring a run from the command line: plusargs
+
+A **plusarg** is a simulation argument that starts with `+`, such as `+VERBOSE` or `+SEED=7`. Your code reads plusargs with two system functions (§21.6):
+
+- `$test$plusargs("VERBOSE")` returns nonzero if a plusarg begins with `VERBOSE`.
+- `$value$plusargs("SEED=%d", seed)` finds the first plusarg that begins with `SEED=`, converts the rest of it with the format (`%d`, `%h`, `%o`, `%b`, `%e`, `%f`, `%g` or `%s`), stores the result in `seed` and returns nonzero. If no plusarg matches, it returns 0, **leaves `seed` unchanged** and prints no warning.
+
+Both functions match by **prefix**: the string you pass has to match the beginning of a plusarg, not the whole of it. Set the default first, then let the plusarg override it:
+
+```systemverilog
+// compile
+module tb_top;
+  string vec_file = "vectors.txt";    // defaults first, at module scope
+  int    seed     = 1;
+  bit    verbose;
+
+  initial begin
+    // A miss leaves the default in place, so discarding the result is safe here.
+    void'($value$plusargs("VECTORS=%s", vec_file));
+    void'($value$plusargs("SEED=%d", seed));
+    verbose = ($test$plusargs("VERBOSE") != 0);
+    $display("vectors=%s seed=%0d verbose=%0b", vec_file, seed, verbose);
+  end
+endmodule
+```
+
+Run it with `+VECTORS=vectors_bad.txt +VERBOSE`:
+
+| Call | Returns | Effect |
+|---|---|---|
+| `$value$plusargs("VECTORS=%s", vec_file)` | nonzero | `vec_file` becomes `"vectors_bad.txt"` |
+| `$value$plusargs("SEED=%d", seed)` | 0 | `seed` keeps its default, 1, and nothing is printed |
+| `$test$plusargs("VERBOSE")` | nonzero | `verbose` becomes 1 |
+| `$test$plusargs("V")` (not in the code) | nonzero | `+VECTORS=...` begins with V: the prefix trap |
+
+The run prints `vectors=vectors_bad.txt seed=1 verbose=1`. Printing the effective configuration at time 0 is the cheapest defence against a misspelt plusarg, which is otherwise ignored in silence. Where you type plusargs on the simulator's command line is tool-specific. **In a real testbench:** plusargs select the test, the vector file, the seed, the verbosity and waveform dumping, so one compiled bench serves a whole regression.
+
+### Random numbers without classes: $urandom and $urandom_range
+
+`$urandom` is a system function that returns a 32-bit unsigned random number. `$urandom_range(max, min)` returns a number from `min` to `max` inclusive, and `min` defaults to 0 (§18.13.1, §18.13.2). If the arguments arrive the wrong way round, they are swapped for you.
+
+| Call | Possible values |
+|---|---|
+| `$urandom_range(10, 5)` | 5 to 10 |
+| `$urandom_range(5, 10)` | also 5 to 10 |
+| `$urandom_range(3)` | 0 to 3 |
+| `$urandom` | 0 to 4294967295 |
+
+```systemverilog
+// snippet
+repeat ($urandom_range(3, 1)) @(posedge clk);   // 1 to 3 idle cycles
+```
+
+Older code often calls `$random` instead. It returns a **signed** 32-bit value, so `$random % 10` can be anything from -9 to 9 (§20.14.1). Used as an array index, that reads outside the array; used as a delay, a negative value is read as a huge unsigned one and the run seems to hang (§9.4.1). `$urandom_range(9)` can never go below 0.
+
+The same seed gives the same sequence, and each thread draws from its own generator, so the values a thread gets do not depend on the order in which threads run (§18.14.2). Use these functions for random gaps and simple random data. Constrained stimulus uses class `randomize()`, taught in [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index); seeds are in Push Further.
+
+### Recording waveforms: $dumpfile and $dumpvars
+
+`$dumpfile("waves.vcd")` names the value change dump (VCD) file; without the call the name is `dump.vcd` (§21.7.1.1). `$dumpvars` chooses what to record: a number of levels, then the scopes or variables (§21.7.1.2). Dumping starts at the end of the current simulation time unit (§21.7.1.3), and every `$dumpvars` call has to execute at the same simulation time.
+
+| Call | Records |
+|---|---|
+| `$dumpvars;` | every variable in the design |
+| `$dumpvars(1, tb_top);` | the variables declared in `tb_top`, and nothing inside `u_dut` |
+| `$dumpvars(0, tb_top);` | `tb_top` and every instance below it, `u_dut` included |
+| `$dumpvars(0, tb_top.u_dut, tb_top.a);` | all of `u_dut` and below, plus the single variable `a` |
+
+Waveform files are large and slow to write, so regression benches record them only on request:
+
+```systemverilog
+// snippet
+initial if ($test$plusargs("DUMP")) begin
+  $dumpfile("waves.vcd");
+  $dumpvars(0, tb_top);
 end
 ```
 
-### 3. Randomization (`$urandom`)
-Generates random numbers without the overhead of a class.
+Automatic variables cannot be dumped or monitored (§13.3.2), and standard VCD records neither memories nor signal strengths (§21.7.2.1). Vendor waveform formats and their options are tool-dependent.
 
-- **`$urandom`**: Returns a 32-bit unsigned random integer.
-- **`$urandom_range(max, min)`**: Returns a number in the specified range.
+### Common pitfalls (recap)
 
-```systemverilog
-int delay;
-delay = $urandom_range(10, 5); // Random between 5 and 10
-#(delay);
-```
+| Symptom | Cause | Fix |
+|---|---|---|
+| Compile error on `int x = 0;` inside `initial` | a static variable with an initializer (§6.21) | write `static` or `automatic`, or declare it at module scope |
+| `$display` of an array does not compile | an unpacked argument needs a format specifier (§21.2.1.1) | print it with `%p` |
+| Only the newest `$monitor` prints | only one `$monitor` list is active; a new call replaces it (§21.2.3) | one `$monitor` with every signal, or explicit `$display` calls |
+| The test passes at time 0 having checked nothing | `$fopen` returned 0 and nobody checked (§21.3.1) | check every descriptor and end with `$fatal(1, ...)` |
+| The last vector is checked twice | a `while (!$feof(fd))` loop (§21.3.8) | loop on the read's return value |
+| Errors in the log, `FAIL=0` in the summary | `$error` neither stops the run nor feeds your counters (§20.10) | count every failure and print the summary from the counters |
+| Times print 1000 times too large | `%t` defaults to the smallest precision in the design (§20.4.3) | call `$timeformat` once at time 0 |
+| An option turns on although nobody passed it | prefix matching: `V` matches `+VECTORS=...` (§21.6) | long, distinct plusarg names |
+| An option is silently ignored | a misspelt plusarg does not match, and nothing warns (§21.6) | print the effective configuration at time 0 |
+| A memory still reads X after `$readmemh` | the file was not found, or its numbers carry a size or a base such as `8'h12`, which the format forbids (§21.4); how loudly the tool complains is tool-dependent | read the warnings in the log, write bare hex digits, and print a few cells after loading |
+| A random index is sometimes negative, or a random delay hangs the run | `$random` returns a signed value, so `$random % n` can be negative (§20.14.1), and a negative delay is read as a huge unsigned one (§9.4.1) | use `$urandom_range` |
+| A variable is missing from the waveform | it is automatic, or outside the `$dumpvars` levels and scopes (§13.3.2, §21.7.1.2) | record a static copy, or widen the scope |
 
-### 4. File I/O
-Read and write files directly from the testbench.
+## Make It Work
 
-- **`$fopen`**: Open a file.
-- **`$fdisplay`**: Write to a file.
-- **`$fscanf`**: Read formatted data.
-- **`$fclose`**: Close the file.
+### Interactive Example: The Logger
 
-## Interactive Example: The Logger
+This small module writes two lines to a file, closes it, reopens it and reads the number back, checking every return value on the way. Predict the one line it prints, then step through the calls and compare each one with the file I/O table above.
+
 <InteractiveCode
   language="systemverilog"
   fileName="file_io_demo.sv"
   code={`
+// compile
 module file_io_demo;
-  int file_h;
-  int read_val;
-  int status;
+  timeunit 1ns;
+  timeprecision 1ps;
+
+  int    fd;
+  int    code;
+  int    read_val;
+  string line;
 
   initial begin
-    // 1. Write to a file
-    file_h = $fopen("log.txt", "w");
-    if (file_h == 0) $fatal("Could not open file!");
-    
-    $fdisplay(file_h, "Timestamp: %0t, Data: %h", $time, 32'hAABBCCDD);
-    $fdisplay(file_h, "12345"); // Write a number
-    
-    $fclose(file_h);
-    
-    // 2. Read back from the file
-    file_h = $fopen("log.txt", "r");
-    
-    // Skip first line (just a demo hack, normally use fgets)
-    void'($fscanf(file_h, "%s %s %s %s", status, status, status, status)); 
-    
-    // Read the number
-    status = $fscanf(file_h, "%d", read_val);
-    if (status == 1)
-      $display("Read back value: %0d", read_val);
-      
-    $fclose(file_h);
+    // 1. Write: "w" creates the file, or empties an existing one.
+    fd = $fopen("log.txt", "w");
+    if (fd == 0) $fatal(1, "cannot open log.txt for writing");
+    $fdisplay(fd, "Timestamp: %0t, Data: %h", $time, 32'hAABBCCDD);
+    $fdisplay(fd, "12345");
+    $fclose(fd);
+
+    // 2. Read it back. The second $fopen needs its own check.
+    fd = $fopen("log.txt", "r");
+    if (fd == 0) $fatal(1, "cannot open log.txt for reading");
+
+    // Skip the header: $fgets returns 0 on an error or at end of file.
+    code = $fgets(line, fd);
+    if (code == 0) $fatal(1, "log.txt has no header line");
+
+    // Read the number: exactly one item is expected.
+    code = $fscanf(fd, "%d", read_val);
+    if (code == 1) $display("Read back value: %0d", read_val);
+    else $error("expected 1 item, $fscanf returned %0d", code);
+
+    $fclose(fd);
   end
 endmodule
 `}
   explanationSteps={[
-    { target: "8-9", title: "Opening Files", explanation: "Always check if the file handle is non-zero. 0 means failure." },
-    { target: "11-12", title: "Writing", explanation: "`$fdisplay` works exactly like `$display` but targets a file handle." },
-    { target: "23", title: "Reading", explanation: "`$fscanf` parses the file content into variables. It returns the number of items successfully matched." }
+    { target: "13-14", title: "Open for writing, and check", explanation: "$fopen returns a file descriptor, or 0 if the file cannot be opened. $fatal(1, ...) ends the run with a clear message instead of letting every later call fail quietly." },
+    { target: "15-17", title: "Write, then close", explanation: "$fdisplay takes the same arguments as $display after the descriptor. %0t prints the time without padding. $fclose closes the file." },
+    { target: "20-21", title: "Reopen, and check again", explanation: "Every $fopen can fail, the second one included: a wrong path, or a mode the file system refuses." },
+    { target: "24-25", title: "Skip the header with $fgets", explanation: "$fgets reads one whole line, newline included, and returns the number of characters read: 29 here. It returns 0 on an error or at the end of the file." },
+    { target: "28-30", title: "Parse the number with $fscanf", explanation: "$fscanf returns the number of items it assigned: 1 here. It would return 0 if the text did not match %d, and -1 at the end of the file." }
   ]}
 />
 
-## Common Pitfalls
-- **`$monitor` Spam:** `$monitor` runs forever in the background. Having multiple active monitors can clutter logs. Prefer explicit `$display` in loops.
-- **File Handles:** Forgetting to `$fclose` can lead to resource leaks or incomplete writes (buffering).
-- **`$cast` Return Value:** Always check the return value of `$cast`. If you ignore it and the cast fails, the destination variable remains unchanged (potentially null), leading to crashes later.
+**Expected output** (illustrative: worked out by hand from IEEE 1800-2023):
 
-## Make It Work
-- Always `$fclose` your file handles to prevent memory leaks and ensure buffers are flushed.
-- Check the return value of `$fscanf` to ensure your variables were populated correctly.
+```text
+Read back value: 12345
+```
+
+The file `log.txt` then holds:
+
+```text
+Timestamp: 0, Data: aabbccdd
+12345
+```
+
+### Worked example: a plusarg-selected, file-driven test
+
+This is the bench from the picture at the top of the page. It reads its options, opens its vector file, drives an 8-bit adder, checks every result and ends with a summary line that a regression script can trust.
+
+```systemverilog
+// compile
+`timescale 1ns/1ps
+
+// DUT: an 8-bit adder with a 9-bit sum, so the carry is visible.
+module adder8 (
+  input  logic [7:0] a,
+  input  logic [7:0] b,
+  output logic [8:0] sum
+);
+  assign sum = a + b;
+endmodule
+
+module tb_top;
+  logic [7:0] a, b;
+  logic [8:0] sum;
+
+  adder8 u_dut (.a(a), .b(b), .sum(sum));
+
+  initial begin
+    string      vec_file;
+    int         fd, code, line_no, n_pass, n_fail;
+    logic [7:0] a_v, b_v;
+    logic [8:0] exp_v;
+
+    $timeformat(-9, 0, " ns", 6);   // %t: nanoseconds, no fraction, 6 wide
+
+    // Options: +VECTORS=<file> picks the vectors, +DUMP records waveforms.
+    if (!$value$plusargs("VECTORS=%s", vec_file)) vec_file = "vectors.txt";
+    if ($test$plusargs("DUMP")) begin
+      $dumpfile("waves.vcd");
+      $dumpvars(0, tb_top);
+    end
+
+    fd = $fopen(vec_file, "r");
+    if (fd == 0) $fatal(1, "cannot open vector file %s", vec_file);
+
+    forever begin
+      code = $fscanf(fd, "%h %h %h", a_v, b_v, exp_v);
+      if (code != 3) break;         // -1: end of file; 0 to 2: unparsable input
+      line_no++;
+      a <= a_v;                     // nonblocking drive: the habit F3C explains
+      b <= b_v;
+      #1;                           // let the adder settle before checking
+      if (sum !== exp_v) begin      // !== also fails on X or Z; != would not
+        n_fail++;
+        $error("vector %0d: %h + %h = %h, expected %h",
+               line_no, a_v, b_v, sum, exp_v);
+      end
+      else n_pass++;
+    end
+    if (code != -1)
+      $error("vector %0d: unparsable input (%0d of 3 fields)", line_no + 1, code);
+    $fclose(fd);
+
+    $display("[%t] PASS=%0d FAIL=%0d", $realtime, n_pass, n_fail);
+    $finish;
+  end
+endmodule
+```
+
+Two vector files sit next to `tb_top.sv`, one vector per line: `a`, `b` and the expected sum, in hex. In `vectors_bad.txt` the second line expects the wrong sum, so the check has something to catch.
+
+`vectors.txt`:
+
+```text
+01 02 003
+ff 01 100
+80 80 100
+7f 01 080
+```
+
+`vectors_bad.txt`:
+
+```text
+01 02 003
+ff 01 000
+80 80 100
+7f 01 080
+```
+
+**Expected output** (illustrative: worked out by hand from IEEE 1800-2023; each `<... prefix>` is the tool's own text with the file, the line, the scope `tb_top` and the time, and every run also ends with the tool's `$finish` report):
+
+```text
+# run 1: +VECTORS=vectors.txt
+[  4 ns] PASS=4 FAIL=0
+
+# run 2: +VECTORS=vectors_bad.txt
+<Error prefix, 2 ns> vector 2: ff + 01 = 100, expected 000
+[  4 ns] PASS=3 FAIL=1
+
+# run 3: +VECTORS=nope.txt
+<Fatal prefix, 0 ns> cannot open vector file nope.txt
+```
+
+Run 3 prints no summary line at all: the run died at time 0, and a regression script that requires `FAIL=0` in the summary marks it failed. Add `+DUMP` to any run to get `waves.vcd` as well.
+
+> [!NOTE]
+> **Run it.** Put `tb_top.sv`, `vectors.txt` and `vectors_bad.txt` in one directory. Compile `tb_top.sv` with your simulator's SystemVerilog option, then run the compiled model three times, with `+VECTORS=vectors.txt`, with `+VECTORS=vectors_bad.txt` and with `+VECTORS=nope.txt`. Simulators pass `+name` arguments to `$test$plusargs` and `$value$plusargs`; where they go on the command line is tool-specific, so check your simulator's manual.
+
+**How to build a test like this:**
+
+1. List what the test needs from outside the simulation: which files and which options. Give every option a default.
+2. Read the options first, at time 0: `$value$plusargs` for values, `$test$plusargs` for switches. Print the effective configuration.
+3. Open every file and check the descriptor. End the run with `$fatal(1, ...)` when a required file is missing.
+4. Loop on the return value of the read, not on `$feof`, and report input that does not parse.
+5. Drive, wait for the DUT, compare with `!==`, count passes and failures, and report each failure with `$error` and the values involved.
+6. Close the files, print `PASS=<n> FAIL=<m>` from the counters and end with `$finish`.
+7. Prove that the check can fail: run a vector file with a wrong expected value.
+
+**Checklist before moving on:**
+
+- [ ] Every system function's return value is checked (`$fopen`, `$fscanf`, `$value$plusargs`) or discarded on purpose with `void'(...)`.
+- [ ] A missing file ends the run with `$fatal`, and no PASS line appears.
+- [ ] `vectors_bad.txt` produces exactly one `$error` and `FAIL=1`.
+- [ ] Every comparison uses `!==`, so an X on `sum` fails the check.
+- [ ] Waveforms are recorded only when `+DUMP` is given.
+- [ ] `%t` prints in nanoseconds because `$timeformat` runs at time 0.
+
+### Debug it: the log that lies
+
+Each case shows a symptom and its log. Name the cause before you open the answer.
+
+**Case 1: the signal that went quiet.** A bench calls `$monitor("t=%0d a=%0d", $time, a)` at time 0. Here is its log, although `a` also changed at 50 ns:
+
+```text
+t=0 a=0
+t=10 a=1
+t=20 a=3
+t=40 b=5
+t=50 b=6
+```
+
+<details>
+<summary>Cause and fix</summary>
+
+At 40 ns another process called `$monitor("t=%0d b=%0d", $time, b)`. Only one `$monitor` list is active at a time, so the new call replaced the first one without a message (§21.2.3). Fix it with one `$monitor` that lists every signal, with explicit `$display` calls at the events you care about, or with `$fmonitor` to files, which can run side by side (§21.3.2).
+
+</details>
+
+**Case 2: the fastest pass in history.** The run ends at time 0 and prints `PASS=0 FAIL=0`.
+
+```systemverilog
+// snippet: the bug
+fd = $fopen("vectros.txt", "r");                       // misspelt file name
+while ($fscanf(fd, "%h %h %h", a_v, b_v, exp_v) == 3) begin
+  // drive and check
+end
+$display("PASS=%0d FAIL=%0d", n_pass, n_fail);
+```
+
+<details>
+<summary>Cause and fix</summary>
+
+`$fopen` returned 0 because the file does not exist (§21.3.1), nothing checked it, and the first read failed at once; how loudly it failed is tool-dependent. Fix it with `if (fd == 0) $fatal(1, ...)` straight after every `$fopen`, and treat a run that checked nothing as a failure.
+
+</details>
+
+**Case 3: the vector that ran twice.** The vector file has four lines, each ending in a newline.
+
+```systemverilog
+// snippet: the bug
+while (!$feof(fd)) begin
+  void'($fscanf(fd, "%h %h %h", a_v, b_v, exp_v));
+  n_checked++;
+  $display("check %0d: %h %h %h", n_checked, a_v, b_v, exp_v);
+end
+```
+
+```text
+check 1: 01 02 003
+check 2: ff 01 100
+check 3: 80 80 100
+check 4: 7f 01 080
+check 5: 7f 01 080
+```
+
+<details>
+<summary>Cause and fix</summary>
+
+After the fourth read the final newline is still unread, so `$feof` is still 0 (§21.3.8). The fifth `$fscanf` hits the end of the file, returns -1 and assigns nothing, and `void'` threw that -1 away, so the old values were checked again (§21.3.4.3). Fix it by looping on the return value, as the worked example does.
+
+</details>
+
+**Case 4: errors in the log, PASS in the summary.**
+
+```text
+<Error prefix, 2 ns> vector 2: ff + 01 = 100, expected 000
+[  4 ns] PASS=4 FAIL=0
+```
+
+<details>
+<summary>Cause and fix</summary>
+
+The failing branch called `$error` but did not increment `n_fail`, and `n_pass++` ran for every vector. `$error` prints and lets the run continue; it never touches your counters (§20.10). Fix it by incrementing `n_fail` in every failing branch and deriving the verdict only from the counters, and make the regression script look for error messages as well. Many simulators also print their own error totals at exit, but that is tool-dependent.
+
+</details>
 
 ## Push Further
-- Try reading a binary file and parsing it into a queue of struct elements.
-- Implement a logging macro that automatically includes `__FILE__` and `__LINE__` in the message.
+
+These sections are for practitioners who run regressions and for interview preparation. You can skip them on a first pass.
+
+### Expert: $monitor, $strobe and the end of the time step
+
+- `$strobe` and `$monitor` print in the Postponed region, the read-only end of the time step, where nothing can change any more (§4.4.2.9). That makes them reliable for final values and useless for seeing what a racing process read. To test a suspected race, print the same variable with `$display` and with `$strobe`: if the two differ, an update landed after your statement ran ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)).
+- `$display` prints in whichever region its process is running: Active for module code, Reactive for program blocks and for the action blocks of concurrent assertions (§4.4.2.6).
+- `$strobe` of `$sampled(x)` prints the value sampled at the start of the current time step, which is the value a concurrent assertion uses, not the settled one (§21.2.2, §16.5.1).
+- `$fmonitor` writes to a file, and any number of them can be active at once. They have no `$monitoron` or `$monitoroff`; `$fclose` on their descriptor cancels them (§21.3.2, §21.3.1).
+- Automatic variables cannot be monitored (§13.3.2).
+
+### Expert: Pass/fail you can trust
+
+- `$fatal(n, ...)` takes the same 0, 1 or 2 as `$finish` and ends the run through an implicit `$finish`, which still runs `final` blocks (§20.10, §9.2.3).
+- §20.10 says that `$fatal` ends the run with an error code, but not what exit status the shell sees, and it defines no code at all for `$error`. The simulator's exit status after `$error` or `$fatal` is therefore tool-dependent, so do not rely on it alone. A regression script should require the bench's own summary line with `FAIL=0` and also scan the log for error and fatal messages. A missing summary line means the run died, and `PASS=0 FAIL=0` means it tested nothing; treat both as failures.
+- Assertions report through the same tasks. An assertion with no `else` branch calls `$error` when it fails (§20.10), so assertion failures do not stop the run either ([I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index)).
+- Elaboration severity tasks (§20.10.1) run outside procedural code, typically under a generate `if`, to reject bad parameters before the simulation starts. An elaboration-time `$error` lets elaboration finish, but the simulation does not start.
+
+```systemverilog
+// snippet
+module fifo #(parameter int DEPTH = 8) ();
+  if (DEPTH < 2) $error("DEPTH=%0d: a FIFO needs at least 2 entries", DEPTH);
+endmodule
+```
+
+- In UVM the report server counts `UVM_ERROR` and `UVM_FATAL` messages and prints the end-of-test summary (IEEE 1800.2-2020 §6.5). T2 teaches it.
+
+### Expert: File descriptors and multichannel descriptors
+
+`$fopen` has two forms (§21.3.1):
+
+- With a mode it returns a **file descriptor** (fd), whose bit 31 is set. It can be opened for reading, writing or both, and it cannot be combined with other descriptors. `STDIN`, `STDOUT` and `STDERR` are pre-opened descriptors with the values `32'h8000_0000`, `32'h8000_0001` and `32'h8000_0002`.
+- Without a mode it opens the file for writing and returns a **multichannel descriptor** (MCD) with one bit set. Bit 0 always means standard output, and OR-ing MCDs writes to all of them at once. Bit 31 is reserved, so at most 31 files can be open through MCDs.
+
+```systemverilog
+// snippet
+int run_log;
+initial begin
+  run_log = $fopen("run.log");      // no mode: a multichannel descriptor
+  if (run_log == 0) $fatal(1, "cannot open run.log");
+  $fdisplay(run_log | 1, "this line goes to run.log and to standard output");
+end
+```
+
+`$fclose` cancels any `$fmonitor` or `$fstrobe` on that descriptor, and later `$fopen` calls reuse closed channels (§21.3.1). `$fflush` writes buffered output out at once (§21.3.6), which helps before a step that might crash the simulator. How many files can be open at once depends on the operating system.
+
+### Expert: Robust vector parsing
+
+- `$fscanf` treats every newline as white space. With `"%h %h %h"`, a line with only two fields silently takes its third from the next line, and every later vector is misaligned. Read one line with `$fgets` and parse it with `$sscanf`, which returns the same counts (§21.3.4.2, §21.3.4.3). The kata below does exactly this.
+- `%*h` reads a field and discards it (assignment suppression), so you can skip a column without a dummy variable (§21.3.4.3).
+- A field wider than its destination variable keeps, in general, only its low-order bits (§21.3.4.3). Size the variables for the widest field in the file.
+- `$sscanf` returns -1 if its string contains x or z bits (§21.3.4.3).
+- After a failed `$fopen` or read, `$ferror` returns an error code and a description of the most recent I/O error (§21.3.1, §21.3.7). Put that description in the `$fatal` message.
+
+### Expert: Plusargs at regression scale
+
+- Prefix matching cuts both ways (§21.6). `$test$plusargs("TEST")` matches `+TEST=5` and also `+TESTNAME=t1`. Give options distinct names, and include the `=` in value lookups such as `"TEST=%d"`, which `+TESTNAME=t1` cannot match.
+- The first matching plusarg in command-line order wins, so `+SEED=1 +SEED=2` gives 1.
+- Characters that the format cannot convert write `'bx` into the variable (§21.6). A 4-state variable then reads X, but a 2-state `int` silently becomes 0. Read numeric options into a `logic` variable and check it with `$isunknown` before you use it.
+- `$test$plusargs` returns a nonzero integer, not necessarily 1. Compare it with 0 before you assign it to a 1-bit variable.
+- How you pass the simulator's own random seed is tool-dependent. Print the seed in every log so that any failure can be rerun.
+- UVM wraps the same mechanism: `uvm_cmdline_processor::get_inst().get_arg_value("+NAME=", value)` returns how many arguments matched (uvm-core 2020.3.1, `uvm_cmdline_processor.svh`).
+
+### Expert: Random stability and seeds
+
+- Every thread has its own random number generator. A new thread's generator is seeded from its parent's, which the standard calls hierarchical seeding, and static processes are seeded from their module's initialization generator (§18.14.1).
+- The values a thread draws therefore depend on the order in which threads are created and numbers are drawn, not on the order in which threads run (§18.14.2). Add new threads and new random calls at the end of a block, so that earlier values stay the same from run to run.
+- `$urandom(seed)` seeds the generator and returns a number (§18.13.1). Manual seeding of processes and objects is covered with class randomization in [I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index).
+
+### Expert: What to dump and what it costs
+
+- Every `$dumpvars` call must execute at the same simulation time (§21.7.1.2). A bench that decides late, for example after waiting for a trigger, must make all its calls in one place at that moment.
+- `$dumpoff` writes every recorded variable as X as a checkpoint and stops recording; `$dumpon` writes the current values and resumes (§21.7.1.3). Bracketing a failure window this way keeps files small.
+- `$dumplimit(bytes)` stops recording when the file reaches that size, and notes it in the file (§21.7.1.5).
+- Standard VCD has no memories and no signal strengths (§21.7.2.1). Vendor formats record more; their options, file sizes and simulation slowdown are tool-dependent, so measure before you dump everything in a regression.
+
+### Interview angles
+
+Answer each question before you look at the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: the log that says PASS"
+  question="A nightly regression reports PASS for a test whose log contains twelve $error messages. What is the most likely explanation, and what do you change?"
+  options={[
+    { text: "$error stopped the test early, so the twelve messages come from earlier runs appended to the same log.", correct: false, feedback: "$error does not stop anything: the simulation continues after each message (IEEE 1800-2023 §20.10)." },
+    { text: "$error printed and the run continued. The PASS came from the bench's own counters or the simulator's exit status, and nothing tied those errors to either. Count every failure in the bench, and make the script require FAIL=0 and no error messages.", correct: true, feedback: "Right. Severity tasks report; they do not decide pass or fail. The bench decides, so every failing check must feed its counters, and the script must check both the summary and the messages." },
+    { text: "The simulator downgrades $error to a warning in batch mode.", correct: false, feedback: "Nothing in IEEE 1800-2023 changes the severity of $error in batch mode. The real gap is between the messages and the verdict." },
+    { text: "$error only counts towards failure inside a final block.", correct: false, feedback: "final blocks run at the end of the simulation and have no special effect on $error." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: the option nobody passed"
+  question={"A test turns on verbose logging with if ($test$plusargs(\"V\")). Every run is now verbose, although nobody passes +V. Every run does pass +VECTORS=... Why, and what is the fix?"}
+  options={[
+    { text: "$test$plusargs matches by prefix, and +VECTORS=... begins with V. Use a long, distinct name such as +VERBOSE that no other option begins with.", correct: true, feedback: "Right. The string only has to match the beginning of a plusarg (§21.6), so short names collide." },
+    { text: "Plusargs ignore case, so the simulator's own -v option matches.", correct: false, feedback: "Plusargs are the arguments that start with +, and the match is on their characters. The cause is the prefix rule." },
+    { text: "$test$plusargs returns the number of plusargs on the command line.", correct: false, feedback: "It returns nonzero when a plusarg matches and 0 otherwise; it does not count arguments." },
+    { text: "A plusarg stays set from the previous run in the same directory.", correct: false, feedback: "Plusargs exist only on the command line of the current run." }
+  ]}
+/>
+
+Three more questions to answer aloud, each followed by the section that answers it:
+
+- Why can `$display` and `$strobe` disagree at one clock edge, and when is `$display` the one to trust? (When does it print?)
+- How do you make a regression's verdict robust against a bench that dies early, prints nothing or tests nothing? (Expert: Pass/fail you can trust)
+- Adding one thread to a test changed the random values that another thread drew. What does the standard promise, and how do you keep runs reproducible? (Expert: Random stability and seeds)
 
 ## Practice & Reinforce
-- Flashcards – Review definitions for file I/O operations and random constraints.
-- Code kata – Write a script that reads a CSV of expected transactions and drives them to a dummy bus.
 
-## Interview Questions
+### Quiz
 
-<Card className="mt-8">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is the difference between `$display`, `$strobe`, and `$monitor`?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p><strong>`$display`</strong> executes immediately in the Active region.</p>
-        <p><strong>`$strobe`</strong> executes at the end of the time step (Postponed region), ensuring all assignments for that time are done. Useful for debugging race conditions.</p>
-        <p><strong>`$monitor`</strong> is a background process that prints whenever its arguments change, also at the end of the time step.</p>
-      </div>
-    </details>
+Answer from memory first; each option explains itself after you choose. Then work through the deck at the end of this section.
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">How do you generate a random number within a class constraint vs. procedurally?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>Inside a class, you use `rand` variables and `obj.randomize()`. Procedurally (e.g., in a module or simple function), you use system tasks like `$urandom` or `$urandom_range`. The class-based solver is much more powerful (supports complex constraints), while `$urandom` is faster for simple needs.</p>
-      </div>
-    </details>
-  </CardContent>
-</Card>
+<Quiz
+  questions={[
+    {
+      question: "One process runs at a clock edge: q <= d; then $display(\"q=%0d\", q); then $strobe(\"q=%0d\", q). Before the edge q = 0 and d = 5. What do the two lines print?",
+      objective: 1,
+      answers: [
+        { text: "$display prints q=5, then $strobe prints q=5", correct: false, feedback: "That treats q <= d as an immediate update. The nonblocking update lands later in the same time step, after $display has printed." },
+        { text: "$display prints q=0, then $strobe prints q=0", correct: false, feedback: "$strobe is not a second $display. It prints at the end of the time step, after every update of that time." },
+        { text: "$display prints q=0, then $strobe prints q=5", correct: true, feedback: "Right. $display prints when it runs, before the update; $strobe waits for the end of the time step." },
+        { text: "$display prints q=0 now, and $strobe prints q=5 one time unit later", correct: false, feedback: "Both lines appear at the same simulation time. A nonblocking update takes no simulated time; it lands later within the time step." }
+      ],
+      explanation: "IEEE 1800-2023 §21.2.2: $strobe prints at the end of the time step, just before simulation time advances. The nonblocking update of q happens earlier in that same time step (F3B names the region), so $display sees 0 and $strobe sees 5."
+    },
+    {
+      question: "n is a logic [3:0] that holds 4'b10x1. What does $display(\"%b %h %0d\", n, n, n) print?",
+      objective: 1,
+      answers: [
+        { text: "10x1 9 9", correct: false, feedback: "The X bit is not read as 0. A value with an unknown bit has no single number, so %h and %d print X." },
+        { text: "10x1 x x", correct: false, feedback: "A lowercase x means every bit is unknown. Only one of the four bits is X here, so the standard prints an uppercase X." },
+        { text: "10x1 X 9", correct: false, feedback: "Decimal follows the same rule as hex: some unknown bits print X, never a partial number." },
+        { text: "10x1 X X", correct: true, feedback: "Right. %b prints every bit; a hex digit or a decimal value with some unknown bits prints an uppercase X." }
+      ],
+      explanation: "§21.2.1.3: in %h, a 4-bit group with some but not all bits unknown prints X; in %d, a value with some but not all bits unknown prints X. All bits unknown would print a lowercase x."
+    },
+    {
+      question: "A check executes $error(\"mismatch\") at 50 ns. What happens next?",
+      objective: 2,
+      answers: [
+        { text: "The message prints, and the simulation ends at 50 ns as if $finish(1) had been called", correct: false, feedback: "That is $fatal. $error reports and returns, and the run goes on." },
+        { text: "The message prints with the severity, file, line, scope and time, and the simulation continues", correct: true, feedback: "Right. The run goes on, so the testbench must count the failure itself." },
+        { text: "The simulation is suspended, as with $stop, until you type a command", correct: false, feedback: "$stop suspends a simulation; $error does not." },
+        { text: "Nothing prints unless the verbosity is raised, as for informational messages", correct: false, feedback: "Verbosity filtering belongs to UVM's informational messages. $error always prints." }
+      ],
+      explanation: "§20.10: $error generates a run-time error message with the file, line, scope and time, and, unlike $fatal, it does not end the simulation. The standard defines no error counter, so the PASS/FAIL line has to come from the testbench."
+    },
+    {
+      question: "$fatal(1, \"timeout\") executes at 1000 ns. The testbench has a final block that prints the PASS/FAIL summary. What does the log show?",
+      objective: 2,
+      answers: [
+        { text: "Only the fatal message: $fatal ends everything before final blocks can run", correct: false, feedback: "final blocks run whenever the simulation ends through $finish, and $fatal calls $finish implicitly." },
+        { text: "The summary first, because final blocks run before any fatal message", correct: false, feedback: "The fatal message prints when $fatal executes; final blocks run only afterwards, as the simulation ends." },
+        { text: "The summary appears only if the test ends with $stop instead of $fatal", correct: false, feedback: "$stop suspends the simulation without ending it, so final blocks do not run at $stop." },
+        { text: "The fatal message, then the summary from the final block", correct: true, feedback: "Right. $fatal prints, calls $finish(1) implicitly, and the final block runs as the simulation ends." }
+      ],
+      explanation: "§20.10: calling $fatal results in an implicit call to $finish. §9.2.3: a final block runs when the simulation ends through an explicit or implicit $finish."
+    },
+    {
+      question: "code = $fscanf(fd, \"%h %h\", a, b); runs when the only input left in the file is a newline. What is code, and what happens to a and b?",
+      objective: 3,
+      answers: [
+        { text: "0, and a and b are set to 0", correct: false, feedback: "Nothing is assigned at the end of the file. And 0 means something else: the first field did not match the format." },
+        { text: "0, and a and b keep their previous values", correct: false, feedback: "0 is the return for an early matching failure, such as letters where %h expects hex digits. Running out of input returns -1." },
+        { text: "-1 (EOF), and a and b keep their previous values", correct: true, feedback: "Right. The input ends before the first conversion, so the function returns EOF and assigns nothing." },
+        { text: "2, because the values from the previous line are assigned again", correct: false, feedback: "$fscanf returns how many items it assigned in this call, and it assigned none." }
+      ],
+      explanation: "§21.3.4.3: $fscanf returns the number of items assigned, 0 for an early matching failure, or EOF (-1) if the input ends before the first conversion. White space, newlines included, is skipped before a conversion."
+    },
+    {
+      question: "The simulation runs with +TEST=burst_long. What do $test$plusargs(\"TEST=burst\") and $value$plusargs(\"TEST=%s\", name) return?",
+      objective: 3,
+      answers: [
+        { text: "$test$plusargs returns 0 because it needs an exact match; name becomes \"burst_long\"", correct: false, feedback: "Neither function needs an exact match: the string only has to match the beginning of a plusarg." },
+        { text: "Both return nonzero, and name becomes \"burst\"", correct: false, feedback: "The variable receives the remainder of the plusarg after the matched TEST=, which is burst_long." },
+        { text: "Both return 0, because = cannot appear in a plusarg", correct: false, feedback: "= is an ordinary character in a plusarg, and TEST= is a common prefix." },
+        { text: "Both return nonzero, and name becomes \"burst_long\"", correct: true, feedback: "Right. Both functions match by prefix, and $value$plusargs converts the rest of the plusarg after TEST=." }
+      ],
+      explanation: "§21.6: if the beginning of a plusarg matches every character of the given string, the function returns nonzero, and $value$plusargs converts the remainder with the format and stores it. That is why short names such as +V are dangerous."
+    },
+    {
+      question: "rom is a logic [7:0] rom [0:15] that nothing has written yet. The file rom.hex holds two lines: @4, then aa bb. After $readmemh(\"rom.hex\", rom), what do rom[0] and rom[5] hold?",
+      objective: 3,
+      answers: [
+        { text: "rom[0] = 8'hxx and rom[5] = 8'hbb", correct: true, feedback: "Right. @4 sends aa to rom[4] and bb to rom[5]. rom[0] is never written, so it still holds X." },
+        { text: "rom[0] = 8'h00 and rom[5] = 8'hbb", correct: false, feedback: "$readmemh writes only the addresses the file reaches. It does not clear the others, so rom[0] keeps its X." },
+        { text: "rom[0] = 8'haa and rom[5] = 8'hbb", correct: false, feedback: "That ignores the @4 line. An address line sends the next number to that address, so aa lands in rom[4]." },
+        { text: "rom[0] = 8'hxx and rom[5] = 8'haa", correct: false, feedback: "The first number after @4 goes to address 4 itself, and the next one to address 5." }
+      ],
+      explanation: "§21.4: when the load meets an @address line, it loads the following numbers from that address on, one address per number. Addresses the file never reaches are not modified, so a never-written 4-state memory still reads X there."
+    },
+    {
+      question: "A design's only timescale is 1ns/1ps, and no $timeformat call has run. At 10 ns, what does $display(\"[%0t]\", $time) print?",
+      objective: 4,
+      answers: [
+        { text: "[10000]", correct: true, feedback: "Right. The default %t unit is the smallest precision in the design, 1 ps, and the 0 in %0t drops the 20-character padding." },
+        { text: "[10]", correct: false, feedback: "10 is the value of $time in the module's unit, ns. %t converts it to the $timeformat unit, which defaults to 1 ps here." },
+        { text: "[10 ns]", correct: false, feedback: "The default suffix is empty; you get a suffix only by passing one to $timeformat." },
+        { text: "[0.01]", correct: false, feedback: "That would be microseconds. The default unit is the smallest precision in the design, not a larger unit." }
+      ],
+      explanation: "§20.4.3 and Table 20-3: by default %t uses the smallest time precision of all the timescale directives, no fractional digits, no suffix and a minimum width of 20. Call $timeformat(-9, 0, \" ns\", 8) at time 0 to print in ns."
+    },
+    {
+      question: "A loop reads a 4-line vector file, every line ending in a newline: while (!$feof(fd)) begin void'($fscanf(fd, \"%h %h %h\", a, b, e)); n++; $display(\"check %0d: %h %h %h\", n, a, b, e); end. The log shows 5 checks, and the last two show the same values. Why?",
+      objective: 5,
+      answers: [
+        { text: "The trailing newline counts as a fifth, empty line, and $fscanf returns the previous line's values for an empty line", correct: false, feedback: "A trailing newline is not a line of data, and $fscanf never returns old values. The repeat comes from the loop." },
+        { text: "$feof is still 0 after the fourth read, so a fifth $fscanf runs, returns -1 and leaves a, b and e unchanged", correct: true, feedback: "Right. Loop on the return value of $fscanf instead of on $feof." },
+        { text: "The trailing newline moves the file position back, so $fscanf reads the fourth line a second time", correct: false, feedback: "Nothing is reread. The unread newline keeps $feof at 0, and the failed fifth read leaves the variables holding the fourth vector." },
+        { text: "void'() makes $fscanf return the result of its previous call instead of the current one", correct: false, feedback: "void'() only discards the return value. That is the real damage here: it threw away the -1 that marked the end of the file." }
+      ],
+      explanation: "§21.3.8: $feof returns nonzero only when the end of the file has already been detected. §21.3.4.3: trailing white space is left unread, and a read that reaches the end before any conversion returns EOF (-1) without assigning anything."
+    },
+    {
+      question: "$monitor(\"a=%0d\", a) is called at time 0. At 50 ns another process calls $monitor(\"b=%0d\", b). After 50 ns, a keeps changing but no a= lines appear. Why?",
+      objective: 5,
+      answers: [
+        { text: "$monitor prints each signal only once, at the first change", correct: false, feedback: "$monitor prints at the end of every time step in which an argument changed, for as long as its list is active." },
+        { text: "a stopped changing after 50 ns", correct: false, feedback: "The question says a keeps changing. The missing lines come from the replaced list." },
+        { text: "Each new $monitor needs $monitoron before anything prints", correct: false, feedback: "Monitoring is on by default. $monitoron re-enables it after $monitoroff and prints a line at once." },
+        { text: "Only one $monitor list can be active; the second call replaced the first", correct: true, feedback: "Right, and the replacement is silent. Use one $monitor for every signal, explicit $display calls, or $fmonitor, which allows several at once." }
+      ],
+      explanation: "§21.2.3: only one $monitor list is active at any time, and calling $monitor again replaces it. §21.3.2: any number of $fmonitor calls can be active at once."
+    },
+    {
+      question: "Which declaration is illegal directly inside initial begin ... end, in an ordinary module?",
+      objective: 3,
+      answers: [
+        { text: "automatic int count = 0;", correct: false, feedback: "Legal: count is created and set to 0 every time the block is entered." },
+        { text: "static int count = 0;", correct: false, feedback: "Legal: count is set to 0 once, at time 0, and the code says so." },
+        { text: "int count = 0;", correct: true, feedback: "Right. A variable declared in an initial block is static, and a static variable with an initializer needs an explicit static or automatic." },
+        { text: "int count; followed by the statement count = 0;", correct: false, feedback: "Legal: a declaration without an initializer, then an ordinary assignment." }
+      ],
+      explanation: "§6.21: variables declared in a static block default to a static lifetime, and an initializer on such a declaration needs an explicit static keyword, to show that it runs only once. Declaring the variable automatic makes the initializer run on every entry instead."
+    }
+  ]}
+/>
+
+### Kata: three options for the vector test
+
+**Objective:** practise objectives 2 to 4 on a bench you already understand. Start from the worked example and add:
+
+1. `+MAXERR=<n>`: after `n` failed vectors, end the run with `$fatal`. Without `+MAXERR`, never stop early.
+2. `+VERBOSE`: report every passing vector with `$info`. Without it, print nothing for passing vectors.
+3. Comment lines: skip every line of the vector file that starts with `#`. Read the file one line at a time with `$fgets` and parse each line with `$sscanf`, so that a short line can no longer take fields from the next one, and report errors by file line number.
+
+**Done when:**
+
+- `+VECTORS=vectors.txt` prints `PASS=4 FAIL=0`, also after you add `# a b expected-sum` as the first line of the file.
+- `+VECTORS=vectors_bad.txt +MAXERR=1` prints one error, then a fatal message, and no PASS line.
+- `+VERBOSE` adds four `$info` lines, and without it there are none.
+
+Hint: do not call the switch `+V`. You saw why.
+
+<details>
+<summary>Worked solution</summary>
+
+```systemverilog
+// compile
+`timescale 1ns/1ps
+
+module adder8 (
+  input  logic [7:0] a,
+  input  logic [7:0] b,
+  output logic [8:0] sum
+);
+  assign sum = a + b;
+endmodule
+
+module tb_top;
+  logic [7:0] a, b;
+  logic [8:0] sum;
+
+  adder8 u_dut (.a(a), .b(b), .sum(sum));
+
+  initial begin
+    string      vec_file, line;
+    int         fd, code, line_no, n_pass, n_fail, max_err;
+    bit         verbose;
+    logic [7:0] a_v, b_v;
+    logic [8:0] exp_v;
+
+    if (!$value$plusargs("VECTORS=%s", vec_file)) vec_file = "vectors.txt";
+    if (!$value$plusargs("MAXERR=%d", max_err))   max_err  = 0;   // 0: never stop
+    verbose = ($test$plusargs("VERBOSE") != 0);  // nonzero is not always 1
+
+    fd = $fopen(vec_file, "r");
+    if (fd == 0) $fatal(1, "cannot open vector file %s", vec_file);
+
+    while ($fgets(line, fd) != 0) begin
+      line_no++;
+      if (line[0] == "#" || line[0] == "\n") continue;    // comment or blank line
+      code = $sscanf(line, "%h %h %h", a_v, b_v, exp_v);
+      if (code != 3) begin
+        $error("line %0d: unparsable vector (%0d of 3 fields)", line_no, code);
+        continue;
+      end
+      a <= a_v;
+      b <= b_v;
+      #1;
+      if (sum !== exp_v) begin
+        n_fail++;
+        $error("line %0d: %h + %h = %h, expected %h",
+               line_no, a_v, b_v, sum, exp_v);
+        if (max_err > 0 && n_fail >= max_err)
+          $fatal(1, "stopping after %0d failures", n_fail);
+      end
+      else begin
+        n_pass++;
+        if (verbose) $info("line %0d: %h + %h = %h", line_no, a_v, b_v, sum);
+      end
+    end
+    $fclose(fd);
+
+    $display("PASS=%0d FAIL=%0d", n_pass, n_fail);
+    $finish;
+  end
+endmodule
+```
+
+**Why it works:**
+
+- `$fgets` returns 0 only on an error or at the end of the file, so the `while` condition replaces the `$feof` test, and `line_no` counts real file lines, comments included.
+- `$sscanf` sees one line at a time, so a short line returns fewer than 3 fields and is reported, instead of borrowing from the next line.
+- `$fatal` ends the run before the summary, so a run stopped by `+MAXERR` cannot be mistaken for a pass.
+- `verbose` is set through `!= 0`, because `$test$plusargs` promises only a nonzero value.
+
+</details>
+
+### Lab: package the stimulus into a task
+
+The module's lab belongs to the next page. In `basics-1` you turn three copy-pasted stimulus blocks into one `task automatic`, fix a testbench drive race and make the bench check itself. Do it after [Tasks and Functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions).
+
+<LabLink labId="basics-1" />
 
 ## References & Next Topics
-- IEEE 1800-2023 §20 (System Tasks)
-- IEEE 1800-2023 §21 (I/O System Tasks)
-- Next: [Tasks and Functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions)
-- Next: [Interprocess Communication](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/ipc)
+
+**Primary sources**
+
+- IEEE 1800-2023 §20.1 (system tasks and functions), §20.2 (simulation control, Table 20-1), §20.3 (time functions), §20.4.3 (`$timeformat`, Tables 20-2 and 20-3), §20.10 and §20.10.1 (severity tasks, run time and elaboration time), §20.14.1 (`$random`).
+- IEEE 1800-2023 §21.2.1 (`$display` and `$write`), §21.2.1.1 (format specifications), §21.2.1.2 (size of displayed data), §21.2.1.3 (X and Z values), §21.2.1.5 (`%m`), §21.2.1.6 (`%p`), §21.2.2 (`$strobe`), §21.2.3 (`$monitor`).
+- IEEE 1800-2023 §21.3.1 (`$fopen`, `$fclose`), §21.3.2 (file output), §21.3.3 (`$sformatf`), §21.3.4.2 (`$fgets`), §21.3.4.3 (`$fscanf`, `$sscanf`), §21.3.6 (`$fflush`), §21.3.7 (`$ferror`), §21.3.8 (`$feof`).
+- IEEE 1800-2023 §21.4 (`$readmemb`, `$readmemh`), §21.6 (`$test$plusargs`, `$value$plusargs`), §21.7.1.1 to §21.7.1.3 and §21.7.1.5 (VCD tasks), §21.7.2.1 (what VCD records).
+- IEEE 1800-2023 §18.13.1 and §18.13.2 (`$urandom`, `$urandom_range`), §18.14.1 and §18.14.2 (random stability).
+- IEEE 1800-2023 §4.4.2.6 and §4.4.2.9 (Reactive and Postponed regions), §6.21 (scope and lifetime), §9.2.3 (`final`), §9.4.1 (negative delays), §13.3.2 (automatic variables cannot be traced), §13.4.1 (`void'` casts), §16.5.1 (assertion sampling), §22.13 (`` `__FILE__ `` and `` `__LINE__ ``).
+- IEEE 1800.2-2020 §6.5 (the UVM report server); uvm-core 2020.3.1 `uvm_cmdline_processor.svh` (`get_arg_value`).
+
+**Prerequisites:** [F2C: Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) for `initial`, `final`, `#` and `@` timing, and [F2A: Core Data Types](/curriculum/T1_Foundational/F2A_Core_Data_Types/index) for `int`, `logic`, `string` and X values.
+
+**Related**
+
+- [Tasks and Functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions): the next page of this module.
+- [Interprocess Communication](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/ipc): the third page of this module.
+- [F2E: Your First Self-Checking Testbench](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index): assembles these system tasks into a complete bench.
+- [F3A: Simulation Semantics](/curriculum/T1_Foundational/F3A_Simulation_Semantics/index): time units, precision and the rounding behind `$time`.
+- [F3B: Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index): the regions in which `$display`, `$strobe` and `$monitor` print.
+- [F3C: Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index): using `$display` and `$strobe` to find races.
+- [Polymorphism Pitfalls and Type Casting](/curriculum/T2_Intermediate/I-SV-1_OOP/polymorphism-pitfalls): `$cast` for class handles; casting to an enum is in F2A.
+- [I-SV-2A: Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index): class `randomize()`.
+- [I-SV-4A: SVA Fundamentals](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index): assertions, whose failures call `$error` by default.
+- [I-SV-5: Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index): events, mailboxes and semaphores in depth.
+
+<NextLesson />
