@@ -23,9 +23,9 @@ async function seedVisit(page: Page, moduleId: string, lessonSlug: string) {
 }
 
 test.describe('curriculum overview routes', () => {
-  test('"Start here" opens F1A', async ({ page }) => {
+  test('"Begin the Junior route" opens F1A', async ({ page }) => {
     await page.goto('/curriculum');
-    await page.getByRole('region', { name: 'Choose your route' }).getByRole('link', { name: 'Start here', exact: true }).click();
+    await page.getByRole('region', { name: 'Choose your route' }).getByRole('link', { name: 'Begin the Junior route', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`${F1A}$`));
     await expect(page.getByRole('heading', { level: 1 }).first()).toBeVisible();
   });

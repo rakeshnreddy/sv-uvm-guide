@@ -98,7 +98,7 @@ test.describe('home route cards (NB2 request 3)', () => {
   test('send Junior to F1A, Practitioner to the placement quiz and Expert to the expert index', async ({ page }) => {
     await page.goto('/');
     const card = (name: string) => page.getByRole('article', { name, exact: true });
-    await expect(card('Start here').getByRole('link', { name: 'Start here', exact: true })).toHaveAttribute('href', F1A);
+    await expect(card('Start here').getByRole('link', { name: 'Begin the Junior route', exact: true })).toHaveAttribute('href', F1A);
     await expect(card('Working DV engineer').getByRole('link', { name: 'Find your level', exact: true })).toHaveAttribute(
       'href',
       PLACEMENT_QUIZ_HREF,

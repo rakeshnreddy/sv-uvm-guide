@@ -46,7 +46,7 @@ describe('route summaries for the home page', () => {
       expect(route.lessonCount).toBeGreaterThan(0);
     });
     expect(Object.fromEntries(routes.map((route) => [route.id, route.cta]))).toEqual({
-      junior: { label: 'Start here', href: F1A },
+      junior: { label: 'Begin the Junior route', href: F1A },
       practitioner: { label: 'Find your level', href: PLACEMENT_QUIZ_HREF },
       expert: { label: 'Expert layers', href: EXPERT_INDEX_HREF },
     });
@@ -66,7 +66,7 @@ describe('home page route cards (G30-PATH-05; NB2 request 3)', () => {
   it('sends Junior to F1A, Practitioner to the placement quiz and Expert to the expert index', () => {
     render(<LearningPathsSection routes={routes} />);
     const card = (name: string) => screen.getByRole('article', { name });
-    expect(within(card('Start here')).getByRole('link', { name: 'Start here' })).toHaveAttribute('href', F1A);
+    expect(within(card('Start here')).getByRole('link', { name: 'Begin the Junior route' })).toHaveAttribute('href', F1A);
     expect(within(card('Working DV engineer')).getByRole('link', { name: 'Find your level' })).toHaveAttribute(
       'href',
       '/quiz/placement',

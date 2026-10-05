@@ -70,7 +70,7 @@ describe('route chooser', () => {
     expect(screen.getByRole('heading', { level: 3, name: 'Start here' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 3, name: 'Working DV engineer' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { level: 3, name: 'Jump in' })).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Start here' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Begin the Junior route' })).toHaveAttribute(
       'href',
       '/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index',
     );

@@ -167,7 +167,7 @@ export const LEARNING_ROUTES: readonly LearningRoute[] = [
       'New to verification or to SystemVerilog. Digital logic and one programming language help; no HDL or verification background is assumed.',
     layers: 'Core layers first: Quick Take and Build Your Mental Model. Push Further is optional on this route.',
     assumes: {},
-    cta: { label: 'Start here' },
+    cta: { label: 'Begin the Junior route' },
     steps: [
       {
         id: 'why-verify',

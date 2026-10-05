@@ -149,7 +149,7 @@ describe('resolved routes', () => {
 
   it('start Junior at F1A, Practitioner at the placement quiz and Expert at the expert index', () => {
     const cta = Object.fromEntries(routes.map((r) => [r.id, r.cta]));
-    expect(cta.junior).toEqual({ label: 'Start here', href: '/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index' });
+    expect(cta.junior).toEqual({ label: 'Begin the Junior route', href: '/curriculum/T1_Foundational/F1A_The_Cost_of_Bugs/index' });
     expect(cta.practitioner).toEqual({ label: 'Find your level', href: PLACEMENT_QUIZ_HREF });
     expect(cta.expert).toEqual({ label: 'Expert layers', href: EXPERT_INDEX_HREF });
   });

@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import React, { useCallback, useEffect, useId, useRef, useState, type RefObject } from "react";
-import { Bell, Menu, PanelLeft, Search, UserCircle, X } from "lucide-react";
+import { Bell, ChevronDown, Menu, PanelLeft, Search, UserCircle, X } from "lucide-react";
 
 import { useOutlineToggle } from "@/components/layout/Sidebar";
 import SearchCombobox from "@/components/search/SearchCombobox";
@@ -23,8 +23,8 @@ interface NavLink {
   href: string;
   /**
    * In the desktop bar only from xl (1280 px), where it fits beside the search
-   * field. Below that it stays in the phone menu and in the course outline's
-   * quick links.
+   * field. From md to xl the bar's "More" disclosure lists it; on phones it is
+   * in the phone menu, and it is always in the course outline's quick links.
    */
   wideOnly?: boolean;
 }
@@ -39,6 +39,9 @@ const navLinks: readonly NavLink[] = [
   ...(featureFlags.tracking ? [{ label: "Dashboard", href: "/dashboard" }] : []),
   ...(featureFlags.community ? [{ label: "Community", href: "/community" }] : []),
 ];
+
+/** The links the bar shows only from xl; below that, "More" lists them. */
+const wideLinks = navLinks.filter((link) => link.wideOnly);
 
 const MD_MIN_WIDTH = 768;
 
@@ -85,6 +88,65 @@ function useDismiss(open: boolean, containerRef: RefObject<HTMLElement>, buttonR
       document.removeEventListener("pointerdown", onPointerDown);
     };
   }, [open, containerRef, buttonRef, close]);
+}
+
+/**
+ * "More" for the links that join the desktop bar only from xl. Between md and
+ * xl there is no room for them beside the search field, so this disclosure
+ * lists them (WAI-ARIA disclosure navigation, not a menu).
+ */
+function MoreLinks({ pathname, links }: { pathname: string | null; links: readonly NavLink[] }) {
+  const [open, setOpen] = useState(false);
+  const panelId = useId();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(open, containerRef, buttonRef, close);
+  useEffect(() => close(), [pathname, close]);
+  const active = links.some((link) => navLinkCurrent(pathname, link.href));
+
+  return (
+    <div ref={containerRef} className="relative xl:hidden">
+      <button
+        ref={buttonRef}
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        aria-controls={panelId}
+        className={cn(
+          "inline-flex h-10 shrink-0 items-center gap-1 whitespace-nowrap border-b-2 px-3 text-sm transition-colors motion-reduce:transition-none",
+          active ? "border-primary font-semibold text-foreground" : "border-transparent text-muted-foreground hover:text-foreground",
+          focusRing,
+        )}
+      >
+        More
+        <ChevronDown aria-hidden="true" className={cn("h-4 w-4 transition-transform motion-reduce:transition-none", open && "rotate-180")} />
+      </button>
+      <div id={panelId} hidden={!open} className={cn(popoverPanel, "w-52 p-2")}>
+        <ul className="space-y-0.5">
+          {links.map((link) => {
+            const current = navLinkCurrent(pathname, link.href);
+            return (
+              <li key={link.href}>
+                <Link
+                  href={link.href}
+                  aria-current={current}
+                  onClick={close}
+                  className={cn(
+                    "block rounded-lg px-3 py-2 text-sm",
+                    current ? "bg-muted font-semibold text-foreground" : "text-foreground hover:bg-muted",
+                    focusRing,
+                  )}
+                >
+                  {link.label}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </div>
+  );
 }
 
 /** Account menu: shown only when the accountUI flag is on (G30-SIDE-06, G30-SIDE-V07). Opens on click, Enter or Space. */
@@ -382,6 +444,7 @@ const Navbar = () => {
                 </Link>
               );
             })}
+            {wideLinks.length > 0 && <MoreLinks pathname={pathname} links={wideLinks} />}
           </nav>
 
           <div className="hidden items-center gap-2 md:flex">

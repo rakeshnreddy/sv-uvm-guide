@@ -122,6 +122,29 @@ describe('Navbar landmarks and links', () => {
     }
   });
 
+  it('lists Labs and Interview prep under "More" from md to xl, as a disclosure', async () => {
+    const user = userEvent.setup();
+    nav.pathname = '/curriculum';
+    render(<Navbar />);
+    const main = within(screen.getByRole('banner')).getAllByRole('navigation', { name: 'Main' })[0];
+    const more = within(main).getByRole('button', { name: 'More' });
+    expect(more.parentElement).toHaveClass('xl:hidden');
+    expect(more).toHaveAttribute('aria-expanded', 'false');
+    const panel = document.getElementById(more.getAttribute('aria-controls')!)!;
+    expect(panel).not.toBeVisible();
+
+    await user.click(more);
+    expect(more).toHaveAttribute('aria-expanded', 'true');
+    expect(within(panel).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href')])).toEqual([
+      ['Labs', '/practice#labs'],
+      ['Interview prep', '/interview-prep'],
+    ]);
+
+    await user.keyboard('{Escape}');
+    expect(more).toHaveAttribute('aria-expanded', 'false');
+    expect(more).toHaveFocus();
+  });
+
   it('marks pages, never a link to part of a page', () => {
     nav.pathname = '/curriculum';
     const { unmount } = render(<Navbar />);

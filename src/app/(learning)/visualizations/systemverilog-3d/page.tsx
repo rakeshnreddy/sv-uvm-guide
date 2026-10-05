@@ -19,7 +19,7 @@ export default function SystemVerilog3DVisualizationPage() {
     <div className="min-h-screen bg-background">
       {/* Rendered on the server: only the sandbox reads the ?scene= parameter, so only it waits for the client. */}
       <div className="container mx-auto px-4 pt-6">
-        <h1 className="text-2xl font-semibold text-foreground">SystemVerilog array sandbox</h1>
+        <h1 className="text-2xl font-semibold text-foreground">{practice.title}</h1>
         <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
           Run real array, queue and associative-array operations and see the resulting state in 3D or as text.
         </p>
