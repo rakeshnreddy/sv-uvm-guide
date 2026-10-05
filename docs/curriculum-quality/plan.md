@@ -107,20 +107,20 @@ Scores R1–R9 (0–3) and S1/S2/S3/S4 counts come from the analyst. Verifier ch
 | L06 | F3A_Simulation_Semantics | **rewrite** | 1 2 1 1 0 1 1 1 1 | 0/6/11/1 | L | ✓ |
 | L06 | F3B_Scheduling_Regions | **rewrite** | 1 2 1 1 2 1 1 1 1 | 0/4/8/5 | L | ✓ |
 | L06 | F3C_Delta_Cycles_and_Race_Conditions | **major** | 1 2 2 2 3 2 2 2 2 | 0/3/7/7 | M | ✓ |
-| L07 | F4A_Modules_and_Packages | **rewrite** | 1 1 1 1 0 1 1 1 0 | 1/10/14/3 | L | pending |
-| L07 | F4B_Interfaces_and_Modports | **major** | 1 2 1 2 2 1 2 2 1 | 0/5/13/4 | L | pending |
+| L07 | F4A_Modules_and_Packages | **rewrite** | 1 1 1 1 0 1 1 1 0 | 1/10/14/3 | L | ✓ |
+| L07 | F4B_Interfaces_and_Modports | **major** | 1 2 1 2 2 1 2 2 1 | 0/5/13/4 | L | ✓ |
 | L08 | F4C_Clocking_Blocks | **major** | 1 2 1 2 2 1 2 1 1 | 0/9/11/9 | L | ✓ |
-| L09 | I-SV-1_OOP/index.mdx (with deck `I-SV-1_OOP`) | **major** | 1 2 2 2 2 2 2 1 1 | 0/5/19/7 | L | pending |
-| L09 | I-SV-1_OOP/constructors.mdx | **major** | 1 2 0 2 0 1 1 1 1 | 0/3/8/1 | M | pending |
-| L09 | I-SV-1_OOP/copying-and-cloning.mdx | **major** | 1 2 0 2 2 1 2 1 1 | 0/3/7/3 | M | pending |
+| L09 | I-SV-1_OOP/index.mdx (with deck `I-SV-1_OOP`) | **major** | 1 2 2 2 2 2 2 1 1 | 0/5/19/7 | L | ✓ |
+| L09 | I-SV-1_OOP/constructors.mdx | **major** | 1 2 0 2 0 1 1 1 1 | 0/3/8/1 | M | ✓ |
+| L09 | I-SV-1_OOP/copying-and-cloning.mdx | **major** | 1 2 0 2 2 1 2 1 1 | 0/3/7/3 | M | ✓ |
 | L10 | I-SV-1_OOP (scope: polymorphism-pitfalls.mdx, parameterized-classes.mdx) | **major** | 1 2 0 2 1 1 1 1 1 | 0/10/14/7 | L | ✓ |
 | L10 | ↳ polymorphism-pitfalls.mdx | major | 1 2 0 2 2 1 1 1 1 | 0/5/8/4 | M | ✓ |
 | L10 | ↳ parameterized-classes.mdx | major | 1 2 0 2 0 1 1 1 1 | 0/5/6/3 | M | ✓ |
-| L11 | I-SV-2A_Constrained_Randomization_Fundamentals | major | 1 2 1 2 2 1 1 1 1 | 0/9/17/17 | L | pending |
+| L11 | I-SV-2A_Constrained_Randomization_Fundamentals | major | 1 2 1 2 2 1 1 1 1 | 0/9/17/17 | L | ✓ |
 | L12 | I-SV-2B_Advanced_Constrained_Randomization | **rewrite** | 1 2 1 1 1 1 1 1 1 | 0/14/21/8 | XL | pending |
-| L13 | I-SV-3A_Functional_Coverage_Fundamentals | major | 1 2 1 2 2 1 1 1 1 | 0/8/18/17 | L | pending |
-| L14 | I-SV-3B_Advanced_Functional_Coverage | rewrite | 1 2 1 2 1 1 1 1 1 | 1/15/20/14 | XL | pending |
-| L15 | I-SV-4A_SVA_Fundamentals | **major** | 1 2 1 2 2 1 1 1 1 | 0/15/18/11 | L | pending |
+| L13 | I-SV-3A_Functional_Coverage_Fundamentals | major | 1 2 1 2 2 1 1 1 1 | 0/8/18/17 | L | ✓ |
+| L14 | I-SV-3B_Advanced_Functional_Coverage | rewrite | 1 2 1 2 1 1 1 1 1 | 1/15/20/14 | XL | ✓ |
+| L15 | I-SV-4A_SVA_Fundamentals | **major** (index); `immediate-vs-concurrent.mdx` **rewrite** (verifier) | 1 2 1 2 2 1 1 1 1 | 0/15/18/11 | L | ✓ |
 | L16 | I-SV-4B_Advanced_Temporal_Logic | **major** | 1 2 1 2 1 1 1 1 1 | 0/12/14/3 | L | pending |
 | L16 | I-SV-4C_Checkers | **major** | 1 2 1 2 1 0 1 2 1 | 0/9/7/7 | L | pending |
 | L17 | I-SV-5_Synchronization_and_IPC | **rewrite** (verifier: major → rewrite) | 1 2 1 2 2 1 1 1 1 | 0/11/17/8 | L | ✓ |
@@ -128,14 +128,14 @@ Scores R1–R9 (0–3) and S1/S2/S3/S4 counts come from the analyst. Verifier ch
 | L18 | I-SV-7_DPI_and_Foreign_Language_Interfaces | major | 1 2 1 2 2 1 2 2 1 | 0/7/11/11 | L | ✓ |
 | L19 | I-SV-9_Why_UVM | rewrite | 1 1 1 1 1 1 1 1 1 | 1/9/12/4 | L | ✓ |
 | L19 | I-UVM-1A_Components | major | 1 2 2 2 1 1 2 1 1 | 0/6/10/3 | L | ✓ |
-| L20 | I-UVM-1B_The_UVM_Factory | **major** | 1 2 1 2 2 1 2 1 1 | 1/5/10/4 | L | pending |
-| L20 | I-UVM-1C_UVM_Phasing | **major** | 1 2 1 2 2 1 2 1 1 | 0/7/9/2 | L | pending |
-| L21 | I-UVM-2A_Component_Roles | **major** | 1 2 1 2 2 1 2 1 1 | 0/6/11/5 | L | pending |
-| L21 | I-UVM-2B_TLM_Connections | **major** | 1 2 1 2 2 2 2 2 1 | 0/5/15/4 | L | pending |
-| L22 | I-UVM-2C_Configuration_and_Resources | **major** | 1 2 1 2 2 1 2 1 1 | 0/7/12/5 | L | pending |
-| L22 | I-UVM-3A_Fundamentals | **major** | 1 2 1 2 2 1 2 2 1 | 1/6/9/4 | L | pending |
-| L23 | I-UVM-3B_Advanced_Sequencing_and_Layering (L23 scope: `index.mdx`, `sequencer-driver-handshake.mdx`, `sequence-arbitration.mdx`, `sequence-libraries.mdx`) | **major** | 1 2 1 2 2 1 2 1 1 | 1/8/22/8 | L | pending |
-| L24 | I-UVM-3B_Advanced_Sequencing_and_Layering (L24 scope: 5 sub-lessons) | **major** | 1 2 1 2 1 1 2 1 1 | 1/10/20/5 | XL | pending |
+| L20 | I-UVM-1B_The_UVM_Factory | **major** | 1 2 1 2 2 1 2 1 1 | 1/5/10/4 | L | ✓ |
+| L20 | I-UVM-1C_UVM_Phasing | **major** | 1 2 1 2 2 1 2 1 1 | 0/7/9/2 | L | ✓ |
+| L21 | I-UVM-2A_Component_Roles | **major** | 1 2 1 2 2 1 2 1 1 | 0/6/11/5 | L | ✓ |
+| L21 | I-UVM-2B_TLM_Connections | **major** | 1 2 1 2 2 2 2 2 1 | 0/5/15/4 | L | ✓ |
+| L22 | I-UVM-2C_Configuration_and_Resources | **major** | 1 2 1 2 2 1 2 1 1 | 0/7/12/5 | L | ✓ |
+| L22 | I-UVM-3A_Fundamentals | **major** | 1 2 1 2 2 1 2 2 1 | 1/6/9/4 | L | ✓ |
+| L23 | I-UVM-3B_Advanced_Sequencing_and_Layering (L23 scope: `index.mdx`, `sequencer-driver-handshake.mdx`, `sequence-arbitration.mdx`, `sequence-libraries.mdx`) | **major** | 1 2 1 2 2 1 2 1 1 | 1/8/22/8 | L | ✓ |
+| L24 | I-UVM-3B_Advanced_Sequencing_and_Layering (L24 scope: 5 sub-lessons) | **major** | 1 2 1 2 1 1 2 1 1 | 1/10/20/5 | XL | ✓ |
 | L25 | I-UVM-4_UVM_Policy_Classes | **major** | 1 2 2 2 2 1 2 2 1 | 0/5/10/4 | L | pending |
 | L25 | I-UVM-5_UVM_Container_Classes | **major** | 1 2 2 2 2 1 2 2 1 | 0/2/7/8 | M | pending |
 | L25 | I-UVM-6_UVM_Recording_Classes | **major** | 1 2 1 2 2 1 2 1 1 | 0/7/7/4 | L | pending |
@@ -158,10 +158,24 @@ Scores R1–R9 (0–3) and S1/S2/S3/S4 counts come from the analyst. Verifier ch
 | L38 | B-AXI-6_AXI_Verification_Performance | **rewrite** | 1 1 1 1 0 1 1 0 1 | 1/10/11/3 | XL (page L, lab L) | pending |
 | L38 | Lab `axi-deadlock-hunt-lab | **major** (small) |          | 0/1/4/2 | S | pending |
 | L38 | Lab `axi-scoreboard-lab | **major** |          | 1/4/5/1 | L | pending |
+| L39 | B-AMBA-F1_Bridges_and_System_Integration | **major** | 1 2 1 2 1 1 1 1 1 | 0/12/14/7 | L (page L, lab S) | pending |
+| L39 | Lab `ahb-axi-bridge-debug | **minor** | – – – – – – – – – | 0/0/4/5 | S | pending |
+| L40 | B-AMBA-F2_Future_Protocols_ACE_CHI | **rewrite** | 1 1 1 1 0 1 1 0 1 | 1/13/13/7 | L | pending |
+| L40 | B-AMBA-F3_Interview_Debug_Clinic | **major** | 1 2 1 2 0 1 2 1 1 | 0/6/9/5 | L | pending |
+| L41 | E-CUST-1_UVM_Methodology_Customization | **major** | 1 2 1 2 1 1 2 1 1 | 0/8/8/5 | L (page L, lab S) | pending |
+| L41 | E-PERF-1_UVM_Performance | **rewrite** | 1 1 2 1 1 1 1 1 1 | 1/9/9/3 | XL (page L, lab M–L, plus one visualizer if the lead approves it) | pending |
+| L41 | Lab `methodology-custom-phase | **minor** |          | 0/0/3/3 | S | pending |
+| L41 | Lab `uvm-performance-1` (coming soon) | **rewrite** |          | 1/3/4/1 | M | pending |
+| L42 | E-DBG-1_Advanced_UVM_Debug_Methodologies (index + 2 sub-lessons + deck) | **major** | 1 2 1 2 2 1 2 1 1 | 1/6/16/4 | L | pending |
+| L42 | Lab `debug-waveform-trigger` (owned) | **major** | — — — — — — — — — | 0/3/4/1 | M | pending |
+| L43 | E-INT-1_Integrating_UVM_with_Formal_Verification | **major** | 1 1 1 2 1 1 2 1 1 | 1/9/17/6 | L (page L, lab M; about 2 days) | pending |
+| L43 | Lab `formal-harness | **rewrite** | -1 -1 -1 -1 -1 -1 -1 -1 -1 | 1/3/3/1 | M | pending |
+| L44 | E-PSS-1_Portable_Stimulus_Standard | **major** | 1 2 1 2 1 1 1 1 1 | 0/12/12/14 | L (page L, deck S) | pending |
+| L44 | Lab `pss-portable-intent | **minor** |          | 0/0/3/7 | S | pending |
 | G29 | Interview banks (6) | 5 major, 1 rewrite (`uvm.json`) | — | 7 S1 | L | ✓ |
 | G30 | Navigation (8 units) | 6 major, 2 rewrite | — | 0 S1, 23 S2 | L | ✓ |
 
-Pending analysis: L39–L48. Pending verification: L07, L09, L11–L16, L20–L38.
+Pending analysis: L45–L48. Pending verification: L12, L16, L25–L44.
 
 **What the first 30 verdicts show.**
 - R1 (objectives) and R9 (completeness and depth) score 1 on every page: no lesson states measurable objectives, and none has an expert layer.
