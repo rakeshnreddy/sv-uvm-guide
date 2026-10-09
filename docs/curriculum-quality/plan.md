@@ -138,30 +138,30 @@ Scores R1–R9 (0–3) and S1/S2/S3/S4 counts come from the analyst. Verifier ch
 | L24 | I-UVM-3B_Advanced_Sequencing_and_Layering (L24 scope: 5 sub-lessons) | **major** | 1 2 1 2 1 1 2 1 1 | 1/10/20/5 | XL | ✓ |
 | L25 | I-UVM-4_UVM_Policy_Classes | **major** | 1 2 2 2 2 1 2 2 1 | 0/5/10/4 | L | ✓ |
 | L25 | I-UVM-5_UVM_Container_Classes | **major** | 1 2 2 2 2 1 2 2 1 | 0/2/7/8 | M | ✓ |
-| L25 | I-UVM-6_UVM_Recording_Classes | **major** | 1 2 1 2 2 1 2 1 1 | 0/7/7/4 | L | ✓ |
+| L25 | I-UVM-6_UVM_Recording_Classes | **rewrite** (verifier: major → rewrite) | 1 2 1 2 2 1 2 1 1 | 0/7/7/4 | L | ✓ |
 | L26 | A-UVM-4A_RAL_Fundamentals | **major** | 1 2 2 2 1 1 1 2 1 | 0/10/17/6 | L | ✓ |
 | L27 | A-UVM-4B_Advanced_RAL_Techniques (index + 3 sub-lessons) | **major** | 1 2 1 2 1 1 2 1 1 | 1/11/26/7 | XL | ✓ |
 | L28 | A-UVM-5_UVM_Callbacks | **major** | 1 2 1 2 2 1 2 1 1 | 0/5/16/9 | L | ✓ |
 | L29 | A-UVM-6_Scoreboards_and_Reference_Models | **major** | 1 2 1 2 2 1 2 2 1 | 1/9/19/10 | L | ✓ |
 | L30 | A-UVM-7_VIP_Construction | **rewrite** | 1 2 1 2 1 1 1 1 1 | 0/11/20/11 | L | ✓ |
-| L31 | A-UVM-8_Multi_Agent_Topologies | rewrite | 1 2 1 1 1 1 1 1 1 | 0/13/14/2 | L | pending |
-| L32 | B-AMBA-1_Protocol_Families_and_Tradeoffs | major | 1 2 1 2 1 1 1 1 1 | 0/7/13/4 | L | pending |
-| L32 | B-AMBA-2_Protocol_Intuition_and_Memory_Hooks | major | 1 2 1 2 1 1 1 1 1 | 0/8/9/6 | L | pending |
+| L31 | A-UVM-8_Multi_Agent_Topologies | rewrite | 1 2 1 1 1 1 1 1 1 | 0/13/14/2 | L | ✓ |
+| L32 | B-AMBA-1_Protocol_Families_and_Tradeoffs | major | 1 2 1 2 1 1 1 1 1 | 0/7/13/4 | L | ✓ |
+| L32 | B-AMBA-2_Protocol_Intuition_and_Memory_Hooks | major | 1 2 1 2 1 1 1 1 1 | 0/8/9/6 | L | ✓ |
 | L33 | B-AHB-1_AHB_Design_Timing_Mechanics | major | 1 2 1 2 2 2 1 1 1 | 0/9/7/3 | L | ✓ |
 | L33 | B-AHB-2_AHB_Pitfalls_and_Deadlocks | major | 1 2 1 2 1 1 2 1 1 | 0/7/6/6 | L | ✓ |
 | L34 | B-AHB-3_AHB_Verification | **major** | 1 2 1 2 0 1 2 1 1 | 0/6/18/6 | L | ✓ |
-| L35 | B-AXI-1_AXI_Channel_Architecture | **major** | 1 2 1 2 2 1 1 1 1 | 1/4/16/6 | L | pending |
-| L36 | B-AXI-2_AXI_Burst_Math | **major** | 1 2 1 2 2 1 1 1 1 | 1/6/15/4 | L | pending |
-| L37 | B-AXI-3_AXI_Ordering_and_IDs | **major** | 1 2 1 2 2 1 2 1 1 | 0/6/15/3 | L | pending |
-| L37 | B-AXI-4_AXI_Expert_Features_Cache_Atomics | **major** | 1 2 1 2 1 1 2 1 1 | 0/6/17/3 | L | pending |
-| L38 | B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks | **major** | 1 1 1 2 1 1 1 1 1 | 1/3/10/2 | L (page L, lab S) | pending |
-| L38 | B-AXI-6_AXI_Verification_Performance | **rewrite** | 1 1 1 1 0 1 1 0 1 | 1/10/11/3 | XL (page L, lab L) | pending |
-| L38 | Lab `axi-deadlock-hunt-lab | **major** (small) |          | 0/1/4/2 | S | pending |
-| L38 | Lab `axi-scoreboard-lab | **major** |          | 1/4/5/1 | L | pending |
-| L39 | B-AMBA-F1_Bridges_and_System_Integration | **major** | 1 2 1 2 1 1 1 1 1 | 0/12/14/7 | L (page L, lab S) | pending |
-| L39 | Lab `ahb-axi-bridge-debug | **minor** | – – – – – – – – – | 0/0/4/5 | S | pending |
-| L40 | B-AMBA-F2_Future_Protocols_ACE_CHI | **rewrite** | 1 1 1 1 0 1 1 0 1 | 1/13/13/7 | L | pending |
-| L40 | B-AMBA-F3_Interview_Debug_Clinic | **major** | 1 2 1 2 0 1 2 1 1 | 0/6/9/5 | L | pending |
+| L35 | B-AXI-1_AXI_Channel_Architecture | **major** | 1 2 1 2 2 1 1 1 1 | 1/4/16/6 | L | ✓ |
+| L36 | B-AXI-2_AXI_Burst_Math | **major** | 1 2 1 2 2 1 1 1 1 | 1/6/15/4 | L | ✓ |
+| L37 | B-AXI-3_AXI_Ordering_and_IDs | **major** | 1 2 1 2 2 1 2 1 1 | 0/6/15/3 | L | ✓ |
+| L37 | B-AXI-4_AXI_Expert_Features_Cache_Atomics | **major** | 1 2 1 2 1 1 2 1 1 | 0/6/17/3 | L | ✓ |
+| L38 | B-AXI-5_AXI_Pitfalls_Interconnect_Deadlocks | **major** | 1 1 1 2 1 1 1 1 1 | 1/3/10/2 | L (page L, lab S) | ✓ |
+| L38 | B-AXI-6_AXI_Verification_Performance | **rewrite** | 1 1 1 1 0 1 1 0 1 | 1/10/11/3 | XL (page L, lab L) | ✓ |
+| L38 | Lab `axi-deadlock-hunt-lab | **major** (small) |          | 0/1/4/2 | S | ✓ |
+| L38 | Lab `axi-scoreboard-lab | **major** |          | 1/4/5/1 | L | ✓ |
+| L39 | B-AMBA-F1_Bridges_and_System_Integration | **major** | 1 2 1 2 1 1 1 1 1 | 0/12/14/7 | L (page L, lab S) | ✓ |
+| L39 | Lab `ahb-axi-bridge-debug | **minor** | – – – – – – – – – | 0/0/4/5 | S | ✓ |
+| L40 | B-AMBA-F2_Future_Protocols_ACE_CHI | **rewrite** | 1 1 1 1 0 1 1 0 1 | 1/13/13/7 | L | ✓ |
+| L40 | B-AMBA-F3_Interview_Debug_Clinic | **major** | 1 2 1 2 0 1 2 1 1 | 0/6/9/5 | L | ✓ |
 | L41 | E-CUST-1_UVM_Methodology_Customization | **major** | 1 2 1 2 1 1 2 1 1 | 0/8/8/5 | L (page L, lab S) | pending |
 | L41 | E-PERF-1_UVM_Performance | **rewrite** | 1 1 2 1 1 1 1 1 1 | 1/9/9/3 | XL (page L, lab M–L, plus one visualizer if the lead approves it) | pending |
 | L41 | Lab `methodology-custom-phase | **minor** |          | 0/0/3/3 | S | pending |
@@ -172,12 +172,21 @@ Scores R1–R9 (0–3) and S1/S2/S3/S4 counts come from the analyst. Verifier ch
 | L43 | Lab `formal-harness | **rewrite** | -1 -1 -1 -1 -1 -1 -1 -1 -1 | 1/3/3/1 | M | pending |
 | L44 | E-PSS-1_Portable_Stimulus_Standard | **major** | 1 2 1 2 1 1 1 1 1 | 0/12/12/14 | L (page L, deck S) | pending |
 | L44 | Lab `pss-portable-intent | **minor** |          | 0/0/3/7 | S | pending |
+| L45 | I-SV-8_Power_Intent_and_UPF | **rewrite** | 1 1 0 1 0 0 1 0 1 | 0/14/9/4 | L (page L, new deck S, two katas included) | pending |
+| L45 | E-PWR-1_Power_Aware_Verification | **major** | 1 1 1 2 1 1 2 1 1 | 1/12/14/3 | L (page L, deck S) | pending |
+| L45 | Lab `power-aware-retention | **rewrite** (small) | -1 -1 -1 -1 -1 -1 -1 -1 -1 | 0/3/4/3 | M | pending |
 | L46 | E-EMU-1_Emulation_Aware_Verification | **rewrite** | 1 1 1 1 1 1 1 1 1 | 3/13/18/5 | L (page L, deck S) | pending |
 | L46 | E-UVM-ML-1_Multi_Language_Verification | **rewrite** | 1 1 1 1 1 1 1 1 1 | 0/13/13/2 | L (page L, deck S) | pending |
+| L47 | E-SOC-1_SoC-Level_Verification_Strategies (index + `pss.mdx` + deck) | **major** | 1 2 1 1 1 1 2 1 1 | 0/12/15/5 | L (index L, `pss.mdx` S, deck S) | pending |
+| L47 | E-PYUVM-1_Python_Based_Verification (index + deck) | **rewrite** | 1 1 1 2 0 1 1 1 1 | 1/11/9/4 | L (page L including the kata, deck S) | pending |
+| L47 | Lab `soc-vip-reuse | **major** |          | 0/2/7/3 | M | pending |
+| L47 | Lab `soc-strategy-capstone | **minor** |          | 0/0/5/2 | S | pending |
+| L48 | E-RISCV-1_RISC_V_Verification_Methodology | **rewrite** | 1 1 1 1 1 1 1 1 1 | 3/11/8/4 | L (page L, deck S) | pending |
+| L48 | E-AI-1_AI_Driven_Verification | **rewrite** | 1 1 1 2 1 1 1 1 1 | 1/11/10/3 | L (page L, deck S) | pending |
 | G29 | Interview banks (6) | 5 major, 1 rewrite (`uvm.json`) | — | 7 S1 | L | ✓ |
 | G30 | Navigation (8 units) | 6 major, 2 rewrite | — | 0 S1, 23 S2 | L | ✓ |
 
-Pending analysis: L45, L47–L48. Pending verification: L31–L32, L35–L44, L46.
+Pending analysis: none. Pending verification: L41–L48.
 
 **What the first 30 verdicts show.**
 - R1 (objectives) and R9 (completeness and depth) score 1 on every page: no lesson states measurable objectives, and none has an expert layer.
