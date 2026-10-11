@@ -77,8 +77,8 @@ describe("lab progress authority", () => {
 
   it("does not let the manual endpoint complete a graded step", async () => {
     const response = await POST(request("POST", {
-      labVersion: "1",
-      stepId: "1",
+      labVersion: "2",
+      stepId: "write-task",
       stepVersion: "1",
       completion: "self_attested",
     }), { params: { labId: "basics-1" } });

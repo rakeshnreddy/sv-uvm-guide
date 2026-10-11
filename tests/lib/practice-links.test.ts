@@ -223,9 +223,10 @@ describe('lab back link', () => {
   });
 
   it('derives the module from owningModule when the registry has no moduleHref', () => {
+    // basics-1 is launched from the F2D tasks-functions sub-lesson (LAB_LESSON_OVERRIDES), so it returns there.
     const basics = getLabById('basics-1') as LabManifest;
     expect(basics.moduleHref).toBeUndefined();
-    expect(getLabBackLink(basics).href).toBe('/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index');
+    expect(getLabBackLink(basics).href).toBe('/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions');
     expect(getLabBackLink({ id: 'example', owningModule: 'I-UVM-2C' }).href).toBe(
       '/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index',
     );
@@ -341,11 +342,11 @@ describe('reverse lookup for a lesson practice panel', () => {
   });
 
   it('includes a lab only when labs are passed, and nothing for an unknown lesson', () => {
-    expect(getPracticeForLesson('F2D_Reusable_Code_and_Parallelism/index').some((entry) => entry.item.kind === 'lab')).toBe(
+    expect(getPracticeForLesson('F2D_Reusable_Code_and_Parallelism/tasks-functions').some((entry) => entry.item.kind === 'lab')).toBe(
       false,
     );
     expect(
-      getPracticeForLesson('F2D_Reusable_Code_and_Parallelism/index', getAllLabs()).map((entry) => entry.item.id),
+      getPracticeForLesson('F2D_Reusable_Code_and_Parallelism/tasks-functions', getAllLabs()).map((entry) => entry.item.id),
     ).toContain('lab:basics-1');
     expect(getPracticeForLesson('NOPE/index')).toEqual([]);
   });

@@ -265,6 +265,7 @@ export const PRACTICE_PAGES: readonly PracticePageDefinition[] = [
  * in the lab's owningModule.
  */
 export const LAB_LESSON_OVERRIDES: Readonly<Record<string, readonly LessonRef[]>> = {
+  'basics-1': ['F2D_Reusable_Code_and_Parallelism/tasks-functions'],
   'randomization-advanced-1': ['I-SV-2B_Advanced_Constrained_Randomization/solver-debug'],
   'coverage-advanced-1': ['I-SV-3B_Advanced_Functional_Coverage/closure-workflow'],
   'uvm-mini-capstone': [

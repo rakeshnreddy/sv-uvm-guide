@@ -2,21 +2,81 @@
   {
     "id": "f4c-1",
     "question": "How do clocking blocks prevent race conditions between the testbench and the DUT?",
-    "answer": "By a strict timing discipline: inputs are sampled before anything changes in the time slot (#1step → Preponed region), and outputs are driven in the Re-NBA region (§14.16), after the design's NBA updates."
+    "answer": "Inputs are read from a sample taken before the edge (#1step: the Preponed region), and drives land in the Re-NBA region (§14.16), after the design's NBA updates. Neither depends on the order in which the simulator runs the TB and DUT processes (§4.7)."
   },
   {
     "id": "f4c-2",
     "question": "What does 'default input #1step' mean in a clocking block?",
-    "answer": "It instructs the clocking block to sample input signals in the Preponed region of the current time step, ensuring it reads the stable, old value before any Active region updates occur."
+    "answer": "Each input is sampled with the last value it had before the clock edge's time slot began, which is identical to sampling in the Preponed region (§4.4.2.1, §14.4). #1step is also the default input skew when no default item is written (§14.3)."
   },
   {
     "id": "f4c-3",
-    "question": "If a testbench drives a signal using a clocking block output without an explicit skew (default #0), when is the value updated?",
-    "answer": "In the Re-NBA region of the clocking-event time step, whatever kind of code issued the drive (IEEE 1800-2023 §14.16). It lands after the design's NBA updates, so DUT flops have already captured the previous value."
+    "question": "If a testbench drives a clocking block output with the default output skew #0, when does the signal change?",
+    "answer": "For a drive executed at the clocking event: in the Re-NBA region of that time slot, whatever code issued it (§14.16), so DUT flops capture it at the next edge. A drive executed between edges acts as if executed at the next clocking event (§14.16)."
   },
   {
     "id": "f4c-4",
-    "question": "Why is driving a DUT signal with a blocking assignment directly on a clock edge (e.g., @(posedge clk) sig = val) dangerous?",
-    "answer": "It creates a race condition in the Active region. It is unpredictable whether the testbench's blocking assignment or the DUT's clocked logic will execute first, leading to non-deterministic simulation results."
+    "question": "Why is driving a DUT input with a blocking assignment right after @(posedge clk) dangerous?",
+    "answer": "The TB process and the DUT's flop wake in the same Active region, and the simulator may run them in either order (§4.7). If the TB runs first, the flop captures the new value one cycle early."
+  },
+  {
+    "id": "f4c-5",
+    "question": "When does the clocking block event @(cb) fire, and why wait on it rather than @(posedge clk)?",
+    "answer": "The block triggers it in the Observed region, after it has stored this edge's samples (§14.10, §14.13). Module or class code that waits on @(posedge clk) and then reads a clockvar races that update and may get the old or the new sample."
+  },
+  {
+    "id": "f4c-6",
+    "question": "What does an explicit #0 input skew sample?",
+    "answer": "The value at the clocking event itself, in the Observed region, after the design's NBA updates for that edge (§14.4, §14.13). It is the only input skew whose sample is not taken before the edge."
+  },
+  {
+    "id": "f4c-7",
+    "question": "An input has skew #2ns and the clock edge is at 25 ns. The DUT output changes at 24 ns. What does the clockvar return after @(cb) at 25 ns?",
+    "answer": "The old value: a #2ns skew samples in the Postponed region of 23 ns (§14.13). The change at 24 ns is seen one edge later, so the skew acts as a setup window."
+  },
+  {
+    "id": "f4c-8",
+    "question": "What does the cycle delay ##N need, and what do you write in a class instead?",
+    "answer": "A default clocking in effect in the current module, interface, program or checker (or one it is nested in); otherwise it is a compile error (§14.11, §14.12). A class in a package has none, so it uses repeat (N) @(vif.cb)."
+  },
+  {
+    "id": "f4c-9",
+    "question": "What is the difference between cb.d <= ##2 v; and ##2 cb.d <= v;?",
+    "answer": "The first does not block: v is evaluated now and d changes two cycles of cb later, with no default clocking needed (§14.16). The second blocks for two cycles of the default clocking, then drives."
+  },
+  {
+    "id": "f4c-10",
+    "question": "Two synchronous drives to the same clockvar are scheduled to mature in the same Re-NBA region. What is driven?",
+    "answer": "Only the last value, for a variable or a net (§14.16.2). Within one process that is the later statement; across two processes it depends on process order (§4.7), which makes it a testbench race."
+  },
+  {
+    "id": "f4c-11",
+    "question": "Why is an asynchronous reset written directly instead of through a clocking block?",
+    "answer": "A drive executed between edges acts as if executed at the next clocking event (§14.16), so a reset through cb would wait for the next clock edge. Write rst_n directly; sampling it through a monitor block such as mon_cb is fine."
+  },
+  {
+    "id": "f4c-12",
+    "question": "Are program blocks deprecated, and how is their code scheduled?",
+    "answer": "No: Annex C (C.2, C.4) does not list them. Program code runs in the reactive region set (§24.3.1), a program may not contain always procedures or module instances (§24.3), and when its initial procedures end it ends their descendant threads; an implicit $finish follows once all program threads have ended (§24.3)."
+  },
+  {
+    "id": "f4c-13",
+    "question": "Where may a clocking block be declared, and how does class code reach one?",
+    "answer": "Only in a module, interface, checker or program, never in a package, class, task or function, and never nested in another clocking block (§14.7). A class reaches it through a virtual interface handle, as vif.cb (§25.9.1)."
+  },
+  {
+    "id": "f4c-14",
+    "question": "Which clockvar accesses are illegal?",
+    "answer": "Writing an input clockvar or reading an output clockvar (§14.3), and writing a clockvar with anything but a synchronous drive, such as assign, force or cb.d <= #4 v (§14.16)."
+  },
+  {
+    "id": "f4c-15",
+    "question": "What does reading an inout clockvar return right after you drive it in the same cycle?",
+    "answer": "Its input sample from the most recent clocking event, not the value just driven: a drive never changes the input side (§14.16.1)."
+  },
+  {
+    "id": "f4c-16",
+    "question": "What is a global clocking declaration for?",
+    "answer": "It names the clocking event that corresponds to the primary system clock used in formal verification; $global_clock refers to it, and a module, interface, checker or program contains at most one (§14.14)."
   }
 ]

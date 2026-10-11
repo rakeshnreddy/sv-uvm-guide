@@ -1,22 +1,77 @@
 [
   {
     "id": "f3a-1",
-    "question": "What does event-driven simulation mean?",
-    "answer": "It means the simulator only evaluates code when an event (typically a change in a signal's value) triggers it. Between events, the simulator does nothing, and simulation time does not advance."
+    "question": "What does it mean that SystemVerilog simulation is event-driven?",
+    "answer": "A process runs only when an event wakes it: an update event (a value change) or an evaluation event (running a process sensitive to that change). The simulator finishes every event of the current time slot, then jumps to the next time that has events (IEEE 1800-2023 §4.3, §4.4)."
   },
   {
     "id": "f3a-2",
-    "question": "Explain the difference between Simulation Time and Delta Time.",
-    "answer": "Simulation Time is the global 'wall clock' of the simulator, advanced only by explicit delays (e.g., #10). Delta Time refers to zero-delay iterations within a single simulation time step, used to order immediate events without advancing the global clock."
+    "question": "What is the difference between simulation time and a delta cycle?",
+    "answer": "Simulation time moves only when the simulator jumps to the next non-empty time slot. A delta cycle is one more pass of the scheduler inside the same time slot (an iteration of the §4.5 loop) and takes zero simulated time. IEEE 1800-2023 never uses the word 'delta'."
   },
   {
     "id": "f3a-3",
-    "question": "In the directive `timescale 1ns/10ps, what do the two values represent?",
-    "answer": "The first value (1ns) is the time unit, meaning a delay of #1 represents 1ns. The second value (10ps) is the time precision, representing the smallest time step the simulator will track. Any delay smaller than 10ps will be rounded."
+    "question": "In `timescale 1ns/10ps, what do the two values mean, and how long is #1.234?",
+    "answer": "1ns is the time unit, so #1 waits 1 ns. 10ps is the precision: every delay in the element is rounded to a multiple of 10 ps (§3.14.1). So #1.234 waits 1.23 ns."
   },
   {
     "id": "f3a-4",
-    "question": "What happens if you use a #0 delay?",
-    "answer": "A #0 delay forces the process to yield and wait for the next inactive region/delta cycle before continuing. It is a legacy hack for fixing race conditions and should be avoided in modern SystemVerilog in favor of non-blocking assignments or clocking blocks."
+    "question": "What does a #0 delay do?",
+    "answer": "It suspends the process and resumes it later in the same time slot: in the Inactive region, before the pending nonblocking updates, or in Re-Inactive when program code runs it (§4.4.2.3, §4.4.2.7). It never advances time. Using `#0` to order two processes only moves the race (F3C)."
+  },
+  {
+    "id": "f3a-5",
+    "question": "What is the difference between an update event and an evaluation event?",
+    "answer": "An update event is a change in the value of a net or variable. An evaluation event is the execution of a process that is sensitive to that update. One update can schedule many evaluations, in an order the standard leaves arbitrary (§4.3)."
+  },
+  {
+    "id": "f3a-6",
+    "question": "How does event-driven simulation differ from cycle-based evaluation?",
+    "answer": "Event-driven simulation, which IEEE 1800 defines, handles each value change at any time, so delays, glitches and order inside a time slot are modelled. Cycle-based evaluation (formal tools, some fast engines) evaluates once per clock cycle and ignores what happens between edges (§16.2)."
+  },
+  {
+    "id": "f3a-7",
+    "question": "ready is already 1. Which passes at once: @(posedge ready) or wait (ready)?",
+    "answer": "`wait (ready)`, because it checks a level (§9.4.3). An event control such as `@(posedge ready)` waits for the next change and never sees an edge that happened before it started waiting (§9.4.2)."
+  },
+  {
+    "id": "f3a-8",
+    "question": "A module declares no timeunit. Which time unit does it get?",
+    "answer": "The first rule that applies: inherit from an enclosing module or interface; else the last `timescale earlier in the compilation unit; else a compilation-unit `timeunit`; else the tool default (§3.14.2.3). Mixing elements with and without a unit is an error."
+  },
+  {
+    "id": "f3a-9",
+    "question": "What is the global time precision, and how do you see it?",
+    "answer": "It is the finest precision anywhere in the design, counting every `timeprecision`, every `timeunit` precision and every `timescale directive (§3.14.3). `1step` equals it, and `$printtimescale($root)` prints it as both unit and precision (§20.4.2)."
+  },
+  {
+    "id": "f3a-10",
+    "question": "How do $time, $stime and $realtime differ?",
+    "answer": "All three are scaled to the time unit of the module that calls them (§20.3). `$time` is a rounded 64-bit integer, `$stime` a 32-bit unsigned integer (the low 32 bits on overflow), and `$realtime` a real that keeps the fraction. None of them counts in precision units."
+  },
+  {
+    "id": "f3a-11",
+    "question": "What controls %t output, and what are the defaults?",
+    "answer": "`$timeformat(units, decimals, suffix, min_width)` sets it for every `%t` in the design until the next call (§20.4.3). `%t` converts its argument from the caller's unit. Defaults: the smallest `timescale precision in the source, 0 decimals, no suffix, width 20."
+  },
+  {
+    "id": "f3a-12",
+    "question": "A package with timeunit 1ps has task wait_t(time t); #t; and a 1 ns bench calls wait_t(5ns). Why does it wait only 5 ps?",
+    "answer": "A time literal becomes a plain number in the scope where it is written (§5.8): 5ns is 5 in the bench. The task then waits #5 in its own 1 ps unit. Fix it in the callee: `#(delay_ns * 1ns)`."
+  },
+  {
+    "id": "f3a-13",
+    "question": "Which execution orders does IEEE 1800-2023 leave open?",
+    "answer": "Processes woken together run in any order (§4.3, §4.7); a running process may be suspended part-way while others run (§4.7); and `initial` and `always` procedures start in no set order (§9.2). Statements inside one `begin…end` still run in source order (§4.6)."
+  },
+  {
+    "id": "f3a-14",
+    "question": "When does a simulation end, and why does a bench with a free-running clock need $finish?",
+    "answer": "It ends when no event is scheduled at any time (§9.6.1), or when `$finish` is called (§20.2). A clock generator always books its next toggle, so the run never runs out of events and the test must call `$finish`."
+  },
+  {
+    "id": "f3a-15",
+    "question": "Why does logic a = 0; remove a time-0 race that a = 0; in an initial block creates?",
+    "answer": "A declaration initializer of a static variable runs before any `initial` or `always` procedure starts (§6.8), so no process can miss the change. An assignment in an `initial` block at t = 0 may run before another process starts waiting for it (§9.2)."
   }
 ]

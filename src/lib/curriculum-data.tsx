@@ -157,17 +157,17 @@ export const curriculumData: Module[] = [
           {
             "title": "F2D: System Tasks and File I/O",
             "slug": "index",
-            "description": "Interact with the simulator kernel: print messages, cast types, generate random numbers, and read/write files."
+            "description": "Print, report, time, end and feed a simulation with system tasks, and predict what each one prints and when."
           },
           {
             "title": "Tasks and Functions",
             "slug": "tasks-functions",
-            "description": "Encapsulate logic, understand variable lifetimes, and safely pass arguments."
+            "description": "Write tasks and functions with the right lifetime and argument passing, and debug a static subroutine that concurrent or recursive calls corrupt."
           },
           {
             "title": "F2D: Interprocess Communication",
             "slug": "ipc",
-            "description": "Coordinate parallel threads safely using Semaphores and Mailboxes."
+            "description": "Coordinate concurrent testbench processes with events, semaphores and mailboxes, and spot the missed trigger, the leaked key and the deadlock before they hang a run."
           }
         ],
         "track": "core",
@@ -204,7 +204,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F3A: Simulation Semantics",
             "slug": "index",
-            "description": "Understand the SystemVerilog event-driven simulation model, time steps, and the distinction between simulation time and delta time."
+            "description": "Predict when a SystemVerilog simulator runs each process and advances time, calculate the real delay behind #d under any time unit and precision, and predict what $time, $realtime and %t print in modules with different time units."
           }
         ],
         "track": "core",
@@ -223,7 +223,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F3B: Scheduling Regions",
             "slug": "index",
-            "description": "Master the SystemVerilog scheduler regions and how statements are ordered for execution to eliminate race conditions."
+            "description": "Predict the region where each SystemVerilog construct runs inside one time slot, and use that to explain sampling, drive timing and printed output."
           }
         ],
         "track": "core",
@@ -241,7 +241,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F3C: Delta Cycles and Race Conditions",
             "slug": "index",
-            "description": "Explore delta cycles, race conditions, and the critical differences between blocking and non-blocking assignments."
+            "description": "Predict, reproduce and fix SystemVerilog race conditions by tracing delta cycles and the ordering freedom IEEE 1800-2023 allows."
           }
         ],
         "track": "core",
@@ -296,7 +296,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F4C: Synchronizing with Clocking and Program Blocks",
             "slug": "index",
-            "description": "Understand how clocking blocks help create race-free testbenches by defining clear timing for signal interaction."
+            "description": "Drive and sample a DUT race-free through clocking blocks, predict when each sample, drive and clocking block event happens, and decide when a program block is worth using."
           }
         ],
         "track": "core",

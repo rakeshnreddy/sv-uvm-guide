@@ -1,147 +1,985 @@
 ---
 title: "F3A: Simulation Semantics"
-description: "Understand the SystemVerilog event-driven simulation model, time steps, and the distinction between simulation time and delta time."
+description: "Predict when a SystemVerilog simulator runs each process and advances time, calculate the real delay behind #d under any time unit and precision, and predict what $time, $realtime and %t print in modules with different time units."
 flashcards: "F3A_Simulation_Semantics"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
-import { InteractiveCode, Quiz, Card, CardContent, CardHeader, CardTitle } from '@/components/ui';
-
 ## Quick Take
-- **What it is:** SystemVerilog simulation is event-driven. Time only advances when events occur.
-- **Why it matters:** Understanding simulation semantics is crucial for avoiding race conditions and predicting hardware behavior accurately. If you don't understand how time flows, your testbenches will be fragile and simulator-dependent.
-- **The Analogy:** Think of simulation time as a clock on the wall, while delta time is a stopwatch used to order immediate events before the wall clock ticks forward.
+
+- **What it is:** A SystemVerilog simulator is a *discrete-event* engine (IEEE 1800-2023 §4.3). Nothing runs on a tick of its own. A **process** (an `initial` or `always` block, a continuous `assign`, a gate) runs only when an **event** wakes it, and simulation time jumps straight to the next moment that has events once the current moment has none left (§4.4). Every `#d` is a plain number that its module's **time unit** and **time precision** turn into a real delay (§3.14).
+- **Why it matters:** The first bugs a new testbench (TB) meets live here: a delay 1000× too long or too short, a log time stamp that disagrees with the waveform, a compile error about missing time units, two prints "at the same time" that show different values, and a first log line that one simulator prints and another does not. Knowing what the standard fixes, and what it leaves to each simulator, is what makes a bench give the same answer on every tool.
+- **The Analogy:** A to-do list sorted by due time. You finish everything due *now*, including new items those tasks add for *now*, then jump straight to the next due time without ticking through the empty minutes in between. *Where it breaks:* "now" is split into ordered stages (the regions of [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)), and the list never says which of two items due at the same stage comes first. [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) shows when that order changes the result.
+
+**You will be able to:**
+1. Explain how an event-driven simulator advances time: which update and evaluation events wake a process, why every event of the current time slot runs before time moves, and which execution orders IEEE 1800-2023 leaves open.
+2. Calculate the real delay behind `#d` under `` `timescale `` or `timeunit`/`timeprecision`, including rounding to the precision and the rules that decide which unit applies.
+3. Predict what `$time`, `$stime`, `$realtime` and `%t` report for fractional delays in modules with different time units, and set `$timeformat` so logs are unambiguous.
+4. Predict which statements execute at the same simulation time, and tell zero-time iterations (delta cycles) apart from time advancing.
+5. Debug time-unit bugs: a missing or leaked `` `timescale ``, a mixed-specification error, and a `time` value passed between scopes with different units.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
-### 1. Event-Driven Simulation
-The simulator only evaluates code when an event triggers it. An event is typically a change in a signal's value. Between events, the simulator does absolutely nothing.
+The core path runs from processes and events, through the scheduler loop and one traced time slot, to the orders the standard leaves open. Then come time units and reading the time. Debugging and real-testbench practice follow, and the expert layer is in Push Further.
+
+### Processes, events and time slots
+
+A design is a set of small programs running side by side. IEEE 1800-2023 calls each one a **process** (§4.3): every `initial`, `always`, `always_comb`, `always_ff` and `always_latch` procedure, every continuous `assign` and every gate primitive. At any moment a process is either running or suspended, waiting for something.
+
+Two kinds of **event** move the simulation forward (§4.3):
+
+- An **update event** is a change in the value of a net or variable.
+- An **evaluation event** is one execution of a process, for example because an update it is sensitive to has happened or because its delay has run out. When an update executes, every process sensitive to it is considered for evaluation, in an arbitrary order.
+
+All the events scheduled for one simulation time form a **time slot** (§4.4). The simulator executes and removes every event of the current time slot before it moves on to the next non-empty time slot, in time order. It never goes backwards in time (§4.4).
+
+**What wakes a process.** A suspended process waits on a timing control, and each kind wakes on something different:
+
+| A process waiting on … | wakes when … | Example | Clause |
+|---|---|---|---|
+| an event control `@(expr)` | the value of `expr` changes; with `posedge` or `negedge`, only on that edge | `@(posedge clk)` | §9.4.2 |
+| a level wait `wait (expr)` | `expr` is true, at once if it already is | `wait (ready)` | §9.4.3 |
+| a delay `#d` | simulation time reaches now + d | `#10` | §9.4.1 |
+| its own inputs (implicit) | any value it reads changes | `assign y = a & b;` or `always_comb` | §4.9.1, §9.2.2.2 |
+
+Only a real change counts. Writing a variable's current value again wakes no `@(a)`, and `@(a & b)` wakes only when the result of `a & b` changes (§9.4.2).
+
+**The two mistakes everyone makes:**
+
+1. *"Time advances after every statement."* It does not. A process runs in zero simulated time until it reaches a timing control or ends. Only a delay puts work into a *later* time slot.
+2. *"`@(expr)` notices a change that already happened."* It does not. An event control sees only changes that occur while the process waits. Use `wait (expr)` for a level that may already be true.
+
+**Predict, then step.** You met the simulator below in F2C. This time, watch the time stamps rather than the code. It runs a small program on a tested model of the standard: a clock that toggles every 5 ns, a counter on the rising edge, a test that prints, waits 22 ns, prints again and calls `$finish`, and a `final` report procedure. Before you step, write down every simulation time at which *any* process does work. The simulator first asks its own question from F2C, what the `final` procedure prints and when; answer it to unlock the trace. (A `final` procedure runs once, when the simulation ends; F3B places it.) Then step through and read the time stamp on each step. The model's narration says "time step"; the standard uses both terms, and this course says time slot.
+
+<ProceduralBlocksSimulator scenario="procedures" />
+
+**What you just saw:**
+
+- The simulator visited t = 0, 5, 10, 15, 20 and 22 ns, and nothing else. Each visit is one time slot. There is no work at 1 ns or 7 ns because no event was scheduled there.
+- At 10 and 20 ns only the clock ran. Its falling edge is an update event, but the counter waits for `posedge clk`, so it stayed asleep.
+- At t = 0 the narration showed a **Scheduler choice**: three processes were ready together, and the standard leaves their order open (see *The order the standard leaves open* below).
+- The run ended at t = 22 ns, when the test called `$finish`. The clock had already booked its next toggle for 25 ns, but nothing runs after the end. The `final` report printed `final: count = 2` at that moment, because only the edges at 5 and 15 ns were rising (§9.2.3).
+
+Now switch the program to **@(posedge) vs wait()**. Its own question asks which waiter gets through. Add one of your own before you step: at what time does the run end, and why then?
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Debrief: what the second program showed</summary>
+
+Both waiters begin waiting at t = 20 ns, after `ready` rose at 10 ns. The `wait (ready)` passes at once, because it checks a level; the `@(posedge ready)` waiter would need a new edge and never wakes. The run ends at t = 20 ns with that waiter still blocked: no event is scheduled at any time, so there is nothing left to simulate (§9.6.1). A blocked process does not keep a simulation alive; only scheduled events do.
+
+</details>
+
+### The scheduler loop: how time advances
+
+IEEE 1800-2023 defines simulation through a reference algorithm (§4.5). A simulator may work differently inside, as long as everything you can observe is consistent with that algorithm (§4.3). Fold the regions of a time slot into one box ([F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) opens it) and the algorithm is a loop:
+
+<figure className="my-6">
+<svg viewBox="0 0 360 360" role="img" aria-labelledby="f3a-loop-title f3a-loop-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="f3a-loop-title">The scheduler loop, simplified from IEEE 1800-2023 §4.5</title>
+  <desc id="f3a-loop-desc">Start at time 0 by initializing nets and variables and scheduling every process to start. If no event is scheduled at any time, the run ends. Otherwise jump to the earliest time that has events: this is the only step where time advances. Take any one event of that time slot. An update event changes a value and wakes the processes waiting on it. An evaluation event runs a process until it waits, and it may add events. If the time slot still has events, take the next one at the same time. If it is empty, go back and look for the next time that has events.</desc>
+  <defs>
+    <marker id="f3a-loop-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 Z" fill="currentColor" />
+    </marker>
+  </defs>
+  <rect x="32" y="8" width="234" height="38" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.55" />
+  <text x="149" y="23" fontSize="10.5" textAnchor="middle" fill="currentColor">t = 0: initialize nets and variables;</text>
+  <text x="149" y="37" fontSize="10.5" textAnchor="middle" fill="currentColor">schedule every process to start</text>
+  <line x1="149" y1="46" x2="149" y2="62" stroke="currentColor" strokeOpacity="0.7" markerEnd="url(#f3a-loop-arrow)" />
+  <rect x="32" y="64" width="234" height="38" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.55" />
+  <text x="149" y="79" fontSize="10.5" textAnchor="middle" fill="currentColor">Is any event scheduled,</text>
+  <text x="149" y="93" fontSize="10.5" textAnchor="middle" fill="currentColor">now or at a later time?</text>
+  <line x1="266" y1="83" x2="280" y2="83" stroke="currentColor" strokeOpacity="0.7" markerEnd="url(#f3a-loop-arrow)" />
+  <text x="273" y="77" fontSize="10" textAnchor="middle" fill="currentColor">no</text>
+  <rect x="282" y="64" width="72" height="38" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.55" strokeDasharray="4 3" />
+  <text x="318" y="79" fontSize="10.5" textAnchor="middle" fill="currentColor">Run ends</text>
+  <text x="318" y="93" fontSize="10" textAnchor="middle" fill="currentColor">(§9.6.1)</text>
+  <line x1="149" y1="102" x2="149" y2="118" stroke="currentColor" strokeOpacity="0.7" markerEnd="url(#f3a-loop-arrow)" />
+  <text x="155" y="114" fontSize="10" fill="currentColor">yes</text>
+  <rect x="32" y="120" width="234" height="38" rx="8" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" strokeWidth="2" />
+  <text x="149" y="135" fontSize="10.5" textAnchor="middle" fill="currentColor">Jump to the earliest time</text>
+  <text x="149" y="149" fontSize="10.5" textAnchor="middle" fill="currentColor">that has events</text>
+  <text x="272" y="135" fontSize="10" fontWeight="600" fill="currentColor">◀ time moves</text>
+  <text x="284" y="148" fontSize="10" fontWeight="600" fill="currentColor">only here</text>
+  <line x1="149" y1="158" x2="149" y2="174" stroke="currentColor" strokeOpacity="0.7" markerEnd="url(#f3a-loop-arrow)" />
+  <rect x="32" y="176" width="234" height="38" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.55" />
+  <text x="149" y="191" fontSize="10.5" textAnchor="middle" fill="currentColor">Take any one event</text>
+  <text x="149" y="205" fontSize="10.5" textAnchor="middle" fill="currentColor">from this time slot</text>
+  <line x1="89" y1="214" x2="89" y2="230" stroke="currentColor" strokeOpacity="0.7" markerEnd="url(#f3a-loop-arrow)" />
+  <line x1="209" y1="214" x2="209" y2="230" stroke="currentColor" strokeOpacity="0.7" markerEnd="url(#f3a-loop-arrow)" />
+  <rect x="32" y="232" width="114" height="60" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.55" />
+  <text x="89" y="247" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">◆ Update event</text>
+  <text x="89" y="260" fontSize="10" textAnchor="middle" fill="currentColor">change the value;</text>
+  <text x="89" y="273" fontSize="10" textAnchor="middle" fill="currentColor">wake processes</text>
+  <text x="89" y="286" fontSize="10" textAnchor="middle" fill="currentColor">waiting on it</text>
+  <rect x="152" y="232" width="114" height="60" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.55" />
+  <text x="209" y="247" fontSize="10" fontWeight="700" textAnchor="middle" fill="currentColor">▶ Evaluation event</text>
+  <text x="209" y="260" fontSize="10" textAnchor="middle" fill="currentColor">run the process</text>
+  <text x="209" y="273" fontSize="10" textAnchor="middle" fill="currentColor">until it waits;</text>
+  <text x="209" y="286" fontSize="10" textAnchor="middle" fill="currentColor">it may add events</text>
+  <line x1="89" y1="292" x2="89" y2="308" stroke="currentColor" strokeOpacity="0.7" markerEnd="url(#f3a-loop-arrow)" />
+  <line x1="209" y1="292" x2="209" y2="308" stroke="currentColor" strokeOpacity="0.7" markerEnd="url(#f3a-loop-arrow)" />
+  <rect x="32" y="310" width="234" height="38" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.55" />
+  <text x="149" y="325" fontSize="10.5" textAnchor="middle" fill="currentColor">More events in</text>
+  <text x="149" y="339" fontSize="10.5" textAnchor="middle" fill="currentColor">this time slot?</text>
+  <polyline points="266,329 280,329 280,195 268,195" fill="none" stroke="currentColor" strokeOpacity="0.7" markerEnd="url(#f3a-loop-arrow)" />
+  <text x="285" y="258" fontSize="10" fill="currentColor">yes:</text>
+  <text x="285" y="271" fontSize="10" fill="currentColor">same t</text>
+  <polyline points="32,329 16,329 16,83 30,83" fill="none" stroke="currentColor" strokeOpacity="0.7" markerEnd="url(#f3a-loop-arrow)" />
+  <text x="11" y="206" fontSize="10" textAnchor="middle" fill="currentColor" transform="rotate(-90 11 206)">no: the slot is empty</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">The scheduler loop, simplified from IEEE 1800-2023 §4.5. Each arrow leads to the next step. Time advances only at the box marked ◀. Everything inside the inner loop (yes: same t) happens at one simulation time.</figcaption>
+</figure>
+
+The same loop as text, simplified from §4.5:
+
+```text
+T = 0; initialize nets and variables; schedule time-0 events
+while (some time slot is non-empty) {
+  move to the first non-empty time slot and set T   // the only place time advances
+  while (this time slot has events) {
+    E = any event of the slot                         // "any": the order is not fixed
+    if (E is an update event)
+      change the value, then schedule an evaluation event
+      for every process sensitive to it               // same time slot
+    else
+      run the process until it suspends or ends       // it may schedule new events,
+  }                                                   // now or at a later time
+}
+```
+
+In the real algorithm a time slot is emptied region by region, so "any event" means any event of the current region (F3B).
+
+Read four rules off the loop:
+
+1. **Time moves in one place only.** When the current time slot is empty, the simulator jumps to the next non-empty one. There is no fixed step size and no tick in between.
+2. **Work inside a slot can create more work in the same slot.** A write wakes a reader, which may write again. Every extra pass takes zero simulated time.
+3. **Only a delay reaches a later slot.** `#d`, an intra-assignment delay such as `q <= #2 d;`, a gate or net delay, and a clocking-block output skew ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)) schedule events at a future time. `@`, `wait`, `->` and a `<=` without a delay do not.
+4. **The run ends when no event is left at any time** (§9.6.1), or earlier at `$finish` (§20.2). A free-running clock (`always #5 clk = ~clk;`) always has a next event, so a bench with one must call `$finish`. A loop with no timing control at all, such as `always areg = ~areg;`, never empties its time slot: time stops and the simulator hangs. §9.2.2.1 calls this a zero-delay infinite loop. A bench built with program blocks also ends when all of them have finished (§9.6.1); F3B shows why that matters.
+
+#### Event-driven versus cycle-based simulation
+
+IEEE 1800-2023 defines simulation as a discrete-event model (§4.3). Cycle-based evaluation is a technique some tools use instead: evaluate the design once per clock cycle and ignore what happens between edges. The standard mentions it in its assertion overview: many tools, such as formal verification tools, use cycle-based semantics and abstract away any timing between clock edges, and in some scenarios that gives different behaviour from SystemVerilog's event-based evaluation (§16.2). It also calls the clocking block a key element of a cycle-based *methodology* for writing testbenches (§14.2), which is a way of writing code, not a different simulator.
+
+| | Event-driven (what IEEE 1800 defines) | Cycle-based (a tool technique) |
+|---|---|---|
+| Unit of work | one event: a value change or a process evaluation | one clock cycle: evaluate all logic once |
+| How time moves | jumps to the next time that has events; any delay value works | one clock cycle at a time |
+| Delays, glitches, order inside a time slot | modelled | abstracted away |
+| Where you meet it | every SystemVerilog simulator | formal tools, and some fast simulation and emulation engines (tool-dependent) |
+
+Your bench runs on an event-driven simulator, where order inside a time slot and fractional delays are real. Write synchronous code whose results are decided at clock edges, the race-free style of F3C and F4C: the intra-cycle details it ignores are exactly what a cycle-based engine discards.
+
+### One time slot, traced event by event
+
+Here is one rising clock edge, followed event by event. The trace below the code follows the standard's rules, and where the standard allows a choice, the text says so.
 
 ```systemverilog
-module event_driven_demo;
-  logic a, b;
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
 
-  // This block only runs when 'a' changes.
-  always @(a) begin
-    b = ~a;
-    $display("a changed to %b at time %0t", a, $time);
-  end
+  logic clk = 0;           // initializers run before any process starts (§6.8)
+  logic d = 1, q = 0;
+  logic q_n;
+
+  always #5 clk = ~clk;              // clock process: wakes every 5 ns
+
+  always_ff @(posedge clk) q <= d;   // reads d now; q changes later in this time slot
+  assign q_n = ~q;                   // re-evaluated whenever q changes
 
   initial begin
-    a = 0;
+    @(posedge clk);                                    // wakes at t = 5
+    $display("%0d display q=%0d q_n=%0d", $time, q, q_n);
+    $strobe ("%0d strobe  q=%0d q_n=%0d", $time, q, q_n);
+    #1 $finish;                       // the clock never stops by itself
+  end
+endmodule
+```
+
+**Expected output** (traced by hand from IEEE 1800-2023; not captured from a simulator run):
+
+```text
+5 display q=0 q_n=1
+5 strobe  q=1 q_n=0
+```
+
+Your simulator then prints its own `$finish` message at t = 6; its format is tool-dependent.
+
+**The time slot at t = 5 ns, event by event.** ◆ marks an update event and ▶ an evaluation event.
+
+| Step | Event | What happens | `clk` | `q` | `q_n` | Printed |
+|---|---|---|---|---|---|---|
+| 0 | (entering the slot) | values left from t = 0 | 0 | 0 | 1 | |
+| 1 | ▶ clock process | its `#5` from t = 0 is over: it runs `clk = ~clk` | 1 | 0 | 1 | |
+| 2 | ◆ `clk` 0 → 1 | a rising edge: the `always_ff` and the `initial`, both waiting on `@(posedge clk)`, are scheduled. The clock process goes on to its next `#5`, which books it for t = 10 | 1 | 0 | 1 | |
+| 3 | ▶ `always_ff` | reads `d` = 1 and schedules a nonblocking update of `q`; `q` does not change yet | 1 | 0 | 1 | |
+| 4 | ▶ `initial` | `$display` prints; `$strobe` books a print for the end of the slot; `#1` books the process for t = 6 | 1 | 0 | 1 | `5 display q=0 q_n=1` |
+| 5 | ◆ `q` 0 → 1 | the nonblocking update, applied only after steps 3 and 4 have run; it schedules the continuous assignment | 1 | 1 | 1 | |
+| 6 | ▶ `assign q_n` | computes `~q` = 0 | 1 | 1 | 1 | |
+| 7 | ◆ `q_n` 1 → 0 | no process waits on `q_n`; only the booked `$strobe` print is left | 1 | 1 | 0 | |
+| 8 | (end of the slot) | the booked `$strobe` prints, then time jumps to t = 6 | 1 | 1 | 0 | `5 strobe  q=1 q_n=0` |
+
+Steps 3 and 4 may run in either order (§4.7). The output does not change, because the `always_ff` write waits until step 5. [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) names the regions behind steps 5 and 8 (NBA for the nonblocking update, Postponed for `$strobe`).
+
+**Zero-time iterations have a name.** Steps 5 to 7 are a second pass through the same time slot, triggered by the nonblocking update. Such passes exist because zero-delay logic still has cause and effect: `q` must change before `q_n` can follow it, and the simulator orders that chain with extra passes instead of inventing a delay. Engineers call each such pass a **delta cycle**. IEEE 1800-2023 never uses the word; it describes iterations of the §4.5 loop. Two facts to keep: a delta cycle takes no simulated time (`$time` is 5 in every step above), and the number of passes a slot needs never shows up in a time stamp. [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) traces delta cycles region by region and shows how they create races.
+
+**A preview of `#0`.** `#0` suspends a process and resumes it later in the *same* time slot, still before the nonblocking update of step 5 (§4.4.2.3, §4.4.2.4). It never advances time. Code that uses `#0` to wait for another process is betting on an order the standard does not promise. F3B places `#0` in its region, and F3C shows why it is not a fix.
+
+**Pitfalls:**
+
+- *"A nonblocking update happens at a later time."* No: step 5 is in the same time slot (§4.9.4). `<=` changes *when within the slot* the value lands, not the time stamp.
+- *"Delta cycles take simulated time."* No: all eight steps happen at t = 5 ns.
+
+### The order the standard leaves open
+
+The trace above has one freedom: steps 3 and 4. The standard deliberately leaves several such choices to the simulator:
+
+1. **Processes woken together run in any order.** When an update executes, the processes sensitive to it are considered for evaluation in an arbitrary order (§4.3), and ready events can be taken in any order (§4.7).
+2. **A running process can be paused part-way.** Statements without a timing control do not have to execute as one event: the simulator may suspend a process and run others in between (§4.7). Statements inside one `begin … end` still execute in source order (§4.6).
+3. **`initial` and `always` start in no particular order.** The standard implies no order between `initial` and `always` procedures, and `initial` procedures need not run first (§9.2).
+
+None of these is a simulator bug. Different tools, versions or optimization switches may choose differently, and the standard expects such differences (§4.3). Here is the classic place this bites, at time 0:
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+
+  logic a;                      // starts as x: no declaration initializer
+
+  always @(a) $display("t=%0d a=%b", $time, a);   // wakes on every change of a
+
+  initial begin
+    a = 0;                      // t = 0: is the always block waiting yet? Not defined.
     #10 a = 1;
     #10 a = 0;
   end
 endmodule
 ```
 
-### 2. Time Steps and Timescale
-Simulation time advances in discrete increments. Delay controls (`#`) explicitly advance time, but the meaning of `#10` depends on the active `` `timescale ``.
+Both outputs below are legal. After t = 20 nothing is scheduled, so the run ends by itself (§9.6.1).
+
+| Time | Order A: the `always` block starts first | Order B: the `initial` block starts first |
+|---|---|---|
+| t = 0 | the `always` block reaches `@(a)` and waits; `a = 0` changes `a` from x to 0, so it wakes and prints `t=0 a=0` | `a = 0` runs while nothing waits; the `always` block starts waiting afterwards and has missed the change |
+| t = 10 | prints `t=10 a=1` | prints `t=10 a=1` |
+| t = 20 | prints `t=20 a=0` | prints `t=20 a=0` |
+| Lines printed | 3 | 2 |
+
+**The fix:** give the variable its starting value in its declaration and make the first real change after a delay.
 
 ```systemverilog
-`timescale 1ns/1ps // time_unit / time_precision
+// snippet: replaces the declaration of a and the initial block above
+logic a = 0;     // set before any process starts (§6.8): no change to miss
 
-module time_steps_demo;
+initial begin
+  #10 a = 1;
+  #10 a = 0;
+end
+```
+
+Now every simulator prints the same two lines. In a log, this kind of race shows up as a first line that appears on one simulator and not another, or that comes and goes when files are reordered. Nothing in the log reports a problem.
+
+#### Why simulator-independent code matters
+
+Each freedom above, and each default the standard leaves to the tool, is a way for one bench to give two answers:
+
+- the order of processes woken together, and of `initial` versus `always` at time 0 (§4.3, §4.7, §9.2);
+- the time unit and precision of a file that declares none (§3.14.2.3, §22.7);
+- which files form one compilation unit, and therefore how far a `` `timescale `` reaches (§3.12.1);
+- the default `%t` format (§20.4.3, Table 20-3).
+
+A result that depends on any of these can pass on one simulator and fail on another, or change when someone reorders the file list. Sign-off needs results that do not depend on the tool. So declare a time unit in every file, set `$timeformat` once, use initializers instead of time-0 assignments, and never let two same-time processes depend on their order ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)).
+
+### Time units and precision
+
+`#10` is a number, not a duration. Two settings of the enclosing design element (a module, interface, program or package) turn it into time (§3.14):
+
+- the **time unit** says what 1 means: `#10` with a 1 ns unit waits 10 ns;
+- the **time precision** says how finely delays are rounded before they are used (§3.14.1). It must be at least as fine as the unit (§3.14).
+
+Both are written as 1, 10 or 100 of `s`, `ms`, `us`, `ns`, `ps` or `fs` (§3.14). There are two ways to set them:
+
+```systemverilog
+// snippet: three design elements in one file
+`timescale 1ns / 1ps       // compiler directive: outside any design element (§22.7)
+
+module a_mod;              // no timeunit: takes 1ns / 1ps from the directive above
+endmodule
+
+module b_mod;
+  timeunit 100ps;          // keywords inside the element (§3.14.2.2);
+  timeprecision 10fs;      // they come before any other item in it
+endmodule
+
+module c_mod;
+  timeunit 1ns / 1ps;      // one-line form: unit / precision
+endmodule
+```
+
+**Prefer the keywords.** A `` `timescale `` applies to every design element compiled after it that has no `timeunit` of its own, until the next `` `timescale ``, across all the files of one **compilation unit**, the group of source files a tool compiles together (§3.12.1, §3.14.2.1, §22.2). A file without its own setting therefore inherits whatever the previous file left behind, and the result depends on compile order. §3.14.2.1 shows a module that gets nanoseconds in one compile order and picoseconds in another. `timeunit` and `timeprecision` inside the element remove that dependency (§3.14.2.2).
+
+**Rounding.** Each delay is scaled by the unit, then rounded to the precision of the element that contains it (§3.14.1):
+
+| Unit / precision | You write | Scaled | Rounded to the precision |
+|---|---|---|---|
+| 1ns / 100ps | `#2.75` | 2.75 ns | 2.8 ns (the standard's own example, §3.14.1) |
+| 1ns / 100ps | `#1.26` | 1.26 ns | 1.3 ns |
+| 10ns / 1ns | `#1.26` | 12.6 ns | 13 ns |
+| 10ns / 1ns | `#2.5` | 25 ns | 25 ns (no rounding needed) |
+| 1ns / 1ns | `#0.4` | 0.4 ns | 0 ns: the statement runs in the same time slot |
+| 1ps / 1ps | `#5ns` | 5000 ps | 5000 ps, because a time literal is scaled to the current unit (§5.8) |
+
+A finer precision elsewhere in the design does not help a coarse module: its delays are accurate only to its own precision (§3.14.1). The picture shows one delay in two modules.
+
+<figure className="my-6">
+<svg viewBox="0 0 360 200" role="img" aria-labelledby="f3a-units-title f3a-units-desc" style={{ width: "100%", maxWidth: 440 }}>
+  <title id="f3a-units-title">One delay, two modules</title>
+  <desc id="f3a-units-desc">A time axis from 0 to 30 ns. Module tb_top, with timeunit 1ns and timeprecision 100ps, runs #1.26 from time 0: 1.26 ns rounds to 1.3 ns. Module u_slow, with timeunit 10ns and timeprecision 1ns, runs the same #1.26: 12.6 ns rounds to 13 ns, and a second #1.26 lands at 26 ns.</desc>
+  <text x="64" y="18" fontSize="10.5" fontWeight="600" fill="currentColor">tb_top: timeunit 1ns; timeprecision 100ps;</text>
+  <line x1="40" y1="50" x2="340" y2="50" stroke="currentColor" strokeOpacity="0.3" strokeDasharray="2 3" />
+  <circle cx="40" cy="50" r="2.5" fill="currentColor" />
+  <circle cx="53" cy="50" r="5.5" fill="rgb(6,182,212)" stroke="currentColor" />
+  <text x="64" y="40" fontSize="10" fill="currentColor">#1.26 = 1.26 ns, rounded to 1.3 ns</text>
+  <line x1="53" y1="56" x2="53" y2="162" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+  <text x="64" y="84" fontSize="10.5" fontWeight="600" fill="currentColor">u_slow: timeunit 10ns; timeprecision 1ns;</text>
+  <text x="170" y="104" fontSize="10" textAnchor="middle" fill="currentColor">#1.26 = 12.6 ns,</text>
+  <text x="170" y="117" fontSize="10" textAnchor="middle" fill="currentColor">rounded to 13 ns</text>
+  <text x="300" y="117" fontSize="10" textAnchor="middle" fill="currentColor">again: 26 ns</text>
+  <line x1="40" y1="130" x2="340" y2="130" stroke="currentColor" strokeOpacity="0.3" strokeDasharray="2 3" />
+  <circle cx="40" cy="130" r="2.5" fill="currentColor" />
+  <path d="M170,123 L177,130 L170,137 L163,130 Z" fill="rgb(139,92,246)" stroke="currentColor" />
+  <path d="M300,123 L307,130 L300,137 L293,130 Z" fill="rgb(139,92,246)" stroke="currentColor" />
+  <line x1="170" y1="137" x2="170" y2="162" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+  <line x1="300" y1="137" x2="300" y2="162" stroke="currentColor" strokeOpacity="0.25" strokeDasharray="3 3" />
+  <line x1="40" y1="166" x2="340" y2="166" stroke="currentColor" strokeOpacity="0.7" />
+  <line x1="40" y1="162" x2="40" y2="170" stroke="currentColor" strokeOpacity="0.7" />
+  <line x1="90" y1="162" x2="90" y2="170" stroke="currentColor" strokeOpacity="0.7" />
+  <line x1="140" y1="162" x2="140" y2="170" stroke="currentColor" strokeOpacity="0.7" />
+  <line x1="190" y1="162" x2="190" y2="170" stroke="currentColor" strokeOpacity="0.7" />
+  <line x1="240" y1="162" x2="240" y2="170" stroke="currentColor" strokeOpacity="0.7" />
+  <line x1="290" y1="162" x2="290" y2="170" stroke="currentColor" strokeOpacity="0.7" />
+  <line x1="340" y1="162" x2="340" y2="170" stroke="currentColor" strokeOpacity="0.7" />
+  <text x="40" y="182" fontSize="10" textAnchor="middle" fill="currentColor">0</text>
+  <text x="90" y="182" fontSize="10" textAnchor="middle" fill="currentColor">5</text>
+  <text x="140" y="182" fontSize="10" textAnchor="middle" fill="currentColor">10</text>
+  <text x="190" y="182" fontSize="10" textAnchor="middle" fill="currentColor">15</text>
+  <text x="240" y="182" fontSize="10" textAnchor="middle" fill="currentColor">20</text>
+  <text x="290" y="182" fontSize="10" textAnchor="middle" fill="currentColor">25</text>
+  <text x="340" y="182" fontSize="10" textAnchor="middle" fill="currentColor">30</text>
+  <text x="190" y="196" fontSize="10" textAnchor="middle" fill="currentColor">simulation time (ns)</text>
+</svg>
+<figcaption className="mt-2 text-sm text-muted-foreground">Both modules start the same `#1.26` at t = 0 (◆ marks `u_slow`, ● marks `tb_top`). The unit scales it, to 12.6 ns and 1.26 ns; each module's own precision then rounds it, to 13 ns and 1.3 ns. The design's global precision is 100 ps, the finer of the two (§3.14.3).</figcaption>
+</figure>
+
+**Which unit applies?** If a design element declares no `timeunit`, the first of these rules that applies decides (§3.14.2.3):
+
+1. a nested module or interface inherits the unit of the module or interface around it;
+2. else the last `` `timescale `` seen earlier in the same compilation unit applies;
+3. else a `timeunit` declared in the compilation-unit scope (outside every design element) applies;
+4. else the tool's default applies, which the standard leaves implementation-specific.
+
+The precision follows the same rules. The compilation-unit scope can take its unit only from a `timeunit` declaration, never from a `` `timescale `` (§3.14.2.3). One more rule overrides convenience: it is an **error** for some design elements to have a time unit and precision while others have none (§3.14.2.3). How a tool reports that, as an error or a warning, is tool-dependent.
+
+**The global precision and `1step`.** The **global time precision**, also called the *simulation time unit*, is the finest precision anywhere in the design. It counts every `timeprecision`, every precision written with `timeunit … / …`, and the smallest precision of all the `` `timescale `` directives (§3.14.3). Every simulation time is a whole number of these steps. `$printtimescale($root)` prints it (§20.4.2). The special delay `1step` equals the global precision (§3.14.3); clocking blocks use `#1step` for sampling, as [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) shows.
+
+**Time literals.** `#5ns`, `#2.1ns` and `40ps` carry a unit where you write them: the literal is converted to a real number in the current time unit (§5.8). So `#5ns` waits 5 ns in a 1 ns module and in a 1 ps module alike, which makes literals the safe way to write delays in shared code. The delay is still rounded to the module's precision: in a 10ns/1ns module, `#2.1ns` becomes 0.21 units, which rounds to 2 ns (§3.14.1). The conversion happens where the literal is written, though: a value stored in a variable has no unit (Push Further).
+
+**Pitfalls:**
+
+- *"A finer precision elsewhere rescues a coarse module."* No: `#0.4` in a 1ns/1ns module is 0 even if another module uses 1 fs (§3.14.1).
+- *"`$timeformat` changes delays."* No: it changes only how `%t` prints (§20.4.3).
+- *"A `` `timescale `` belongs to its file."* No: it reaches every later file of the same compilation unit (§3.14.2.1, §22.2), which is how a delay ends up 1000× off.
+
+### Reading the time: `$time`, `$stime`, `$realtime` and `%t`
+
+Three system functions read the current simulation time. All three are scaled to the **time unit of the module that calls them**, not to the precision and not to the global precision:
+
+| Function | Returns | Clause |
+|---|---|---|
+| `$time` | a 64-bit integer, rounded | §20.3.1 |
+| `$stime` | a 32-bit unsigned integer; the low 32 bits if the value does not fit | §20.3.2 |
+| `$realtime` | a real number that keeps the fraction | §20.3.3 |
+
+The standard's own example (§20.3.1, §20.3.3) uses a 10 ns unit, a 1 ns precision and two delays of 1.55. Here is the same experiment written as a complete unit:
+
+```systemverilog
+// compile
+module tb_top;
+  timeunit 10ns; timeprecision 1ns;
+
   initial begin
-    $display("Time is %0t", $time);     // 0
-    #5.5; // Advances time by 5.5ns (representable: precision is 1ps)
-    $display("Time is %0t", $time);     // 6000: $time rounds to the 1ns unit (6), %t prints in ps
-    $display("Time is %0t", $realtime); // 5500: $realtime keeps the fraction
+    #1.55;   // 15.5 ns, rounded to the 1 ns precision: 16 ns
+    $display("$time=%0d $realtime=%.1f", $time, $realtime);
+    #1.55;   // another 16 ns: t = 32 ns
+    $display("$time=%0d $realtime=%.1f", $time, $realtime);
   end
 endmodule
 ```
 
-### 3. Simulation Time vs. Delta Time
-Multiple events can occur at the exact same simulation time. The simulator processes these in "delta cycles" — zero-delay iterations that determine the order of evaluation without advancing the global simulation clock.
+**Expected output** (traced by hand; it matches the values in §20.3.1 and §20.3.3):
+
+```text
+$time=2 $realtime=1.6
+$time=3 $realtime=3.2
+```
+
+| Statement | Absolute time | In units of 10 ns | `$time` | `$realtime` |
+|---|---|---|---|---|
+| first `#1.55` (15.5 ns, rounded) | 16 ns | 1.6 | 2 | 1.6 |
+| second `#1.55` | 32 ns | 3.2 | 3 | 3.2 |
+
+The NOTE in §20.3.1 makes the point: the times `$time` reports (2 and 3) do not match the times the delays ended (16 ns and 32 ns). `$time` is not wrong; it is coarse.
+
+**`%t` and `$timeformat`.** The `%t` format prints a time "in current time format" (§21.2.1.1). It treats its argument as a time in the caller's unit and converts it to the units chosen with `$timeformat` (§20.4.3):
 
 ```systemverilog
-module delta_time_demo;
-  logic clk = 0;
-  logic d = 1, q = 0;
-  logic q_n;
-
-  always #5 clk = ~clk;
-
-  always_ff @(posedge clk) q <= d; // Active: reads d. NBA: writes q.
-  assign q_n = ~q;                 // re-evaluated when q changes: one more delta
-
-  initial begin
-    @(posedge clk);                                       // all of this is t = 5
-    $display("display q=%0d q_n=%0d", q, q_n);            // Active: q=0 q_n=1 (old values)
-    $strobe ("strobe  q=%0d q_n=%0d", q, q_n);            // Postponed: q=1 q_n=0
-  end
-endmodule
+// snippet
+$timeformat(-9, 3, " ns", 0);   // units, decimals, suffix, minimum field width
+$display("t=%t", $realtime);    // after the first #1.55 above: t=16.000 ns
 ```
+
+- **units_number** is a power of ten from 2 (100 s) down to −15 (1 fs): −9 is ns and −12 is ps (Table 20-2).
+- **precision_number** is the number of digits after the decimal point.
+- **suffix_string** is appended after the number, such as `" ns"`.
+- **minimum_field_width** pads the result to at least that many characters.
+
+One call sets the format for every `%t` in the design until the next call (§20.4.3). Without any call, the defaults are: units equal to the smallest precision among the `` `timescale `` directives in the source, no decimals, no suffix, and a minimum width of 20 characters (Table 20-3). `timeunit` declarations do not count toward that default, so a design that uses only `timeunit` has a tool-dependent default.
+
+**Asking for the settings.** `$printtimescale` prints `Time scale of (<name>) is <unit> / <precision>` for the current scope, for a named instance, for `$unit` (the compilation unit) or for `$root` (the global precision, shown as both unit and precision) (§20.4.2). `$timeunit` and `$timeprecision` return the same information as an integer exponent, such as −9 for 1 ns, for code that checks it (§20.4.1).
+
+**Pitfalls:**
+
+- *"`$time` reports in the precision unit."* No: in the caller's time unit, rounded (§20.3.1). `#1.5` in a module with `timeunit 1ns; timeprecision 1ps;` gives `$time` = 2, not 1500.
+- *"Two equal `$time` values mean the same moment."* Only within one module. Across modules with different units, compare `%t` output.
+- *"`%t` of `$time` is exact."* No: `$time` has already been rounded, so pass `$realtime` to `%t`.
+
+### Debugging time problems
+
+| What the log or waveform shows | Likely cause | Confirm with | Fix |
+|---|---|---|---|
+| A delay is 10× or 1000× too long or too short | the file inherited another unit from a leaked `` `timescale ``, or got the tool default | `$printtimescale;` inside that module | `timeunit`/`timeprecision` at the top of the file |
+| Elaboration stops with a message about time units or precision | mixed specification: some elements have a unit and others none (§3.14.2.3) | the message names the element, often a package | give that element its own `timeunit` |
+| Time stamps look scaled, such as `@ 15000` for an event at 15 ns | no `$timeformat`, so `%t` uses the finest `` `timescale `` precision in the build (Table 20-3) | `$printtimescale($root);` | `$timeformat(-9, 3, " ns", 0);` at time 0 in `tb_top` |
+| A printed time is off by a fraction of a unit | `$time` was rounded to the module's unit (§20.3.1) | print `$realtime` beside it | print with `%t` and `$realtime` |
+| A small delay has no effect | it rounded to 0 at the module's precision (§3.14.1) | `$printtimescale;` | a finer `timeprecision`, or a larger delay |
+| A shared task waits 1000× too short or too long | a unitless number crossed into a scope with another unit (§5.8) | print `$realtime` before and after the call | scale inside the callee, such as `#(delay_ns * 1ns)` |
+| The first log line appears on one simulator only | a time-0 race between `initial` and `always` (§9.2) | reorder the files or processes and rerun | a declaration initializer (§6.8) |
+| The run never ends | a free-running clock and no `$finish` (§9.6.1) | time stamps keep growing | the test calls `$finish` |
+| The run hangs and time stops moving | a zero-delay loop (§9.2.2.1) | the time stamp stops changing | add a timing control to the loop |
+
+### In a real testbench
+
+- **Every file declares its unit.** Put `timeunit 1ns; timeprecision 1ps;` (or your project's agreed values) first in every module, interface, program and package, as the [F2E](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index) bench does. Packages matter too: a package's delays, and the `$realtime` its classes read, use the package's unit.
+- **One `$timeformat`, at time 0, in `tb_top`.** In a UVM bench, call it before `run_test()`, so every `%t` in the log uses one format.
+- **UVM log time stamps follow it.** uvm-core 2020.3.1 builds the time in every report message with `$swrite(time_str, "%0t", $realtime)` (`compose_report_message` in `src/base/uvm_report_server.svh`), so the `$timeformat` call in `tb_top` controls the `@ …` stamp of every `` `uvm_info `` line.
+- **Delays make clocks, resets and timeouts; everything else waits on events.** Drivers and monitors wake on clock edges, and from F4C on clocking blocks. A test waits for a condition with `@` or `wait`, never for a guessed `#delay` that breaks as soon as the design's latency changes.
+- **When not to use a delay:** never use `#0` to put one process after another in the same time slot. It only moves the race (F3C). Drive timing is solved with nonblocking drives and clocking blocks (F3C, F4C).
+
+### Recap
+
+<VisualRecap
+  title="Time jumps between slots; work inside a slot takes no time"
+  rule="The simulator finishes every event of the current time slot, including the new ones those events create, then jumps to the next time that has events. Only a delay reaches a later slot, and the module's time unit and precision decide how long that delay is."
+  code={`always #5 clk = ~clk;             // a delay: the next event is 5 units later
+always_ff @(posedge clk) q <= d;  // woken by an update of clk
+assign q_n = ~q;                  // woken by an update of q, same time slot`}
+  mistake="Believing that time advances after each statement, or that a nonblocking update or a delta cycle happens at a later time. Every one of them stays in the current time slot."
+  inTestbench="Clock generators, reset sequences and timeouts are delays; drivers and monitors wake on events. Several log lines share one time stamp because they come from one time slot."
+>
+  <svg viewBox="0 0 300 200" role="img" aria-labelledby="f3a-recap-title" style={{ width: "100%", maxWidth: 360 }}>
+    <title id="f3a-recap-title">A time axis with events only at 0, 5 and 10 ns, and no events in between. Zoomed into t = 5 ns: evaluate the clock process, update clk 0 to 1, evaluate the always_ff and the initial, update q 0 to 1 (nonblocking), evaluate the assign, update q_n 1 to 0. All of it happens at t = 5 ns.</title>
+    <line x1="16" y1="34" x2="284" y2="34" stroke="currentColor" strokeOpacity="0.5" />
+    <circle cx="40" cy="34" r="4.5" fill="currentColor" />
+    <circle cx="150" cy="34" r="4.5" fill="currentColor" />
+    <circle cx="260" cy="34" r="4.5" fill="currentColor" />
+    <text x="40" y="16" fontSize="10" textAnchor="middle" fill="currentColor">t = 0</text>
+    <text x="150" y="16" fontSize="10" textAnchor="middle" fill="currentColor">t = 5 ns</text>
+    <text x="260" y="16" fontSize="10" textAnchor="middle" fill="currentColor">t = 10 ns</text>
+    <text x="95" y="28" fontSize="9" textAnchor="middle" fill="currentColor" fillOpacity="0.75">no events</text>
+    <text x="205" y="28" fontSize="9" textAnchor="middle" fill="currentColor" fillOpacity="0.75">no events</text>
+    <line x1="150" y1="39" x2="36" y2="56" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="3 3" />
+    <line x1="150" y1="39" x2="264" y2="56" stroke="currentColor" strokeOpacity="0.4" strokeDasharray="3 3" />
+    <rect x="36" y="56" width="228" height="136" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+    <text x="46" y="75" fontSize="10" fill="currentColor">▶ evaluate</text>
+    <text x="126" y="75" fontSize="10" fill="currentColor">clock process</text>
+    <text x="46" y="92" fontSize="10" fill="currentColor">◆ update</text>
+    <text x="126" y="92" fontSize="10" fill="currentColor">clk 0 → 1</text>
+    <text x="46" y="109" fontSize="10" fill="currentColor">▶ evaluate</text>
+    <text x="126" y="109" fontSize="10" fill="currentColor">always_ff, initial</text>
+    <text x="46" y="126" fontSize="10" fill="currentColor">◆ update</text>
+    <text x="126" y="126" fontSize="10" fill="currentColor">q 0 → 1 (nonblocking)</text>
+    <text x="46" y="143" fontSize="10" fill="currentColor">▶ evaluate</text>
+    <text x="126" y="143" fontSize="10" fill="currentColor">assign q_n</text>
+    <text x="46" y="160" fontSize="10" fill="currentColor">◆ update</text>
+    <text x="126" y="160" fontSize="10" fill="currentColor">q_n 1 → 0</text>
+    <text x="150" y="182" fontSize="9.5" textAnchor="middle" fill="currentColor" fillOpacity="0.85">all at t = 5 ns: zero simulated time</text>
+  </svg>
+</VisualRecap>
+
+- A process runs only when an event wakes it; an update event is a value change, and an evaluation event runs a process sensitive to it (§4.3).
+- Time jumps to the next non-empty time slot only when the current one is empty (§4.4). Delta cycles are extra passes inside one slot and take no time.
+- The standard leaves the order of same-time processes open (§4.7, §9.2). Code whose result depends on that order is a race.
+- `#d` is scaled by the element's time unit and rounded to its precision (§3.14.1). Declare `timeunit`/`timeprecision` in every file.
+- `$time`, `$stime` and `$realtime` are in the caller's unit (§20.3). Print logs with `%t`, `$realtime` and one `$timeformat` call.
 
 ## Make It Work
-- Give every file an explicit time unit. Prefer `timeunit 1ns; timeprecision 1ps;` inside each module or package (IEEE 1800-2023 §3.14.2.2): unlike `` `timescale ``, it cannot leak between files through compilation order. `$timeformat` only changes how `%t` prints.
-- Recognize that `#0` delays are a legacy hack for forcing delta cycle delays. Do not use them in modern SystemVerilog; use non-blocking assignments (`<=`) or clocking blocks instead.
+
+### Worked example: two modules, two time units
+
+Two design elements in one file, each with its own unit. `tb_top` sets one time format for the whole design, prints the time settings, and both modules print the same three views of the time after the same `#1.26`.
+
+```systemverilog
+// compile
+// One file, two design elements, two time units. Each element declares its own
+// unit, so nothing depends on compile order (IEEE 1800-2023 §3.14.2.2).
+
+module slow_gen;
+  timeunit 10ns; timeprecision 1ns;      // a model written in 10 ns steps
+
+  initial begin
+    #1.26;                               // 12.6 ns, rounded to the 1 ns precision
+    $display("slow_gen $time=%0d $realtime=%.2f %%t=%t", $time, $realtime, $realtime);
+    #1.26;                               // another 13 ns
+    $display("slow_gen $time=%0d $realtime=%.2f %%t=%t", $time, $realtime, $realtime);
+  end
+endmodule
+
+module tb_top;
+  timeunit 1ns; timeprecision 100ps;
+
+  slow_gen u_slow ();
+
+  initial begin
+    $timeformat(-9, 1, " ns", 0);        // all %t output: ns, 1 decimal, no padding
+    $printtimescale;                     // this module
+    $printtimescale(u_slow);             // the instance
+    $printtimescale($root);              // the global precision
+    #1.26;                               // 1.26 ns, rounded to the 100 ps precision
+    $display("tb_top   $time=%0d $realtime=%.2f %%t=%t", $time, $realtime, $realtime);
+    #30 $finish;                         // after u_slow's last print at 26 ns
+  end
+endmodule
+```
+
+**Predict before you read the output.** Answer all three, then compare with the log below.
+
+<InterviewQuestionPlayground
+  title="Predict: the tb_top line"
+  question="tb_top (timeunit 1ns, timeprecision 100ps) runs #1.26, then prints $time, $realtime with two decimals, and %t in nanoseconds with one decimal. What does its line show?"
+  options={[
+    { text: "$time=13 $realtime=13.00 %t=1.3 ns", isCorrect: false, feedback: "That counts in 100 ps precision steps. $time and $realtime report in the calling module's time unit, 1 ns (§20.3.1)." },
+    { text: "$time=1 $realtime=1.26 %t=1.3 ns", isCorrect: false, feedback: "The delay was rounded to 1.3 ns before it was used (§3.14.1), so the process woke at 1.3 ns, and $realtime reports the time at which it actually woke." },
+    { text: "$time=1 $realtime=1.30 %t=1.3 ns", isCorrect: true, feedback: "Right. #1.26 is 1.26 ns, rounded to the 100 ps precision: 1.3 ns (§3.14.1). $time rounds 1.3 to the integer 1 in tb_top's 1 ns unit, $realtime keeps 1.3, and %t converts to nanoseconds (§20.3, §20.4.3)." },
+    { text: "$time=1.3 $realtime=1.30 %t=1.3 ns", isCorrect: false, feedback: "$time returns an integer (§20.3.1). Only $realtime keeps the fraction." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Predict: the first slow_gen line"
+  question="u_slow (timeunit 10ns, timeprecision 1ns) runs the same #1.26 and prints the same three values. What does its first line show?"
+  options={[
+    { text: "$time=13 $realtime=13.00 %t=13.0 ns", isCorrect: false, feedback: "13 is the time in nanoseconds, but $time and $realtime are scaled to the caller's unit, 10 ns (§20.3.1)." },
+    { text: "$time=1 $realtime=1.30 %t=13.0 ns", isCorrect: true, feedback: "Right. 1.26 × 10 ns = 12.6 ns, rounded to the 1 ns precision: 13 ns. In u_slow's 10 ns unit that is 1.3, so $time is 1 and $realtime is 1.30. %t converts from u_slow's unit to nanoseconds: 13.0 ns." },
+    { text: "$time=1 $realtime=1.30 %t=1.3 ns", isCorrect: false, feedback: "%t does not print the raw number. It treats the value as a time in the caller's 10 ns unit and converts it to the $timeformat units (§20.4.3)." },
+    { text: "$time=1 $realtime=1.26 %t=12.6 ns", isCorrect: false, feedback: "The 1 ns precision rounds 12.6 ns to 13 ns before the delay is used (§3.14.1). tb_top's finer 100 ps precision does not help this module." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Predict: the $root line"
+  question="What does $printtimescale($root) print for this design?"
+  options={[
+    { text: "Time scale of ($root) is 1ns / 100ps", isCorrect: false, feedback: "That is tb_top's own setting. $root reports the global precision, and its unit and precision are always identical (§20.4.2)." },
+    { text: "Time scale of ($root) is 10ns / 1ns", isCorrect: false, feedback: "The coarsest unit plays no part. The global precision is the minimum of all the precisions in the design (§3.14.3)." },
+    { text: "Time scale of ($root) is 1ns / 1ns", isCorrect: false, feedback: "$root always shows identical unit and precision, but not this value. The global precision is the finest precision declared anywhere, and tb_top declares 100 ps (§3.14.3, §20.4.2)." },
+    { text: "Time scale of ($root) is 100ps / 100ps", isCorrect: true, feedback: "Right. $root reports the simulation time unit, the finest precision in the design (100 ps), shown as both unit and precision (§3.14.3, §20.4.2)." }
+  ]}
+/>
+
+**Expected output** (traced by hand from IEEE 1800-2023 §3.14, §20.3 and §20.4; not captured from a simulator run):
+
+```text
+Time scale of (tb_top) is 1ns / 100ps
+Time scale of (tb_top.u_slow) is 10ns / 1ns
+Time scale of ($root) is 100ps / 100ps
+tb_top   $time=1 $realtime=1.30 %t=1.3 ns
+slow_gen $time=1 $realtime=1.30 %t=13.0 ns
+slow_gen $time=3 $realtime=2.60 %t=26.0 ns
+```
+
+How a simulator names the instance in the second line, and the message `$finish` prints at 31.3 ns, are tool-dependent.
+
+| Absolute time | Module | After | `$time` | `$realtime` | `%t` |
+|---|---|---|---|---|---|
+| 0 | `tb_top` | `$timeformat` and three `$printtimescale` calls | | | |
+| 1.3 ns | `tb_top` | `#1.26`: 1.26 ns rounded to 1.3 ns | 1 | 1.30 | 1.3 ns |
+| 13 ns | `u_slow` | `#1.26`: 12.6 ns rounded to 13 ns | 1 | 1.30 | 13.0 ns |
+| 26 ns | `u_slow` | the second `#1.26` | 3 (2.6 rounded) | 2.60 | 26.0 ns |
+| 31.3 ns | `tb_top` | `#30`, then `$finish` | | | |
+
+**What to notice:**
+
+- The same `#1.26` is 1.3 ns in `tb_top` and 13 ns in `u_slow`. The unit scales it and each module's own precision rounds it (§3.14.1).
+- `$time` prints 1 in both modules, at different absolute times. It reports in the caller's unit, rounded (§20.3.1).
+- `$realtime` keeps the fraction but is also in the caller's unit: 1.30 means 1.3 ns in `tb_top` and 13 ns in `u_slow`.
+- Only `%t` shows both as absolute nanoseconds, because one `$timeformat` call set one format for the whole design (§20.4.3).
+- `$root` reports 100ps / 100ps, the finest precision in the design (§3.14.3).
+
+**Run it.** Save both modules in one file, compile the file as one compilation unit and elaborate `tb_top` as the top module. Any SystemVerilog simulator should accept it, for example on EDA Playground. Support for `$printtimescale` and fractional delays in open-source simulators varies, and this example has not been run in this project's CI.
+
+### How to apply this in your own bench
+
+1. Put `timeunit` and `timeprecision` at the top of every module, interface, program and package you write.
+2. Call `$timeformat` once, at time 0, in `tb_top`, before anything prints. In a UVM bench, do it before `run_test()`.
+3. Print times with `%t` and `$realtime`. Keep raw `$time` for arithmetic inside one module.
+4. When a delay or a time stamp looks wrong, add `$printtimescale;` to the suspect module and `$printtimescale($root);` to `tb_top`.
+5. In shared code (packages and interfaces), write delays as time literals such as `#5ns`, or scale a real argument inside, such as `#(delay_ns * 1ns)`.
+6. Give variables their starting values in their declarations, and make the first real change after a delay.
+
+**Checklist before moving on:**
+
+- [ ] I can explain each of the six lines of the expected output above.
+- [ ] I can list the events of the t = 5 ns time slot in the traced example, and say why `$time` stays 5 during its delta cycles.
+- [ ] I can predict when `#0.4` runs in a module with `timeunit 1ns; timeprecision 1ns;`.
+- [ ] I can name a design's global precision from its time settings.
+- [ ] I can explain why `logic a = 0;` removes the time-0 race and `a = 0;` in an `initial` block does not.
 
 ## Push Further
-- Explore how the simulator engine actually processes events: it maintains an event queue sorted by time. When all events for the current time are exhausted, it advances to the next time in the queue.
-- See how `$strobe` and `$monitor` leverage the Postponed region (end of the current time step) to print values only after all delta cycles have settled.
+
+### Expert: time zero, step by step
+
+Time 0 is the busiest and least ordered time slot of any simulation. The standard fixes only these points:
+
+| What | When | Clause |
+|---|---|---|
+| declaration initializers of static variables, such as `logic a = 0;` | before any `initial` or `always` procedure starts | §6.8 |
+| `initial` and `always` procedures | all enabled at the start of simulation, in no implied order | §9.2 |
+| continuous assignments | evaluated at time 0 to propagate constant values | §4.9.1 |
+| `always_comb` | runs once at time 0, after all `initial` and `always` procedures have started | §9.2.2.2 |
+| `always @*` | does not run until something it reads changes | §9.2.2.2.2 |
+
+Consequences an expert uses:
+
+- An `always @*` block whose inputs never change after their initializers never computes its output, while `always_comb` does (§9.2.2.2.2). That is one reason RTL style guides prefer `always_comb` (practice, not a rule of the standard).
+- A change from x to 0 is a `negedge` (§9.4.2, Table 9-2). An asynchronous reset driven low by an `initial` block at t = 0 resets a flop at t = 0 only if the flop's process was already waiting, which is a time-0 race. It is usually harmless when reset is held for several clocks, but a check of reset values before the first clock edge inherits the race.
+- Code ported from Verilog can change behaviour here. In IEEE 1364-2005, a declaration initializer ran like an assignment from an `initial` procedure, after simulation had started (§6.8, NOTE).
+
+### Expert: which time unit applies
+
+The precedence rules (§3.14.2.3) interact with how files are grouped into compilation units:
+
+- **Compilation units are tool-specific.** A tool must support both "all files on one command line form one compilation unit" and "each file is its own compilation unit", and it may offer other mappings (§3.12.1). A directive from one compilation unit never affects another (§3.12.1), so a `` `timescale `` in file 1 reaches file 2 only in the first mode.
+- **`` `resetall `` stops a leak.** It sets the compiler directives that have a default, `` `timescale `` among them, back to that default (§22.3). After it, a file without its own `timeunit` falls through to a compilation-unit `timeunit`, if there is one, or to the tool's default (§3.14.2.3, §22.7).
+- **The mixed-specification error covers packages.** A design element is a module, program, interface, checker, package, primitive or configuration (§3.2), and §3.14.2.3 makes it an error for some to have a unit while others have none. uvm-core 2020.3.1's `src/uvm_pkg.sv` declares no time unit, so UVM takes its unit from a `` `timescale `` earlier in its compilation unit, from a compilation-unit `timeunit`, or from the tool default.
+- **Tool-dependent:** command-line options that give files without a unit a default `timescale`, whether the mixed case is reported as an error or a warning, and the default unit itself.
+
+The robust rule for a team: every design element you own declares `timeunit` and `timeprecision`, and third-party code without them is compiled after a known `` `timescale `` that the build script documents. `$printtimescale($unit)` shows what the compilation-unit scope ended up with (§20.4.2).
+
+### Expert: global precision and `1step`
+
+- **One file can change it.** The global precision is the minimum over every precision in the design, including the precision of every `` `timescale `` directive, even one that every element overrides with `timeunit` (§3.14.3). Add one vendor model compiled under `` `timescale 1ns/1fs `` and `$printtimescale($root)` reports 1fs / 1fs, `1step` becomes 1 fs, and the default `%t` units (Table 20-3) become femtoseconds.
+- **`#1step` in a clocking block** samples a value just before the clock event, which is the same as sampling in the Preponed region of the time slot (§4.4.2.1). So it always sees the values from just before the current time slot, whatever the global precision is. F3B and F4C cover the sampling rules.
+- **Cost.** Whether a finer global precision slows a simulation is implementation-dependent; the standard says nothing about speed.
+- **`$stime` wraps.** In a design where every unit and precision is 1 ps, `$stime` passes 32 bits after 2^32 ps, about 4.29 ms of simulated time. At 5 ms it returns the low 32 bits of 5,000,000,000, which is 705,032,704 (§20.3.2). Use `$time` (64 bits) or `$realtime` for long runs.
+
+### Expert: time values that cross scopes
+
+- **Numbers carry no unit.** A time literal is converted to a number in the scope where it is written (§5.8). `time`, `realtime` and `int` variables hold plain numbers (`realtime` is the same type as `real`, §6.12). When a value crosses into a scope with another unit, such as a package task, an interface task or a class method compiled in a package, the receiver reads the number in *its* unit.
+- **The 1000× bug.** A package with `timeunit 1ps` exports `task automatic wait_t(time t); #t; endtask`. A 1 ns caller writes `wait_t(5ns)`: the literal becomes 5 in the caller, and the task waits 5 ps. The Debug challenge below walks through it.
+- **Fix patterns.** (1) Scale inside the callee: `#(delay_ns * 1ns)`, where `1ns` is converted in the callee's own unit (§5.8). (2) Agree one time unit for every file in the project. (3) Pass clock-cycle counts instead of times where you can: `repeat (n) @(posedge clk);` needs no unit at all.
+- **Real to integer.** Assigning a real to a `time` argument rounds to the nearest integer, and an exact half rounds away from zero (§6.12.1): `wait_t(1.5ns)` from a 1 ns caller passes 2.
+- **UVM time stamps.** `compose_report_message` in uvm-core 2020.3.1 (`src/base/uvm_report_server.svh`) formats the message time with `"%0t"` and `$realtime`. `$realtime` is in uvm_pkg's unit, and `%t` converts it to the `$timeformat` units, so the stamps are correct in absolute terms once `tb_top` calls `$timeformat` before `run_test()`. Without that call, the units come from the `` `timescale `` directives in the build (Table 20-3), which is how a log ends up printing `@ 15000` for an event at 15 ns.
+
+### Expert: delay values that are not what they look like
+
+- **A delay can round to nothing.** `#0.4` in a 1ns/1ns element becomes 0 (§3.14.1). The statement runs in the same time slot, a classic "my delay did nothing" bug.
+- **x, z and negative delays.** A delay expression that evaluates to x or z is treated as zero. A negative delay is reinterpreted as an unsigned number as wide as `time`, so `#(-1)` waits about 2^64 − 1 units, which is effectively forever (§9.4.1).
+- **Exact halves.** The standard's own examples settle two halfway cases, 2.75 ns to 2.8 ns (§3.14.1) and 15.5 ns to 16 ns (§20.3.1), and both round up under every common tie rule. §3.14.1 states no tie rule of its own, though, and decimal delays are not exact in binary, so the last bit depends on each simulator's arithmetic. A halfway delay where the rules disagree, such as `#2.85` at 1ns/100ps (28.5 steps: 29 when halves round up, 28 when they round to even), is tool-dependent. If two simulators must agree, keep delays clear of halfway points.
+
+### Expert: interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: delta cycles and time"
+  question="A colleague says: each delta cycle advances simulation time by one step of the global precision, which is why #1step exists. How do you answer?"
+  options={[
+    { text: "That is wrong. Delta cycles are extra passes inside one time slot and take no simulated time. 1step is a real delay equal to the global precision (§3.14.3).", isCorrect: true, feedback: "Right. $time is identical before and after any number of delta cycles (§4.4, §4.5). #1step is a different thing: the smallest real delay in the design, used for sampling just before an edge." },
+    { text: "That is right: every pass of the scheduler costs one precision step.", isCorrect: false, feedback: "Time moves only when the simulator jumps to the next non-empty time slot (§4.4). Passes inside a slot cost nothing." },
+    { text: "It is right only for nonblocking assignments, which update one step later.", isCorrect: false, feedback: "A nonblocking assignment without a delay updates in the same time slot (§4.9.4)." },
+    { text: "It depends on the simulator, because the standard leaves delta timing open.", isCorrect: false, feedback: "The standard leaves the order of events open, not their time. Every event of a time slot happens at that slot's time (§4.4)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the UVM time stamp"
+  question="A UVM log prints @ 15000 for an event the waveform shows at 15 ns. Nobody calls $timeformat. Explain the number and the fix."
+  options={[
+    { text: "UVM converts every time to picoseconds internally.", isCorrect: false, feedback: "uvm-core passes $realtime to %0t; the units come from $timeformat or its defaults (Table 20-3), not from UVM." },
+    { text: "The testbench's time unit is 1 ps, so $time counts picoseconds.", isCorrect: false, feedback: "The stamp is %t output, not $time. Its units come from $timeformat, whatever unit tb_top has." },
+    { text: "UVM prints time with %0t and $realtime. Without $timeformat, %t uses the smallest `timescale precision in the build (1 ps here), so 15 ns prints as 15000. Call $timeformat(-9, 3, \" ns\", 0) in tb_top before run_test().", isCorrect: true, feedback: "Right. uvm-core 2020.3.1 formats the stamp with \"%0t\" and $realtime (uvm_report_server.svh), and Table 20-3 gives the default %t units." },
+    { text: "The waveform is wrong: the event happened at 15000 ns.", isCorrect: false, feedback: "Both show the same instant. Only the log's number format is scaled." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: one bench, two simulators"
+  question="The first line of a log appears on one simulator but not on another. Nothing else differs. What is the most likely cause, and the fix?"
+  options={[
+    { text: "One simulator is cycle-based, so it skips t = 0.", isCorrect: false, feedback: "SystemVerilog simulators implement the event-driven semantics of the standard, and t = 0 is an ordinary time slot." },
+    { text: "A time-0 race: an initial block changes a value before an always block has started waiting for it (§9.2). Use a declaration initializer (§6.8), or make the first change after a delay.", isCorrect: true, feedback: "Right. The standard sets no order between initial and always procedures, so one tool's log has the t = 0 line and the other's does not." },
+    { text: "Different default $timeformat settings hide the line.", isCorrect: false, feedback: "A time format changes how a line prints, not whether it prints." },
+    { text: "The second simulator's precision rounds the t = 0 event away.", isCorrect: false, feedback: "Rounding applies to delays (§3.14.1). Nothing rounds an event at t = 0 away." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: delays in shared code"
+  question="You own a package of bus tasks used by benches with 1 ns and 1 ps time units. How do you make its delays mean the same physical time everywhere?"
+  options={[
+    { text: "Leave the time unit out so the package inherits the caller's `timescale.", isCorrect: false, feedback: "Time units are lexical: a package never inherits from the code that calls it, and packages cannot be nested (§3.14.2.3). It gets whatever `timescale preceded it in compile order or a compilation-unit timeunit. With neither, it falls back to the tool default, which is an error while other elements declare a unit." },
+    { text: "Call $timeformat inside the package.", isCorrect: false, feedback: "$timeformat changes how %t prints. It never changes what a delay means (§20.4.3)." },
+    { text: "Pass delays as time values; time values carry their unit with them.", isCorrect: false, feedback: "They do not. A time variable holds a plain number, which each scope reads in its own unit (§5.8)." },
+    { text: "Give the package its own timeunit and timeprecision, write every delay inside it as a time literal or as a real argument scaled by a literal, such as #(t_ns * 1ns), and never take a raw time value from the caller.", isCorrect: true, feedback: "Right. A literal is converted in the scope where it is written (§5.8), so the package's delays no longer depend on any caller." }
+  ]}
+/>
 
 ## Practice & Reinforce
-- Flashcards – Review definitions of event-driven execution, time units, precision, and delta cycles.
-- Quiz – Complete the knowledge check below to ensure you understand time resolution.
 
-## Interview Questions
+### Retrieval quiz
 
-<Card className="mt-8">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is a delta cycle? How is it different from simulation time?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>A delta cycle is a zero-delay iteration within a single simulation time step. Simulation time (the wall clock) only advances when there are no more events to process at the current time. Delta cycles allow the simulator to model the propagation of logic gates that all happen "instantaneously" at the same simulation time.</p>
-      </div>
-    </details>
-
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What does `` `timescale 1ns/10ps `` mean? If I write `#1.234`, what delay is actually applied?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>The first value (1ns) is the time unit (what `#1` means). The second value (10ps) is the time precision (the smallest time step the simulator can resolve, which dictates rounding).</p>
-        <p>`#1.234` means 1.234ns. However, because the precision is 10ps (0.01ns), the simulator rounds it to 1.23ns (or 1230ps). The '4' is lost.</p>
-      </div>
-    </details>
-  </CardContent>
-</Card>
-
-## References & Next Topics
-- IEEE 1800-2023 §3.14 (Time scale)
-- IEEE 1800-2023 §4 (Scheduling semantics)
-- Next: [Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)
+Answer from memory first. Each question names the objective it checks.
 
 <Quiz
   questions={[
     {
-      question: 'In `timescale 10ns/1ns, what does #2.5 represent?',
+      question: "Which of these schedules work in a LATER time slot?",
       answers: [
-        { text: '2.5 nanoseconds', correct: false },
-        { text: '25 nanoseconds', correct: true },
-        { text: '2 nanoseconds (precision truncated)', correct: false },
-        { text: 'It is a syntax error', correct: false }
+        { text: "q <= d;", correct: false, feedback: "A nonblocking assignment without a delay updates q later in the same time slot (§4.9.4). $time does not change." },
+        { text: "#10 a = 1;", correct: true, feedback: "Right. A delay suspends the process and schedules it 10 units ahead (§9.4.1). Time jumps there only after the current slot is empty (§4.4)." },
+        { text: "-> done; (triggering a named event)", correct: false, feedback: "Triggering an event wakes its waiters in the current time slot. No time passes." },
+        { text: "One more delta cycle", correct: false, feedback: "A delta cycle is another pass through the same time slot. It takes zero simulated time." }
       ],
-      explanation:
-        'The time unit is 10ns. So #2.5 means 2.5 * 10ns = 25ns. The precision is 1ns, so 25ns is perfectly representable.'
+      explanation: "Only delays (#d, intra-assignment delays, gate and net delays, clocking-block output skews) put events at a future time. A nonblocking update without a delay, an event trigger, @, wait and delta cycles all stay in the current time slot.",
+      objective: 1
     },
     {
-      question: 'Which of the following advances simulation time?',
+      question: "A bench contains only: logic clk = 0; always #5 clk = ~clk; initial #22 $finish; At which times after t = 0 does the simulator do any work?",
       answers: [
-        { text: 'A non-blocking assignment (<=)', correct: false },
-        { text: 'A delay control (#10)', correct: true },
-        { text: 'A delta cycle', correct: false },
-        { text: 'An event trigger (-> e)', correct: false }
+        { text: "Every nanosecond from 1 to 22", correct: false, feedback: "There are no ticks. Time moves only to the next time that has a scheduled event (§4.4, §4.5)." },
+        { text: "5, 10, 15 and 20 ns, with $finish waiting for the next clock edge at 25 ns", correct: false, feedback: "$finish runs when its process wakes at 22 ns. It does not wait for a clock (§20.2)." },
+        { text: "5, 10, 15, 20 and 22 ns, and nothing in between", correct: true, feedback: "Right. The clock schedules a toggle every 5 ns, and the initial block wakes at 22 ns to call $finish. Time jumps from one scheduled time to the next (§4.4)." },
+        { text: "Only 22 ns, because the clock runs in the background without events", correct: false, feedback: "Each toggle of clk is an update event in its own time slot, so the simulator visits every 5 ns." }
       ],
-      explanation:
-        'Only explicit time controls like #delay or waiting for events that happen in the future will advance the global simulation clock. Delta cycles evaluate in zero simulation time.'
+      explanation: "An event-driven simulator jumps from one non-empty time slot to the next: the toggles at 5, 10, 15 and 20 ns and the $finish at 22 ns. The toggle booked for 25 ns never runs, because $finish ends the run first.",
+      objective: 1
+    },
+    {
+      question: "logic a; has no initializer. Process P is always @(a), which prints one line per wake-up. Process Q is initial begin a = 0; #10 a = 1; end. How many lines can print?",
+      answers: [
+        { text: "1 or 2, depending on which process the simulator starts first", correct: true, feedback: "Right. If P starts first, it sees a change from x to 0 at t = 0 and the change at 10 ns: 2 lines. If Q starts first, the t = 0 change happens before P waits: 1 line (§9.2, §9.4.2)." },
+        { text: "Always 2, because initial blocks run before always blocks", correct: false, feedback: "The standard implies no order between initial and always procedures (§9.2)." },
+        { text: "Always 2, because processes start in source order", correct: false, feedback: "Source order between processes is not a rule of the standard. Ready processes run in any order (§4.7)." },
+        { text: "Always 1, because a change from x to 0 is not a change", correct: false, feedback: "Any value change, including x to 0, wakes @(a) (§9.4.2). The question is whether P is already waiting." }
+      ],
+      explanation: "This is a time-0 race. A declaration initializer (logic a = 0;) runs before any process starts (§6.8) and removes it.",
+      objective: 1
+    },
+    {
+      question: "In a module with timeunit 1ns; timeprecision 100ps; a process runs #1.55 at t = 0. When does it wake?",
+      answers: [
+        { text: "At 1.55 ns, because the simulator keeps the exact value", correct: false, feedback: "Delays are rounded to the element's precision before they are used (§3.14.1). 100 ps steps cannot represent 1.55 ns." },
+        { text: "At 2 ns, because delays round to whole time units", correct: false, feedback: "Delays round to the precision (100 ps), not to the unit (1 ns)." },
+        { text: "At 1.5 ns, because extra digits are cut off", correct: false, feedback: "Delays are rounded, not truncated. The standard rounds 2.75 ns to 2.8 ns in the same way (§3.14.1)." },
+        { text: "At 1.6 ns", correct: true, feedback: "Right. 1.55 ns is rounded to the 100 ps precision: 1.6 ns (§3.14.1)." }
+      ],
+      explanation: "The unit scales #1.55 to 1.55 ns, and the precision rounds it to a multiple of 100 ps: 1.6 ns. The standard's own §20.3.1 example rounds the same digits the same way (15.5 ns to 16 ns at a 1 ns precision).",
+      objective: 2
+    },
+    {
+      question: "A module has timeunit 1ns; timeprecision 1ns; and runs #0.4 x = 1; at t = 0. Another module in the design uses timeprecision 1ps. When is x written?",
+      answers: [
+        { text: "At 0.4 ns, because the global precision is 1 ps", correct: false, feedback: "A finer precision elsewhere does not help: a module's delays are accurate only to its own precision (§3.14.1)." },
+        { text: "At t = 0, in the same time slot, because 0.4 rounds to 0 in this module", correct: true, feedback: "Right. Each element rounds its own delays to its own precision (§3.14.1), so the delay becomes 0 and no time passes." },
+        { text: "At 1 ns, because delays round up so that they are never zero", correct: false, feedback: "Rounding goes to the nearest step, and 0.4 is nearer to 0 than to 1." },
+        { text: "Never: it is a compile error, because a delay must be a whole number of units", correct: false, feedback: "Fractional delays are legal. They are rounded to the precision (§3.14.1)." }
+      ],
+      explanation: "This is how a tiny delay silently does nothing. Give the module a finer timeprecision, or write a delay it can represent.",
+      objective: 2
+    },
+    {
+      question: "In a module with timeunit 1ns; timeprecision 1ps; a process runs #1.5 and then displays $time with %0d. What prints?",
+      answers: [
+        { text: "1500", correct: false, feedback: "That counts in precision steps (1 ps). $time reports in the module's time unit (§20.3.1)." },
+        { text: "1.5", correct: false, feedback: "$time returns an integer. $realtime would return 1.5 (§20.3.3)." },
+        { text: "2", correct: true, feedback: "Right. The process wakes at 1.5 ns. $time is scaled to the module's 1 ns unit and returned as a rounded integer (§20.3.1), so 1.5 becomes 2." },
+        { text: "1", correct: false, feedback: "$time rounds; it does not truncate." }
+      ],
+      explanation: "The misconception is that $time reports in the precision unit. It reports in the caller's time unit, rounded. Use $realtime, or %t with $realtime, to keep the fraction.",
+      objective: 3
+    },
+    {
+      question: "tb_top calls $timeformat(-9, 1, \" ns\", 0) at time 0. Module u_slow, with timeunit 10ns, displays %t with $realtime at absolute time 26 ns. What does %t print?",
+      answers: [
+        { text: "2.6 ns", correct: false, feedback: "%t does not print the raw number in the caller's unit. It converts it to the $timeformat units." },
+        { text: "30.0 ns", correct: false, feedback: "That is %t of $time, which was already rounded to 3 units of 10 ns. $realtime keeps the fraction." },
+        { text: "26000, because the default units are picoseconds", correct: false, feedback: "The $timeformat call sets the format of every %t in the design until the next call (§20.4.3), including u_slow's." },
+        { text: "26.0 ns", correct: true, feedback: "Right. In u_slow, $realtime is 2.6 (units of 10 ns). %t treats the value as a time in the caller's unit and converts it to the $timeformat units: nanoseconds with one decimal (§20.4.3)." }
+      ],
+      explanation: "One $timeformat call in tb_top fixes every %t in the design. Pass $realtime, not $time, so the fraction survives.",
+      objective: 3
+    },
+    {
+      question: "At t = 5 ns: always_ff @(posedge clk) q <= d; with d = 1 and q = 0 before the edge, and assign q_n = ~q;. A testbench process wakes on @(posedge clk), runs $display of q and q_n, then $strobe of q and q_n. What do the two lines show?",
+      answers: [
+        { text: "display q=0 q_n=1, then strobe q=1 q_n=0", correct: true, feedback: "Right. $display runs before the nonblocking update of q. $strobe prints at the end of the time slot, after q and then q_n have changed (§4.9.4, §4.4.2.9)." },
+        { text: "display q=1 q_n=0, then strobe q=1 q_n=0", correct: false, feedback: "A nonblocking update does not land at once: $display runs before it (§4.9.4)." },
+        { text: "display q=0 q_n=1, then strobe q=0 q_n=1", correct: false, feedback: "q is updated in the same time slot, not at a later time, and $strobe waits for the end of the slot." },
+        { text: "display q=0 q_n=1, then strobe q=1 q_n=1", correct: false, feedback: "The update of q_n is one more pass in the same time slot, and $strobe prints only after every pass is done." }
+      ],
+      explanation: "All of this happens at t = 5 ns. The extra passes that update q and then q_n are delta cycles: zero simulated time.",
+      objective: 4
+    },
+    {
+      question: "How much simulated time do the delta cycles inside one time slot take?",
+      answers: [
+        { text: "One step of the global precision each", correct: false, feedback: "That step is 1step, a real delay (§3.14.3). Delta cycles are passes inside one time slot and add no time." },
+        { text: "One time unit each", correct: false, feedback: "If each pass cost a time unit, the two prints in the traced example would show different time stamps. Both show 5." },
+        { text: "None: $time is the same before and after them", correct: true, feedback: "Right. A delta cycle is one more iteration of the §4.5 loop at the same simulation time." },
+        { text: "It depends on the simulator", correct: false, feedback: "The standard leaves the order of events open, not their time. Every event of a slot executes at that slot's time (§4.4)." }
+      ],
+      explanation: "Delta cycle is industry usage for one more pass of the scheduler at the same time. No number of them moves $time.",
+      objective: 4
+    },
+    {
+      question: "a.sv starts with `timescale 1ns/1ps and holds module a. b.sv holds module b, which has #10 delays and no time unit of its own. Compiled as one compilation unit, a.sv then b.sv, b waits 10 ns. A new script compiles b.sv first. What happens?",
+      answers: [
+        { text: "Nothing changes, because a `timescale applies only to the file it is written in", correct: false, feedback: "A `timescale applies to everything after it in the compilation unit, across files (§3.14.2.1, §22.2). That is exactly why the order matters." },
+        { text: "b loses its inherited unit. Mixing elements with and without a unit is an error (§3.14.2.3), and a tool that only warns gives b its default unit. Fix: timeunit in b.sv.", correct: true, feedback: "Right. A `timescale reaches only the elements compiled after it (§3.14.2.1). With b first, nothing gives b a unit." },
+        { text: "Only %t output changes; the delays are unaffected", correct: false, feedback: "Delays are measured in the time unit, so they change with it." },
+        { text: "Nothing changes, provided tb_top calls $timeformat at time 0", correct: false, feedback: "$timeformat changes how %t prints, never what a delay means (§20.4.3)." }
+      ],
+      explanation: "File-order dependence is the classic `timescale bug: §3.14.2.1 shows a module that gets nanoseconds in one order and picoseconds in another. timeunit and timeprecision inside each element remove it (§3.14.2.2).",
+      objective: 5
+    },
+    {
+      question: "package util_pkg; timeunit 1ps; timeprecision 1ps; task automatic wait_t(time t); #t; endtask endpackage. tb_top, with timeunit 1ns, calls util_pkg::wait_t(5ns). How long does the task wait?",
+      answers: [
+        { text: "5 ns, because a time literal carries its unit with it", correct: false, feedback: "A time literal is converted to a plain number in the scope where it is written (§5.8). The unit is gone by the time the task sees it." },
+        { text: "5000 ps, because values are converted when they cross scopes", correct: false, feedback: "Nothing converts a value between scopes. The receiving scope reads the number in its own unit." },
+        { text: "0, because the argument is rounded to the package's precision", correct: false, feedback: "5 is a whole number of 1 ps steps, so nothing rounds away." },
+        { text: "5 ps", correct: true, feedback: "Right. 5ns becomes the number 5 in tb_top's 1 ns unit (§5.8). The time argument carries no unit, and #t waits 5 of the package's 1 ps units." }
+      ],
+      explanation: "Fix it in the callee: task automatic wait_ns(realtime delay_ns); #(delay_ns * 1ns); endtask. There, 1ns is converted in the package's own unit (§5.8).",
+      objective: 5
     }
   ]}
 />
+
+### Kata (guided): two modules, two time units
+
+**Objective:** predict, run and explain time values in a design whose modules use different units (objectives 2, 3 and 5).
+
+**Steps:**
+
+1. Run the Make It Work example and compare your log with the expected output. Write one sentence per line explaining it.
+2. In `slow_gen`, add `$stime` to both displays and pass `$time` instead of `$realtime` to `%t`. Predict the new lines, then run.
+3. Add `` `timescale 1ns/1fs `` as the first line of the file, keeping every `timeunit`. Predict what `$printtimescale($root)` prints, then run.
+4. Remove that `` `timescale `` again. Then delete the `timeunit 10ns; timeprecision 1ns;` line from `slow_gen`, run, and record what your simulator reports. Restore the line.
+5. Comment out the `$timeformat` call and record how `%t` prints now.
+
+**Artifact:** your log, with one sentence per line that explains it.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+1. The six lines are explained under *What to notice* in Make It Work.
+2. `$stime` prints the same values as `$time` (1, then 3): both are scaled to the 10 ns unit, and the values are far below 2^32. `%t` of `$time` prints `10.0 ns` and `30.0 ns`. `$time` had already rounded 1.3 and 2.6 to 1 and 3, so the fraction was lost before `%t` converted the value.
+3. `Time scale of ($root) is 1fs / 1fs`. The precision of every `` `timescale `` directive counts toward the global precision, even when every module overrides the directive with its own `timeunit` (§3.14.3). Nothing else changes: each module still rounds to its own precision, and `$timeformat` still fixes `%t`.
+4. `slow_gen` now has no unit while `tb_top` has one. §3.14.2.3 makes that mix an error; the message, and whether your tool stops or only warns and applies its default unit, are tool-dependent. If you had skipped the first part of step 4, `slow_gen` would have inherited 1ns/1fs from the `` `timescale ``, and its first delay would have shrunk from 13 ns to 1.26 ns without any message: the file-order leak in action.
+5. Without `$timeformat`, `%t` uses the defaults of Table 20-3: units equal to the smallest `` `timescale `` precision in the source, no decimals, no suffix and a minimum width of 20 characters. This file has no `` `timescale ``, so your tool chooses the units. That is why benches call `$timeformat` explicitly.
+
+</details>
+
+### Debug challenge: the 1000× delay
+
+A shared package was written by a team that works in picoseconds. Your bench works in nanoseconds.
+
+```systemverilog
+// compile
+package util_pkg;
+  timeunit 1ps; timeprecision 1ps;   // the library team's convention
+
+  task automatic wait_t(time t);
+    #t;                              // waits t units of THIS package's time unit
+  endtask
+endpackage
+
+module tb_top;
+  timeunit 1ns; timeprecision 1ps;
+
+  initial begin
+    $timeformat(-9, 3, " ns", 0);
+    util_pkg::wait_t(5ns);           // intent: wait 5 ns
+    $display("expected 5 ns, woke at %t", $realtime);
+    $finish;
+  end
+endmodule
+```
+
+The log shows `expected 5 ns, woke at 0.005 ns`. Explain the number, then fix the package so that callers in any time unit get the delay they ask for.
+
+<details className="my-4 rounded-xl border border-border/70 p-3">
+<summary className="cursor-pointer font-semibold">Show the worked solution</summary>
+
+**Why 0.005 ns.** The literal `5ns` is converted where it is written, in `tb_top`'s 1 ns unit: it becomes the number 5.0 (§5.8). Passing it to a `time` argument makes it the integer 5. Inside `util_pkg`, `#t` means 5 of the package's 1 ps units (§3.14). Nothing converts a number when it crosses from one scope into another.
+
+**Fix.** Take a real number of nanoseconds and scale it inside the package, where the literal `1ns` is converted in the package's own unit (1000.0):
+
+```systemverilog
+// snippet: replaces wait_t in util_pkg
+task automatic wait_ns(realtime delay_ns);
+  #(delay_ns * 1ns);                 // 5.0 * 1000.0 = 5000 ps = 5 ns
+endtask
+```
+
+Call it as `util_pkg::wait_ns(5);`. The log then shows `expected 5 ns, woke at 5.000 ns` (traced by hand). An alternative is a project rule that every package uses the bench's `timeunit`, but the scaled task stays correct whatever the caller's unit is.
+
+</details>
+
+The flashcards for this module follow. To revisit the event model, go back to the simulator in Build Your Mental Model and pick **fork…join timing**: predict when "join done" prints, then explain it with the scheduler loop.
+
+## References & Next Topics
+
+**Primary sources**
+
+- IEEE 1800-2023, *IEEE Standard for SystemVerilog*:
+  - §3.2 Design elements; §3.12.1 Compilation units.
+  - §3.14 Simulation time units and precision: §3.14.1 Time value rounding, §3.14.2.1 The `` `timescale `` compiler directive, §3.14.2.2 The timeunit and timeprecision keywords, §3.14.2.3 Precedence of timeunit, timeprecision, and `` `timescale ``, §3.14.3 Simulation time unit.
+  - §4.3 Event simulation; §4.4 Stratified event scheduler (§4.4.2.1 Preponed, §4.4.2.3 Inactive, §4.4.2.4 NBA, §4.4.2.9 Postponed events regions); §4.5 SystemVerilog simulation reference algorithm; §4.6 Determinism; §4.7 Nondeterminism; §4.9.1 Continuous assignment; §4.9.4 Nonblocking assignment.
+  - §5.8 Time literals; §6.8 Variable declarations; §6.12 Real, shortreal, and realtime data types (§6.12.1 Conversion).
+  - §9.2 Structured procedures (§9.2.2.1 General purpose always procedure, §9.2.2.2 Combinational logic always_comb procedure, §9.2.2.2.2 always_comb compared to always @*, §9.2.3 Final procedures); §9.4.1 Delay control; §9.4.2 Event control; §9.4.3 Level-sensitive event control; §9.6.1 Wait fork statement (automatic termination).
+  - §14.2 Overview, in Clause 14 Clocking blocks (cycle-based methodology); §16.2 Overview, in Clause 16 Assertions (cycle-based semantics).
+  - §20.2 Simulation control system tasks; §20.3.1 $time; §20.3.2 $stime; §20.3.3 $realtime; §20.4.1 Timescale retrieval system functions (Table 20-2); §20.4.2 $printtimescale; §20.4.3 $timeformat (Table 20-3).
+  - §21.2.1.1 Format specifications (`%t`); §22.2 Overview (scope of compiler directives); §22.3 `` `resetall ``; §22.7 `` `timescale ``.
+- uvm-core 2020.3.1, the Accellera reference implementation of IEEE 1800.2-2020: `src/base/uvm_report_server.svh` (`compose_report_message` formats the message time with `"%0t"` and `$realtime`) and `src/uvm_pkg.sv` (declares no time unit).
+
+**Prerequisites:** [F2C: Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) for `#`, `@`, `wait` and `=` versus `<=`, and [F2D: System Tasks and File I/O](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index) for `$display`, format specifiers and `$finish`.
+
+**Related**
+
+- [F2C: Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index): the procedural blocks simulator used above, with more programs.
+- [F2E: Your First Self-Checking Testbench](/curriculum/T1_Foundational/F2E_First_Self_Checking_Testbench/index): a complete bench whose `timeunit` lines, clock, watchdog and `$finish` this lesson explains.
+- [F3B: Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index): the ordered regions inside one time slot.
+- [F3C: Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index): delta cycles traced region by region, and races found and fixed.
+- [F4C: Synchronizing with Clocking and Program Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): `#1step` sampling and race-free drives.
+- [I-SV-6: Compiler Directives & Generate Constructs](/curriculum/T2_Intermediate/I-SV-6_Compiler_Directives_and_Generates/index): `` `timescale ``, `` `resetall `` and the other compiler directives in depth.
+
+<NextLesson />

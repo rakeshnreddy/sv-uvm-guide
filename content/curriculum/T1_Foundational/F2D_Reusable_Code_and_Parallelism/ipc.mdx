@@ -1,153 +1,793 @@
 ---
 title: "F2D: Interprocess Communication"
-description: "Coordinate parallel threads safely using Semaphores and Mailboxes."
+description: "Coordinate concurrent testbench processes with events, semaphores and mailboxes, and spot the missed trigger, the leaked key and the deadlock before they hang a run."
 flashcards: "F2D_IPC"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
-import { InteractiveCode, Quiz } from '@/components/ui';
-import MailboxSemaphoreGame from '@/components/visuals/MailboxSemaphoreGame';
-
 ## Quick Take
-- **What it is:** Mechanisms for threads to talk to each other (`mailbox`) or share resources (`semaphore`).
-- **Why it matters:** In a real testbench, your Driver needs to get data from the Sequencer, and multiple Drivers might need to access the same Bus. You need thread-safe ways to handle this.
-- **The Analogy:**
-    - **Semaphore:** A single bathroom key. Only one person can use it at a time.
-    - **Mailbox:** A physical mailbox. The postman puts letters in, you take them out. If it's full, the postman waits. If it's empty, you wait.
+
+- **What it is:** **Interprocess communication** (IPC) is how the concurrent processes of a testbench coordinate. IEEE 1800-2023 §15 gives you three built-in tools: a **named event** announces that something happened, a **semaphore** makes processes take turns on a shared resource, and a **mailbox** passes data from one process to another in order. This page is the foundation-level first look. [I-SV-5: Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index) teaches the full depth.
+- **Why it matters:** A testbench (TB) is a team of processes that run at the same time: a generator, a driver, a monitor, a checker and often a watchdog. They must say "done", share a bus and hand over transactions. Ad-hoc shared variables race ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)), and a wrong wait does not fail loudly: the run hangs, or a step silently never happens.
+- **The Analogy:** A restaurant kitchen. The bell at the pass is an event: everyone listening hears it at once. The single key to the walk-in fridge is a semaphore: one cook goes in, the others queue. The ticket rail is a mailbox: tickets come off in the order they went on, the cook waits when the rail is empty, and the waiter waits when it is full. *Where it breaks:* a real bell rings long enough for a cook who walks in a moment later to hear it, but `-> done` lasts no time at all, so only processes that are already waiting wake. And a kitchen knows who has the fridge key; a semaphore does not, so any process can `put()` a key it never took.
+
+**You will be able to:**
+1. Choose the right tool for a coordination need: an event to announce, a semaphore to take turns, a mailbox to pass data.
+2. Predict whether a process waiting with `@(ev)` or `wait (ev.triggered)` wakes when `-> ev` runs in the same time slot, and write the race-free form.
+3. Write a semaphore-guarded critical section and a typed, bounded mailbox between a producer and a consumer, and predict when `get()` and `put()` block.
+4. Diagnose the classic IPC failures from a log: a missed trigger, a leaked key, a circular wait (deadlock) and a consumer waiting for a message that never comes.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
-### The Traffic Controller
-Predict the scripted run first, then drive processes A, B and C yourself. Notice that a blocked process cannot do anything, and that it resumes **by itself**, oldest waiter first, the moment another process returns a key or a message. Nobody polls.
+### Processes need a way to coordinate
 
-<MailboxSemaphoreGame />
+A **process** is code that the simulator runs concurrently with other code: each `initial` and `always` procedure, and each statement that a `fork` starts (IEEE 1800-2023 §9.2, §9.3.2). You met them in [F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index); many engineers say **thread** for the same thing. A process **blocks** when it suspends itself to wait for time to pass or for something to happen, and it resumes when that wait is over.
 
-### 1. Semaphores (The Key)
-Used for **mutual exclusion**.
-- `new(n)`: Create with `n` keys.
-- `get(n)`: Grab `n` keys. Blocks until `n` keys are free at the same time; waiters are queued first-in first-out (IEEE 1800-2023 §15.3.3).
-- `put(n)`: Return `n` keys. It never checks who took them, and the count can grow past the initial `n` (§15.3.1).
-- `try_get(n)`: Non-blocking attempt. Returns a positive value and takes the keys, or returns 0 and takes nothing (§15.3.4).
+When several processes are ready in the same **time slot** (everything the simulator does at one simulation time), the standard does not say which runs first. There is no implied order between `initial` and `always` procedures (§9.2), and ready processes may run in any order (§4.7). So processes cannot coordinate by guessing the order. Polling a shared variable works, but badly:
 
 ```systemverilog
-semaphore key = new(1); // Single key
+// snippet
+// Polling: wakes every nanosecond just to look, and can be up to 1 ns late
+while (!reset_done_flag) #1;
 
-initial begin
-  fork
-    begin
-      key.get(1); // Grab key
-      // Critical Section: Drive Bus
-      #10;
-      key.put(1); // Return key
-    end
-    begin
-      #2;
-      key.get(1); // BLOCKS here until Thread 1 is done
-      // Critical Section
-      key.put(1);
-    end
-  join
+// IPC: sleeps until another process announces it
+@(reset_done);
+```
+
+The IPC tools give you **blocking with wake-up**. A call suspends the calling process until another process makes the call possible, and that other process's action resumes it. Nobody polls. The diagram shows where the three tools sit in the plain-SystemVerilog bench you will build in Make It Work.
+
+<ArchitectureDiagram
+  title="Where events, semaphores and mailboxes sit in a plain-SystemVerilog testbench"
+  caption="Four processes inside tb_top. gen hands items to drv through the mailbox gen2drv; drv and irq take turns on the bus through the semaphore bus; drv's trigger of the event drv_done wakes chk. Every name matches the Make It Work code."
+  nodes={[
+    { id: "top", label: "tb_top", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 3, container: true },
+    { id: "gen", label: "gen", sublabel: "generator process", kind: "generic", col: 0, row: 0 },
+    { id: "mbx", label: "gen2drv", sublabel: "mailbox #(int), new(1)", kind: "fifo", col: 1, row: 0 },
+    { id: "chk", label: "chk", sublabel: "checker process", kind: "generic", col: 0, row: 1 },
+    { id: "drv", label: "drv", sublabel: "driver process", kind: "driver", col: 1, row: 1 },
+    { id: "irq", label: "irq", sublabel: "interrupt process", kind: "generic", col: 0, row: 2 },
+    { id: "bus", label: "bus", sublabel: "semaphore, new(1)", kind: "generic", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "gen", to: "mbx", style: "data", label: "put(i)" },
+    { from: "mbx", to: "drv", style: "data", label: "get(item)" },
+    { from: "drv", to: "chk", style: "causal", label: "-> drv_done" },
+    { from: "drv", to: "bus", style: "control", label: "get(1) … put(1)" },
+    { from: "irq", to: "bus", style: "control", label: "get(1) … put(1)" }
+  ]}
+/>
+
+> [!NOTE]
+> **Classes, in one paragraph.** `semaphore` and `mailbox` are built-in **classes** (§15.2), and [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index) teaches classes properly. Until then you need two facts. `new(...)` creates the object, and your variable holds a **handle** that refers to it, so every process that uses the same variable uses the same semaphore or mailbox. Create them where you declare them, at module scope: that runs before any `initial` procedure starts (§6.8). An `event` is not a class, but its variable is also a handle, and a declaration without an initializer creates a fresh event (§6.17).
+
+### Named events: announce that something happened
+
+A **named event** is a variable of type `event`: a handle to a synchronization object that processes can trigger and wait for (§6.17, §15.5). It carries no data. Triggering it with `->` wakes **every** process that is already waiting on it (§15.5.1). Waiting with `@` blocks until the next trigger, and the waiter must already be blocked when the trigger runs: "If the trigger executes first, then the waiting process remains blocked" (§15.5.2).
+
+| Form | What it does |
+|---|---|
+| `event done;` | Declares a named event (§6.17). |
+| `-> done;` | Triggers it now. Every process already blocked on `done` wakes; the trigger itself lasts no time (§15.5.1, §15.5.2). |
+| `@(done);` or `@done;` | Blocks until the next trigger (§15.5.2). |
+| `wait (done.triggered);` | Passes at once if `done` was triggered earlier in this time slot; otherwise blocks until it is (§15.5.3). |
+| `->> done;` | Nonblocking trigger: fires later in the same time slot. A preview here; I-SV-5 covers it (§15.5.1). |
+
+The minimal correct use starts waiting long before the trigger can happen:
+
+```systemverilog
+// compile
+`timescale 1ns/1ns
+
+module tb_top;
+  event reset_done;  // a fresh synchronization object: no new() needed
+
+  initial begin : reset_gen
+    #20;                                       // reset lasts 20 ns
+    $display("%0t reset_gen: reset released", $time);
+    -> reset_done;                             // wakes every process already waiting
+  end
+
+  initial begin : stimulus
+    @(reset_done);                             // waiting since t = 0: cannot miss it
+    $display("%0t stimulus: starting traffic", $time);
+  end
+endmodule
+```
+
+**Expected output** (computed by hand from §15.5.1–§15.5.2, not captured from a simulator):
+
+```text
+20 reset_gen: reset released
+20 stimulus: starting traffic
+```
+
+The order of these two lines is fixed: `stimulus` cannot wake before the trigger, and the trigger comes after the `$display` in `reset_gen`. The danger appears when the trigger and the wait land in the **same time slot**. Below is the code the next visualizer runs. Both processes resume at t = 10 ns. **Predict before you touch it:** does the consumer always print `consumer woke`?
+
+```systemverilog
+// snippet: the code the visualizer runs
+event done;
+
+initial begin // producer
+  #10 -> done;
+  $display("producer triggered done");
+end
+
+initial begin // consumer
+  #10 @(done);
+  $display("consumer woke");
 end
 ```
 
-### 2. Mailboxes (The Pipe)
-Used for **data transfer** between threads.
-- `new(bound)`: Create with size `bound` (0 = infinite).
-- `put(obj)`: Place object (blocks if full).
-- `get(obj)`: Retrieve object (blocks if empty).
-- `peek(obj)`: Copy the oldest object without removing it (blocks if empty).
-- `try_put`, `try_get`, `try_peek`: Never block. They return 0 when the mailbox is full (or empty) and leave it unchanged (§15.4.4, §15.4.6).
+<ForkJoinVisualizer scenario="event-race" scenarios={["event-race"]} />
+
+Use it in this order:
+
+1. Keep **-> with @(done)**. Lock in your prediction, then flip the order under **When processes are ready together, this simulator runs…** and step through both runs.
+2. Switch to **-> with wait(done.triggered)**, predict again, and flip the order again.
+3. Open **forever wait(done.triggered)** and watch what happens to simulation time.
+4. **->> with @(done)** previews the nonblocking trigger. I-SV-5 covers it after [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) explains the NBA region; skip it for now if you like.
+
+**What you just saw.** With `@(done)`, the model found two outcomes. If the consumer runs first, it is already waiting and wakes. If the producer runs first, the trigger fires while nobody waits, and the consumer blocks forever. That is a race: the result depends on an order the standard leaves open (§4.7, §15.5.2). With `wait (done.triggered)`, both orders agree, because an event's **triggered state** "persists throughout the time step (i.e., until simulation time advances)" (§15.5.3). The loop variant shows the cost of that persistence: the wait passes again and again at 10 ns, and time never moves.
+
+The mistakes everyone makes with events:
+
+- **The missed trigger.** A process that reaches `@(ev)` after `-> ev` has already run (earlier in the same time slot, or at an earlier time) waits for the next trigger, which may never come. Start waiting before the trigger can happen, or use `wait (ev.triggered)` when both can land in one time slot.
+- **Treating `triggered` as a flag.** It lasts only until time advances. A `wait (ev.triggered)` that starts at 50 ns does not see a trigger from 20 ns; it waits for the next one.
+- **Spinning on `triggered`.** Never put `wait (ev.triggered)` alone inside a loop; use `@(ev)` there.
+- **Expecting events to carry or count anything.** Two triggers while nobody waits are both lost. To pass data or keep every notification, use a mailbox.
+
+### Semaphores: take turns on a shared resource
+
+"Conceptually, a semaphore is a bucket" of keys (§15.3). A process gets a key before it uses the shared resource and puts it back afterwards; the code in between is its **critical section**. If no key is free, `get()` blocks the caller in a first-in first-out (FIFO) queue (§15.3.3). The standard gives a semaphore no owner: any process can return keys, even ones it never took, and the count can grow past the number `new()` created (§15.3.1).
+
+| Call | Kind | Blocks? | What it does |
+|---|---|---|---|
+| `new(keyCount = 0)` | function | no | Creates the bucket with `keyCount` keys. **The default is 0** (§15.3.1). |
+| `get(keyCount = 1)` | task | yes | Returns once that many keys are free and takes them; until then the caller waits in the FIFO queue (§15.3.3). |
+| `put(keyCount = 1)` | function | no | Returns keys; a waiting process whose request is now met resumes (§15.3.2). |
+| `try_get(keyCount = 1)` | function | no | Takes the keys and returns a positive integer, or returns 0 and takes nothing (§15.3.4). |
+
+One correct example: two processes share a bus through a task that every caller must use.
 
 ```systemverilog
-mailbox #(int) mbx = new(2); // Capacity 2
+// compile
+`timescale 1ns/1ns
 
-initial begin
-  fork
-    // Producer
-    begin
-      for (int i=0; i<5; i++) begin
-        mbx.put(i); // Blocks if full
-        $display("Sent %0d", i);
-      end
-    end
-    // Consumer
-    begin
-      int val;
-      forever begin
-        mbx.get(val); // Blocks if empty
-        $display("Got %0d", val);
-      end
-    end
-  join // never completes: the consumer loops forever. Real code uses join_none here.
-end
+module tb_top;
+  semaphore bus = new(1);  // one key in the bucket
+
+  task automatic bus_write(string who, int data);
+    bus.get(1);            // waits while another caller holds the key
+    $display("%0t %s: write %0d start", $time, who, data);
+    #10;                   // the transfer occupies the bus for 10 ns
+    $display("%0t %s: write %0d end", $time, who, data);
+    bus.put(1);            // gives the key back; the oldest waiter wakes
+  endtask
+
+  initial bus_write("A", 1);
+  initial #4 bus_write("B", 2);  // B asks while A still holds the key
+endmodule
 ```
 
-Before you simulate it, predict where the first "Got" line appears among the "Sent" lines. With a bound of 2, the producer can run at most two messages ahead of the consumer.
+**Expected output** (computed by hand from §15.3.2–§15.3.3, not captured from a simulator):
+
+```text
+0 A: write 1 start
+10 A: write 1 end
+10 B: write 2 start
+20 B: write 2 end
+```
+
+Read the log against the rules. B calls `get(1)` at 4 ns while A holds the only key, so B blocks. When A calls `put(1)` at 10 ns, B, the oldest waiter, takes the key and resumes by itself. The two transfers never overlap, and nobody polled.
 
 <VisualRecap
-  title="Blocking means suspended until someone else acts"
-  rule="get, put and peek suspend the caller until another process makes them possible, then resume it automatically, oldest waiter first. try_get, try_put and try_peek never block: they return 0 instead."
-  code={`semaphore bus = new(1);
-bus.get(1);          // waits for the key
-drive_packet();
-bus.put(1);          // every exit path must return it
-
-mailbox #(int) mbx = new(2);
-mbx.put(x);          // waits while 2 items are queued
-if (!mbx.try_get(y)) $display("nothing yet");`}
-  mistake="Leaving a task early, or being killed by disable fork, while holding a semaphore key. Nothing returns the key, so every later get() waits forever."
-  inTestbench="Plain-SV benches connect generator and driver with a bounded mailbox; UVM wraps the same idea in uvm_tlm_fifo. Semaphores guard a bus that several drivers share."
+  title="A semaphore is a bucket of keys with a waiting line"
+  rule="get(n) returns only when n keys are free; otherwise the caller joins a first-in first-out queue. put(n) returns keys, and waiting processes resume in queue order. No one owns a key: any process may put one back."
+  code={`semaphore bus = new(1); // new() alone would create 0 keys
+bus.get(1);   // wait for the key
+// ... use the bus ...
+bus.put(1);   // every path out must return it`}
+  mistake="Leaving the critical section through an early return, a disable or a disable fork while holding the key. Nothing gives it back, so every later get() waits forever, and no error is printed."
+  inTestbench="Several drivers, or a test thread and an interrupt process, sharing one physical bus; also a shared log file or reference model. In UVM, the sequencer's arbitration usually does this job (I-UVM-3B)."
 >
-  <svg viewBox="0 0 320 130" role="img" aria-label="A semaphore bucket with one key, and a FIFO queue of waiting processes B then C; a put wakes B first." style={{ width: "100%", maxWidth: 360 }}>
-    <rect x="10" y="20" width="90" height="60" rx="10" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
-    <text x="22" y="44" fontSize="11" fill="currentColor">bucket</text>
-    <text x="22" y="66" fontSize="14" fill="currentColor">⚿</text>
-    <text x="130" y="44" fontSize="11" fill="currentColor">wait queue (FIFO)</text>
-    <rect x="130" y="52" width="40" height="24" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
-    <text x="140" y="68" fontSize="11" fill="currentColor">1. B</text>
-    <rect x="178" y="52" width="40" height="24" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
-    <text x="188" y="68" fontSize="11" fill="currentColor">2. C</text>
-    <line x1="100" y1="64" x2="126" y2="64" stroke="currentColor" strokeDasharray="5 3" markerEnd="none" />
-    <text x="10" y="104" fontSize="10" fill="currentColor">put(1) → the key goes to B, the oldest waiter;</text>
-    <text x="10" y="120" fontSize="10" fill="currentColor">B wakes by itself. C waits for the next put.</text>
+  <svg viewBox="0 0 340 130" role="img" aria-label="Process A holds the only key and the bucket is empty. B is first and C second in the first-in first-out wait queue. When A calls put(1), the key goes to B, the oldest waiter." style={{ width: "100%", maxWidth: 360 }}>
+    <rect x="8" y="30" width="76" height="40" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="18" y="47" fontSize="11" fill="currentColor">A</text>
+    <text x="18" y="62" fontSize="9" fill="currentColor">holds the key</text>
+    <line x1="84" y1="50" x2="112" y2="50" stroke="currentColor" />
+    <text x="86" y="44" fontSize="9" fill="currentColor">put(1)</text>
+    <rect x="112" y="30" width="84" height="40" rx="10" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="122" y="47" fontSize="11" fill="currentColor">bucket</text>
+    <text x="122" y="62" fontSize="9" fill="currentColor">0 keys</text>
+    <line x1="196" y1="50" x2="224" y2="50" stroke="currentColor" strokeDasharray="5 3" />
+    <text x="224" y="22" fontSize="10" fill="currentColor">wait queue (FIFO)</text>
+    <rect x="224" y="30" width="50" height="40" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="234" y="55" fontSize="11" fill="currentColor">1. B</text>
+    <rect x="280" y="30" width="50" height="40" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <text x="290" y="55" fontSize="11" fill="currentColor">2. C</text>
+    <text x="8" y="100" fontSize="10" fill="currentColor">A calls put(1): the key goes to B, the oldest waiter,</text>
+    <text x="8" y="118" fontSize="10" fill="currentColor">and B wakes by itself. C waits for the next put().</text>
   </svg>
 </VisualRecap>
 
-## Common Pitfalls
-- **Deadlock:** Thread A has Key 1 and wants Key 2. Thread B has Key 2 and wants Key 1. Both wait forever.
-- **Type Safety:** Always use parameterized mailboxes (`mailbox #(type)`) instead of generic ones to avoid runtime casting errors.
-- **Zero-Size Mailbox:** `new(0)` creates an unbounded mailbox. It never blocks on `put()`, which can lead to memory exhaustion if the consumer is too slow.
+The mistakes everyone makes with semaphores:
 
-## Interview Questions
+- **`new()` with no argument.** It creates **zero** keys (§15.3.1), so the first `get(1)` blocks forever. Write `new(1)` when you mean one key.
+- **A leaked key.** An early `return`, a `disable` or a `disable fork` inside the critical section skips `put()`. Give the code one exit path that always returns the key.
+- **An extra `put()`.** A `put()` without a matching `get()` adds a key, and with two keys two processes enter the critical section together (§15.3.1).
+- **Ignoring `try_get()`.** It returns 0 when no key is free; code that drives the bus anyway has no protection.
 
-<Card className="mt-8">
-  <CardHeader>
-    <CardTitle>Ready for the Interview?</CardTitle>
-  </CardHeader>
-  <CardContent className="space-y-4">
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">What is the difference between a mailbox and a queue?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>A <strong>queue</strong> is just a data structure; pushing/popping is non-blocking. A <strong>mailbox</strong> is a synchronization primitive; `put/get` are blocking tasks that suspend the thread until the operation is possible. Use mailboxes for IPC; use queues for local storage.</p>
-      </div>
-    </details>
+### Mailboxes: pass data in order
 
-    <details className="group rounded-lg border border-border bg-muted/40 p-4">
-      <summary className="flex cursor-pointer items-start justify-between gap-3 font-medium text-foreground">
-        <span className="min-w-0 flex-1">How does `try_get()` differ from `get()`?</span>
-        <span aria-hidden="true" className="shrink-0 text-muted-foreground transition group-open:rotate-180 motion-reduce:transition-none">▼</span>
-      </summary>
-      <div className="mt-4 text-sm leading-relaxed text-muted-foreground">
-        <p>`get()` is a blocking task. `try_get()` is a function that returns immediately. For a semaphore it returns a positive value when it got the keys and 0 otherwise (§15.3.4). For a mailbox it returns a positive value when it retrieved a message, 0 when the mailbox is empty, and a negative value when the message type does not match the variable (§15.4.6). It allows a thread to do something else if the resource isn't ready, rather than sleeping — but the thread must check the result before using the resource.</p>
-      </div>
-    </details>
-  </CardContent>
-</Card>
+A **mailbox** is a queue of messages shared between processes (§15.4). One process puts messages in and another gets them out, oldest first: `put()` stores each message "in strict FIFO order" (§15.4.3). A **bounded** mailbox holds at most `bound` messages, so a fast producer must wait for a slow consumer; that waiting is called **backpressure**. Declare it **typed**, as in `mailbox #(int)`, so that the compiler checks every message type (§15.4.9).
 
-## References
-- IEEE 1800-2023 §15.3 (Semaphores)
-- IEEE 1800-2023 §15.4 (Mailboxes)
+| Call | Kind | Blocks? | What it does |
+|---|---|---|---|
+| `new(bound = 0)` | function | no | Creates the mailbox. 0, the default, means unbounded; a positive `bound` is the queue size (§15.4.1). |
+| `put(msg)` | task | while full | Adds `msg` at the back; waits while a bounded mailbox is full (§15.4.3). |
+| `get(msg)` | task | while empty | Removes the oldest message into `msg`; waits while the mailbox is empty (§15.4.5). |
+| `peek(msg)` | task | while empty | Copies the oldest message without removing it (§15.4.7). |
+| `try_put(msg)`, `try_get(msg)`, `try_peek(msg)` | function | never | Return a positive integer on success, or 0 and change nothing (§15.4.4, §15.4.6, §15.4.8). On an untyped mailbox, `try_get()` and `try_peek()` can also return a negative value (Push Further). |
+| `num()` | function | never | The number of messages now; "valid only until the next get() or put()" (§15.4.2). |
 
-**Next Step for Advanced Learners:** If you are ready for a deeper dive into backpressure, memory leaks, and deadlocks, head straight to [I-SV-5: Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index) for the advanced track and practice labs.
+One correct example: a producer and a slow consumer joined by a mailbox that holds two messages.
+
+```systemverilog
+// compile
+`timescale 1ns/1ns
+
+module tb_top;
+  mailbox #(int) mbx = new(2);  // typed, and bounded to 2 messages
+
+  initial begin : producer
+    for (int i = 0; i < 4; i++) begin
+      mbx.put(i);                // waits while 2 messages are queued
+      $display("%0t sent %0d", $time, i);
+    end
+  end
+
+  initial begin : consumer
+    int v;
+    repeat (4) begin
+      #10 mbx.get(v);            // a slow consumer: one message every 10 ns
+      $display("%0t got %0d", $time, v);
+    end
+  end
+endmodule
+```
+
+**Predict before you open the lab:** at what time does the producer print `sent 2`? Write your answer down; the lab below runs the same program and shows its times in the trace.
+
+The mistakes everyone makes with mailboxes:
+
+- **Expecting a full mailbox to drop or overwrite.** It never does: `put()` waits, and `try_put()` returns 0 (§15.4.3, §15.4.4).
+- **Leaving it unbounded by accident.** `new()` never makes the producer wait (§15.4.1). If the producer outruns the consumer, the queue and the memory it uses grow for the whole run.
+- **Steering on `num()`.** Its value is stale as soon as another process puts or gets (§15.4.2). Let `get()` and `put()` do the waiting.
+- **Two mailboxes where you meant one.** Two calls to `new()` create two separate mailboxes. A consumer that reads one while the producer writes the other waits forever.
+
+### Predict, then drive it yourself
+
+The lab below runs on the same tested process model as the visualizer above. The semaphore and mailbox modes first ask you to predict a scripted run, then let you issue the calls yourself; blocked processes are woken by the model, never by you.
+
+<MailboxSemaphoreGame />
+
+Work through it in this order:
+
+1. **Semaphore**, program **FIFO wake-up**: A holds the only key for 10 ns, B asks at 2 ns and C at 4 ns. Predict when C gets the key, then step through the run.
+2. Switch the lab to **Mailbox** and choose **new(2)**. This is the producer and consumer above: check the time you wrote down.
+3. In the mailbox sandbox, make **consumer 1** call `get(v)` on the empty mailbox, then let the producer put. Watch who wakes, and how.
+4. Try **new(1)** and **new()**, and in semaphore mode the **get(2)** program.
+
+**What the lab showed.**
+
+- A blocked process runs no code at all until another process makes its call possible. Then it resumes by itself.
+- Semaphore waiters (§15.3.3) and processes blocked in a mailbox `get()` (§15.4.5) are served first-in first-out. In step 1, the key passes from A to B at 10 ns, and from B to C at 15 ns.
+- The `try_` calls never block: when they cannot succeed, they return 0 and change nothing.
+- With `new(2)`, messages 0 and 1 fill the mailbox at 0 ns, so `put(2)` waits until the consumer's first `get()` at 10 ns. Here is the full log of the mailbox example:
+
+```text
+0 sent 0
+0 sent 1
+10 got 0
+10 sent 2
+20 got 1
+20 sent 3
+30 got 2
+40 got 3
+```
+
+This log was computed by hand from §15.4.3 and §15.4.5, and the lab's model gives the same times. Lines that share a time stamp come from different processes, so a simulator may print them in either order (§4.7); the time stamps themselves cannot change.
+
+### Race and deadlock smells
+
+IPC failures rarely print an error. Nothing in the standard reports a blocked process, so the usual symptom is a log that stops early, or a run that never ends. These are the five shapes to recognize.
+
+**1. The missed trigger.**
+- *Log:* the line after an `@(ev)` never prints. A bench with a free-running clock hangs; one without a clock ends early.
+- *Cause:* `-> ev` ran before the waiter reached `@(ev)`, earlier in the same time slot or at an earlier time (§15.5.2).
+- *Fix:* start waiting before the trigger can happen. If both can land in one time slot, use `wait (ev.triggered)`. If the waiter may arrive at a later time, an event is the wrong tool (see Push Further).
+
+**2. Spinning on `triggered`.**
+- *Log:* simulation time stops advancing while the simulator stays busy; the log may flood with repeated lines.
+- *Cause:* a loop around `wait (ev.triggered)` passes again and again, because the triggered state lasts until time advances (§15.5.3).
+- *Fix:* use `@(ev)` inside loops.
+
+**3. The leaked key.**
+- *Log:* the first transfers finish, then every process that uses the resource stops inside `get()`.
+- *Cause:* a path out of the critical section (an early `return`, a `disable`, a `disable fork`) skipped `put()`. Nothing returns keys automatically (§15.3.2).
+- *Fix:* one exit path that always calls `put()`. Practise it in the lab's **Debug: the lost key** mode.
+
+**4. Circular wait (deadlock).**
+- *Log:* two processes stop for good, each inside a `get()`.
+- *Cause:* each holds a key the other needs, because they take two semaphores in opposite orders.
+- *Fix:* take keys in one global order everywhere (here: `s1`, then `s2`). I-SV-5 teaches deadlock diagnosis in depth.
+
+```systemverilog
+// snippet
+semaphore s1 = new(1), s2 = new(1);
+
+initial begin : proc_a
+  s1.get(1);
+  #5 s2.get(1);   // proc_b holds s2: waits forever
+  s2.put(1);
+  s1.put(1);
+end
+
+initial begin : proc_b
+  s2.get(1);
+  #5 s1.get(1);   // proc_a holds s1: waits forever
+  s1.put(1);
+  s2.put(1);
+end
+```
+
+<SequenceDiagram
+  title="Circular wait: two processes take two semaphores in opposite orders"
+  caption="At 0 ns each process takes a different key, so both succeed. At 5 ns each asks for the key the other holds. Neither can reach its put(), so both wait forever."
+  columnWidth={140}
+  participants={[
+    { id: "a", label: "proc_a", kind: "generic" },
+    { id: "s1", label: "s1", sublabel: "semaphore, 1 key", kind: "generic" },
+    { id: "s2", label: "s2", sublabel: "semaphore, 1 key", kind: "generic" },
+    { id: "b", label: "proc_b", kind: "generic" }
+  ]}
+  messages={[
+    { kind: "divider", label: "t = 0 ns" },
+    { from: "a", to: "s1", label: "s1.get(1)" },
+    { kind: "return", from: "s1", to: "a", label: "key taken" },
+    { from: "b", to: "s2", label: "s2.get(1)" },
+    { kind: "return", from: "s2", to: "b", label: "key taken" },
+    { kind: "divider", label: "t = 5 ns" },
+    { from: "a", to: "s2", label: "s2.get(1): blocks", tone: "error" },
+    { from: "b", to: "s1", label: "s1.get(1): blocks", tone: "error" },
+    { kind: "note", from: "a", to: "b", label: "proc_a holds s1 and waits for s2; proc_b holds s2 and waits for s1. No put() can ever run." }
+  ]}
+/>
+
+**5. The starved consumer.**
+- *Log:* a consumer stops inside `get()` after the last message.
+- *Cause:* it expects more messages than any producer sends, or it reads a different mailbox than the producer writes.
+- *Fix:* share one count (or an end marker) between producer and consumer, and create each mailbox once.
+
+### Choosing the right tool
+
+| You need to… | Use | Not the others, because… |
+|---|---|---|
+| Announce that something happened: reset released, last item sent | A named event: `-> ev`, `@(ev)` | A mailbox also works, but carries data you do not need. A flag with `wait (flag)` is the choice when late arrivals must pass too (Push Further). |
+| Let one process at a time use a resource: a bus, a log file, a model | A semaphore: `get()`, `put()` | An event cannot make processes queue. A "busy" flag that two processes test and set in one time slot races. |
+| Hand data from a producer to a consumer, in order, losing none | A mailbox: `put()`, `get()` | An event carries no data and is lost when nobody waits. A shared variable keeps only the latest value. |
+
+In a class-based SystemVerilog bench, a mailbox joins the generator to the driver and another joins the monitor to the scoreboard; I-SV-5 builds that layered bench. Events mark moments such as "reset released" or "stimulus done". Semaphores guard a bus that several drivers or test threads share. UVM wraps the same ideas in its own classes (see Push Further).
+
+**Recap.** Processes coordinate by blocking and being woken, never by guessing the order. An event announces a moment and reaches only processes that are already waiting. A semaphore hands out keys and makes the rest queue. A mailbox queues data, in order, with backpressure when it is bounded. When any of them is misused, the bench usually stops quietly instead of reporting an error.
+
+## Make It Work
+
+### Build it: a generator, a driver, an interrupt and a checker
+
+This is the bench from the diagram at the start of Build Your Mental Model. `gen` makes three items, `drv` sends each one over a shared bus, `irq` needs the same bus at 25 ns, and `chk` confirms that every item was sent. There is no design under test (DUT): the bus is modelled by the time a transfer takes, so you can watch only the coordination.
+
+```systemverilog
+// compile
+`timescale 1ns/1ns
+
+module tb_top;
+  // Shared objects: created before any initial procedure starts
+  mailbox #(int) gen2drv = new(1);  // bounded: put() waits while one item is queued
+  semaphore      bus     = new(1);  // one key: one transfer on the bus at a time
+  event          drv_done;          // drv has sent its last item
+
+  int n_sent;                       // written only by drv
+
+  // The only way onto the bus: take the key first, give it back on every path out
+  task automatic bus_write(string who, int data);
+    bus.get(1);                     // waits while another process holds the key
+    $display("%0t %s: write %0d start", $time, who, data);
+    #10;                            // the transfer occupies the bus for 10 ns
+    $display("%0t %s: write %0d end", $time, who, data);
+    bus.put(1);                     // the oldest waiter, if any, takes the key
+  endtask
+
+  initial begin : gen
+    for (int i = 1; i <= 3; i++) begin
+      gen2drv.put(i);               // waits while the mailbox is full
+      $display("%0t gen: put %0d", $time, i);
+    end
+  end
+
+  initial begin : drv
+    int item;
+    repeat (3) begin
+      gen2drv.get(item);            // waits while the mailbox is empty
+      bus_write("drv", item);
+      n_sent++;
+    end
+    -> drv_done;                    // chk has been waiting since t = 0
+  end
+
+  initial begin : irq
+    #25 bus_write("irq", 99);       // arrives while drv holds the bus
+  end
+
+  initial begin : chk
+    @(drv_done);                    // waiting from t = 0, so it cannot miss the trigger
+    if (n_sent == 3)
+      $display("%0t chk: PASS, drv sent %0d items", $time, n_sent);
+    else
+      $error("chk: drv sent %0d items, expected 3", n_sent);
+  end
+endmodule
+```
+
+> [!NOTE]
+> **Run it.** Save the code as `tb_top.sv`, compile it on its own with any simulator that supports IEEE 1800-2023 mailboxes and semaphores, and run `tb_top`. It needs no plusargs. Compiled alone, `%0t` prints nanoseconds: by default, `%t` uses the finest time precision of everything you compile (§20.4.3).
+
+**Expected output** (computed by hand from §15.3–§15.5, not captured from a simulator):
+
+```text
+0 gen: put 1
+0 drv: write 1 start
+0 gen: put 2
+10 drv: write 1 end
+10 drv: write 2 start
+10 gen: put 3
+20 drv: write 2 end
+20 drv: write 3 start
+30 drv: write 3 end
+30 irq: write 99 start
+30 chk: PASS, drv sent 3 items
+40 irq: write 99 end
+```
+
+Lines that share a time stamp come from different processes, so another simulator may print them in a different order (§4.7). The time stamps cannot change. Check each against the rules:
+
+- **0 ns.** `drv` takes item 1 at once, which leaves room for item 2. The mailbox holds one item, so `put(3)` waits.
+- **10 ns.** `drv` takes item 2, which frees the slot, so `gen`'s `put(3)` completes at 10 ns: that is backpressure in the log.
+- **25 ns.** `irq` calls `get(1)` while `drv` holds the key. It blocks; nothing is printed.
+- **30 ns.** `drv` returns the key, and `irq` takes it. `drv` triggers `drv_done`, and `chk`, waiting since 0 ns, wakes.
+- **40 ns.** `irq` finishes. Nothing else is scheduled, so the simulation ends.
+
+### How to wire processes together
+
+1. **List what the processes must tell each other,** and pick one tool per need: announce with an event, take turns with a semaphore, pass data with a mailbox.
+2. **Declare and create shared objects at module scope,** as in `mailbox #(int) gen2drv = new(1);`. They exist before any process starts (§6.8), and every process shares one handle.
+3. **Type and bound every mailbox.** The bound sets how far the producer may run ahead of the consumer.
+4. **Put each shared resource behind one task** that calls `get()` first and `put()` on every path out.
+5. **Start every `@(ev)` before its trigger can run,** at time 0 when you can. If the two can meet in one time slot, use `wait (ev.triggered)`.
+6. **Print PASS only after the last expected step,** so that a hang shows up as a missing PASS line.
+7. **Read the log by time stamp, not by line order.**
+
+### Debug it: break the bench on purpose
+
+Make each change on its own, predict the log, then compare with the result below.
+
+1. **Delete `bus.put(1);` from `bus_write`.** The log stops after `10 gen: put 3`. `drv` blocks in `bus.get(1)` for item 2, `irq` blocks at 25 ns, and the simulation ends at 25 ns because nothing else is scheduled. There is no error and no PASS line: a leaked key.
+2. **Create the semaphore with `new` instead of `new(1)`.** The log shows only `0 gen: put 1` and `0 gen: put 2`. The bucket starts with zero keys (§15.3.1), so `drv` blocks on its first transfer, and `gen` then blocks on its third `put()`.
+3. **Change `chk` to wait with `#30 @(drv_done);`.** Now the wait and the trigger both happen at 30 ns. Depending on which process the simulator runs first, the PASS line prints or the run ends without it: a race (§15.5.2). Restore the wait from time 0, or use `#30 wait (drv_done.triggered);`.
+
+**Checklist before moving on:**
+- [ ] Every semaphore `get()` has a matching `put()` on every path out, including early returns.
+- [ ] Every mailbox is typed, `mailbox #(T)`, and bounded unless you have a reason not to.
+- [ ] Every `@(ev)` starts before its `-> ev` can run, or uses `wait (ev.triggered)` when both can happen in one time slot.
+- [ ] No `wait (ev.triggered)` sits alone inside a loop.
+- [ ] Shared objects are created once, at module scope, and every process uses the same handle.
+- [ ] The bench prints PASS only when its end condition holds, so a hang cannot pass for success.
+
+## Push Further
+
+### Expert: What FIFO wake-up does and does not promise
+
+The standard defines two first-in first-out waiting queues: the semaphore's (§15.3.3) and the queue of processes blocked in a mailbox `get()` (§15.4.5). Both clauses add that FIFO "does not guarantee the order in which processes arrive at the queue"; it only preserves the arrival order. Two drivers that call `get()` in the same time slot arrive in an order the simulator chooses (§4.7).
+
+Three more things are not spelled out. The standard gives no order for several processes blocked in `put()` on a full mailbox: §15.4.3 says only that the caller is suspended "until there is enough room". It does not say whether a process that calls `get()` right after a `put()` woke a waiter can take the key first. And for multi-key requests, it does not say whether a large request at the head of the queue holds back a smaller one behind it. The course's process model has to make one choice for each, and both visualizers on this page list the main ones under **Assumptions and limits**; simulators may differ (tool-dependent).
+
+**Design rule:** never let correctness depend on who wins a same-time race for a key or a message. If the order matters, make it explicit, for example by letting one process own the resource and serve requests that arrive through a mailbox.
+
+### Expert: When a signal must last, use a level, not an event
+
+An event is an edge: `-> ev` reaches only the processes waiting at that moment, and `ev.triggered` is a short memory that clears when simulation time advances (§15.5.3). A wait condition is also re-evaluated only when one of its operands changes, and the end-of-time-slot reset of `triggered` does not count (§15.5.3). No event construct can tell a process that starts waiting at 50 ns about a trigger at 20 ns.
+
+When late arrivals must pass, keep the fact in a variable and wait on its level. `wait` is level-sensitive: it passes at once if the condition is already true (§9.4.3). Otherwise it sleeps until an operand changes, so unlike the polling loop at the top of this page, it never wakes just to look.
+
+```systemverilog
+// snippet
+bit reset_done_flag;           // 0 until reset has finished
+
+initial begin : reset_gen
+  #20 reset_done_flag = 1;     // set once, never cleared
+end
+
+initial begin : late_joiner
+  #50 wait (reset_done_flag);  // passes at once: the level is still 1
+end
+```
+
+Two IPC objects also remember. A semaphore created with `new(0)` banks each `put(1)` until a `get(1)` takes it (§15.3.1–§15.3.3), and a mailbox keeps every message (§15.4.3). The nonblocking trigger `->>` (§15.5.1) is a different tool, for ordering within one time slot; I-SV-5 teaches it.
+
+### Expert: A deadlock can end quietly
+
+A process blocked in `get()` or `@(ev)` has no event scheduled. The standard's reference algorithm keeps running only "while (some time slot is nonempty)" (§4.5). So when every process is blocked and nothing else is scheduled, the simulation simply ends, with no message. A bench with a free-running clock (`always #5 clk = ~clk;`) shows the opposite face: the clock keeps scheduling events, so a deadlocked run never ends until a watchdog fires or the tool's own limits stop it (tool-dependent).
+
+Either way, "no errors in the log" is not a pass. Print the PASS line only from code that runs after the last expected step, as `chk` does in Make It Work, and make your regression flow treat a missing PASS line as a failure (how depends on your scripts: tool-dependent). Give every test a watchdog too: a `fork … join_any` race between the test and a timeout, as in [F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index).
+
+### Expert: Typed mailboxes and handles inside messages
+
+A plain `mailbox` is typeless: one mailbox can carry messages of any type, and the type check happens at run time. `get()` or `peek()` into a variable of a non-equivalent type is a run-time error (§15.4.5, §15.4.7), and `try_get()` and `try_peek()` return a negative integer instead (§15.4.6, §15.4.8). The parameterized form, `mailbox #(T)`, moves the check to compile time (§15.4.9). That is why every mailbox on this page is typed.
+
+A message can be any singular expression, "including object handles" (§15.4.3). When you send a class handle, the consumer receives a handle to the same object, not a copy. If the producer then reuses that object for the next transaction, the consumer's earlier message changes under it. Create a new object for every transaction you put: [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/index) explains handles, and I-SV-5 drills this bug.
+
+### Expert: The same ideas in UVM
+
+UVM wraps these primitives in components:
+
+- `uvm_tlm_fifo` holds a `local mailbox #( T ) m;`, its constructor's `size` argument defaults to 1, and its `put()` and `get()` call the mailbox's. `uvm_tlm_analysis_fifo` passes size 0, so it is unbounded (uvm-core 2020.3.1, `src/tlm1/uvm_tlm_fifos.svh`). [I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) teaches TLM FIFOs.
+- Several sequences share one driver through the sequencer's arbitration, not a hand-written semaphore ([I-UVM-3B: sequence arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration)).
+- Notifications between components can use `uvm_event`, and objections decide when the test ends ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+
+The trade-off: raw events, semaphores and mailboxes stay useful inside one component or a plain-SystemVerilog bench. Between UVM components, prefer the UVM classes, which plug into the component hierarchy and its connections.
+
+### Interview angles
+
+<InterviewQuestionPlayground
+  title="Interview: mailbox or queue?"
+  question="What is the difference between a SystemVerilog mailbox and a queue such as int q[$]?"
+  options={[
+    { text: "A mailbox's put() and get() can block, and a blocked process wakes when another process acts; a queue's methods never block or wake anyone.", isCorrect: true, feedback: "Right. A queue is storage. A mailbox is storage plus synchronization: get() waits on an empty mailbox, put() waits on a full bounded one, and the waiter resumes by itself (§15.4.3, §15.4.5)." },
+    { text: "A queue is first-in first-out and a mailbox is last-in first-out.", isCorrect: false, feedback: "Both can be used first-in first-out; a mailbox always is: put() stores messages in strict FIFO order (§15.4.3)." },
+    { text: "A mailbox can only hold integers.", isCorrect: false, feedback: "A mailbox can carry any singular type, including class handles (§15.4.3); mailbox #(T) fixes the type." },
+    { text: "A queue cannot be shared between processes.", isCorrect: false, feedback: "It can, but nothing makes a reader wait for data or a writer wait for room. The processes must coordinate on their own, which is what a mailbox does for you." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the bench that froze at 30 ns"
+  question="A colleague replaced every @(ev) in the bench with wait (ev.triggered) to fix a race. Now one test freezes at 30 ns with the simulator still busy. What happened?"
+  options={[
+    { text: "A wait (ev.triggered) inside a loop passes again and again at 30 ns, because the triggered state lasts until time advances, so time can never advance.", isCorrect: true, feedback: "Right: a zero-delay loop (§15.5.3). Use @(ev) inside loops and keep wait (ev.triggered) for one-shot waits that may meet the trigger in the same time slot." },
+    { text: "wait (ev.triggered) is illegal inside a loop, and the simulator is stuck on the error.", isCorrect: false, feedback: "It is legal anywhere a statement is legal; the problem is what it does in a loop." },
+    { text: "The triggered state stays set forever after the first trigger.", isCorrect: false, feedback: "It clears when simulation time advances (§15.5.3). The trouble is that the loop never lets time advance." },
+    { text: "The event was triggered twice in the same time slot.", isCorrect: false, feedback: "Extra triggers do not cause a spin. Even one trigger makes the loop spin, because the triggered state stays true for the rest of the time slot." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Quiz
+
+Answer from memory first. Every question maps to one objective. The flashcards under **Reinforce the essentials**, at the end of this section, cover the same rules.
+
+<Quiz questions={[
+  {
+    question: "Both processes resume at t = 10 ns. The producer runs #10 -> done; and the consumer runs #10 @(done); $display(\"consumer woke\"); Does \"consumer woke\" print?",
+    answers: [
+      { text: "Always: both statements run at t = 10 ns, so the consumer sees the trigger", correct: false, feedback: "Running at the same time is not enough. @(done) catches only triggers that happen after the consumer starts waiting (§15.5.2)." },
+      { text: "Only if the simulator happens to run the consumer first; the standard leaves that order open", correct: true, feedback: "Right. If the consumer reaches @(done) first, the trigger wakes it. If the producer runs first, the trigger fires while nobody waits (§4.7, §15.5.2)." },
+      { text: "Never: a trigger at 10 ns can only be caught by a wait that started at 9 ns or earlier", correct: false, feedback: "Waiting earlier in the same time slot is enough. If the consumer reaches @(done) before the producer triggers, it wakes." },
+      { text: "Yes, but at t = 11 ns, one time unit after the trigger", correct: false, feedback: "A trigger wakes waiters in the same time slot; nothing moves to a later time. The only question is whether the consumer was already waiting." }
+    ],
+    explanation: "@(done) needs the waiter to be blocked before -> runs (§15.5.2). Both processes resume at 10 ns and the standard leaves their order open (§4.7), so this is a race: the line prints in one order and never in the other. A wait that starts earlier in the same time slot is enough, and a trigger never wakes anyone at a later time.",
+    objective: 2
+  },
+  {
+    question: "Which single change makes the consumer in the previous question wake whichever process runs first at t = 10 ns?",
+    answers: [
+      { text: "Replace #10 @(done); with #10 wait (done.triggered);", correct: true, feedback: "Right. The triggered state lasts until simulation time advances, so the wait passes even when the trigger came first in that time slot (§15.5.3)." },
+      { text: "Add #0 so that the consumer runs #10 #0 @(done);", correct: false, feedback: "That makes it worse. #0 sends the consumer to the back of the line at 10 ns, so every process already ready, including the producer, runs first. The trigger now always comes before @(done)." },
+      { text: "Move the consumer's initial block above the producer's in the source file", correct: false, feedback: "Source order does not decide which process runs first: there is no implied order between initial procedures (§9.2)." },
+      { text: "Trigger the event twice: -> done; -> done;", correct: false, feedback: "Both triggers happen at the same instant in the producer. If the consumer is not waiting yet, it misses both." }
+    ],
+    explanation: "wait (done.triggered) tests the event's triggered state, which -> sets and which lasts for the rest of the time slot (§15.5.3), so the order of the two processes stops mattering. #0 pushes the consumer behind the producer, so it always misses. File order carries no meaning (§9.2), and extra triggers in the same instant do not help a process that is not yet waiting.",
+    objective: 2
+  },
+  {
+    question: "mailbox #(int) mbx = new(1); At t = 0 the producer runs mbx.put(1); mbx.put(2); $display(\"done\"); The consumer runs #5 mbx.get(v); once. When does \"done\" print?",
+    answers: [
+      { text: "At 0 ns: put() never blocks", correct: false, feedback: "put() waits while a bounded mailbox is full (§15.4.3). new(1) holds one message, so put(2) waits." },
+      { text: "At 5 ns: put(2) waits until the consumer's get() frees the only slot", correct: true, feedback: "Right. put(1) fills the mailbox, and put(2) waits until get() at 5 ns removes message 1 (§15.4.3, §15.4.5)." },
+      { text: "At 0 ns: put(2) replaces message 1, which is lost", correct: false, feedback: "A mailbox never overwrites. A full bounded mailbox makes put() wait; try_put() would return 0 instead (§15.4.4)." },
+      { text: "Never: the consumer reads only once, so the mailbox stays full", correct: false, feedback: "One get() is enough: it frees the slot for message 2. The mailbox is full again afterwards, but put(2) has already completed." }
+    ],
+    explanation: "new(1) bounds the mailbox to one message (§15.4.1). put(1) succeeds at 0 ns, put(2) suspends the producer because the mailbox is full (§15.4.3), and the consumer's get() at 5 ns removes message 1, which lets put(2) complete. So \"done\" prints at 5 ns. A mailbox never drops or overwrites a message.",
+    objective: 3
+  },
+  {
+    question: "A test declares semaphore bus = new; and its only process starts with bus.get(1); at t = 0. What happens?",
+    answers: [
+      { text: "get() returns at once, because a new semaphore holds one key", correct: false, feedback: "The default key count of new() is 0, not 1 (§15.3.1)." },
+      { text: "The process blocks forever, because new() without an argument creates no keys", correct: true, feedback: "Right. keyCount defaults to 0 (§15.3.1), so get(1) waits for a put() that nobody calls." },
+      { text: "Compile error: new() needs a key count", correct: false, feedback: "The argument has a default, function new(int keyCount = 0), so new and new() are both legal." },
+      { text: "A run-time error reports that no keys are available", correct: false, feedback: "get() never reports missing keys; it blocks until keys arrive (§15.3.3). That silence is what makes this bug hard to see." }
+    ],
+    explanation: "The semaphore constructor is function new(int keyCount = 0) (§15.3.1), so new and new() are both legal and create an empty bucket. get(1) is a task that blocks until a key is available (§15.3.3). With no put() anywhere, the process waits forever and nothing prints an error. Write new(1) when you mean one key.",
+    objective: 3
+  },
+  {
+    question: "A driver calls send(1), send(2) and send(3) in order, where send(id) is: bus.get(1); if (id == 2) return; #10; bus.put(1); The run ends at 10 ns with no error and nothing after send(1). What is the bug?",
+    answers: [
+      { text: "send(2) returns while holding the key, so send(3) waits in get() forever", correct: true, feedback: "Right. The early return skips put(). Nothing gives the key back, and nothing reports it (§15.3.2)." },
+      { text: "get() should be try_get() so that send never blocks", correct: false, feedback: "try_get() would hide the symptom and let send(3) use the bus without the key. The bug is the missing put()." },
+      { text: "The semaphore needs new(2) so that two sends can run", correct: false, feedback: "A second key only delays the hang until the next error path leaks it, and it lets two senders onto the bus at once." },
+      { text: "send(3) starts before send(2) has finished, which is a race", correct: false, feedback: "One process calls the sends one after another, so nothing races. send(3) waits for a key that never comes back." }
+    ],
+    explanation: "The error path leaves send with the key still taken. The get() in send(3) then waits for a put() that never happens (§15.3.2, §15.3.3), and with nothing else scheduled the simulation ends quietly at 10 ns. Nothing races, because one process calls the sends in order, and try_get() or a second key would only hide the leak while letting two senders onto the bus. Fix it so that every path out of send returns the key, for example: if (id == 2) begin bus.put(1); return; end",
+    objective: 4
+  },
+  {
+    question: "semaphore s1 = new(1), s2 = new(1); proc_a runs s1.get(1); #5 s2.get(1); and proc_b runs s2.get(1); #5 s1.get(1); Each would put both keys back afterwards. What happens?",
+    answers: [
+      { text: "Both block forever at 5 ns, each holding the key the other needs: a deadlock", correct: true, feedback: "Right. proc_a holds s1 and waits for s2; proc_b holds s2 and waits for s1. Neither can reach its put()." },
+      { text: "It depends on which process the simulator runs first", correct: false, feedback: "Not here. At 0 ns they take keys from different semaphores, so both succeed in any order, and at 5 ns both block in any order." },
+      { text: "The FIFO queue gives proc_a the key first, so proc_a finishes and frees s1", correct: false, feedback: "FIFO orders the waiters of one semaphore. proc_a waits on s2, whose key proc_b holds and never returns." },
+      { text: "get() times out after a while and both processes continue", correct: false, feedback: "A semaphore get() has no timeout (§15.3.3). A watchdog in the test is what ends such a hang." }
+    ],
+    explanation: "Each process holds one key and waits for the other's: a circular wait. At 0 ns both get() calls succeed because they use different semaphores; at 5 ns both block forever, in any order (§15.3.3). FIFO order only ranks the waiters of one semaphore, and get() has no timeout, so nothing breaks the cycle. The fix is one acquisition order: both processes take s1 before s2.",
+    objective: 4
+  },
+  {
+    question: "A monitor must hand every observed transaction to a checker that is sometimes still busy with the previous one. Which tool fits?",
+    answers: [
+      { text: "A mailbox: it queues each transaction until the checker calls get()", correct: true, feedback: "Right. A mailbox carries data and keeps every message, in order, until the consumer takes it (§15.4.3, §15.4.5)." },
+      { text: "An event: the monitor triggers it and the checker wakes", correct: false, feedback: "An event carries no data, and a trigger while the checker is busy is lost: the checker is not waiting at that moment (§15.5.2)." },
+      { text: "A semaphore with one key shared by the two processes", correct: false, feedback: "A semaphore makes processes take turns on a resource. It passes no data." },
+      { text: "A shared variable, plus an event to say that it changed", correct: false, feedback: "The next transaction overwrites the variable before a busy checker reads it, and the event is missed while the checker is busy." }
+    ],
+    explanation: "Passing data from a producer to a consumer that may lag behind is the mailbox's job: put() queues each transaction and get() returns them in order (§15.4.3, §15.4.5). Events signal without data and are lost when nobody waits, semaphores share access without passing data, and a shared variable holds only the latest value.",
+    objective: 1
+  }
+]} />
+
+### Kata: repair the hand-off
+
+This bench should print three `chk: got` lines, then `chk: all values checked` and `report: mon finished`. It prints at most four lines. Without adding any `#` delay:
+
+1. Predict the log, including the line that depends on the simulator.
+2. Name the two smells.
+3. Fix both.
+
+```systemverilog
+// compile
+`timescale 1ns/1ns
+
+module tb_top;
+  mailbox #(int) mon2chk = new();  // unbounded: mon never waits
+  event          mon_done;         // mon has seen its last value
+
+  initial begin : mon
+    for (int i = 1; i <= 3; i++) begin
+      #10 mon2chk.put(i * 10);     // one observed value every 10 ns
+    end
+    -> mon_done;                   // runs at t = 30 ns
+  end
+
+  initial begin : chk
+    int v;
+    repeat (4) begin
+      mon2chk.get(v);
+      $display("%0t chk: got %0d", $time, v);
+    end
+    $display("%0t chk: all values checked", $time);
+  end
+
+  initial begin : report
+    #30 @(mon_done);
+    $display("%0t report: mon finished", $time);
+  end
+endmodule
+```
+
+<details>
+<summary>Reveal the worked solution</summary>
+
+**The starter's log.** `chk` prints `got 10`, `got 20` and `got 30` at 10, 20 and 30 ns. The fourth line appears only if the simulator runs `report` before `mon` at 30 ns; in the other order it never prints. Then the simulation ends at 30 ns, with `chk` blocked in its fourth `get()` and no error.
+
+```text
+10 chk: got 10
+20 chk: got 20
+30 chk: got 30
+30 report: mon finished
+```
+
+**Smell 1, the starved consumer.** `chk` waits for four values, but `mon` sends three, so the fourth `get()` never returns (§15.4.5). Changing `repeat (4)` to `repeat (3)` works until someone edits only one of the two loops. Share one count instead.
+
+**Smell 2, the missed trigger.** `#30 @(mon_done)` starts waiting at 30 ns, the same time slot in which `mon` triggers, so it is a race (§15.5.2). Wait from time 0 instead. (`#30 wait (mon_done.triggered);` also works, but there is no reason to wait 30 ns first.)
+
+```systemverilog
+// compile
+`timescale 1ns/1ns
+
+module tb_top;
+  localparam int N = 3;            // one count, shared by producer and consumer
+
+  mailbox #(int) mon2chk = new();
+  event          mon_done;
+
+  initial begin : mon
+    for (int i = 1; i <= N; i++) begin
+      #10 mon2chk.put(i * 10);
+    end
+    -> mon_done;
+  end
+
+  initial begin : chk
+    int v;
+    repeat (N) begin               // expects exactly what mon sends
+      mon2chk.get(v);
+      $display("%0t chk: got %0d", $time, v);
+    end
+    $display("%0t chk: all values checked", $time);
+  end
+
+  initial begin : report
+    @(mon_done);                   // waiting from t = 0: it cannot miss the trigger
+    $display("%0t report: mon finished", $time);
+  end
+endmodule
+```
+
+**Expected output after the fix** (computed by hand; the `report` line may print before the two `chk` lines at 30 ns, because they come from different processes):
+
+```text
+10 chk: got 10
+20 chk: got 20
+30 chk: got 30
+30 chk: all values checked
+30 report: mon finished
+```
+
+</details>
+
+### Debug challenge: the lost key
+
+Go back to [the lab in Build Your Mental Model](#predict-then-drive-it-yourself) and choose **Debug: the lost key**. Try it without the hints first: find the line that loses the key, then choose a fix. The model reruns the whole test and grades your fix on three checks: no process is left blocked, never two senders on the bus, and the bus ends with all its keys.
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023 unless stated):
+
+- §4.5 reference scheduling algorithm; §4.7 nondeterminism.
+- §6.8 variable initialization before any procedure starts; §6.17 the `event` data type.
+- §9.2 structured procedures (no implied order); §9.3.2 `fork`-`join`; §9.4.3 level-sensitive `wait`.
+- §15.2 overview; §15.3 semaphores (§15.3.1 `new`, §15.3.2 `put`, §15.3.3 `get`, §15.3.4 `try_get`).
+- §15.4 mailboxes (§15.4.1 `new`, §15.4.2 `num`, §15.4.3 `put`, §15.4.4 `try_put`, §15.4.5 `get`, §15.4.6 `try_get`, §15.4.7 `peek`, §15.4.8 `try_peek`, §15.4.9 parameterized mailboxes).
+- §15.5 named events (§15.5.1 triggering, including `->>`; §15.5.2 waiting with `@`; §15.5.3 the `triggered` method).
+- §20.4.3 `$timeformat` defaults for `%t`.
+- Annex G.3 and G.4: the `semaphore` and `mailbox` prototypes.
+- uvm-core 2020.3.1, `src/tlm1/uvm_tlm_fifos.svh`: `uvm_tlm_fifo` and `uvm_tlm_analysis_fifo`.
+
+**Related:**
+
+- [I-SV-5: Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index): the full depth, including `->>`, `wait_order`, event handles, multi-key semaphores, the `process` class, the layered class-based bench and the `ipc-deadlock` lab. Its sub-lessons: [Events](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/events), [Mailboxes](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/mailboxes) and [Semaphores](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/semaphores).
+- [F2C: Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index): processes, `fork`-`join`, `disable fork` and timeouts.
+- [F3C: Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index): why a same-time order is a race.
+- [F3B: Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index): the regions behind `#0` and `->>`.
+- [I-SV-1: Object-Oriented Programming](/curriculum/T2_Intermediate/I-SV-1_OOP/index): classes, handles and `new`.
+- [I-UVM-2B: TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) and [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index): the UVM versions of these ideas.
+
+**Go deeper:** when you reach Tier 2, [I-SV-5: Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index) picks up exactly where this page stops.
+
+<NextLesson />
