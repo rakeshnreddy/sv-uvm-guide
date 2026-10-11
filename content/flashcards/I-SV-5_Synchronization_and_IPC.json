@@ -1,32 +1,77 @@
 [
   {
     "id": "isv5-1",
-    "question": "What is the difference between @ev and wait(ev.triggered)?",
-    "answer": "@ev blocks until the event is triggered after the wait begins. ev.triggered stays true for the rest of the time step in which the event was triggered (IEEE 1800-2023 §15.5.3), so wait(ev.triggered) also succeeds when the trigger happened earlier in the same time step — it removes the trigger-before-wait race."
+    "question": "What is the difference between `@ev` and `wait (ev.triggered)`?",
+    "answer": "`@ev` blocks until the next trigger, so a `-> ev` that ran earlier in the same time slot is missed (IEEE 1800-2023 §15.5.2). `ev.triggered` stays true for the rest of the time slot in which the event fired (§15.5.3), so `wait (ev.triggered)` also passes when the trigger came first. Neither catches a trigger from an earlier time slot."
   },
   {
     "id": "isv5-2",
-    "question": "What does ->>ev do?",
-    "answer": "It is a nonblocking trigger: the statement does not block, and the event is triggered by an update scheduled in the NBA region (§15.5.1). It does not make the event persistent."
+    "question": "What does `->> ev` do, and what does it not do?",
+    "answer": "It does not block; it triggers the event in the nonblocking assignment (NBA) region of the current time slot (§15.5.1). A process that reached `@ev` in the Active region of that slot is therefore already waiting. It does not make the event persistent: a process that starts waiting after the trigger still misses it."
   },
   {
     "id": "isv5-3",
-    "question": "put() vs try_put() on a full bounded mailbox?",
-    "answer": "put() blocks until space is available. try_put() returns 0 immediately and inserts nothing (§15.4)."
+    "question": "What do `put()` and `try_put()` do on a full bounded mailbox?",
+    "answer": "`put()` suspends the caller until there is room; it never overwrites (§15.4.3). `try_put()` returns 0 at once and stores nothing (§15.4.4). A mailbox created with `new()` or `new(0)` is unbounded and never full (§15.4.1)."
   },
   {
     "id": "isv5-4",
-    "question": "What does wait fork wait for?",
-    "answer": "Completion of all immediate child subprocesses of the current process (§9.6.1) — not processes those children spawned."
+    "question": "Recap (F2C): what does `wait fork` wait for?",
+    "answer": "The immediate child processes of the calling process, not the processes those children spawned (§9.6.1)."
   },
   {
     "id": "isv5-5",
-    "question": "Why is `fork … join_any; disable fork;` usually wrapped in `fork begin … end join`?",
-    "answer": "disable fork terminates all active descendants of the calling process (§9.6.3). The isolation wrapper limits it to the threads of this timeout pattern instead of killing unrelated threads started earlier by the same process."
+    "question": "Recap (F2C): why wrap `fork … join_any; disable fork;` in `fork begin … end join`?",
+    "answer": "`disable fork` kills every descendant of the calling process, including threads it forked earlier (§9.6.3). The wrapper gives the race its own parent process, so `disable fork` reaches only the threads of that race."
   },
   {
     "id": "isv5-6",
-    "question": "How does a semaphore key leak show up?",
-    "answer": "As a hang: if a process returns early without put(), the key count never recovers, and later get() calls block forever (§15.3). Nothing reports an error, so watchdogs and objection traces are how you find it."
+    "question": "How does a leaked semaphore key show up in a run?",
+    "answer": "Every later `get()` on that semaphore blocks forever, and nothing reports an error. If nothing else is scheduled the run simply ends early with no PASS line (§9.6.1); with a clock or a timer running it hangs until a watchdog fires. A watchdog that prints what each thread is blocked on, plus a variable that records who took each key, finds the leak."
+  },
+  {
+    "id": "isv5-7",
+    "question": "Event, mailbox, semaphore or `process` handle: how do you choose?",
+    "answer": "Ask what must pass between the threads: data in order needs a mailbox (a `uvm_tlm_fifo` between UVM components); a turn on a limited resource, or a count, needs a semaphore; control of one particular thread needs its `process` handle; only the fact that something happened needs an event."
+  },
+  {
+    "id": "isv5-8",
+    "question": "What does a `uvm_tlm_fifo` add to a `mailbox`?",
+    "answer": "It is a UVM component that holds a `mailbox #(T)` behind TLM exports such as `put_export` and `get_peek_export`, so components connect through ports instead of sharing a handle; its depth defaults to 1. `uvm_tlm_analysis_fifo` is unbounded, and its `write()` never blocks (IEEE 1800.2-2020 §12.2.8.2–§12.2.8.3)."
+  },
+  {
+    "id": "isv5-9",
+    "question": "What does `process::self()` return, and what can `status()` report?",
+    "answer": "A handle to the calling process (§9.7). `status()` returns `FINISHED`, `RUNNING`, `WAITING` (blocked in a blocking statement), `SUSPENDED` or `KILLED` (ended by `kill()` or by `disable`)."
+  },
+  {
+    "id": "isv5-10",
+    "question": "What does `p.kill()` end, and what does it leave behind?",
+    "answer": "The process and all its descendants, all before `kill()` returns (§9.7). It undoes nothing: keys the killed processes held stay taken, so the next `get()` blocks unless your timeout path puts them back."
+  },
+  {
+    "id": "isv5-11",
+    "question": "How does a parent safely get a handle to a forked child?",
+    "answer": "Declare `process p;` where the parent can read it, make `p = process::self();` the child's first statement, and run `wait (p != null);` in the parent before using `p`. The child starts only when the parent blocks (§9.3.2), so using `p` right after `join_none` hits a null handle."
+  },
+  {
+    "id": "isv5-12",
+    "question": "What does a wait-for graph tell you about a stuck bench?",
+    "answer": "Draw an arrow from each blocked thread to what it waits for, and from that resource to the thread that would have to act. A closed loop is a deadlock; an arrow that ends at a finished or killed thread is a lost wake-up or a leaked key; no loop while the waiter keeps losing to others is starvation."
+  },
+  {
+    "id": "isv5-13",
+    "question": "How does a global lock order prevent deadlock?",
+    "answer": "Rank every shared resource and make every thread acquire in rising rank. A loop would need some thread to wait for a lower-ranked resource while it holds a higher-ranked one, which the rule forbids. Also never hold a key while you wait for a reply or an event that another thread must produce."
+  },
+  {
+    "id": "isv5-14",
+    "question": "What is starvation, and how does it differ from deadlock?",
+    "answer": "The bench keeps making progress, but one waiting thread is passed over again and again: by a fixed-priority server, or because it polls with `try_get()` while other threads wait in `get()`, which a returned key lets proceed (§15.3.2). There is no loop to break, so the fix is fairer arbitration (round-robin, aging, blocking instead of polling), not a lock order."
+  },
+  {
+    "id": "isv5-15",
+    "question": "Why can a deadlocked SystemVerilog bench finish with no error?",
+    "answer": "Simulation ends by itself when there is no further activity of any kind (§9.6.1). If every thread is blocked and no clock or timer is scheduled, the run just stops: no error and no PASS line. End every test with a summary line and a watchdog that calls `$fatal`, which ends the run with an error code (§20.10)."
   }
 ]

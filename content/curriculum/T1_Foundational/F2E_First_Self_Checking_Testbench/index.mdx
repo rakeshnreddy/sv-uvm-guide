@@ -1,9 +1,1096 @@
 ---
 title: "F2E: Your First Self-Checking Testbench"
-description: "Build a directed, self-checking SystemVerilog testbench without UVM: clock and reset, stimulus, expected values, a scoreboard queue, a watchdog and a PASS/FAIL summary."
+description: "Build and run a directed, self-checking SystemVerilog testbench without UVM that drives a clocked DUT race-free, checks every result against a model, ends every run with a PASS/FAIL summary, and is proven to fail on a planted bug."
 flashcards: "F2E_First_Self_Checking_Testbench"
+sources:
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
 ## Quick Take
 
-This lesson is being written.
+- **What it is:** A **self-checking testbench** drives a **design under test (DUT)**, predicts the correct answer for every input from the specification, compares each answer the DUT gives with that prediction, and ends with a one-line verdict such as `PASS=14 FAIL=0`. Nobody has to open a waveform to know whether the run passed.
+- **Why it matters:** It is the smallest bench that counts as verification, and it is milestone M0 of this course. Every later bench, up to a full UVM environment, keeps the same loop: drive, predict, compare, count, report. A bench that only produces waveforms needs a person for every run; a self-checking bench reruns after every change, unattended, and fails loudly.
+- **The Analogy:** An exam with an answer key. Every question (the stimulus) has its answer worked out in advance (the expected value), and grading (the comparison) is mechanical, so a thousand papers can be graded overnight. *Where it breaks:* an answer key can be wrong, and an exam with only easy questions lets a weak student pass. A bench has both weaknesses, so you check the key against the specification and plant a known mistake (a **mutant**) to prove that the grader catches it.
+
+**You will be able to:**
+1. Write a `tb_top` module with a time unit, a clock, a reset sequence and a DUT instance.
+2. Write stimulus tasks, an expected-value queue and a checker that compares with `!==` and counts passes and failures, and end every run with one `PASS=<n> FAIL=<m>` line, a `$fatal` watchdog and `$finish`.
+3. Prove the bench can fail: inject a DUT bug (a stuck bit or an off-by-one) and choose the directed test, selected with a plusarg, that catches it.
+4. Explain why the bench drives DUT inputs with `<=` (or on the opposite clock edge) until you learn clocking blocks, and predict what a blocking drive at the active edge can do.
+5. Debug a first bench from its log: a vacuous pass, an X that slips through `!=`, a check made one cycle too early, and a hang.
+
+<BeforeYouStart />
+
+## Build Your Mental Model
+
+### Why self-checking beats eyeballing waveforms
+
+After writing your first stimulus, the natural move is to open the waveform and look. For one addition that works: find the edge where the result is valid, read it, and add the inputs in your head. For the fourteen additions in this lesson's bench, after every RTL edit and on every simulator, it does not. People miss things, a waveform cannot fail a nightly regression, and it says nothing about the cases nobody looked at.
+
+A **self-checking testbench** (TB) moves the judgement into code. For every stimulus it computes the **expected value** with a **reference model** of the specification, compares it with the actual output of the DUT, counts passes and failures, and prints one verdict line. A run becomes a yes-or-no answer that a script can collect for thousands of tests.
+
+| | Eyeballing a waveform | Self-checking testbench |
+|---|---|---|
+| Who decides PASS | a person, every run | the bench, every run |
+| How many results are checked | the few someone looks at | every one |
+| An X on an output | easy to miss | a failure, when compared with `!==` |
+| After an RTL change | look again | rerun and read one line |
+| Evidence that it can fail | none | plant a bug and watch FAIL appear |
+
+Waveforms stay essential for debugging: once a check fails, the dump shows why. This lesson's bench writes one only when you ask for it.
+
+There is a catch. A self-checking bench can lie: a checker that never runs prints PASS, and so does one that compares the wrong thing or cannot see X. The rule from [F1B](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index) applies: a test you have never seen fail is no evidence. This lesson builds the bench, then proves that it can fail.
+
+### Meet the DUT: a registered adder
+
+The DUT is `adder_reg`, a registered 8-bit adder with a valid flag. Write the bench from this specification, not from the RTL: if you read the RTL to decide what is correct, you inherit its bugs.
+
+| Port | Direction | Meaning |
+|---|---|---|
+| `clk` | input | Clock. Everything happens on its rising edge. |
+| `rst_n` | input | Synchronous reset, active low. |
+| `in_valid` | input | `a` and `b` hold an addition to perform this cycle. |
+| `a`, `b` | input, 8 bits | The operands. |
+| `out_valid` | output | `sum` holds a new result. |
+| `sum` | output, 9 bits | `a + b`, with the carry in bit 8. |
+
+On every rising edge of `clk`:
+- **R1.** If `rst_n` is 0, `out_valid` becomes 0 and `sum` becomes 0.
+- **R2.** Otherwise `out_valid` becomes the value of `in_valid`: one result per valid input, one cycle later.
+- **R3.** If `in_valid` is 1, `sum` becomes `a + b`, all 9 bits of it.
+- **R4.** If `in_valid` is 0, `sum` keeps its value.
+
+The RTL in Make It Work has one extra parameter, `BUG`, that plants a known bug on request. Real designs have no such parameter; it exists here so you can prove that the bench fails.
+
+### Anatomy of a self-checking testbench
+
+The whole bench lives in one module, `tb_top`. It has no ports: it is the top of the simulation, and it instantiates the DUT. Read the diagram as a loop. Every value the stimulus drives into the DUT also goes, through the model, into a queue of expectations, and every result the DUT reports is matched against exactly one of them.
+
+<ArchitectureDiagram
+  title="Anatomy of the self-checking testbench tb_top"
+  caption="Follow the loop: send() drives the DUT's inputs and, through model_add(), pushes the expected answer into exp_q; the checker pops one expectation for every result the DUT reports, and report() turns the counts into one verdict line. The tags (DRV, REF, FIFO, SCB) are the names these jobs get in a UVM bench later."
+  gapX={110}
+  nodes={[
+    { id: "top", label: "tb_top", kind: "generic", col: 0, row: 0, colSpan: 2, rowSpan: 5, container: true },
+    { id: "tests", label: "test_*()", sublabel: "chosen by +TEST=", kind: "test", col: 0, row: 0 },
+    { id: "gen", label: "clock + reset", sublabel: "always #5, reset_dut()", kind: "generic", col: 1, row: 0 },
+    { id: "stim", label: "send() / idle()", sublabel: "drive with <=", kind: "driver", col: 0, row: 1 },
+    { id: "dut", label: "dut", sublabel: "adder_reg", kind: "dut", col: 1, row: 1 },
+    { id: "model", label: "model_add()", sublabel: "from the spec", kind: "model", col: 0, row: 2 },
+    { id: "q", label: "exp_q[$]", sublabel: "oldest first", kind: "fifo", col: 0, row: 3 },
+    { id: "chk", label: "checker", sublabel: "always @(posedge clk)", kind: "scoreboard", col: 1, row: 3 },
+    { id: "wdog", label: "watchdog", sublabel: "#(TIMEOUT), $fatal", kind: "generic", col: 0, row: 4 },
+    { id: "rpt", label: "report()", sublabel: "PASS=n FAIL=m", kind: "generic", col: 1, row: 4 }
+  ]}
+  edges={[
+    { from: "tests", to: "stim", style: "causal", label: "calls" },
+    { from: "gen", to: "dut", style: "data", label: "clk, rst_n" },
+    { from: "stim", to: "dut", style: "data", label: "in_valid, a, b" },
+    { from: "stim", to: "model", style: "causal", label: "model_add(a_val, b_val)" },
+    { from: "model", to: "q", style: "data", label: "push_back" },
+    { from: "dut", to: "chk", style: "data", label: "out_valid, sum" },
+    { from: "q", to: "chk", style: "data", label: "pop_front" },
+    { from: "chk", to: "rpt", style: "data", label: "pass_cnt, fail_cnt" },
+    { from: "wdog", to: "rpt", style: "causal", label: "on timeout" }
+  ]}
+/>
+
+| Part | Code in `tb_top` | Job |
+|---|---|---|
+| Time unit | `timeunit 1ns; timeprecision 1ps;` | Defines what `#5` means. |
+| Clock and reset | `always #5 clk = ~clk;` and `reset_dut()` | Give the DUT a clock and a known starting state. |
+| DUT instance | `adder_reg #(.W(W), .BUG(0)) dut (...)` | The design being verified. |
+| Stimulus | `send()` and `idle()` | Drive the DUT's inputs, one cycle per call. |
+| Directed tests | `test_smoke()`, `test_corners()`, `test_gaps()` | Fixed lists of stimulus, chosen with `+TEST=`. |
+| Expected values | `model_add()` and `exp_q` | Predict each result and remember it until it arrives. |
+| Comparison | the checker and `check_result()` | Compare each result with `!==` and count it. |
+| Verdict and end | `report()`, `$finish`, a watchdog with `$fatal` | One summary line; every run ends. |
+
+**In a real testbench.** A UVM bench in Tier 2 splits the same jobs into classes: a driver drives, a monitor takes over the checker's reading of `out_valid` and `sum`, a predictor plays `model_add()`, a scoreboard plays `exp_q` and the compare, and a test (with its sequences) chooses the stimulus. The diagram's tags name those roles, so this bench is the skeleton you will recognise later.
+
+### Time, clock and reset
+
+**Time unit.** `#5` means 5 time units. `timeunit 1ns; timeprecision 1ps;` as the first items of a module set its time unit (1 ns) and the precision that delays are rounded to (1 ps), whatever order the files are compiled in (IEEE 1800-2023 §3.14.2.2). The older `` `timescale 1ns/1ps `` directive applies to every module compiled after it, so a module's unit can change with file order (§3.14.2.1). Mixing is an error: if some design elements have a time unit and precision and others do not, the standard rejects the design (§3.14.2.3), which is why the DUT declares one too. [F3A](/curriculum/T1_Foundational/F3A_Simulation_Semantics/index) covers time units in depth.
+
+**Clock.** A free-running clock is one variable and one `always` procedure:
+
+```systemverilog
+// snippet
+logic clk = 1'b0;        // set before any procedure starts (§6.8)
+always #5 clk = ~clk;    // 10 ns period: rising edges at 5, 15, 25 ns ...
+```
+
+The initializer matters. A `logic` variable without one starts at x (§6.8, Table 6-7), and `~x` is x (§11.4.8), so `logic clk; always #5 clk = ~clk;` never toggles and nothing clocked ever runs. The other common form, an `initial` block that sets `clk` to 0 and then loops `forever #5 clk = ~clk;`, works as well.
+
+**Reset.** `reset_dut()` drives every DUT input to a known value, holds `rst_n` low for two rising edges, then releases it with `<=` just after an edge, so the DUT sees the release on the next edge. Rule R1 needs at least one edge with `rst_n` low; check your design's specification for how many it needs. Until reset is released the checker compares nothing; afterwards it insists that `out_valid` is never x or z, using `$isunknown` (§20.9). If your DUT resets asynchronously, assert reset at any time but release it the same way; [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) explains why reset stays outside clocking blocks.
+
+### Drive the DUT without a race
+
+**The rule:** drive DUT inputs with `<=` right after the clock edge, or with `=` at the opposite edge. Never use `=` at the edge the DUT samples on, its **active edge**.
+
+Here is why. The DUT's `always_ff` and the bench's `send()` both wake on the same rising edge, and the standard lets the simulator run processes woken by one event in any order (§4.7). A **blocking assignment** (`=`) changes the variable at once, so whether the flop reads the old or the new value depends on which process ran first: a **race condition** (§4.8). A **nonblocking assignment** (NBA, `<=`) computes the value now but schedules the update for later in the same **time slot** (all the activity at one simulation time), after every process woken by the edge has run (§4.9.4, §10.4.2).
+
+**Predict.** In `+TEST=gaps`, `a` is 7 just before the edge on which `send(9, 10)` runs. On that edge, `send()` drives `a` to 9 while the DUT's flop reads `a`. Which value does the flop capture with each drive style?
+
+| How `send()` drives `a` | Order the simulator picks | Value the DUT samples on this edge |
+|---|---|---|
+| `a = a_val;` (blocking) | the DUT's `always_ff` first | 7, the old value, as intended |
+| `a = a_val;` (blocking) | `send()` first | 9, the new value: one cycle early |
+| `a <= a_val;` (nonblocking) | either order | 7: the update lands after every read |
+
+With blocking drives, the edge on which the DUT sees each input depends on an order the standard leaves open. The same bench can pass on one simulator and fail on another, or change behaviour after an unrelated edit. The reset release has the same problem: `rst_n = 1'b1;` right after `@(posedge clk)` lets the DUT leave reset on that edge or on the next, depending on the order.
+
+**Check your prediction against a model.** The comparison below is a one-flop DUT, `always_ff @(posedge clk) q <= din;`, and a bench that drives `din` from 3 to 7 on the clock edge and reads `q` on the same edge. It runs each drive style through **every** process order the standard allows. Answer its question before you look at the verdicts. The strip in each card names scheduler regions that [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index) teaches; for now, read only the verdict and the values.
+
+<TestbenchDriveComparison />
+
+What the model shows:
+- **`din = 7` is a race.** Some legal orders let the flop capture 7, one cycle early, exactly like the blocking row of the table above.
+- **`din <= 7` is deterministic.** The flop captures 3 in every order. This is the style `send()`, `idle()` and `reset_dut()` use.
+- **`cb.din <= 7` is deterministic too.** It is the clocking-block form you will write from F4C onward.
+- **The bench's read of `q` sees the old value in every order**, because the DUT writes `q` with `<=`. This lesson's checker relies on the same fact; Push Further explains when it stops being true.
+
+The opposite-edge style is also race-free, because no flop in this DUT reads anything on the falling edge:
+
+```systemverilog
+// snippet: the opposite-edge style, an alternative to send()
+task automatic send_negedge(input logic [W-1:0] a_val, input logic [W-1:0] b_val);
+  @(negedge clk);
+  in_valid = 1'b1;   // the DUT samples on the next rising edge, half a cycle later
+  a = a_val;
+  b = b_val;
+  exp_q.push_back(exp_t'{a: a_val, b: b_val, sum: model_add(a_val, b_val)});
+endtask
+```
+
+Inputs then change mid-cycle, which reads well in a waveform. The style breaks when the design also uses falling edges or several clocks, and in gate-level simulation the half cycle becomes a real timing budget. This lesson drives with `<=` after the rising edge, because that is the idea a **clocking block** formalises: a declaration, taught in F4C, that fixes when a bench samples and drives a group of signals relative to a clock. [F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index) lets you run every legal process order and watch the race appear and disappear; [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) replaces this rule with clocking blocks, which every bench from milestone M1 onward uses.
+
+**Code-review rule until F4C:** no `=` to a DUT input after `@(posedge clk)`.
+
+### One checked transaction, edge by edge
+
+**Predict.** In `+TEST=gaps`, `send(5, 5)` runs on edge 2. On which edge does the checker see `sum = 10`?
+
+<TimingDiagram
+  title="One checked transaction: +TEST=gaps, edges 0 to 5"
+  caption={"Edge k is the rising edge at 5 + 10k ns, and each value is the one sampled at that edge. The bench drives with <= just after an edge, so its inputs are drawn changing right after that edge and the DUT samples them on the next one. sum and out_valid are x until the first reset edge."}
+  edges={6}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "rst_n", kind: "bit", values: [0, 0, 1, 1, 1, 1] },
+    { name: "in_valid", kind: "bit", values: [0, 0, 0, 1, 0, 0] },
+    { name: "a", kind: "bus", values: ["0", "0", "0", "5", "5", "5"] },
+    { name: "b", kind: "bus", values: ["0", "0", "0", "5", "5", "5"] },
+    { name: "out_valid", kind: "bit", values: [undefined, 0, 0, 0, 1, 0] },
+    { name: "sum", kind: "bus", values: [undefined, "0", "0", "0", "10", "10"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "drive", label: "Edge 1 (15 ns): reset_dut() releases reset with rst_n <= 1; the DUT first sees rst_n = 1 on edge 2" },
+    { edge: 2, tone: "drive", label: "Edge 2 (25 ns): send(5, 5) drives in_valid, a and b with <= and pushes the expectation 10 onto exp_q" },
+    { edge: 3, tone: "sample", label: "Edge 3 (35 ns): the DUT samples in_valid = 1, a = 5, b = 5 and schedules out_valid <= 1 and sum <= 10" },
+    { edge: 4, tone: "pass", label: "Edge 4 (45 ns): the checker reads out_valid = 1 and sum = 10, pops 10 from exp_q, and counts a pass" }
+  ]}
+/>
+
+What the waveform shows:
+- **Edge 1.** `reset_dut()` releases `rst_n` with `<=`, so the DUT first sees `rst_n = 1` on edge 2.
+- **Edge 2.** `send(5, 5)` wakes, drives `in_valid`, `a` and `b` with `<=`, and pushes the expectation 10 onto `exp_q`. The new values appear just after the edge.
+- **Edge 3.** The DUT samples `in_valid = 1`, `a = 5` and `b = 5`, and schedules `out_valid <= 1` and `sum <= 10`.
+- **Edge 4.** The checker, woken by the same edge as the DUT, reads `out_valid = 1` and `sum = 10`: the values from before this edge's updates. It pops 10 from `exp_q`, a match.
+
+A result is therefore checked two edges after it was driven, although the DUT's latency is one cycle: one edge for the DUT to sample the inputs, one for the checker to read the registered result. You count those edges once, here. The queue in the next section means the checker never needs to know the latency.
+
+### Expected values: a model and a queue
+
+**The reference model** answers "what should the DUT say?" from the specification alone:
+
+```systemverilog
+// snippet
+function automatic logic [W:0] model_add(input logic [W-1:0] op_a,
+                                         input logic [W-1:0] op_b);
+  return {1'b0, op_a} + {1'b0, op_b};   // widen first, so the carry is kept
+endfunction
+```
+
+It is written differently from the RTL on purpose. The RTL relies on its 9-bit target to widen `a + b` (§11.6); the model widens each operand itself. If you copy the RTL's expression into the model, you copy its bugs, and the check can no longer disagree with the design. For a DUT with state, such as a counter, the model is a variable that you update every cycle; for a pure function like this adder, a function is enough.
+
+**Why a queue.** The result for a stimulus arrives after the stimulus, and with back-to-back inputs several results are in flight at once. One `expected` variable cannot hold them: the next `send()` overwrites it before the earlier result arrives. A queue ([F2B](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index)) keeps them in order. `send()` pushes one expectation per transaction with `push_back` (§7.10.2.7), and the checker pops the oldest one for each result with `pop_front` (§7.10.2.4). Each expectation is a struct ([F2A](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums)) that also keeps the inputs, so a failure message can name them. Together, the queue of expectations and the compare that consumes it form a **scoreboard**: the part of a bench that holds expected results and matches each actual result against one of them.
+
+**Predict.** In `+TEST=gaps`, what does `exp_q` hold after edge 6? Trace it:
+
+| Edge (time) | Bench | DUT samples | Checker sees | Expected sums in `exp_q` after the edge |
+|---|---|---|---|---|
+| 2 (25 ns) | `send(5, 5)` pushes 10 | `in_valid = 0` | `out_valid = 0` | `{10}` |
+| 3 (35 ns) | `idle` | 5 + 5 | `out_valid = 0` | `{10}` |
+| 4 (45 ns) | `idle` | `in_valid = 0` | `sum = 10`: pop 10 ✓ | `{}` |
+| 5 (55 ns) | `send(7, 8)` pushes 15 | `in_valid = 0` | `out_valid = 0` | `{15}` |
+| 6 (65 ns) | `send(9, 10)` pushes 19 | 7 + 8 | `out_valid = 0` | `{15, 19}` |
+| 7 (75 ns) | `idle` | 9 + 10 | `sum = 15`: pop 15 ✓ | `{19}` |
+| 8 (85 ns) | `send(11, 12)` pushes 23 | `in_valid = 0` | `sum = 19`: pop 19 ✓ | `{23}` |
+| 9 (95 ns) | `idle` | 11 + 12 | `out_valid = 0` | `{23}` |
+| 10 (105 ns) | (draining) | `in_valid = 0` | `sum = 23`: pop 23 ✓ | `{}` |
+
+At edge 6 two results are in flight, and the queue absorbs them. Matching on `out_valid` instead of counting cycles is what lets one checker serve any mix of valid and idle cycles.
+
+Three queue pitfalls:
+- **Popping an empty queue.** `pop_front` on an empty queue returns the element type's default value (here, an `exp_t` whose `logic` members are all x; §7.10.2.4, Table 7-1) and may only warn. Check `exp_q.size()` first, and report a result that nobody expected as a failure.
+- **Leftovers.** Expectations still in the queue at the end are results that never arrived. Count each one as a failure.
+- **Order assumptions.** An in-order queue is right for a DUT that answers in order. A DUT that may reorder its answers needs keyed matching: F2B's associative array of queues, and later [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index).
+
+### Compare with `!==` and count
+
+The checker compares with the **case inequality** operator `!==`, never with `!=`. With `!=`, if the bits that are known agree and some bit is x or z, the result is x (§11.4.5). An `if` treats x as false and runs its `else` branch (§12.4). So `if (sum != e.sum) fail_cnt++; else pass_cnt++;` counts an unknown result as a **pass**. `!==` compares x and z as values and always returns 0 or 1.
+
+| `sum` from the DUT | Expected | `sum != 10` | The `if`/`else` counts | `sum !== 10` |
+|---|---|---|---|---|
+| `9'd10` | 10 | 0 | pass ✓ | 0: pass ✓ |
+| `9'd11` | 10 | 1 | fail ✓ | 1: fail ✓ |
+| all bits x | 10 | x | **pass ✕** | 1: fail ✓ |
+| `9'b0_0000_101x` | 10 | x: the known bits match 10 | **pass ✕** | 1: fail ✓ |
+| `9'b1_0000_101x` | 10 | 1: bit 8 differs | fail ✓ | 1: fail ✓ |
+
+Two more ways X hides:
+- **In a control signal.** `if (out_valid)` with `out_valid` at x simply skips the compare: no failure, no pass, nothing. The checker therefore tests `$isunknown(out_valid)` first (§20.9).
+- **In a 2-state copy.** Copying `sum` into an `int` or a `bit` turns x into 0 before any compare ([F2A](/curriculum/T1_Foundational/F2A_Core_Data_Types/index)). Keep DUT values in 4-state `logic`.
+
+Each compare ends in `pass_cnt++` or in `fail_cnt++` plus a `$error` message. `$error` reports and lets the run continue (§20.10), so one run shows every failure, not just the first.
+
+### Directed tests from a plan
+
+A **directed test** is a fixed list of stimulus values chosen to exercise one row of a verification plan. Use the plan-row format from [F1B](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index): a feature, a scenario, a check, and the bug the check must catch.
+
+| Plan row (rule) | Test | Stimulus | The check proves | Mutant it catches |
+|---|---|---|---|---|
+| R3 for ordinary values | `smoke` | 1 + 2, 10 + 20, 100 + 27 | the basic path works end to end | off-by-one (`BUG=2`) |
+| R3 keeps the carry | `corners` | 255 + 1, 255 + 255, 128 + 128 | bit 8 of `sum` can be 1 | carry stuck at 0 (`BUG=1`) |
+| R3 at the boundaries | `corners` | 0 + 0, 255 + 0, 0 + 255, `8'hAA` + `8'h55` | 0 needs every bit at 0; 255 needs bits 0 to 7 at 1 | any bit of `sum` stuck at 1; bits 0 to 7 stuck at 0 (bit 8 stuck at 0 is the carry row's job) |
+| R2: one result per valid input | `gaps` | valid, two idle, two back to back, idle, valid | `out_valid` follows `in_valid` one cycle later, with no extra or missing result | dropped or duplicated results |
+| R1: outputs known after reset | every test | `reset_dut()` | `out_valid` is never x or z after reset | a reset that does not clear `out_valid` |
+
+Tests are chosen at run time with a **plusarg**, a `+name` or `+name=value` argument on the simulator's command line (§21.6):
+
+```systemverilog
+// snippet
+if (!$value$plusargs("TEST=%s", test_name)) test_name = "all";
+```
+
+`+TEST=corners` runs one test; no plusarg runs them all. `$value$plusargs` returns 0 and leaves the variable untouched when the plusarg is missing (§21.6), which is why the default sits in the same line. A misspelled name stops the run with `$fatal`, because a bench that runs nothing must never look like a pass. One trap: plusargs match by prefix, so `$test$plusargs("DUMP")` is also true for `+DUMPALL` (§21.6). Pick names that are not prefixes of each other.
+
+**Predict, then check.** With the carry bit stuck at 0 (`BUG=1`), which tests fail? This matrix comes from a cycle model of the Make It Work code; each cell is the run's summary line:
+
+| `+TEST=` | `BUG=0` (correct) | `BUG=1` (carry stuck at 0) | `BUG=2` (off by one) |
+|---|---|---|---|
+| `smoke` | `PASS=3 FAIL=0` | `PASS=3 FAIL=0`, escapes | `PASS=0 FAIL=3` |
+| `corners` | `PASS=7 FAIL=0` | `PASS=4 FAIL=3` | `PASS=0 FAIL=7` |
+| `gaps` | `PASS=4 FAIL=0` | `PASS=4 FAIL=0`, escapes | `PASS=0 FAIL=4` |
+| `all` | `PASS=14 FAIL=0` | `PASS=11 FAIL=3` | `PASS=0 FAIL=14` |
+
+The off-by-one is loud: every result is wrong. The stuck carry is quiet: `smoke` and `gaps` never produce a sum of 256 or more, so bit 8 is 0 in every result they check, broken or not. A directed test catches only the bugs its stimulus provokes and its checks observe.
+
+### End every run with a verdict
+
+Four statements decide how a run ends:
+
+| Statement | Effect (IEEE 1800-2023) | Use it for |
+|---|---|---|
+| `$error("...")` | Prints a run-time error with the tool's prefix (file, line, scope, time); the run continues (§20.10). | A failed check. |
+| `$fatal(1, "...")` | Prints a fatal error and ends the run: it implies a call to `$finish` (§20.10). | A broken bench: an unknown test, a timeout. |
+| `$finish` | Ends the simulation and returns control to the operating system (§20.2). | The normal end, after the summary. |
+| `$display("PASS=%0d FAIL=%0d", ...)` | Prints the verdict. | Exactly once per run. |
+
+The first argument of `$fatal` and the optional argument of `$finish` (0, 1 or 2) only choose how much diagnostic text the tool prints (§20.2, §20.10).
+
+**The summary line** is the bench's contract with whatever runs it: exactly one line, in a fixed format. Milestone M0 requires a clean run to print a line that matches `^PASS=\d+ FAIL=0$`. Two guards keep that line honest. Expectations left in `exp_q` count as failures, and a run that checked nothing at all fails, because `PASS=0 FAIL=0` would otherwise match the pattern.
+
+**Ending the run.** A simulation stops by itself when there is no further activity of any kind (§9.6.1). A free-running clock is activity forever, so without `$finish` this bench never ends. Before the summary, `drain()` waits until every expectation has been checked, then watches two more quiet edges so that a late or extra result still fails. It reads `exp_q` on the falling edge, when the checker is not running.
+
+**The watchdog.** If the bench hangs (a wait that never completes, a clock that never toggles), no summary appears and a regression stalls. A **watchdog** races the test against a timer:
+
+```systemverilog
+// snippet: the end of the main initial block in tb_top
+fork
+  begin : run
+    reset_dut();
+    if (test_name == "all") begin
+      run_one("smoke");
+      run_one("corners");
+      run_one("gaps");
+    end else begin
+      run_one(test_name);
+    end
+    drain();
+  end
+  begin : watchdog
+    #(TIMEOUT);
+    fail_cnt++;                  // a hang is a failure, never a pass
+    report();
+    $fatal(1, "WDOG test '%s' still running at %t", test_name, $time);
+  end
+join_any                         // resume when either branch ends (§9.3.2)
+disable fork;                    // stop the branch that is still running (§9.6.3)
+report();
+$finish;
+```
+
+<SequenceDiagram
+  title="The watchdog race inside tb_top's main initial block"
+  caption="In a normal run the run branch ends first: main kills the waiting watchdog with disable fork, prints the verdict and calls $finish. If run never ends, the watchdog wins instead: it counts the hang, prints the verdict and calls $fatal, so every run ends with a summary line."
+  participants={[
+    { id: "main", label: "main" },
+    { id: "run", label: "run branch" },
+    { id: "wdog", label: "watchdog branch" }
+  ]}
+  messages={[
+    { kind: "async", from: "main", to: "run", label: "fork: reset_dut(), the tests, drain()" },
+    { kind: "async", from: "main", to: "wdog", label: "fork: #(TIMEOUT)" },
+    { kind: "note", from: "main", label: "join_any: main waits until one branch ends" },
+    { kind: "divider", label: "clock edges pass; the checker compares results" },
+    { kind: "return", from: "run", to: "main", label: "run ends: every expectation checked" },
+    { from: "main", to: "wdog", label: "disable fork kills the waiting watchdog", tone: "error" },
+    { kind: "self", from: "main", label: "report(), then $finish" },
+    { kind: "divider", label: "the other ending: run never returns" },
+    { kind: "self", from: "wdog", label: "after TIMEOUT: fail_cnt++, report(), $fatal" }
+  ]}
+/>
+
+What to take from the race:
+- `join_any` resumes `main` when the first branch ends (§9.3.2). In a normal run that is `run`, and `disable fork` kills the waiting watchdog.
+- `disable fork` kills **every** descendant of the process that calls it (§9.6.3). Here `main` has no other children, so only the watchdog can die; the checker is a separate `always` procedure, not a child of `main`. If `main` had forked a background process earlier, `disable fork` would kill it too, and [F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) shows the isolation wrapper that prevents it.
+- If the timer wins, the watchdog counts the hang, prints the summary and calls `$fatal`, so even a hung run ends with a verdict line.
+- A delay-based watchdog cannot catch a loop that never lets time advance, such as `while (exp_q.size() != 0);` with nothing inside it: the timer's moment never comes. Every loop that waits needs a clock edge or a delay inside it.
+
+**Why the checker is an `always`, not an `always_ff`.** `always_comb` and `always_ff` forbid any other process from writing the variables they assign, including variables written by the functions they call (§9.2.2.2, §9.2.2.4). The checker's `check_result()` writes `fail_cnt`, which `report()` and the watchdog also write, so the checker must be a plain `always @(posedge clk)`. Keep `always_ff` for flops.
+
+### Reporting conventions
+
+A log is read by people and by scripts. These conventions serve both:
+
+| Message | Code | Why |
+|---|---|---|
+| Test start | `$display("%t TEST %s", $time, name)` | Shows where each test begins, in the log and on the waveform's time axis. |
+| A failed check | `$error("CHK a=%0d b=%0d: sum=%0d, expected %0d", ...)` | The tool adds the severity, file, line and time (§20.10); the inputs let you reproduce the failure without a waveform. |
+| A broken bench | `$fatal(1, "TEST unknown test ...")` | Stops at once: nothing after a configuration error is meaningful. |
+| The verdict | `$display("PASS=%0d FAIL=%0d", ...)` | Exactly once, in a fixed format. |
+
+- **Tag every message** (`TEST`, `CHK`, `WDOG`), so that searching the log for `CHK` finds every check failure.
+- **Stay quiet on success.** A line for every passing check buries the one that failed.
+- **Print time in one unit.** `$timeformat(-9, 0, " ns", 0)` once, at time 0, makes every `%t` print nanoseconds with a suffix (§20.4.3).
+- **Make unknowns visible.** With `%0d`, an all-x value prints as `x` and a partly unknown one as `X` (§21.2.1.3), so an X result shows in the message.
+- **Debug the first failure first.** Later failures are often its echoes.
+
+### Waveforms on demand
+
+Dumping a waveform costs run time and disk space, so this bench writes one only when the run has `+DUMP`:
+
+```systemverilog
+// snippet
+if ($test$plusargs("DUMP")) begin
+  $dumpfile("tb_top.vcd");    // name of the VCD file (§21.7.1.1)
+  $dumpvars(0, tb_top);       // 0: tb_top and every level below it (§21.7.1.2)
+end
+```
+
+A **value change dump (VCD)** is the portable waveform format defined by the standard (§21.7); waveform viewers generally read it, and simulators also offer faster formats of their own (tool-dependent). To debug a failure, rerun the failing test with `+DUMP`, go to the time of the first `CHK` error, and look one and two edges earlier at the inputs that produced that result.
+
+### Common bugs and how to debug them
+
+| What the log shows | Likely cause | Fix |
+|---|---|---|
+| `nothing was checked`, then `PASS=0 FAIL=1` | The test sent nothing: an empty or unfinished test task, or a `case` branch that calls the wrong task. | Read the test task named on the `TEST` line. |
+| `result(s) never arrived` (with `PASS=0` if none came back) | Reset was never released (`rst_n` stuck low, or never driven and so x, which makes the checker skip every edge), the DUT dropped results, or the run ended before they came out. | Rerun with `+DUMP` and look at `rst_n`, `in_valid` and `out_valid` on the first edges; check that every test ends with `idle()` and that `drain()` ran. |
+| `unexpected result ... nothing was sent` | The DUT made an extra result, or a test left `in_valid` high (no final `idle()`). | Look at the last `send()` before the error time. |
+| Each actual value equals the previous expected value | The check reads `sum` one cycle too early, or one `expected` variable is overwritten by the next `send()`. | Match results on `out_valid` with the queue; do not count edges. |
+| An X result passes | `!=` instead of `!==`, or `sum` copied into an `int` or `bit`. | Use `!==`; keep DUT values in `logic`. |
+| Passes on one simulator, fails on another (or after reordering files) | A blocking drive (`=`) to a DUT input at the clock edge. | Drive with `<=` after the edge, or at the opposite edge. |
+| The summary prints, but the run never ends | No `$finish` after `report()`: the free-running clock keeps the simulation busy, and `disable fork` has already killed the watchdog. | End `main` with `$finish`. |
+| The run ends with the `WDOG` fatal | A wait for a value that never comes, or a clock that never toggles (`logic clk;` starts at x). | Find the blocked process at the timeout time with your simulator's debug commands; look at `clk` first. |
+| Simulation time stops and the watchdog never fires | A zero-delay loop, such as `while (exp_q.size() != 0);`. | Put a clock edge inside every loop that waits. |
+| An error about missing time units | Some modules have a time unit and others do not (§3.14.2.3). | Give every module a `timeunit`, or use your simulator's default time-scale option. |
+
+### Recap
+
+- A self-checking bench predicts every result from the specification, compares with `!==`, counts, and prints one `PASS=<n> FAIL=<m>` line.
+- `tb_top` has a time unit, a clock with an initializer, a reset released with `<=` after an edge, and the DUT instance.
+- Drive with `<=` after the edge (or with `=` at the opposite edge) until you learn clocking blocks.
+- Expectations go into a queue when you drive; results pop them when `out_valid` says so. Leftovers and zero checks are failures.
+- Directed tests come from plan rows, and a plusarg picks them at run time.
+- `$error` continues, `$fatal` ends, `$finish` ends, and a watchdog guarantees that every run ends with a verdict.
+- A PASS is evidence only after you have seen the same bench FAIL on a planted bug.
+
+## Make It Work
+
+### The complete bench
+
+One file holds the DUT and the bench, so you can copy it and run it as it is. In a project the DUT lives in its own file (or, on EDA Playground, in the design pane). The `// compile` tag marks a complete compile unit.
+
+```systemverilog
+// compile
+// tb_top.sv: a registered adder (the DUT) and its self-checking testbench.
+
+// ------------------------------------------------------------------- DUT
+module adder_reg #(
+  parameter int W   = 8,
+  parameter int BUG = 0              // 1 or 2 plants a known bug; real RTL has none
+) (
+  input  logic         clk,
+  input  logic         rst_n,        // synchronous, active low
+  input  logic         in_valid,
+  input  logic [W-1:0] a,
+  input  logic [W-1:0] b,
+  output logic         out_valid,
+  output logic [W:0]   sum           // one extra bit, so the carry is kept
+);
+  timeunit 1ns; timeprecision 1ps;   // every module needs one (1800-2023 3.14.2.3)
+
+  logic [W:0] next_sum;
+
+  always_comb begin
+    next_sum = a + b;                // evaluated at W+1 bits, the target's width
+    case (BUG)
+      1:       next_sum[W] = 1'b0;           // mutant 1: carry bit stuck at 0
+      2:       next_sum    = a + b + 1'b1;   // mutant 2: off by one
+      default: ;                             // 0: the design as specified
+    endcase
+  end
+
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin                // R1
+      out_valid <= 1'b0;
+      sum       <= '0;
+    end else begin
+      out_valid <= in_valid;         // R2: one result per valid input, a cycle later
+      if (in_valid) sum <= next_sum; // R3; otherwise sum holds its value (R4)
+    end
+  end
+endmodule
+
+// ------------------------------------------------------------- testbench
+module tb_top;
+  timeunit 1ns; timeprecision 1ps;
+
+  localparam int      W       = 8;
+  localparam realtime TIMEOUT = 10us;  // far longer than the longest run (250 ns)
+
+  // Signals between the bench and the DUT
+  logic         clk = 1'b0;            // must start known: ~x stays x
+  logic         rst_n;
+  logic         in_valid;
+  logic [W-1:0] a, b;
+  logic         out_valid;
+  logic [W:0]   sum;
+
+  // Scoreboard: one expectation per transaction, oldest first
+  typedef struct {
+    logic [W-1:0] a, b;                // the inputs, so a failure can name them
+    logic [W:0]   sum;                 // the expected result
+  } exp_t;
+
+  exp_t exp_q[$];
+  int   pass_cnt = 0;
+  int   fail_cnt = 0;
+
+  // The DUT. Set .BUG(1) or .BUG(2) to prove that the bench can fail.
+  adder_reg #(.W(W), .BUG(0)) dut (
+    .clk(clk), .rst_n(rst_n), .in_valid(in_valid), .a(a), .b(b),
+    .out_valid(out_valid), .sum(sum)
+  );
+
+  always #5 clk = ~clk;                // 10 ns period: rising edges at 5, 15, 25 ns ...
+
+  // Reference model: the specification's answer, written independently of the RTL.
+  function automatic logic [W:0] model_add(input logic [W-1:0] op_a,
+                                           input logic [W-1:0] op_b);
+    return {1'b0, op_a} + {1'b0, op_b};  // widen first, so the carry is kept
+  endfunction
+
+  // Reset: hold rst_n low for a number of rising edges, then release it.
+  task automatic reset_dut(input int cycles = 2);
+    rst_n    <= 1'b0;
+    in_valid <= 1'b0;
+    a        <= '0;
+    b        <= '0;
+    repeat (cycles) @(posedge clk);
+    rst_n    <= 1'b1;                  // just after an edge: seen on the next one
+  endtask
+
+  // Drive one addition for one cycle and record what the DUT must answer.
+  task automatic send(input logic [W-1:0] a_val, input logic [W-1:0] b_val);
+    @(posedge clk);
+    in_valid <= 1'b1;                  // <= lands after the DUT's flops read this edge
+    a        <= a_val;
+    b        <= b_val;
+    exp_q.push_back(exp_t'{a: a_val, b: b_val, sum: model_add(a_val, b_val)});
+  endtask
+
+  // Drive no addition for n cycles.
+  task automatic idle(input int n);
+    repeat (n) begin
+      @(posedge clk);
+      in_valid <= 1'b0;
+    end
+  endtask
+
+  // Compare one DUT result with the oldest expectation.
+  function automatic void check_result(input logic [W:0] actual);
+    exp_t e;
+    if (exp_q.size() == 0) begin
+      fail_cnt++;
+      $error("CHK unexpected result sum=%0d: nothing was sent", actual);
+      return;
+    end
+    e = exp_q.pop_front();
+    if (actual !== e.sum) begin        // !== : an x or z bit is a mismatch
+      fail_cnt++;
+      $error("CHK a=%0d b=%0d: sum=%0d, expected %0d", e.a, e.b, actual, e.sum);
+    end else begin
+      pass_cnt++;
+    end
+  endfunction
+
+  // Checker: a testbench process, so always, not always_ff (1800-2023 9.2.2.4).
+  // It reads out_valid and sum as they were before this edge: the DUT
+  // updates them with <=, after every process woken by the edge has run.
+  always @(posedge clk) begin
+    if (rst_n) begin                   // no checks while the DUT is in reset
+      if ($isunknown(out_valid)) begin
+        fail_cnt++;
+        $error("CHK out_valid is %b after reset", out_valid);
+      end else if (out_valid) begin
+        check_result(sum);
+      end
+    end
+  end
+
+  // Directed tests: one task per row of the test table.
+  task automatic test_smoke();
+    send(8'd1, 8'd2);
+    send(8'd10, 8'd20);
+    send(8'd100, 8'd27);
+    idle(1);
+  endtask
+
+  task automatic test_corners();
+    send(8'd0, 8'd0);                  // every result bit 0
+    send(8'd255, 8'd0);                // largest sum without a carry
+    send(8'd0, 8'd255);
+    send(8'd255, 8'd1);                // carry: 256
+    send(8'd255, 8'd255);              // largest sum: 510
+    send(8'd128, 8'd128);              // carry with a zero low byte
+    send(8'hAA, 8'h55);                // alternating bits: every low bit 1
+    idle(1);
+  endtask
+
+  task automatic test_gaps();
+    send(8'd5, 8'd5);
+    idle(2);                           // no result may appear on idle cycles
+    send(8'd7, 8'd8);
+    send(8'd9, 8'd10);                 // back to back: two results in flight
+    idle(1);
+    send(8'd11, 8'd12);
+    idle(1);
+  endtask
+
+  task automatic run_one(input string name);
+    $display("%t TEST %s", $time, name);
+    case (name)
+      "smoke":   test_smoke();
+      "corners": test_corners();
+      "gaps":    test_gaps();
+      default:   $fatal(1, "TEST unknown test '%s' (use smoke, corners, gaps, all)",
+                        name);
+    endcase
+  endtask
+
+  // End of test: wait (bounded) until every expectation is checked, then two
+  // quiet cycles, so that a late or extra result cannot slip past the summary.
+  task automatic drain(input int max_cycles = 20);
+    repeat (max_cycles) begin
+      @(negedge clk);                  // mid-cycle: the checker is not running
+      if (exp_q.size() == 0) break;
+    end
+    repeat (2) @(negedge clk);
+  endtask
+
+  // The verdict: exactly one line, in a format a script can match.
+  function automatic void report();
+    if (exp_q.size() != 0) begin
+      fail_cnt += exp_q.size();
+      $error("CHK %0d result(s) never arrived", exp_q.size());
+    end
+    if (pass_cnt == 0 && fail_cnt == 0) begin
+      fail_cnt++;                      // a run that checked nothing proves nothing
+      $error("CHK nothing was checked");
+    end
+    $display("PASS=%0d FAIL=%0d", pass_cnt, fail_cnt);
+  endfunction
+
+  initial begin : main
+    string test_name;
+    $timeformat(-9, 0, " ns", 0);      // %t prints nanoseconds: "15 ns"
+    if (!$value$plusargs("TEST=%s", test_name)) test_name = "all";
+    if ($test$plusargs("DUMP")) begin  // waveforms only on request
+      $dumpfile("tb_top.vcd");
+      $dumpvars(0, tb_top);
+    end
+    fork
+      begin : run
+        reset_dut();
+        if (test_name == "all") begin
+          run_one("smoke");
+          run_one("corners");
+          run_one("gaps");
+        end else begin
+          run_one(test_name);
+        end
+        drain();
+      end
+      begin : watchdog
+        #(TIMEOUT);
+        fail_cnt++;                    // a hang is a failure, never a pass
+        report();
+        $fatal(1, "WDOG test '%s' still running at %t", test_name, $time);
+      end
+    join_any
+    disable fork;                      // main has no other children: only the watchdog
+    report();
+    $finish;
+  end
+endmodule
+```
+
+**Expected output** of a run with no plusargs. It is illustrative: it was derived from a cycle model of this code, not captured from a simulator, and your simulator adds its own banner and `$finish` lines.
+
+```text
+15 ns TEST smoke
+55 ns TEST corners
+135 ns TEST gaps
+PASS=14 FAIL=0
+```
+
+The run ends at 250 ns: the last result is checked at 225 ns, `drain()` finds the queue empty at 230 ns, and two quiet edges follow.
+
+### Run it
+
+1. Save the file as `tb_top.sv`.
+2. Compile it with any IEEE 1800 simulator. `tb_top` is the top level, because nothing instantiates it; if your simulator asks for the top, name `tb_top`.
+3. Run it with no plusargs. The last line must be `PASS=14 FAIL=0`.
+4. Run a single test: add `+TEST=corners` and expect `PASS=7 FAIL=0`.
+5. Add `+DUMP` to any run to get `tb_top.vcd`, and open it in a waveform viewer.
+
+The commands differ per simulator. These are typical invocations; check your simulator's documentation (tool-dependent):
+
+```bash
+# Synopsys VCS
+vcs -sverilog tb_top.sv
+./simv +TEST=corners
+
+# Siemens Questa
+vlib work
+vlog tb_top.sv
+vsim -c tb_top +TEST=corners -do "run -all; quit"
+
+# Cadence Xcelium
+xrun tb_top.sv +TEST=corners
+```
+
+Without a local simulator, EDA Playground runs the bench in a browser: put `adder_reg` in the design pane and `tb_top` in the testbench pane, and pass the plusargs in the simulator's run options. Open-source simulators support different subsets of SystemVerilog, and none was verified for this page. Verilator in particular is a 2-state simulator, so the bench's X checks can never fire there (tool-dependent).
+
+### Prove it can fail
+
+1. Change `.BUG(0)` to `.BUG(1)` in `tb_top`: bit 8 of `sum` is now stuck at 0. **Predict** which tests will notice.
+2. Run `+TEST=smoke`. The bug escapes:
+
+```text
+15 ns TEST smoke
+PASS=3 FAIL=0
+```
+
+3. Run `+TEST=corners`. The bench catches the bug. Here `[error @ t]` stands for your simulator's own `$error` prefix, which includes the time, file and line (§20.10):
+
+```text
+15 ns TEST corners
+[error @ 75 ns] CHK a=255 b=1: sum=0, expected 256
+[error @ 85 ns] CHK a=255 b=255: sum=254, expected 510
+[error @ 95 ns] CHK a=128 b=128: sum=0, expected 256
+PASS=4 FAIL=3
+```
+
+4. Set `.BUG(2)` (off by one) and run `+TEST=smoke`. Every result fails:
+
+```text
+15 ns TEST smoke
+[error @ 45 ns] CHK a=1 b=2: sum=4, expected 3
+[error @ 55 ns] CHK a=10 b=20: sum=31, expected 30
+[error @ 65 ns] CHK a=100 b=27: sum=128, expected 127
+PASS=0 FAIL=3
+```
+
+5. Set `.BUG(0)` again and rerun with no plusargs: `PASS=14 FAIL=0`. A mutant is a tool for proving the bench; it never stays in.
+
+These logs are illustrative too, derived from the same cycle model.
+
+**Checklist before moving on:**
+- [ ] Every module in the compile declares a time unit.
+- [ ] The clock variable has an initializer, and every run ends with `$finish`.
+- [ ] Every DUT input is driven with `<=` right after the edge (or with `=` at the opposite edge).
+- [ ] Expected values come from a model written from the specification, one queue entry per transaction.
+- [ ] Every compare uses `!==`, and control signals are checked with `$isunknown` after reset.
+- [ ] The run prints exactly one `PASS=<n> FAIL=<m>` line; leftovers and zero checks count as failures.
+- [ ] A watchdog ends a hung run with `$fatal`.
+- [ ] I have seen this bench fail on a mutant, and I know which test catches it.
+
+## Push Further
+
+### Expert: X and Z in self-checks (`===` versus `==`)
+
+- **Where X hides.** `==` and `!=` return x only when the relation is ambiguous: the bits that are known agree, and at least one bit is x or z (§11.4.5). `9'b1_0000_101x != 9'd10` is 1, because bit 8 differs, while `9'b0_0000_101x != 9'd10` is x. A `!=` check therefore fails some X results loudly and passes others silently, which is the worst kind of check.
+- **Polarity.** An immediate assertion treats x as false and fails (§16.3), so `assert (sum == e.sum)` catches an X result, while `if (sum != e.sum) fail_cnt++;` passes it. Write every check so that an unknown lands on the failing side; `!==` and `===` do that whichever way round you test. Assertions arrive in [I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index).
+- **X in the expectation.** `===` matches x against x. If the model is fed x (an undriven stimulus variable), an X result matches an X expectation and passes. Guard the model: `if ($isunknown(e.sum))` should be a bench error, never a comparison.
+- **Wildcards on purpose.** `==?` treats x and z in its right operand as don't-care bits (§11.4.6). Use it when the specification leaves bits undefined, for example `sum ==? 9'b0_0000_1xxx`. An x in the left operand, the DUT's value, is not a wildcard.
+- **2-state traps.** Assigning `sum` to an `int` or a `bit` turns x into 0 before any compare. Some simulators are 2-state throughout, so X checks cannot fire on them; run X-sensitive regressions on a 4-state simulator (tool-dependent).
+- **Interview angle:** "Why does `assert (a == b)` fail when `a` is x, while `if (a != b) err++;` lets it through?"
+
+### Expert: The cost of directed tests versus constrained-random
+
+- **Counting the cases.** The adder has 256 × 256 = 65,536 input pairs, so exhaustive simulation is affordable: one addition per 10 ns cycle is 655.36 µs of simulated time. Raise `TIMEOUT` first, or the watchdog fires at 10 µs:
+
+```systemverilog
+// snippet: an exhaustive directed test for W = 8 (raise TIMEOUT to 1 ms first)
+task automatic test_exhaustive();
+  for (int i = 0; i < 256; i++) begin
+    for (int j = 0; j < 256; j++) begin
+      send(i[7:0], j[7:0]);
+    end
+  end
+  idle(1);
+endtask
+```
+
+- **Where exhaustion ends.** With 16-bit operands there are 2³² (about 4.3 × 10⁹) pairs, about 43 s of simulated time at 10 ns each; with 32-bit operands there are 2⁶⁴ (about 1.8 × 10¹⁹) pairs, far beyond any simulation. Wall-clock time per simulated second depends on the simulator, the design and the machine (tool-dependent).
+- **What directed tests buy.** You get exactly the cases you wrote, cheaply, and they are the right tool for bring-up, for known corners such as 255 + 1, and for reproducing a bug. Their cost grows with every feature and corner, and they never find a case nobody imagined.
+- **What constrained-random buys.** The bench chooses the values within constraints ([I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index)). The cost moves into a checker that can predict any input (this bench's model and queue already can) and into functional coverage that measures which cases actually ran ([I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index)). Formal tools can prove properties for every input at once ([E-INT-1](/curriculum/T4_Expert/E-INT-1_Integrating_UVM_with_Formal_Verification/index)).
+
+| | Directed | Constrained-random | Formal |
+|---|---|---|---|
+| Who picks the cases | you, one by one | the solver, within your constraints | the tool: all cases at once |
+| What it needs to be useful | a check per test | a model that predicts any input, plus coverage | properties and assumptions |
+| Finds the case nobody imagined | no | often | yes, within the assumptions |
+| Typical use | bring-up, corners, bug reproduction | the bulk of block-level regression | control logic, protocols, small arithmetic |
+
+- **Interview angle:** "When would you still write a directed test inside a constrained-random environment?"
+
+### Expert: Race-free sampling, a preview
+
+- **Why this bench's sampling works.** The checker reads `out_valid` and `sum` right after `@(posedge clk)`. That is deterministic only because the DUT writes them with `<=`: the update lands after every process woken by the edge has read them (§4.9.4, §10.4.2). F3C proves it by running every legal order.
+- **When it breaks.** The read becomes order-dependent if the RTL writes its flops with `=`, or if an output is combinational logic of inputs that the bench changes with `=` on the same edge. In gate-level simulation with timing, outputs change a propagation delay after the edge instead of in the same time slot, so the delays, not the scheduler, decide what a read at the edge returns; clocking-block input skews (§14.4) make that sampling point an explicit part of the bench.
+- **The queue is shared, too.** `send()` pushes and the checker pops on the same edge, in either order. That is safe here: the expectation a result needs was pushed two edges earlier, and `push_back` and `pop_front` work on opposite ends of the queue. Only a result nobody expected can meet an empty queue at that moment, and it fails in either order, just with a different message. `drain()` sidesteps the question by reading the queue on the falling edge.
+- **What clocking blocks change.** By default a clocking block samples its inputs with a `1step` skew, which returns the value each signal had before the current time slot began, its Preponed value (§14.3, §14.13); it drives its outputs in the Re-NBA region, after the design's NBA updates (§14.16). This bench's `@(posedge clk); a <= a_val;` becomes `@(cb); cb.a <= a_val;`, and the timing rule moves from code review into a declaration. [F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index) teaches them, together with program blocks (§24.3), another way to separate the bench from the design.
+- **Interview angle:** "A monitor reads a DUT output right after `@(posedge clk)`. Does it see the old value or the new one, and what has to be true for that to be guaranteed?"
+
+### Expert: What an in-order queue cannot see
+
+- **Latency.** The queue matches values and order, not timing. A mutant with one extra pipeline stage passes every test on this page. If the specification fixes the latency, add a `time sent;` field to `exp_t`, store `$time` in `send()`, and fail in `check_result()` when `$time - e.sent` differs from 20 ns, the two edges from drive to check.
+- **The end of the run.** A result that arrives after the summary is never checked. That is why `drain()` waits for an empty queue and then watches two more edges, so a late or duplicated result still fails.
+- **Reordering.** A DUT that may answer out of order (several IDs or channels) needs keyed matching: a queue per key in an associative array ([F2B](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index)), then the scoreboards of [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index).
+- **Reset in the middle of traffic.** Expectations for transactions that a reset discards must be flushed, or they are reported as missing; a later module on reset handling and error injection is planned.
+- **Equivalent mutants.** Swapping `a` and `b` in the RTL changes the code but never the behaviour, because addition commutes, so no test can kill that mutant. A **mutation score** (killed mutants divided by non-equivalent mutants) measures how much a bench really checks; commercial mutation-analysis tools automate it (tool-dependent).
+- **Interview angle:** "Your scoreboard passes, but the designers say latency went from one cycle to two. Why did your bench not catch it, and what would you add?"
+
+### Expert: Pass and fail signals a regression can trust
+
+- **Exit codes.** `$fatal` terminates the simulation "with an error code" (§20.10), but the standard does not define its value, and `$finish` only returns control to the operating system (§20.2). Exit statuses are tool-dependent, so regression scripts decide from the log.
+- **The contract.** Exactly one summary line per run. A missing summary (a crash, an early `$fatal`, a killed job) is a failure. Match the whole line, `^PASS=\d+ FAIL=0$`; some simulators prefix every transcript line (for example with `# `), so strip the tool's prefix first (tool-dependent).
+- **Errors your counters never see.** A `$error` from an immediate assertion in the RTL, from a vendor model or from someone else's code does not touch `fail_cnt`. Scan the log for the tool's error messages as well, or route every check through one counter. The planned UVM lesson on reporting and pass/fail does the same for UVM's report counts.
+- **Seeds.** A directed bench gives the same result on every run. Once stimulus is random, the seed must be in the log so that a failure can be reproduced ([I-SV-2B](/curriculum/T2_Intermediate/I-SV-2B_Advanced_Constrained_Randomization/index)).
+- **Interview angle:** "Your regression marked a test as passed because the simulator exited with status 0. What can go wrong?"
+
+### Interview angles
+
+Attempt each question before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: trusting a first PASS"
+  question="Your new bench prints PASS=200 FAIL=0 on its very first run. What do you do before you trust it?"
+  options={[
+    { text: "Nothing more: two hundred passing checks on a first run are strong evidence.", correct: false, feedback: "A first-run PASS is the least informative result a bench can give. A checker that never compares, or compares the wrong thing, prints exactly this." },
+    { text: "Open the waveform and confirm a handful of results by eye before trusting it.", correct: false, feedback: "Spot checks show that a few results look right; they do not show that the checker would notice a wrong one." },
+    { text: "Plant a known bug and see FAIL > 0; check the pass count equals the transactions sent.", correct: true, feedback: "Right. The mutant proves the checks can fail, and the count proves they ran on every transaction. Then remove the mutant." },
+    { text: "Measure code coverage; at 100% line coverage, the bench is complete.", correct: false, feedback: "Code coverage says which lines ran, not whether anything checked their results (F1B)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: reviewing a checker"
+  question="A colleague's checker is: if (dout != exp) errors++; Which review comment matters most?"
+  options={[
+    { text: "Use === for speed: the case operators are cheaper for the simulator.", correct: false, feedback: "The difference is semantics, not speed: === and !== treat x and z as values." },
+    { text: "Use !== instead of !=: an x on dout can make the condition x, so the X result passes.", correct: true, feedback: "Right (IEEE 1800-2023 §11.4.5, §12.4): an x condition takes the else path, so errors never increments. Also check that exp itself can never be x, and that something counts the passing compares." },
+    { text: "Call $fatal on the first mismatch so that the run stops right at the failure.", correct: false, feedback: "That hides every later failure. Use $error and counters for checks, and $fatal for a broken bench." },
+    { text: "Sample dout on the falling clock edge instead, away from the clock race.", correct: false, feedback: "The sampling point is a separate question. The X hole stays whichever edge you sample on." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
+    {
+      question: "A checker is written as: if (sum != e.sum) fail_cnt++; else pass_cnt++; For one result the DUT's sum is all x and the expected value is 10. What happens?",
+      answers: [
+        { text: "fail_cnt goes up, because an unknown value can never equal 10", correct: false, feedback: "That is what you want, but != does not deliver it: with every bit unknown the relation is ambiguous, so sum != e.sum evaluates to x, not 1 (§11.4.5)." },
+        { text: "The simulator stops the run with an X-propagation error", correct: false, feedback: "x is a legal 4-state value, and nothing in the language stops a simulation because of it. Only your checks can catch it." },
+        { text: "pass_cnt goes up: the condition is x, and if runs its else branch", correct: true, feedback: "Right. §11.4.5 makes sum != e.sum evaluate to x, and §12.4 runs the else branch for x or z, which counts a pass. Use !==, which always returns 0 or 1." },
+        { text: "Neither counter changes, because if skips both branches on x", correct: false, feedback: "The if does run. It treats x as false and takes the else branch, which counts a pass." }
+      ],
+      explanation: "With !=, an ambiguous comparison yields 1'bx (IEEE 1800-2023 §11.4.5), and if (x) runs the else branch (§12.4), so the X result is counted as a pass. Nothing stops the simulation, and the else branch does run. With !==, x and z bits are compared as values and the result is always 0 or 1, so the X result fails.",
+      objective: 2
+    },
+    {
+      question: "check_result() calls $error at 75 ns for the first mismatch of a run. What happens next?",
+      answers: [
+        { text: "The error prints, fail_cnt counts it, and later checks still run", correct: true, feedback: "Right: §20.10 defines $error as a run-time error, not a stop. The tool adds its prefix (file, line, time), and seeing every failure helps you spot the pattern." },
+        { text: "The simulation stops at 75 ns, so the summary line never prints", correct: false, feedback: "That describes $fatal. $error reports the problem and returns (§20.10)." },
+        { text: "The current test finishes, then the run ends at the next edge", correct: false, feedback: "Nothing in §20.10 ends the run after $error; only $fatal or $finish ends it." },
+        { text: "Nothing prints unless a verbosity plusarg enables error messages", correct: false, feedback: "The severity tasks always print. Verbosity filtering is a UVM reporting feature you meet in Tier 2." }
+      ],
+      explanation: "$error generates a run-time error message and execution continues; $fatal generates a fatal error and implicitly calls $finish (IEEE 1800-2023 §20.10). No severity task waits for an edge or depends on a verbosity setting. This bench counts each failed check in fail_cnt and decides PASS or FAIL in the summary line.",
+      objective: 2
+    },
+    {
+      question: "With .BUG(1) (carry bit stuck at 0) you run +TEST=smoke, and the log ends PASS=3 FAIL=0. What does that tell you?",
+      answers: [
+        { text: "The DUT is correct for every case a real design would meet", correct: false, feedback: "The DUT has a planted bug. This run simply never looked where the bug is." },
+        { text: "The checker is broken, because a buggy DUT must always fail it", correct: false, feedback: "The checker compared all three results correctly. The gap is in the stimulus, not in the comparison." },
+        { text: "The plusarg was ignored, so the run checked nothing at all", correct: false, feedback: "Three results were checked (PASS=3). With no checks at all, report() would have added a failure." },
+        { text: "smoke never makes bit 8 a 1; of the three tests, only corners does", correct: true, feedback: "Right: every smoke result fits in 8 bits, so a correct and a broken bit 8 look the same. +TEST=corners reports PASS=4 FAIL=3." }
+      ],
+      explanation: "A directed test catches only the bugs its stimulus provokes and its checks observe. The smoke results are 3, 30 and 127, so bit 8 is 0 in both the expected and the buggy result; the checker did its job on all three, and PASS=3 shows that the test ran. The corners test adds 255 + 1, 255 + 255 and 128 + 128, which need bit 8 and expose the bug.",
+      objective: 3
+    },
+    {
+      question: "reset_dut() releases reset with rst_n = 1'b1; (a blocking assignment) right after @(posedge clk) on edge 1. The DUT's always_ff reads rst_n on the same edge. On which edge does the DUT first act as out of reset?",
+      answers: [
+        { text: "Always edge 1, because the testbench statement runs first", correct: false, feedback: "Nothing guarantees that the testbench runs first: processes woken by the same edge run in any order (§4.7)." },
+        { text: "Always edge 2, because a flop samples before any assignment", correct: false, feedback: "That holds only for nonblocking updates. A blocking write is visible at once to any process that runs after it." },
+        { text: "Edge 1 or edge 2, depending on the order the simulator picks", correct: true, feedback: "Right: the blocking write races the flop's read (§4.7, §4.8). With rst_n <= 1'b1 the update lands after every process woken by the edge has read rst_n (§4.9.4), so it is always edge 2." },
+        { text: "Never: blocking writes to DUT inputs are ignored at an edge", correct: false, feedback: "They are not ignored. They take effect immediately, which is exactly the problem." }
+      ],
+      explanation: "Processes woken by one event may run in any order (IEEE 1800-2023 §4.7), so a blocking write at the edge is a race with the flop that reads it (§4.8): neither 'always' answer is guaranteed, and the write is never ignored. A nonblocking assignment schedules its update after the processes woken by the edge have run (§4.9.4), so with <= the DUT always sees the release on the next edge.",
+      objective: 4
+    },
+    {
+      question: "A learner checks without a queue: @(posedge clk); in_valid <= 1; a <= a_val; b <= b_val; @(posedge clk); in_valid <= 0; if (sum !== model_add(a_val, b_val)) $error(...); The log shows sum=0, expected 3, then sum=3, expected 30, then sum=30, expected 127. What is wrong?",
+      answers: [
+        { text: "The adder is broken: it returns the previous result, not the new one", correct: false, feedback: "Each sum is the right answer for the previous inputs. The DUT has one cycle of latency, as specified." },
+        { text: "The check reads sum one edge too early, before the DUT's <= update", correct: true, feedback: "Right: on the second edge the DUT is only sampling a and b, so the check reads the previous result. Wait one more edge or, better, match results on out_valid with a queue, which never counts edges." },
+        { text: "!== should be !=, because !== also compares the x and z bits", correct: false, feedback: "The operator is fine, and !== is the right choice. The timing of the read is wrong." },
+        { text: "in_valid <= 0 cancels the transaction before the DUT samples it", correct: false, feedback: "The DUT samples in_valid = 1 on that edge; the nonblocking update to 0 lands after the flops have read it." }
+      ],
+      explanation: "The DUT samples the new a and b on the second edge and updates sum with <=, after every process woken by that edge has read it (IEEE 1800-2023 §4.9.4). The check on that edge therefore reads the result of the previous transaction: the DUT and the operator are fine, and in_valid was sampled as 1. Matching results on out_valid with an expected-value queue removes the edge counting.",
+      objective: 5
+    },
+    {
+      question: "Which declarations give tb_top (time unit 1 ns) a 10 ns clock whose first rising edge is at 5 ns?",
+      answers: [
+        { text: "logic clk = 1'b0; always #5 clk = ~clk;", correct: true, feedback: "Right: clk is 0 before any process starts (§6.8) and toggles every 5 ns, so it rises at 5, 15, 25 ns." },
+        { text: "logic clk; always #5 clk = ~clk;", correct: false, feedback: "clk starts at x (§6.8, Table 6-7), and ~x is x (§11.4.8): the clock never toggles and nothing clocked ever runs." },
+        { text: "logic clk = 1'b0; always #10 clk = ~clk;", correct: false, feedback: "This toggles every 10 ns: a 20 ns period whose first rising edge is at 10 ns." },
+        { text: "logic clk = 1'b0; initial #5 clk = ~clk;", correct: false, feedback: "An initial procedure runs once: one rising edge at 5 ns, then nothing." }
+      ],
+      explanation: "A declaration initializer sets the variable before any initial or always procedure starts (IEEE 1800-2023 §6.8). Without it, a logic variable starts at x, and bitwise negation of x is x (§11.4.8), so the clock never toggles. A half period of 5 ns gives a 10 ns period; #10 gives 20 ns, and an initial procedure toggles only once.",
+      objective: 1
+    },
+    {
+      question: "The bench is correct, but a learner deletes the $finish at the end of the main initial block. The clock is still always #5 clk = ~clk. What happens after the summary line prints?",
+      answers: [
+        { text: "The simulation ends, because main has nothing left to run", correct: false, feedback: "A simulation ends by itself only when there is no further activity of any kind (§9.6.1), and the clock keeps scheduling events forever." },
+        { text: "The watchdog ends it with $fatal once TIMEOUT has passed", correct: false, feedback: "disable fork already killed the watchdog when the tests finished, so nothing is left to stop the run." },
+        { text: "It ends at the next clock edge, because no test is left to run", correct: false, feedback: "Clock edges are exactly the activity that keeps the simulation alive." },
+        { text: "It never ends: the clock keeps scheduling events forever", correct: true, feedback: "Right. The run hangs after printing the summary, and a regression would have to kill the job. Always end the run with $finish." }
+      ],
+      explanation: "A simulation terminates by itself only when there is no further activity of any kind (IEEE 1800-2023 §9.6.1). An always #5 clock is activity forever, and disable fork has already killed the watchdog, so once the $finish (§20.2) is gone nothing in the bench ends the run.",
+      objective: 2
+    },
+    {
+      question: "A learner's report() prints only the two counters. After the reset_dut() call is deleted by mistake, a run with no plusargs ends with PASS=0 FAIL=0. What happened?",
+      answers: [
+        { text: "The DUT passed every test, so there was nothing to report", correct: false, feedback: "PASS=0 means not a single comparison succeeded; a clean run of all the tests checks 14 results." },
+        { text: "Nothing was compared: with rst_n at x, the checker skipped every edge", correct: true, feedback: "Right. if (rst_n) treats x as false, so 14 expectations stayed in exp_q unchecked. This is why the lesson's report() adds leftovers to FAIL and fails a run that checked nothing: PASS=0 FAIL=0 would otherwise match the M0 pattern." },
+        { text: "No test ran, because the +TEST plusarg was missing from the command", correct: false, feedback: "With no plusarg the bench runs every test: test_name defaults to all." },
+        { text: "$finish ran before the first rising edge of the clock arrived", correct: false, feedback: "The TEST lines and the run's end time show that the tests ran and the run ended normally." }
+      ],
+      explanation: "An if treats x as false (IEEE 1800-2023 §12.4), so a checker guarded by if (rst_n) never compares while rst_n is x, even though every test ran and the run ended normally. A summary of PASS=0 FAIL=0 is a vacuous pass. Counting leftover expectations and failing a run with zero checks turns it into a visible failure.",
+      objective: 5
+    }
+  ]}
+/>
+
+### Kata (guided): catch a bug the bench cannot see yet
+
+**Objective:** add a directed test and a check for a rule the bench ignores, plant the bug that breaks the rule, and prove that the bench now catches it.
+
+**The rule:** R4 says that when `in_valid` is 0, `sum` keeps its value. Nothing in the bench checks it, because the checker looks at `sum` only when `out_valid` is 1.
+
+**Steps:**
+1. Add mutant 3 to `adder_reg`: change `if (in_valid) sum <= next_sum;` to `if (in_valid || BUG == 3) sum <= next_sum;`, so `sum` also updates on idle cycles. Set `.BUG(3)`.
+2. **Predict**, then run with no plusargs. Does the bench notice?
+3. Write the plan row: rule R4; scenario: idle cycles that carry new values on `a` and `b`; check: `sum` does not change while `out_valid` is 0; mutant: `BUG=3`.
+4. Write the stimulus: a task `send_invalid(a_val, b_val)` that drives `a` and `b` with `in_valid` low for one cycle, and a test `test_hold()` with one valid addition, two such invalid cycles, then `idle(1)`. Register it as `hold` in `run_one()` and in the `all` list.
+5. Write the check: in the checker, remember the last result the DUT reported (0 after reset) and fail if `sum` changes while `out_valid` is 0.
+6. Run the correct DUT (`.BUG(0)`) with no plusargs and with `+TEST=hold`, then `.BUG(3)` with `+TEST=hold`.
+
+**Acceptance:** with `.BUG(0)` the run with no plusargs ends `PASS=15 FAIL=0` and `+TEST=hold` ends `PASS=1 FAIL=0`; with `.BUG(3)`, `+TEST=hold` reports `FAIL` greater than 0.
+
+<details>
+<summary>Hint 1</summary>
+
+Why would `test_gaps()` miss mutant 3 even if the bench had a hold check? Look at what `idle()` does to `a` and `b`.
+
+</details>
+
+<details>
+<summary>Hint 2</summary>
+
+The hold check needs state that only the checker writes: a variable such as `last_sum`, updated whenever `out_valid` is 1 and set to 0 while reset is active.
+
+</details>
+
+<details>
+<summary>Worked solution</summary>
+
+**Step 1, the mutant** in `adder_reg`:
+
+```systemverilog
+// snippet: adder_reg, inside the always_ff block
+      if (in_valid || BUG == 3) sum <= next_sum;  // mutant 3: sum moves on idle cycles
+```
+
+**Step 2.** The run ends `PASS=14 FAIL=0`: the bug escapes. No check looks at `sum` on idle cycles, and on idle cycles the existing tests never change `a` or `b`, so recomputing `a + b` gives the same value anyway.
+
+**Step 3, the plan row:**
+
+| Plan row (rule) | Test | Stimulus | The check proves | Mutant it catches |
+|---|---|---|---|---|
+| R4: `sum` holds while `in_valid` is 0 | `hold` | 3 + 4, then two idle cycles that carry 50 + 60 and 70 + 80 | `sum` stays 7 while `out_valid` is 0 | `sum` updates on idle cycles (`BUG=3`) |
+
+**Step 4, the stimulus and the test** in `tb_top`:
+
+```systemverilog
+// snippet: tb_top additions
+  // One idle cycle that still carries new data: the DUT must ignore it (R4).
+  task automatic send_invalid(input logic [W-1:0] a_val, input logic [W-1:0] b_val);
+    @(posedge clk);
+    in_valid <= 1'b0;
+    a        <= a_val;
+    b        <= b_val;
+  endtask
+
+  task automatic test_hold();
+    send(8'd3, 8'd4);                  // sum becomes 7
+    send_invalid(8'd50, 8'd60);        // a correct DUT keeps 7
+    send_invalid(8'd70, 8'd80);
+    idle(1);
+  endtask
+```
+
+Add `"hold":    test_hold();` to the `case` in `run_one()`, add `run_one("hold");` after `run_one("gaps");` in the `all` branch of `main`, and add `hold` to the list in the `$fatal` message.
+
+**Step 5, the check** replaces the checker:
+
+```systemverilog
+// snippet: tb_top, the checker with the hold check
+  logic [W:0] last_sum;                // the last result the DUT reported
+
+  always @(posedge clk) begin
+    if (rst_n) begin
+      if ($isunknown(out_valid)) begin
+        fail_cnt++;
+        $error("CHK out_valid is %b after reset", out_valid);
+      end else if (out_valid) begin
+        check_result(sum);
+        last_sum = sum;                // only this process uses last_sum, so = is safe
+      end else if (sum !== last_sum) begin   // R4: no new result, so no change
+        fail_cnt++;
+        $error("CHK sum changed to %0d while out_valid=0 (held %0d)", sum, last_sum);
+      end
+    end else begin
+      last_sum = '0;                   // R1: sum is 0 after reset
+    end
+  end
+```
+
+**Step 6, the expected results** (illustrative, from the same cycle model). With `.BUG(0)` and no plusargs:
+
+```text
+15 ns TEST smoke
+55 ns TEST corners
+135 ns TEST gaps
+215 ns TEST hold
+PASS=15 FAIL=0
+```
+
+With `.BUG(3)` and `+TEST=hold`:
+
+```text
+15 ns TEST hold
+[error @ 55 ns] CHK sum changed to 110 while out_valid=0 (held 7)
+[error @ 65 ns] CHK sum changed to 150 while out_valid=0 (held 7)
+[error @ 75 ns] CHK sum changed to 150 while out_valid=0 (held 7)
+PASS=1 FAIL=3
+```
+
+The result 7 is checked at 45 ns. The mutant samples the invalid pair 50 and 60 at 45 ns and the pair 70 and 80 at 55 ns, so the checker sees `sum` = 110 at 55 ns, then 150 at 65 ns and again at 75 ns, the edges `drain()` waits through: three failures. With `.BUG(3)` and no plusargs, only the `hold` test fails, giving `PASS=15 FAIL=3`: the other tests never change `a` or `b` on an idle cycle.
+
+**Reflect:** the bug needed both a new stimulus (data that changes while `in_valid` is low) and a new check (stability while `out_valid` is low). Neither alone catches it.
+
+</details>
+
+### Kata (independent): bench the counter you planned in F1B
+
+**Objective:** build an M0 bench from a specification alone, for a DUT with state.
+
+**The DUT:** `cnt4`, a 4-bit counter (the one from the planning kata in [F1B](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index)). On each rising edge: if `rst_n` is 0, `count` becomes 0; otherwise, if `ld` is 1, `count` becomes `d` (load has priority over enable); otherwise, if `en` is 1, `count` increments, and 15 wraps to 0; otherwise `count` holds.
+
+**Requirements:**
+- Write `cnt4` with a `BUG` parameter for two mutants from your plan, for example a wrap at 14 instead of 15, and a load that ignores `d[3]`.
+- Write `tb_top` with the same skeleton: time units, a clock, a reset, `<=` drives, a model, `!==` checks, a summary line, a watchdog and `+TEST=` selection.
+- Turn your F1B plan into directed tests: one test task per plan row (reset mid-count, increment, hold, load, load priority with `ld` and `en` high together including at 15, the wrap from 15 to 0, and the expert reset-priority row). Rows that F1B marks Random get a directed test here; [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) shows how to randomize them.
+- Decide what the model is. A counter has state, so the expected value is a model register that you update every cycle from the same inputs, not a queue of independent answers.
+
+**Acceptance:** the correct DUT ends `PASS=<n> FAIL=0`; each mutant gives `FAIL` greater than 0 in at least one test, and you can name that test; an unknown test name is fatal; a run that checks nothing fails. No solution is given: compare your bench with this page's checklist. A runner-graded M0 lab is planned; until it ships, these two katas are this module's hands-on practice.
+
+The flashcards below drill the anatomy, the `!==` rule, the drive rule and the end-of-run contract.
+
+## References & Next Topics
+
+**Primary sources** (IEEE 1800-2023):
+- §3.14.2.1–§3.14.2.3: the `` `timescale `` directive, `timeunit` and `timeprecision`, and their precedence (mixing units is an error).
+- §4.7 nondeterminism, §4.8 race conditions, §4.9.4 nonblocking assignment scheduling; §10.4.2 nonblocking procedural assignments.
+- §6.8 variable declarations: initializers run before any procedure starts; Table 6-7 default initial values.
+- §7.10.2 queue methods: §7.10.2.4 `pop_front()` on an empty queue, §7.10.2.7 `push_back()`.
+- §9.2.2.2 and §9.2.2.4: `always_comb` and `always_ff` writer restrictions.
+- §9.3.2 fork–join variants; §9.6.1 automatic termination of a simulation with no activity; §9.6.3 `disable fork`.
+- §11.4.5 equality operators; §11.4.6 wildcard equality; §11.4.8 bitwise operators; §11.6 expression bit lengths.
+- §12.4 `if`–`else`: an x or z condition takes the `else` branch.
+- §14.3 clocking block declaration (default skews), §14.4 input and output skews, §14.13 input sampling and §14.16 synchronous drives (preview of clocking blocks); §24.3 the program construct.
+- §16.3 immediate assertions: x, z or 0 fails.
+- §20.2 `$finish`; §20.4.3 `$timeformat`; §20.9 `$isunknown`; §20.10 severity tasks.
+- §21.2.1.3 displaying x and z; §21.6 plusargs; §21.7.1.1 `$dumpfile` and §21.7.1.2 `$dumpvars`.
+
+**Prerequisites:** [F2B: Dynamic Data Structures](/curriculum/T1_Foundational/F2B_Dynamic_Structures/index) (queues) and [F2D: System Tasks and File I/O](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/index) (tasks, functions and system tasks). For review: [F1B](/curriculum/T1_Foundational/F1B_The_Verification_Mindset/index) (plans and mutants) and [F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) (fork–join and `disable fork`).
+
+**Related:**
+- [F2A: Structs, Unions and Enums](/curriculum/T1_Foundational/F2A_Core_Data_Types/structs-unions-enums): the `exp_t` struct and its assignment pattern.
+- [F2D: Tasks and Functions](/curriculum/T1_Foundational/F2D_Reusable_Code_and_Parallelism/tasks-functions): `automatic` lifetime and default arguments.
+- [F3C: Delta Cycles and Race Conditions](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index): why `=` at the edge races, with every legal order explored.
+- [F4C: Synchronizing with Clocking and Program Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): race-free driving and sampling, milestone M1.
+- [I-SV-2A: Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index): letting the bench choose the stimulus.
+- [I-SV-9: Why UVM](/curriculum/T2_Intermediate/I-SV-9_Why_UVM/index): from this bench's roles to UVM components.
+- [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): keyed matching and end-of-test accounting.
+- [E-DBG-1: Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index): honest pass/fail and triage at scale.
+
+<NextLesson />

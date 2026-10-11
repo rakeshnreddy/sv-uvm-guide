@@ -1,38 +1,47 @@
 {
   "id": "ipc-deadlock",
-  "version": "1",
-  "title": "Semaphore Deadlock",
-  "description": "Diagnose and fix a simulation hang caused by an unreturned semaphore key in an early exit condition.",
+  "version": "2",
+  "title": "Semaphore Hangs: Leaked Key and Circular Wait",
+  "description": "Read a watchdog report, draw the wait-for graph, and fix a semaphore key leaked by an early return and a circular wait between two locks.",
   "owningModule": "I-SV-5",
   "routeSlug": "ipc-deadlock",
   "status": "available",
   "labPrerequisites": [],
   "modulePrerequisites": [
-    "F2D"
+    "F2C",
+    "I-SV-1"
   ],
   "steps": [
     {
       "id": "1",
-      "version": "1",
+      "version": "2",
       "completion": "self_attested",
-      "title": "Step 1: Identify the Hang",
-      "instructions": "Run the simulation. Notice the `WATCHDOG` timer fires at 500ns because the test never organically reaches `$finish;`.",
+      "title": "Step 1: Run the starter and read the report",
+      "instructions": "Run src/testbench.sv as it is. Each part has its own watchdog, so the log shows two FAIL reports and ends with PASS=0 FAIL=2. For each part, write down which thread waits for which key and who holds that key. Then explain why, without the watchdogs, the run would simply stop at 110 ns with no error (IEEE 1800-2023 §9.6.1).",
       "starterCode": ""
     },
     {
       "id": "2",
-      "version": "1",
+      "version": "2",
       "completion": "self_attested",
-      "title": "Step 2: Trace the Keys",
-      "instructions": "Look at `producer_thread()`. It requires a key to start transmission. Trace what happens to that key if `data == 5` occurs.",
+      "title": "Step 2: Fix Part 1, the leaked key",
+      "instructions": "Draw Part 1's wait-for graph from its report. The bus key is held by sender (item 2), a call of send_item that has already returned: a leaked key, not a deadlock. Make every path out of send_item call give_key(BUS), preferably through one exit point, and rerun until the log shows [185] PART 1 PASS.",
       "starterCode": ""
     },
     {
       "id": "3",
+      "version": "2",
+      "completion": "self_attested",
+      "title": "Step 3: Fix Part 2, the circular wait",
+      "instructions": "Draw Part 2's wait-for graph: the mover holds table A and waits for table B, and the auditor holds table B and waits for table A, so the arrows form a loop. Make both threads take the two keys in the same order, and rerun until the log ends with PASS=2 FAIL=0. Extra keys, or a try_get() retry loop that keeps the first key, fail the harness's checks.",
+      "starterCode": ""
+    },
+    {
+      "id": "4",
       "version": "1",
       "completion": "self_attested",
-      "title": "Step 3: Fix the Leak",
-      "instructions": "Ensure `shared_bus.put(1);` is called even when bailing out early. Re-run to see both threads complete all 5 iterations.",
+      "title": "Step 4: Explain what you saw",
+      "instructions": "Answer the four questions in Step 4 of the README: the key the sender waited for, the lines Part 2 never printed, the fix that would leave an extra key, and when release-and-retry beats a fixed order. Then compare your file with solution/testbench.sv.",
       "starterCode": ""
     }
   ],
@@ -45,7 +54,13 @@
     },
     {
       "path": "src/testbench.sv",
-      "role": "reference",
+      "role": "starter",
+      "language": "systemverilog",
+      "editable": true
+    },
+    {
+      "path": "solution/testbench.sv",
+      "role": "solution",
       "language": "systemverilog",
       "editable": false
     }

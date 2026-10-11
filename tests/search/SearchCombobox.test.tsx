@@ -78,7 +78,7 @@ describe('SearchCombobox in the navbar (popup)', () => {
 
     // Section results link to the heading's anchor on the canonical lesson URL.
     const section = options.find((option) => option.getAttribute('href')?.includes('#'));
-    expect(section?.getAttribute('href')).toMatch(/^\/curriculum\/T\d_[A-Za-z]+\/[^/]+\/[a-z0-9-]+#[a-z0-9-]+$/);
+    expect(section?.getAttribute('href')).toMatch(/^\/curriculum\/T\d_[A-Za-z]+\/[^/]+\/[a-z0-9-]+#[a-z0-9_-]+$/);
     expect(section).toHaveTextContent('Section');
 
     // Result options stay out of the Tab order; focus stays in the field.

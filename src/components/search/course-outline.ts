@@ -100,6 +100,18 @@ export function moduleDisplayTitle(title: string, code: string): string {
   return stripModuleCode(displayLessonTitle(title), code);
 }
 
+/**
+ * A sub-lesson's outline label: its topic only. Rewritten sub-lessons have
+ * titles such as "Mailboxes: Bounded Queues and Handshakes"; the outline is a
+ * compact list, so it shows "Mailboxes". Module index pages keep their title.
+ */
+export function outlineLessonTitle(title: string, code: string, slug: string): string {
+  const display = moduleDisplayTitle(title, code);
+  if (slug === "index") return display;
+  const colon = display.indexOf(": ");
+  return colon > 0 ? display.slice(0, colon) : display;
+}
+
 export function buildCourseOutline(
   data: readonly Module[],
   tierMeta: readonly TierMeta[],
@@ -120,7 +132,7 @@ export function buildCourseOutline(
         const key = `${tier.slug}/${section.slug}/${topic.slug}`;
         return {
           slug: topic.slug,
-          title: moduleDisplayTitle(topic.title, code),
+          title: outlineLessonTitle(topic.title, code, topic.slug),
           href: `/curriculum/${key}`,
           current: key === currentKey,
         };

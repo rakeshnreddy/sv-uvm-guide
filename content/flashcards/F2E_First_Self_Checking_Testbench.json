@@ -2,6 +2,76 @@
   {
     "id": "f2e-1",
     "question": "What makes a testbench self-checking?",
-    "answer": "It computes the expected result for every stimulus, compares it with the DUT's output automatically, and reports a PASS/FAIL count, so nobody has to inspect waveforms to know whether the test passed."
+    "answer": "It computes the expected result for every stimulus from the specification, compares it with the DUT's output automatically, and ends with a PASS/FAIL count, so nobody has to inspect waveforms to know whether the run passed."
+  },
+  {
+    "id": "f2e-2",
+    "question": "Name the parts of a minimal self-checking tb_top.",
+    "answer": "A time unit, a clock, a reset sequence and the DUT instance; stimulus tasks; a reference model with an expected-value queue; a checker that compares and counts; one summary line; a watchdog; and `$finish`."
+  },
+  {
+    "id": "f2e-3",
+    "question": "Why compare with `!==` instead of `!=`?",
+    "answer": "If the known bits agree and any bit is x or z, `!=` returns x (IEEE 1800-2023 §11.4.5), and an `if` treats x as false and runs its `else` branch (§12.4), so the X result counts as a pass. `!==` compares x and z as values and always returns 0 or 1."
+  },
+  {
+    "id": "f2e-4",
+    "question": "Does `$error` stop the simulation? What does `$fatal` do?",
+    "answer": "No: `$error` reports a run-time error and the run continues, so you see every failure. `$fatal` reports a fatal error and ends the run with an implicit `$finish` (§20.10)."
+  },
+  {
+    "id": "f2e-5",
+    "question": "What does the M0 summary line look like, and why one fixed format?",
+    "answer": "Exactly one `PASS=<n> FAIL=<m>` line per run. A clean run must match `^PASS=\\d+ FAIL=0$`, so a script can decide pass or fail without reading the rest of the log."
+  },
+  {
+    "id": "f2e-6",
+    "question": "Why does the lesson's `report()` fail a run that would print `PASS=0 FAIL=0`?",
+    "answer": "A run that compared nothing proves nothing, for example a test task that sent nothing. Without the guard, `PASS=0 FAIL=0` would match the M0 pass pattern; leftover expectations are counted as failures for the same reason."
+  },
+  {
+    "id": "f2e-7",
+    "question": "Why keep expectations in a queue instead of one `expected` variable?",
+    "answer": "Results arrive after their stimulus, and back-to-back inputs put several in flight, so one variable is overwritten by the next `send()` before the earlier result arrives. Push one expectation per transaction when you drive it; pop the oldest when `out_valid` reports a result."
+  },
+  {
+    "id": "f2e-8",
+    "question": "What does `pop_front()` return on an empty queue of `logic` values?",
+    "answer": "The element type's default value, x for 4-state types, and the call may only warn (§7.10.2.4). Check `size()` first, and report a result nobody expected as a failure."
+  },
+  {
+    "id": "f2e-9",
+    "question": "Why drive DUT inputs with `<=` right after `@(posedge clk)`?",
+    "answer": "The DUT's flops read their inputs on the same edge, and processes woken by one edge run in any order (§4.7), so a blocking write may or may not be seen. A nonblocking update lands after every process woken by the edge has read the input (§4.9.4); driving with `=` at the opposite edge also works, and clocking blocks (F4C) replace the rule."
+  },
+  {
+    "id": "f2e-10",
+    "question": "How does the watchdog end a hung run?",
+    "answer": "`main` forks the test and a `#(TIMEOUT)` branch and waits with `join_any`. If the test ends first, `disable fork` kills the timer; if the timer ends first, it counts a failure, prints the summary and calls `$fatal`."
+  },
+  {
+    "id": "f2e-11",
+    "question": "How do you prove a bench can fail?",
+    "answer": "Plant a known bug (a mutant), such as a stuck bit or an off-by-one, confirm the run reports FAIL greater than 0, then remove it. If the run still passes, a stimulus or a check is missing."
+  },
+  {
+    "id": "f2e-12",
+    "question": "Why did the carry-stuck mutant (`BUG=1`) escape `+TEST=smoke`?",
+    "answer": "Every smoke result is below 256, so bit 8 is 0 whether or not it is stuck. A directed test catches only the bugs its stimulus provokes and its checks observe; `corners` (255 + 1, 255 + 255, 128 + 128) catches it."
+  },
+  {
+    "id": "f2e-13",
+    "question": "How do you choose a test and request a waveform without recompiling?",
+    "answer": "Read plusargs (§21.6): `$value$plusargs(\"TEST=%s\", test_name)` returns 0 and leaves `test_name` unchanged when `+TEST=` is absent, and `$test$plusargs(\"DUMP\")` gates `$dumpfile` and `$dumpvars(0, tb_top)` (§21.7)."
+  },
+  {
+    "id": "f2e-14",
+    "question": "Symptom: every actual value equals the previous expected value. What is the cause?",
+    "answer": "The check is one cycle early: it reads `sum` on the edge where the DUT is only sampling the inputs, before the DUT's `<=` update, so it sees the previous result. Match results on `out_valid` with the queue instead of counting edges."
+  },
+  {
+    "id": "f2e-15",
+    "question": "Why does every module, including the DUT, declare a time unit?",
+    "answer": "IEEE 1800-2023 §3.14.2.3 makes it an error for some design elements to have a time unit and precision while others do not. A `timeunit` declaration inside each module also removes the file-order dependence of `` `timescale ``."
   }
 ]

@@ -35,7 +35,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F1A: The Cost of Bugs",
             "slug": "index",
-            "description": "Understand the economic and reputational stakes of verification in the semiconductor industry."
+            "description": "Explain why a bug costs more at every stage it survives, and choose between a pre-tape-out ECO, a metal-only respin and a full respin."
           }
         ],
         "track": "core",
@@ -51,7 +51,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F1B: The Verification Mindset",
             "slug": "index",
-            "description": "Adopt the destructive testing philosophy and explore the methodologies used to break designs."
+            "description": "Plan a block's verification, choose between directed, constrained-random and formal methods, measure progress with coverage, and prove your checks can fail."
           }
         ],
         "track": "core",
@@ -70,7 +70,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F1C: Why SystemVerilog?",
             "slug": "index",
-            "description": "Discover why SystemVerilog replaced Verilog as the industry standard for verification."
+            "description": "Explain how Verilog, SystemVerilog and UVM relate, match verification problems to SystemVerilog features, and predict whether legacy Verilog compiles as SystemVerilog."
           }
         ],
         "track": "core",
@@ -86,7 +86,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F2A: Core Data Types",
             "slug": "index",
-            "description": "Dive deep into SystemVerilog nets, variables, and value systems with interactive explorers grounded in IEEE 1800-2023."
+            "description": "Choose the right SystemVerilog data type by predicting how 4-state values, nets and variables, literals, widths and signedness behave in testbench and RTL code."
           },
           {
             "title": "Structs, Unions and Enums",
@@ -114,7 +114,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F2B: Dynamic Data Structures",
             "slug": "index",
-            "description": "Manipulate dynamic arrays, queues, and associative arrays with an IEEE 1800-2023 guided workflow."
+            "description": "Choose dynamic arrays, queues and associative arrays for testbench data, predict the result of every resize, push, pop, lookup and array method, and build an expected-transaction tracker."
           }
         ],
         "track": "core",
@@ -133,12 +133,12 @@ export const curriculumData: Module[] = [
           {
             "title": "F2C: Procedural Code and Flow Control",
             "slug": "index",
-            "description": "Master the procedural heart of SystemVerilog—initial/always/final blocks, flow control, and assignment semantics that drive every testbench."
+            "description": "Choose the right procedure and assignment, predict blocking and nonblocking results, and write fork/join threads with race-safe timeouts."
           },
           {
             "title": "Procedural Flow Control",
             "slug": "flow-control",
-            "description": "Guide decisions with if, case, and loop constructs to steer simulation flow."
+            "description": "Predict which branch or loop iteration runs, including with x or z values, and choose plain, unique, unique0 or priority decisions that report real bugs."
           }
         ],
         "track": "core",
@@ -185,7 +185,7 @@ export const curriculumData: Module[] = [
           {
             "title": "F2E: Your First Self-Checking Testbench",
             "slug": "index",
-            "description": "Build a directed, self-checking SystemVerilog testbench without UVM: clock and reset, stimulus, expected values, a scoreboard queue, a watchdog and a PASS/FAIL summary."
+            "description": "Build and run a directed, self-checking SystemVerilog testbench without UVM that drives a clocked DUT race-free, checks every result against a model, ends every run with a PASS/FAIL summary, and is proven to fail on a planted bug."
           }
         ],
         "track": "core",
@@ -557,17 +557,17 @@ export const curriculumData: Module[] = [
           {
             "title": "I-SV-5: Synchronization and IPC",
             "slug": "index",
-            "description": "Master SystemVerilog's built-in inter-process communication primitives: events, mailboxes, and semaphores."
+            "description": "Choose the right tool to make testbench threads cooperate, build the producer/consumer, request/response and arbitration patterns, control threads with process handles, and diagnose deadlock and starvation with a wait-for graph."
           },
           {
-            "title": "Events | Advanced SystemVerilog for Verification",
+            "title": "Events: Triggers, Persistence and Ordering",
             "slug": "events",
-            "description": "Synchronize parallel processes with SystemVerilog events."
+            "description": "Predict whether a waiting process wakes for ->, ->>, @ and wait (ev.triggered) in one time slot, fix lost-event races, check trigger order with wait_order, and share event handles safely through tasks and classes."
           },
           {
-            "title": "Mailboxes | Advanced SystemVerilog for Verification",
+            "title": "Mailboxes: Typed, Bounded Channels Between Threads",
             "slug": "mailboxes",
-            "description": "Use mailboxes for thread-safe communication between processes."
+            "description": "Pass transactions between testbench threads through typed, bounded mailboxes: predict when each call waits and what it returns, choose each channel's depth, and avoid the shared-handle bug."
           },
           {
             "title": "Semaphores | Advanced SystemVerilog for Verification",

@@ -74,7 +74,7 @@ const toneStyles: Record<MarkerTone, { glyph: string; className: string }> = {
 const highlightFill: Record<NonNullable<CycleHighlight["tone"]>, string> = {
   attempt: "fill-cyan-400/10",
   fail: "fill-rose-500/15",
-  pass: "fill-emerald-500/12",
+  pass: "fill-emerald-500/15",
   info: "fill-sky-500/10",
 };
 
