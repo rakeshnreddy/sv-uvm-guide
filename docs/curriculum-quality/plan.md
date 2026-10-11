@@ -205,13 +205,13 @@ Each wave runs the implementation workflow:
 
 | Wave | Groups | Starts when | Status |
 |---|---|---|---|
-| W1a | L01 (F1A–F1C), L02 (F2A index), L03 (F2B), N01 (F2E), N02 (F2A sub-lessons) | L01–L03 verified; the lead adds placeholders, manifest entries and registered decks for N01/N02 first | running |
-| W1b | L04 (F2C), L05a/b/c (F2D pages), L06a/b/c (F3A, F3B, F3C), L08 (F4C) | L04–L06 and L08 verified | running |
-| W2a | L17a–d (I-SV-5 pages), L18a/b (I-SV-6, I-SV-7), L19a/b (I-SV-9, I-UVM-1A) | L17–L19 verified; the lead adds sub-lesson decks | running |
+| W1a | L01 (F1A–F1C), L02 (F2A index), L03 (F2B), N01 (F2E), N02 (F2A sub-lessons) | L01–L03 verified; the lead adds placeholders, manifest entries and registered decks for N01/N02 first | integrated (83a3512f, 6ee3f296) |
+| W1b | L04 (F2C), L05a/b/c (F2D pages), L06a/b/c (F3A, F3B, F3C), L08 (F4C) | L04–L06 and L08 verified | integrated (834b5b11) |
+| W2a | L17a–d (I-SV-5 pages), L18a/b (I-SV-6, I-SV-7), L19a/b (I-SV-9, I-UVM-1A) | L17–L19 verified; the lead adds sub-lesson decks | integrated (83a3512f, ee4de477) |
 | W2-SV | L07a/b (F4A, F4B), L09a–c and L10a/b (I-SV-1 pages), L11 (I-SV-2A), L12a–e (I-SV-2B pages and lab), L13 (I-SV-3A), L14a–d (I-SV-3B pages and lab), L15a/b (I-SV-4A pages), L16a–d (I-SV-4B pages, I-SV-4C), L16e (lab assertions-1) | L07–L16 verified; the lead gives every module and split sub-lesson its own deck | running (v2 author rules) |
 | W2-UVM | L20a/b (I-UVM-1B, 1C), L21a/b (2A, 2B), L22a/b (2C with config-debug, 3A), L23a–d and L24a–e (I-UVM-3B pages) | L20–L24 verified; decks as for W2-SV | running (v2 author rules) |
-| W3 | L25 (I-UVM-4/5/6), N03 (I-UVM-1D), N04 (I-UVM-3C) | L25 verified; the lead adds N03/N04 placeholders | waiting |
-| W4 | L26–L31 (RAL, callbacks, scoreboards with uvm-mini-capstone, VIP, multi-agent), N05 (A-UVM-9) | L26–L31 verified | waiting |
+| W3 | L25 (I-UVM-4/5/6), N03 (I-UVM-1D), N04 (I-UVM-3C) | L25 verified; the lead adds N03/N04 placeholders | running |
+| W4 | L26–L31 (RAL, callbacks, scoreboards, VIP, multi-agent); N05 (A-UVM-9) later | L26–L31 verified | running (N05 pending) |
 | W5 | L32–L40 (AMBA), N06 (B-APB-1) | L32–L40 verified | waiting |
 | W6 | L41–L48 (expert tier), G29 bank fixes | L41–L48 analysed and verified | waiting |
 
