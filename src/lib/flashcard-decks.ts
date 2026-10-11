@@ -79,6 +79,11 @@ import A_UVM_1_Advanced_Sequencing from '../../content/flashcards/A-UVM-1_Advanc
 import A_UVM_2_The_UVM_Factory from '../../content/flashcards/A-UVM-2_The_UVM_Factory.json';
 import A_UVM_3_Advanced_UVM_Techniques from '../../content/flashcards/A-UVM-3_Advanced_UVM_Techniques.json';
 import A_UVM_4_RAL from '../../content/flashcards/A-UVM-4_RAL.json';
+import A_UVM_4A_RAL_Fundamentals from '../../content/flashcards/A-UVM-4A_RAL_Fundamentals.json';
+import A_UVM_4B_Advanced_RAL from '../../content/flashcards/A-UVM-4B_Advanced_RAL.json';
+import A_UVM_4B_Explicit_vs_Implicit from '../../content/flashcards/A-UVM-4B_Explicit_vs_Implicit.json';
+import A_UVM_4B_Frontdoor_vs_Backdoor from '../../content/flashcards/A-UVM-4B_Frontdoor_vs_Backdoor.json';
+import A_UVM_4B_Built_in_RAL_Sequences from '../../content/flashcards/A-UVM-4B_Built_in_RAL_Sequences.json';
 import A_UVM_5_Callbacks from '../../content/flashcards/A-UVM-5_UVM_Callbacks.json';
 import A_UVM_6_Scoreboards from '../../content/flashcards/A-UVM-6_Scoreboards.json';
 import A_UVM_7_VIP_Construction from '../../content/flashcards/A-UVM-7_VIP_Construction.json';
@@ -201,6 +206,11 @@ export const flashcardDecks: Record<string, any[]> = {
   'A-UVM-2_The_UVM_Factory': A_UVM_2_The_UVM_Factory,
   'A-UVM-3_Advanced_UVM_Techniques': A_UVM_3_Advanced_UVM_Techniques,
   'A-UVM-4_RAL': A_UVM_4_RAL,
+  'A-UVM-4A_RAL_Fundamentals': A_UVM_4A_RAL_Fundamentals,
+  'A-UVM-4B_Advanced_RAL': A_UVM_4B_Advanced_RAL,
+  'A-UVM-4B_Explicit_vs_Implicit': A_UVM_4B_Explicit_vs_Implicit,
+  'A-UVM-4B_Frontdoor_vs_Backdoor': A_UVM_4B_Frontdoor_vs_Backdoor,
+  'A-UVM-4B_Built_in_RAL_Sequences': A_UVM_4B_Built_in_RAL_Sequences,
   'A-UVM-5_Callbacks': A_UVM_5_Callbacks,
   'A-UVM-6_Scoreboards': A_UVM_6_Scoreboards,
   'A-UVM-7_VIP_Construction': A_UVM_7_VIP_Construction,
@@ -242,8 +252,6 @@ const deckAliases: Record<string, string> = {
   'I-UVM-1A_Components': 'I-UVM-1_UVM_Intro',
   'I-UVM-1B_The_UVM_Factory': 'I-UVM-4_Factory_and_Overrides',
   'I-UVM-1C_UVM_Phasing': 'I-UVM-5_Phasing_and_Synchronization',
-  'A-UVM-4A_RAL_Fundamentals': 'A-UVM-4_RAL',
-  'A-UVM-4B_Advanced_RAL': 'A-UVM-4_RAL',
 };
 
 for (const [alias, target] of Object.entries(deckAliases)) {
