@@ -1,20 +1,24 @@
 {
   "id": "callbacks-driver-behavior",
-  "version": "1",
+  "version": "2",
   "title": "Modifying Driver Behavior with Callbacks",
-  "description": "Inject an error and a delay into a driver using a callback hook without altering the driver class itself.",
+  "description": "Inject a parity error and a delay into one of two drivers with a callback hook, without altering the driver class, then break the attachment on purpose and stack two callbacks.",
   "owningModule": "A-UVM-5",
   "routeSlug": "callbacks-driver-behavior",
   "status": "available",
   "labPrerequisites": [],
-  "modulePrerequisites": [],
+  "modulePrerequisites": [
+    "I-UVM-2A",
+    "A-UVM-7",
+    "A-UVM-5"
+  ],
   "steps": [
     {
       "id": "1",
-      "version": "1",
+      "version": "2",
       "completion": "self_attested",
-      "title": "Step 1: Review the Hook",
-      "instructions": "Open `testbench.sv` and locate the `packet_driver_cb` virtual class, the `uvm_do_callbacks` call inside the driver's `run_phase`, and the `a_parity_ok` checker in `packet_if`. Note which packet fields the driver reads after the hook returns.",
+      "title": "Step 1: Review the hook and the two drivers",
+      "instructions": "Open `testbench.sv` and locate the `packet_driver_cb` virtual class, the `uvm_do_callbacks` call inside the driver's `run_phase`, the `a_parity_ok` checker in `packet_if`, and the two drivers `env.drv0` and `env.drv1`. Note which packet fields the driver reads after the hook returns. Run the starter once: six `DRV` lines with `error=0 delay_cycles=0`, no `PARITY_ERR`, and `display()` reports no callbacks for `packet_driver`.",
       "starterCode": ""
     },
     {
@@ -27,10 +31,26 @@
     },
     {
       "id": "3",
+      "version": "2",
+      "completion": "self_attested",
+      "title": "Step 3: Attach it to drv0 only",
+      "instructions": "Write `my_test::connect_phase`: create the callback and attach it to `env.drv0` only with the static `add()` of `uvm_callbacks#(packet_driver, packet_driver_cb)`. Run: `display()` lists the callback on `uvm_test_top.env.drv0` only; there are 3 `CB` messages, 3 `DRV` lines from drv0 with `error=1 delay_cycles=2` and 3 clean ones from drv1, and 3 `PARITY_ERR` errors, all from `vif0`. The third error appears only because the test sets a 20 ns drain time before dropping its objection.",
+      "starterCode": ""
+    },
+    {
+      "id": "4",
       "version": "1",
       "completion": "self_attested",
-      "title": "Step 3: Attach in the Test",
-      "instructions": "In `my_test::connect_phase` (not `build_phase`: `env.drv` is still null there, and `add(null, cb)` would register the callback type-wide), create the callback and attach it with `uvm_callbacks#(packet_driver, packet_driver_cb)::add(env.drv, my_cb)`. Run: each of the three packets should show a `CB` message, `error=1 delay_cycles=2` in the `DRV` line, and one `PARITY_ERR` error.",
+      "title": "Step 4: Break it on purpose",
+      "instructions": "Move the callback's creation and `add()` into `my_test::build_phase`, right after `env` is created, and change the `final_phase` delete to `delete(null, my_cb)`. Predict the counts and the `display()` output, then run. Expect 6 `CB` lines, 6 `PARITY_ERR` errors (3 from `vif0`, 3 from `vif1`) and a type-wide `(*)` row in `display()`: `env.drv0` was still null, so `add()` registered the callback for every `packet_driver`. Explain why one driver alone could not reveal this mistake, then restore `connect_phase`.",
+      "starterCode": ""
+    },
+    {
+      "id": "5",
+      "version": "1",
+      "completion": "self_attested",
+      "title": "Step 5 (optional): Stack and switch",
+      "instructions": "Split the callback into `delay_cb` (sets `extra_delay_cycles = 2`) and `parity_err_cb` (sets `inject_parity_error = 1`, counts its packets and calls `callback_mode(0)` on itself after the second). Add `parity_err_cb` to `env.drv0`, then `delay_cb` with `UVM_PREPEND`. Predict the order in `display()` and the error count, then run: `delay_cb` is listed first, all 3 drv0 packets are delayed, and there are exactly 2 `PARITY_ERR` errors, both from `vif0`.",
       "starterCode": ""
     }
   ],

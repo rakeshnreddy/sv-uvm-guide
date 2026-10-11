@@ -1,1 +1,82 @@
-[]
+[
+  {
+    "id": "a-uvm-4b-bis-1",
+    "question": "What are the UVM built-in register sequences, and how do you start one?",
+    "answer": "Ready-made register and memory tests defined in IEEE 1800.2-2020 Annex E (E.1 to E.8), each extending uvm_reg_sequence. Set the `model` property to the block to test and call `start(null)`: the accesses go through the register model and each map's sequencer."
+  },
+  {
+    "id": "a-uvm-4b-bis-2",
+    "question": "What does uvm_reg_hw_reset_seq check, and what must happen before it runs?",
+    "answer": "It calls `model.reset()` and reads every register that has a reset value through every map with `mirror(status, UVM_CHECK, UVM_FRONTDOOR, map)`. In uvm-core 2020.3.1 its `reset_blk()` is empty, so it does not reset the DUT: run it straight after a DUT reset, before any other traffic."
+  },
+  {
+    "id": "a-uvm-4b-bis-3",
+    "question": "How does uvm_reg_bit_bash_seq test one bit, and what does it cost?",
+    "answer": "Twice: flip the bit in `get()`, write through the frontdoor, take `exp = get() & ~dc_mask`, read back and compare. That is 4 frontdoor accesses per tested bit, per map. Write-only, NOACCESS and UVM_NO_CHECK bits are skipped; unused bits are tested as read-only bits that must read 0."
+  },
+  {
+    "id": "a-uvm-4b-bis-4",
+    "question": "Does bit-bash need prediction? Does the register access test?",
+    "answer": "Bit-bash does not: it compares with `get()`, the desired value that each write's `set()` updates by field policy. The register access test does: after its frontdoor write it compares the backdoor value with the mirror, so auto-predict or a connected uvm_reg_predictor must update the mirror."
+  },
+  {
+    "id": "a-uvm-4b-bis-5",
+    "question": "What steps does uvm_reg_single_access_seq run for one register and map?",
+    "answer": "`v = get()`; frontdoor `write(~v)`; `#1`; `mirror(UVM_CHECK, UVM_BACKDOOR)`; backdoor `write(v)`; `mirror(UVM_CHECK, UVM_FRONTDOOR)`. It skips registers whose fields are all RO, or that have a field with an unknown access policy."
+  },
+  {
+    "id": "a-uvm-4b-bis-6",
+    "question": "What does uvm_reg_access_seq do with a register that has no HDL path and no user backdoor?",
+    "answer": "It issues a UVM_WARNING ('does not have a backdoor mechanism available') and skips the register. A model with no HDL paths therefore passes with zero errors: a false pass. uvm_mem_access_seq skips memories the same way; only the single-register form raises a uvm_error."
+  },
+  {
+    "id": "a-uvm-4b-bis-7",
+    "question": "How do you stop the built-in sequences from testing a register?",
+    "answer": "Before starting them, create a bit resource in the REG:: namespace: `uvm_resource_db#(bit)::set({\"REG::\", rg.get_full_name()}, \"NO_REG_BIT_BASH_TEST\", 1, this);`. Use NO_REG_TESTS to skip it in every test, or the test-specific name (NO_REG_HW_RESET_TEST, NO_REG_ACCESS_TEST, NO_MEM_WALK_TEST and so on) for one test."
+  },
+  {
+    "id": "a-uvm-4b-bis-8",
+    "question": "You set NO_REG_BIT_BASH_TEST to 0 for a register. Is the register tested?",
+    "answer": "No. The sequences only check that `get_by_name()` finds a resource of type bit with that name for the scope; the value is never read. To re-enable the register, do not create the resource. A resource of another type, such as int, is never found, so it excludes nothing."
+  },
+  {
+    "id": "a-uvm-4b-bis-9",
+    "question": "Which exclusion works at field level?",
+    "answer": "Only NO_REG_HW_RESET_TEST, and only in uvm_reg_hw_reset_seq. No other sequence looks at field names. To keep bit-bash off one field but test the rest of its register, set that field's compare policy: `fld.set_compare(UVM_NO_CHECK)` puts its bits in the don't-care mask."
+  },
+  {
+    "id": "a-uvm-4b-bis-10",
+    "question": "What is the difference between the scopes \"REG::ral.dma.*\" and \"REG::ral.dma\"?",
+    "answer": "Scopes use uvm_is_match simplified notation (* any characters, ? one, + one or more; '.' is literal). \"REG::ral.dma.*\" matches every register, memory and sub-block below dma, but not dma itself. \"REG::ral.dma\" matches the block only; the register tests then skip its sub-blocks too, but the memory sequences in uvm-core still reach them."
+  },
+  {
+    "id": "a-uvm-4b-bis-11",
+    "question": "Do the built-in sequences know which registers are unsafe to test?",
+    "answer": "No. They know only the register model and your exclusion resources. Soft-reset, start and FIFO-push bits, board- or fuse-dependent values, and fields the hardware changes (not marked volatile) must be fixed in the model or excluded, or the tests fail or disturb the DUT."
+  },
+  {
+    "id": "a-uvm-4b-bis-12",
+    "question": "How do you run only the reset test and bit-bash with one sequence?",
+    "answer": "Extend uvm_reg_mem_built_in_seq (E.8.1 declares it virtual; uvm-core makes it concrete) and set `tests = UVM_DO_REG_HW_RESET | UVM_DO_REG_BIT_BASH;`. The default, UVM_DO_ALL_REG_MEM_TESTS, runs all six tests in the order reset, bit-bash, register access, memory access, shared access, memory walk."
+  },
+  {
+    "id": "a-uvm-4b-bis-13",
+    "question": "What does uvm_mem_walk_seq do, and what does it skip?",
+    "answer": "For each word k it writes ~k, then reads word k-1 and expects ~(k-1), then writes k-1 there; it reads the last word at the end. About 3 frontdoor accesses per word, with no backdoor or prediction. It runs only in maps where the memory's access is RW, and skips other maps without a message."
+  },
+  {
+    "id": "a-uvm-4b-bis-14",
+    "question": "What does uvm_reg_mem_hdl_paths_seq prove, and what can it not prove?",
+    "answer": "In zero time, with no bus access, it checks that every HDL path the model declares exists and can be accessed in this simulation (uvm-core reports a bad path as a uvm_error). It skips registers and memories that have no path, so it cannot tell you that paths are missing."
+  },
+  {
+    "id": "a-uvm-4b-bis-15",
+    "question": "Why must the DUT be idle during the built-in tests, even with auto-predict on?",
+    "answer": "Implicit (auto) prediction updates the mirror only for the register model's own accesses, and bit-bash compares with the desired value anyway. Firmware, DMA or interrupts that change registers between a sequence's write and read cause failures that vary from run to run, or hide real bugs."
+  },
+  {
+    "id": "a-uvm-4b-bis-16",
+    "question": "After the access test's backdoor write, do you need to call predict() to update the mirror?",
+    "answer": "Not in uvm-core 2020.3.1: write(UVM_BACKDOOR), poke() and peek() call do_predict() themselves. IEEE 1800.2-2020 §18.4.4.9 leaves the mirror update to the auto-prediction setting. The frontdoor write is the step that needs auto-predict or a uvm_reg_predictor."
+  }
+]

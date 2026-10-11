@@ -1,1 +1,77 @@
-[]
+[
+  {
+    "id": "a-uvm-4b-fvb-1",
+    "question": "What is the difference between a frontdoor and a backdoor register access?",
+    "answer": "The frontdoor is a real bus transaction built by the map's adapter and driven by the agent: time passes and the monitor sees it. The backdoor reads or deposits the register's storage directly through its HDL path (or a user backdoor), in zero time, with no bus transfer."
+  },
+  {
+    "id": "a-uvm-4b-fvb-2",
+    "question": "CTRL[31:4] is RO and CTRL starts at 'h0. What do `write(st, 'hFFFF_FFFF, UVM_BACKDOOR)` and `poke(st, 'hFFFF_FFFF)` each leave in the mirror?",
+    "answer": "Backdoor `write()` reads, applies each field's policy and deposits, so RO bits stay 0: the mirror is `'h0000_000F`. `poke()` is raw: the mirror becomes `'hFFFF_FFFF`, even if the RTL does not store bits 31:4."
+  },
+  {
+    "id": "a-uvm-4b-fvb-3",
+    "question": "After a successful `poke()`, do you need to call `predict()`?",
+    "answer": "Not in uvm-core 2020.3.1: `poke()` and `peek()` call `do_predict()` themselves, whatever the auto-predict setting. IEEE 1800.2-2020 §18.4.4.11-§18.4.4.12 say they are \"affected by the auto-prediction configuration value\", so portable code checks `get_mirrored_value()`."
+  },
+  {
+    "id": "a-uvm-4b-fvb-4",
+    "question": "An RC counter holds 3. What do `peek()` and `read(…, UVM_BACKDOOR)` each do to the DUT?",
+    "answer": "`peek()` returns 3 and leaves the DUT at 3. A backdoor `read()` mimics a bus read: it returns 3 and deposits 0, clearing the counter. Use `peek()` to look without side effects."
+  },
+  {
+    "id": "a-uvm-4b-fvb-5",
+    "question": "How do you give a backdoor to a register held in two HDL variables, `mode_q` (bits 3:1) and `en_q` (bit 0)?",
+    "answer": "Give the block its root, for example `ral.configure(null, \"tb_top.dut\")`, then add one slice per variable, most significant first: `add_hdl_path_slice(\"mode_q\", 1, 3)` and `add_hdl_path_slice(\"en_q\", 0, 1)`. Register slices are relative to the block path."
+  },
+  {
+    "id": "a-uvm-4b-fvb-6",
+    "question": "What happens when `write(…, UVM_BACKDOOR)` targets a register with no HDL path and no user backdoor?",
+    "answer": "uvm-core warns \"No backdoor access available for register '…' . Using frontdoor instead.\" and performs a normal bus write, which the monitor and predictor see. `poke()` and `peek()` instead fail with a `UVM_ERROR` and `UVM_NOT_OK`."
+  },
+  {
+    "id": "a-uvm-4b-fvb-7",
+    "question": "A backdoor `write()` returns `UVM_NOT_OK` with no message in the log. What is the likely cause?",
+    "answer": "The register's rights in its map: a backdoor write needs RW or WO (a backdoor read needs RW or RO). uvm-core sets `UVM_NOT_OK` without printing anything, so always check the status."
+  },
+  {
+    "id": "a-uvm-4b-fvb-8",
+    "question": "What does compiling UVM with `+define+UVM_HDL_NO_DPI` do to the backdoor?",
+    "answer": "It replaces the `uvm_hdl_*` routines with stubs, so every built-in backdoor access ends in a fatal: \"uvm_hdl DPI routines are compiled off. Recompile without +define+UVM_HDL_NO_DPI\" (`src/dpi/uvm_hdl.svh`). User backdoors still work."
+  },
+  {
+    "id": "a-uvm-4b-fvb-9",
+    "question": "What is a user frontdoor, and how is it attached?",
+    "answer": "A class extending `uvm_reg_frontdoor` (IEEE 1800.2-2020 §19.4.2), itself a sequence, whose `body()` performs the access some other way, for example INDEX then DATA writes, using `rw_info`. Attach it per map with `rg.set_frontdoor(fd, map)` (§18.4.5.2)."
+  },
+  {
+    "id": "a-uvm-4b-fvb-10",
+    "question": "With auto-predict off and an explicit predictor, whose mirror changes after a write through an INDEX/DATA user frontdoor?",
+    "answer": "Only INDEX's and DATA's: the predictor sees two bus writes and nothing addressed to the target. Keep the target right with auto-predict on the root map, `predict()` after the access, or `uvm_reg_indirect_data`."
+  },
+  {
+    "id": "a-uvm-4b-fvb-11",
+    "question": "How do you write a user backdoor, and when do you need one?",
+    "answer": "When the built-in routines cannot reach the storage (encrypted RTL, a C model, unresolvable names). Extend `uvm_reg_backdoor`, override `write()` (calling `do_pre_write()` first and `do_post_write()` last) and `read_func()`, and attach it with `set_backdoor()` (§19.5, §18.4.6.2)."
+  },
+  {
+    "id": "a-uvm-4b-fvb-12",
+    "question": "Who sees a backdoor access: the monitor, the register predictor, auto-predict, a bus-fed scoreboard?",
+    "answer": "None of them: there is no bus transfer. Explicit prediction means a predictor fed by the monitor, and auto-predict covers only the model's own frontdoor calls. In uvm-core the mirror is still right, because the register predicts itself; scoreboards should read configuration from the register model."
+  },
+  {
+    "id": "a-uvm-4b-fvb-13",
+    "question": "Why can a backdoor report `UVM_IS_OK` and still never touch the DUT?",
+    "answer": "If the top block was configured with an empty path (`configure(null, \"\")`) and no root was added, uvm-core builds an empty list of full paths, deposits nothing and reports success (by source inspection). A start-up check that fails on `paths.size() == 0` catches it."
+  },
+  {
+    "id": "a-uvm-4b-fvb-14",
+    "question": "Does `uvm_reg_access_seq` know which registers have no backdoor, or which are unsafe to test?",
+    "answer": "It warns and skips registers with no backdoor, so a model with no HDL paths can pass; and it cannot know which registers are unsafe, so you exclude them with `NO_REG_*` resources. See Built-in RAL Sequences."
+  },
+  {
+    "id": "a-uvm-4b-fvb-15",
+    "question": "Why does a backdoor write of a GO bit not always start the job?",
+    "answer": "A deposit changes the stored bits and produces no bus write. Logic triggered by the write strobe does not fire; logic that uses the stored level sees the new value. Which applies depends on the RTL."
+  }
+]

@@ -976,7 +976,7 @@ export const curriculumData: Module[] = [
           {
             "title": "A-UVM-6: Scoreboards and Reference Models",
             "slug": "index",
-            "description": "Build self-checking testbenches using transaction-level scoreboards, reference models, and analysis FIFOs to catch DUT bugs without manual waveform inspection."
+            "description": "Build self-checking scoreboards that predict with a reference model, match in order or by key, and account for every transaction at end of test."
           }
         ],
         "track": "core",
@@ -996,7 +996,7 @@ export const curriculumData: Module[] = [
           {
             "title": "A-UVM-7: VIP Construction",
             "slug": "index",
-            "description": "Architect, build, and package reusable Verification IP for standard protocols — from agent internals to directory structure and integration best practices."
+            "description": "Build and package a protocol agent as reusable verification IP (configuration object, driver, monitor, responder, interface checks, coverage, sequences) that works active or passive at block and SoC level."
           }
         ],
         "track": "core",
@@ -1019,7 +1019,7 @@ export const curriculumData: Module[] = [
           {
             "title": "A-UVM-5: UVM Callbacks",
             "slug": "index",
-            "description": "Inject optional behavior into components without exploding your class hierarchy or hacking the base code."
+            "description": "Add, order, switch and debug stackable callbacks on UVM components, and choose between a callback and a factory override for an extension."
           }
         ],
         "track": "core",
@@ -1039,7 +1039,7 @@ export const curriculumData: Module[] = [
           {
             "title": "A-UVM-8: Multi-Agent Topologies",
             "slug": "index",
-            "description": "Coordinate multiple protocol agents across complex SoC environments using virtual sequencers, virtual sequences, and cross-agent synchronization patterns."
+            "description": "Architect a UVM environment with several agents and sub-environments, configure it from the test, and coordinate its stimulus and checking across agents without hangs or silent passes."
           }
         ],
         "track": "core",
@@ -1059,7 +1059,7 @@ export const curriculumData: Module[] = [
           {
             "title": "A-UVM-4A: RAL Fundamentals",
             "slug": "index",
-            "description": "Model DUT registers once and decouple stimulus from physical bus protocols."
+            "description": "Build a UVM register model from a spec, connect it to a bus agent through an adapter, and predict the desired, mirrored and DUT values after every register call."
           }
         ],
         "track": "core",
@@ -1079,7 +1079,7 @@ export const curriculumData: Module[] = [
           {
             "title": "A-UVM-4B: Advanced RAL Techniques",
             "slug": "index",
-            "description": "Master adapters, predictors, and sophisticated debug workflows for robust UVM register environments."
+            "description": "Keep a UVM register model's mirror correct under real traffic: choose a prediction set-up, predict hardware-changed fields, model memories and shared maps, extend access with frontdoors and callbacks, and debug mirror mismatches from the log."
           },
           {
             "title": "Explicit vs. Implicit Prediction",
@@ -1087,14 +1087,14 @@ export const curriculumData: Module[] = [
             "description": "Choose implicit, explicit or passive prediction for each bus, wire a uvm_reg_predictor without double prediction, predict when the register mirror goes stale, and debug it from the log."
           },
           {
-            "title": "Frontdoor vs. Backdoor Access | Advanced UVM RAL",
+            "title": "Frontdoor vs. Backdoor Access",
             "slug": "frontdoor-vs-backdoor",
-            "description": "Blend frontdoor realism with backdoor speed—learn when to poke directly and when to march through the bus for accurate checking."
+            "description": "Choose the frontdoor or the backdoor for each register access, predict what every call does to the DUT and the mirror, give registers working HDL paths, write user frontdoors and backdoors, and debug a backdoor that fails, falls back or silently does nothing."
           },
           {
-            "title": "Built-in RAL Sequences & Utilities | Advanced UVM RAL",
+            "title": "Built-in RAL Sequences",
             "slug": "built-in-ral-sequences",
-            "description": "Leverage UVM’s prebuilt register sequences—reset, bit-bash, mem tests—and learn how to extend or constrain them safely."
+            "description": "Run the IEEE 1800.2 Annex E built-in register and memory tests on a register model, fence off unsafe registers with NO_REG_* resources, and recognise a run that passed without testing anything."
           }
         ],
         "track": "core",

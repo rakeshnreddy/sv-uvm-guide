@@ -80,7 +80,6 @@ import I_UVM_5_Phasing_and_Synchronization from '../../content/flashcards/I-UVM-
 import A_UVM_1_Advanced_Sequencing from '../../content/flashcards/A-UVM-1_Advanced_Sequencing.json';
 import A_UVM_2_The_UVM_Factory from '../../content/flashcards/A-UVM-2_The_UVM_Factory.json';
 import A_UVM_3_Advanced_UVM_Techniques from '../../content/flashcards/A-UVM-3_Advanced_UVM_Techniques.json';
-import A_UVM_4_RAL from '../../content/flashcards/A-UVM-4_RAL.json';
 import A_UVM_4A_RAL_Fundamentals from '../../content/flashcards/A-UVM-4A_RAL_Fundamentals.json';
 import A_UVM_4B_Advanced_RAL from '../../content/flashcards/A-UVM-4B_Advanced_RAL.json';
 import A_UVM_4B_Explicit_vs_Implicit from '../../content/flashcards/A-UVM-4B_Explicit_vs_Implicit.json';
@@ -209,7 +208,6 @@ export const flashcardDecks: Record<string, any[]> = {
   'A-UVM-1_Advanced_Sequencing': A_UVM_1_Advanced_Sequencing,
   'A-UVM-2_The_UVM_Factory': A_UVM_2_The_UVM_Factory,
   'A-UVM-3_Advanced_UVM_Techniques': A_UVM_3_Advanced_UVM_Techniques,
-  'A-UVM-4_RAL': A_UVM_4_RAL,
   'A-UVM-4A_RAL_Fundamentals': A_UVM_4A_RAL_Fundamentals,
   'A-UVM-4B_Advanced_RAL': A_UVM_4B_Advanced_RAL,
   'A-UVM-4B_Explicit_vs_Implicit': A_UVM_4B_Explicit_vs_Implicit,

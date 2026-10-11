@@ -1,34 +1,72 @@
 [
   {
-    "front": "What is a Verification IP (VIP) and why is it important?",
-    "back": "A VIP is a reusable, pre-verified testbench component for a standard protocol (AXI, APB, PCIe, USB). It encapsulates an agent, interface, protocol checker, and sequence library for plug-and-play integration."
+    "id": "a-uvm-7-1",
+    "question": "What does a verification IP (VIP) ship, beyond a plain agent?",
+    "answer": "A package of classes (configuration object, item, sequencer, driver, monitor, coverage collector, sequences) plus an interface with clocking blocks and protocol assertions. It also ships a self-test, a version number and a user guide. Scoreboards stay outside: they belong to the environment that uses the VIP."
   },
   {
-    "front": "What is the standard directory structure for a UVM VIP package?",
-    "back": "Typically: `vip_name/src/` (agent, driver, monitor, sequencer, sequences), `vip_name/sv/` (package file, interface), `vip_name/docs/` (integration guide), and `vip_name/tests/` (self-test environment)."
+    "id": "a-uvm-7-2",
+    "question": "Why does a VIP's interface sit outside its package, and in what order are the files compiled?",
+    "answer": "A package cannot contain an interface declaration (IEEE 1800-2023 §26.2); the package refers to it only through a virtual-interface type such as `apb_vif_t`. Compile UVM, then `apb_if.sv`, then `apb_pkg.sv` (which includes its classes in declaration order), then the test package, then `tb_top.sv`."
   },
   {
-    "front": "What does the `is_active` flag control in a UVM agent?",
-    "back": "When `is_active == UVM_ACTIVE`, the agent instantiates a driver and sequencer (can drive stimulus). When `UVM_PASSIVE`, only the monitor is instantiated (observe-only mode)."
+    "id": "a-uvm-7-3",
+    "question": "What does a passive agent build, and what happens to its driver and sequencer?",
+    "answer": "It builds the monitor, plus the coverage collector when `has_coverage` is 1. The driver and sequencer are never constructed, so their handles are `null`; passive is not an active agent with an idle driver. Starting a sequence on `agt.sqr` ends in a fatal error (uvm-core reports `[SEQ]`)."
   },
   {
-    "front": "What is a protocol checker in a VIP and where does it run?",
-    "back": "A protocol checker validates bus-level protocol rules (timing, handshake legality) in real time. It typically runs as a separate monitor component or via SystemVerilog assertions bound to the interface."
+    "id": "a-uvm-7-4",
+    "question": "Why use one configuration object for a VIP instead of many scalar `uvm_config_db` entries?",
+    "answer": "A typo or a type mismatch in a scalar entry makes `get()` return 0 silently, and the agent runs on its defaults. One `apb_agent_config` gives one typed lookup that fails loudly, defaults in one class, a printable summary, and an object you can copy or randomize per agent."
   },
   {
-    "front": "How do you parameterize a VIP for different bus widths?",
-    "back": "Use SV-parameterized classes or `uvm_config_db` for runtime configuration. The interface should use parameters (e.g., `parameter DATA_WIDTH = 32`) that propagate to the agent, driver, and monitor."
+    "id": "a-uvm-7-5",
+    "question": "This lesson's agent copies `cfg.is_active` after `super.build_phase()`. What happens to a scalar `\"is_active\"` setting?",
+    "answer": "It is silently ignored: `uvm_agent::build_phase` reads it, then the copy overwrites the uvm-core `is_active` member. The user guide must say so. Overriding the virtual `get_is_active()` to return `cfg.is_active` is the portable alternative (IEEE 1800.2-2020 §13.4.2.2)."
   },
   {
-    "front": "What is a sequence library in a VIP?",
-    "back": "A collection of pre-built, reusable sequences (write, read, burst, error injection) that test-writers can compose without understanding driver-level protocol details."
+    "id": "a-uvm-7-6",
+    "question": "An interface assertion uses `else $error(...)` and fails. What does the UVM report summary show, and how do you fix it?",
+    "answer": "`UVM_ERROR :    0`: `$error` is a simulator message the UVM report server never sees. Import `uvm_pkg` in the interface and report with `` `uvm_error(\"APB_SVA\", $sformatf(\"%m: ...\")) ``; outside a class it reports through `uvm_root` (IEEE 1800.2-2020 F.3.2.1) and is counted."
   },
   {
-    "front": "What are common pitfalls when integrating a 3rd-party VIP?",
-    "back": "Clock/reset connectivity mismatches, interface signal name misalignment, missing `uvm_config_db` settings for the VIP's internal configuration, and version incompatibilities with the UVM library."
+    "id": "a-uvm-7-7",
+    "question": "How should a VIP let tests turn its interface checks off, and what is better for an error-injection test?",
+    "answer": "A `checks_enable` bit in every `disable iff`, written by the agent from `cfg.checks_enable`; `$assertoff` on a named scope such as `tb_top.bus` belongs in a module, because package code may not use hierarchical references (IEEE 1800-2023 §26.2). For a test that expects one violation, keep checks on and demote or catch exactly that ID on `uvm_root`, so any other violation still fails."
   },
   {
-    "front": "How do you extend a VIP's sequence library without modifying its source?",
-    "back": "Extend the VIP's base sequence class, add new constraints or protocol steps in the derived class, and use factory overrides to substitute your sequence when needed."
+    "id": "a-uvm-7-8",
+    "question": "Why must a monitor create a new item for every observed transfer?",
+    "answer": "`ap.write(tr)` passes a handle, so every subscriber that stores it holds a reference to the same object (IEEE 1800-2023 §8.4, §8.12). If the monitor refills one object, every stored item shows the last transfer. Create with `type_id::create` per transfer."
+  },
+  {
+    "id": "a-uvm-7-9",
+    "question": "Reset asserts while a `get_next_item()` driver is in the middle of a transfer. What are the four steps?",
+    "answer": "Stop: kill the drive thread (an isolated `fork` with `disable fork`). Release: call `item_done()` for the aborted item, so `finish_item` returns in the sequence. Idle the bus outputs, then resume only after reset is deasserted."
+  },
+  {
+    "id": "a-uvm-7-10",
+    "question": "What are the moving parts of a responder agent with a reactive sequence?",
+    "answer": "The monitor publishes each request at its SETUP edge on `req_ap` into a `uvm_tlm_analysis_fifo` in the sequencer. A `forever` reactive sequence gets it through `p_sequencer`, randomizes only the response fields and sends the item to the responder driver. The driver holds `PREADY` low by default, so a slow answer becomes legal wait states."
+  },
+  {
+    "id": "a-uvm-7-11",
+    "question": "Why must a reactive sequence not hold an objection?",
+    "answer": "It runs a `forever` loop and never ends, so an objection it raises is never dropped and the run phase never ends (IEEE 1800.2-2020 §14.2.4.4 NOTE). Start it in `fork ... join_none` without an objection, and let the test's own traffic hold the objection."
+  },
+  {
+    "id": "a-uvm-7-12",
+    "question": "`tb_top` sets `virtual apb_if #(16, 32)` and the VIP gets `virtual apb_if #(32, 32)`. What happens, and how do you prevent it?",
+    "answer": "`get()` returns 0 with no message: parameter values, and any modport, are part of the virtual-interface type (IEEE 1800-2023 §25.9), and `uvm_config_db` matches the exact type. Declare the type once, for example `typedef virtual apb_if #(32, 32) apb_vif_t;`, and use it on both sides."
+  },
+  {
+    "id": "a-uvm-7-13",
+    "question": "Your sequence sends `my_apb_item` to a vendor's `uvm_sequencer #(vendor_apb_item)`, and the two classes are unrelated. What happens?",
+    "answer": "uvm-core stops with `UVM_FATAL [SQRSNDREQCAST]` when the sequencer fails to cast the item in `finish_item`. Protocol timing lives in the driver; what must match is the item type. Extending the vendor's base sequence gives you its helpers; it is good practice, not a UVM rule."
+  },
+  {
+    "id": "a-uvm-7-14",
+    "question": "What does a VIP's release self-test prove, and what does its log record?",
+    "answer": "A master, a responder and a passive observer on one interface, with a scoreboard comparing the master's intent with what the observer saw, must pass with `UVM_ERROR :    0`. An error-injection test must fail with exactly one assertion error, proving the checks fire and are counted. The log prints the VIP version and `UVM_VERSION_STRING`, and a `print_topology` golden shows the passive agent has no `drv` or `sqr`."
   }
 ]

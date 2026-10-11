@@ -1,42 +1,77 @@
 [
   {
-    "front": "What is a multi-agent UVM testbench topology?",
-    "back": "A testbench with multiple protocol agents (e.g., AXI master, AXI slave, APB, interrupt controller) that must be coordinated to verify system-level interactions."
+    "id": "a-uvm-8-1",
+    "question": "What is a multi-agent UVM topology?",
+    "answer": "An environment with one agent per DUT interface (active if the testbench drives it, passive if it only watches), often with nested or repeated sub-environments, a virtual sequencer holding the active agents' sequencer handles, one configuration-object tree, and scoreboards that check across interfaces. Agents are per interface, not per design block."
   },
   {
-    "front": "What is a virtual sequencer and what role does it play?",
-    "back": "A virtual sequencer is a `uvm_sequencer` that holds handles to multiple typed sub-sequencers. It serves as a coordination point for virtual sequences that dispatch work across agents."
+    "id": "a-uvm-8-2",
+    "question": "How do you decide whether an agent is active or passive?",
+    "answer": "Ask one question per interface: in this configuration, must the testbench drive these pins? If yes, active. If the DUT or another block drives them, passive: the agent only monitors."
   },
   {
-    "front": "How does a virtual sequence dispatch items to different agents?",
-    "back": "It holds handles to each agent's sequencer and calls `child_seq.start(specific_sqr_handle)` to run typed sequences on the appropriate sub-sequencer."
+    "id": "a-uvm-8-4",
+    "question": "Does the virtual sequencer decide the order in which agents run, and where does a mid-stream reconfiguration go?",
+    "answer": "No. It only holds handles and arbitrates nothing between agents. The order comes from the statements in the virtual sequence's `body()`: sequential `start()` calls, or events such as `cfg_done.wait_on()`. A reconfiguration goes at a safe point, where nothing it could affect is in flight: for example right after `data_seq.start()` returns, because every item has then been sampled. Forking it with the traffic makes the outcome depend on timing."
   },
   {
-    "front": "What is cross-agent synchronization and why is it needed?",
-    "back": "When a test requires coordinated behavior across agents (e.g., write via AXI then read via APB), events, semaphores, or barriers synchronize the sequences on different agents."
+    "id": "a-uvm-8-5",
+    "question": "Where are the virtual sequencer's handles assigned?",
+    "answer": "In the env's `connect_phase`, after the agents are built: `v_sqr.data_sqr = data_agt.sqr;`. Not through `uvm_config_db`, because the sequencers do not exist when the test's `build_phase` runs. A passive agent's handle is null."
   },
   {
-    "front": "How is the virtual sequencer typically configured in the UVM environment?",
-    "back": "In the environment's `connect_phase()`, assign the virtual sequencer's sub-sequencer handles: `v_sqr.axi_sqr = axi_agent.sequencer; v_sqr.apb_sqr = apb_agent.sequencer;`"
+    "id": "a-uvm-8-6",
+    "question": "Why put all agent settings in one environment configuration object, and what does a missing agent object do?",
+    "answer": "The test builds and sets it once; the env hands each agent its own object at its own path before creating it, and it carries topology switches such as `has_scoreboard` or an agent count. A missing `set()` or a mistyped path makes the agent's `get()` return 0, so its guard fatals with `NO_CFG`. But an object the test never created passes through `set()` and `get()` as a null handle, and `cfg.is_active` then crashes with no UVM id. So the env null-checks every agent object before `set()`, and each agent's guard also tests `cfg == null`."
   },
   {
-    "front": "What is the advantage of virtual sequences over direct multi-agent test code?",
-    "back": "Virtual sequences are reusable, composable, and can be overridden via the factory. Direct test code in `run_phase` is monolithic, not reusable, and harder to maintain."
+    "id": "a-uvm-8-7",
+    "question": "What is vertical reuse, and what changes when a block env is nested in a subsystem env?",
+    "answer": "Reusing a block env as a sub-environment (IEEE 1800.2-2020 §13.3). Only configuration changes: agents on interfaces now driven by another block become passive, block scoreboards stay as internal checkers, block virtual sequences run as children on the block virtual sequencers, and config paths get one level deeper."
   },
   {
-    "front": "How do you handle interrupt-driven scenarios in a multi-agent topology?",
-    "back": "Use a dedicated interrupt agent with a monitor. The virtual sequence waits on an event triggered by the interrupt monitor, then dispatches the appropriate handler sequence to the CPU agent."
+    "id": "a-uvm-8-8",
+    "question": "What is horizontal reuse, and what breaks when an env is instantiated twice?",
+    "answer": "Using the same env again at the same level: in another project, or as several instances side by side (`ch0`, `ch1`). Instances differ only by name and configuration object. Wildcard config paths, global event-pool keys, static variables and type overrides silently couple the instances."
   },
   {
-    "front": "What is `uvm_config_db` role in multi-agent topology configuration?",
-    "back": "It passes configuration objects to each agent (active/passive mode, ID widths, interface handles) and the virtual sequencer (agent sequencer handles), enabling test-specific topology setup."
+    "id": "a-uvm-8-9",
+    "question": "Where should a check live: per-agent checker or shared scoreboard?",
+    "answer": "At the lowest level that has all the information it needs. One interface's protocol rules go with the agent (interface assertions, monitor or subscriber) and travel with it; rules that need several interfaces (output = f(config, input)) go in a shared scoreboard in the env that owns those agents."
   },
   {
-    "front": "How do you verify correct data flow across multiple agents?",
-    "back": "Use a top-level scoreboard that subscribes to analysis ports from multiple monitors. It correlates transactions across agents (e.g., AXI write data should appear in APB read response)."
+    "id": "a-uvm-8-11",
+    "question": "A `forever` responder sits in the same `fork…join` as the configuration and data threads. What happens?",
+    "answer": "`join` waits for every branch, so `body()` never returns, the test's objection is never dropped, and the run ends in `UVM_FATAL [PH_TIMEOUT]` even though every item matched. Fix: start the responder in its own `fork…join_none`."
   },
   {
-    "front": "What is the recommended way to scale a multi-agent testbench for SoC verification?",
-    "back": "Use hierarchical environments: each subsystem has its own `uvm_env` with agents, and a top-level SoC env instantiates multiple subsystem envs with a top-level virtual sequencer."
+    "id": "a-uvm-8-12",
+    "question": "What happens when a sequence is started on a passive agent's null sequencer handle?",
+    "answer": "Without a parent: `UVM_FATAL [SEQ]` at the first `start_item()`. With `this` while the virtual sequence runs on `v_sqr`, uvm-core 2020.3.1 falls back to `v_sqr` and `start_item()` hangs (or `DCLPSQ` fires if the child declares `p_sequencer`). Null-check handles at the top of `body()`."
+  },
+  {
+    "id": "a-uvm-8-13",
+    "question": "`wait_on()`, `wait_trigger()` or `wait_ptrigger()`: which returns if the `uvm_event` was triggered earlier?",
+    "answer": "`wait_on()`: the event stays on until `reset()`. `wait_trigger()` waits for the next trigger; `wait_ptrigger()` also accepts a trigger from the same time slot only. Reuse an event only after `reset()`, done when nobody is waiting (or with `reset(1)`)."
+  },
+  {
+    "id": "a-uvm-8-14",
+    "question": "A barrier is created with `new(\"ready\")` and three threads call `wait_for()`. What happens?",
+    "answer": "Each returns at once: the default threshold is 0 (IEEE 1800.2-2020 §10.3.2.1). Call `set_threshold(3)` for three participants, and `cancel()` if a participant is killed while waiting."
+  },
+  {
+    "id": "a-uvm-8-15",
+    "question": "Semaphore or sequencer `grab()`/`lock()` to keep other traffic off an agent's sequencer?",
+    "answer": "`grab()`/`lock()`: a semaphore only serializes threads that call `get()` on it. A lock blocks other sequences on that sequencer, but in uvm-core never the holder's own descendants, and with no argument it locks the caller's own sequencer (`v_sqr` for a virtual sequence). Hold the grab in a child that runs on the agent's sequencer."
+  },
+  {
+    "id": "a-uvm-8-16",
+    "question": "How does a cross-agent scoreboard learn the DUT's configuration, and why report ORDER?",
+    "answer": "From the configuration agent's monitor through its own analysis imp (`` `uvm_analysis_imp_decl(_cfg) ``), never from the sequence. Data seen while `EN = 0` is reported as ORDER, not predicted: otherwise the DUT's drop looks like a MISSING DUT bug, or a broken test passes."
+  },
+  {
+    "id": "a-uvm-8-17",
+    "question": "Why must a background `forever` sequence never raise an automatic phase objection, and when does that objection exist at all?",
+    "answer": "The automatic objection is raised on the sequence's starting phase, which a default sequence gets automatically and any other sequence only through `set_starting_phase()` before `start()`. If it has one, the objection is dropped only when `body()` returns, which never happens, so the phase never ends (IEEE 1800.2-2020 §14.2.4.4 NOTE). A child started from a virtual sequence with `start(sqr, this)` has no starting phase, so its automatic objection does nothing. Raise objections in the test or the top virtual sequence, and stop the responder explicitly with `kill()`."
   }
 ]

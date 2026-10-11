@@ -1,115 +1,1112 @@
-import { InfoPage } from "@/components/templates/InfoPage";
+---
+title: "Built-in RAL Sequences"
+description: "Run the IEEE 1800.2 Annex E built-in register and memory tests on a register model, fence off unsafe registers with NO_REG_* resources, and recognise a run that passed without testing anything."
+flashcards: "A-UVM-4B_Built_in_RAL_Sequences"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual (Annex E test sequences; §19.4.1 uvm_reg_sequence; §17.2.2.10 uvm_reg_mem_tests_e; Annex C.3 uvm_resource_db; §F.3.3.1 uvm_is_match)"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+---
 
-export const metadata = {
-  title: "Built-in RAL Sequences & Utilities | Advanced UVM RAL",
-  description: "Leverage UVM’s prebuilt register sequences—reset, bit-bash, mem tests—and learn how to extend or constrain them safely.",
-};
+## Quick Take
 
-<InfoPage
-  title="Built-in RAL Sequences & Utilities"
-  uvm_concept_tags={["RAL sequences", "uvm_reg_sequence", "bit-bash"]}
->
+- **What it is:** UVM ships a set of ready-made register tests, the **built-in sequences** of IEEE 1800.2-2020 Annex E. You hand one a register model and start it, and it walks every register or memory in the model by itself: it checks reset values (`uvm_reg_hw_reset_seq`), flips every bit (`uvm_reg_bit_bash_seq`), compares the frontdoor with the backdoor (`uvm_reg_access_seq`), and walks every memory word (`uvm_mem_walk_seq`), among others. You keep them away from registers they must not touch with **exclusion resources** such as `NO_REG_TESTS`, set in the `REG::` namespace of the resource database.
+- **Why it matters:** A generated register model can describe hundreds of registers. The built-in sequences check the model against the RTL in one test, with no stimulus written by hand, and they find wrong reset values, wrong access policies, address-decoding bugs and broken HDL paths before any functional test relies on the model. Used carelessly, they also start jobs through self-starting bits, fail on registers that are correct, or report a pass after skipping every register.
+- **The Analogy:** A built-in sequence is a garage's diagnostic tool. Plug it in and it presses every switch in the car and checks every gauge against the manual. *Where it breaks:* the tool knows only the manual, which here is your register model. If the manual is wrong, it fails a healthy car. It also presses the button that fires the ejector seat unless you tape that button over first, which is what an exclusion resource does. And unlike a garage tool, some of these sequences quietly skip any switch they cannot reach and still report "all good".
 
-  ## Elevator Pitch
+**You will be able to:**
+1. Choose the Annex E sequence that answers a given question about a block (reset values, bit behaviour, frontdoor against backdoor, shared maps, memories, HDL paths), and state what it needs: a freshly reset DUT, an idle DUT, prediction or a backdoor.
+2. Predict what a built-in sequence does to a register or memory: which accesses it makes, what it compares against, and which registers, fields and bits it skips.
+3. Write a test that runs built-in sequences on a register block, one at a time or as a selection with `uvm_reg_mem_built_in_seq`.
+4. Configure `NO_REG_*` and `NO_MEM_*` exclusion resources in the `REG::` namespace that fence off unsafe blocks, registers, memories and fields, and predict which sequences honour each one.
+5. Debug a built-in run from its log, including a run that passed without testing anything.
 
-  RAL ships with ready-made test sequences (IEEE 1800.2-2020 Annex E): `uvm_reg_hw_reset_seq`, `uvm_reg_bit_bash_seq`, `uvm_reg_access_seq`, `uvm_mem_walk_seq` and more. Use them to prove the model and the silicon (or emulation) agree. You control them with **resource attributes**, not by overriding methods: each sequence skips any block, register or memory that has a `NO_REG_*` / `NO_MEM_*` bit resource in the `"REG::"` scope.
+<BeforeYouStart />
 
-  ## Reset & Mirror Validation
+## Build Your Mental Model
 
-  ```systemverilog
-  class soc_reset_test extends base_test;
-    `uvm_component_utils(soc_reset_test)
+**How to read this lesson.** The core path is the first five sections: what a built-in sequence is, the catalogue, the reset test, the bit-bash test and the access test. Practitioner depth follows: the other sequences, fencing unsafe registers, running a selection, what the sequences assume, and debugging. Make It Work builds a complete bench that runs two of them, and Push Further holds the expert layer.
+
+**Words this page uses.** Each is taught in [A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index) or the earlier lessons of this module; here is a one-line reminder.
+
+- The **design under test (DUT)** is the RTL being verified. A **register model** is a set of SystemVerilog classes that describes its registers: a **block** (`uvm_reg_block`) holds **registers** (`uvm_reg`), memories (`uvm_mem`) and sub-blocks, and each register holds **fields** (`uvm_reg_field`).
+- A **map** (`uvm_reg_map`) gives each register an address on one bus. A register that is reachable from two buses sits in two maps.
+- A field's **access policy** is its behaviour on reads and writes: `"RW"` (read-write), `"RO"` (read-only), `"W1C"` (write 1 to clear), `"WO"` (write-only) and so on.
+- Every field holds a **desired value** (what the test wants; `get()` returns it) and a **mirrored value** (what the model believes the DUT holds; `get_mirrored_value()` returns it).
+- A **frontdoor** access is a real bus transfer: the map turns it into a bus item for the agent's **sequencer** and **driver** ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)). A **backdoor** access reads or deposits the RTL signal directly through an **HDL path**, a string naming that signal in the simulation, and normally takes no simulation time.
+- **Prediction** updates the mirror after an access. **Implicit prediction** is `map.set_auto_predict(1)`; **explicit prediction** is a `uvm_reg_predictor` fed by a bus monitor ([Explicit vs Implicit Prediction](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit)).
+- The **resource database** (`uvm_resource_db`) is the global name-and-scope store that the configuration database is built on ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)).
+
+A **uvm-core 2020.3.1** label marks behaviour of the Accellera reference implementation that IEEE 1800.2-2020 does not specify, or specifies differently. Push Further lists every such difference on this page.
+
+### What a built-in sequence is
+
+Each built-in sequence is a class that extends `uvm_reg_sequence` (IEEE 1800.2-2020 §19.4.1), the base class for sequences that work on a register model rather than on bus items. It has one input that matters: the `model` property (§19.4.1.3.1), a handle to the block to test. You set `model`, then start the sequence:
+
+```systemverilog
+// snippet: inside a test's run_phase, with env.ral a locked, connected register model
+uvm_reg_hw_reset_seq reset_seq;
+reset_seq = uvm_reg_hw_reset_seq::type_id::create("reset_seq");
+reset_seq.model = env.ral;
+reset_seq.start(null);
+```
+
+Two things in that snippet surprise newcomers.
+
+- **`start(null)` is correct.** The sequence never sends items itself. It calls `write()`, `read()` and `mirror()` on the model, exactly as your own test would, and each map sends the bus item to the sequencer you gave it with `set_sequencer()`. The sequence therefore needs no sequencer of its own.
+- **The sequence reads the model, not the DUT's documentation.** It decides what to access and what to expect only from the model: its registers, maps, access policies, reset values, HDL paths and the exclusion resources you set. Anything the model gets wrong, the sequence gets wrong too.
+
+The diagram shows where a built-in sequence sits in the bench you will build in Make It Work.
+
+<ArchitectureDiagram
+  title="Where a built-in sequence runs"
+  caption="The test sets bash_seq.model = env.ral and calls start(null). Every access goes through the register model, the map's adapter and the map's sequencer, like a write() from your own test. No sequencer is passed to start()."
+  nodes={[
+    { id: "test", label: "uvm_test_top", sublabel: "reg_smoke_test", kind: "test", col: 0, row: 0, colSpan: 3, rowSpan: 3, container: true },
+    { id: "seq", label: "bash_seq", sublabel: "uvm_reg_bit_bash_seq", kind: "sequence", col: 0, row: 0 },
+    { id: "env", label: "env", sublabel: "regs_env", kind: "env", col: 0, row: 1, colSpan: 3, rowSpan: 2, container: true },
+    { id: "ral", label: "ral", sublabel: "regs_block, default_map", kind: "reg", col: 0, row: 1 },
+    { id: "adapter", label: "adapter", sublabel: "rbus_adapter", kind: "generic", col: 1, row: 2 },
+    { id: "sqr", label: "sqr", sublabel: "rbus_sqr", kind: "sequencer", col: 2, row: 1 },
+    { id: "drv", label: "drv", sublabel: "rbus_drv", kind: "driver", col: 2, row: 2 },
+    { id: "dut", label: "dut", sublabel: "regs_dut", kind: "dut", col: 3, row: 2 }
+  ]}
+  ports={[
+    { id: "sqr.export", node: "sqr", side: "bottom", kind: "export", label: "seq_item_export" },
+    { id: "drv.port", node: "drv", side: "top", kind: "port", label: "seq_item_port" }
+  ]}
+  edges={[
+    { from: "seq", to: "ral", style: "causal", label: "write / read / mirror" },
+    { from: "ral", to: "adapter", style: "causal", label: "reg2bus / bus2reg" },
+    { from: "ral", to: "sqr", style: "data", label: "rbus_item via default_map" },
+    { from: "drv.port", to: "sqr.export", style: "control", label: "get_next_item" },
+    { from: "drv", to: "dut", style: "data", label: "sel, wr, addr, wdata / rdata" }
+  ]}
+/>
+
+### The Annex E catalogue
+
+Annex E defines eight groups. Most come in two forms: a **block-level** sequence that you start with `model` set, and a **single** sequence that tests one register (`rg`) or one memory (`mem`). The block-level form runs the single form on every register or memory of the block and of its sub-blocks.
+
+| Annex E | Block-level class (single form) | Question it answers | What it needs | Compares against |
+| --- | --- | --- | --- | --- |
+| E.1 | `uvm_reg_hw_reset_seq` | Does every register read back its reset value, through every map? | Frontdoor reads; a DUT fresh out of reset | The mirror, after `model.reset()` |
+| E.2 | `uvm_reg_bit_bash_seq` (`uvm_reg_single_bit_bash_seq`) | Can every bit be written and read as its access policy says, through every map? | Frontdoor; an idle DUT | The desired value, `get()`, after each write |
+| E.3 | `uvm_reg_access_seq` (`uvm_reg_single_access_seq`); `uvm_reg_mem_access_seq` runs E.3 and E.5 | Do the frontdoor and the backdoor reach the same register? | Frontdoor, backdoor (HDL path) and prediction | The mirror |
+| E.4 | `uvm_reg_mem_shared_access_seq` (`uvm_reg_shared_access_seq`, `uvm_mem_shared_access_seq`) | Is a write through one map seen through every other map? | Registers or memories in two or more maps | The desired value (registers); the written value (memories) |
+| E.5 | `uvm_mem_access_seq` (`uvm_mem_single_access_seq`) | Do the frontdoor and the backdoor reach every memory word? | Frontdoor and backdoor | The value written |
+| E.6 | `uvm_mem_walk_seq` (`uvm_mem_single_walk_seq`) | Does every word of a read-write memory hold its data? | Frontdoor | The value it wrote |
+| E.7 | `uvm_reg_mem_hdl_paths_seq` | Does every HDL path in the model exist in this simulation? | Nothing on the bus: it runs in zero time | Not applicable |
+| E.8 | `uvm_reg_mem_built_in_seq` | Runs a selection of E.1 to E.6 | Whatever each selected test needs | As each test |
+
+Three columns of that table decide everything else on this page. **What it needs** tells you when a sequence can run at all. **Compares against** tells you whether it needs prediction: comparing with the desired value needs none, comparing with the mirror after a write does. And no column says "knows which registers are unsafe", because none of them does.
+
+### The reset test: uvm_reg_hw_reset_seq
+
+**Purpose.** A wrong reset value in the model, or in the RTL, breaks every test that assumes the DUT starts from its documented state. The reset test checks all of them in one pass, and it is usually the first test you run on a new block.
+
+**Mechanism** (Annex E.1; uvm-core 2020.3.1 `uvm_reg_hw_reset_seq.svh`):
+
+1. It calls `reset_blk(model)`, which is **empty** in uvm-core, then `model.reset()`, which sets every field's mirrored and desired value to its reset value (§18.1.5.3). It never touches the DUT's reset pin.
+2. For every register that has a reset value, it marks fields as "don't compare" for the duration of the check: fields without a reset, fields whose compare policy is already `UVM_NO_CHECK` (which `configure()` sets for volatile fields), and fields excluded with `NO_REG_HW_RESET_TEST`.
+3. If at least one field is left to compare, it calls `mirror(status, UVM_CHECK, UVM_FRONTDOOR, map)` for **every map** the register is in. `mirror()` reads the register and compares the value with the mirror it held before the read; a difference is reported as a `RegModel` error.
+4. It restores each field's compare policy and recurses into the sub-blocks.
+
+**Traced on the Make It Work block.** The block has three registers; BOOT.PINS copies the board's strap pins, so the bench excludes it.
+
+| Register | Fields (policy, reset) | Exclusion | What the sequence does | Bits compared |
+| --- | --- | --- | --- | --- |
+| CTRL | MODE (RW, 0), EN (RW, 0) | none | Frontdoor read, compare with 0 | MODE and EN, mask `'h1f` |
+| VERSION | ID (RO, `'h12`) | none | Frontdoor read, compare with `'h12` | ID, mask `'hff` |
+| BOOT | PINS (RO, 0), SPARE (RW, 0) | `NO_REG_HW_RESET_TEST` on `ral.BOOT.PINS` | PINS set to `UVM_NO_CHECK`, frontdoor read, compare SPARE only | SPARE, mask `'hff00` |
+
+Notice the masks: the reset test compares only modelled fields that are not `UVM_NO_CHECK` and not write-only. Unmodelled bits are not checked here, unlike in the bit-bash test below.
+
+**The mistake everyone makes once.** IEEE 1800.2-2020 E.1 says the sequence "resets the DUT". uvm-core 2020.3.1 does not: `reset_blk()` is empty. If anything wrote a register between the DUT's reset and the reset test, the test fails on a correct DUT. Run it first, straight after reset, or extend it and make `reset_blk()` really reset the DUT (Push Further).
+
+### The bit-bash test: uvm_reg_bit_bash_seq
+
+**Purpose.** A field modelled `"RW"` that the RTL implements as read-only, a bit stuck at one value, or two fields swapped in the RTL all pass a reset test. Bit-bash catches them by writing each bit both ways and reading it back.
+
+**Mechanism** (Annex E.2; uvm-core `uvm_reg_bit_bash_seq.svh`). For every register and every map it is in, the single sequence first builds a **don't-care mask**, `dc_mask`: the bits of fields that are write-only (`"WO"`, `"WOC"`, `"WOS"`, `"WO1"`), `"NOACCESS"`, or set to `UVM_NO_CHECK`. Every bit that is **not** in a field is treated as read-only and is tested, so unmodelled bits must read back as 0. Then, for each bit `k` outside the mask, `bash_kth_bit` runs this twice:
+
+<SequenceDiagram
+  title="bash_kth_bit for one bit of ral.CTRL"
+  caption="Each pass flips bit k, writes, takes the expected value from get(), reads and compares. The second pass flips the bit back. Four frontdoor accesses per bit, per map."
+  participants={[
+    { id: "seq", label: "reg_single_bit_bash_seq", kind: "sequence" },
+    { id: "rg", label: "rg (ral.CTRL)", sublabel: "model", kind: "reg" },
+    { id: "dut", label: "dut", sublabel: "via map, sqr, drv", kind: "dut" }
+  ]}
+  messages={[
+    { kind: "divider", label: "repeat (2)" },
+    { from: "seq", to: "rg", label: "get()" },
+    { kind: "return", from: "rg", to: "seq", label: "val (desired value)" },
+    { kind: "self", from: "seq", label: "val[k] = ~val[k]" },
+    { from: "seq", to: "rg", label: "write(status, val, UVM_FRONTDOOR, map)" },
+    { kind: "note", from: "rg", label: "set(val): each field's policy updates the desired value (RO keeps its old value)" },
+    { from: "rg", to: "dut", label: "frontdoor bus write" },
+    { from: "seq", to: "rg", label: "get()" },
+    { kind: "return", from: "rg", to: "seq", label: "exp = desired & ~dc_mask" },
+    { from: "seq", to: "rg", label: "read(status, val, UVM_FRONTDOOR, map)" },
+    { from: "rg", to: "dut", label: "frontdoor bus read" },
+    { kind: "return", from: "dut", to: "rg", label: "data" },
+    { kind: "return", from: "rg", to: "seq", label: "val" },
+    { kind: "self", from: "seq", label: "(val & ~dc_mask) !== exp: uvm_error" }
+  ]}
+/>
+
+**Predict before you read on.** CTRL has MODE in bits 3:0 and EN in bit 4, both RW, and bits 31:5 are unused. How many frontdoor accesses does bit-bash make on CTRL through one map?
+
+The answer is 128. All 32 bits are tested, the five field bits and the 27 unused bits (as read-only bits that must stay 0), at four accesses each. The expected value comes from `get()`, the desired value that the write's `set()` call has already updated with each field's policy, so **bit-bash needs no prediction**. A read-only VERSION.ID that holds `'h12` passes: the write leaves its desired value at `'h12`, and the DUT returns `'h12`.
+
+**The mistakes everyone makes once.**
+
+- **Bashing a register with side effects.** Bit-bash writes 1 to every bit it tests. A soft-reset bit modelled `"RW"` resets the block; an enable bit starts traffic; a start bit launches a job. The sequence cannot know; you exclude the register (below) or model the field accurately.
+- **Unmodelled bits that read as 1.** A reserved bit that the RTL ties to 1 fails bit-bash ("yielded … instead of …"), even though the reset test passed, because the reset test ignores unmodelled bits.
+
+### The access test: uvm_reg_access_seq
+
+**Purpose.** The backdoor (HDL paths) is only useful if it reaches the same flops as the bus. The access test checks that for each register by crossing the two paths.
+
+**Mechanism** (Annex E.3; uvm-core `uvm_reg_access_seq.svh`). For each register, the single sequence skips it with a warning if every field is `"RO"` in a map, or if any field has an unknown access policy. Otherwise, for every map:
+
+<SequenceDiagram
+  title="uvm_reg_single_access_seq on one register and one map"
+  caption="Write through the frontdoor, check through the backdoor; write through the backdoor, check through the frontdoor. The first check compares with the mirror, so it fails on every register unless something predicts the frontdoor write."
+  participants={[
+    { id: "seq", label: "reg_seq", sublabel: "uvm_reg_single_access_seq", kind: "sequence" },
+    { id: "rg", label: "rg", sublabel: "model: desired and mirror", kind: "reg" },
+    { id: "dut", label: "dut", kind: "dut" }
+  ]}
+  messages={[
+    { from: "seq", to: "rg", label: "get()" },
+    { kind: "return", from: "rg", to: "seq", label: "v" },
+    { from: "seq", to: "rg", label: "write(status, ~v, UVM_FRONTDOOR, map)" },
+    { from: "rg", to: "dut", label: "frontdoor bus write of ~v" },
+    { kind: "note", from: "rg", label: "mirror updated only by auto-predict or a uvm_reg_predictor" },
+    { kind: "divider", label: "#1" },
+    { from: "seq", to: "rg", label: "mirror(status, UVM_CHECK, UVM_BACKDOOR)" },
+    { from: "rg", to: "dut", label: "backdoor read (HDL path)" },
+    { kind: "return", from: "dut", to: "rg", label: "value" },
+    { kind: "self", from: "rg", label: "compare with mirror: [RegModel] error if different" },
+    { from: "seq", to: "rg", label: "write(status, v, UVM_BACKDOOR, map)" },
+    { from: "rg", to: "dut", label: "backdoor write of v, field policies applied" },
+    { kind: "note", from: "rg", label: "uvm-core predicts the mirror itself here" },
+    { from: "seq", to: "rg", label: "mirror(status, UVM_CHECK, UVM_FRONTDOOR, map)" },
+    { from: "rg", to: "dut", label: "frontdoor bus read" },
+    { kind: "return", from: "dut", to: "rg", label: "value" },
+    { kind: "self", from: "rg", label: "compare with mirror: [RegModel] error if different" }
+  ]}
+/>
+
+So the access test has two requirements that the others do not:
+
+1. **A backdoor.** The register needs an HDL path (`has_hdl_path()`) or a user-defined backdoor (`get_backdoor()`). How to add them is in [Frontdoor vs Backdoor Access](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/frontdoor-vs-backdoor).
+2. **A prediction path.** After the frontdoor write, the backdoor check compares the DUT with the **mirror**. Unless auto-predict or a connected `uvm_reg_predictor` has moved the mirror to `~v`, every register fails with a `RegModel` mismatch.
+
+**The mistake that hides bugs: the silent skip.** What happens to a register with no backdoor depends on which form you run.
+
+| You start | Register without a backdoor | Result |
+| --- | --- | --- |
+| `uvm_reg_access_seq` (block) | `uvm_warning` "Register '…' does not have a backdoor mechanism available", then the register is **skipped** | A block with no HDL paths at all ends with `UVM_ERROR :    0`: a pass that tested nothing |
+| `uvm_reg_single_access_seq` (one register) | `uvm_error` with the same text | The test fails |
+
+`uvm_mem_access_seq` skips memories without a backdoor in the same way. Treat that warning as a failure: check the paths before you start (Debugging, below), or run `uvm_reg_mem_hdl_paths_seq` first.
+
+### The other sequences: shared maps, memories and HDL paths
+
+- **Shared access** (E.4). Tests only registers and memories that sit in two or more maps; `get_n_maps()` below 2 means a silent skip. For each map it writes a random value through that map, then reads through every map and compares with `get()`, ignoring write-only bits. The register form uses only the frontdoor; the memory form reads each word's old value with `peek()` when the memory has a user-defined backdoor (`get_backdoor()`), and otherwise through a readable map.
+- **Memory access** (E.5). For every word of every memory: write a random value through the frontdoor, wait `#1`, `peek()` it through the backdoor, `poke()` its complement, then read it through the frontdoor. Memories have no mirror, so it compares with the values it wrote. It needs a backdoor and skips a memory without one, with a warning.
+- **Memory walk** (E.6). Needs no backdoor and no prediction. It runs only in maps where the memory's access is `"RW"`; a memory mapped `"RO"` is skipped without a message. Annex E calls it a walking-ones test; the uvm-core algorithm writes each address's complement and checks it after the next write. Traced on a 4-word, 8-bit memory:
+
+| Step `k` | Write | Read and expect | Write back |
+| --- | --- | --- | --- |
+| 0 | `[0] = 'hFF` (`~0`) | none | none |
+| 1 | `[1] = 'hFE` | `[0]`, expect `'hFF` | `[0] = 'h00` |
+| 2 | `[2] = 'hFD` | `[1]`, expect `'hFE` | `[1] = 'h01` |
+| 3 | `[3] = 'hFC` | `[2]`, expect `'hFD`; then `[3]`, expect `'hFC` (last word) | `[2] = 'h02` |
+
+  Eleven accesses for four words, about three per word. Each word is read back once, after its neighbour was written, so the walk catches a word that does not hold its data and a write that lands on the previous address. It is not an exhaustive memory test.
+- **HDL-path check** (E.7). For every register and memory that has a path, `uvm_reg_mem_hdl_paths_seq` asks the simulator whether the path exists (`uvm_hdl_check_path`) and, for registers, whether it can be read. It reports a bad path as a `uvm_error` in uvm-core. Registers with **no** path are not reported, so it cannot tell you that paths are missing, only that the ones you wrote are wrong.
+
+### Fencing unsafe registers: NO_REG_* resources
+
+Every built-in sequence asks the resource database, for each block, register and memory it is about to test, whether a resource of type `bit` with a given **name** exists for the scope `"REG::"` plus that element's full name. If one exists, the element is skipped. You create those resources in the test, before you start the sequence:
+
+```systemverilog
+// snippet: in a test, before starting the sequences (a larger block than Make It Work's)
+// Never bit-bash INT_STATUS: hardware sets its bits while the test runs.
+uvm_resource_db#(bit)::set({"REG::", env.ral.INT_STATUS.get_full_name()},
+                           "NO_REG_BIT_BASH_TEST", 1, this);
+// Skip every register, memory and sub-block under the dma block in every test.
+uvm_resource_db#(bit)::set({"REG::", env.ral.dma.get_full_name(), ".*"},
+                           "NO_REG_TESTS", 1, this);
+// Check SPARE but not PINS in the reset test (field level: reset test only).
+uvm_resource_db#(bit)::set({"REG::", env.ral.BOOT.PINS.get_full_name()},
+                           "NO_REG_HW_RESET_TEST", 1, this);
+```
+
+Each name is read by specific sequences at specific levels (uvm-core 2020.3.1 `sequences/*.svh`; Annex E lists the names per class):
+
+| Resource name | Read by | Levels checked |
+| --- | --- | --- |
+| `NO_REG_TESTS` | Every register and memory test, E.1 to E.6, and E.8 | Block, register, memory (never a field) |
+| `NO_REG_HW_RESET_TEST` | Reset test | Block, register and **field** |
+| `NO_REG_BIT_BASH_TEST` | Bit-bash | Block, register |
+| `NO_REG_ACCESS_TEST` | Register access, `uvm_reg_mem_access_seq` | Block, register |
+| `NO_REG_SHARED_ACCESS_TEST` | Shared access (registers and memories) | Block, register, memory |
+| `NO_MEM_TESTS` | Memory access, memory walk, memory shared access | Block, memory |
+| `NO_MEM_ACCESS_TEST` | Memory access | Block, memory |
+| `NO_MEM_WALK_TEST` | Memory walk | Memory (block level: see Push Further) |
+| `NO_MEM_SHARED_ACCESS_TEST` | Memory shared access | Block, memory |
+
+Five rules follow from how the lookup works:
+
+1. **Existence, not value.** The sequences call `uvm_resource_db#(bit)::get_by_name(scope, name, 0)` and test the result against `null` (Annex C.3.2.3.4). The value is never read, so setting it to 0 still excludes. To re-enable a register, do not create the resource in that test.
+2. **The type must be `bit`.** The lookup matches the resource's type. `uvm_resource_db#(int)::set(…, "NO_REG_TESTS", 1, …)` creates a resource the sequences never find, and nothing is excluded.
+3. **The scope is a pattern.** Resource scopes use the simplified notation of `uvm_is_match` (Annex C.2.4.3, §F.3.3.1): `*` matches any characters, `?` exactly one, `+` one or more, and `.` is a plain dot. `"REG::ral.dma.*"` matches everything below `ral.dma` but not `ral.dma` itself. `"REG::ral.dma"` matches the block only. The register tests (E.1 to E.3) visit sub-blocks one level at a time and return at the block-level check, so for them it also skips dma's sub-blocks. The memory, shared-access and HDL-path sequences reach sub-blocks from the top block's flattened list (Push Further), so for them it does not: use `".*"` when you mean the whole sub-tree.
+4. **Field level is the reset test only.** No other sequence looks at a field's name. To keep bit-bash away from one field but test the rest of its register, set that field's compare policy instead: `fld.set_compare(UVM_NO_CHECK)` (§18.5.5.15) puts its bits in `dc_mask`.
+5. **The namespace is literal.** The scope must start with `REG::`. `uvm_config_db#(bit)::set(this, …)` puts the test's own path, `uvm_test_top.`, in front of your string, so the sequences never find it. With a `null` context the configuration database does store the scope unchanged, but `uvm_resource_db` says what you mean.
+
+**Traced: which sequence skips what.** For a block `ral` with registers CTRL and BOOT (fields PINS and SPARE), a sub-block `dma` and a memory `sram`:
+
+| Resource you set | Reset test | Bit-bash | Register access | Memory walk |
+| --- | --- | --- | --- | --- |
+| `REG::ral.BOOT`, `NO_REG_TESTS` | skips BOOT | skips BOOT | skips BOOT | no effect |
+| `REG::ral.BOOT`, `NO_REG_BIT_BASH_TEST` | tests BOOT | skips BOOT | tests BOOT | no effect |
+| `REG::ral.BOOT.PINS`, `NO_REG_HW_RESET_TEST` | reads BOOT, compares SPARE only | tests all of BOOT | tests BOOT | no effect |
+| `REG::ral.BOOT.PINS`, `NO_REG_TESTS` | ignored: compares PINS | ignored | ignored | no effect |
+| `REG::ral.dma.*`, `NO_REG_TESTS` | skips everything under dma | same | same | skips memories under dma |
+| `REG::ral.sram`, `NO_MEM_WALK_TEST` | no effect | no effect | no effect | skips sram |
+| `REG::ral.BOOT`, `NO_REG_BIT_BASH_TEST`, value 0 | tests BOOT | **still skips BOOT** | tests BOOT | no effect |
+
+### Running a selection: uvm_reg_mem_built_in_seq
+
+`uvm_reg_mem_built_in_seq` (E.8) runs several built-in tests in a fixed order: reset, bit-bash, register access, memory access, shared access, memory walk. Its `tests` field (E.8.2.2) is a bit mask built by OR-ing values of `uvm_reg_mem_tests_e` (§17.2.2.10): `UVM_DO_REG_HW_RESET`, `UVM_DO_REG_BIT_BASH`, `UVM_DO_REG_ACCESS`, `UVM_DO_MEM_ACCESS`, `UVM_DO_SHARED_ACCESS`, `UVM_DO_MEM_WALK`. The default, `UVM_DO_ALL_REG_MEM_TESTS`, runs all six, including the access tests that need a backdoor.
+
+```systemverilog
+// snippet: a portable selection class (IEEE 1800.2-2020 E.8.1 declares the base virtual)
+class reg_smoke_seq extends uvm_reg_mem_built_in_seq;
+  `uvm_object_utils(reg_smoke_seq)
+  function new(string name = "reg_smoke_seq");
+    super.new(name);
+    tests = UVM_DO_REG_HW_RESET | UVM_DO_REG_BIT_BASH;   // reset first, then bit-bash
+  endfunction
+endclass
+```
+
+Before each test it runs, it checks the exclusion resources at the level of its own `model` too, so `NO_REG_BIT_BASH_TEST` on the top block's scope drops that whole test.
+
+### What the sequences assume, and how they pass falsely
+
+Every Annex E description ends with the same warning: "The DUT should be idle and not modify any register during this test." Here is the full list of assumptions, and what you see when one is broken.
+
+| Assumption | If it is broken |
+| --- | --- |
+| The DUT was reset just before the reset test (uvm-core does not reset it) | Reset test fails on registers that earlier traffic changed |
+| The DUT is idle: no other bus master, no firmware, no interrupts or DMA changing registers | Random bit-bash or access failures that move from seed to seed. Auto-predict cannot help: it sees only the register model's own accesses |
+| The model is right: policies, reset values, volatile fields | Failures on a correct DUT. Fix the model, not the test |
+| Registers with side effects are excluded | Jobs start, the block resets, or interrupts fire in the middle of the test |
+| The access tests have a backdoor | Registers and memories skipped with a warning; the run passes |
+| The register access test has prediction | Every register fails right after its frontdoor write |
+| The exclusion resources are spelt right, typed `bit` and scoped `REG::` | Nothing is excluded, or everything is |
+
+The three **false passes** are the ones to remember: a register or memory with no backdoor is skipped by the access tests with only a warning; a register or memory in one map is skipped by the shared-access test without a message; and a memory mapped without `"RW"` access is skipped by the walk without a message. A pass is only evidence if the log shows the "Verifying …" or "Walking …" line for the elements you meant to test.
+
+### Debugging a built-in run from its log
+
+| Symptom in the log | Likely cause | Fix |
+| --- | --- | --- |
+| `[RegModel] Register "ral.BOOT" value read from DUT (0x…2) does not match mirrored value (0x…0)` during the reset test, followed by `Field PINS (ral.BOOT[1:0]) mismatch read=2'h2 mirrored=2'h0` | Model reset value differs from the RTL, a strap or a non-reset field, or traffic before the test | Check the spec; fix the model, or exclude the field with `NO_REG_HW_RESET_TEST`; run the reset test first |
+| `[uvm_reg_bit_bash_seq] Writing a 1 in bit #4 of register "ral.CTRL" with initial value 'h… yielded 'h… instead of 'h…` | Wrong access policy in the model, a bit the hardware changes (should be volatile), a side-effect bit, an unmodelled bit that reads 1, or a busy DUT | Compare the RTL with the model for that bit; mark hardware-updated fields volatile; exclude side-effect registers |
+| `[uvm_reg_access_seq] Register 'ral.CTRL' does not have a backdoor mechanism available` (warning) | No HDL path or user backdoor on that register | Add HDL paths, then run `uvm_reg_mem_hdl_paths_seq`; until then, do not count the pass |
+| `[RegModel] … does not match mirrored value …` right after the access test's frontdoor write, on every register | No prediction path: neither auto-predict nor a connected `uvm_reg_predictor` | Connect the predictor or turn on auto-predict ([Explicit vs Implicit Prediction](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit)) |
+| `[uvm_reg_access_seq] Register '…' has only RO fields in map …, skipping` | Expected: nothing to write | None |
+| `[uvm_reg_mem_hdl_paths_seq] HDL path "…" for register "…" is not accessible` | Wrong path string, an unnamed generate block, or the simulator was not given access to that signal (tool-dependent switches) | Fix the path; name generate blocks; check your simulator's access options |
+| `No block or system specified to run sequence on` (reset test) or `No register model specified to run sequence on` (bit-bash, access, memory and shared-access tests) | `model` was never set | Set `seq.model` before `start()` |
+| The sequence starts and no "Verifying" lines appear | Everything is excluded, for example a scope pattern that is too wide such as `"REG::*"` | Narrow the pattern; list your exclusions at the start of the test |
+
+A cheap guard against the silent skip, before you start the access test:
+
+```systemverilog
+// snippet: in the test, before starting uvm_reg_access_seq on env.ral
+uvm_reg regs[$];
+env.ral.get_registers(regs);   // default UVM_HIER: every register below ral
+foreach (regs[i])
+  if (regs[i].get_backdoor() == null && !regs[i].has_hdl_path())
+    `uvm_error("NO_BKDR", {regs[i].get_full_name(),
+                            " has no backdoor; the access test would skip it"})
+```
+
+If you exclude some registers from the access test on purpose, skip them in this loop too.
+
+### Where the built-in sequences belong in a real testbench
+
+- **When.** Run them in a dedicated register test at block level, as soon as the generated model compiles against the RTL, and again whenever the register spec changes. They are a smoke test of the model and the register RTL, not functional verification: a register that passes bit-bash can still do the wrong thing when the hardware uses it.
+- **Order.** Reset test first, while the DUT is fresh out of reset. Then bit-bash. Then the HDL-path check before any access test. `uvm_reg_mem_built_in_seq` uses the same order.
+- **Quiet the rest of the bench.** Bit-bash and the access tests write every testable bit, including enables. Functional scoreboards, protocol checkers that assume legal configurations, and interrupt handlers usually have to be disabled or made register-aware for the test.
+- **Where not to use them.** Registers whose writes have side effects (start, soft-reset, FIFO push), indirect registers reached through an index and data pair, and anything a CPU or other master owns at the time. At SoC level, frontdoor cost grows with every bit (Push Further), so most teams run the full set per IP block and only the reset and HDL-path checks on the assembled SoC ([E-SOC-1](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index)).
+
+### Recap: the mistakes everyone makes once
+
+1. Expecting the reset test to reset the DUT. In uvm-core it does not.
+2. Believing the sequences know which registers are unsafe. They know only the model and your exclusions.
+3. Trusting an access-test pass on a model with no HDL paths. Unreachable registers are skipped with a warning.
+4. Running the register access test without prediction. Every register then fails right after its frontdoor write.
+5. Setting an exclusion to 0 to turn it off. Existence is what counts.
+6. Expecting `NO_REG_TESTS` on a field to work. Only the reset test reads field names, and only `NO_REG_HW_RESET_TEST`.
+
+## Make It Work
+
+### A reset test and a bit-bash test on a three-register block
+
+The bench below is one file. The DUT has three 32-bit registers on a simple register bus: CTRL (MODE and EN, read-write), VERSION (a hard-wired ID) and BOOT, whose PINS field copies the board's strap pins and whose SPARE field is read-write. The test fences BOOT from the parts of each test that cannot know the strap value, then runs the reset test and bit-bash.
+
+```systemverilog
+// compile
+// reg_smoke.sv: uvm_reg_hw_reset_seq, then uvm_reg_bit_bash_seq, on a 3-register block.
+`timescale 1ns/1ps
+`include "uvm_macros.svh"
+
+// DUT: three 32-bit registers on a simple register bus.
+module regs_dut (
+  input  logic        clk,
+  input  logic        rst_n,
+  input  logic        sel,        // 1 = an access is in progress
+  input  logic        wr,         // 1 = write, 0 = read
+  input  logic [7:0]  addr,
+  input  logic [31:0] wdata,
+  output logic [31:0] rdata,
+  input  logic [1:0]  boot_pins   // board strap pins, copied into BOOT.PINS
+);
+  logic [3:0] mode;
+  logic       en;
+  logic [7:0] spare;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      mode  <= 4'h0;
+      en    <= 1'b0;
+      spare <= 8'h00;
+    end else if (sel && wr) begin
+      case (addr)
+        8'h00: begin
+          mode <= wdata[3:0];
+          en   <= wdata[4];
+        end
+        8'h08:   spare <= wdata[15:8];
+        default: ;                      // VERSION and BOOT.PINS ignore writes
+      endcase
+    end
+  end
+
+  // Reads are combinational; the driver samples rdata at the edge that ends the access.
+  always_comb begin
+    case (addr)
+      8'h00:   rdata = {27'b0, en, mode};
+      8'h04:   rdata = 32'h0000_0012;   // VERSION.ID is hard-wired
+      8'h08:   rdata = {16'b0, spare, 6'b0, boot_pins};
+      default: rdata = 32'h0;
+    endcase
+  end
+endmodule
+
+interface rbus_if (input logic clk);
+  logic        rst_n;
+  logic        sel;
+  logic        wr;
+  logic [7:0]  addr;
+  logic [31:0] wdata;
+  logic [31:0] rdata;
+
+  // Drives land after the edge; rdata is sampled just before it (#1step): no races.
+  clocking cb @(posedge clk);
+    default input #1step output #0;
+    output sel, wr, addr, wdata;
+    input  rdata;
+  endclocking
+endinterface
+
+package regs_pkg;
+  import uvm_pkg::*;
+
+  // Bus item, sequencer, driver and adapter
+  class rbus_item extends uvm_sequence_item;
+    `uvm_object_utils(rbus_item)
+    rand bit        wr;
+    rand bit [7:0]  addr;
+    rand bit [31:0] data;
+
+    function new(string name = "rbus_item");
+      super.new(name);
+    endfunction
+
+    virtual function string convert2string();
+      return $sformatf("%s addr='h%02h data='h%08h", wr ? "WR" : "RD", addr, data);
+    endfunction
+  endclass
+
+  typedef uvm_sequencer #(rbus_item) rbus_sqr;
+
+  class rbus_drv extends uvm_driver #(rbus_item);
+    `uvm_component_utils(rbus_drv)
+    virtual rbus_if vif;
 
     function new(string name, uvm_component parent);
       super.new(name, parent);
     endfunction
 
-    task run_phase(uvm_phase phase);
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (!uvm_config_db#(virtual rbus_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NOVIF", "rbus_drv: no virtual interface set under the name vif")
+    endfunction
+
+    virtual task run_phase(uvm_phase phase);
+      vif.cb.sel <= 1'b0;
+      // The built-in sequences never reset the DUT: wait until tb_top has.
+      wait (vif.rst_n === 1'b1);
+      forever begin
+        seq_item_port.get_next_item(req);
+        @(vif.cb);
+        vif.cb.sel   <= 1'b1;
+        vif.cb.wr    <= req.wr;
+        vif.cb.addr  <= req.addr;
+        vif.cb.wdata <= req.data;
+        @(vif.cb);                              // the DUT performs the access here
+        if (!req.wr) req.data = vif.cb.rdata;   // read data, sampled before the edge
+        vif.cb.sel   <= 1'b0;
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
+
+  class rbus_adapter extends uvm_reg_adapter;
+    `uvm_object_utils(rbus_adapter)
+
+    function new(string name = "rbus_adapter");
+      super.new(name);
+      supports_byte_enable = 0;
+      provides_responses   = 0;   // the driver returns read data in the request item
+    endfunction
+
+    virtual function uvm_sequence_item reg2bus(const ref uvm_reg_bus_op rw);
+      rbus_item item = rbus_item::type_id::create("item");
+      item.wr   = (rw.kind == UVM_WRITE);
+      item.addr = rw.addr[7:0];
+      item.data = rw.data[31:0];
+      return item;
+    endfunction
+
+    virtual function void bus2reg(uvm_sequence_item bus_item, ref uvm_reg_bus_op rw);
+      rbus_item item;
+      if (!$cast(item, bus_item)) begin
+        `uvm_fatal("NOT_RBUS", "bus2reg: the item is not an rbus_item")
+        return;
+      end
+      rw.kind   = item.wr ? UVM_WRITE : UVM_READ;
+      rw.addr   = item.addr;
+      rw.data   = item.data;
+      rw.status = UVM_IS_OK;
+    endfunction
+  endclass
+
+  // Register model: what a generator would emit for the three registers
+  class ctrl_reg extends uvm_reg;
+    `uvm_object_utils(ctrl_reg)
+    rand uvm_reg_field MODE;
+    rand uvm_reg_field EN;
+
+    function new(string name = "ctrl_reg");
+      super.new(name, 32, UVM_NO_COVERAGE);
+    endfunction
+
+    virtual function void build();
+      // configure(parent, size, lsb, access, volatile, reset, has_reset, is_rand, indiv)
+      MODE = uvm_reg_field::type_id::create("MODE");
+      MODE.configure(this, 4, 0, "RW", 0, 4'h0, 1, 1, 0);
+      EN = uvm_reg_field::type_id::create("EN");
+      EN.configure(this, 1, 4, "RW", 0, 1'b0, 1, 1, 0);
+    endfunction
+  endclass
+
+  class version_reg extends uvm_reg;
+    `uvm_object_utils(version_reg)
+    uvm_reg_field ID;
+
+    function new(string name = "version_reg");
+      super.new(name, 32, UVM_NO_COVERAGE);
+    endfunction
+
+    virtual function void build();
+      ID = uvm_reg_field::type_id::create("ID");
+      ID.configure(this, 8, 0, "RO", 0, 8'h12, 1, 0, 0);
+    endfunction
+  endclass
+
+  class boot_reg extends uvm_reg;
+    `uvm_object_utils(boot_reg)
+    uvm_reg_field      PINS;
+    rand uvm_reg_field SPARE;
+
+    function new(string name = "boot_reg");
+      super.new(name, 32, UVM_NO_COVERAGE);
+    endfunction
+
+    virtual function void build();
+      // The spec documents 0, but the board's strap pins decide the real value.
+      PINS = uvm_reg_field::type_id::create("PINS");
+      PINS.configure(this, 2, 0, "RO", 0, 2'b00, 1, 0, 0);
+      SPARE = uvm_reg_field::type_id::create("SPARE");
+      SPARE.configure(this, 8, 8, "RW", 0, 8'h00, 1, 1, 0);
+    endfunction
+  endclass
+
+  class regs_block extends uvm_reg_block;
+    `uvm_object_utils(regs_block)
+    rand ctrl_reg    CTRL;
+    rand version_reg VERSION;
+    rand boot_reg    BOOT;
+
+    function new(string name = "regs_block");
+      super.new(name, UVM_NO_COVERAGE);
+    endfunction
+
+    virtual function void build();
+      CTRL = ctrl_reg::type_id::create("CTRL");
+      CTRL.configure(this);
+      CTRL.build();
+      VERSION = version_reg::type_id::create("VERSION");
+      VERSION.configure(this);
+      VERSION.build();
+      BOOT = boot_reg::type_id::create("BOOT");
+      BOOT.configure(this);
+      BOOT.build();
+
+      default_map = create_map("default_map", 'h0, 4, UVM_LITTLE_ENDIAN);
+      default_map.add_reg(CTRL,    'h00);
+      default_map.add_reg(VERSION, 'h04);
+      default_map.add_reg(BOOT,    'h08);
+      lock_model();
+    endfunction
+  endclass
+
+  // Environment and test
+  class regs_env extends uvm_env;
+    `uvm_component_utils(regs_env)
+    rbus_sqr     sqr;
+    rbus_drv     drv;
+    regs_block   ral;
+    rbus_adapter adapter;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      // A real env wraps sqr and drv in an agent; they sit here to keep the file short.
+      sqr = rbus_sqr::type_id::create("sqr", this);
+      drv = rbus_drv::type_id::create("drv", this);
+      ral = regs_block::type_id::create("ral");
+      ral.build();                       // ends with lock_model()
+      adapter = rbus_adapter::type_id::create("adapter");
+    endfunction
+
+    virtual function void connect_phase(uvm_phase phase);
+      drv.seq_item_port.connect(sqr.seq_item_export);
+      ral.default_map.set_sequencer(sqr, adapter);
+      // The model is the only bus master here, so implicit prediction is enough.
+      ral.default_map.set_auto_predict(1);
+    endfunction
+  endclass
+
+  class reg_smoke_test extends uvm_test;
+    `uvm_component_utils(reg_smoke_test)
+    regs_env env;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      env = regs_env::type_id::create("env", this);
+    endfunction
+
+    virtual task run_phase(uvm_phase phase);
       uvm_reg_hw_reset_seq reset_seq;
+      uvm_reg_bit_bash_seq bash_seq;
       phase.raise_objection(this);
 
-      // STRAP_CFG resets to a pin-strapped value: skip it in the reset check.
-      uvm_resource_db#(bit)::set({"REG::", env.ral.STRAP_CFG.get_full_name()},
+      // Fence what the sequences cannot know. Only the resource's existence counts.
+      // 1. PINS copies the strap pins, so its reset value depends on the board.
+      uvm_resource_db#(bit)::set({"REG::", env.ral.BOOT.PINS.get_full_name()},
                                  "NO_REG_HW_RESET_TEST", 1, this);
+      // 2. Bit-bash has no field-level exclusion: fence the whole BOOT register.
+      uvm_resource_db#(bit)::set({"REG::", env.ral.BOOT.get_full_name()},
+                                 "NO_REG_BIT_BASH_TEST", 1, this);
 
-      reset_seq       = uvm_reg_hw_reset_seq::type_id::create("reset_seq");
+      // Reset values first, while the DUT is still fresh out of reset.
+      reset_seq = uvm_reg_hw_reset_seq::type_id::create("reset_seq");
       reset_seq.model = env.ral;
-      reset_seq.start(null);   // register sequences run their items on each map's sequencer
+      reset_seq.start(null);             // each map's sequencer carries the accesses
+
+      bash_seq = uvm_reg_bit_bash_seq::type_id::create("bash_seq");
+      bash_seq.model = env.ral;
+      bash_seq.start(null);
+
       phase.drop_objection(this);
     endtask
   endclass
-  ```
+endpackage
 
-  **What it does**
-  - `uvm_reg_hw_reset_seq` resets the model, then reads every register that has a reset value through **every map** it is in, with `mirror(status, UVM_CHECK, UVM_FRONTDOOR, map)`. Fields with no reset or with `UVM_NO_CHECK` (volatile fields by default) are not compared.
-  - `NO_REG_HW_RESET_TEST` (or the catch-all `NO_REG_TESTS`) can name a block, a register, or for this sequence a single field.
+module tb_top;
+  import uvm_pkg::*;
+  import regs_pkg::*;
 
-  ## Bit-Bash, Access and Memory Walk
+  logic clk;
+  initial clk = 1'b0;
+  always #5 clk = ~clk;
 
-  - `uvm_reg_bit_bash_seq`: for every register and map, inverts each bit through a frontdoor write, reads it back and compares with `get()`, then inverts it again and repeats the check. It skips WO, WOC, WOS, WO1 and NOACCESS fields and fields set to `UVM_NO_CHECK`. Exclude whole registers that have side effects (W1C interrupt status, GO bits, FIFOs) with `NO_REG_BIT_BASH_TEST`.
-  - `uvm_reg_access_seq`: for each register, writes through the frontdoor and checks through the **backdoor**, then writes through the backdoor and checks through the frontdoor. It needs HDL paths and a working prediction path, and it skips registers whose fields are all RO. Exclude with `NO_REG_ACCESS_TEST`.
-  - `uvm_mem_walk_seq`: a walking pattern over every memory, through each map (write `~k` at address k, read it back on the next step). Exclude with `NO_MEM_WALK_TEST` or `NO_MEM_TESTS`.
+  rbus_if bus (.clk(clk));
 
+  regs_dut dut (
+    .clk(clk), .rst_n(bus.rst_n), .sel(bus.sel), .wr(bus.wr), .addr(bus.addr),
+    .wdata(bus.wdata), .rdata(bus.rdata), .boot_pins(2'b10)
+  );
 
-  ```systemverilog
-  // In the test, before starting the sequence:
-  // never bit-bash the interrupt status (W1C) register
-  uvm_resource_db#(bit)::set({"REG::", env.ral.INT_STATUS.get_full_name()},
-                             "NO_REG_BIT_BASH_TEST", 1, this);
-  // skip every register of the DMA sub-block in all built-in tests
-  uvm_resource_db#(bit)::set({"REG::", env.ral.dma.get_full_name(), ".*"},
-                             "NO_REG_TESTS", 1, this);
+  initial begin
+    bus.rst_n = 1'b0;
+    repeat (3) @(posedge clk);
+    bus.rst_n <= 1'b1;                   // release with <= so flops see a clean edge
+  end
 
-  bash_seq       = uvm_reg_bit_bash_seq::type_id::create("bash_seq");
-  bash_seq.model = env.ral;
-  bash_seq.start(null);
-  ```
+  initial begin
+    uvm_config_db#(virtual rbus_if)::set(null, "uvm_test_top.env.drv", "vif", bus);
+    run_test("reg_smoke_test");
+  end
+endmodule
+```
 
-  **Why attributes and not overrides**
-  - The sequences look up these resources for each block and register (`uvm_resource_db#(bit)::get_by_name({"REG::", rg.get_full_name()}, "NO_REG_BIT_BASH_TEST")`), so exclusions live with the test, and the library code stays untouched.
-  - The scope is a glob, so `".*"` after a block name covers everything below it.
+**Expected output** (illustrative: written from the uvm-core 2020.3.1 message formats and this bench's timing, 20 ns per access, not captured from a simulator run; the UVM banner and file names are elided):
 
-  ## Checklist
+```text
+UVM_INFO … @ 0: reporter [RNTST] Running test reg_smoke_test...
+UVM_INFO … @ 0: reporter@@reset_seq [STARTING_SEQ]
 
-  - [ ] Registers with side effects or unpredictable resets carry the matching `NO_REG_*` attribute.
-  - [ ] HDL paths exist before running `uvm_reg_access_seq`.
-  - [ ] Coverage/scoreboards observe these sequences to collect reset/bit coverage metrics.
-  - [ ] Register model and adapters are synchronized before running memory walk tests.
+Starting reset_seq sequence...
 
-  ## Quiz Yourself
+UVM_INFO … @ 0: reporter@@reset_seq [uvm_reg_hw_reset_seq] Verifying reset value of register ral.CTRL in map "ral.default_map"...
+UVM_INFO … @ 45: reporter@@reset_seq [uvm_reg_hw_reset_seq] Verifying reset value of register ral.VERSION in map "ral.default_map"...
+UVM_INFO … @ 65: reporter@@reset_seq [uvm_reg_hw_reset_seq] Verifying reset value of register ral.BOOT in map "ral.default_map"...
+UVM_INFO … @ 85: reporter@@bash_seq [STARTING_SEQ]
 
-  <Quiz
-    questions={[
-      {
-        question: "What does uvm_reg_bit_bash_seq primarily validate?",
-        answers: [
-          { text: "Adapters convert opcodes correctly", correct: false },
-          { text: "Every bit of every register behaves as its field's access policy says", correct: true },
-          { text: "The DUT boots correctly", correct: false },
-          { text: "Scoreboards are connected", correct: false }
-        ],
-        explanation: "It flips each bit through the frontdoor, reads it back and compares with the model's desired value, then flips it back and checks again."
-      },
-      {
-        question: "How do you keep uvm_reg_bit_bash_seq away from a W1C interrupt status register?",
-        answers: [
-          { text: "Disable mirroring", correct: false },
-          { text: "Set the NO_REG_BIT_BASH_TEST bit resource for that register in the \"REG::\" scope", correct: true },
-          { text: "Override is_legal() in a subclass", correct: false },
-          { text: "Use set_sequencer(null)", correct: false }
-        ],
-        explanation: "The built-in sequences have no is_legal() hook; they check NO_REG_* resources for each block and register."
-      },
-      {
-        question: "uvm_reg_access_seq fails immediately on a register. What is the most likely missing piece?",
-        answers: [
-          { text: "A covergroup", correct: false },
-          { text: "An HDL path for the backdoor", correct: true },
-          { text: "A factory override", correct: false }
-        ],
-        explanation: "The access sequence compares frontdoor and backdoor views of each register, so it needs a backdoor."
-      }
-    ]}
-  />
+Starting bash_seq sequence...
 
-</InfoPage>
+UVM_INFO … @ 85: reporter@@bash_seq.reg_single_bit_bash_seq [uvm_reg_bit_bash_seq] Verifying bits in register ral.CTRL in map "ral.default_map"...
+UVM_INFO … @ 2645: reporter@@bash_seq.reg_single_bit_bash_seq [uvm_reg_bit_bash_seq] Verifying bits in register ral.VERSION in map "ral.default_map"...
+
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO :    …
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+What to notice:
+
+- **BOOT is read by the reset test but compared on SPARE only**: its line is there, and no error follows even though PINS reads `2'b10`.
+- **BOOT has no bit-bash line**: `NO_REG_BIT_BASH_TEST` skipped it before the "Verifying bits" message.
+- **Bit-bash takes 2560 ns per register** here: 32 bits, 4 accesses each, 20 ns per access. VERSION starts 2560 ns after CTRL.
+- **Registers appear in creation order.** uvm-core keeps a block's registers in an array indexed by each object's instance id, so the order follows the `create()` calls in `build()`.
+
+**Run it.** Compile the file with a simulator that supports IEEE 1800.2 UVM and the uvm-core 2020.3.1 library, then run `tb_top`. The commands and options are tool-specific; this bench has not been tried on Verilator, whose UVM support is limited.
+
+### How to run built-in sequences on your own block
+
+1. **Make the model reachable.** Build and lock the model, call `set_sequencer(sqr, adapter)` on each root map, and choose a prediction mode. Bit-bash and the reset test work without prediction; the register access test does not.
+2. **Decide what the sequences must not touch.** Walk the register spec for side-effect bits (start, soft reset, FIFO push), board- or fuse-dependent values, hardware-updated fields and registers owned by another master. Fix the model first (volatile fields, correct policies), then exclude what remains.
+3. **Write the exclusions** with `uvm_resource_db#(bit)::set({"REG::", <full name>}, "<NAME>", 1, this)` before the first `start()`: the field for the reset test, the register or block for the others, `".*"` for a whole sub-tree.
+4. **Reset, then start.** Make sure the DUT has just come out of reset and nothing else drives the bus. Start the reset test first, then bit-bash, each with `model` set and `start(null)`; or use a `uvm_reg_mem_built_in_seq` subclass with a `tests` mask.
+5. **Add backdoor tests only after the paths are proven.** Run `uvm_reg_mem_hdl_paths_seq`, check that every register you expect has a path, then run the access tests.
+6. **Read the log, not just the summary.** Count the "Verifying …" lines against the registers you meant to test, and treat "does not have a backdoor mechanism available" as a failure.
+
+**Checklist before moving on:**
+- [ ] I can say, for each Annex E sequence, what it compares against and whether it needs a backdoor or prediction.
+- [ ] I can predict how many frontdoor accesses bit-bash makes on a register, and which bits it skips.
+- [ ] My test sets every exclusion with type `bit`, the `REG::` prefix and the right name, before the sequences start.
+- [ ] The DUT is fresh out of reset and idle when the reset test starts.
+- [ ] I check the log for skipped registers before I trust a pass.
+
+## Push Further
+
+### Expert: IEEE 1800.2-2020 versus uvm-core 2020.3.1 in Annex E
+
+Every difference below was read in the uvm-core 2020.3.1 source (`src/reg/sequences/*.svh`) against the IEEE 1800.2-2020 text of Annex E.
+
+| Topic | IEEE 1800.2-2020 | uvm-core 2020.3.1 |
+| --- | --- | --- |
+| DUT reset in the reset test | E.1: "Resets the DUT and the block abstraction class" | `reset_blk()` is empty; only `model.reset()` runs. The source comment says to reset the DUT first or implement `reset_blk()` in an extension |
+| `uvm_reg_mem_built_in_seq` | E.8.1 declares it a `virtual class` | A concrete class registered with the factory; `type_id::create()` works. Extend it, as in the mental model, to be portable |
+| Bit-bash expected value | E.2.1: compared with "the mirrored value" | Compared with `get()`, the desired value after the write's `set()` |
+| HDL-path check result | E.7: "a warning is issued" | `uvm_error` for a path that is not readable or not accessible |
+| Single memory access exclusions | E.5.1 lists `NO_MEM_SHARED_ACCESS_TEST` | Checks `NO_MEM_ACCESS_TEST` (with `NO_REG_TESTS` and `NO_MEM_TESTS`) |
+| Memory walk, block level | E.6.2: `NO_MEM_WALK_TEST` on the block | The block-level check reads `NO_MEM_ACCESS_TEST`; `NO_MEM_WALK_TEST` is read only per memory, and on the model by `uvm_reg_mem_built_in_seq`. Scope it with `".*"` to reach every memory |
+| Sub-block traversal in the memory, shared-access and HDL-path sequences | "on every memory within it" | `do_block()` collects all descendant blocks (`get_blocks()` with its default `UVM_HIER`) and then recurses into each, so elements two or more levels below the model are tested more than once, and an exact-scope exclusion on a middle block does not stop its sub-blocks. The reset, bit-bash and register access sequences use `UVM_NO_HIER` and visit each block once |
+
+The practical rule: write exclusions at register and memory level with a `".*"` pattern, and do not rely on the reset test to reset anything.
+
+### Expert: extending the built-in sequences
+
+The sequences have three deliberate extension points.
+
+- **`reset_blk()`.** Every block-level sequence calls this empty virtual task before `model.reset()`. Override it to really reset the DUT, for example through a virtual interface the test passes in, then wait for reset to finish. The reset test then stands on its own:
+
+```systemverilog
+// snippet: a reset test that resets the DUT itself; vif is set by the test
+class reset_and_check_seq extends uvm_reg_hw_reset_seq;
+  `uvm_object_utils(reset_and_check_seq)
+  virtual rbus_if vif;
+  function new(string name = "reset_and_check_seq");
+    super.new(name);
+  endfunction
+  virtual task reset_blk(uvm_reg_block blk);
+    vif.rst_n <= 1'b0;
+    repeat (3) @(vif.cb);
+    vif.rst_n <= 1'b1;
+    @(vif.cb);
+  endtask
+endclass
+```
+
+- **Factory overrides of the single sequences.** `uvm_reg_bit_bash_seq`, `uvm_reg_access_seq`, `uvm_mem_access_seq` and `uvm_mem_walk_seq` create their single-register or single-memory sequence with `type_id::create()`, so a type override of, say, `uvm_reg_single_bit_bash_seq` changes how every register is tested without touching the block-level class. `uvm_reg_mem_access_seq` builds its two sub-sequences with `new()`, so overrides do not reach them there (uvm-core 2020.3.1).
+- **`do_block()`.** It is a protected virtual task; overriding it lets you change which registers a block-level sequence visits, for example to test only registers listed in a plan.
+
+Prefer exclusions to extensions when the goal is only to skip something: they keep the library code untouched and show up in one place in the test.
+
+### Expert: cost and scale
+
+| Sequence | Frontdoor accesses per element, per map | Backdoor accesses |
+| --- | --- | --- |
+| Reset test | 1 per register | none |
+| Bit-bash | 4 per tested bit: `repeat (2)` of a write and a read; unused bits count | none |
+| Register access | 2 per register | 2 per register |
+| Memory access | 2 per word | 2 per word |
+| Memory walk | about 3 per word (3n − 1 for n words) | none |
+| HDL-path check | none | one or two simulator path queries per path slice, in zero time |
+
+A block of 200 32-bit registers costs about 25 600 frontdoor accesses for bit-bash alone, and a 64K-word memory costs about 196 000 for the walk. In simulation that is seconds to minutes; in gate-level simulation or on an emulator with a slow transactor it can dominate a regression (tool-dependent). Typical responses: bit-bash per IP and not per SoC, memory walks on a subset of memories or in a nightly run, and the access tests only once the paths are stable. Every number in this table comes from the loops in `src/reg/sequences/*.svh`.
+
+### Expert: making a false pass loud
+
+The skip warnings carry the sequence's class name as their ID, and the access sequence also uses that ID for legitimate skips ("has only RO fields … skipping"). Promoting the whole ID to an error would fail clean read-only registers, so match the message text instead with a report catcher (IEEE 1800.2-2020 §6.6; [I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index) teaches catchers):
+
+```systemverilog
+// snippet: turn "no backdoor" skips into errors; add before the access tests start
+class no_backdoor_catcher extends uvm_report_catcher;
+  `uvm_object_utils(no_backdoor_catcher)
+  function new(string name = "no_backdoor_catcher");
+    super.new(name);
+  endfunction
+  virtual function action_e catch();
+    if (get_severity() == UVM_WARNING &&
+        uvm_is_match("*does not have a backdoor mechanism available*", get_message()))
+      set_severity(UVM_ERROR);
+    return THROW;
+  endfunction
+endclass
+// In the test: no_backdoor_catcher c = new(); uvm_report_cb::add(null, c);
+```
+
+Two other habits close the remaining gaps. Count coverage of the test itself: compare the number of "Verifying …" lines with the number of registers that should have been tested. And keep the exclusion list in one function of the test base class, printed at the start of the run, so a reviewer can see what was skipped without reading the log.
+
+### Expert: interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: a pass that proves nothing"
+  question="A colleague says the register access test passed on a new block with zero errors. What do you check before you believe it?"
+  options={[
+    { text: "Nothing: UVM_ERROR : 0 means every register's frontdoor and backdoor agree.", isCorrect: false, feedback: "The block-level access sequence skips every register without a backdoor with only a warning, and skips registers whose fields are all RO, so zero errors can mean zero registers tested." },
+    { text: "That the log has a 'Verifying access of register' line for each register I expected, no 'does not have a backdoor mechanism available' warnings, and that uvm_reg_mem_hdl_paths_seq ran clean first.", isCorrect: true, feedback: "Correct. Skips are warnings, so the evidence is in the per-register lines and the warning count, and the HDL-path check proves the paths that do exist." },
+    { text: "That the coverage report shows 100% register coverage.", isCorrect: false, feedback: "Register coverage, if enabled, shows which addresses or values were accessed, not that the backdoor agrees with the frontdoor, and it is often not built at all." },
+    { text: "That the test ran with auto-predict on.", isCorrect: false, feedback: "Prediction is needed for the access test to pass on registers it tests; it does nothing about the registers it skipped." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: built-in tests at SoC level"
+  question="Your SoC has 40 IP blocks and 12 000 registers. A manager asks for bit-bash on the whole SoC in every nightly regression. What do you propose?"
+  options={[
+    { text: "Run it: the built-in sequences are designed for full-chip use and scale linearly.", isCorrect: false, feedback: "They scale linearly in accesses, which is the problem: at four accesses per bit, 12 000 32-bit registers is over 1.5 million bus transfers, with every interrupt, clock-gating and security register on the chip to fence off." },
+    { text: "Bit-bash and access tests per IP in its own block-level environment; on the SoC, the reset test and the HDL-path check, plus targeted register tests for the integration (address map, security, shared maps).", isCorrect: true, feedback: "Correct. Bit behaviour is a property of the IP and is cheapest to prove there; the SoC adds address decoding, reset distribution and map sharing, which the reset test, the shared-access test and directed tests cover." },
+    { text: "Replace bit-bash with the memory walk, which is cheaper.", isCorrect: false, feedback: "The walk tests memories, not register bits; it answers a different question." },
+    { text: "Run it, but exclude every register with NO_REG_TESTS except the ones that failed last time.", isCorrect: false, feedback: "That tests only known failures and gives no evidence for new RTL." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: an intermittent bit-bash failure"
+  question="Bit-bash fails on INT_STATUS in about one seed in five, always on a different bit. The model marks the fields W1C, not volatile. What is the most likely cause?"
+  options={[
+    { text: "The simulator is nondeterministic; rerun with the same seed.", isCorrect: false, feedback: "Same seed, same failure: the variation across seeds points at something the random stimulus or timing changes, not at the simulator." },
+    { text: "Hardware sets INT_STATUS bits during the test (an interrupt source is still active), so a bit changes between bit-bash's write and read. Make the DUT idle, mark hardware-set fields volatile, or exclude the register with NO_REG_BIT_BASH_TEST.", isCorrect: true, feedback: "Correct. Bit-bash assumes the DUT does not modify registers during the test, and a non-volatile field keeps UVM_CHECK, so every hardware update is a mismatch." },
+    { text: "W1C fields cannot be bit-bashed; UVM always fails them.", isCorrect: false, feedback: "A W1C bit that holds 0 stays 0 when bit-bash writes 1, and set() predicts exactly that, so a quiet W1C register passes." },
+    { text: "Auto-predict is off, so the expected value is stale.", isCorrect: false, feedback: "Bit-bash compares with get(), the desired value that set() updates on every write; it needs no prediction." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
+    {
+      question: "In uvm-core 2020.3.1, what must be true before you start uvm_reg_hw_reset_seq for its result to mean anything?",
+      answers: [
+        { text: "Nothing: the sequence pulses the DUT's reset itself, as Annex E.1 describes.", correct: false, feedback: "E.1 says so, but uvm-core's reset_blk() is empty. The sequence resets only the model, with model.reset()." },
+        { text: "The DUT has just come out of reset and nothing has written its registers since.", correct: true, feedback: "Right. The sequence compares each register with the model's reset value, so any earlier write turns into a reset-value failure." },
+        { text: "Every register has an HDL path.", correct: false, feedback: "The reset test reads through the frontdoor only; HDL paths matter for the access tests." },
+        { text: "Auto-predict is on, so the mirror holds the reset values.", correct: false, feedback: "model.reset() puts the reset values in the mirror; the comparison needs no prediction." }
+      ],
+      explanation: "The reset test calls reset_blk() (empty in uvm-core) and model.reset(), then reads every register through the frontdoor and compares with the reset values. Run it first, straight after a DUT reset, or override reset_blk().",
+      objective: 1
+    },
+    {
+      question: "CTRL is a 32-bit register: MODE (RW) in bits 3:0, EN (RW) in bit 4, bits 31:5 unused. How many frontdoor accesses does uvm_reg_bit_bash_seq make on CTRL through one map?",
+      answers: [
+        { text: "20: five field bits, four accesses each", correct: false, feedback: "Unused bits are not skipped: bit-bash treats them as read-only bits that must read 0, and tests them too." },
+        { text: "64: one write and one read per bit", correct: false, feedback: "bash_kth_bit runs its write-then-read twice per bit, so each bit costs four accesses." },
+        { text: "128: all 32 bits, four accesses each", correct: true, feedback: "Right. n_bits is get_n_bytes() * 8 = 32; only write-only, NOACCESS and UVM_NO_CHECK bits are skipped, and each tested bit gets repeat (2) of a write and a read." },
+        { text: "10: five field bits, one write and one read each", correct: false, feedback: "This misses both the unused bits and the second pass that flips each bit back." }
+      ],
+      explanation: "Bit-bash tests every bit position up to the register width except bits in write-only, NOACCESS or UVM_NO_CHECK fields. For each it writes the flipped bit and reads back, twice. 32 bits times 4 accesses is 128.",
+      objective: 2
+    },
+    {
+      question: "You start uvm_reg_access_seq on a block. Prediction is set up correctly, but none of the registers has an HDL path or a user backdoor. What happens?",
+      answers: [
+        { text: "It fails on the first register with a uvm_error.", correct: false, feedback: "That is what uvm_reg_single_access_seq does when you start it on one register. The block-level sequence checks first and skips." },
+        { text: "Each register is skipped with a UVM_WARNING, and the run can end with UVM_ERROR : 0: a pass that tested nothing.", correct: true, feedback: "Right. do_block() warns 'does not have a backdoor mechanism available' and continues to the next register." },
+        { text: "It falls back to frontdoor reads for the backdoor steps and tests the bus twice.", correct: false, feedback: "uvm_reg::write() and mirror() do fall back to the frontdoor when asked for a backdoor that does not exist, but the access sequence checks for a backdoor first and skips the register before any access." },
+        { text: "It stops the simulation with a UVM_FATAL.", correct: false, feedback: "No fatal is raised; the skip is a warning, which is exactly why it is dangerous." }
+      ],
+      explanation: "The block-level access sequence skips registers without a backdoor with a warning, so a model with no HDL paths passes. Check has_hdl_path() or get_backdoor() first, run uvm_reg_mem_hdl_paths_seq, or promote the warning with a report catcher.",
+      objective: 5
+    },
+    {
+      question: "The access test reports, on every register, a RegModel error right after the frontdoor write: the value read from the DUT through the backdoor is ~v, the mirrored value is v. HDL paths are correct. What is missing?",
+      answers: [
+        { text: "A prediction path: neither set_auto_predict(1) nor a uvm_reg_predictor connected to a bus monitor updates the mirror after the frontdoor write.", correct: true, feedback: "Right. The backdoor check compares the DUT with the mirror, so the mirror must follow the frontdoor write." },
+        { text: "Explicit prediction: the sequence should call predict() by hand after each write.", correct: false, feedback: "Explicit prediction means a uvm_reg_predictor fed by a bus monitor, not hand-written predict() calls, and you cannot add calls inside the library sequence anyway." },
+        { text: "An HDL path: the backdoor read returned garbage.", correct: false, feedback: "The backdoor returned ~v, exactly what the frontdoor wrote, so the path works. The stale value is the mirror's." },
+        { text: "A longer delay than #1 between the write and the check.", correct: false, feedback: "Time does not help when nothing updates the mirror at all." }
+      ],
+      explanation: "uvm_reg_single_access_seq writes ~v through the frontdoor and then calls mirror(UVM_CHECK, UVM_BACKDOOR). The DUT holds ~v; the mirror still holds v unless implicit (auto-predict) or explicit (uvm_reg_predictor) prediction moved it.",
+      objective: 5
+    },
+    {
+      question: "To bit-bash INT_STATUS again in one test, a colleague changes its exclusion to uvm_resource_db#(bit)::set({\"REG::\", ral.INT_STATUS.get_full_name()}, \"NO_REG_BIT_BASH_TEST\", 0, this). Is INT_STATUS tested?",
+      answers: [
+        { text: "Yes: a value of 0 means 'do not exclude'.", correct: false, feedback: "The sequences never read the value. They test whether get_by_name() returns a resource, and it does." },
+        { text: "No: the sequences check only whether a resource with that name exists for the scope, so it is still excluded.", correct: true, feedback: "Right. To re-enable the register, do not create the resource in that test." },
+        { text: "Yes, because the most recent set() has the highest precedence.", correct: false, feedback: "Precedence picks which resource is returned; the returned resource still exists, and its value is ignored." },
+        { text: "Only if the set() happens before build_phase.", correct: false, feedback: "Timing matters only in that the resource must exist before the sequence looks; the value is ignored either way." }
+      ],
+      explanation: "Every built-in sequence uses uvm_resource_db#(bit)::get_by_name(scope, name, 0) != null. Existence excludes; the bit's value is never read.",
+      objective: 4
+    },
+    {
+      question: "Which call makes the reset test skip the field BOOT.PINS but still compare BOOT.SPARE?",
+      answers: [
+        { text: "uvm_resource_db#(bit)::set({\"REG::\", ral.BOOT.PINS.get_full_name()}, \"NO_REG_TESTS\", 1, this);", correct: false, feedback: "No sequence reads NO_REG_TESTS at field level, so PINS is still compared." },
+        { text: "uvm_resource_db#(bit)::set({\"REG::\", ral.BOOT.PINS.get_full_name()}, \"NO_REG_HW_RESET_TEST\", 1, this);", correct: true, feedback: "Right. The reset test is the only sequence that checks fields, and only for NO_REG_HW_RESET_TEST." },
+        { text: "uvm_config_db#(bit)::set(this, {\"REG::\", ral.BOOT.PINS.get_full_name()}, \"NO_REG_HW_RESET_TEST\", 1);", correct: false, feedback: "With this as the context, the configuration database puts uvm_test_top. in front of the scope, so the sequence never finds the resource." },
+        { text: "uvm_resource_db#(bit)::set({\"REG::\", ral.BOOT.get_full_name()}, \"NO_REG_HW_RESET_TEST\", 1, this);", correct: false, feedback: "That excludes the whole BOOT register, so SPARE is not compared either." }
+      ],
+      explanation: "Field-level exclusion exists only for the reset test and only under the name NO_REG_HW_RESET_TEST. The scope must be REG:: plus the field's full name, and the resource must be found under that exact scope.",
+      objective: 4
+    },
+    {
+      question: "Nothing is excluded, and bit-bash runs on a block whose CTRL.SOFT_RST bit is modelled RW. Writing 1 to it resets the block's registers. What happens?",
+      answers: [
+        { text: "Nothing: bit-bash recognises reset bits and skips them.", correct: false, feedback: "The sequences know only the model. A bit modelled RW is bashed like any other." },
+        { text: "Bit-bash writes 1 to SOFT_RST, the block resets, and the read-back and later registers mismatch.", correct: true, feedback: "Right. The built-in sequences do not know which registers are unsafe; exclude CTRL from bit-bash or model the bit's real behaviour." },
+        { text: "UVM detects the side effect and issues a warning before writing.", correct: false, feedback: "UVM has no knowledge of side effects beyond the access policy in the model." },
+        { text: "No harm: bit-bash restores each bit after testing it.", correct: false, feedback: "The second pass flips the bit back, but the side effect of the first write has already happened." }
+      ],
+      explanation: "Built-in sequences test what the model describes. Side-effect bits (soft reset, start, FIFO push) must be excluded with NO_REG_BIT_BASH_TEST or NO_REG_TESTS, or modelled so the test skips them.",
+      objective: 1
+    },
+    {
+      question: "You want one sequence that runs only the reset test and then bit-bash. Which is correct in your uvm_reg_mem_built_in_seq subclass?",
+      answers: [
+        { text: "tests = UVM_DO_REG_HW_RESET | UVM_DO_REG_BIT_BASH;", correct: true, feedback: "Right. tests is a mask built by OR-ing uvm_reg_mem_tests_e values (E.8.2.2, §17.2.2.10)." },
+        { text: "tests = UVM_DO_REG_HW_RESET & UVM_DO_REG_BIT_BASH;", correct: false, feedback: "The two values are different single bits, so AND gives 0 and no test runs." },
+        { text: "Leave tests at its default; the default runs only the register tests.", correct: false, feedback: "The default, UVM_DO_ALL_REG_MEM_TESTS, runs all six tests, including the memory and access tests." },
+        { text: "Start uvm_reg_hw_reset_seq; it runs bit-bash afterwards automatically.", correct: false, feedback: "Each Annex E sequence runs only its own test. Only uvm_reg_mem_built_in_seq chains several." }
+      ],
+      explanation: "uvm_reg_mem_built_in_seq runs the selected tests in a fixed order: reset, bit-bash, register access, memory access, shared access, memory walk. Select with a bitwise OR.",
+      objective: 3
+    },
+    {
+      question: "A test calls reset_seq.start(null) but never sets reset_seq.model. What do you see?",
+      answers: [
+        { text: "The sequence tests every register block in the environment.", correct: false, feedback: "The sequence does not search for models; it uses only the model handle you give it." },
+        { text: "A null-handle crash inside the sequence.", correct: false, feedback: "body() checks for a null model first." },
+        { text: "A uvm_error 'No block or system specified to run sequence on', and the sequence returns without testing.", correct: true, feedback: "Right. Bit-bash, the access tests and the memory walk report 'No register model specified to run sequence on' instead." },
+        { text: "A fatal, because start(null) needs a sequencer.", correct: false, feedback: "start(null) is the normal way to start a register sequence; the maps supply the sequencer for each access." }
+      ],
+      explanation: "Set model before start(). start(null) is correct because the sequence works through the register model, and each map sends its bus items to the sequencer set with set_sequencer().",
+      objective: 3
+    },
+    {
+      question: "A memory sram is added to the only map with rights \"RO\". You run uvm_mem_walk_seq on the block. What happens to sram?",
+      answers: [
+        { text: "It is walked, and every read fails because writes are ignored.", correct: false, feedback: "The walk checks the memory's access in each map first." },
+        { text: "It is skipped in that map without a message: the walk tests only maps where the memory's access is RW.", correct: true, feedback: "Right. A run with no 'Walking memory' line for sram tested nothing on it." },
+        { text: "It is skipped with a warning, like a register without a backdoor.", correct: false, feedback: "The walk skips it silently: there is no warning to catch." },
+        { text: "It is read once per word and compared with the reset values.", correct: false, feedback: "The walk has no read-only mode, and memories have no reset values in the model." }
+      ],
+      explanation: "uvm_mem_single_walk_seq continues to the next map when get_access(map) is not RW. Look for the 'Walking memory … in map …' line to know a memory was tested.",
+      objective: 2
+    },
+    {
+      question: "An embedded CPU model runs firmware that writes registers while bit-bash runs on the same block. Auto-predict is on. Which statement is right?",
+      answers: [
+        { text: "It is fine: auto-predict sees the firmware's writes and keeps the expected values current.", correct: false, feedback: "Auto-predict updates the mirror only for accesses the register model itself makes. Firmware traffic is invisible to it, and bit-bash compares with the desired value anyway." },
+        { text: "The test is invalid: the DUT must be idle. Firmware writes change bits between bit-bash's write and read, giving failures that vary from run to run, or hiding real bugs.", correct: true, feedback: "Right. Every Annex E sequence assumes the DUT is idle; stop the firmware or run the test in a bench without it." },
+        { text: "It is fine as long as the firmware writes different registers.", correct: false, feedback: "Even writes to other registers can start activity that changes the tested register, and nothing guarantees which registers firmware touches." },
+        { text: "Connecting a uvm_reg_predictor would make it safe.", correct: false, feedback: "A predictor would keep the mirror current, but bit-bash compares with get() and still sees bits change under it." }
+      ],
+      explanation: "The built-in sequences assume an idle DUT. Implicit prediction sees only the register model's own accesses, and bit-bash's expected value comes from get(), so another master always breaks the test.",
+      objective: 1
+    }
+  ]}
+/>
+
+### Flashcards
+
+The deck for this lesson covers the catalogue, what each sequence compares against, the exclusion rules, the false passes and the assumptions. It follows below, under "Reinforce the essentials".
+
+### Kata: exclusions that do exactly what you mean
+
+**Task.** Start from the Make It Work file.
+
+1. **Predict a failure.** Delete the `NO_REG_HW_RESET_TEST` line. Write down the error lines the reset test prints, with their values, before you run.
+2. **Test more, skip less.** Put the line back. Change the test so that bit-bash still skips BOOT.PINS but now tests BOOT.SPARE. Predict the number of frontdoor accesses bit-bash makes on BOOT.
+3. **One sequence.** Replace the two `start()` calls with one `uvm_reg_mem_built_in_seq` subclass that runs the same two tests.
+
+<details>
+<summary>Worked solution</summary>
+
+1. **Without the field exclusion**, PINS keeps `UVM_CHECK`. The read returns `'h2` (SPARE is 0, PINS is `2'b10`) and the mirror holds 0, so `do_check()` reports (illustrative, uvm-core 2020.3.1 formats):
+
+```text
+UVM_ERROR … [RegModel] Register "ral.BOOT" value read from DUT (0x0000000000000002) does not match mirrored value (0x0000000000000000) (valid bit mask = 0x000000000000ff03)
+UVM_INFO … [RegModel] Field PINS (ral.BOOT[1:0]) mismatch read=2'h2 mirrored=2'h0
+```
+
+   The mask `'hff03` covers PINS and SPARE, every field that is checked. The summary ends with `UVM_ERROR :    1`.
+
+2. **Replace the register-level bit-bash exclusion with a compare policy** on PINS, and restore it afterwards:
+
+```systemverilog
+// snippet: replaces exclusion 2 and the bit-bash start in reg_smoke_test::run_phase
+env.ral.BOOT.PINS.set_compare(UVM_NO_CHECK);   // PINS bits join bit-bash's dc_mask
+bash_seq = uvm_reg_bit_bash_seq::type_id::create("bash_seq");
+bash_seq.model = env.ral;
+bash_seq.start(null);
+env.ral.BOOT.PINS.set_compare(UVM_CHECK);
+```
+
+   Bit-bash now tests 30 of BOOT's 32 bits: SPARE (bits 15:8) and the 22 unused bits, which read 0 in this DUT. That is 30 × 4 = 120 frontdoor accesses, and the log gains a "Verifying bits in register ral.BOOT" line. The reset test is unaffected: it already skips PINS through its own exclusion.
+
+3. **A selection class:**
+
+```systemverilog
+// snippet: add to regs_pkg; start it in place of reset_seq and bash_seq
+class reg_smoke_seq extends uvm_reg_mem_built_in_seq;
+  `uvm_object_utils(reg_smoke_seq)
+  function new(string name = "reg_smoke_seq");
+    super.new(name);
+    tests = UVM_DO_REG_HW_RESET | UVM_DO_REG_BIT_BASH;
+  endfunction
+endclass
+```
+
+```systemverilog
+// snippet: in reg_smoke_test::run_phase, after the exclusions
+reg_smoke_seq smoke;   // declare with the other locals at the top of the task
+smoke = reg_smoke_seq::type_id::create("smoke");
+smoke.model = env.ral;
+smoke.start(null);
+```
+
+   The log shows `[START_SEQ]` for `smoke`, then the same "Verifying" lines as before, each test followed by a `[FINISH_SEQ] Finished … sequence.` line.
+
+**How to check yourself.** In step 1, the error count is exactly 1: one register, one comparison. In step 2, if bit-bash fails on BOOT bit 1 or 0, the `set_compare()` call came after `start()`; if it fails on a bit above 15, the DUT drives an unused bit.
+
+</details>
+
+### Debug challenge: four built-in logs
+
+Each log comes from a variation of a bench like Make It Work. Name the cause and the fix before you open the answers.
+
+**Log A** (the access test on a block of 40 registers)
+```text
+UVM_WARNING … [uvm_reg_access_seq] Register 'ral.CTRL' does not have a backdoor mechanism available
+UVM_WARNING … [uvm_reg_access_seq] Register 'ral.MASK' does not have a backdoor mechanism available
+… 38 more warnings like these …
+UVM_ERROR :    0
+```
+
+**Log B** (bit-bash)
+```text
+UVM_ERROR … [uvm_reg_bit_bash_seq] Writing a 1 in bit #0 of register "ral.CMD" with initial value 'h0000000000000000 yielded 'h0000000000000000 instead of 'h0000000000000001
+```
+
+**Log C** (the access test, HDL paths verified)
+```text
+UVM_ERROR … [RegModel] Register "ral.CTRL" value read from DUT (0x000000000000001f) does not match mirrored value (0x0000000000000000) (valid bit mask = 0x000000000000001f)
+```
+
+**Log D** (the reset test, run as the third test of a regression bench)
+```text
+UVM_ERROR … [RegModel] Register "ral.CTRL" value read from DUT (0x0000000000000013) does not match mirrored value (0x0000000000000000) (valid bit mask = 0x000000000000001f)
+```
+
+<details>
+<summary>Answers</summary>
+
+- **Log A.** No register has an HDL path, so the block-level access sequence skipped all 40 and tested nothing; the zero-error summary is a false pass. Fix: add HDL paths, run `uvm_reg_mem_hdl_paths_seq`, and add the `has_hdl_path()` guard or the report catcher so this run fails next time.
+- **Log B.** CMD bit 0 reads back 0 after a write of 1: it is a self-clearing start bit modelled `"RW"`. Bit-bash has just started a job in the DUT. Fix: exclude CMD with `NO_REG_BIT_BASH_TEST` (and consider whether the job it started disturbed the rest of the run), and model the bit's real behaviour.
+- **Log C.** The backdoor read returned `'h1f`, the complement written through the frontdoor, so the path works; the mirror still holds 0 because nothing predicted the frontdoor write. Fix: connect a `uvm_reg_predictor` or turn on auto-predict.
+- **Log D.** CTRL holds `'h13`, a value an earlier test wrote; the reset test does not reset the DUT. Fix: run the reset test first, straight after reset, or override `reset_blk()` to reset the DUT.
+
+</details>
+
+## References & Next Topics
+
+**Primary sources**
+- IEEE 1800.2-2020 Annex E (normative), test sequences: E.1 `uvm_reg_hw_reset_seq`; E.2 bit bashing (E.2.1 `uvm_reg_single_bit_bash_seq`, E.2.2 `uvm_reg_bit_bash_seq`); E.3 register access (E.3.1, E.3.2, E.3.3 `uvm_reg_mem_access_seq`); E.4 shared register and memory access; E.5 memory access; E.6 memory walking-ones; E.7 `uvm_reg_mem_hdl_paths_seq`; E.8 `uvm_reg_mem_built_in_seq` (E.8.2.2 `tests`).
+- IEEE 1800.2-2020 §19.4.1 `uvm_reg_sequence` (§19.4.1.3.1 `model`); §17.2.2.10 `uvm_reg_mem_tests_e`; §18.1.5.3 `uvm_reg_block::reset`; §18.4.4.14 `uvm_reg::mirror`; §18.4.6.1 `get_backdoor`, §18.4.6.6 `has_hdl_path`; §18.5.5.15 `set_compare`; §6.6 `uvm_report_catcher`.
+- IEEE 1800.2-2020 Annex C.2.4.3 resource scope matching; C.3.2.3.1 `uvm_resource_db::set`; C.3.2.3.4 `get_by_name`; §F.3.3.1 `uvm_is_match` and Table F.1 (simplified notation).
+- uvm-core 2020.3.1 (uvm-core impl.): `src/reg/sequences/uvm_reg_hw_reset_seq.svh`, `uvm_reg_bit_bash_seq.svh`, `uvm_reg_access_seq.svh`, `uvm_reg_mem_shared_access_seq.svh`, `uvm_mem_access_seq.svh`, `uvm_mem_walk_seq.svh`, `uvm_reg_mem_hdl_paths_seq.svh`, `uvm_reg_mem_built_in_seq.svh`; `src/reg/uvm_reg.svh` (`mirror`, `do_check`, `uvm_reg_err_service::do_check_error`, `set`); `src/reg/uvm_reg_field.svh` (`configure`, `set`); `src/reg/uvm_reg_block.svh` (`get_registers`, `get_blocks`); `src/base/uvm_resource_db_implementation.svh` and `uvm_resource_pool.svh` (`get_by_name`, `lookup_name`).
+
+**Related**
+- [Frontdoor vs Backdoor Access](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/frontdoor-vs-backdoor) (the previous lesson): HDL paths and what backdoor accesses do to the mirror.
+- [Explicit vs Implicit Prediction](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit): the prediction path the access test needs.
+- [A-UVM-4B: Advanced RAL Techniques](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index): memories, multiple maps and the mirror-mismatch checklist.
+- [A-UVM-4A: RAL Fundamentals](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index): building the model, access policies, reset values and maps.
+- [I-UVM-2C: Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index): the resource database behind the exclusions.
+- [I-UVM-1D: Reporting and Run Control](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index): report catchers, used above to make a false pass loud.
+- [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): register testing across a whole chip.
+
+<NextLesson />

@@ -1043,37 +1043,47 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "ral-mirror-bug",
-    "version": "1",
+    "version": "2",
     "title": "RAL Mirror Bug",
-    "description": "Diagnose and fix a frozen RAL mirror caused by a missing predictor connection in connect_phase.",
+    "description": "Diagnose a register model whose mirror disagrees with the DUT, using only the log and the prediction checklist, and fix each testbench fault until the run is clean.",
     "owningModule": "A-UVM-4B",
     "routeSlug": "ral-mirror-bug",
     "status": "available",
     "labPrerequisites": [],
-    "modulePrerequisites": [],
+    "modulePrerequisites": [
+      "A-UVM-4A"
+    ],
     "steps": [
       {
         "id": "1",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 1: Identify the Frozen Mirror",
-        "instructions": "Run the simulation. Every `mirror(UVM_CHECK)` call fails with the stale reset value `0x0000`, even though bus writes to the DUT succeed.",
+        "title": "Step 1: Read the first failure",
+        "instructions": "Run `testbench_buggy.sv` as it is. Find the first `[RegModel]` error and write down: which register and fields differ, what the DUT holds, what the model believed, and at what time. Then list every access in the test that changed that register, and say which component started each one (the register model or the firmware sequence). Decide which prediction set-up would have missed one of those accesses, find where the environment chooses its set-up, and fix it so that every transfer on the bus is predicted. Rerun and confirm that this error is gone.",
         "starterCode": ""
       },
       {
         "id": "2",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 2: Trace the Predictor Pipeline",
-        "instructions": "Open `testbench_buggy.sv` and inspect `connect_phase()`. The predictor and adapter are assigned, but is the bus monitor's analysis port connected to `predictor.bus_in`?",
+        "title": "Step 2: Chase the next symptom",
+        "instructions": "Rerun after your first fix and read the new error, if there is one. Note which fields differ and by how much. Ask how many times the failing access must have been predicted to give that mirror, and list everything in the environment that can predict an access the register model starts. Fix the cause, not the symptom: do not change the field's policy or make it volatile. If your run is already clean of this kind of error, explain in one sentence why your step 1 fix also prevented it.",
         "starterCode": ""
       },
       {
         "id": "3",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 3: Fix the Connect Phase",
-        "instructions": "Add `axi_agt.monitor.ap.connect(predictor.bus_in);` to `connect_phase`. Re-run. The mirror should now track writes and `mirror(UVM_CHECK)` should pass.",
+        "title": "Step 3: When the read was right but the mirror was not",
+        "instructions": "A remaining error appears right after a read whose value the test checked and accepted. Rerun with `+UVM_VERBOSITY=UVM_HIGH` and compare the predictor's `REG_PREDICT` line for that read with the value `read()` returned. Work out which component produced the value the predictor used, and fix that component. Rerun.",
+        "starterCode": ""
+      },
+      {
+        "id": "4",
+        "version": "2",
+        "completion": "self_attested",
+        "title": "Step 4: Prove it",
+        "instructions": "Run until the report summary shows `UVM_ERROR :    0` and `UVM_FATAL :    0` and the log ends with `[TEST] register checks complete`. For each fix, write one sentence naming the checklist question it answers. Then undo each fix on its own and confirm that its original symptom comes back, so you know every check can fail.",
         "starterCode": ""
       }
     ],
@@ -1171,40 +1181,65 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "scoreboard-reference-model",
-    "version": "1",
-    "title": "Self-Checking Scoreboard with Reference Model",
-    "description": "Implement a UVM scoreboard that consumes monitor transactions, predicts expected ALU results, and reports mismatches automatically.",
+    "version": "2",
+    "title": "The M3 Scoreboard Gate: Reference Model, Predictor and Accounting",
+    "description": "Build a reference model, a predictor and an in-order scoreboard fed by two analysis FIFOs, with end-of-test accounting and a drain, then prove it fails on a dropped, wrong, extra and missing result.",
     "owningModule": "A-UVM-6",
     "routeSlug": "scoreboard-reference-model",
     "moduleHref": "/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index",
     "status": "available",
-    "labPrerequisites": [
-      "scoreboard-decoupling"
+    "labPrerequisites": [],
+    "modulePrerequisites": [
+      "I-UVM-2B",
+      "I-UVM-3A"
     ],
-    "modulePrerequisites": [],
     "steps": [
       {
         "id": "1",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 1: Implement the Scoreboard",
-        "instructions": "Open `testbench.sv` and implement `alu_scoreboard` with a `uvm_tlm_analysis_fifo`, reference model, and compare logic.",
+        "title": "Step 1: Run the starter and predict",
+        "instructions": "Run `testbench.sv` as shipped. Predict the verdict first: it ends with `UVM_ERROR :    0` even with `+define+MUT_SUB`, because nothing compares anything. Note the times: the test drops its objection at 235 ns, when request 20 is accepted.",
         "starterCode": ""
       },
       {
         "id": "2",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 2: Wire Analysis Traffic",
-        "instructions": "Create the scoreboard in `alu_env` and connect `monitor.ap` to the scoreboard FIFO's `analysis_export` in `connect_phase`.",
+        "title": "Step 2: Reference model and predictor",
+        "instructions": "TODO 1: write `alu_model()` from the specification table in README.md. TODO 2: in `alu_predictor::write()`, clone the observed request, set the clone's `result` with `alu_model()`, and publish the clone on `ap`; never modify the received item.",
         "starterCode": ""
       },
       {
         "id": "3",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 3: Verify Self-Checking Behavior",
-        "instructions": "Run the lab and confirm each random ALU transaction produces a PASS comparison; then intentionally corrupt the reference model to see `uvm_error` mismatches.",
+        "title": "Step 3: In-order scoreboard on two FIFOs",
+        "instructions": "TODO 3: give `alu_scoreboard` `exp_export` and `act_export` connected to private `uvm_tlm_analysis_fifo`s, a comparer with `set_threshold(0)`, and a `run_phase` loop: `peek()` the oldest prediction, `get()` the next actual, set it aside if its tag differs, otherwise `try_get()` the prediction and compare with a checked `compare()`. Connect `prd.ap` and `out_agt.out_mon.ap` to the exports in `alu_env`.",
+        "starterCode": ""
+      },
+      {
+        "id": "4",
+        "version": "2",
+        "completion": "self_attested",
+        "title": "Step 4: Accounting and the summary line",
+        "instructions": "TODO 4a/4b: in `check_phase`, report `SCB/MISSING`, `SCB/UNEXPECTED` and `SCB/NO_TRAFFIC`; in `report_phase` and `pre_abort()`, print exactly `SCB_SUMMARY matches=<n> mismatches=<n> pending=<n>`. Never print PASSED.",
+        "starterCode": ""
+      },
+      {
+        "id": "5",
+        "version": "2",
+        "completion": "self_attested",
+        "title": "Step 5: Drain without a fixed delay",
+        "instructions": "TODO 4c: in `phase_ready_to_end`, for the run phase only, once, and only while `exp_fifo` holds a prediction, raise the phase's objection, wait until `exp_fifo` is empty or `max_latency` has passed, then drop it. Run `alu_test`: expect `SCB/DRAIN ... 2 outstanding` at 235 ns and `SCB_SUMMARY matches=20 mismatches=0 pending=0` at 255 ns with `UVM_ERROR :    0`.",
+        "starterCode": ""
+      },
+      {
+        "id": "6",
+        "version": "2",
+        "completion": "self_attested",
+        "title": "Step 6: Prove it fails: four mutants",
+        "instructions": "Run `+define+MUT_DROP` (expect `SCB/MISSING` for tag 3 and `pending=1`), `+define+MUT_SUB` (expect `SCB/MISMATCH` with the comparer's field detail), `+define+MUT_EXTRA` (expect `SCB/UNEXPECTED` for tag 9 and `pending=1`) and `+UVM_TESTNAME=alu_zero_test` (expect `SCB/NO_TRAFFIC`). Every mutant must fail with its own ID.",
         "starterCode": ""
       }
     ],
@@ -1232,37 +1267,55 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "scoreboard-decoupling",
-    "version": "1",
+    "version": "2",
     "title": "Scoreboard Decoupling",
-    "description": "Practice removing monitor backpressure by routing transactions through an analysis FIFO.",
+    "description": "Move a check that must wait out of write() and into a run_phase thread fed by analysis FIFOs, then account for every item at end of test.",
     "owningModule": "I-UVM-2B",
     "routeSlug": "scoreboard-decoupling",
     "status": "available",
     "labPrerequisites": [],
-    "modulePrerequisites": [],
+    "modulePrerequisites": [
+      "I-UVM-2B"
+    ],
     "steps": [
       {
         "id": "1",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 1: Declare the FIFO",
-        "instructions": "Open `src/dv/env.sv` and declare a `uvm_tlm_analysis_fifo #(my_txn)` named `sb_fifo`.",
+        "title": "Step 1: Run the coupled starter",
+        "instructions": "Read `src/dv/scoreboard.sv`, predict the log, then run `src/dv/testbench.sv`. Expect one `SCB/NO_RSP` error per request (10 to 100 ns) and `SCB/NO_TRAFFIC`: `write_req()` runs in zero time, before the response exists.",
         "starterCode": ""
       },
       {
         "id": "2",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 2: Connect the FIFO",
-        "instructions": "In `env.sv`, wire the monitor's `ap` to the FIFO's `analysis_export`, and the scoreboard to the `get_export`.",
+        "title": "Step 2: Try to wait in write()",
+        "instructions": "Add `@(rsp_in)` or `wait (last_rsp != null)` inside `write_req()` and compile. The compiler rejects a time-controlling statement in a function (IEEE 1800-2023 §13.4). Remove it.",
         "starterCode": ""
       },
       {
         "id": "3",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 3: Refactor the Scoreboard",
-        "instructions": "In `scoreboard.sv`, change the `analysis_imp` to a `uvm_blocking_get_port`. Replace `write()` with a `run_phase` loop that calls `get()`.",
+        "title": "Step 3: Exports and analysis FIFOs",
+        "instructions": "In `scoreboard.sv`, make `req_in` and `rsp_in` `uvm_analysis_export #(my_txn)` members, add private `uvm_tlm_analysis_fifo #(my_txn)` buffers `req_fifo` and `rsp_fifo`, construct them with `new()`, and connect each export to its FIFO's `analysis_export`. Remove the imp declarations and the `write_*()` methods.",
+        "starterCode": ""
+      },
+      {
+        "id": "4",
+        "version": "2",
+        "completion": "self_attested",
+        "title": "Step 4: The run_phase thread",
+        "instructions": "Loop forever: `req_fifo.peek()`, `rsp_fifo.get()`, `req_fifo.try_get()`, then `check()`. Report leftovers in `check_phase` (`SCB/MISSING`, `SCB/UNEXPECTED`, `SCB/NO_TRAFFIC`). Expect `SCB_SUMMARY matches=10 mismatches=0 pending=0` at 130 ns and `UVM_ERROR :    0`.",
+        "starterCode": ""
+      },
+      {
+        "id": "5",
+        "version": "2",
+        "completion": "self_attested",
+        "title": "Step 5: Prove it can fail",
+        "instructions": "Run with `+CORRUPT=4`. Expect `SCB/MISMATCH` for seq 4 at 80 ns and `SCB_SUMMARY matches=9 mismatches=1 pending=0`. Compare your file with `solution/scoreboard.sv`.",
         "starterCode": ""
       }
     ],
@@ -1274,22 +1327,22 @@ export const GENERATED_LAB_MANIFESTS = [
         "editable": false
       },
       {
-        "path": "src/dv/env.sv",
+        "path": "src/dv/scoreboard.sv",
         "role": "starter",
         "language": "systemverilog",
         "editable": true
       },
       {
-        "path": "src/dv/monitor.sv",
+        "path": "src/dv/env.sv",
         "role": "reference",
         "language": "systemverilog",
         "editable": false
       },
       {
-        "path": "src/dv/scoreboard.sv",
-        "role": "starter",
+        "path": "src/dv/traffic_gen.sv",
+        "role": "reference",
         "language": "systemverilog",
-        "editable": true
+        "editable": false
       },
       {
         "path": "src/dv/testbench.sv",
@@ -1300,6 +1353,12 @@ export const GENERATED_LAB_MANIFESTS = [
       {
         "path": "src/dv/txn.sv",
         "role": "reference",
+        "language": "systemverilog",
+        "editable": false
+      },
+      {
+        "path": "solution/scoreboard.sv",
+        "role": "solution",
         "language": "systemverilog",
         "editable": false
       }
@@ -1468,21 +1527,25 @@ export const GENERATED_LAB_MANIFESTS = [
   },
   {
     "id": "callbacks-driver-behavior",
-    "version": "1",
+    "version": "2",
     "title": "Modifying Driver Behavior with Callbacks",
-    "description": "Inject an error and a delay into a driver using a callback hook without altering the driver class itself.",
+    "description": "Inject a parity error and a delay into one of two drivers with a callback hook, without altering the driver class, then break the attachment on purpose and stack two callbacks.",
     "owningModule": "A-UVM-5",
     "routeSlug": "callbacks-driver-behavior",
     "status": "available",
     "labPrerequisites": [],
-    "modulePrerequisites": [],
+    "modulePrerequisites": [
+      "I-UVM-2A",
+      "A-UVM-7",
+      "A-UVM-5"
+    ],
     "steps": [
       {
         "id": "1",
-        "version": "1",
+        "version": "2",
         "completion": "self_attested",
-        "title": "Step 1: Review the Hook",
-        "instructions": "Open `testbench.sv` and locate the `packet_driver_cb` virtual class, the `uvm_do_callbacks` call inside the driver's `run_phase`, and the `a_parity_ok` checker in `packet_if`. Note which packet fields the driver reads after the hook returns.",
+        "title": "Step 1: Review the hook and the two drivers",
+        "instructions": "Open `testbench.sv` and locate the `packet_driver_cb` virtual class, the `uvm_do_callbacks` call inside the driver's `run_phase`, the `a_parity_ok` checker in `packet_if`, and the two drivers `env.drv0` and `env.drv1`. Note which packet fields the driver reads after the hook returns. Run the starter once: six `DRV` lines with `error=0 delay_cycles=0`, no `PARITY_ERR`, and `display()` reports no callbacks for `packet_driver`.",
         "starterCode": ""
       },
       {
@@ -1495,10 +1558,26 @@ export const GENERATED_LAB_MANIFESTS = [
       },
       {
         "id": "3",
+        "version": "2",
+        "completion": "self_attested",
+        "title": "Step 3: Attach it to drv0 only",
+        "instructions": "Write `my_test::connect_phase`: create the callback and attach it to `env.drv0` only with the static `add()` of `uvm_callbacks#(packet_driver, packet_driver_cb)`. Run: `display()` lists the callback on `uvm_test_top.env.drv0` only; there are 3 `CB` messages, 3 `DRV` lines from drv0 with `error=1 delay_cycles=2` and 3 clean ones from drv1, and 3 `PARITY_ERR` errors, all from `vif0`. The third error appears only because the test sets a 20 ns drain time before dropping its objection.",
+        "starterCode": ""
+      },
+      {
+        "id": "4",
         "version": "1",
         "completion": "self_attested",
-        "title": "Step 3: Attach in the Test",
-        "instructions": "In `my_test::connect_phase` (not `build_phase`: `env.drv` is still null there, and `add(null, cb)` would register the callback type-wide), create the callback and attach it with `uvm_callbacks#(packet_driver, packet_driver_cb)::add(env.drv, my_cb)`. Run: each of the three packets should show a `CB` message, `error=1 delay_cycles=2` in the `DRV` line, and one `PARITY_ERR` error.",
+        "title": "Step 4: Break it on purpose",
+        "instructions": "Move the callback's creation and `add()` into `my_test::build_phase`, right after `env` is created, and change the `final_phase` delete to `delete(null, my_cb)`. Predict the counts and the `display()` output, then run. Expect 6 `CB` lines, 6 `PARITY_ERR` errors (3 from `vif0`, 3 from `vif1`) and a type-wide `(*)` row in `display()`: `env.drv0` was still null, so `add()` registered the callback for every `packet_driver`. Explain why one driver alone could not reveal this mistake, then restore `connect_phase`.",
+        "starterCode": ""
+      },
+      {
+        "id": "5",
+        "version": "1",
+        "completion": "self_attested",
+        "title": "Step 5 (optional): Stack and switch",
+        "instructions": "Split the callback into `delay_cb` (sets `extra_delay_cycles = 2`) and `parity_err_cb` (sets `inject_parity_error = 1`, counts its packets and calls `callback_mode(0)` on itself after the second). Add `parity_err_cb` to `env.drv0`, then `delay_cb` with `UVM_PREPEND`. Predict the order in `display()` and the error count, then run: `delay_cb` is listed first, all 3 drv0 packets are delayed, and there are exactly 2 `PARITY_ERR` errors, both from `vif0`.",
         "starterCode": ""
       }
     ],

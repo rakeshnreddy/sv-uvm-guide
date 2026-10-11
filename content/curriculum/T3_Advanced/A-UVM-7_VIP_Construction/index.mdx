@@ -1,166 +1,150 @@
 ---
 title: "A-UVM-7: VIP Construction"
-description: "Architect, build, and package reusable Verification IP for standard protocols — from agent internals to directory structure and integration best practices."
+description: "Build and package a protocol agent as reusable verification IP (configuration object, driver, monitor, responder, interface checks, coverage, sequences) that works active or passive at block and SoC level."
 flashcards: "A-UVM-7_VIP_Construction"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "AMBA APB Protocol Specification v2.0"
+    type: "standard"
+    identifier: "Arm IHI 0024C"
 ---
 
 ## Quick Take
-- **What it is:** Verification IP (VIP) is a self-contained, reusable verification component that encapsulates everything needed to verify a specific protocol interface: an agent (driver + monitor + sequencer), a protocol checker, a coverage model, a sequence library, and an SV interface with assertions.
-- **Why it matters:** Professional verification teams spend 30–60% of testbench bring-up time integrating protocol agents. A well-architected VIP eliminates this cost for every subsequent project that uses the same protocol. Commercial VIP from Synopsys (VIP Catalog), Cadence (VIPCAT), and Siemens (Questa VIP) follows these exact patterns.
-- **The Standard:** While IEEE 1800.2 does not prescribe a VIP structure, the de facto industry standard is an agent-based architecture with a configurable `is_active` flag, a parameterized interface, and a package file that encapsulates all types and components.
 
-## What is a VIP and Why It Matters
+- **What it is:** **Verification IP (VIP)** is a protocol agent packaged so that other teams can use it without reading its source. It ships a **package** of classes (a configuration object, a sequence item, a driver, a monitor, a sequencer, a coverage collector and ready-made sequences), plus an **interface** that holds the protocol's signals, its clocking blocks and its protocol assertions. The interface sits outside the package, because a SystemVerilog package cannot contain an interface. A VIP also ships a self-test, a version number and a user guide.
+- **Why it matters:** One VIP, written once, drives a bus at block level (an **active** agent) and only watches the same bus at chip level, where real hardware drives it (a **passive** agent). The settings that make this switch live in one configuration object, so nobody edits the VIP to reuse it. A VIP also decides whether its protocol checks count: assertion failures reach the UVM report summary only if the VIP reports them through UVM, and a regression that reads only `UVM_ERROR :    0` passes protocol violations it never counted.
+- **The Analogy:** A bench protocol exerciser with an analyzer mode, the kind of box you plug into one connector standard. In exerciser mode it generates traffic (active); in analyzer mode it only listens (passive). It comes with compliance checks, a coverage report, a manual and a firmware version. *Where it breaks:* a passive agent is not the same box with the generator switched off. Its driver and sequencer are never constructed, so their handles are `null`. And a real analyzer's red light is always visible, while a VIP's checks count only if they report through the UVM report server.
 
-A VIP is not just "a UVM agent." It is a **complete verification solution** for a protocol interface that includes:
+**You will be able to:**
+1. **Write** a VIP configuration object (`vif`, `is_active`, `has_coverage`, `checks_enable`, protocol and policy knobs) and an agent that builds from it, so one setting makes it active or passive and a passive build never constructs a driver or a sequencer.
+2. **Write** a driver and a monitor that use the interface's clocking blocks through the virtual interface: the driver recovers from reset (stop, release the item, idle, resume) and the monitor publishes a new object per observed transfer. **Write** a responder driver and the reactive sequence that feeds it.
+3. **Write** the VIP's package (include order, the interface outside the package, a parameterized interface with a virtual-interface typedef) and **integrate** it into a new environment through `uvm_config_db`.
+4. **Debug** a run whose interface assertion fired but whose summary says `UVM_ERROR :    0`: route assertion failures through UVM reporting, and gate checks and coverage from the configuration object.
+5. **Evaluate** a third-party VIP before integrating it: virtual-interface type and parameters, configuration paths, item and sequencer compatibility, version support and self-test evidence.
 
-| Component | Purpose | Reuse Scope |
+<BeforeYouStart />
+
+## Build Your Mental Model
+
+### What a VIP contains, and what it leaves out
+
+You already know the parts of an **agent** from [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index): a **sequencer** that hands sequence items to a **driver**, which turns each item into pin activity, and a **monitor** that turns pin activity back into transactions and publishes them on an **analysis port** (a broadcast output, [I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)). The driver and monitor reach the pins through a **virtual interface**, a class-side handle to an interface instance (IEEE 1800-2023 §25.9), and they time their reads and writes with the interface's **clocking blocks** ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)).
+
+A VIP is that agent made reusable by someone who has never seen your testbench. That adds four things: a **configuration object** that is the VIP's only settings API, **sequences** that test writers start instead of building items by hand, **checks and coverage** that work in any environment, and the **shipping material**: package file, version, self-test and documentation.
+
+| Part | Where it lives | Job |
 |---|---|---|
-| **SV Interface** | Signal-level connection to DUT | Shared across all testbenches using this protocol |
-| **Agent** | Driver + Monitor + Sequencer bundle | Configurable for active (driving) or passive (monitoring) mode |
-| **Protocol Checker** | Assertion-based protocol compliance monitor | Catches DUT protocol violations independent of test scenarios |
-| **Coverage Model** | Covergroups for protocol-level functional coverage | Measures protocol feature exercised across all tests |
-| **Sequence Library** | Pre-built sequences for common operations | Accelerates test development |
-| **Configuration Object** | Parameters, mode flags, timing knobs | Allows per-instance customization without code changes |
-| **Package File** | Compilation unit encapsulating all types | Clean namespace management |
+| `apb_if` interface | outside the package, instantiated in `tb_top` | signals, clocking blocks `drv_cb`, `rsp_cb`, `mon_cb`, and the protocol assertions |
+| `apb_agent_config` | `apb_pkg` | every setting: `vif`, `is_active`, `role`, `has_coverage`, `checks_enable`, responder policy |
+| `apb_item` | `apb_pkg` | the data API: request fields, response fields, `do_copy`, `do_compare`, `convert2string` |
+| `apb_agent` with `sqr`, `drv`, `mon`, `cov` | `apb_pkg` | builds what the configuration asks for; publishes observed transfers on `ap` |
+| `apb_base_seq`, `apb_rw_seq`, `apb_reactive_seq` | `apb_pkg` | stimulus that test writers start and extend |
+| self-test, version, user guide | shipped beside the package | proof that the VIP works, and the contract for its users |
 
-## VIP Internal Architecture
+What stays **outside** the VIP matters as much. A **scoreboard** compares what went into the design under test (DUT) with what came out, which needs at least two interfaces, so it belongs to the environment that uses the VIP ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)). The VIP's monitor feeds scoreboards; it never contains one.
 
-### The Agent as the Core Building Block
+The picture shows the VIP built in this lesson. The names match the code in Make It Work exactly.
 
-```systemverilog
-class apb_agent extends uvm_agent;
-  `uvm_component_utils(apb_agent)
+<ArchitectureDiagram
+  title="Anatomy of the APB VIP built in this lesson"
+  caption="Everything inside apb_pkg is a class. The interface instance bus lives in tb_top, outside the package, and holds the clocking blocks and assertions. The agent publishes observed transfers on its own port ap, which the user's env connects to a scoreboard outside the VIP. cov exists only when has_coverage is 1; sqr and drv exist only in an active agent."
+  cellWidth={130}
+  nodes={[
+    { id: "pkg", label: "apb_pkg", sublabel: "the VIP's classes", kind: "generic", col: 0, row: 0, colSpan: 4, rowSpan: 3, container: true },
+    { id: "agt", label: "agt", sublabel: "apb_agent", kind: "agent", col: 1, row: 0, colSpan: 3, rowSpan: 2, container: true },
+    { id: "cfg", label: "cfg", sublabel: "apb_agent_config", kind: "generic", col: 0, row: 0 },
+    { id: "item", label: "apb_item", sublabel: "request + response", kind: "generic", col: 0, row: 1 },
+    { id: "seqs", label: "sequences", sublabel: "apb_base_seq and children", kind: "sequence", col: 0, row: 2 },
+    { id: "sqr", label: "sqr", sublabel: "apb_sequencer", kind: "sequencer", col: 1, row: 0 },
+    { id: "drv", label: "drv", sublabel: "master or responder", kind: "driver", col: 1, row: 1 },
+    { id: "mon", label: "mon", sublabel: "apb_monitor", kind: "monitor", col: 2, row: 1 },
+    { id: "cov", label: "cov", sublabel: "if has_coverage", kind: "subscriber", col: 3, row: 1 },
+    { id: "bus", label: "bus", sublabel: "apb_if: clocking blocks + SVA", kind: "interface", col: 1, row: 3, colSpan: 2 },
+    { id: "dut", label: "DUT", sublabel: "APB slave or master", kind: "dut", col: 3, row: 3 },
+    { id: "scb", label: "scb", sublabel: "user's env, not the VIP", kind: "scoreboard", col: 4, row: 0 }
+  ]}
+  ports={[
+    { id: "drv.port", node: "drv", side: "top", kind: "port", label: "seq_item_port" },
+    { id: "sqr.export", node: "sqr", side: "bottom", kind: "export", label: "seq_item_export" },
+    { id: "mon.ap", node: "mon", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "cov.imp", node: "cov", side: "left", kind: "analysis_imp", label: "analysis_export" },
+    { id: "agt.ap", node: "agt", side: "right", at: 0.25, kind: "analysis_port", label: "ap" },
+    { id: "scb.imp", node: "scb", side: "left", kind: "analysis_imp", label: "analysis_export" }
+  ]}
+  edges={[
+    { from: "drv.port", to: "sqr.export", style: "control", label: "get_next_item" },
+    { from: "drv", to: "bus", style: "data", label: "drv_cb" },
+    { from: "bus", to: "mon", style: "data", label: "mon_cb" },
+    { from: "bus", to: "dut", style: "structural", label: "pins" },
+    { from: "mon.ap", to: "cov.imp", style: "data", label: "write(tr)" },
+    { from: "mon.ap", to: "agt.ap", style: "data", via: [[2.5, 0]] },
+    { from: "agt.ap", to: "scb.imp", style: "data", label: "write(tr)" },
+    { from: "cfg", to: "sqr", style: "causal", label: "handle" }
+  ]}
+/>
 
-  apb_driver     driver;
-  apb_monitor    monitor;
-  apb_sequencer  sequencer;
-  apb_coverage   coverage;
+### The APB3 subset this VIP speaks
 
-  // Configuration object — set via uvm_config_db
-  apb_agent_config cfg;
+The example protocol is **APB**, Arm's simple register bus (Arm IHI 0024C). It has no dedicated lesson yet (a B-APB-1 module is planned), so this section defines the subset the VIP implements. IHI 0024C calls the revision with wait states and error reporting **APB3** and the one that adds `PPROT` and `PSTRB` **APB4** (§1.2). This VIP implements APB3 signals with 32-bit buses, the maximum the specification allows (§2.1.1).
 
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-  endfunction
+The **master** (the requester, usually a bridge) drives `PSEL`, `PENABLE`, `PWRITE`, `PADDR` and `PWDATA`. The **slave** (the completer) drives `PREADY`, `PRDATA` and `PSLVERR`. Later Arm issues call these roles manager and subordinate. Every transfer has two phases (§4.1):
 
-  function void build_phase(uvm_phase phase);
-    super.build_phase(phase);   // uvm_agent reads an "is_active" config_db entry here
+- **SETUP:** `PSEL` = 1, `PENABLE` = 0. It always lasts exactly one clock cycle; the bus moves to ACCESS at the next rising edge. Address, direction and write data must not change between SETUP and ACCESS.
+- **ACCESS:** `PSEL` = 1, `PENABLE` = 1. The slave ends it by driving `PREADY` high. While `PREADY` is low the transfer waits, and the master holds `PADDR`, `PWRITE`, `PSEL`, `PENABLE` and, for writes only, `PWDATA` unchanged (§3.1.2, §3.3.2). Any number of wait states is legal, from zero upwards (§3.3.2). `PREADY` may take any value while `PENABLE` is low (§3.1.2).
+- **Completion:** the transfer completes at the edge where `PSEL`, `PENABLE` and `PREADY` are all 1. `PSLVERR` counts only at that edge (§3.4); `PRDATA` is valid there for reads. `PENABLE` falls after completion (§3.1.1).
 
-    if (!uvm_config_db#(apb_agent_config)::get(this, "", "cfg", cfg))
-      `uvm_fatal("NO_CFG", "Agent config not found in config_db")
+APB has **no bursts**: every transfer is a separate SETUP and ACCESS, so it takes at least two cycles. In the waveform, each value is the one **sampled at that rising edge**, which is what a clocking block reads and what the slave's flops capture.
 
-    // One source of truth: the config object decides, get_is_active() reports it
-    is_active = cfg.is_active;
+<TimingDiagram
+  title="APB3: a write with one wait state, then a read that completes with an error"
+  caption="Edge numbers are rising edges of PCLK; each column shows the value sampled at that edge. Bus values are hexadecimal, and hatching means not yet driven. The master idles one cycle between transfers. PADDR and PWRITE keep their last values while idle, which IHI 0024C (§3.1.2) recommends to reduce power; PWDATA simply holds its last value too."
+  edges={8}
+  signals={[
+    { name: "PCLK", kind: "clock" },
+    { name: "PSEL", kind: "bit", values: [0, 1, 1, 1, 0, 1, 1, 0] },
+    { name: "PENABLE", kind: "bit", values: [0, 0, 1, 1, 0, 0, 1, 0] },
+    { name: "PWRITE", kind: "bit", values: [undefined, 1, 1, 1, 1, 0, 0, 0] },
+    { name: "PADDR", kind: "bus", values: [undefined, "10", "10", "10", "10", "14", "14", "14"] },
+    { name: "PWDATA", kind: "bus", values: [undefined, "A5", "A5", "A5", "A5", "A5", "A5", "A5"] },
+    { name: "PREADY", kind: "bit", values: [0, 0, 0, 1, 0, 0, 1, 0] },
+    { name: "PRDATA", kind: "bus", values: ["00", "00", "00", "00", "00", "00", "3C", "3C"] },
+    { name: "PSLVERR", kind: "bit", values: [0, 0, 0, 0, 0, 0, 1, 0] }
+  ]}
+  markers={[
+    { edge: 1, tone: "info", label: "edge 1: SETUP of the write (PSEL 1, PENABLE 0); it lasts exactly one cycle" },
+    { edge: 2, tone: "info", label: "edge 2: ACCESS with PREADY 0, a wait state; the master holds PADDR, PWRITE and PWDATA" },
+    { edge: 3, tone: "pass", label: "edge 3: write completes, PSEL, PENABLE and PREADY all 1; PSLVERR 0" },
+    { edge: 5, tone: "info", label: "edge 5: SETUP of the read at 0x14" },
+    { edge: 6, tone: "sample", label: "edge 6: read completes with PRDATA 3C and PSLVERR 1; this is the only edge where PSLVERR counts" }
+  ]}
+/>
 
-    // Monitor is ALWAYS built (both active and passive mode)
-    monitor = apb_monitor::type_id::create("monitor", this);
+Before reading on, predict: at edge 4, would a protocol checker complain that `PADDR` is still `10` although no transfer is running? (No. Outside a transfer the address has no meaning, and the specification recommends keeping the address and `PWRITE` stable until the next access, §3.1.2.)
 
-    // Coverage collector is ALWAYS built
-    coverage = apb_coverage::type_id::create("coverage", this);
+### The configuration object is the VIP's API
 
-    // Driver and sequencer are only built in ACTIVE mode
-    if (get_is_active() == UVM_ACTIVE) begin
-      driver    = apb_driver::type_id::create("driver", this);
-      sequencer = apb_sequencer::type_id::create("sequencer", this);
-    end
-  endfunction
-
-  function void connect_phase(uvm_phase phase);
-    super.connect_phase(phase);
-
-    // Monitor analysis port → coverage collector
-    monitor.ap.connect(coverage.analysis_export);
-
-    // Driver ↔ sequencer connection (active mode only: in passive mode both handles are null)
-    if (get_is_active() == UVM_ACTIVE) begin
-      driver.seq_item_port.connect(sequencer.seq_item_export);
-    end
-  endfunction
-endclass
-```
-
-### The Interface with Protocol Assertions
-
-```systemverilog
-interface apb_if (input logic pclk, input logic preset_n);
-  import uvm_pkg::*;
-  `include "uvm_macros.svh"
-
-  logic        psel;
-  logic        penable;
-  logic        pwrite;
-  logic [31:0] paddr;
-  logic [31:0] pwdata;
-  logic [31:0] prdata;
-  logic        pready;
-  logic        pslverr;
-
-  // ------ Protocol checker assertions ------
-  // Reported through UVM so they count in the UVM_ERROR total, and switchable
-  // for error-injection tests that break the protocol on purpose.
-  bit checks_enable = 1;
-
-  // A SETUP cycle (PSEL=1, PENABLE=0) is always followed by an ACCESS cycle
-  property p_setup_then_access;
-    @(posedge pclk) disable iff (!preset_n || !checks_enable)
-    (psel && !penable) |=> (psel && penable);
-  endproperty
-  assert property (p_setup_then_access)
-    else `uvm_error("APB_SVA", "SETUP cycle not followed by ACCESS")
-
-  // PENABLE rises only one cycle after a SETUP cycle
-  property p_enable_needs_setup;
-    @(posedge pclk) disable iff (!preset_n || !checks_enable)
-    $rose(penable) |-> $past(psel && !penable);
-  endproperty
-  assert property (p_enable_needs_setup)
-    else `uvm_error("APB_SVA", "PENABLE asserted without a preceding SETUP cycle")
-
-  // While the slave waits (PREADY=0), the master holds the transfer stable
-  property p_access_stable;
-    @(posedge pclk) disable iff (!preset_n || !checks_enable)
-    (psel && penable && !pready) |=> (psel && penable && $stable({paddr, pwrite, pwdata}));
-  endproperty
-  assert property (p_access_stable)
-    else `uvm_error("APB_SVA", "PSEL, PENABLE, PADDR, PWRITE or PWDATA changed during a wait state")
-
-  // ------ Clocking blocks for driver/monitor ------
-  clocking driver_cb @(posedge pclk);
-    output psel, penable, pwrite, paddr, pwdata;
-    input  prdata, pready, pslverr;
-  endclocking
-
-  clocking monitor_cb @(posedge pclk);
-    input psel, penable, pwrite, paddr, pwdata, prdata, pready, pslverr;
-  endclocking
-
-  modport driver_mp  (clocking driver_cb, input pclk, preset_n);
-  modport monitor_mp (clocking monitor_cb, input pclk, preset_n);
-endinterface
-```
-
-> **Why not `$error`?** A plain `$error` goes to the simulator, not to the UVM report server. The UVM summary still says `UVM_ERROR : 0`, and a regression that only checks that line passes with protocol violations. `` `uvm_error `` works in an interface once it imports `uvm_pkg` (it calls the global `uvm_report_error`). Tests that inject protocol errors clear `checks_enable` through the virtual interface, or demote the `APB_SVA` id with a report catcher, so the deliberate violation does not fail the test.
-
-## Passive vs Active Agent Mode
-
-The `is_active` flag is the single most important VIP configuration parameter:
-
-| Mode | `is_active` | Components Built | Use Case |
-|---|---|---|---|
-| **Active** | `UVM_ACTIVE` | Driver + Monitor + Sequencer + Coverage | Acting as a bus master or slave — driving and monitoring |
-| **Passive** | `UVM_PASSIVE` | Monitor + Coverage only | Observing an existing interface without driving — used for protocol checking and coverage collection on DUT-to-DUT connections |
+A test writer should change a VIP's behaviour in one place, with one type, without knowing the VIP's internal paths. That place is the **configuration object**, a `uvm_object` that the test creates, fills and hands to the agent through the **configuration database** (`uvm_config_db`, [I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)).
 
 ```systemverilog
-// Configuration object
+// snippet: from apb_pkg (complete version in Make It Work)
+typedef virtual apb_if #(.AW(32), .DW(32)) apb_vif_t;  // the one vif type of this VIP
+typedef enum {APB_MASTER, APB_RESPONDER} apb_role_e;
+
 class apb_agent_config extends uvm_object;
   `uvm_object_utils(apb_agent_config)
 
-  uvm_active_passive_enum is_active = UVM_ACTIVE;
-  virtual apb_if vif;
-
-  // Protocol timing parameters
-  int unsigned setup_time  = 1;  // PSEL to PENABLE delay in cycles
-  int unsigned max_wait    = 16; // Maximum PREADY wait cycles before timeout
+  apb_vif_t               vif;                        // which interface instance
+  uvm_active_passive_enum is_active     = UVM_ACTIVE; // build drv and sqr?
+  apb_role_e              role          = APB_MASTER; // active only: which side to play
+  bit                     has_coverage  = 1;          // build cov?
+  bit                     checks_enable = 1;          // interface assertions on?
+  int unsigned            max_wait      = 3;          // responder: most wait states
+  int unsigned            slverr_pct    = 10;         // responder: PSLVERR rate, 0..100
 
   function new(string name = "apb_agent_config");
     super.new(name);
@@ -168,163 +152,1834 @@ class apb_agent_config extends uvm_object;
 endclass
 ```
 
-**One mechanism, two places to set it.** `uvm_agent` has an `is_active` field (default `UVM_ACTIVE`), and `uvm_agent::build_phase` fills it from a config_db entry named `"is_active"` if a test set one (uvm-core `uvm_agent.svh`). This agent copies `cfg.is_active` into that field right after `super.build_phase()`, so its own code, and anyone else, asks `get_is_active()` and gets one answer. A test configures this VIP through its config object; a VIP without a config object is configured with `uvm_config_db#(uvm_active_passive_enum)::set(..., "is_active", UVM_PASSIVE)`. Read the VIP's documentation to know which.
+The flow has a fixed order. `tb_top` publishes the interface instance before the test exists; the test reads it during its `build_phase`, creates the configuration object and sets it for the agent's path; the agent gets it once in its own `build_phase` and hands the **same handle** to its children. Because the build phase runs top-down (IEEE 1800.2-2020 §9.8.1.1), each step happens before the step that needs it.
 
-Predict which components exist after `build_phase` in passive mode, then switch levels. Under "break the agent", forget `super.build_phase()` or the `connect_phase` guard and watch what fails.
+<SequenceDiagram
+  title="How the virtual interface and the configuration reach the VIP's components"
+  caption="Follow the handle. tb_top sets the vif before run_test(); the test wraps it in cfg; the agent fetches cfg once and passes the same handle down. Nothing below the agent touches uvm_config_db."
+  participants={[
+    { id: "top", label: "tb_top", sublabel: "module", kind: "generic" },
+    { id: "db", label: "uvm_config_db", kind: "generic" },
+    { id: "test", label: "test", sublabel: "uvm_test_top", kind: "test" },
+    { id: "agt", label: "agt", sublabel: "apb_agent", kind: "agent" },
+    { id: "kids", label: "mon, drv", sublabel: "children", kind: "monitor" }
+  ]}
+  messages={[
+    { from: "top", to: "db", label: 'set(null, "uvm_test_top", "vif", bus)' },
+    { kind: "divider", label: "run_test(): build_phase, top-down" },
+    { from: "test", to: "db", label: 'get(this, "", "vif", vif)' },
+    { kind: "return", from: "db", to: "test", label: "1: vif found" },
+    { kind: "self", from: "test", label: "cfg = create; cfg.vif = vif; cfg.is_active = ..." },
+    { from: "test", to: "db", label: 'set(this, "env.agt", "cfg", cfg)' },
+    { from: "agt", to: "db", label: 'get(this, "", "cfg", cfg)' },
+    { kind: "return", from: "db", to: "agt", label: "1: cfg found" },
+    { kind: "self", from: "agt", label: "is_active = cfg.is_active; create children" },
+    { from: "agt", to: "kids", label: "mon.cfg = cfg; drv.cfg = cfg" },
+    { kind: "divider", label: "connect_phase" },
+    { kind: "self", from: "agt", label: "cfg.vif.checks_enable = cfg.checks_enable" }
+  ]}
+/>
+
+**Misconception: "VIP settings should be many scalar `config_db` fields."** It is tempting to give every knob its own `uvm_config_db` entry. With nine knobs and four agents that is 36 untyped lookups by string. A typo in a field name, or a `set` with `int` where the `get` uses `int unsigned`, makes the `get()` return 0 with no message, and the agent quietly runs on its defaults. One configuration object means one typed lookup that fails loudly (`NO_CFG`), defaults that live in one class, a `convert2string` that prints every setting, and an object you can randomize or copy for a second agent. The standard `"is_active"` entry still exists (§13.4.2.2); the next section shows how this VIP treats it.
+
+The explorer below runs a model of `uvm_config_db` lookups. Choose the scenario **Debug: type mismatch**: `tb_top` publishes the interface, and the driver asks for a modport view of it. **Predict** what `get()` returns and what message appears, then reveal. You should see `get()` return 0 with no message: the database matches on the exact type, and a **modport** (a named view of an interface, [F4B](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index)) is part of a virtual interface's type (§25.9). The same silence happens when the interface's **parameters** differ, which is why this VIP declares its vif type once, as `apb_vif_t`, and uses it on both sides.
+
+<ConfigDbExplorer />
+
+### Active and passive: what the agent builds
+
+The agent's `build_phase` decides the topology. It fetches the configuration, copies the mode into `uvm_agent`'s `is_active`, always builds the monitor, builds the coverage collector only when asked, and builds the sequencer and driver only when the agent is active.
+
+```systemverilog
+// snippet: apb_agent::build_phase and connect_phase (complete class in Make It Work)
+function void build_phase(uvm_phase phase);
+  super.build_phase(phase);   // uvm-core reads a scalar "is_active" setting here
+  if (!uvm_config_db#(apb_agent_config)::get(this, "", "cfg", cfg))
+    `uvm_fatal("NO_CFG", {"no apb_agent_config named cfg for ", get_full_name()})
+  if (cfg.vif == null)
+    `uvm_fatal("NO_VIF", {"cfg.vif is null for ", get_full_name()})
+  is_active = cfg.is_active;  // the config object wins (uvm-core member, see below)
+  ap  = new("ap", this);
+  mon = apb_monitor::type_id::create("mon", this);
+  mon.cfg = cfg;
+  if (cfg.has_coverage) cov = apb_coverage::type_id::create("cov", this);
+  if (get_is_active() == UVM_ACTIVE) begin   // passive: sqr and drv stay null
+    sqr = apb_sequencer::type_id::create("sqr", this);
+    sqr.cfg = cfg;
+    if (cfg.role == APB_MASTER) drv = apb_master_driver::type_id::create("drv", this);
+    else                        drv = apb_responder_driver::type_id::create("drv", this);
+    drv.cfg = cfg;
+  end
+endfunction
+
+function void connect_phase(uvm_phase phase);
+  super.connect_phase(phase);
+  mon.ap.connect(ap);         // the env connects to agt.ap, never to agt.mon.ap
+  if (cfg.has_coverage) mon.ap.connect(cov.analysis_export);
+  if (get_is_active() == UVM_ACTIVE) begin   // same test as build: handles may be null
+    drv.seq_item_port.connect(sqr.seq_item_export);
+    if (cfg.role == APB_RESPONDER) mon.req_ap.connect(sqr.req_fifo.analysis_export);
+  end
+  cfg.vif.checks_enable = cfg.checks_enable;
+endfunction
+```
+
+**Misconception: "a passive agent is an active agent with an idle driver."** Passive means *never constructed*. The `if` branch is skipped, `create()` is never called, and `sqr` and `drv` stay `null`. An idle driver would still own clocking-block outputs on the bus. Anything that touches `agt.sqr` in a passive agent meets a `null` handle: starting a sequence on it ends in a fatal error (uvm-core 2020.3.1 reports `UVM_FATAL ... [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied to start item`).
+
+**One mode, two places to set it.** IEEE 1800.2-2020 §13.4.2.2 defines `get_is_active()` and a configuration setting named `"is_active"`. In uvm-core, `uvm_agent` stores the mode in a member variable `is_active`, which `uvm_agent::build_phase` fills from that setting; the member itself is an implementation detail, not part of the standard. This agent copies `cfg.is_active` into the member *after* `super.build_phase()`, so `get_is_active()` gives one answer everywhere, and **a scalar `"is_active"` setting, or `+uvm_set_config_string=<path>,is_active,UVM_PASSIVE`, is silently ignored**. The VIP's user guide must say so. A portable alternative is to override the virtual `get_is_active()` to return `cfg.is_active`, which §13.4.2.2 explicitly allows.
+
+The visualizer below shows one agent reused at two levels: at block level it drives an SPI block; at SoC level the CPU's firmware drives the same bus, so the agent must only watch. Its agent is a simpler `spi_agent` that takes the mode from the scalar `"is_active"` setting, not from a configuration object, but what gets built is the same. **Predict** which components exist in passive mode, then switch levels. Then open **break the agent** and tick "Forget super.build_phase(phase)".
 
 <VIPReuseVisualizer />
 
-**When to use passive mode:**
-- Monitoring traffic between two DUT-internal interfaces
-- Adding protocol checking to an interface already driven by another agent or the RTL itself
-- Collecting coverage on interfaces where driving would cause contention
+**Debrief.** In passive mode only the monitor and coverage exist, and the driver and sequencer rows show `null`, not "disabled". The contention view shows what goes wrong when an agent stays active at SoC level: two drivers on one bus. The broken `spi_agent` stays active because the scalar setting is read inside `uvm_agent::build_phase`, which it skipped. Our `apb_agent` has a different single point of failure: forget the line `is_active = cfg.is_active;` and it stays active whatever the test put in the configuration object. Either way the symptom is the same, and `print_topology` shows it: a driver inside an agent you believed was passive.
 
-## Packaging a VIP for Reuse
+### The driver: clocking-block drives and reset
 
-### Recommended Directory Structure
+A driver must do two things right: drive the pins only through its clocking block, and survive a reset in the middle of a transfer.
 
-```
-vip/
-└── apb_vip/
-    ├── apb_pkg.sv                    ← Package file (compilation entry point)
-    ├── apb_if.sv                     ← Interface + protocol assertions
-    ├── src/
-    │   ├── apb_types.sv              ← Enums, typedefs, parameters
-    │   ├── apb_transaction.sv        ← Sequence item
-    │   ├── apb_agent_config.sv       ← Configuration object
-    │   ├── apb_driver.sv             ← Driver
-    │   ├── apb_monitor.sv            ← Monitor
-    │   ├── apb_sequencer.sv          ← Sequencer (typedef or class)
-    │   ├── apb_coverage.sv           ← Functional coverage model
-    │   ├── apb_agent.sv              ← Agent (top-level component)
-    │   └── apb_protocol_checker.sv   ← Standalone protocol checker
-    ├── sequences/
-    │   ├── apb_base_seq.sv           ← Base sequence with common helpers
-    │   ├── apb_single_write_seq.sv   ← Single write transaction
-    │   ├── apb_single_read_seq.sv    ← Single read transaction
-    │   ├── apb_burst_seq.sv          ← Burst of transactions
-    │   └── apb_error_inject_seq.sv   ← Protocol error injection
-    ├── tests/
-    │   ├── apb_base_test.sv          ← Base test with agent instantiation
-    │   └── apb_sanity_test.sv        ← VIP self-test
-    └── docs/
-        ├── README.md                 ← Integration guide
-        └── apb_vip_userguide.pdf     ← API reference
-```
-
-### The Package File
-
-The package file controls compilation order and provides a clean namespace:
+**Clocking-block drives.** A synchronous drive such as `vif.drv_cb.psel <= 1'b1;` with zero output skew, executed in the time step of a clock edge, changes the signal in the Re-NBA region of that time step (a late scheduling region, after every flop has sampled the edge; see [F3B](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index)), so the value is sampled at the **next** edge (IEEE 1800-2023 §14.16). That is why the master below waits for an edge first, then drives, then waits for the edge that samples what it drove. It reads `PREADY` from `vif.drv_cb.pready`, the value sampled just before the edge (input skew `1step` by default, §14.3).
 
 ```systemverilog
+// snippet: apb_master_driver::drive_item (complete class in Make It Work)
+virtual task drive_item(apb_item it);
+  @(vif.drv_cb);                            // start just after an edge
+  vif.drv_cb.psel    <= 1'b1;               // SETUP: sampled at the next edge
+  vif.drv_cb.penable <= 1'b0;
+  vif.drv_cb.pwrite  <= it.write;
+  vif.drv_cb.paddr   <= it.addr;
+  if (it.write) vif.drv_cb.pwdata <= it.wdata;
+  @(vif.drv_cb);                            // the SETUP edge
+  vif.drv_cb.penable <= 1'b1;               // ACCESS
+  @(vif.drv_cb);                            // first ACCESS edge
+  it.wait_cycles = 0;
+  while (vif.drv_cb.pready !== 1'b1) begin  // wait states: hold everything
+    it.wait_cycles++;
+    @(vif.drv_cb);
+  end
+  if (!it.write) it.rdata = vif.drv_cb.prdata;  // valid at the completion edge only
+  it.slverr = vif.drv_cb.pslverr;
+  drive_idle();                             // PSEL, PENABLE low at the next edge
+endtask
+```
+
+**Reset: stop, release, idle, resume.** Reset can arrive in the middle of a wait state. The driver must stop driving at once, release the item it holds so the sequence is not stuck, put the bus in its idle state, and start again only after reset ends. The rule that makes this safe is **one `item_done()` per `get_next_item()`, always**: `finish_item()` in the sequence returns only after the driver signals that the item is done (IEEE 1800.2-2020 §14.2.6.3). This VIP writes the recipe once, in a base class shared by the master and the responder; each role supplies only `drive_item` and `drive_idle`.
+
+```systemverilog
+// snippet: apb_driver_base::run_phase (complete class in Make It Work)
+task run_phase(uvm_phase phase);
+  drive_idle();
+  forever begin
+    seq_item_port.get_next_item(req);
+    wait (vif.preset_n === 1'b1);           // never start an item during reset
+    fork
+      begin : guard                         // keeps disable fork local to this block
+        fork
+          drive_item(req);
+          wait (vif.preset_n === 1'b0);     // reset asserted mid-item
+        join_any
+        disable fork;
+      end
+    join
+    if (vif.preset_n !== 1'b1) begin
+      drive_idle();                         // takes effect at the next clock edge
+      `uvm_info("APB_RST", {"aborted by reset: ", req.convert2string()}, UVM_MEDIUM)
+    end else begin
+      apb_item done;
+      $cast(done, req.clone());
+      done_ap.write(done);                  // the completed item, as this driver saw it
+    end
+    seq_item_port.item_done();              // exactly one per get_next_item
+  end
+endtask
+```
+
+Three details are easy to miss:
+- **`disable fork` kills every child process of the calling process** (IEEE 1800-2023 §9.6.3), not just the two in this `fork`. The `guard` block makes the `drive_item` and `wait` threads children of a fresh process, so the `disable fork` cannot reach anything else `run_phase` may have started.
+- **Reset is read directly from `vif.preset_n`, not through the clocking block**, because it is asynchronous: a clocking block would see it only at the next edge.
+- **`get_next_item()` is never inside the killed fork.** Killing a driver while it waits inside the sequencer's handshake leaves the sequencer's bookkeeping to the implementation; this structure never does it.
+
+<TimingDiagram
+  title="Reset during a wait state: the driver aborts, releases the item and resumes"
+  caption="PRESETn falls between edges 2 and 3. The driver's wait wakes at once, kills drive_item, calls drive_idle() and item_done() in that same instant. A clocking drive executed between edges acts at the next edge (§14.16), so PSEL and PENABLE are still sampled 1 at edge 3 and are 0 from edge 4. Reset rises at edge 6 (sampled 1 at edge 7), and the next item's SETUP is sampled at edge 8."
+  edges={10}
+  signals={[
+    { name: "PCLK", kind: "clock" },
+    { name: "PRESETn", kind: "bit", values: [1, 1, 1, 0, 0, 0, 0, 1, 1, 1] },
+    { name: "PSEL", kind: "bit", values: [0, 1, 1, 1, 0, 0, 0, 0, 1, 1] },
+    { name: "PENABLE", kind: "bit", values: [0, 0, 1, 1, 0, 0, 0, 0, 0, 1] },
+    { name: "PREADY", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0] }
+  ]}
+  markers={[
+    { edge: 2, tone: "info", label: "edge 2: wait state of the item in flight" },
+    { edge: 3, tone: "drive", label: "between edges 2 and 3: reset falls; the driver kills drive_item, drives idle and calls item_done(), so finish_item returns in the sequence" },
+    { edge: 4, tone: "pass", label: "edge 4: PSEL and PENABLE sampled 0; the monitor already discarded the partial transfer at edge 3" },
+    { edge: 8, tone: "info", label: "edge 8: after reset, the next item's SETUP" }
+  ]}
+/>
+
+**Pitfalls.**
+- *A blocking assignment to a DUT input at the clock edge* (`vif.psel = 1;`) races with the flops that sample it ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)). Drive through the clocking block.
+- *Killing the transfer without `item_done()`.* The sequence waits in `finish_item()` forever, so its parent never ends and the test's **objection** (the counter that keeps the run phase alive until every raiser drops it, [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)) is never dropped. The symptom is a hang until the global timeout. This applies to drivers that use `get_next_item()`; a driver that uses `get()` has already completed the handshake when `get()` returns (§14.2.6.3 NOTE).
+- *Who else might flush the sequencer.* If the environment also calls `sqr.stop_sequences()` on reset, the in-flight item has two owners; see the expert item on reset ownership in Push Further.
+
+### The monitor: sample, build a new item, publish
+
+The monitor watches the bus through `mon_cb`, which samples every signal, including `preset_n`, at each edge. It recognizes a SETUP edge, publishes the request at once for any responder on the same bus, then waits for the completion edge, counts wait states on the way, and publishes the finished transfer.
+
+```systemverilog
+// snippet: apb_monitor (complete class in Make It Work)
+task run_phase(uvm_phase phase);
+  forever begin
+    @(vif.mon_cb);
+    if (vif.mon_cb.preset_n === 1'b1 && vif.mon_cb.psel === 1'b1
+        && vif.mon_cb.penable === 1'b0)
+      collect_transfer();                   // a SETUP edge
+  end
+endtask
+
+protected task collect_transfer();
+  apb_item rq, tr;
+  rq = apb_item::type_id::create("rq");     // the request, for responders, right now
+  rq.write = vif.mon_cb.pwrite;
+  rq.addr  = vif.mon_cb.paddr;
+  rq.wdata = vif.mon_cb.pwdata;
+  req_ap.write(rq);
+  tr = apb_item::type_id::create("tr");     // a NEW object for every transfer
+  tr.copy(rq);
+  forever begin
+    @(vif.mon_cb);
+    if (vif.mon_cb.preset_n !== 1'b1) return;               // reset: discard
+    if (vif.mon_cb.psel !== 1'b1 || vif.mon_cb.penable !== 1'b1) return;  // SVA reports
+    if (vif.mon_cb.pready === 1'b1) break;                  // completion edge
+    tr.wait_cycles++;
+  end
+  if (!tr.write) tr.rdata = vif.mon_cb.prdata;
+  tr.slverr = vif.mon_cb.pslverr;           // counts only at this edge (IHI 0024C §3.4)
+  ap.write(tr);
+endtask
+```
+
+**Why a new object every time.** `ap.write(tr)` passes a **handle**, not a copy: every subscriber receives a reference to the same object (IEEE 1800-2023 §8.4, §8.12). A subscriber may not modify what it receives (IEEE 1800.2-2020 §12.2.10.2), but nothing stops the *monitor* from modifying it later. If the monitor created `tr` once in `build_phase` and refilled it for each transfer, every handle a scoreboard stored would point at one object, which holds the last transfer.
+
+Trace three transfers to addresses `0x10`, `0x14` and `0x18` into a scoreboard that stores each handle it receives:
+
+| After transfer | Monitor reuses one `tr`: what the stored handles show | Monitor creates `tr` per transfer: what the stored handles show |
+|---|---|---|
+| 1 (`0x10`) | `[0x10]` | `[0x10]` |
+| 2 (`0x14`) | `[0x14, 0x14]`: both handles point at the one object | `[0x10, 0x14]` |
+| 3 (`0x18`) | `[0x18, 0x18, 0x18]` | `[0x10, 0x14, 0x18]` |
+
+Scoreboards should still copy before they store ([A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)), but a VIP cannot rely on every user doing so.
+
+**Reset in the monitor.** A transfer cut by reset never completed, so the monitor publishes nothing for it. Publishing a partial transfer would give the scoreboard a false mismatch.
+
+### Responder agents and reactive sequences
+
+So far the VIP plays the master. To verify an APB **master** DUT, such as a bridge, the VIP must play the **slave**: answer each request with wait states, read data and errors that a test can control. A **responder agent** (also called a slave or reactive agent) does that. Its stimulus cannot be generated in advance, because it depends on requests the DUT has not made yet, so it comes from a **reactive sequence**: a sequence that waits for a request, then produces the response.
+
+The pattern uses three pieces:
+1. The monitor publishes each request at its SETUP edge on a second analysis port, `req_ap`.
+2. The agent's sequencer holds a `uvm_tlm_analysis_fifo #(apb_item) req_fifo`, an unbounded FIFO with an `analysis_export` (IEEE 1800.2-2020 §12.2.8.3). In the responder role the agent connects `mon.req_ap` to it.
+3. The reactive sequence reaches that FIFO through `p_sequencer`, the typed handle to its sequencer that `` `uvm_declare_p_sequencer `` declares (Annex B.3.3). It blocks in `req_fifo.get()`, then creates a response item and sends it to the responder driver.
+
+```systemverilog
+// snippet: apb_reactive_seq::body and apb_responder_driver (Make It Work has both)
+task body();                                // apb_reactive_seq
+  apb_item obs, rsp;
+  forever begin
+    p_sequencer.req_fifo.get(obs);          // a request seen at a SETUP edge
+    rsp = apb_item::type_id::create("rsp");
+    start_item(rsp);
+    rsp.write = obs.write;
+    rsp.addr  = obs.addr;
+    rsp.wdata = obs.wdata;
+    rsp.c_aligned.constraint_mode(0);       // the DUT chose addr: do not re-check it
+    if (!rsp.randomize(wait_cycles, rdata, slverr) with {  // only these are random
+          wait_cycles <= p_sequencer.cfg.max_wait;
+          slverr dist {1 := p_sequencer.cfg.slverr_pct,
+                       0 := 100 - p_sequencer.cfg.slverr_pct};
+        })
+      `uvm_fatal("RAND", "response randomization failed")
+    finish_item(rsp);
+  end
+endtask
+
+virtual task drive_item(apb_item it);       // apb_responder_driver
+  repeat (it.wait_cycles) @(vif.rsp_cb);    // PREADY stays low: wait states
+  vif.rsp_cb.pready  <= 1'b1;
+  vif.rsp_cb.pslverr <= it.slverr;
+  if (!it.write) vif.rsp_cb.prdata <= it.rdata;
+  @(vif.rsp_cb);                            // the completion edge
+  drive_idle();                             // PREADY and PSLVERR low again
+endtask
+```
+
+`randomize(wait_cycles, rdata, slverr)` makes only those three fields random for this call; the request fields keep the observed values (IEEE 1800-2023 §18.11). The item's own constraints still apply to those state variables, and a constraint that fails on them makes `randomize()` fail. That is why the sequence first turns off `c_aligned`, the item's word-alignment rule for generated addresses: a responder must answer whatever address the DUT sends, not only the ones this VIP would have generated. Test writers change the responder's behaviour by extending this sequence or overriding it with the factory, never by editing the driver.
+
+<SequenceDiagram
+  title="One request answered by a responder agent"
+  caption="Read the order. The driver is already waiting in get_next_item, so start_item is granted at once. Everything from the SETUP edge to rsp reaching the driver happens in zero time, inside the SETUP edge's time step."
+  participants={[
+    { id: "mon", label: "mon", sublabel: "apb_monitor", kind: "monitor" },
+    { id: "fifo", label: "sqr.req_fifo", sublabel: "analysis FIFO", kind: "fifo" },
+    { id: "seq", label: "seq", sublabel: "apb_reactive_seq", kind: "sequence" },
+    { id: "sqr", label: "sqr", sublabel: "apb_sequencer", kind: "sequencer" },
+    { id: "drv", label: "drv", sublabel: "apb_responder_driver", kind: "driver" }
+  ]}
+  messages={[
+    { from: "drv", to: "sqr", label: "get_next_item(req): blocks" },
+    { from: "seq", to: "fifo", label: "req_fifo.get(obs): blocks" },
+    { kind: "divider", label: "@(posedge pclk): SETUP sampled (PSEL 1, PENABLE 0)" },
+    { kind: "async", from: "mon", to: "fifo", label: "req_ap.write(rq)" },
+    { kind: "return", from: "fifo", to: "seq", label: "obs" },
+    { kind: "self", from: "seq", label: 'rsp = apb_item::type_id::create("rsp")' },
+    { from: "seq", to: "sqr", label: "start_item(rsp): granted" },
+    { kind: "self", from: "seq", label: "rsp.randomize(wait_cycles, rdata, slverr)" },
+    { from: "seq", to: "sqr", label: "finish_item(rsp)" },
+    { kind: "return", from: "sqr", to: "drv", label: "rsp: get_next_item returns" },
+    { kind: "self", from: "drv", label: "wait rsp.wait_cycles edges, then drive PREADY, PRDATA, PSLVERR via rsp_cb" },
+    { kind: "divider", label: "completion edge: PSEL, PENABLE and PREADY all 1" },
+    { kind: "async", from: "drv", to: "sqr", label: "item_done()" },
+    { kind: "return", from: "sqr", to: "seq", label: "finish_item returns; loop to req_fifo.get" }
+  ]}
+/>
+
+Two design decisions make the responder robust:
+- **`PREADY` is low by default.** The responder raises it only to complete a transfer. If a reactive sequence is slow, for example because it waits for a reference model, the master simply sees more wait states, which APB allows in any number (IHI 0024C §3.3.2). A responder that held `PREADY` high by default would complete transfers it had not answered yet.
+- **`PSLVERR` is driven low when it is not sampled.** IHI 0024C §3.4 recommends this but does not require it, so a monitor must ignore `PSLVERR` outside the completion edge.
+
+**Pitfall: an objection in a `forever` sequence.** A reactive sequence never ends. If it raises an objection, or the test turns on its automatic phase objection, the objection is never dropped and the run phase never ends; IEEE 1800.2-2020 §14.2.4.4 warns against exactly this. Start it without an objection, in a `fork ... join_none`, and let the test's own traffic hold the objection. The AXI and AHB verification lessons, [B-AXI-6](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index) and [B-AHB-3](/curriculum/T3_Advanced/B-AHB-3_AHB_Verification/index), apply the same pattern to responders with random `READY` signals, out-of-order answers and error injection.
+
+### The sequences a VIP ships
+
+A test writer should never have to write `start_item` for a plain register write. The VIP ships a **base sequence** with helper tasks, and every other sequence extends it.
+
+```systemverilog
+// snippet: apb_base_seq (complete version in Make It Work)
+class apb_base_seq extends uvm_sequence #(apb_item);
+  `uvm_object_utils(apb_base_seq)
+  `uvm_declare_p_sequencer(apb_sequencer)   // p_sequencer.cfg: the agent's settings
+
+  function new(string name = "apb_base_seq");
+    super.new(name);
+  endfunction
+
+  task apb_write(bit [31:0] addr, bit [31:0] data, output bit slverr);
+    apb_item it = apb_item::type_id::create("it");
+    start_item(it);
+    if (!it.randomize() with { write == 1; addr == local::addr; wdata == data; })
+      `uvm_fatal("RAND", "apb_write: randomization failed")
+    finish_item(it);
+    slverr = it.slverr;   // the master driver filled the response before item_done
+  endtask
+endclass
+```
+
+`local::addr` names the task's argument rather than the item's field of the same name inside the inline constraint (IEEE 1800-2023 §18.7.1). The helpers return the response because the master driver writes `rdata`, `slverr` and `wait_cycles` into the same item before it calls `item_done()`.
+
+<ArchitectureDiagram
+  title="The VIP's sequence classes and where they run"
+  caption="apb_base_seq gives every sequence the helpers and p_sequencer. The VIP ships apb_rw_seq and apb_reactive_seq; users extend the base, or replace a shipped sequence with a factory override. All of them run on an agent's sqr."
+  cellWidth={140}
+  nodes={[
+    { id: "base", label: "apb_base_seq", sublabel: "helpers, p_sequencer", kind: "sequence", col: 1, row: 0 },
+    { id: "rw", label: "apb_rw_seq", sublabel: "n random transfers", kind: "sequence", col: 0, row: 1 },
+    { id: "react", label: "apb_reactive_seq", sublabel: "responder answers", kind: "sequence", col: 1, row: 1 },
+    { id: "user", label: "user_seq", sublabel: "in the user's test package", kind: "sequence", col: 2, row: 1 },
+    { id: "sqr", label: "agt.sqr", sublabel: "apb_sequencer", kind: "sequencer", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "rw", to: "base", style: "structural", label: "extends" },
+    { from: "react", to: "base", style: "structural", label: "extends" },
+    { from: "user", to: "base", style: "structural", label: "extends" },
+    { from: "rw", to: "sqr", style: "causal", label: "start" },
+    { from: "react", to: "sqr", style: "causal", label: "start" },
+    { from: "user", to: "sqr", style: "causal", label: "start" }
+  ]}
+/>
+
+Practitioner notes:
+- **Constraints layer.** Put protocol-legal defaults in the item (`addr` word-aligned) and test intent in derived sequences or inline `with` blocks.
+- **Error injection is a sequence, gated by configuration.** A sequence that makes the responder return `PSLVERR` is legal APB and needs no special permission. A sequence that makes the *master* break the protocol must run with checks configured for it (see the interface checks below), and the reset and error-injection strategy for a whole environment is a separate topic (a planned A-UVM-9 module).
+- **`uvm_sequence_library`** (IEEE 1800.2-2020 §14.4) is a specific class that picks registered sequences at random. It is an option for soak tests, not a synonym for "the sequences a VIP ships".
+
+### The coverage model
+
+A VIP's coverage collector measures how much of the *protocol* a test has exercised, whatever the DUT. It is a `uvm_subscriber #(apb_item)`: a component with a built-in `analysis_export` whose `write()` method the subclass implements (IEEE 1800.2-2020 §13.9). The agent builds and connects it only when `cfg.has_coverage` is 1.
+
+```systemverilog
+// snippet: apb_coverage (complete class in Make It Work)
+class apb_coverage extends uvm_subscriber #(apb_item);
+  `uvm_component_utils(apb_coverage)
+  apb_item tr;
+
+  covergroup cg_apb;
+    cp_dir:   coverpoint tr.write { bins read = {0}; bins write = {1}; }
+    cp_waits: coverpoint tr.wait_cycles { bins none = {0}; bins one = {1};
+                                          bins many = {[2:$]}; }
+    cp_err:   coverpoint tr.slverr;
+    x_dir_err: cross cp_dir, cp_err;
+  endgroup
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    cg_apb = new();               // an embedded covergroup is built in new()
+  endfunction
+
+  function void write(apb_item t);
+    tr = t;
+    cg_apb.sample();
+  endfunction
+endclass
+```
+
+Trace which bins fill after four observed transfers. Each row adds hits; "x" marks the first hit of a bin.
+
+| Transfer | `cp_dir` | `cp_waits` | `cp_err` | `x_dir_err` |
+|---|---|---|---|---|
+| write, 1 wait, `PSLVERR` 0 | write x | one x | 0 x | (write, 0) x |
+| read, 0 waits, `PSLVERR` 1 | read x | none x | 1 x | (read, 1) x |
+| write, 3 waits, `PSLVERR` 0 | | many x | | |
+| read, 0 waits, `PSLVERR` 0 | | | | (read, 0) x |
+
+After four transfers every coverpoint bin is hit but the cross still misses (write, 1): no write has completed with an error. That gap tells you what the next test, or the responder's `slverr_pct`, must do. Covergroups are taught in [I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index); what a VIP adds is the gate. At SoC level dozens of passive agents may sample coverage nobody reads, so `has_coverage` lets the integrator switch it off.
+
+### Interface checks that count
+
+Protocol rules about signal timing belong in the interface as **concurrent assertions** ([I-SV-4A](/curriculum/T2_Intermediate/I-SV-4A_SVA_Fundamentals/index)): they check every clock edge, whatever the test does, including at SoC level where the agent is passive and no driver exists. Rules about transactions (address maps, error accounting) belong in the monitor or in a subscriber.
+
+```systemverilog
+// snippet: the checks inside apb_if (complete interface in Make It Work)
+bit checks_enable = 1'b1;   // the agent copies cfg.checks_enable here
+
+a_setup_then_access: assert property (
+  @(posedge pclk) disable iff (!preset_n || !checks_enable)
+    (psel && !penable) |=> (psel && penable && $stable(paddr) && $stable(pwrite)
+                            && (!pwrite || $stable(pwdata))))
+  else `uvm_error("APB_SVA", $sformatf("%m: SETUP not followed by a stable ACCESS"))
+
+a_wait_stable: assert property (
+  @(posedge pclk) disable iff (!preset_n || !checks_enable)
+    (psel && penable && !pready) |=> (psel && penable && $stable(paddr)
+                                      && $stable(pwrite) && (!pwrite || $stable(pwdata))))
+  else `uvm_error("APB_SVA", $sformatf("%m: transfer changed during a wait state"))
+```
+
+The complete interface has four properties: SETUP is followed by a stable ACCESS (§4.1), `PENABLE` rises only after SETUP, nothing changes during a wait state (§3.1.2, §3.3.2), and `PENABLE` falls after completion (§3.1.1). They are a **subset** of IHI 0024C: they say nothing about `PSTRB`, `PPROT`, or unknown values on the buses. A real VIP documents which rules it checks.
+
+**Misconception: "`$error` in an interface assertion increments `UVM_ERROR`."** An assertion with no `else`, or with `else $error(...)`, reports through the simulator's own messages (IEEE 1800-2023 §16.14.1, §20.10). The UVM report server never sees them, so the summary says `UVM_ERROR :    0` and a regression that checks only that line passes. `` `uvm_error `` works in an interface once the interface imports `uvm_pkg`: outside a class, the macro reports through `uvm_get_report_object()`, which returns `uvm_root` (IEEE 1800.2-2020 F.3.2.1), and the server counts it. The message's source then shows as `reporter`, with no component path, which is why each message adds `%m`, the hierarchical name of the interface instance.
+
+The waveform below is the failing trace from the error-injection test in Make It Work: a deliberately broken master changes `PADDR` in a wait state. **Predict** which assertion fails and at which edge before reading the markers.
+
+<TimingDiagram
+  title="A master that changes PADDR during a wait state"
+  caption="The antecedent of a_wait_stable (PSEL, PENABLE high, PREADY low) holds at edge 2; |=> checks the next edge. At edge 3 PADDR is 18, not 10, so the assertion fails at edge 3. At edge 3 the antecedent holds again, and at edge 4 PADDR is stable at 18, so that attempt passes."
+  edges={6}
+  signals={[
+    { name: "PCLK", kind: "clock" },
+    { name: "PSEL", kind: "bit", values: [0, 1, 1, 1, 1, 0] },
+    { name: "PENABLE", kind: "bit", values: [0, 0, 1, 1, 1, 0] },
+    { name: "PWRITE", kind: "bit", values: [undefined, 1, 1, 1, 1, 1] },
+    { name: "PADDR", kind: "bus", values: [undefined, "10", "10", "18", "18", "18"] },
+    { name: "PREADY", kind: "bit", values: [0, 0, 0, 0, 1, 0] }
+  ]}
+  markers={[
+    { edge: 2, tone: "info", label: "edge 2: wait state; a_wait_stable starts an attempt" },
+    { edge: 3, tone: "fail", label: "edge 3: a_wait_stable fails, PADDR changed from 10 to 18; one UVM_ERROR [APB_SVA]" },
+    { edge: 4, tone: "pass", label: "edge 4: transfer completes; the attempt started at edge 3 passes" }
+  ]}
+/>
+
+The log line looks like `UVM_ERROR ... @ 45000: reporter [APB_SVA] tb_top.bus...: transfer changed during a wait state`. What `%m` prints for an assertion's action block depends on the simulator: always the interface instance, and in most tools the assertion label too.
+
+**Gating checks from the configuration.** Error-injection tests break the protocol on purpose, so the VIP must let them turn checks off. Three controls exist, from most to least VIP-friendly:
+
+| Control | Who sets it | Effect |
+|---|---|---|
+| `checks_enable` in `disable iff` | the agent, from `cfg.checks_enable`, through the vif | per interface instance; an attempt that is disabled runs no action block (IEEE 1800-2023 §16.14.1), and attempts in flight are disabled too |
+| `$assertoff`, `$asserton`, `$assertkill`, `$assertcontrol` | a module, usually `tb_top` | by hierarchical scope or assertion name (§20.11). `$assertoff` stops new attempts; attempts already running finish. `$assertkill` also aborts those |
+| severity override or report catcher on the ID `APB_SVA` | the test, on `uvm_root` | the assertion still fires, but the message is demoted or caught (IEEE 1800.2-2020 §6.3.7, §6.6). Works only because the VIP reports through UVM |
+
+A test class cannot call `$assertoff(0, tb_top.bus)` itself: items in a package may not contain hierarchical references to the design (IEEE 1800-2023 §26.2). That is why the VIP exposes `checks_enable` through the configuration, and why `$assertoff` lives in `tb_top`, typically behind a plusarg the test documents:
+
+```systemverilog
+// snippet: tb_top; +APB_SVA_OFF is this testbench's own plusarg, not a UVM one
+initial if ($test$plusargs("APB_SVA_OFF")) $assertoff(0, tb_top.bus);
+```
+
+When several agents share one interface, as in the self-test, they all write the same `checks_enable` bit. Give them the same setting, or the last agent to connect wins.
+
+### Packaging: the package, include order, and the interface outside
+
+A VIP is delivered as files that other people compile. A common layout keeps one class per file and one package file that includes them:
+
+```text
+apb_vip/
+  VERSION                     1.0.0, also the package parameter APB_VIP_VERSION
+  CHANGELOG.md                what changed in each release
+  docs/apb_vip_user_guide.md  the contract: see "Shipping a VIP" below
+  apb_if.sv                   interface: signals, clocking blocks, assertions
+  apb_pkg.sv                  package file: includes everything under src/
+  src/
+    apb_types.svh             apb_vif_t, apb_role_e
+    apb_item.svh
+    apb_agent_config.svh
+    apb_sequencer.svh
+    apb_driver_base.svh
+    apb_master_driver.svh
+    apb_responder_driver.svh
+    apb_monitor.svh
+    apb_coverage.svh
+    apb_agent.svh
+    seq/apb_base_seq.svh
+    seq/apb_rw_seq.svh
+    seq/apb_back_to_back_seq.svh  back-to-back single transfers (APB has no bursts)
+    seq/apb_reactive_seq.svh
+  selftest/
+    apb_selftest_pkg.sv       self-test env, scoreboard and tests
+    tb_top.sv
+```
+
+```systemverilog
+// snippet: apb_pkg.sv
 package apb_pkg;
   import uvm_pkg::*;
   `include "uvm_macros.svh"
 
-  // Types and parameters first
-  `include "src/apb_types.sv"
-  `include "src/apb_transaction.sv"
-  `include "src/apb_agent_config.sv"
+  parameter string APB_VIP_VERSION = "1.0.0";
 
-  // Components (order matters: leaf components before containers)
-  `include "src/apb_driver.sv"
-  `include "src/apb_monitor.sv"
-  `include "src/apb_sequencer.sv"
-  `include "src/apb_coverage.sv"
-  `include "src/apb_agent.sv"
-  `include "src/apb_protocol_checker.sv"
-
-  // Sequences
-  `include "sequences/apb_base_seq.sv"
-  `include "sequences/apb_single_write_seq.sv"
-  `include "sequences/apb_single_read_seq.sv"
-  `include "sequences/apb_burst_seq.sv"
-  `include "sequences/apb_error_inject_seq.sv"
+  `include "src/apb_types.svh"       // types first: everything below uses them
+  `include "src/apb_item.svh"
+  `include "src/apb_agent_config.svh"
+  `include "src/apb_sequencer.svh"   // before the sequences: p_sequencer's type
+  `include "src/apb_driver_base.svh" // before the drivers that extend it
+  `include "src/apb_master_driver.svh"
+  `include "src/apb_responder_driver.svh"
+  `include "src/apb_monitor.svh"
+  `include "src/apb_coverage.svh"
+  `include "src/apb_agent.svh"       // after every class it creates
+  `include "src/seq/apb_base_seq.svh"
+  `include "src/seq/apb_rw_seq.svh"
+  `include "src/seq/apb_back_to_back_seq.svh"
+  `include "src/seq/apb_reactive_seq.svh"
 endpackage
 ```
 
-### Parameter Passing for Protocol Variants
+Three rules explain this shape:
+- **The interface stays outside the package.** A package is a named scope for shared types, classes, tasks and functions; its grammar has no place for an interface declaration (IEEE 1800-2023 §26.2). The package refers to the interface only through the virtual-interface type `apb_vif_t`.
+- **Include order is declaration order.** A class must be declared before another class uses it as a base class or in most other ways, so the package includes base classes and used types first. When two classes refer to each other, a forward declaration `typedef class apb_agent;` (§8.27) breaks the cycle.
+- **Compile order follows from that:** uvm-core (or the simulator's built-in UVM library), then `apb_if.sv`, then `apb_pkg.sv` with the VIP's root directory on the include path, then the user's test package, then `tb_top.sv`.
 
-Use SystemVerilog parameters to support protocol variants within a single VIP:
+### Parameterized interfaces and virtual-interface typedefs
 
-```systemverilog
-class apb_agent #(int ADDR_WIDTH = 32, int DATA_WIDTH = 32) extends uvm_agent;
-  // Parameterized agent supports APB3 (32-bit) and APB4 (variable width)
-endclass
-```
-
-## Integrating a 3rd-Party VIP
-
-When integrating commercial VIP (Synopsys VIP, Cadence VIPCAT), watch for these common pitfalls:
-
-### 1. Virtual Interface Mismatch
-Commercial VIPs use their own interface definitions. You must connect your DUT ports to the VIP's interface, not the other way around:
+Buses come in widths. An interface can take parameters just like a module (IEEE 1800-2023 §25.8):
 
 ```systemverilog
-// In tb_top.sv — connect DUT to VIP interface
-apb_if apb_master_if(.pclk(clk), .preset_n(rst_n));
-
-// Bind DUT ports to VIP interface signals
-assign apb_master_if.prdata  = dut.apb_slave.prdata;
-assign apb_master_if.pready  = dut.apb_slave.pready;
-assign dut.apb_slave.psel    = apb_master_if.psel;
-assign dut.apb_slave.penable = apb_master_if.penable;
-// ... etc
+// snippet
+interface apb_if #(int AW = 32, int DW = 32) (input logic pclk, input logic preset_n);
+  wire [AW-1:0] paddr;
+  wire [DW-1:0] pwdata, prdata;
+  // ...
+endinterface
 ```
 
-### 2. Configuration Database Path Mismatch
-Commercial VIPs expect their config objects at specific `uvm_config_db` paths. Always read the VIP integration guide to find the expected path string.
+The catch is the virtual-interface **type**. §25.9: the type of an interface includes its actual parameter values, default or overridden, and they must match for an interface instance and a virtual interface to be the same type; a selected modport is also part of the type. `uvm_config_db` looks values up by their exact type, and a lookup of another type returns 0 without a message (uvm-core 2020.3.1). So:
 
-### 3. Sequence Compatibility
-Your custom sequences must extend the VIP's base sequence class, not `uvm_sequence` directly. The VIP's base sequence provides protocol-specific `start_item`/`finish_item` handling.
+| `set` with | `get` with | Same type? | Result |
+|---|---|---|---|
+| `virtual apb_if #(32, 32)` | `virtual apb_if #(32, 32)` | yes | found |
+| `virtual apb_if` (defaults are 32, 32) | `apb_vif_t` (`virtual apb_if #(32, 32)`) | yes: the defaults are the actual values | found |
+| `virtual apb_if #(16, 32)` | `virtual apb_if #(32, 32)` | no | `get()` returns 0 silently; the VIP's `NO_VIF` fatal fires |
+| `virtual apb_if` | `virtual apb_if.some_mp` | no | `get()` returns 0, although SystemVerilog allows *assigning* the plain vif to the modport vif (§25.9) |
 
-### 4. License Availability
-Commercial VIP requires runtime licenses. CI pipelines must handle license checkout failures gracefully — either queue the job or fall back to a stub VIP.
+That is why the VIP declares the type **once**, `typedef virtual apb_if #(.AW(32), .DW(32)) apb_vif_t;`, and both `tb_top` and the VIP use `apb_vif_t`. A typedef is only a new name for the same type, so it never causes a mismatch.
 
-## Knowledge Check
+This VIP supports one specialization, 32 by 32, because APB buses are at most 32 bits wide; a narrower peripheral connects to the low bits. A VIP that must support several specializations has two choices: carry `AW` and `DW` as parameters through every class (an agent declared with `` `uvm_component_param_utils ``), or keep one maximum-width interface type and put the used width in the configuration. Push Further compares them.
+
+### Integrating the VIP into a new environment
+
+To use the VIP with a DUT, three files change, and none of them is the VIP's. The example is an APB register block `apb_regs` (an APB slave), so the agent plays the active master.
+
+```systemverilog
+// snippet: tb_top.sv for a DUT that is an APB slave
+module tb_top;
+  import uvm_pkg::*;
+  import apb_pkg::*;
+  import regs_test_pkg::*;
+
+  logic pclk = 1'b0;
+  logic preset_n;
+  always #5 pclk = ~pclk;
+
+  apb_if bus (.pclk(pclk), .preset_n(preset_n));
+
+  // Connect DUT ports to the interface's nets at instantiation: one driver per net.
+  apb_regs dut (.pclk(pclk), .presetn(preset_n), .psel(bus.psel), .penable(bus.penable),
+                .pwrite(bus.pwrite), .paddr(bus.paddr), .pwdata(bus.pwdata),
+                .prdata(bus.prdata), .pready(bus.pready), .pslverr(bus.pslverr));
+
+  initial begin
+    preset_n = 1'b0;
+    repeat (3) @(posedge pclk);
+    preset_n <= 1'b1;
+  end
+
+  initial begin
+    uvm_config_db#(apb_vif_t)::set(null, "uvm_test_top", "vif", bus);  // before run_test
+    run_test();
+  end
+endmodule
+```
+
+The test reads `vif`, builds an `apb_agent_config` with `is_active = UVM_ACTIVE` and `role = APB_MASTER`, and sets it for `"env.apb_agt"`. The env creates `apb_agt` with `apb_agent::type_id::create` and connects `apb_agt.ap` to its scoreboard. Two mistakes are common here:
+- **Assigning into the DUT's hierarchy**, as in `assign dut.u_core.psel = bus.psel;`, adds a second driver to a net the DUT already drives through its port, and on a variable that has another writer it is illegal (IEEE 1800-2023 §6.5). Connect the interface's nets to the DUT's ports, as above.
+- **Setting the vif after `run_test()`**, or in an `initial` block that races with it. The test's `build_phase` runs inside `run_test()`, so the `set` must come first.
+
+### Passive reuse at SoC level
+
+At SoC level the same APB bus is driven by the chip's own bridge. The block-level VIP is reused **unchanged**: the SoC test sets `cfg.is_active = UVM_PASSIVE`, and `tb_top` feeds the interface from the RTL instead of connecting the DUT to it.
+
+```systemverilog
+// snippet: SoC tb_top observes an internal APB bus (hierarchical names are examples)
+apb_if soc_apb (.pclk(dut.u_apb_bridge.pclk), .preset_n(dut.u_apb_bridge.presetn));
+assign soc_apb.psel    = dut.u_apb_bridge.psel;     // one-way: RTL drives the
+assign soc_apb.penable = dut.u_apb_bridge.penable;  // interface's nets, nothing
+assign soc_apb.pready  = dut.u_uart.pready;         // drives back into the RTL
+// ... the other APB signals the same way
+
+// snippet: tb_top publishes it before run_test(), with the type the VIP uses
+initial begin
+  uvm_config_db#(apb_vif_t)::set(null, "uvm_test_top", "uart_apb_vif", soc_apb);
+  run_test();
+end
+
+// snippet: in the SoC test's build_phase
+if (!uvm_config_db#(apb_vif_t)::get(this, "", "uart_apb_vif", soc_vif))
+  `uvm_fatal("NO_VIF", "tb_top did not set uart_apb_vif")
+cfg = apb_agent_config::type_id::create("uart_apb_cfg");
+cfg.vif          = soc_vif;
+cfg.is_active    = UVM_PASSIVE;   // monitor (and coverage) only
+cfg.has_coverage = 1;
+uvm_config_db#(apb_agent_config)::set(this, "env.uart_apb", "cfg", cfg);
+```
+
+The hierarchical references stay in `tb_top`. An interface that itself contains hierarchical references to signals outside it may not be used for a virtual interface (§25.9). The proof that reuse worked is the topology: the passive agent lists `ap`, `cov` and `mon`, and no `drv` or `sqr`. The SoC application of this pattern, with an SPI agent and a CPU running firmware, is the `soc-vip-reuse` lab of [E-SOC-1](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index), linked under Practice & Reinforce.
+
+### Using someone else's VIP: what to check
+
+Most projects buy VIP for complex protocols. Before you commit to one, check the same contract surfaces you just built:
+
+<ArchitectureDiagram
+  title="Where your testbench meets a third-party VIP"
+  caption="Each edge is a contract you must satisfy exactly: the virtual-interface type set by tb_top, the configuration object and the path it is set on, the item type your sequences send to the VIP's sequencer, and the item type its analysis port sends to your scoreboard."
+  cellWidth={140}
+  nodes={[
+    { id: "top", label: "tb_top", sublabel: "your module", kind: "generic", col: 0, row: 0 },
+    { id: "test", label: "your test", sublabel: "builds the VIP's config", kind: "test", col: 0, row: 1 },
+    { id: "seq", label: "your sequence", sublabel: "must send the VIP's item type", kind: "sequence", col: 0, row: 2 },
+    { id: "vip", label: "vendor agent", sublabel: "vendor package", kind: "agent", col: 2, row: 0, rowSpan: 3, container: true },
+    { id: "vsqr", label: "sqr", sublabel: "uvm_sequencer #(vendor_item)", kind: "sequencer", col: 2, row: 2 },
+    { id: "vmon", label: "mon", sublabel: "publishes vendor_item", kind: "monitor", col: 2, row: 1 },
+    { id: "scb", label: "your scoreboard", kind: "scoreboard", col: 3, row: 1 }
+  ]}
+  edges={[
+    { from: "top", to: "vip", style: "control", label: "exact vif type" },
+    { from: "test", to: "vip", style: "control", label: "cfg type + path" },
+    { from: "seq", to: "vsqr", style: "causal", label: "item type" },
+    { from: "vmon", to: "scb", style: "data", label: "vendor_item" }
+  ]}
+/>
+
+**Misconception: "my sequences must extend the vendor's base sequence because it implements protocol-specific `start_item` and `finish_item`."** Protocol timing lives in the driver. `start_item` and `finish_item` are `uvm_sequence_base` tasks that ask the sequencer for a grant, send the item, and wait for the driver's `item_done()` (IEEE 1800.2-2020 §14.2.6.2, §14.2.6.3). They are virtual, so a vendor *could* override them, but vendor base sequences normally add helpers, configuration access and `p_sequencer`. What actually has to match is the **item type**: a sequence that sends an unrelated item type to the vendor's `uvm_sequencer #(vendor_item)` fails when the sequencer casts it (uvm-core 2020.3.1: `UVM_FATAL ... [SQRSNDREQCAST] send_request failed to cast sequence item`; the standard specifies no message for this case). Extending the vendor's base sequence is the documented way to get its helpers; it is good practice, not a UVM rule.
+
+The full evaluation checklist is in Push Further. The licensing point belongs here: commercial VIP needs a run-time license, and a regression that falls back to a stub VIP when the checkout fails reports a pass with no protocol checks. A checkout failure is an infrastructure error; retry or queue the job, never pass it.
+
+### Shipping a VIP: self-test, version and documentation
+
+A VIP is a product, and its users need three things beside the code.
+
+- **A self-test.** The VIP's own environment, with no DUT: an active master and an active responder on one interface, plus a passive observer agent. A scoreboard compares what the master intended with what the observer saw. A second test injects a protocol violation and must fail with exactly one `APB_SVA` error, which proves the checks fire and are counted. Make It Work builds both.
+- **A version.** A semantic version (`1.0.0`) in a `VERSION` file and in the package parameter `APB_VIP_VERSION`, printed once at the start of simulation together with the UVM version string, so every log says which VIP and which UVM produced it. The UVM library provides `` `UVM_VERSION ``, the parameter `uvm_pkg::UVM_VERSION_STRING` and the "ladder" defines such as `` `UVM_VERSION_POST_2017 `` for conditional compilation (IEEE 1800.2-2020 Annex B.7.1 to B.7.3). Keep a changelog and a compatibility list of simulators, UVM versions and the protocol issue implemented (here IHI 0024C).
+- **A user guide.** It states: the vif type and parameters; every configuration field with its default; the `uvm_config_db` field name (`"cfg"`) and where to set it; that a scalar `"is_active"` setting is ignored; the sequences and their knobs; the report IDs (`APB_SVA`, `APB_RST`, `NO_CFG`, `NO_VIF`); which protocol rules the assertions check; and known limitations (here: no `PSTRB`, no `PPROT`, one idle cycle between master transfers).
+
+### Recap: the mistakes everyone makes
+
+| Mistake | Why it is wrong | Fix |
+|---|---|---|
+| Interface assertions with `$error` | the UVM summary never counts them | `` `uvm_error `` with `%m`, interface imports `uvm_pkg` |
+| "Passive" agent with an idle driver | the driver still owns bus outputs; at SoC level the bus has two drivers | build `drv` and `sqr` only when `get_is_active() == UVM_ACTIVE` |
+| One `config_db` entry per knob | silent misses on typos and type mismatches | one configuration object, one typed `get`, fatal if missing |
+| Monitor refills one object | every stored handle shows the last transfer | `type_id::create` per transfer |
+| Reset kills the transfer without `item_done()` | the sequence hangs in `finish_item` | one `item_done()` per `get_next_item()` |
+| Reactive sequence with an objection | the run phase never ends | start it in `fork ... join_none`, no objection |
+| `set` and `get` with different vif parameters or modport | `get()` returns 0 silently | one typedef, used on both sides |
+
+## Make It Work
+
+### Worked example: the APB VIP with its self-test
+
+This compile unit is the whole VIP in one file, so you can paste it and run it: the interface, the VIP package, a self-test package and `tb_top`. The Packaging section shows how the same code splits into files. There is no DUT: the self-test's master and responder agents talk to each other on one interface, and a passive observer agent watches.
+
+<ArchitectureDiagram
+  title="The self-test: three copies of apb_agent on one interface"
+  caption="Read it against apb_selftest_env. master (active, APB_MASTER) drives the request signals through drv_cb; responder (active, APB_RESPONDER) drives PREADY, PRDATA and PSLVERR through rsp_cb; observer (passive) only samples through mon_cb. The scoreboard sb compares the master driver's intent, from master.drv.done_ap, with what the observer saw on observer.ap. It never compares two monitors of the same bus."
+  cellWidth={140}
+  nodes={[
+    { id: "env", label: "env", sublabel: "apb_selftest_env", kind: "env", col: 0, row: 0, colSpan: 4, rowSpan: 2, container: true },
+    { id: "master", label: "master", sublabel: "active master: sqr, drv, mon", kind: "agent", col: 0, row: 0 },
+    { id: "responder", label: "responder", sublabel: "active responder: sqr, drv, mon", kind: "agent", col: 1, row: 0 },
+    { id: "observer", label: "observer", sublabel: "passive: mon, cov", kind: "agent", col: 2, row: 0 },
+    { id: "sb", label: "sb", sublabel: "apb_selftest_sb", kind: "scoreboard", col: 3, row: 1 },
+    { id: "bus", label: "bus", sublabel: "apb_if in tb_top", kind: "interface", col: 0, row: 2, colSpan: 3 }
+  ]}
+  ports={[
+    { id: "master.done", node: "master", side: "bottom", at: 0.8, kind: "analysis_port", label: "drv.done_ap" },
+    { id: "observer.ap", node: "observer", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "sb.exp", node: "sb", side: "left", kind: "analysis_imp", label: "exp_fifo" },
+    { id: "sb.act", node: "sb", side: "top", kind: "analysis_imp", label: "act_fifo" }
+  ]}
+  edges={[
+    { from: "master", to: "bus", style: "data", label: "drv_cb" },
+    { from: "responder", to: "bus", style: "data", label: "rsp_cb" },
+    { from: "bus", to: "observer", style: "data", label: "mon_cb" },
+    { from: "master.done", to: "sb.exp", style: "data", via: [[0.2, 1]] },
+    { from: "observer.ap", to: "sb.act", style: "data", via: [[3, 0]], label: "observed" }
+  ]}
+/>
+
+```systemverilog
+// compile
+// apb_vip_selftest.sv: needs uvm-core 2020.3.1 (uvm_pkg) compiled first.
+`timescale 1ns/1ps
+`include "uvm_macros.svh"
+
+// ---------------------------------------------------------------- interface
+interface apb_if #(int AW = 32, int DW = 32) (input logic pclk, input logic preset_n);
+  import uvm_pkg::*;   // lets the assertions report with `uvm_error
+
+  // Nets, not variables: the master side and the responder side each drive some of
+  // them, and a clocking output on a net is a 'z driver until its first drive.
+  wire          psel, penable, pwrite;
+  wire [AW-1:0] paddr;
+  wire [DW-1:0] pwdata, prdata;
+  wire          pready, pslverr;
+
+  bit checks_enable = 1'b1;   // written by apb_agent from apb_agent_config
+
+  clocking drv_cb @(posedge pclk);   // master driver
+    output psel, penable, pwrite, paddr, pwdata;
+    input  pready, prdata, pslverr;
+  endclocking
+
+  clocking rsp_cb @(posedge pclk);   // responder driver
+    output pready, prdata, pslverr;
+    input  psel, penable, pwrite, paddr, pwdata;
+  endclocking
+
+  clocking mon_cb @(posedge pclk);   // monitor: samples everything, drives nothing
+    input psel, penable, pwrite, paddr, pwdata, prdata, pready, pslverr, preset_n;
+  endclocking
+
+  // Signal-timing rules from Arm IHI 0024C (a subset). Reported through UVM so they
+  // count in the report summary.
+  a_setup_then_access: assert property (
+    @(posedge pclk) disable iff (!preset_n || !checks_enable)
+      (psel && !penable) |=> (psel && penable && $stable(paddr) && $stable(pwrite)
+                              && (!pwrite || $stable(pwdata))))
+    else `uvm_error("APB_SVA", $sformatf("%m: SETUP not followed by a stable ACCESS"))
+
+  a_enable_after_setup: assert property (
+    @(posedge pclk) disable iff (!preset_n || !checks_enable)
+      $rose(penable) |-> $past(psel && !penable))
+    else `uvm_error("APB_SVA", $sformatf("%m: PENABLE rose without a SETUP cycle"))
+
+  a_wait_stable: assert property (
+    @(posedge pclk) disable iff (!preset_n || !checks_enable)
+      (psel && penable && !pready) |=> (psel && penable && $stable(paddr)
+                                        && $stable(pwrite)
+                                        && (!pwrite || $stable(pwdata))))
+    else `uvm_error("APB_SVA", $sformatf("%m: transfer changed during a wait state"))
+
+  a_enable_falls: assert property (
+    @(posedge pclk) disable iff (!preset_n || !checks_enable)
+      (psel && penable && pready) |=> !penable)
+    else `uvm_error("APB_SVA", $sformatf("%m: PENABLE still high after completion"))
+endinterface
+
+// ---------------------------------------------------------------- the VIP
+package apb_pkg;
+  import uvm_pkg::*;
+
+  parameter string APB_VIP_VERSION = "1.0.0";
+  typedef virtual apb_if #(.AW(32), .DW(32)) apb_vif_t;
+  typedef enum {APB_MASTER, APB_RESPONDER} apb_role_e;
+
+  // The VIP's data API: request fields, then response fields.
+  class apb_item extends uvm_sequence_item;
+    `uvm_object_utils(apb_item)
+    rand bit          write;
+    rand bit [31:0]   addr;
+    rand bit [31:0]   wdata;
+    rand int unsigned wait_cycles;   // response: chosen by a responder, counted by mon
+    rand bit [31:0]   rdata;
+    rand bit          slverr;
+
+    constraint c_aligned { addr[1:0] == 2'b00; }
+    constraint c_waits   { wait_cycles <= 15; }
+
+    function new(string name = "apb_item");
+      super.new(name);
+    endfunction
+
+    virtual function void do_copy(uvm_object rhs);
+      apb_item r;
+      if (!$cast(r, rhs)) `uvm_fatal("APB_ITEM", "do_copy: rhs is not an apb_item")
+      super.do_copy(rhs);
+      write = r.write;  addr = r.addr;  wdata = r.wdata;
+      wait_cycles = r.wait_cycles;  rdata = r.rdata;  slverr = r.slverr;
+    endfunction
+
+    // PWDATA means something only for writes, PRDATA only for reads.
+    virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
+      apb_item r;
+      if (!$cast(r, rhs)) return 0;
+      return super.do_compare(rhs, comparer) && write == r.write && addr == r.addr
+             && (!write || wdata == r.wdata) && (write || rdata == r.rdata)
+             && slverr == r.slverr && wait_cycles == r.wait_cycles;
+    endfunction
+
+    virtual function string convert2string();
+      return $sformatf("%s addr=%08h data=%08h waits=%0d slverr=%0b",
+                       write ? "WR" : "RD", addr, write ? wdata : rdata,
+                       wait_cycles, slverr);
+    endfunction
+  endclass
+
+  class apb_agent_config extends uvm_object;
+    `uvm_object_utils(apb_agent_config)
+    apb_vif_t               vif;
+    uvm_active_passive_enum is_active     = UVM_ACTIVE;
+    apb_role_e              role          = APB_MASTER;
+    bit                     has_coverage  = 1;
+    bit                     checks_enable = 1;
+    int unsigned            max_wait      = 3;    // responder: most wait states
+    int unsigned            slverr_pct    = 10;   // responder: PSLVERR rate, 0..100
+
+    function new(string name = "apb_agent_config");
+      super.new(name);
+    endfunction
+
+    virtual function string convert2string();
+      return $sformatf("%s %s coverage=%0b checks=%0b max_wait=%0d slverr_pct=%0d",
+                       is_active.name(), role.name(), has_coverage, checks_enable,
+                       max_wait, slverr_pct);
+    endfunction
+  endclass
+
+  class apb_sequencer extends uvm_sequencer #(apb_item);
+    `uvm_component_utils(apb_sequencer)
+    apb_agent_config                   cfg;       // handed over by apb_agent
+    uvm_tlm_analysis_fifo #(apb_item)  req_fifo;  // responder role: requests at SETUP
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      req_fifo = new("req_fifo", this);
+    endfunction
+  endclass
+
+  // The reset recipe, written once for both roles.
+  class apb_driver_base extends uvm_driver #(apb_item);
+    `uvm_component_utils(apb_driver_base)
+    apb_agent_config              cfg;       // handed over by apb_agent::build_phase
+    apb_vif_t                     vif;
+    uvm_analysis_port #(apb_item) done_ap;   // each completed item, as this driver saw it
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      done_ap = new("done_ap", this);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      vif = cfg.vif;   // the agent set cfg before this build_phase ran (top-down)
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      drive_idle();
+      forever begin
+        seq_item_port.get_next_item(req);
+        wait (vif.preset_n === 1'b1);         // never start an item during reset
+        fork
+          begin : guard                       // keeps disable fork local
+            fork
+              drive_item(req);
+              wait (vif.preset_n === 1'b0);   // reset asserted mid-item
+            join_any
+            disable fork;
+          end
+        join
+        if (vif.preset_n !== 1'b1) begin
+          drive_idle();                       // takes effect at the next clock edge
+          `uvm_info("APB_RST", {"aborted by reset: ", req.convert2string()}, UVM_MEDIUM)
+        end else begin
+          apb_item done;
+          $cast(done, req.clone());
+          done_ap.write(done);
+        end
+        seq_item_port.item_done();            // exactly one per get_next_item
+      end
+    endtask
+
+    virtual task drive_item(apb_item it);
+    endtask
+
+    virtual function void drive_idle();
+    endfunction
+  endclass
+
+  class apb_master_driver extends apb_driver_base;
+    `uvm_component_utils(apb_master_driver)
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void drive_idle();
+      vif.drv_cb.psel    <= 1'b0;
+      vif.drv_cb.penable <= 1'b0;
+    endfunction
+
+    virtual task drive_item(apb_item it);
+      @(vif.drv_cb);                          // start just after an edge
+      vif.drv_cb.psel    <= 1'b1;             // SETUP: sampled at the next edge
+      vif.drv_cb.penable <= 1'b0;
+      vif.drv_cb.pwrite  <= it.write;
+      vif.drv_cb.paddr   <= it.addr;
+      if (it.write) vif.drv_cb.pwdata <= it.wdata;
+      @(vif.drv_cb);                          // the SETUP edge
+      vif.drv_cb.penable <= 1'b1;             // ACCESS
+      @(vif.drv_cb);                          // first ACCESS edge
+      it.wait_cycles = 0;
+      while (vif.drv_cb.pready !== 1'b1) begin
+        it.wait_cycles++;
+        @(vif.drv_cb);
+      end
+      if (!it.write) it.rdata = vif.drv_cb.prdata;
+      it.slverr = vif.drv_cb.pslverr;
+      drive_idle();
+    endtask
+  endclass
+
+  class apb_responder_driver extends apb_driver_base;
+    `uvm_component_utils(apb_responder_driver)
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void drive_idle();
+      vif.rsp_cb.pready  <= 1'b0;   // low by default: a slow answer adds wait states
+      vif.rsp_cb.pslverr <= 1'b0;   // recommended low when not sampled (IHI 0024C 3.4)
+    endfunction
+
+    // Called in the time step of the SETUP edge (see apb_reactive_seq).
+    virtual task drive_item(apb_item it);
+      repeat (it.wait_cycles) @(vif.rsp_cb);
+      vif.rsp_cb.pready  <= 1'b1;
+      vif.rsp_cb.pslverr <= it.slverr;
+      if (!it.write) vif.rsp_cb.prdata <= it.rdata;
+      @(vif.rsp_cb);                          // the completion edge
+      drive_idle();
+    endtask
+  endclass
+
+  class apb_monitor extends uvm_monitor;
+    `uvm_component_utils(apb_monitor)
+    apb_agent_config              cfg;
+    apb_vif_t                     vif;
+    uvm_analysis_port #(apb_item) ap;       // completed transfers
+    uvm_analysis_port #(apb_item) req_ap;   // requests, at their SETUP edge
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      ap     = new("ap", this);
+      req_ap = new("req_ap", this);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      vif = cfg.vif;
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      forever begin
+        @(vif.mon_cb);
+        if (vif.mon_cb.preset_n === 1'b1 && vif.mon_cb.psel === 1'b1
+            && vif.mon_cb.penable === 1'b0)
+          collect_transfer();
+      end
+    endtask
+
+    protected task collect_transfer();
+      apb_item rq, tr;
+      rq = apb_item::type_id::create("rq");
+      rq.write = vif.mon_cb.pwrite;
+      rq.addr  = vif.mon_cb.paddr;
+      rq.wdata = vif.mon_cb.pwdata;
+      req_ap.write(rq);
+      tr = apb_item::type_id::create("tr");   // a new object for every transfer
+      tr.copy(rq);
+      forever begin
+        @(vif.mon_cb);
+        if (vif.mon_cb.preset_n !== 1'b1) return;               // reset: discard
+        if (vif.mon_cb.psel !== 1'b1 || vif.mon_cb.penable !== 1'b1) return;
+        if (vif.mon_cb.pready === 1'b1) break;                  // completion edge
+        tr.wait_cycles++;
+      end
+      if (!tr.write) tr.rdata = vif.mon_cb.prdata;
+      tr.slverr = vif.mon_cb.pslverr;
+      ap.write(tr);
+    endtask
+  endclass
+
+  class apb_coverage extends uvm_subscriber #(apb_item);
+    `uvm_component_utils(apb_coverage)
+    apb_item tr;
+
+    covergroup cg_apb;
+      cp_dir:   coverpoint tr.write { bins read = {0}; bins write = {1}; }
+      cp_waits: coverpoint tr.wait_cycles { bins none = {0}; bins one = {1};
+                                            bins many = {[2:$]}; }
+      cp_err:   coverpoint tr.slverr;
+      x_dir_err: cross cp_dir, cp_err;
+    endgroup
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      cg_apb = new();
+    endfunction
+
+    function void write(apb_item t);
+      tr = t;
+      cg_apb.sample();
+    endfunction
+  endclass
+
+  class apb_agent extends uvm_agent;
+    `uvm_component_utils(apb_agent)
+    apb_agent_config              cfg;
+    uvm_analysis_port #(apb_item) ap;    // the agent's public output
+    apb_monitor                   mon;
+    apb_coverage                  cov;
+    apb_sequencer                 sqr;
+    apb_driver_base               drv;
+    local static bit              banner_printed;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (!uvm_config_db#(apb_agent_config)::get(this, "", "cfg", cfg))
+        `uvm_fatal("NO_CFG", {"no apb_agent_config named cfg for ", get_full_name()})
+      if (cfg.vif == null)
+        `uvm_fatal("NO_VIF", {"cfg.vif is null for ", get_full_name()})
+      is_active = cfg.is_active;   // uvm-core member; a scalar "is_active" is ignored
+      ap  = new("ap", this);
+      mon = apb_monitor::type_id::create("mon", this);
+      mon.cfg = cfg;
+      if (cfg.has_coverage) cov = apb_coverage::type_id::create("cov", this);
+      if (get_is_active() == UVM_ACTIVE) begin
+        sqr = apb_sequencer::type_id::create("sqr", this);
+        sqr.cfg = cfg;
+        if (cfg.role == APB_MASTER)
+          drv = apb_master_driver::type_id::create("drv", this);
+        else
+          drv = apb_responder_driver::type_id::create("drv", this);
+        drv.cfg = cfg;
+      end
+    endfunction
+
+    function void connect_phase(uvm_phase phase);
+      super.connect_phase(phase);
+      mon.ap.connect(ap);
+      if (cfg.has_coverage) mon.ap.connect(cov.analysis_export);
+      if (get_is_active() == UVM_ACTIVE) begin
+        drv.seq_item_port.connect(sqr.seq_item_export);
+        if (cfg.role == APB_RESPONDER) mon.req_ap.connect(sqr.req_fifo.analysis_export);
+      end
+      cfg.vif.checks_enable = cfg.checks_enable;
+    endfunction
+
+    function void start_of_simulation_phase(uvm_phase phase);
+      super.start_of_simulation_phase(phase);
+      if (!banner_printed) begin
+        banner_printed = 1;
+        `uvm_info("APB_VIP", $sformatf("apb_vip %s (APB3 subset of IHI 0024C) on %s",
+                  APB_VIP_VERSION, uvm_pkg::UVM_VERSION_STRING), UVM_LOW)
+      end
+      `uvm_info("APB_CFG", cfg.convert2string(), UVM_MEDIUM)
+    endfunction
+  endclass
+
+  class apb_base_seq extends uvm_sequence #(apb_item);
+    `uvm_object_utils(apb_base_seq)
+    `uvm_declare_p_sequencer(apb_sequencer)
+
+    function new(string name = "apb_base_seq");
+      super.new(name);
+    endfunction
+
+    task apb_write(bit [31:0] addr, bit [31:0] data, output bit slverr);
+      apb_item it = apb_item::type_id::create("it");
+      start_item(it);
+      if (!it.randomize() with { write == 1; addr == local::addr; wdata == data; })
+        `uvm_fatal("RAND", "apb_write: randomization failed")
+      finish_item(it);
+      slverr = it.slverr;
+    endtask
+
+    task apb_read(bit [31:0] addr, output bit [31:0] data, output bit slverr);
+      apb_item it = apb_item::type_id::create("it");
+      start_item(it);
+      if (!it.randomize() with { write == 0; addr == local::addr; })
+        `uvm_fatal("RAND", "apb_read: randomization failed")
+      finish_item(it);
+      data   = it.rdata;
+      slverr = it.slverr;
+    endtask
+  endclass
+
+  class apb_rw_seq extends apb_base_seq;
+    `uvm_object_utils(apb_rw_seq)
+    rand int unsigned n_transfers;
+    constraint c_n { n_transfers inside {[1:100]}; }
+
+    function new(string name = "apb_rw_seq");
+      super.new(name);
+    endfunction
+
+    task body();
+      for (int i = 0; i < n_transfers; i++) begin
+        apb_item it = apb_item::type_id::create($sformatf("it%0d", i));
+        start_item(it);
+        if (!it.randomize()) `uvm_fatal("RAND", "apb_rw_seq: randomization failed")
+        finish_item(it);
+      end
+    endtask
+  endclass
+
+  // Never ends: start it without an objection (IEEE 1800.2-2020 14.2.4.4 NOTE).
+  class apb_reactive_seq extends apb_base_seq;
+    `uvm_object_utils(apb_reactive_seq)
+
+    function new(string name = "apb_reactive_seq");
+      super.new(name);
+    endfunction
+
+    task body();
+      apb_item obs, rsp;
+      forever begin
+        p_sequencer.req_fifo.get(obs);
+        rsp = apb_item::type_id::create("rsp");
+        start_item(rsp);
+        rsp.write = obs.write;
+        rsp.addr  = obs.addr;
+        rsp.wdata = obs.wdata;
+        rsp.c_aligned.constraint_mode(0);   // the DUT chose addr: do not re-check it
+        if (!rsp.randomize(wait_cycles, rdata, slverr) with {
+              wait_cycles <= p_sequencer.cfg.max_wait;
+              slverr dist {1 := p_sequencer.cfg.slverr_pct,
+                           0 := 100 - p_sequencer.cfg.slverr_pct};
+            })
+          `uvm_fatal("RAND", "apb_reactive_seq: randomization failed")
+        finish_item(rsp);
+      end
+    endtask
+  endclass
+endpackage
+
+// ---------------------------------------------------------------- the self-test
+package apb_selftest_pkg;
+  import uvm_pkg::*;
+  import apb_pkg::*;
+
+  // Compares what the master intended (and received) with what a passive agent saw.
+  class apb_selftest_sb extends uvm_component;
+    `uvm_component_utils(apb_selftest_sb)
+    uvm_tlm_analysis_fifo #(apb_item) exp_fifo;   // from master.drv.done_ap
+    uvm_tlm_analysis_fifo #(apb_item) act_fifo;   // from observer.ap
+    int unsigned matches, mismatches, slverrs;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      exp_fifo = new("exp_fifo", this);
+      act_fifo = new("act_fifo", this);
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      apb_item exp, act;
+      forever begin
+        exp_fifo.get(exp);
+        act_fifo.get(act);
+        if (act.compare(exp)) matches++;
+        else begin
+          mismatches++;
+          `uvm_error("SELFTEST", {"expected ", exp.convert2string(),
+                                  " observed ", act.convert2string()})
+        end
+        if (act.slverr) slverrs++;
+      end
+    endtask
+
+    function void check_phase(uvm_phase phase);
+      super.check_phase(phase);
+      if (exp_fifo.used() != 0 || act_fifo.used() != 0)
+        `uvm_error("SELFTEST", $sformatf("unmatched: %0d expected, %0d observed",
+                                         exp_fifo.used(), act_fifo.used()))
+    endfunction
+
+    function void report_phase(uvm_phase phase);
+      super.report_phase(phase);
+      `uvm_info("SELFTEST", $sformatf("transfers=%0d mismatches=%0d slverr=%0d",
+                matches + mismatches, mismatches, slverrs), UVM_LOW)
+    endfunction
+  endclass
+
+  class apb_selftest_env extends uvm_env;
+    `uvm_component_utils(apb_selftest_env)
+    apb_agent       master, responder, observer;
+    apb_selftest_sb sb;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      master    = apb_agent::type_id::create("master", this);
+      responder = apb_agent::type_id::create("responder", this);
+      observer  = apb_agent::type_id::create("observer", this);
+      sb        = apb_selftest_sb::type_id::create("sb", this);
+    endfunction
+
+    function void connect_phase(uvm_phase phase);
+      super.connect_phase(phase);
+      master.drv.done_ap.connect(sb.exp_fifo.analysis_export);
+      observer.ap.connect(sb.act_fifo.analysis_export);
+    endfunction
+  endclass
+
+  class apb_selftest extends uvm_test;
+    `uvm_component_utils(apb_selftest)
+    apb_selftest_env env;
+    apb_vif_t        vif;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (!uvm_config_db#(apb_vif_t)::get(this, "", "vif", vif))
+        `uvm_fatal("NO_VIF", "tb_top did not set an apb_vif_t named vif")
+      env = apb_selftest_env::type_id::create("env", this);
+      set_cfg("env.master",    "master_cfg",    UVM_ACTIVE,  APB_MASTER,    0);
+      set_cfg("env.responder", "responder_cfg", UVM_ACTIVE,  APB_RESPONDER, 0);
+      set_cfg("env.observer",  "observer_cfg",  UVM_PASSIVE, APB_MASTER,    1);
+    endfunction
+
+    protected function void set_cfg(string path, string name,
+                                    uvm_active_passive_enum mode, apb_role_e role,
+                                    bit coverage);
+      apb_agent_config cfg = apb_agent_config::type_id::create(name);
+      cfg.vif          = vif;
+      cfg.is_active    = mode;
+      cfg.role         = role;          // ignored by a passive agent
+      cfg.has_coverage = coverage;      // only the observer collects coverage
+      uvm_config_db#(apb_agent_config)::set(this, path, "cfg", cfg);
+    endfunction
+
+    function void end_of_elaboration_phase(uvm_phase phase);
+      super.end_of_elaboration_phase(phase);
+      uvm_root::get().print_topology();
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      apb_reactive_seq answers;
+      apb_rw_seq       traffic;
+      phase.raise_objection(this);
+      answers = apb_reactive_seq::type_id::create("answers");
+      fork
+        answers.start(env.responder.sqr);   // runs forever and holds no objection
+      join_none
+      traffic = apb_rw_seq::type_id::create("traffic");
+      if (!traffic.randomize() with { n_transfers == 20; })
+        `uvm_fatal("RAND", "traffic randomization failed")
+      traffic.start(env.master.sqr);
+      phase.get_objection().set_drain_time(this, 50ns);  // let the last compare run
+      phase.drop_objection(this);
+    endtask
+  endclass
+
+  // Breaks IHI 0024C 3.1.2 once: changes PADDR in the first wait state it meets.
+  class apb_bad_master_driver extends apb_master_driver;
+    `uvm_component_utils(apb_bad_master_driver)
+    bit broken_once;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual task drive_item(apb_item it);
+      @(vif.drv_cb);
+      vif.drv_cb.psel    <= 1'b1;
+      vif.drv_cb.penable <= 1'b0;
+      vif.drv_cb.pwrite  <= it.write;
+      vif.drv_cb.paddr   <= it.addr;
+      if (it.write) vif.drv_cb.pwdata <= it.wdata;
+      @(vif.drv_cb);
+      vif.drv_cb.penable <= 1'b1;
+      @(vif.drv_cb);
+      it.wait_cycles = 0;
+      while (vif.drv_cb.pready !== 1'b1) begin
+        if (!broken_once) begin
+          vif.drv_cb.paddr <= it.addr + 8;   // the protocol violation
+          broken_once = 1;
+        end
+        it.wait_cycles++;
+        @(vif.drv_cb);
+      end
+      if (!it.write) it.rdata = vif.drv_cb.prdata;
+      it.slverr = vif.drv_cb.pslverr;
+      drive_idle();
+    endtask
+  endclass
+
+  // Must FAIL with exactly one APB_SVA error: proves the checks fire and are counted.
+  class apb_assert_test extends apb_selftest;
+    `uvm_component_utils(apb_assert_test)
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      apb_master_driver::type_id::set_type_override(apb_bad_master_driver::get_type());
+      super.build_phase(phase);
+    endfunction
+  endclass
+endpackage
+
+// ---------------------------------------------------------------- top
+module tb_top;
+  import uvm_pkg::*;
+  import apb_pkg::*;
+  import apb_selftest_pkg::*;
+
+  logic pclk = 1'b0;
+  logic preset_n;
+  always #5 pclk = ~pclk;
+
+  apb_if bus (.pclk(pclk), .preset_n(preset_n));   // default parameters: 32, 32
+
+  initial begin
+    preset_n = 1'b0;
+    repeat (3) @(posedge pclk);
+    preset_n <= 1'b1;   // released just after an edge, like a synchronized reset
+  end
+
+  initial begin
+    uvm_config_db#(apb_vif_t)::set(null, "uvm_test_top", "vif", bus);
+    run_test();          // +UVM_TESTNAME=apb_selftest or apb_assert_test
+  end
+endmodule
+```
+
+**Expected output** (illustrative: derived by hand from the code and uvm-core 2020.3.1, not captured from a simulator run). The `file(line)` part of each message is omitted, `@<id>`, `<t>` and `<n>` stand for values that differ per run or seed, and the log is **abridged**: the library's own start-up banner and the per-ID counts of the summary are left out, and the topology table keeps only the components and each agent's `ap`; the real table also lists every port, export and FIFO. The `APB_CFG` lines appear because `UVM_MEDIUM` is the default verbosity.
+
+For `+UVM_TESTNAME=apb_selftest`:
+
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test apb_selftest...
+UVM_INFO @ 0: reporter [UVMTOP] UVM testbench topology:
+-------------------------------------------------------------------
+Name                       Type                          Size  Value
+-------------------------------------------------------------------
+uvm_test_top               apb_selftest                  -     @<id>
+  env                      apb_selftest_env              -     @<id>
+    master                 apb_agent                     -     @<id>
+      ap                   uvm_analysis_port             -     @<id>
+      drv                  apb_master_driver             -     @<id>
+      mon                  apb_monitor                   -     @<id>
+      sqr                  apb_sequencer                 -     @<id>
+    observer               apb_agent                     -     @<id>
+      ap                   uvm_analysis_port             -     @<id>
+      cov                  apb_coverage                  -     @<id>
+      mon                  apb_monitor                   -     @<id>
+    responder              apb_agent                     -     @<id>
+      ap                   uvm_analysis_port             -     @<id>
+      drv                  apb_responder_driver          -     @<id>
+      mon                  apb_monitor                   -     @<id>
+      sqr                  apb_sequencer                 -     @<id>
+    sb                     apb_selftest_sb               -     @<id>
+-------------------------------------------------------------------
+UVM_INFO @ 0: uvm_test_top.env.master [APB_VIP] apb_vip 1.0.0 (APB3 subset of IHI 0024C) on Accellera:1800.2:UVM:2020.3.1
+UVM_INFO @ 0: uvm_test_top.env.master [APB_CFG] UVM_ACTIVE APB_MASTER coverage=0 checks=1 max_wait=3 slverr_pct=10
+UVM_INFO @ 0: uvm_test_top.env.observer [APB_CFG] UVM_PASSIVE APB_MASTER coverage=1 checks=1 max_wait=3 slverr_pct=10
+UVM_INFO @ 0: uvm_test_top.env.responder [APB_CFG] UVM_ACTIVE APB_RESPONDER coverage=0 checks=1 max_wait=3 slverr_pct=10
+UVM_INFO @ <t>: uvm_test_top.env.sb [SELFTEST] transfers=20 mismatches=0 slverr=<n>
+
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO :   <n>
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+For `+UVM_TESTNAME=apb_assert_test`, the topology shows `drv` of type `apb_bad_master_driver` under `master`, and the run ends with:
+
+```text
+UVM_ERROR @ <t>: reporter [APB_SVA] tb_top.bus.a_wait_stable: transfer changed during a wait state
+UVM_INFO @ <t>: uvm_test_top.env.sb [SELFTEST] transfers=20 mismatches=0 slverr=<n>
+
+** Report counts by severity
+UVM_INFO :   <n>
+UVM_WARNING :    0
+UVM_ERROR :    1
+UVM_FATAL :    0
+```
+
+Read the output against the code. The `observer` has `cov` and `mon` and no `drv` or `sqr`: passive, and the only agent with coverage. The banner prints once, from the first agent to reach `start_of_simulation_phase` (a bottom-up phase, IEEE 1800.2-2020 §9.8.1.4; uvm-core visits siblings in name order, so `master` comes first), and each agent then prints its configuration, so a log always records how every agent was set up. In the assertion test the scoreboard still matches, because the master's intent and the monitor's capture both use the address from the SETUP edge; only the assertion sees the illegal change, and it is counted. The `%m` text, here `tb_top.bus.a_wait_stable`, varies by simulator. If the random responder never inserts a wait state in 20 transfers (each transfer has a three in four chance of at least one), the bad driver never fires and the test reports no error; a release self-test pins the seed or forces `max_wait` and a minimum wait for this test.
+
+**Run it.** No simulator ships with this site, so the steps are tool-neutral:
+1. Compile uvm-core 2020.3.1 (`src/uvm_pkg.sv`, with `src` on the include path), or select your simulator's built-in UVM library and check that it is 2020.3.1 or later.
+2. Compile `apb_vip_selftest.sv` with the same include path.
+3. Elaborate `tb_top` and run with `+UVM_TESTNAME=apb_selftest`, then again with `+UVM_TESTNAME=apb_assert_test`.
+4. Open-source simulators' support for UVM, clocking blocks on nets and concurrent assertions varies; check your tool's documentation before relying on it.
+
+### How to build a VIP, step by step
+
+1. **Write the interface** with nets for every signal, one clocking block per role (`drv_cb`, `rsp_cb`, `mon_cb`), the protocol assertions reporting with `` `uvm_error `` and `%m`, and a `checks_enable` bit in every `disable iff`.
+2. **Declare the vif type once** in the package: `typedef virtual apb_if #(...) apb_vif_t;`.
+3. **Write the item** with request fields, response fields, `do_copy`, `do_compare` and `convert2string`.
+4. **Write the configuration object** with every knob and its default.
+5. **Write the drivers** on a shared base class that owns the reset recipe: one `item_done()` per `get_next_item()`, drives only through clocking blocks.
+6. **Write the monitor**: sample through `mon_cb`, create a new item per transfer, publish requests at SETUP on `req_ap` and completed transfers on `ap`, discard transfers cut by reset.
+7. **Write the agent**: get `cfg` once, copy the mode, build `drv` and `sqr` only when active and `cov` only when asked, connect `mon.ap` to the agent's `ap`, apply `checks_enable`.
+8. **Write the sequences**: a base sequence with helpers and `p_sequencer`, traffic sequences, and the reactive sequence.
+9. **Write the self-test**: master, responder and passive observer on one interface, a scoreboard fed by the master's `done_ap` and the observer's `ap`, and an error-injection test that must fail with one `APB_SVA` error.
+10. **Ship it**: package file, version parameter and banner, changelog, user guide.
+
+### Debugging a VIP: symptom, cause, fix
+
+| Symptom in the log | Likely cause | Fix |
+|---|---|---|
+| `UVM_FATAL ... [NO_CFG] no apb_agent_config named cfg for uvm_test_top.env.agt` | the test set `cfg` on another path, or after the agent's build | set it in the test's `build_phase`, on the agent's exact relative path; trace with `+UVM_CONFIG_DB_TRACE` (uvm-core) |
+| `UVM_FATAL ... [NO_VIF]` in the test, although `tb_top` calls `set` | the `set` and `get` use different vif types (parameters or modport) | use `apb_vif_t` on both sides |
+| A null-handle fatal at the first `vif.drv_cb` access | a component reads `vif` before anyone assigned it | the agent assigns `cfg` right after `create`, and children copy `cfg.vif` in their own `build_phase` |
+| `UVM_FATAL ... [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied to start item` | a sequence was started on `agt.sqr` of a passive agent (uvm-core message) | start stimulus only on active agents; check `print_topology` |
+| The waveform shows a protocol violation, but the summary says `UVM_ERROR :    0` | the assertion reports with `$error`, or `checks_enable` is 0 | report with `` `uvm_error ``; check what wrote `checks_enable` |
+| Every item the scoreboard stored shows the last transfer's values | the monitor reuses one object | `type_id::create` per transfer |
+| The test hangs until the global timeout after a reset | the driver dropped an item without `item_done()`, or a reactive sequence holds an objection | one `item_done()` per item; start reactive sequences without an objection |
+| `UVM_FATAL ... [SQRBADITMDN] Item_done() called with no outstanding requests` | the driver called `item_done()` for an item the environment already flushed with `stop_sequences()` (uvm-core message) | give the in-flight item one owner (Push Further) |
+| X on `PSEL` and `PENABLE` at SoC level during transfers, and `print_topology` shows a `drv` in the "passive" agent | the agent ignored the passive setting (missing `is_active = cfg.is_active;`, or the test set the scalar `"is_active"` that this VIP ignores) | set `cfg.is_active`; fix the agent |
+| `UVM_FATAL ... [SQRSNDREQCAST] send_request failed to cast sequence item` | a sequence sends an item type the sequencer does not accept (uvm-core message) | send the VIP's item type, or a subclass of it |
+
+**Checklist before moving on:**
+- [ ] The configuration object is the only place a test sets mode, role, coverage, checks and responder policy.
+- [ ] `print_topology` shows the passive agent with `mon` (and `cov` if enabled) and no `drv` or `sqr`.
+- [ ] Every driver drives only through its clocking block and calls `item_done()` exactly once per `get_next_item()`, also on reset.
+- [ ] The monitor creates a new item per transfer and publishes nothing for a transfer cut by reset.
+- [ ] The responder's wait states and errors come from a sequence, and that sequence holds no objection.
+- [ ] Interface assertions report with `` `uvm_error `` and obey `checks_enable`.
+- [ ] `tb_top` and the VIP use the same vif typedef.
+- [ ] The self-test passes, and the error-injection test fails with exactly one `APB_SVA` error.
+
+## Push Further
+
+### Expert: Where interface-assertion messages go, and how to control them
+
+`` `uvm_error `` expands to `` `uvm_report_begin `` with the default report object `uvm_get_report_object()` (uvm-core 2020.3.1 `src/macros/uvm_message_defines.svh`). Outside a class that is the package-level function, which returns `uvm_root` (IEEE 1800.2-2020 F.3.2.1), and the message is issued by the package-level `uvm_report_error` (F.3.2.3). Consequences a staff engineer is expected to know:
+- **No instance path.** The message's source is `reporter`; put `%m` in the text, or the interface's instance name in the ID.
+- **Component settings do not reach it.** `env.set_report_id_action("APB_SVA", ...)` changes nothing. Control the ID on `uvm_root::get()` (§6.3.5.2, §6.3.7), or with a report catcher, which sees every message the server issues (§6.6).
+- **Expected errors.** An error-injection test that *wants* one violation should demote or catch exactly that ID and count it, rather than turn all checks off, so that an unexpected second violation still fails. The full strategy for expected errors is environment scope (planned A-UVM-9).
+- **Assertion control semantics** (IEEE 1800-2023 §20.11): `$assertoff` is `$assertcontrol` with control type 4 (Off): no new attempts start, while attempts in flight and their action blocks continue. `$assertkill` (5) also aborts attempts in flight. `$assertfailoff` stops only fail action blocks. A `disable iff` condition, by contrast, disables attempts in flight as soon as it becomes true, and a disabled attempt runs no action block (§16.14.1).
+- **Tool-dependent:** some simulators can be configured to count assertion failures or `$error` calls in their exit status. Never rely on that for UVM pass or fail; the report summary is the contract.
+
+### Expert: A UVM-free interface that still counts
+
+Importing `uvm_pkg` into the interface ties it to UVM, and some teams share one interface between UVM benches, formal and non-UVM benches. That is why some lessons and vendors keep `$error` in the interface. The fix is to move the *reporting*, not the *checking*: the action block records the failure in the interface, and a UVM component reports it.
+
+```systemverilog
+// snippet: inside a UVM-free apb_if
+int unsigned sva_fails;   // read by the monitor through the vif
+a_wait_stable: assert property (/* as before */)
+  else begin sva_fails++; $error("%m: transfer changed during a wait state"); end
+
+// snippet: in apb_monitor; check_phase runs after the run phase
+function void check_phase(uvm_phase phase);
+  super.check_phase(phase);
+  if (vif.sva_fails != 0)
+    `uvm_error("APB_SVA", $sformatf("%0d interface assertion failure(s), see the log",
+                                    vif.sva_fails))
+endfunction
+```
+
+The trade-off: the UVM error arrives at the end of the run, not at the failure time, and several monitors on one interface would report the same count, so only one should. This is a methodology pattern, not a standard clause.
+
+### Expert: Parameterized VIPs and the virtual-interface type
+
+When a VIP must support several widths, the type rules of IEEE 1800-2023 §25.9 drive the design. Three designs are in use:
+1. **Parameters through every class.** `class apb_agent #(int AW = 32, int DW = 32) extends uvm_agent;` with `` `uvm_component_param_utils(apb_agent #(AW, DW)) `` and `typedef virtual apb_if #(AW, DW) vif_t;` inside. The param macros register no type name with the factory, so name-based lookup is impossible (IEEE 1800.2-2020 B.2.1.3): `+uvm_set_type_override` (G.2.7), which is name-based, cannot target these classes, and overrides must be by type (§8.2.3.2.5, §8.3.1.4.2). Every specialization is a separate type, and the parameters spread into items, sequences and tests.
+2. **One maximum-width interface.** The interface and every class use the widest width; the configuration carries the used width, and the monitor masks unused bits. One type, no parameter plumbing, at the cost of checks that must know the used width.
+3. **An abstract bus-functional API.** The package declares an abstract class with tasks such as `drive_setup()` and `wait_ready()`; the parameterized interface contains a class that implements it, and hands a handle to the VIP through the configuration. Classes see only the abstract handle, so they need no virtual-interface type at all. This is a methodology pattern (sometimes called a polymorphic interface), not a standard clause; its cost is an extra layer that is harder to debug.
+
+The standard's own §25.9 example shows the trap: a virtual-interface declaration with default parameter values that no instance uses is legal, but nothing can be assigned to it.
+
+### Expert: Nets or variables in a multi-role interface
+
+The same interface serves a master driver, a responder driver and a passive monitor, so who drives each signal changes with the role. A `logic` **variable** may have one continuous driver, and a port connection counts as one, and it may not mix continuous and procedural writes (IEEE 1800-2023 §6.5). A clocking block's output is a synchronous drive, so a `logic` signal that the DUT drives through a port and a clocking block also lists as an output is a conflict. Whether a simulator reports it at elaboration when the clocking output is never written is tool-dependent.
+
+On a **net** (`wire`), each clocking-block output creates its own driver that is `'z` until the first synchronous drive (§14.16), so the unused role's driver never interferes. That is why the Make It Work interface uses `wire`, and why contention at SoC level shows up as X: two drivers on one net. For observation-only hookups, use one-way continuous assignments from RTL into the interface, or `bind` an interface instance into the RTL (§23.11) and pass the signals through its ports, because an interface that contains hierarchical references cannot be used for a virtual interface (§25.9).
+
+### Expert: Who owns the in-flight item at reset
+
+This lesson keeps reset handling inside the agent: the driver aborts, releases the item with `item_done()`, idles and waits. Environments often add a second reaction: on reset, a test or virtual sequence calls `sqr.stop_sequences()`, which kills the sequences on the sequencer and removes all queued requests, locks and responses (IEEE 1800.2-2020 §15.3.2.14). Both react to the same reset edge, so their order is a race. In uvm-core 2020.3.1, `stop_sequences()` empties the request FIFO, and a later `item_done()` from the driver finds no outstanding request and ends the run with `UVM_FATAL [SQRBADITMDN] Item_done() called with no outstanding requests` (`src/seq/uvm_sequencer.svh`).
+
+The rule is **one owner for the in-flight item**. Either the driver releases it and nothing else flushes, as in this lesson, or the environment flushes and the driver must not call `item_done()` for a flushed item (for example, it waits for the environment's "flushed" event and skips the release). A driver that uses `get()` instead of `get_next_item()` completes the handshake inside `get()` (§14.2.6.3 NOTE), so it has nothing to release, at the price of not being able to return a response through the same item. Scoreboard flushing, objections across reset and phase jumps are environment strategy, for the planned A-UVM-9 module.
+
+### Expert: Configuration API design
+
+- **One object or scalar knobs** is the misconception discussed earlier; the staff-level answer adds that objects nest. An env configuration can hold one agent configuration per agent, and the env sets each on its agent's path, so a test configures a whole subsystem with one object ([A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index)).
+- **Source of truth for the mode.** Copying `cfg.is_active` into uvm-core's `is_active` member works but relies on an implementation member and silently ignores the standard `"is_active"` setting. Overriding the virtual `get_is_active()` to return `cfg.is_active` is portable (§13.4.2.2 says the agent developer may override it). Whichever you choose, write the precedence in the user guide.
+- **Validate early.** Check the configuration in the agent's `build_phase` (null vif, `slverr_pct` above 100, a responder role on a passive agent) and stop with a clear fatal. A wrong setting found at time 0 costs seconds; found after an hour of simulation it costs the hour.
+- **Debug aids** (uvm-core 2020.3.1, not in IEEE 1800.2-2020): `+UVM_CONFIG_DB_TRACE` logs every `set` and `get`, and `check_config_usage()` lists settings nobody read, which catches path typos.
+
+### Expert: Versioning and release qualification
+
+`` `UVM_VERSION ``, `uvm_pkg::UVM_VERSION_STRING` and the `` `UVM_VERSION_POST_2017 `` ladder are required by IEEE 1800.2-2020 Annex B.7.1 to B.7.3. uvm-core 2020.3.1 defines `` `UVM_VERSION `` as 2020, ladder defines up to `` `UVM_VERSION_POST_2020_2_0 ``, and `UVM_VERSION_STRING` as `"Accellera:1800.2:UVM:2020.3.1"` (`src/base/uvm_version.svh`, `src/macros/uvm_version_defines.svh`). A VIP that must also build against an older library guards the differences with these defines.
+
+A release qualification regression, run on every supported simulator and UVM version, contains at least:
+- the loopback self-test with many seeds;
+- one error-injection test per assertion, each expecting exactly its own ID once, so that a check that silently stopped firing fails the release;
+- closure of the VIP's own covergroups;
+- a `print_topology` golden file per configuration (active master, active responder, passive), compared textually (F.7.4.2).
+
+### Expert: Evaluating a third-party VIP
+
+A staff-level evaluation, before the purchase order:
+- **Protocol:** which issue of the specification, which optional features, and which rules the checkers cover.
+- **Virtual-interface type:** parameters and modports, and whether its interface can be connected to your DUT ports and to internal RTL for passive use.
+- **Configuration API:** objects or scalar settings, field names, paths and defaults, and what happens on a missing setting (fatal, or silent defaults?).
+- **Items and sequences:** item type and its fields, base sequences and helpers, response handling, and how you add your own sequences (the item type must match, see above).
+- **Extension points:** callbacks and factory-overridable components, documented by hook and order ([A-UVM-5](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index)).
+- **Reporting:** report IDs, and whether its checkers report through UVM. A VIP whose assertions use `$error` will pass your regression with violations.
+- **Coverage:** its model, and the cost of sampling it on every passive instance.
+- **Debug visibility:** encrypted source, transaction recording, waveform access.
+- **Support matrix and evidence:** simulators, UVM versions, and its own self-test results.
+- **Licensing in CI:** a checkout failure must fail as an infrastructure error.
+
+### Expert: Passive VIPs at SoC scale
+
+At SoC level one environment may hold dozens of passive VIP instances. Their cost grows with the number of objects created per transfer, analysis fan-out (every `write` calls every subscriber in turn), covergroup sampling, transaction recording and assertion attempts. Gate each one from the configuration (`has_coverage`, `checks_enable`, recording), do configuration lookups once in `build_phase`, and measure before optimizing; the numbers depend on the simulator and the design ([E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index)). This section gives no figures because none were measured for this lesson.
+
+### Interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: the regression that passed with violations"
+  question="The waveform of a passing regression run shows an APB master changing PADDR during a wait state, and the interface has an assertion for exactly that rule. The report summary says UVM_ERROR 0. What are the likely causes, and which do you check first?"
+  options={[
+    { text: "The assertion reports with $error (or has no else), so the UVM server never counts it; or checks_enable was 0, or $assertoff was active, for this test. Check the log for a simulator-format error line first, then what set checks_enable.", isCorrect: true, feedback: "Right. A simulator-format error line means the check fired but was not counted; no line at all means it was disabled. Then make the interface report with `uvm_error and make error tests demote exactly one ID." },
+    { text: "Concurrent assertions do not run in UVM tests; only immediate assertions do.", isCorrect: false, feedback: "Concurrent assertions in an interface run on every clock edge whatever the test does; UVM has nothing to do with whether they evaluate." },
+    { text: "The UVM report server ignores errors from interfaces; only components can raise UVM_ERROR.", isCorrect: false, feedback: "`uvm_error in an interface that imports uvm_pkg reports through uvm_root and is counted (F.3.2.1)." },
+    { text: "The scoreboard should have caught it, so the scoreboard is broken.", isCorrect: false, feedback: "A scoreboard compares data. A change of PADDR during a wait state may not change any data the scoreboard sees; this is the assertion's job." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: one agent, block and SoC"
+  question="Make one APB agent drive the bus at block level and only observe it at SoC level, without editing the agent. What exactly changes between the two benches?"
+  options={[
+    { text: "Only the test and tb_top: the test sets cfg.is_active to UVM_PASSIVE and the vif to an interface fed from the RTL by one-way assigns; the agent builds no driver or sequencer, and print_topology proves it.", isCorrect: true, feedback: "Right. The agent's code is identical; the configuration object and the interface hookup change. The env connects agt.ap to the SoC scoreboard." },
+    { text: "Keep the agent active at SoC level and simply never start a sequence on it.", isCorrect: false, feedback: "The driver still exists and drives its idle values through its clocking block, so the bus has two drivers: X on PSEL and PENABLE whenever the RTL drives them high." },
+    { text: "Write a second, monitor-only agent class for SoC use.", isCorrect: false, feedback: "That duplicates the monitor and its checks, and the two copies drift apart. Reuse is the point of the passive mode." },
+    { text: "Set a scalar is_active entry in uvm_config_db, which every agent honours.", isCorrect: false, feedback: "Only if the agent reads it. This lesson's VIP takes the mode from its configuration object and ignores the scalar entry, which its user guide must say." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: a responder whose answers come from sequences"
+  question="Design an APB responder agent whose wait states and errors are controlled by sequences. What are the moving parts, and what is the classic bug?"
+  options={[
+    { text: "The monitor publishes each request at SETUP to an analysis FIFO in the sequencer; a forever reactive sequence gets it through p_sequencer and sends a response item; the driver holds PREADY low until the response says otherwise. The classic bug is an objection in the forever sequence, which hangs the test.", isCorrect: true, feedback: "Right. Add that PREADY low by default turns a slow answer into legal wait states, and that the reactive sequence is started in fork-join_none with no objection." },
+    { text: "Generate all responses in advance in a sequence started before the test, and have the driver pop them in order.", isCorrect: false, feedback: "Responses depend on requests the DUT has not made yet: read or write, address. A reactive design answers each request as it arrives." },
+    { text: "Let the driver randomize responses itself; sequences cannot react to the bus.", isCorrect: false, feedback: "Then tests must override the driver to change responses. Sequences can react through p_sequencer and an analysis FIFO fed by the monitor." },
+    { text: "Drive PREADY high by default so transfers never stall.", isCorrect: false, feedback: "Then the responder completes transfers it has not answered yet, with stale data. Low by default is the safe choice; APB allows any number of wait states." }
+  ]}
+/>
+
+Further questions to practise aloud:
+- A parameterized VIP's driver hits a null virtual interface at time 0. What do you check first? (The `set` and `get` types: parameters and modport.)
+- What is in your VIP release checklist, and how do you prove an assertion still fires?
+- Why can a test class not call `$assertoff(0, tb_top.bus)`, and what do you offer instead?
+
+## Practice & Reinforce
+
+### Retrieval quiz
 
 <Quiz
   questions={[
     {
-      question: "What is the purpose of the is_active flag in a VIP agent?",
-      options: [
-        "It determines whether the agent uses blocking or non-blocking assignments",
-        "It controls whether the driver and sequencer are instantiated (active mode) or only the monitor runs (passive mode)",
-        "It sets the agent's priority in the UVM component hierarchy",
-        "It enables or disables the agent's analysis ports"
+      question: "An APB interface assertion has else $error(\"wait-state violation\"). During a test it fails 3 times, and nothing else goes wrong. What does the UVM report summary show, and what does a regression that checks only that summary decide?",
+      objective: 4,
+      answers: [
+        { text: "UVM_ERROR : 0, so the regression marks the test as passed", correct: true, feedback: "Right. $error is a simulator message; the UVM report server never sees it, so its counts stay at 0." },
+        { text: "UVM_ERROR : 3, so the regression marks the test as failed", correct: false, feedback: "This is the classic misconception. Only messages issued through UVM, for example with `uvm_error, are counted by the report server." },
+        { text: "UVM_FATAL : 1, because $error stops the simulation", correct: false, feedback: "$error reports an error and continues; $fatal is the severity task that ends the run." },
+        { text: "Nothing: concurrent assertions do not run inside UVM tests", correct: false, feedback: "The assertion ran and fired three times; the waveform and the simulator log show it. It simply was not counted." }
       ],
-      correctAnswer: 1,
-      explanation: "When is_active is UVM_ACTIVE, the agent builds its driver and sequencer in addition to the monitor, enabling it to drive transactions. When UVM_PASSIVE, only the monitor and coverage collector are built, allowing the agent to observe traffic without driving."
+      explanation: "Interface assertions report through the simulator unless their action block calls UVM reporting. Fix: import uvm_pkg in the interface and use `uvm_error with %m in the message; then each failure increments UVM_ERROR through uvm_root."
     },
     {
-      question: "Why does the VIP package file control the order of `include directives?",
-      options: [
-        "SystemVerilog requires alphabetical ordering of includes",
-        "Leaf components (driver, monitor) must be compiled before container components (agent) that instantiate them",
-        "The UVM library requires a specific include order",
-        "The order determines the factory registration priority"
+      question: "The test sets cfg.is_active = UVM_PASSIVE for env.apb_agt. A virtual sequence later calls seq.start(env.apb_agt.sqr) on that agent. What happens with uvm-core 2020.3.1?",
+      objective: 1,
+      answers: [
+        { text: "The run stops with UVM_FATAL [SEQ] at the sequence's first start_item: the sequencer handle is null", correct: true, feedback: "Right. A passive agent never constructs sqr, so start() receives null and start_item finds no sequencer." },
+        { text: "The items queue up and the idle driver ignores them", correct: false, feedback: "There is no idle driver and no sequencer: passive means never constructed, not built and switched off." },
+        { text: "The agent switches to active mode while the sequence runs", correct: false, feedback: "The topology is fixed in build_phase; nothing creates a driver later." },
+        { text: "It fails to compile, because you cannot start a sequence on a passive agent", correct: false, feedback: "The compiler cannot know the mode; env.apb_agt.sqr is a legal handle expression that happens to be null at run time." }
       ],
-      correctAnswer: 1,
-      explanation: "SystemVerilog compilation is order-dependent. The agent class references driver, monitor, and sequencer types, so those must be compiled first. Similarly, the transaction class must precede the driver that uses it."
+      explanation: "In passive mode the agent's build_phase skips the branch that creates sqr and drv. The handle is null, and uvm-core reports UVM_FATAL [SEQ] 'neither the item's sequencer nor dedicated sequencer has been supplied to start item'. The standard requires only an error message here."
     },
     {
-      question: "Where should protocol compliance assertions be placed in a VIP architecture?",
-      options: [
-        "Inside the driver's run_phase task",
-        "In the test's check_phase function",
-        "In the SV interface definition, executing continuously via concurrent assertions",
-        "In the scoreboard's compare function"
+      question: "Your VIP has nine settings, and an SoC environment instantiates it eight times with different values. How should tests configure it?",
+      objective: 1,
+      answers: [
+        { text: "One apb_agent_config object per agent, set once by the test on the agent's path, fetched once by the agent and handed to its children", correct: true, feedback: "Right. One typed lookup that fails loudly, defaults in one class, printable and copyable." },
+        { text: "Nine scalar uvm_config_db entries per agent, one per setting", correct: false, feedback: "72 string-keyed lookups: a typo or a type mismatch makes get() return 0 silently and the agent runs on defaults." },
+        { text: "Package-level variables in apb_pkg", correct: false, feedback: "A package variable is shared by all eight instances; they cannot differ." },
+        { text: "`define macros chosen at compile time", correct: false, feedback: "Macros are fixed per compile and identical for every instance, and changing one forces a recompile." }
       ],
-      correctAnswer: 2,
-      explanation: "Protocol assertions belong in the interface definition as concurrent SVA properties. They check every clock edge whatever the test does, including in passive reuse where no driver exists. Two details make them usable in a VIP: report through `uvm_error so the UVM summary counts them, and provide an enable knob for error-injection tests."
+      explanation: "The configuration object is the VIP's API. Scalar entries fail silently, package variables are shared, and macros are compile-time constants for all instances."
+    },
+    {
+      question: "A scoreboard stores every transfer it receives from the monitor, then prints them: three transfers to 0x10, 0x14 and 0x18 all print as 0x18. The monitor creates tr once in build_phase and refills it for each transfer. What is the cause?",
+      objective: 2,
+      answers: [
+        { text: "ap.write(tr) passes a handle, so all stored handles point at the one object, which holds the last transfer", correct: true, feedback: "Right. Create a new item per transfer in the monitor; scoreboards should also copy before storing." },
+        { text: "Analysis ports drop writes when the subscriber is busy, so only the last one arrived", correct: false, feedback: "Analysis writes are function calls that complete in zero time; none are dropped. Three writes arrived, carrying the same handle." },
+        { text: "The 1step input skew makes the monitor read the last value", correct: false, feedback: "The skew decides when each value is sampled; each transfer was sampled correctly before being overwritten in the shared object." },
+        { text: "The scoreboard must compare items with == instead of compare()", correct: false, feedback: "== on handles compares identity. The bug is upstream: there is only one object." }
+      ],
+      explanation: "Class variables hold handles (IEEE 1800-2023 §8.4). Reusing one object means every subscriber's stored reference sees later changes. The monitor must create an object per transfer."
+    },
+    {
+      question: "PRESETn falls while the master driver is in an ACCESS wait state. The driver uses get_next_item(). What should it do?",
+      objective: 2,
+      answers: [
+        { text: "Stop driving, drive PSEL and PENABLE low, call item_done() for the aborted item, and start the next item only after PRESETn rises", correct: true, feedback: "Right: stop, release, idle, resume. One item_done per get_next_item keeps the sequence from hanging." },
+        { text: "Finish the transfer first, then handle the reset", correct: false, feedback: "The slave is in reset and will not complete it; the driver would wait forever, and it keeps driving the bus during reset." },
+        { text: "Kill its thread and let UVM clean up the sequencer", correct: false, feedback: "Nothing calls item_done for the aborted item, so the sequence stays in finish_item and the test hangs." },
+        { text: "Nothing: clocking blocks pause automatically during reset", correct: false, feedback: "Clocking blocks have no reset semantics; they keep sampling and driving at every clock edge." }
+      ],
+      explanation: "finish_item returns only after the driver signals item_done (IEEE 1800.2-2020 §14.2.6.3). If the environment also flushes the sequencer with stop_sequences(), only one of them may own the in-flight item, or uvm-core reports SQRBADITMDN."
+    },
+    {
+      question: "The responder holds PREADY low by default. A reactive sequence answers a read 2 clock cycles after the SETUP edge, with wait_cycles = 0. What does the bus show?",
+      objective: 2,
+      answers: [
+        { text: "Extra wait states (PREADY low in ACCESS) until the answer is driven; the transfer then completes normally, which is legal APB", correct: true, feedback: "Right. APB allows any number of wait states, so a slow answer is never a protocol error with PREADY low by default." },
+        { text: "A protocol violation: ACCESS must complete in the first cycle", correct: false, feedback: "Only SETUP is fixed at one cycle. ACCESS lasts until PREADY is high (IHI 0024C §3.3.2)." },
+        { text: "The master times out and drops the transfer", correct: false, feedback: "APB defines no timeout; a timeout is a checker policy a VIP may add, and two cycles would not trigger a sensible one." },
+        { text: "The transfer completes immediately with stale PRDATA", correct: false, feedback: "That happens with PREADY high by default. Low by default is what prevents it." }
+      ],
+      explanation: "Holding PREADY low means the responder completes a transfer only when its answer is driven. The delay appears as wait states, which IHI 0024C allows from zero upwards."
+    },
+    {
+      question: "tb_top calls uvm_config_db#(virtual apb_if #(16, 32))::set(null, \"uvm_test_top\", \"vif\", bus16). The VIP's test calls get with apb_vif_t, which is virtual apb_if #(32, 32). What happens?",
+      objective: 3,
+      answers: [
+        { text: "get() returns 0 without any message, because the two virtual-interface types differ; the VIP's NO_VIF fatal then fires", correct: true, feedback: "Right. Parameter values are part of the interface type (§25.9), and uvm_config_db matches on the exact type." },
+        { text: "It works: parameters are not part of the interface type", correct: false, feedback: "They are: the type includes the actual parameter values, default or overridden." },
+        { text: "It works, and the upper address bits are truncated", correct: false, feedback: "Types are not converted in the configuration database; the lookup simply misses." },
+        { text: "Compile error at the set call", correct: false, feedback: "The set is legal: it stores a value of its own type. The mismatch shows only when a get of another type finds nothing." }
+      ],
+      explanation: "Declare the vif type once (typedef virtual apb_if #(...) apb_vif_t) and use it in tb_top and in the VIP. A modport is also part of the type, with the same silent-miss result."
+    },
+    {
+      question: "Why is apb_if.sv compiled as its own file instead of being declared inside apb_pkg?",
+      objective: 3,
+      answers: [
+        { text: "A package cannot contain an interface declaration; the package refers to the interface only through the virtual-interface type", correct: true, feedback: "Right. Package items are types, classes, tasks, functions and similar declarations; interfaces are design elements (IEEE 1800-2023 §26.2)." },
+        { text: "So the interface can import uvm_pkg, which a package cannot do", correct: false, feedback: "Both can import uvm_pkg; apb_pkg does exactly that." },
+        { text: "UVM requires interfaces to be compiled after packages", correct: false, feedback: "This is a SystemVerilog rule, not a UVM one, and the usual order is the reverse: the interface before the package that names it." },
+        { text: "An interface must be in the same file as tb_top", correct: false, feedback: "Any compilation order works as long as the interface is compiled before what refers to it." }
+      ],
+      explanation: "The package holds the VIP's classes and types; the interface is a design element instantiated in tb_top. Compile order: UVM, apb_if.sv, apb_pkg.sv, the test package, tb_top.sv."
+    },
+    {
+      question: "my_seq extends uvm_sequence #(my_apb_item) and is started on a vendor VIP's sequencer of type uvm_sequencer #(vendor_apb_item). The two item classes are unrelated. What happens with uvm-core 2020.3.1?",
+      objective: 5,
+      answers: [
+        { text: "The run stops with UVM_FATAL [SQRSNDREQCAST] when the sequencer fails to cast the item in finish_item", correct: true, feedback: "Right. The item type is the contract. Send the vendor's item type, usually by extending its base sequence." },
+        { text: "It works, because start_item and finish_item are protocol-independent", correct: false, feedback: "They are protocol-independent, but the sequencer still requires an item of its own type or a subclass of it." },
+        { text: "It works only if my_seq overrides start_item with the vendor's protocol-specific version", correct: false, feedback: "Protocol behaviour lives in the vendor's driver, not in start_item. What must match is the item type." },
+        { text: "Compile error, because the sequencer's parameter differs from the sequence's", correct: false, feedback: "start() takes a uvm_sequencer_base handle, so it compiles; the mismatch shows at run time." }
+      ],
+      explanation: "start_item and finish_item come from uvm_sequence_base (IEEE 1800.2-2020 §14.2.6.2, §14.2.6.3). The vendor sequencer casts each request to its own item type; uvm-core reports a failed cast as SQRSNDREQCAST. Extending the vendor's base sequence is good practice for its helpers, not a UVM requirement."
+    },
+    {
+      question: "An error-injection test deliberately breaks the APB protocol once and must not fail because of it, while any other violation should still fail. Which control fits best?",
+      objective: 4,
+      answers: [
+        { text: "Keep the checks on, and demote or catch exactly the APB_SVA ID on uvm_root for this test, counting the expected occurrence", correct: true, feedback: "Right. Only the expected message is handled; any other ID still fails. This works because the VIP reports through UVM." },
+        { text: "Call $assertoff(0, tb_top.bus) from the test's run_phase", correct: false, feedback: "A class in a package may not contain hierarchical references to the design (§26.2), and turning every check off would also hide unexpected violations." },
+        { text: "Add a report catcher that turns the assertion's $error into a warning", correct: false, feedback: "Report catchers see only messages issued through UVM. A $error never reaches them." },
+        { text: "Set env.set_report_id_action(\"APB_SVA\", UVM_NO_ACTION) on the env", correct: false, feedback: "Interface messages are issued through uvm_root, not the env, so the env's settings do not apply to them." }
+      ],
+      explanation: "Narrow controls beat broad ones: checks_enable or $assertoff hide every violation, while an ID-specific demotion or catcher on uvm_root handles only the expected one. Catchers and severity overrides work only for messages issued through UVM."
+    },
+    {
+      question: "The SoC test sets uvm_config_db#(uvm_active_passive_enum)::set(this, \"env.uart_apb\", \"is_active\", UVM_PASSIVE) and leaves the agent's configuration object at its default. What does this lesson's apb_agent build?",
+      objective: 1,
+      answers: [
+        { text: "An active agent with drv and sqr, because the agent copies cfg.is_active (UVM_ACTIVE) after super.build_phase read the scalar setting", correct: true, feedback: "Right. The copy overwrites what uvm_agent read. The user guide must say the scalar setting is ignored, and the SoC bus now has two drivers." },
+        { text: "A passive agent: the standard is_active setting always wins", correct: false, feedback: "uvm_agent::build_phase does read it, but this agent overwrites the member with cfg.is_active right afterwards." },
+        { text: "A compile error: is_active cannot be set both ways", correct: false, feedback: "Both are legal; the question is only which one the agent's code uses last." },
+        { text: "Nothing: the agent stops with NO_CFG", correct: false, feedback: "The test still set the configuration object (at its defaults); only the scalar setting is redundant." }
+      ],
+      explanation: "This VIP takes the mode from its configuration object. Either document that a scalar is_active is ignored, or override get_is_active() to return cfg.is_active; in both cases the configuration object is the one source of truth."
     }
   ]}
 />
 
+The flashcards for this lesson appear at the end of this section, under "Reinforce the essentials". They cover the VIP's parts, the configuration object, passive builds, reporting from interfaces, the monitor's new object per transfer, the reset recipe, responders, vif types, packaging, sequence compatibility and release checks.
+
+### Kata: make an `$error` interface assertion count
+
+Start from this interface fragment, used by a UVM test whose driver violates the wait-state rule once.
+
+```systemverilog
+// snippet: the starting point
+interface simple_apb_if (input logic pclk, input logic preset_n);
+  wire psel, penable, pready;
+  wire [31:0] paddr;
+
+  a_wait_stable: assert property (
+    @(posedge pclk) disable iff (!preset_n)
+      (psel && penable && !pready) |=> $stable(paddr))
+    else $error("PADDR changed during a wait state");
+endinterface
+```
+
+1. Predict the report summary's `UVM_ERROR` count and what else the log shows.
+2. Change the interface so the failure is counted as a UVM error with the ID `APB_SVA` and the interface's instance name in the message.
+3. Add an enable bit that a VIP agent can set from its configuration object, and predict the summary when the error-injection test clears it.
+4. Explain why clearing the bit is a poor way to write an error-injection test.
+
+<details>
+<summary>Worked solution</summary>
+
+1. `UVM_ERROR :    0`. The log also has one simulator-format error line from `$error`, which a summary-only regression ignores.
+2. and 3.
+
+```systemverilog
+// snippet: the fixed interface
+`include "uvm_macros.svh"
+interface simple_apb_if (input logic pclk, input logic preset_n);
+  import uvm_pkg::*;                  // uvm_report_error and friends for the macro
+  wire psel, penable, pready;
+  wire [31:0] paddr;
+  bit checks_enable = 1'b1;           // the agent writes cfg.checks_enable here
+
+  a_wait_stable: assert property (
+    @(posedge pclk) disable iff (!preset_n || !checks_enable)
+      (psel && penable && !pready) |=> $stable(paddr))
+    else `uvm_error("APB_SVA", $sformatf("%m: PADDR changed during a wait state"))
+endinterface
+```
+
+   With the bit set: `UVM_ERROR :    1`, and the message reads `reporter [APB_SVA] <instance path>...: PADDR changed during a wait state`. With the bit cleared: the attempt is disabled, no action block runs (IEEE 1800-2023 §16.14.1), and the summary shows `UVM_ERROR :    0`.
+4. With the bit cleared, the test passes even if the injected violation never happened, or if a *different* violation happened too. A better error test keeps checks on and demotes or catches exactly the expected `APB_SVA` message on `uvm_root`, counting it, so it can also fail when the count is wrong. The enable bit is for tests that break the protocol on purpose in ways too varied to count.
+
+</details>
+
+### Debug challenge: the SoC run with X on PSEL
+
+A SoC test reuses the block team's `apb_agent` on an internal APB bus with `cfg.is_active = UVM_PASSIVE`. On the interface's nets the run shows X on `PSEL` and `PENABLE` whenever the SoC's bridge starts a transfer, and the SoC scoreboard misses transfers. This is part of the agent you were given:
+
+```systemverilog
+// snippet: the given agent's build_phase
+function void build_phase(uvm_phase phase);
+  super.build_phase(phase);
+  if (!uvm_config_db#(apb_agent_config)::get(this, "", "cfg", cfg))
+    `uvm_fatal("NO_CFG", "no cfg")
+  mon = apb_monitor::type_id::create("mon", this);
+  mon.cfg = cfg;
+  if (get_is_active() == UVM_ACTIVE) begin
+    sqr = apb_sequencer::type_id::create("sqr", this);
+    sqr.cfg = cfg;
+    drv = apb_master_driver::type_id::create("drv", this);
+    drv.cfg = cfg;
+  end
+endfunction
+```
+
+1. What would `print_topology` show under the agent, and why?
+2. Why X, rather than a wrong but known value?
+3. Give two fixes, one in the agent and one in the test, and say which one the VIP's user guide should require.
+
+<details>
+<summary>Answers</summary>
+
+1. `drv`, `mon` and `sqr`. The agent never copies `cfg.is_active`, so `is_active` keeps its default `UVM_ACTIVE` (no scalar `"is_active"` setting exists either), and `get_is_active()` returns `UVM_ACTIVE`.
+2. The interface signals are nets. The driver's clocking-block outputs drive `PSEL` and `PENABLE` low from its first `drive_idle()` (no sequence ever runs on it), while the one-way assigns drive the bridge's values. While both sides drive 0 the net is 0; when the bridge drives 1 against the driver's 0, two strong drivers with different values resolve to X (IEEE 1800-2023 §6.5, §14.16). The monitor then never sees `PSEL === 1`, so it publishes nothing and the scoreboard misses transfers. `PWRITE`, `PADDR` and `PWDATA` stay correct, because the idle driver never drove them and their clocking drivers are still `'z`.
+3. In the agent, add `is_active = cfg.is_active;` after `super.build_phase(phase)`, or override `get_is_active()` to return `cfg.is_active`. In the test, a scalar `uvm_config_db#(uvm_active_passive_enum)::set(this, "env.uart_apb", "is_active", UVM_PASSIVE)` would also work with this broken agent, but it would be ignored by the fixed one. The user guide should name one source of truth, the configuration object, and the agent should implement it.
+
+</details>
+
+### Exercise: make the interface width a parameter
+
+Starting from the Make It Work file:
+1. Instantiate the interface in `tb_top` as `apb_if #(.AW(16), .DW(32)) bus (...)` and keep the `set` with `apb_vif_t`. Predict whether this compiles, and what happens at run time. (Assigning `bus` to an `apb_vif_t` is illegal, because the types differ, so expect a compile or elaboration error at the `set` call; the exact message is tool-dependent.)
+2. Change only the `set` to `uvm_config_db#(virtual apb_if #(.AW(16), .DW(32)))::set(...)`. Predict the first message. (The test's `get` with `apb_vif_t` returns 0 silently, and the test's `NO_VIF` fatal fires.)
+3. Choose one of the three designs in "Expert: Parameterized VIPs and the virtual-interface type" and make the 16-bit bench pass the self-test. Write down what changed in the VIP and what changed for its users.
+
+### Lab
+
+The `soc-vip-reuse` lab of E-SOC-1 applies passive reuse at SoC level: an SPI agent that collides with firmware until you make it passive. As you work through it, remember that a passive agent's driver is **never constructed**, not "disabled".
+
+<LabLink labId="soc-vip-reuse" />
+
+A milestone lab for this module, LAB-M2 (one valid/ready or APB agent reused as master, responder and passive observer, graded on its `print_topology` signature), is planned.
+
 ## References & Next Topics
 
-- **Prerequisite:** [I-UVM-2A: Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index) — agents, drivers, monitors, and sequencers.
-- **Prerequisite:** [I-UVM-2B: TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) — analysis ports used by monitors.
-- **Prerequisite:** [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) — scoreboards that consume VIP monitor output.
-- **Next:** [A-UVM-8: Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index) — coordinating multiple VIP agents in an SoC-level environment.
-- **Related:** [A-UVM-5: UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index) — callbacks for extending VIP behavior without subclassing.
+**Primary sources**
+- **IEEE 1800.2-2020:** §9.3.1.7.1 `get_objection`; §9.8.1.1 `uvm_build_phase` (top-down); §10.5.1.3.7 `set_drain_time`; §6.3.5.2 report actions; §6.3.7 severity overrides; §6.6 `uvm_report_catcher`; §8.2.3.2.5 `set_type_override`; §8.3.1.4.2 `set_type_override_by_type`; §12.2.8.3 `uvm_tlm_analysis_fifo`; §12.2.10.2 analysis imp (subscribers do not modify what they receive); §13.4 `uvm_agent` (§13.4.2.2 `get_is_active` and the `is_active` setting); §13.9 `uvm_subscriber`; §14.2.4.4 `set_automatic_phase_objection` (NOTE on `forever` sequences); §14.2.6.2 `start_item`; §14.2.6.3 `finish_item` (NOTE on `item_done` and `get`); §14.4 `uvm_sequence_library`; §15.3.2.14 `stop_sequences`; §15.3.2.20 `send_request`; §15.5.2.3 `get_next_item`; Annex B.2.1.3 component utils and param utils macros; B.3.3 `` `uvm_declare_p_sequencer ``; B.7.1 to B.7.3 version defines; F.2.1.7 `uvm_active_passive_enum`; F.3.2.1 `uvm_get_report_object`; F.3.2.3 global `uvm_report_*`; F.7.4.2 `print_topology`; G.2.7 `+uvm_set_type_override`.
+- **IEEE 1800-2023:** §6.5 nets and variables; §8.4 objects and handles; §8.12 assignment and copying; §8.27 `typedef class`; §9.6.3 `disable fork`; §13.4.4 clocking drives allowed in functions; §14.3 clocking block declaration (default skews); §14.16 synchronous drives (nets, `'z` driver, drives between edges); §16.14.1 `assert` (disabled attempts run no action block); §18.7.1 `local::` scope resolution in inline constraints; §18.11 inline random-variable control; §20.10 severity tasks; §20.11 assertion control tasks; §23.11 `bind`; §25.8 parameterized interfaces; §25.9 virtual interfaces (type includes parameters and modport; null use is fatal; no hierarchical references); §26.2 package declarations.
+- **Arm IHI 0024C (AMBA APB Protocol Specification v2.0):** §1.2 revisions (APB3, APB4); §2.1.1 data buses (up to 32 bits); §3.1.1 write without wait states (`PENABLE` deasserted at the end); §3.1.2 write with wait states (signals held; `PREADY` any value while `PENABLE` is low); §3.3.2 read with wait states (any number); §3.4 error response (`PSLVERR` valid only at completion; driving it low otherwise is recommended); §4.1 operating states (SETUP lasts one cycle). Later issues of the APB specification were not checked for this lesson.
+- **uvm-core 2020.3.1 (implementation behaviour, labelled "uvm-core" on this page):** `src/comps/uvm_agent.svh` (the `is_active` member and the scalar lookup); `src/macros/uvm_message_defines.svh` (`` `uvm_error `` and `uvm_get_report_object()`); `src/seq/uvm_sequence_base.svh` (`SEQ` fatal); `src/seq/uvm_sequencer.svh` (`stop_sequences`, `SQRBADITMDN`); `src/seq/uvm_sequencer_param_base.svh` (`SQRSNDREQCAST`); `src/tlm1/uvm_tlm_fifos.svh`; `src/base/uvm_version.svh`; `src/macros/uvm_version_defines.svh`; `+UVM_CONFIG_DB_TRACE` and `check_config_usage()`.
+
+**Related**
+- [I-UVM-2A Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index): the agent's roles and the active/passive mechanism this VIP packages.
+- [I-UVM-2B TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index): analysis ports, exports and FIFOs.
+- [I-UVM-2C Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index): `uvm_config_db` mechanics and type matching.
+- [I-UVM-1B The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index): type overrides, used by the error-injection test.
+- [I-UVM-1D Reporting and Run Control](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index): the report summary and pass/fail rule.
+- [I-UVM-3B Advanced Sequencing and Layering](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index): `p_sequencer`, virtual sequences.
+- [I-SV-4C Checkers and Bind](/curriculum/T2_Intermediate/I-SV-4C_Checkers/index): `bind` for observation hookups.
+- [A-UVM-8 Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index): several VIP instances under one configuration.
+- [E-SOC-1 SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): SoC reuse strategy.
+- [E-DBG-1 Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index) and [E-PERF-1 UVM Performance](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index).
+- [A-UVM-5 UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index): the extension points a VIP driver offers, so users can change its behaviour without editing or overriding it. It is the next module on the path.
+- Planned, not yet available: B-APB-1 (the APB protocol in full) and A-UVM-9 (reset handling and error injection across an environment).
+
+<NextLesson />

@@ -1,36 +1,54 @@
 {
   "id": "scoreboard-decoupling",
-  "version": "1",
+  "version": "2",
   "title": "Scoreboard Decoupling",
-  "description": "Practice removing monitor backpressure by routing transactions through an analysis FIFO.",
+  "description": "Move a check that must wait out of write() and into a run_phase thread fed by analysis FIFOs, then account for every item at end of test.",
   "owningModule": "I-UVM-2B",
   "routeSlug": "scoreboard-decoupling",
   "status": "available",
   "labPrerequisites": [],
-  "modulePrerequisites": [],
+  "modulePrerequisites": [
+    "I-UVM-2B"
+  ],
   "steps": [
     {
       "id": "1",
-      "version": "1",
+      "version": "2",
       "completion": "self_attested",
-      "title": "Step 1: Declare the FIFO",
-      "instructions": "Open `src/dv/env.sv` and declare a `uvm_tlm_analysis_fifo #(my_txn)` named `sb_fifo`.",
+      "title": "Step 1: Run the coupled starter",
+      "instructions": "Read `src/dv/scoreboard.sv`, predict the log, then run `src/dv/testbench.sv`. Expect one `SCB/NO_RSP` error per request (10 to 100 ns) and `SCB/NO_TRAFFIC`: `write_req()` runs in zero time, before the response exists.",
       "starterCode": ""
     },
     {
       "id": "2",
-      "version": "1",
+      "version": "2",
       "completion": "self_attested",
-      "title": "Step 2: Connect the FIFO",
-      "instructions": "In `env.sv`, wire the monitor's `ap` to the FIFO's `analysis_export`, and the scoreboard to the `get_export`.",
+      "title": "Step 2: Try to wait in write()",
+      "instructions": "Add `@(rsp_in)` or `wait (last_rsp != null)` inside `write_req()` and compile. The compiler rejects a time-controlling statement in a function (IEEE 1800-2023 §13.4). Remove it.",
       "starterCode": ""
     },
     {
       "id": "3",
-      "version": "1",
+      "version": "2",
       "completion": "self_attested",
-      "title": "Step 3: Refactor the Scoreboard",
-      "instructions": "In `scoreboard.sv`, change the `analysis_imp` to a `uvm_blocking_get_port`. Replace `write()` with a `run_phase` loop that calls `get()`.",
+      "title": "Step 3: Exports and analysis FIFOs",
+      "instructions": "In `scoreboard.sv`, make `req_in` and `rsp_in` `uvm_analysis_export #(my_txn)` members, add private `uvm_tlm_analysis_fifo #(my_txn)` buffers `req_fifo` and `rsp_fifo`, construct them with `new()`, and connect each export to its FIFO's `analysis_export`. Remove the imp declarations and the `write_*()` methods.",
+      "starterCode": ""
+    },
+    {
+      "id": "4",
+      "version": "2",
+      "completion": "self_attested",
+      "title": "Step 4: The run_phase thread",
+      "instructions": "Loop forever: `req_fifo.peek()`, `rsp_fifo.get()`, `req_fifo.try_get()`, then `check()`. Report leftovers in `check_phase` (`SCB/MISSING`, `SCB/UNEXPECTED`, `SCB/NO_TRAFFIC`). Expect `SCB_SUMMARY matches=10 mismatches=0 pending=0` at 130 ns and `UVM_ERROR :    0`.",
+      "starterCode": ""
+    },
+    {
+      "id": "5",
+      "version": "2",
+      "completion": "self_attested",
+      "title": "Step 5: Prove it can fail",
+      "instructions": "Run with `+CORRUPT=4`. Expect `SCB/MISMATCH` for seq 4 at 80 ns and `SCB_SUMMARY matches=9 mismatches=1 pending=0`. Compare your file with `solution/scoreboard.sv`.",
       "starterCode": ""
     }
   ],
@@ -42,22 +60,22 @@
       "editable": false
     },
     {
-      "path": "src/dv/env.sv",
+      "path": "src/dv/scoreboard.sv",
       "role": "starter",
       "language": "systemverilog",
       "editable": true
     },
     {
-      "path": "src/dv/monitor.sv",
+      "path": "src/dv/env.sv",
       "role": "reference",
       "language": "systemverilog",
       "editable": false
     },
     {
-      "path": "src/dv/scoreboard.sv",
-      "role": "starter",
+      "path": "src/dv/traffic_gen.sv",
+      "role": "reference",
       "language": "systemverilog",
-      "editable": true
+      "editable": false
     },
     {
       "path": "src/dv/testbench.sv",
@@ -68,6 +86,12 @@
     {
       "path": "src/dv/txn.sv",
       "role": "reference",
+      "language": "systemverilog",
+      "editable": false
+    },
+    {
+      "path": "solution/scoreboard.sv",
+      "role": "solution",
       "language": "systemverilog",
       "editable": false
     }

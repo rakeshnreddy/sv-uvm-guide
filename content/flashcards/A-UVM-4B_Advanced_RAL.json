@@ -2,6 +2,86 @@
   {
     "id": "auvm4b-1",
     "question": "What does a uvm_reg_predictor do in explicit prediction?",
-    "answer": "It subscribes to a bus monitor's analysis port, converts each observed bus transaction to a register operation with the adapter's bus2reg(), and updates the matching register's mirror, so the model tracks every access on the bus, including ones the register model did not start (IEEE 1800.2-2020 19.3)."
+    "answer": "It receives every transfer the bus monitor publishes on its bus_in, converts each one with the adapter's bus2reg(), finds the register at that address in its map, and predicts that register's mirror. So the model tracks every access on the bus, including ones it did not start (IEEE 1800.2-2020 §19.3)."
+  },
+  {
+    "id": "auvm4b-2",
+    "question": "Name the three prediction set-ups, and say which one a new uvm_reg_map uses.",
+    "answer": "Implicit (auto): map.set_auto_predict(1), which predicts only accesses the register model starts. Explicit: a uvm_reg_predictor fed by the bus monitor, which predicts every transfer; passive is the same predictor on a bus the model never drives. A new map uses neither: auto-predict is 0 and no predictor exists, so nothing predicts frontdoor traffic until you choose."
+  },
+  {
+    "id": "auvm4b-3",
+    "question": "Misconception check: is calling predict() by hand after every write 'explicit prediction'?",
+    "answer": "No. Explicit prediction is the uvm_reg_predictor component fed by a monitor. A hand-written predict() records what you believe happened and misses every access you did not make, such as firmware or DMA writes."
+  },
+  {
+    "id": "auvm4b-4",
+    "question": "Misconception check: with set_auto_predict(1) and no predictor, does the mirror see a firmware write?",
+    "answer": "No. Auto-predict runs inside the register model's own read(), write(), mirror() and update() calls. A transfer from another initiator never passes through them, so only a predictor fed by the bus monitor sees it."
+  },
+  {
+    "id": "auvm4b-5",
+    "question": "Misconception check: after ral.ctrl.poke(status, 'h3), must you call predict('h3)?",
+    "answer": "Not in uvm-core 2020.3.1: poke() and peek() call do_predict() themselves, unconditionally. IEEE 1800.2-2020 §18.4.4.11–§18.4.4.12 words it differently (\"affected by the auto-prediction configuration\"), so portable code checks get_mirrored_value() instead of assuming. The bus monitor never sees a backdoor access."
+  },
+  {
+    "id": "auvm4b-6",
+    "question": "Why does auto-predict plus a connected predictor break a W1T field but not RW or W1C fields?",
+    "answer": "Each access the model starts is predicted twice. RW (store the data) and W1C (mirror AND NOT data) give the same result when applied twice, but W1T (mirror XOR data) undoes itself: 0 XOR 1 XOR 1 = 0. Keep auto-predict at 0 wherever a predictor is connected."
+  },
+  {
+    "id": "auvm4b-7",
+    "question": "The hardware sets a W1C status bit. When does the mirror learn it, and how do you avoid false mismatches?",
+    "answer": "Only when something reads the register (a predicted read), or peeks it, or calls predict(): no access means no prediction. Read the field before you check it, or configure it volatile (compare mode UVM_NO_CHECK) and check its value against your scoreboard. Volatile skips the check but prediction still runs."
+  },
+  {
+    "id": "auvm4b-8",
+    "question": "Give the mirror-mismatch checklist, in the order a prediction travels.",
+    "answer": "1 mon.ap connected to predictor.bus_in? 2 does the monitor publish every transfer, with read data? 3 does bus2reg() set kind, addr, data and status right? 4 is predictor.map a root map of a locked model, and does the address match? 5 is the field's policy and volatility right, and was the status OK? 6 is the access also auto-predicted (double prediction)? Also check provides_responses."
+  },
+  {
+    "id": "auvm4b-9",
+    "question": "The predictor never updates anything and logs nothing at normal verbosity. What message do you look for, and what does it mean?",
+    "answer": "Rerun at +UVM_VERBOSITY=UVM_FULL and look for REG_PREDICT_NOT_FOR_ME (\"Observed transaction does not target a register\"). It means the address lookup failed: predictor.map is a sub-map (only the root map holds the address table), bus2reg() converts the address wrongly, or the map's base differs from the bus's. No predictor messages at all means mon.ap is not connected."
+  },
+  {
+    "id": "auvm4b-10",
+    "question": "What does the adapter's provides_responses flag control, and what goes wrong when it does not match the driver?",
+    "answer": "When it is 1 the map waits for a separate response item and calls bus2reg() on it; when 0 it calls bus2reg() on the request item (IEEE 1800.2-2020 §19.2.1.2.3). Set to 1 with a driver that sends no response, every access hangs. Set to 0 with a driver that returns data only through put_response(), read() returns stale data (usually 0)."
+  },
+  {
+    "id": "auvm4b-11",
+    "question": "In uvm-core 2020.3.1, when is ral.ctrl.en.write() a field-only bus access?",
+    "answer": "Only if it is a frontdoor access, the field is individually_accessible, the register has no user frontdoor, the adapter has supports_byte_enable = 1, and no other field shares the field's bus-width word. Otherwise the whole register is written with a warning, and RW-like neighbours are filled from their mirrored values (RO, RC and W1x neighbours get 0, W0x get all ones). A stale mirror therefore corrupts neighbours."
+  },
+  {
+    "id": "auvm4b-12",
+    "question": "What does the register model know about a uvm_mem, and what does its mam give you?",
+    "answer": "Its size, width, access and address, but no mirror: the predictor never predicts memory accesses, so check contents by reading back or with a scoreboard (IEEE 1800.2-2020 §18.6). mam (uvm_mem_mam, §18.12) reserves non-overlapping regions: request_region(n_bytes) rounds up to whole locations, picks a random free offset, and returns null (with a uvm_error) when no space is left."
+  },
+  {
+    "id": "auvm4b-13",
+    "question": "A register is in cfg_map and dbg_map. How many mirrors does it have, and where must set_sequencer, set_auto_predict and predictor.map go?",
+    "answer": "One register object, one mirror: both maps point at it, and either bus's predictor updates the same mirror. Each bus needs its own sequencer, adapter and predictor, all on that bus's root map: in uvm-core the root map owns the sequencer, adapter, auto-predict setting and address table. Name the map on every frontdoor access; with map = null uvm-core silently uses the block's default map."
+  },
+  {
+    "id": "auvm4b-14",
+    "question": "What is a uvm_reg_frontdoor, and whose mirror does an explicit predictor update when a register is accessed through one?",
+    "answer": "A sequence whose body() performs the register's access in a non-linear way, such as INDEX then DATA, installed with set_frontdoor(fd, map) (IEEE 1800.2-2020 §19.4.2, §18.4.5.2). The predictor sees only the transfers the frontdoor makes, so it updates INDEX and DATA, not the target. The target moves only with auto-predict, predict(), or uvm_reg_indirect_data (§18.7)."
+  },
+  {
+    "id": "auvm4b-15",
+    "question": "Which uvm_reg_cbs hook fixes the mirror of a GO bit that always reads back 0, and why that one?",
+    "answer": "post_predict (IEEE 1800.2-2020 §18.11.2.6): set its inout value to 0 for UVM_PREDICT_WRITE, and add the callback with uvm_reg_field_cb::add(field, cb). It runs after every read or write prediction, from the predictor, auto-predict or a backdoor access. A post_write that calls predict(0) can be overwritten when the monitor publishes after write() returns."
+  },
+  {
+    "id": "auvm4b-16",
+    "question": "How do you turn on register coverage, and why might it stay at zero?",
+    "answer": "Call uvm_reg::include_coverage(\"*\", UVM_CVR_ALL) before the model is built, so the registers build their (generated) covergroups, then call set_coverage(UVM_CVR_ALL) on the block to start measuring. If include_coverage() runs after construction, no covergroups exist, and set_coverage() can only turn on models that were built."
+  },
+  {
+    "id": "auvm4b-17",
+    "question": "Misconception check: do the built-in register sequences know which registers are unsafe to bit-bash?",
+    "answer": "No. They test every register and memory that is not excluded, including GO bits, FIFO pops and interrupt triggers. Fence those off with NO_REG_TESTS or a test-specific NO_REG_* resource in the REG:: namespace before you start the sequence."
   }
 ]

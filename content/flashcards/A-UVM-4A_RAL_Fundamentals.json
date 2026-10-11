@@ -2,6 +2,86 @@
   {
     "id": "auvm4a-1",
     "question": "What does uvm_reg::mirror() do, and does it check the value by default?",
-    "answer": "It reads the register from the DUT (through the path you choose, the front door by default) and updates the model's mirrored value. It compares the read value with the mirror only when you pass check = UVM_CHECK; the default is UVM_NO_CHECK (IEEE 1800.2-2020 18.4.4.14)."
+    "answer": "It reads the register (frontdoor by default) and updates the mirror with the read value when the read is predicted; in uvm-core 2020.3.1 a frontdoor mirror() predicts only with auto-prediction on. It compares the read value with the old mirror only when you pass UVM_CHECK; the default is UVM_NO_CHECK (IEEE 1800.2-2020 §18.4.4.14)."
+  },
+  {
+    "id": "auvm4a-2",
+    "question": "What are a field's desired value, mirrored value and DUT value?",
+    "answer": "Desired (`get()`) is what the test wants the DUT to hold; mirrored (`get_mirrored_value()`) is what the model believes the DUT holds; the DUT value is what the hardware really holds. Neither model value is the DUT, and each register call moves the three differently."
+  },
+  {
+    "id": "auvm4a-3",
+    "question": "What does ral.CTRL.set('h5) do to the DUT?",
+    "answer": "Nothing. `set()` changes only the desired value, adjusted by each field's policy; `update()` or `write()` is what sends a bus write (§18.4.4.2)."
+  },
+  {
+    "id": "auvm4a-4",
+    "question": "When does update() send a bus write?",
+    "answer": "Only when `needs_update()` is 1: a writable field's desired value differs from its mirror. In uvm-core 2020.3.1 it is also always 1 for a writable volatile field, so a bulk `ral.update()` writes W1C interrupt registers and can clear pending flags."
+  },
+  {
+    "id": "auvm4a-5",
+    "question": "With no register predictor and auto-prediction off, what happens to the mirror after a frontdoor write()?",
+    "answer": "Nothing: the DUT changes but the mirror keeps its old value, so a later `mirror(status, UVM_CHECK)` reports a mismatch. The mirror moves after a bus access only if `set_auto_predict(1)` is on (implicit prediction) or a `uvm_reg_predictor` sees the transfer (explicit prediction, A-UVM-4B)."
+  },
+  {
+    "id": "auvm4a-6",
+    "question": "Which argument of uvm_reg::configure(blk_parent, regfile_parent, hdl_path) is the HDL path?",
+    "answer": "The third. The second is an optional `uvm_reg_file` handle (§18.4.2.2). The full backdoor path is the block's path (from the block's `configure()` or `add_hdl_path()`), a dot, then the register's path."
+  },
+  {
+    "id": "auvm4a-7",
+    "question": "How do poke(v) and write(v, UVM_BACKDOOR) differ?",
+    "answer": "`poke()` deposits `v` as is, RO and reserved bits included. `write(…, UVM_BACKDOOR)` mimics a bus write: it reads the current value, applies each field's policy and deposits the result, and needs \"RW\" or \"WO\" map rights (§18.4.4.9, §18.4.4.11)."
+  },
+  {
+    "id": "auvm4a-8",
+    "question": "Do peek() and poke() update the mirror?",
+    "answer": "In uvm-core 2020.3.1, yes, always, when the backdoor access succeeds: `poke(v)` sets the mirror to `v` with no policy applied. IEEE 1800.2-2020 says they are 'affected by the auto-prediction configuration' (§18.4.4.11–12), so portable code may call `predict()` after a poke; a bus-monitor predictor never sees them."
+  },
+  {
+    "id": "auvm4a-9",
+    "question": "What does lock_model() do, and what fails if you call create_map() after it?",
+    "answer": "It freezes the model's structure and builds the tables that map an address back to a register (§18.1.2.6). A map created afterwards fails with 'Cannot add map to locked model'."
+  },
+  {
+    "id": "auvm4a-10",
+    "question": "What does volatile = 1 in uvm_reg_field::configure() change in uvm-core 2020.3.1?",
+    "answer": "The field's compare mode becomes UVM_NO_CHECK, so `mirror(UVM_CHECK)` skips it (use `set_compare(UVM_CHECK)` to check it anyway); `get_mirrored_value()` warns UVM/FLD/GET_MIRRORED_VAL/VOL; and a writable volatile field always needs an update. The standard says only that a volatile field's mirror cannot be trusted (§18.5.4.10)."
+  },
+  {
+    "id": "auvm4a-11",
+    "question": "A W1C register is added to the map with \"RO\" rights. What happens when the test writes 1 to clear a flag?",
+    "answer": "The write still goes out and the DUT clears the flag, but through \"RO\" rights the field's effective access is RO, so prediction keeps the mirror at 1 and `needs_update()` returns 0 (§18.2.3.3). Add such registers with \"RW\" rights, the default."
+  },
+  {
+    "id": "auvm4a-12",
+    "question": "A 64-bit register sits at offset 'h10 in a 4-byte, byte-addressed UVM_LITTLE_ENDIAN map with base 'h1000. Which bus accesses does read() make?",
+    "answer": "Two: 'h1010 carries bits [31:0] and 'h1014 carries bits [63:32]. With UVM_BIG_ENDIAN the most-significant word sits at the lower address."
+  },
+  {
+    "id": "auvm4a-13",
+    "question": "Does ral.reset() reset the DUT? What must happen after a DUT reset in the middle of a test?",
+    "answer": "No: `reset(kind = \"HARD\")` sets only the model's desired and mirrored values to the reset values (§18.1.5.3). After a DUT reset, call `ral.reset()` too, or the stale mirror causes false mismatches; note that the map's `reset()` defaults to \"SOFT\"."
+  },
+  {
+    "id": "auvm4a-14",
+    "question": "In the adapter, who calls reg2bus() and bus2reg(), and why can read() return 0 although the waveform shows data?",
+    "answer": "The register map calls `reg2bus()` to build each bus item and `bus2reg()` on the finished item; a `uvm_reg_predictor` also calls `bus2reg()`. With `provides_responses = 0` the map reads the request item, so if the driver returns read data in a separate response, `read()` returns 0: copy the data into the request or set `provides_responses = 1`."
+  },
+  {
+    "id": "auvm4a-15",
+    "question": "What do the uvm_status_e values mean, and is a non-OK access predicted?",
+    "answer": "UVM_IS_OK, UVM_NOT_OK (completed with error) and UVM_HAS_X (completed with unknown bits) (§17.2.2.1). uvm-core 2020.3.1 skips prediction for any status other than UVM_IS_OK and warns PREDICT_NOK; only the adapter can see X on the bus and set UVM_HAS_X, because the model's data type is 2-state."
+  },
+  {
+    "id": "auvm4a-16",
+    "question": "How does a uvm_reg_sequence reach the register model, and what must happen before it starts?",
+    "answer": "Whoever starts it sets its `model` handle to the block (§19.4.1.3.1); its `write_reg`, `read_reg`, `mirror_reg` and similar tasks pass the sequence as `parent`. The map must already have a sequencer from `set_sequencer()` (§18.2.3.6), called in `connect_phase`; the sequence itself can then be started with `start(null)`."
+  },
+  {
+    "id": "auvm4a-17",
+    "question": "poke() logs 'No backdoor access available to poke register'. What is missing, and what does a backdoor write() do in the same situation?",
+    "answer": "The register has no HDL path (`configure()`'s third argument or `add_hdl_path_slice()`), so `peek()`/`poke()` return UVM_NOT_OK. A `write`/`read(…, UVM_BACKDOOR)` instead warns 'Using frontdoor instead.' and quietly uses the bus."
   }
 ]

@@ -1,10 +1,14 @@
+// Top level of the scoreboard-decoupling lab.
+// Compile this file only, with src/dv on the include path; to run the
+// solution, put solution/ on the include path before src/dv.
+`timescale 1ns/1ps
 `include "uvm_macros.svh"
 import uvm_pkg::*;
 
-`include "src/dv/txn.sv"
-`include "src/dv/monitor.sv"
-`include "src/dv/scoreboard.sv"
-`include "src/dv/env.sv"
+`include "txn.sv"
+`include "traffic_gen.sv"
+`include "scoreboard.sv"
+`include "env.sv"
 
 class decoupling_test extends uvm_test;
   `uvm_component_utils(decoupling_test)
@@ -12,33 +16,33 @@ class decoupling_test extends uvm_test;
   my_env env;
   decoupling_lab_config cfg;
 
-  function new(string name = "decoupling_test", uvm_component parent = null);
+  function new(string name, uvm_component parent);
     super.new(name, parent);
   endfunction
 
-  function void build_phase(uvm_phase phase);
+  virtual function void build_phase(uvm_phase phase);
     super.build_phase(phase);
     cfg = decoupling_lab_config::type_id::create("cfg");
     cfg.transaction_count = 10;
-    cfg.consumer_delay = 30ns;
-    uvm_config_db#(decoupling_lab_config)::set(this, "env", "cfg", cfg);
+    cfg.rsp_latency       = 30ns;
+    void'($value$plusargs("CORRUPT=%d", cfg.corrupt_index));  // e.g. +CORRUPT=4
+    uvm_config_db#(decoupling_lab_config)::set(this, "env.gen", "cfg", cfg);
     env = my_env::type_id::create("env", this);
+    uvm_root::get().set_timeout(10us);   // a hang ends here
   endfunction
 
-  task run_phase(uvm_phase phase);
-    phase.raise_objection(this);
-    env.scb.wait_until_complete();
-    phase.drop_objection(this);
+  // The traffic source knows when its last response is out, so the test
+  // ends there; it never reaches into the scoreboard.
+  virtual task run_phase(uvm_phase phase);
+    phase.raise_objection(this, "traffic running");
+    env.gen.send();
+    phase.drop_objection(this, "traffic done");
   endtask
 endclass
 
-module testbench;
+module tb_top;
   initial begin
+    $timeformat(-9, 0, " ns", 0);
     run_test("decoupling_test");
-  end
-
-  initial begin
-    #10us;
-    `uvm_fatal("TIMEOUT", "Scoreboard decoupling lab did not complete")
   end
 endmodule

@@ -1,411 +1,1892 @@
 ---
 title: "A-UVM-8: Multi-Agent Topologies"
-description: "Coordinate multiple protocol agents across complex SoC environments using virtual sequencers, virtual sequences, and cross-agent synchronization patterns."
+description: "Architect a UVM environment with several agents and sub-environments, configure it from the test, and coordinate its stimulus and checking across agents without hangs or silent passes."
 flashcards: "A-UVM-8_Multi_Agent_Topologies"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual (§8.3.1.4.1, §9.3.1.7.1, §10.1, §10.3, §10.4.1, §10.5.1.3.7, §10.5.1.5.1, §13.1.4.3.2, §13.3, §13.4.2.2, §14.1.2.5, §14.2.3.1, §14.2.4.1, §14.2.4.4, §14.2.5.5–§14.2.5.8, §14.2.5.11, §15.3.2.2, §15.3.2.8–§15.3.2.14, §15.3.5, §18.2.3.5, Annexes B.3.3, B.5.22, C.4.2.2.1, F.7.3.3, F.7.4.2, G.2.1, G.2.8, G.2.9)"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog: Unified Hardware Design, Specification, and Verification Language (§4.7, §6.5, §9.3.2, §9.4.2, §9.6.1, §9.6.3, §14.16, §15.3, §15.5.3, §15.5.5.1, §23.6)"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "Accellera uvm-core reference implementation (src/seq/uvm_sequence_item.svh, uvm_sequence_base.svh, uvm_sequencer_base.svh, uvm_sequencer.svh; src/base/uvm_event.svh, uvm_barrier.svh, uvm_objection.svh, uvm_phase_hopper.svh; src/comps/uvm_agent.svh; src/macros/uvm_sequence_defines.svh, uvm_global_defines.svh)"
+    type: "implementation"
+    identifier: "uvm-core 2020.3.1"
 ---
 
 ## Quick Take
-- **What it is:** Multi-agent topologies are testbench architectures where multiple protocol agents (AXI master, AXI slave, APB, interrupt controller, DMA) operate concurrently within a single UVM environment, coordinated through virtual sequences running on a virtual sequencer.
-- **Why it matters:** Real SoC verification involves 10–50 protocol interfaces running simultaneously. Without a structured coordination mechanism, test scenarios devolve into uncoordinated concurrent traffic that never exercises cross-protocol interactions — the exact class of bugs that escapes to silicon.
-- **The Standard:** IEEE 1800.2-2020 does not define a `uvm_virtual_sequencer` class. The virtual sequencer pattern is a community convention built from the standard `uvm_sequencer` base class with sub-sequencer handles.
-
-## Scaling Beyond a Single Agent
-
-A single-agent testbench manages one protocol interface:
-
-```
-┌─────────────────────────────────────┐
-│              uvm_test               │
-│  ┌───────────────────────────────┐  │
-│  │           uvm_env             │  │
-│  │  ┌───────────────────────┐    │  │
-│  │  │      apb_agent        │    │  │
-│  │  │  driver + monitor +   │    │  │
-│  │  │  sequencer             │    │  │
-│  │  └───────────────────────┘    │  │
-│  └───────────────────────────────┘  │
-└─────────────────────────────────────┘
-```
-
-An SoC-level testbench manages many simultaneously:
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                         uvm_test                             │
-│  ┌────────────────────────────────────────────────────────┐  │
-│  │                     soc_env                            │  │
-│  │                                                        │  │
-│  │  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌────────┐│  │
-│  │  │ axi_agent│  │ apb_agent│  │ irq_agent│  │dma_agt ││  │
-│  │  │ (master) │  │          │  │          │  │        ││  │
-│  │  └──────────┘  └──────────┘  └──────────┘  └────────┘│  │
-│  │                                                        │  │
-│  │  ┌──────────────────────────────────────────────────┐  │  │
-│  │  │            virtual_sequencer                     │  │  │
-│  │  │  axi_sqr ──┐                                     │  │  │
-│  │  │  apb_sqr ──┼── handles to sub-sequencers         │  │  │
-│  │  │  irq_sqr ──┤                                     │  │  │
-│  │  │  dma_sqr ──┘                                     │  │  │
-│  │  └──────────────────────────────────────────────────┘  │  │
-│  └────────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
-```
-
-## The Virtual Sequencer Pattern
-
-A virtual sequencer is a plain `uvm_sequencer` that holds **handles** to typed sub-sequencers. It does not process sequence items itself — it serves as a coordination point.
-
-```systemverilog
-class soc_virtual_sequencer extends uvm_sequencer;
-  `uvm_component_utils(soc_virtual_sequencer)
-
-  // Handles to per-protocol sub-sequencers
-  axi_sequencer  axi_sqr;
-  apb_sequencer  apb_sqr;
-  irq_sequencer  irq_sqr;
-  dma_sequencer  dma_sqr;
-
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-  endfunction
-endclass
-```
-
-In the environment's `build_phase` and `connect_phase`:
-
-```systemverilog
-class soc_env extends uvm_env;
-  `uvm_component_utils(soc_env)
-
-  axi_agent          axi_agt;
-  apb_agent          apb_agt;
-  irq_agent          irq_agt;
-  dma_agent          dma_agt;
-  soc_virtual_sequencer v_sqr;
-  soc_scoreboard     scoreboard;
-
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-  endfunction
-
-  function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    axi_agt  = axi_agent::type_id::create("axi_agt", this);
-    apb_agt  = apb_agent::type_id::create("apb_agt", this);
-    irq_agt  = irq_agent::type_id::create("irq_agt", this);
-    dma_agt  = dma_agent::type_id::create("dma_agt", this);
-    v_sqr    = soc_virtual_sequencer::type_id::create("v_sqr", this);
-    scoreboard = soc_scoreboard::type_id::create("scoreboard", this);
-  endfunction
-
-  function void connect_phase(uvm_phase phase);
-    super.connect_phase(phase);
-    // Wire virtual sequencer handles to actual sub-sequencers.
-    // irq_agt is PASSIVE in this test, so irq_agt.sequencer is null:
-    // the irq handle stays null and nothing may start a sequence on it.
-    v_sqr.axi_sqr = axi_agt.sequencer;
-    v_sqr.apb_sqr = apb_agt.sequencer;
-    v_sqr.irq_sqr = irq_agt.sequencer;
-    v_sqr.dma_sqr = dma_agt.sequencer;
-
-    // Wire monitors to scoreboard
-    axi_agt.monitor.ap.connect(scoreboard.axi_fifo.analysis_export);
-    apb_agt.monitor.ap.connect(scoreboard.apb_fifo.analysis_export);
-  endfunction
-endclass
-```
-
-## Virtual Sequence Construction
-
-A virtual sequence runs on the virtual sequencer and dispatches child sequences to specific sub-sequencers:
-
-```systemverilog
-class dma_transfer_with_irq_vseq extends uvm_sequence;
-  `uvm_object_utils(dma_transfer_with_irq_vseq)
-  `uvm_declare_p_sequencer(soc_virtual_sequencer)
-
-  function new(string name = "dma_transfer_with_irq_vseq");
-    super.new(name);
-  endfunction
-
-  task body();
-    apb_config_dma_seq  cfg_seq;
-    dma_transfer_seq    xfer_seq;
-    axi_read_verify_seq verify_seq;
-    uvm_event           dma_done;
-
-    // Step 1: Configure DMA via APB registers
-    cfg_seq = apb_config_dma_seq::type_id::create("cfg_seq");
-    cfg_seq.src_addr  = 32'h1000_0000;
-    cfg_seq.dst_addr  = 32'h2000_0000;
-    cfg_seq.length    = 256;
-    cfg_seq.start(p_sequencer.apb_sqr, this);
-
-    // Step 2: Trigger DMA transfer
-    xfer_seq = dma_transfer_seq::type_id::create("xfer_seq");
-    xfer_seq.start(p_sequencer.dma_sqr, this);
-
-    // Step 3: Wait for the completion interrupt. irq_agt is PASSIVE (the DUT
-    // drives the interrupt line), so it has no sequencer. Its monitor triggers
-    // a named event instead; wait_on() returns at once if it already fired.
-    dma_done = uvm_event_pool::get_global("dma_done_irq");
-    dma_done.wait_on();
-
-    // Step 4: Verify data via AXI reads
-    verify_seq = axi_read_verify_seq::type_id::create("verify_seq");
-    verify_seq.addr   = 32'h2000_0000;
-    verify_seq.length = 256;
-    verify_seq.start(p_sequencer.axi_sqr, this);
-  endtask
-endclass
-```
-
-**Key pattern:** Each `start()` call targets a **specific sub-sequencer** via the virtual sequencer's handle, and passes `this` as the parent so the child inherits the virtual sequence's context. The virtual sequence orchestrates the cross-protocol scenario; each child sequence only knows about its own protocol.
-
-**Never start a sequence on a passive agent.** A passive agent never builds its sequencer, so `p_sequencer.irq_sqr` is null. `irq_wait_seq.start(null)` runs its `body()`, and the first `start_item()` stops the test with `UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied…` (uvm-core `uvm_sequence_base.svh`). Wait through the passive agent's monitor: an event it triggers, or an analysis subscriber.
-
-The order of the steps is the virtual sequence's job: the DUT drops data that arrives before it is configured. Pick a `body()` structure, predict what the run reports, then read the timeline cycle by cycle. The last two structures reproduce bugs this lesson used to contain.
-
-<MultiAgentCoordinationVisualizer />
-
-## Cross-Agent Synchronization
-
-### Using Events
-
-When sequences on different agents must synchronize without a full handshake, one thread triggers a `uvm_event` and another waits for it. Keep two rules in mind:
-- `wait_trigger()` waits for the **next** trigger. If the trigger already happened, it waits forever. `wait_on()` returns at once when the event is already on (IEEE 1800.2-2020 §10.1.1.2.2), and `wait_ptrigger()` covers a trigger earlier in the same time step.
-- `fork…join` waits for **every** branch. A background branch that never ends, such as a responder sequence, keeps `body()` from returning, so the test never drops its objection.
-
-```systemverilog
-class synchronized_vseq extends uvm_sequence;
-  `uvm_object_utils(synchronized_vseq)
-  `uvm_declare_p_sequencer(soc_virtual_sequencer)
-
-  uvm_event dma_config_done;
-
-  function new(string name = "synchronized_vseq");
-    super.new(name);
-    dma_config_done = new("dma_config_done");
-  endfunction
-
-  task body();
-    apb_config_dma_seq cfg_seq;
-    dma_transfer_seq   xfer_seq;
-    irq_responder_seq  irq_seq;   // irq_agt is ACTIVE here: it answers interrupts
-
-    cfg_seq  = apb_config_dma_seq::type_id::create("cfg_seq");
-    xfer_seq = dma_transfer_seq::type_id::create("xfer_seq");
-    irq_seq  = irq_responder_seq::type_id::create("irq_seq");
-
-    // Background: runs for the whole test, so it must not be part of the join
-    fork
-      irq_seq.start(p_sequencer.irq_sqr, this);
-    join_none
-
-    // Foreground: configure, then transfer; body() returns when both are done
-    fork
-      begin
-        cfg_seq.start(p_sequencer.apb_sqr, this);
-        dma_config_done.trigger();
-      end
-      begin
-        dma_config_done.wait_on();
-        xfer_seq.start(p_sequencer.dma_sqr, this);
-      end
-    join
-    // irq_seq keeps running until the run phase ends and kills it
-  endtask
-endclass
-```
-
-An earlier version of this example put the background responder inside the same `fork…join`. Every data item matched, and the test still never ended. Find the line, then try the fixes; `join_any` and `join_none` look plausible and fail differently.
-
-<MultiAgentCoordinationVisualizer mode="debug" />
-
-### Using Semaphores for Resource Arbitration
-
-When multiple sequences compete for a shared resource (e.g., a shared bus):
-
-```systemverilog
-class arbitrated_vseq extends uvm_sequence;
-  `uvm_object_utils(arbitrated_vseq)
-  `uvm_declare_p_sequencer(soc_virtual_sequencer)
-
-  semaphore bus_lock;
-
-  function new(string name = "arbitrated_vseq");
-    super.new(name);
-    bus_lock = new(1); // Binary semaphore: one user at a time
-  endfunction
-
-  task body();
-    fork
-      run_axi_traffic();
-      run_dma_traffic();
-    join
-  endtask
-
-  task run_axi_traffic();
-    axi_write_seq wr;  // declarations first: SV does not allow them after statements
-    repeat (10) begin
-      bus_lock.get(1); // Acquire bus
-      wr = axi_write_seq::type_id::create("aw");
-      wr.start(p_sequencer.axi_sqr, this);
-      bus_lock.put(1); // Release bus
-    end
-  endtask
-
-  task run_dma_traffic();
-    dma_transfer_seq xfer;
-    repeat (5) begin
-      bus_lock.get(1); // Acquire bus
-      xfer = dma_transfer_seq::type_id::create("dx");
-      xfer.start(p_sequencer.dma_sqr, this);
-      bus_lock.put(1); // Release bus
-    end
-  endtask
-endclass
-```
-
-The semaphore only serializes these two threads of this one virtual sequence. It does nothing about other sequences running on the same sequencers; inside one sequencer that is the job of the arbitration mode and of `lock()`/`grab()` ([Sequencer Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration)).
-
-## Topology Configuration with `uvm_config_db`
-
-Configure multi-agent topologies from the test level. The agents here follow the A-UVM-7 VIP pattern: each reads a config object, copies `cfg.is_active` into its `is_active` field, and builds its driver and sequencer only when `get_is_active() == UVM_ACTIVE`. (A VIP without a config object takes the mode from a `uvm_config_db#(uvm_active_passive_enum)` entry named `"is_active"` instead, which `uvm_agent::build_phase` reads.)
-
-```systemverilog
-class dma_stress_test extends uvm_test;
-  `uvm_component_utils(dma_stress_test)
-
-  soc_env env;
-
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-  endfunction
-
-  function void build_phase(uvm_phase phase);
-    axi_agent_config axi_cfg = axi_agent_config::type_id::create("axi_cfg");
-    apb_agent_config apb_cfg = apb_agent_config::type_id::create("apb_cfg");
-    irq_agent_config irq_cfg = irq_agent_config::type_id::create("irq_cfg");
-    super.build_phase(phase);
-
-    axi_cfg.is_active = UVM_ACTIVE;   // bus master
-    apb_cfg.is_active = UVM_ACTIVE;   // register access
-    irq_cfg.is_active = UVM_PASSIVE;  // the DUT drives the interrupt lines
-    // (virtual interfaces are set in the same objects by tb_top / the base test)
-
-    uvm_config_db#(axi_agent_config)::set(this, "env.axi_agt", "cfg", axi_cfg);
-    uvm_config_db#(apb_agent_config)::set(this, "env.apb_agt", "cfg", apb_cfg);
-    uvm_config_db#(irq_agent_config)::set(this, "env.irq_agt", "cfg", irq_cfg);
-
-    env = soc_env::type_id::create("env", this);
-  endfunction
-
-  task run_phase(uvm_phase phase);
-    dma_transfer_with_irq_vseq vseq;
-    phase.raise_objection(this);
-
-    vseq = dma_transfer_with_irq_vseq::type_id::create("vseq");
-    vseq.start(env.v_sqr);
-
-    phase.drop_objection(this);
-  endtask
-endclass
-```
-
-## Worked Example: 2-Agent AXI+APB Environment
-
-Here is a minimal SoC environment with two agents (agent, sequencer and scoreboard classes as in the earlier modules):
-
-```systemverilog
-// Minimal SoC environment: AXI master + APB slave
-class mini_soc_env extends uvm_env;
-  `uvm_component_utils(mini_soc_env)
-
-  axi_agent axi_master;
-  apb_agent apb_slave;
-  soc_virtual_sequencer v_sqr;
-  soc_scoreboard scoreboard;
-
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-  endfunction
-
-  function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    axi_master = axi_agent::type_id::create("axi_master", this);
-    apb_slave  = apb_agent::type_id::create("apb_slave", this);
-    v_sqr      = soc_virtual_sequencer::type_id::create("v_sqr", this);
-    scoreboard = soc_scoreboard::type_id::create("scoreboard", this);
-  endfunction
-
-  function void connect_phase(uvm_phase phase);
-    super.connect_phase(phase);
-    v_sqr.axi_sqr = axi_master.sequencer;
-    v_sqr.apb_sqr = apb_slave.sequencer;
-
-    axi_master.monitor.ap.connect(scoreboard.axi_fifo.analysis_export);
-    apb_slave.monitor.ap.connect(scoreboard.apb_fifo.analysis_export);
-  endfunction
-endclass
-```
-
-## Knowledge Check
-
-<Quiz
-  questions={[
-    {
-      question: "What is a virtual sequencer in UVM?",
-      options: [
-        "A sequencer that handles virtual interfaces",
-        "A uvm_sequencer that holds handles to typed sub-sequencers for cross-protocol coordination",
-        "A sequencer that only runs in simulation, not on emulators",
-        "A sequencer that generates randomized sequences automatically"
-      ],
-      correctAnswer: 1,
-      explanation: "A virtual sequencer extends uvm_sequencer and contains handle variables pointing to each protocol-specific sub-sequencer. It does not process sequence items itself — it serves as a coordination point for virtual sequences that dispatch work to multiple agents."
-    },
-    {
-      question: "How does a virtual sequence send transactions to a specific protocol agent?",
-      options: [
-        "By calling `start()` on the virtual sequencer, which routes automatically",
-        "By calling `start()` on the specific sub-sequencer handle (e.g., `p_sequencer.apb_sqr`)",
-        "By using `uvm_config_db` to set the target agent",
-        "By overriding the agent's factory type at runtime"
-      ],
-      correctAnswer: 1,
-      explanation: "Each child sequence's `start()` call targets a specific sub-sequencer handle accessed through `p_sequencer`. For example, `cfg_seq.start(p_sequencer.apb_sqr)` sends APB transactions through the APB agent's sequencer."
-    },
-    {
-      question: "When should you use `uvm_event` vs `semaphore` for cross-agent synchronization?",
-      options: [
-        "Events for signaling completion of a phase; semaphores for mutual exclusion of shared resources",
-        "Events for high-speed traffic; semaphores for low-speed traffic",
-        "Events for active agents; semaphores for passive agents",
-        "They are interchangeable — use whichever is more convenient"
-      ],
-      correctAnswer: 0,
-      explanation: "Events are point-to-point notifications (one thread signals, another waits) — ideal for sequencing dependencies. Semaphores control concurrent access to shared resources (one thread acquires, later releases) — ideal for bus arbitration or preventing protocol conflicts."
-    },
-    {
-      question: "Why is it important to configure some agents as UVM_PASSIVE in a multi-agent SoC environment?",
-      options: [
-        "Passive agents consume less simulation memory",
-        "Passive agents can monitor interfaces already driven by the DUT or other agents without causing bus contention",
-        "UVM requires at least one passive agent per environment",
-        "Passive agents are needed for coverage but not for driving"
-      ],
-      correctAnswer: 1,
-      explanation: "In an SoC, some interfaces are driven by internal DUT logic (e.g., an interrupt controller output). A passive agent monitors this traffic for coverage and protocol checking without driving conflicting signals. Driving on an already-driven interface would cause X-state contention."
-    }
+
+- **What it is:** A **multi-agent topology** is the shape of a UVM environment for a design under test (DUT) with several interfaces. It has one **agent** per interface: active if the testbench drives it, passive if it only watches. Whole block environments are often nested inside a bigger one or repeated side by side, and around them sit a **virtual sequencer** that holds handles to the agents' sequencers, one **configuration object** tree that says what to build, and **scoreboards** that check results using more than one interface.
+- **Why it matters:** The bugs live *between* interfaces: data that arrives before the DUT is configured, a mode change in the middle of traffic, an interrupt nobody answers. Multi-agent mistakes rarely show up as a clean mismatch. They show up as a test that never ends, a responder that never ran, or a pass that checked nothing.
+- **The Analogy:** A railway junction run from a signal box. Each line (agent) runs its own trains (items); the timetable (the virtual sequence's `body()`) says which line moves when; signals (events, barriers, a sequencer `grab()`) hold trains until it is safe; trackside observers (passive agents) only watch and log. *Where it breaks:* nothing enforces the timetable except the statements you write in `body()`, the signal box itself (the virtual sequencer) gives no orders at all, and an observer's post has no trains: a passive agent has no sequencer, so its handle is null.
+
+**You will be able to:**
+1. Design a multi-agent environment for a DUT with a configuration port and data ports: choose active or passive for each agent, wire the virtual sequencer's handles, and reuse environments vertically (a block env nested in a subsystem env) and horizontally (several instances side by side).
+2. Write a virtual sequence that configures before sending data, reconfigures in mid-stream at a safe point, and runs a background responder without blocking the end of the test.
+3. Choose between `uvm_event`, `uvm_barrier`, a semaphore and sequencer `grab()`/`lock()` for a cross-agent rule, and predict the outcome of trigger/wait races.
+4. Debug multi-agent hangs and silent passes from the log: a `forever` branch inside `fork…join`, a sequence started on a passive agent's null sequencer (with and without a parent), and objections held by background threads.
+5. Configure the topology from the test through one environment configuration object, and check results across agents: place each check in a per-agent checker or a shared scoreboard, and make the shared scoreboard follow the configuration.
+
+<BeforeYouStart />
+
+This lesson also uses [A-UVM-6 Scoreboards](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) (predictor and comparator), [I-UVM-2C Configuration](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index) (configuration objects), [I-UVM-1C Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) (objections, `uvm_event`, `uvm_barrier`) and [I-UVM-5 Containers](/curriculum/T2_Intermediate/I-UVM-5_UVM_Container_Classes/index) (`uvm_event_pool`). Each is linked again where it is needed.
+
+## Build Your Mental Model
+
+**How to read this lesson.** The core path is the recap, the running example, one environment with many agents, configuring it from the test, reusing environments, ordering stimulus across agents and checking across agents. Practitioner depth sits between and after them: mid-stream reconfiguration, locking a sequencer, synchronization objects, where each check lives, and debugging. Make It Work builds the whole bench, and Push Further holds the expert corner cases.
+
+**Words this lesson uses.** Each was taught earlier; here is the one-line version.
+- **Agent:** a component that bundles a **sequencer** (queues items from sequences), a **driver** (turns items into pin activity) and a **monitor** (turns pin activity back into transactions) for one interface ([I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)).
+- **Active / passive agent:** an active agent (`UVM_ACTIVE`) builds all three; a passive agent (`UVM_PASSIVE`) builds only the monitor ([A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index)).
+- **Analysis port:** the monitor's broadcast output; every connected subscriber's `write()` is called with each transaction ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)).
+- **Virtual sequence:** a sequence that sends no items itself; its `body()` starts **child sequences** on the agents' sequencers. A **virtual sequencer** is a driverless sequencer that only holds those handles ([I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences)).
+- **Configuration object:** a `uvm_object` that holds an agent's settings (mode, virtual interface, switches) and travels through the configuration database as one handle ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)).
+- **Phase:** one of the named steps UVM runs every component through, in order: `build_phase` creates children (top-down), `connect_phase` wires ports and handles, `run_phase` consumes simulation time, and the check and report phases run at the end ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+- **Objection:** the vote that keeps a task phase such as `run_phase` alive; the phase ends when the last one is dropped ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+- **Elaboration and time slot:** elaboration is the step before simulation in which the tool builds the design hierarchy and resolves connections; a time slot is all the activity at one simulation time ([F3C](/curriculum/T1_Foundational/F3C_Delta_Cycles_and_Race_Conditions/index)).
+- **Parent and default sequencer:** a sequence started with `child.start(sqr, this)` has the calling sequence as its **parent**; the sequencer a sequence was started on is its **default sequencer** (for a virtual sequence, that is `v_sqr`).
+
+### What I-UVM-3B already gave you
+
+[Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) and [The Virtual Sequencer](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer) own the mechanics, so this lesson only recaps them. A child runs on the sequencer you pass to `child.start(sqr, this)`, and `start()` returns when the child's `body()` returns, so two `start()` calls in a row run one after the other. The handles reach the virtual sequence either from the test (`vseq.start(null)`) or from a virtual sequencer through the typed `p_sequencer` handle that `` `uvm_declare_p_sequencer `` declares (IEEE 1800.2-2020 Annex B.3.3). IEEE 1800.2-2020 defines no virtual-sequencer class; uvm-core 2020.3.1 ships `typedef uvm_sequencer #(uvm_sequence_item) uvm_virtual_sequencer;` (`uvm_sequencer.svh`), which you will meet in older code.
+
+This lesson uses the virtual-sequencer style throughout, with type `soc_vsqr` and instance `v_sqr`, and spends its space on what I-UVM-3B does not cover: the topology around the virtual sequence, how it is configured, how its checking spans agents, and how it fails.
+
+### The running example: one DUT, four interfaces
+
+Every example on this page verifies the same small DUT, `dma_stream`, a streaming engine:
+- **Configuration port.** An APB-style register bus: a write takes a **setup** cycle (`psel = 1`) and then an **access** cycle (`psel = 1`, `penable = 1`), and the register is written at the end of the access cycle when `pready = 1`. Two registers: `CTRL` at address 0x0 (bit 0 is `EN`, "accept data") and `MODE` at address 0x4 (bit 0: 0 passes data through, 1 inverts it). APB itself is taught in the AMBA track; this subset is all you need here.
+- **Data in.** `din_valid` and `din`. The DUT accepts an item only while `CTRL.EN = 1` and **silently drops** anything sent while `EN = 0`.
+- **Data out.** `dout_valid` and `dout`, two cycles after an item is accepted, with `MODE` applied when the item was accepted.
+- **Interrupt.** `irq` rises after every fourth accepted item and stays high until the testbench pulses `irq_ack`.
+
+| Interface (bus in `tb_top`) | Who drives it | Agent | Mode | Its handle in `v_sqr` |
+|---|---|---|---|---|
+| configuration (`apb_bus`) | the testbench | `apb_agt` | active | `apb_sqr` |
+| data in (`data_bus`) | the testbench | `data_agt` | active | `data_sqr` |
+| interrupt (`irq_bus`) | the DUT raises `irq`; the testbench answers with `irq_ack` | `irq_agt` (a **responder**) | active | `irq_sqr` |
+| data out (`out_bus`) | the DUT | `out_agt` | passive | none: no sequencer |
+
+A **responder** agent reacts to the DUT instead of starting traffic: its sequence runs for the whole test and each item it sends means "acknowledge the next interrupt". The names `cfg_seq`, `data_seq`, `irq_seq`, `cfg_done`, `apb_sqr`, `data_sqr` and `irq_sqr` match the interactive visual further down.
+
+### One environment, many agents
+
+The rule for choosing a mode is one question per interface: **in this configuration, must the testbench drive these pins?** If yes, the agent is active. If the DUT (or another block) drives them, the agent is passive and only watches. Here is the environment the rule gives for `dma_stream`. Before you read the caption, find the agent that can never run a sequence.
+
+<ArchitectureDiagram
+  title="soc_env for dma_stream: four agents, a virtual sequencer and a cross-agent scoreboard"
+  cellWidth={130}
+  gapX={44}
+  caption="v_sqr holds three handles (dotted control edges) and no driver. out_agt is passive: it has a monitor only, so there is no handle for it and v_sqr has no field for it. Three monitors feed the scoreboard through three separate analysis imps, one per input stream."
+  nodes={[
+    { id: "env", label: "env (soc_env)", kind: "env", col: 0, row: 0, colSpan: 4, rowSpan: 3, container: true },
+    { id: "vsqr", label: "v_sqr", sublabel: "soc_vsqr: handles only", kind: "sequencer", col: 1, row: 0, colSpan: 2 },
+    { id: "apb", label: "apb_agt", sublabel: "sqr + drv + mon", kind: "agent", col: 0, row: 1, badge: "active" },
+    { id: "data", label: "data_agt", sublabel: "sqr + drv + mon", kind: "agent", col: 1, row: 1, badge: "active" },
+    { id: "irq", label: "irq_agt", sublabel: "sqr + drv (responder)", kind: "agent", col: 2, row: 1, badge: "active" },
+    { id: "out", label: "out_agt", sublabel: "mon only; sqr = null", kind: "agent", col: 3, row: 1, badge: "passive" },
+    { id: "scb", label: "scb", sublabel: "soc_scoreboard", kind: "scoreboard", col: 0, row: 2, colSpan: 4 }
+  ]}
+  ports={[
+    { id: "apb.ap", node: "apb", side: "bottom", kind: "analysis_port", label: "mon.ap" },
+    { id: "data.ap", node: "data", side: "bottom", kind: "analysis_port", label: "mon.ap" },
+    { id: "out.ap", node: "out", side: "bottom", kind: "analysis_port", label: "mon.ap" },
+    { id: "scb.cfg", node: "scb", side: "top", at: 0.125, kind: "analysis_imp", label: "cfg_imp" },
+    { id: "scb.in", node: "scb", side: "top", at: 0.375, kind: "analysis_imp", label: "in_imp" },
+    { id: "scb.out", node: "scb", side: "top", at: 0.875, kind: "analysis_imp", label: "out_imp" }
+  ]}
+  edges={[
+    { from: "vsqr", to: "apb", style: "control", label: "apb_sqr" },
+    { from: "vsqr", to: "data", style: "control", label: "data_sqr" },
+    { from: "vsqr", to: "irq", style: "control", label: "irq_sqr" },
+    { from: "apb.ap", to: "scb.cfg", style: "data", label: "write_cfg" },
+    { from: "data.ap", to: "scb.in", style: "data", label: "write_in" },
+    { from: "out.ap", to: "scb.out", style: "data", label: "write_out" }
   ]}
 />
 
+**What the picture shows.**
+- **One class can be two agents.** `data_agt` and `out_agt` are both `stream_agent`, on two instances of the same interface type. The configuration object decides which one drives.
+- **The env wires the handles.** In `connect_phase` the env copies each agent's sequencer handle into `v_sqr`: `v_sqr.data_sqr = data_agt.sqr;`. An agent written to the A-UVM-7 pattern does not create its sequencer when it is passive, so copying a passive agent's `sqr` copies `null`.
+- **The virtual sequencer gives no orders.** It is a place to keep handles. Order comes from the statements in the virtual sequence's `body()`.
+
+**The two mistakes everyone makes here.** Starting a sequence on a passive agent's handle (it is null; the symptom depends on the parent and is in the debugging table below), and leaving an agent active on an interface the DUT drives. On a net, two drivers resolve to X wherever their values disagree; on a variable, mixing a continuous driver (such as a DUT output port) with any other writer is an error, while two procedural writers are legal and the last write silently wins (IEEE 1800-2023 §6.5). Neither outcome is what you want.
+
+### Configuring the topology from the test
+
+A topology has knobs: which agents are active, how many data agents there are, whether the scoreboard is built. Put them all in **one environment configuration object** that holds one configuration object per agent. The test builds the tree and sets it once; the env takes it and hands each agent its own object at its own path; each agent copies `cfg.is_active` into `uvm_agent`'s public `is_active` member and reads it back with `get_is_active()`. (IEEE 1800.2-2020 §13.4.2.2 standardizes `get_is_active()` and the `is_active` configuration parameter; the public member is uvm-core 2020.3.1's implementation, in `uvm_agent.svh`. An agent that must stay portable overrides `get_is_active()` to return `cfg.is_active` instead.) The [I-UVM-2C worked example](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index) taught the per-agent object; this is the same idea one level up.
+
+```systemverilog
+// snippet: the environment configuration object (full version in Make It Work)
+class soc_env_cfg extends uvm_object;
+  `uvm_object_utils(soc_env_cfg)
+  apb_cfg    apb_agt_cfg;          // one object per agent
+  stream_cfg data_agt_cfg;
+  stream_cfg out_agt_cfg;
+  irq_cfg    irq_agt_cfg;
+  bit        has_scoreboard = 1;   // topology switches live here too
+  function new(string name = "soc_env_cfg");
+    super.new(name);
+  endfunction
+endclass
+```
+
+The order of events at build time matters, because `build_phase` runs top-down: a parent's `build_phase` finishes before its children are built. Follow one agent's configuration from `tb_top` to the agent.
+
+<SequenceDiagram
+  title="Build-time configuration flow for data_agt"
+  caption="Virtual interfaces go from tb_top to the test through the configuration database, before run_test(). The test stores them in the config objects; tb_top never sees those objects, which do not exist until the test's build_phase. Every get() must find a set() made earlier at a matching path, or the component stops with a fatal."
+  participants={[
+    { id: "tb", label: "tb_top", kind: "generic" },
+    { id: "db", label: "uvm_config_db", kind: "generic" },
+    { id: "test", label: "test", sublabel: "stream_reconfig_test", kind: "test" },
+    { id: "env", label: "env", sublabel: "soc_env", kind: "env" },
+    { id: "agt", label: "data_agt", sublabel: "stream_agent", kind: "agent" }
+  ]}
+  messages={[
+    { from: "tb", to: "db", label: "set(null, \"uvm_test_top\", \"data_vif\", data_bus)" },
+    { kind: "async", from: "tb", to: "test", label: "run_test(): build_phase starts at the top" },
+    { from: "test", to: "db", label: "get(this, \"\", \"data_vif\", ...)" },
+    { kind: "return", from: "db", to: "test", label: "data_bus handle" },
+    { kind: "self", from: "test", label: "create soc_env_cfg and agent cfgs; store vifs; out_agt_cfg.is_active = UVM_PASSIVE" },
+    { from: "test", to: "db", label: "set(this, \"env\", \"cfg\", env_cfg)" },
+    { from: "test", to: "env", label: "create(\"env\", this)" },
+    { kind: "divider", label: "env.build_phase" },
+    { from: "env", to: "db", label: "get(this, \"\", \"cfg\", cfg)" },
+    { from: "env", to: "db", label: "set(this, \"data_agt\", \"cfg\", cfg.data_agt_cfg)" },
+    { from: "env", to: "agt", label: "create(\"data_agt\", this)" },
+    { kind: "divider", label: "data_agt.build_phase" },
+    { from: "agt", to: "db", label: "get(this, \"\", \"cfg\", cfg)" },
+    { kind: "note", from: "agt", to: "db", tone: "error", label: "no set() at this path: get() returns 0, UVM_FATAL [NO_CFG] in build" },
+    { kind: "self", from: "agt", label: "is_active = cfg.is_active; build mon, and sqr + drv only if active" }
+  ]}
+/>
+
+**Pitfalls.**
+- **A missing `set()` and a missing object fail differently.** If no `set()` matches the agent's path, its `get()` returns 0 and the agent's guard stops the test in `build_phase` with `UVM_FATAL [NO_CFG]`. But if the env does call `set()` and the test simply never created that agent's object, `set()` stores a **null handle**: `get()` finds it and returns 1 with `cfg == null`. Without a further check, the next line, `is_active = cfg.is_active;`, dereferences null and the simulator stops with its own null-object error, which carries no UVM id and points at the agent, not at the test. So check both places: the env fatals on any null agent object before it calls `set()`, and each agent's guard tests `cfg == null` as well as the return value of `get()`. The Make It Work code does both. One environment object gives you one place to make that check. (In the Make It Work test, a forgotten `create()` would crash even earlier, at the test's own `get()` into `env_cfg.data_agt_cfg.vif`, for the same reason: a member of a null object.)
+- **A path typo.** `set(this, "data_agent", ...)` for an agent named `data_agt` matches nothing, so the get fails the same way. uvm-core 2020.3.1 prints every set and get with `+UVM_CONFIG_DB_TRACE` (implementation, not 1800.2); I-UVM-2C has the full [debugging table](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index).
+- **Setting after creating.** The env must call `set()` for an agent before it creates that agent. If it creates the agent first, the order still works today (the agent's `build_phase` runs later), but the moment someone moves a `get()` into a constructor it breaks. Set first, then create.
+
+**An agent count from the configuration.** When the number of identical interfaces varies by DUT variant, keep an array of agent objects in the environment configuration and build the agents in a loop:
+
+```systemverilog
+// snippet: N data agents, named data_agt0, data_agt1, ... (env side)
+stream_agent data_agt[];
+// in build_phase, after getting cfg:
+data_agt = new[cfg.num_data_agents];
+foreach (data_agt[i]) begin
+  string name = $sformatf("data_agt%0d", i);
+  uvm_config_db#(stream_cfg)::set(this, name, "cfg", cfg.data_agt_cfg[i]);
+  data_agt[i] = stream_agent::type_id::create(name, this);
+end
+```
+
+The virtual interfaces need one instance per agent in `tb_top`. A select into an array of interface instances must be a constant expression (an **instance select**, IEEE 1800-2023 §23.6), so a `foreach` with a variable index cannot reach them. A `generate` loop can, because its loop variable (`genvar`) is a constant in each copy:
+
+```systemverilog
+// snippet: tb_top side; each generated block owns one interface instance
+for (genvar i = 0; i < N_DATA; i++) begin : g_data
+  stream_if bus (clk, rst_n);
+  initial uvm_config_db#(virtual stream_if)::set(null, "uvm_test_top",
+                                                 $sformatf("data_vif%0d", i), bus);
+end
+```
+
+### Environments inside environments: block to subsystem
+
+IEEE 1800.2-2020 §13.3 describes `uvm_env` as a container that "can be reused as a sub-environment in even larger system-level environments". That is **vertical reuse**: the environment you built for one block becomes a component of the subsystem environment, unchanged, and only its configuration differs. Suppose the subsystem connects block A's output straight to block B's input. Before you read on, predict which agent must change mode.
+
+<ArchitectureDiagram
+  title="Vertical reuse: two block environments inside a subsystem environment"
+  cellWidth={128}
+  gapX={40}
+  caption="The internal bus between A and B is now driven by block A, so block B's input agent is set passive through B's configuration object (it still monitors and still feeds b_scb). The top virtual sequencer holds the two block virtual sequencers; blk_b_env.v_sqr's handle to its input sequencer is now null."
+  nodes={[
+    { id: "sub", label: "sub_env", kind: "env", col: 0, row: 0, colSpan: 4, rowSpan: 4, container: true },
+    { id: "top", label: "v_sqr", sublabel: "sub_vsqr", kind: "sequencer", col: 1, row: 0, colSpan: 2 },
+    { id: "a", label: "blk_a_env", kind: "env", col: 0, row: 1, colSpan: 2, rowSpan: 3, container: true },
+    { id: "b", label: "blk_b_env", kind: "env", col: 2, row: 1, colSpan: 2, rowSpan: 3, container: true },
+    { id: "avs", label: "v_sqr", sublabel: "blk_a_env.v_sqr", kind: "sequencer", col: 0, row: 1, colSpan: 2 },
+    { id: "bvs", label: "v_sqr", sublabel: "blk_b_env.v_sqr", kind: "sequencer", col: 2, row: 1, colSpan: 2 },
+    { id: "ain", label: "in_agt", sublabel: "drives A's input", kind: "agent", col: 0, row: 2, badge: "active" },
+    { id: "aout", label: "out_agt", sublabel: "watches A to B bus", kind: "agent", col: 1, row: 2, badge: "passive" },
+    { id: "bin", label: "in_agt", sublabel: "watches A to B bus", kind: "agent", col: 2, row: 2, badge: "passive", state: "active" },
+    { id: "bout", label: "out_agt", sublabel: "watches B's output", kind: "agent", col: 3, row: 2, badge: "passive" },
+    { id: "ascb", label: "a_scb", sublabel: "block A checks", kind: "scoreboard", col: 0, row: 3, colSpan: 2 },
+    { id: "bscb", label: "b_scb", sublabel: "block B checks", kind: "scoreboard", col: 2, row: 3, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "top", to: "avs", style: "control", label: "a_vsqr" },
+    { from: "top", to: "bvs", style: "control", label: "b_vsqr" },
+    { from: "avs", to: "ain", style: "control", label: "in_sqr" },
+    { from: "aout", to: "bin", style: "structural", label: "same bus" },
+    { from: "ain", to: "ascb", style: "data" },
+    { from: "aout", to: "ascb", style: "data" },
+    { from: "bin", to: "bscb", style: "data" },
+    { from: "bout", to: "bscb", style: "data" }
+  ]}
+/>
+
+**What changes, and what does not.**
+- **Agents on internal interfaces become passive.** At block level, B's input agent drove B. Now block A drives that bus, so B's `in_agt` must only watch. Nothing in `blk_b_env` changes except its configuration object (`in_agt_cfg.is_active = UVM_PASSIVE`). This is why the active/passive choice belongs in configuration, not in code.
+- **Configuration nests too.** `sub_env_cfg` holds `blk_a_cfg` and `blk_b_cfg` (each a block environment object); `sub_env` sets each one at `"blk_a_env"` and `"blk_b_env"`, and each block env distributes its own agents' objects exactly as before. Every configuration path gets one level deeper, which is why paths should be relative to `this`, never absolute strings such as `"uvm_test_top.env.data_agt"`.
+- **Block virtual sequences are reused as children.** A subsystem virtual sequence starts block A's virtual sequence on `p_sequencer.a_vsqr` with `this` as parent, so the block scenario runs unchanged. A block sequence that drives B's input can no longer run (its handle is null), which is the correct outcome.
+- **Block scoreboards stay as internal checkers.** They now check each block's behaviour on internal buses that the subsystem test cannot see from the outside, and they localize failures. An end-to-end scoreboard from A's input to B's output can be added on top; the [E-SOC-1](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index) lesson covers that strategy at SoC scale.
+
+Here is the subsystem env in code. `blk_env` is the block environment class (the same shape as `soc_env`), instantiated twice; `blk_env_cfg` is its configuration object, holding an `in_agt_cfg` and an `out_agt_cfg`; `blk_vsqr` is its virtual sequencer.
+
+```systemverilog
+// snippet: sub_env nests two copies of blk_env (vertical reuse)
+class sub_env extends uvm_env;
+  `uvm_component_utils(sub_env)
+  sub_env_cfg cfg;                    // holds blk_env_cfg blk_a_cfg, blk_b_cfg
+  blk_env     blk_a_env, blk_b_env;
+  sub_vsqr    v_sqr;                  // holds blk_vsqr a_vsqr, b_vsqr
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if (!uvm_config_db#(sub_env_cfg)::get(this, "", "cfg", cfg) || cfg == null ||
+        cfg.blk_a_cfg == null || cfg.blk_b_cfg == null)
+      `uvm_fatal("NO_CFG", "no complete sub_env_cfg at the env's path")
+    // Block A drives B's input here: only B's configuration changes, not blk_env
+    cfg.blk_b_cfg.in_agt_cfg.is_active = UVM_PASSIVE;
+    uvm_config_db#(blk_env_cfg)::set(this, "blk_a_env", "cfg", cfg.blk_a_cfg);
+    uvm_config_db#(blk_env_cfg)::set(this, "blk_b_env", "cfg", cfg.blk_b_cfg);
+    blk_a_env = blk_env::type_id::create("blk_a_env", this);
+    blk_b_env = blk_env::type_id::create("blk_b_env", this);
+    v_sqr     = sub_vsqr::type_id::create("v_sqr", this);
+  endfunction
+  function void connect_phase(uvm_phase phase);
+    v_sqr.a_vsqr = blk_a_env.v_sqr;   // block virtual sequencers, not agent ones
+    v_sqr.b_vsqr = blk_b_env.v_sqr;
+  endfunction
+endclass
+
+// in sub_vseq::body(): block A's own virtual sequence runs unchanged, as a child
+a_seq.start(p_sequencer.a_vsqr, this);
+```
+
+Each `blk_env` then gets its `cfg` and sets `in_agt_cfg` and `out_agt_cfg` on its own agents with paths relative to `this`, exactly as `soc_env` does, so no block code changes.
+
+**Pitfalls, with what the log shows.**
+- **An internal agent left active.** B's input driver and block A both drive the internal bus: X on a net wherever they disagree, or a multiple-driver error on a variable, and B's scoreboard sees garbage.
+- **An absolute configuration path.** A block env that sets `set(null, "uvm_test_top.env.in_agt", "cfg", …)` worked at block level. Nested, the agent is `uvm_test_top.env.blk_b_env.in_agt`, nothing matches, and the build stops with `UVM_FATAL [NO_CFG]` from `blk_b_env.in_agt`. Use `set(this, "in_agt", …)`.
+- **The same path checked twice.** `b_scb` and a subsystem scoreboard both predict the internal bus with different expectations, and one bug produces two contradictory error streams.
+
+### Horizontal reuse: the same environment side by side
+
+**Horizontal reuse** keeps an environment at the same level of the hierarchy and uses it again: in the next project or a derivative chip, or several times at once when the DUT repeats an interface. (IEEE 1800.2-2020 does not define the terms "vertical" and "horizontal" reuse; they are common industry usage.) Suppose the next chip, `dma_stream_x2`, has two independent copies of the `dma_stream` channel, each with its own configuration port, data ports and interrupt. You do not write a new environment: you build two instances of `soc_env`, named `ch0` and `ch1`, and give each its own configuration object. Before you read the caption, predict what makes `ch1` different from `ch0` in the code.
+
+<ArchitectureDiagram
+  title="Horizontal reuse: two soc_env instances side by side in dual_env"
+  cellWidth={128}
+  gapX={40}
+  caption="ch0 and ch1 are the same class. The only difference is the soc_env_cfg each receives: ch_cfg[0] holds channel 0's virtual interfaces, ch_cfg[1] channel 1's. Each instance keeps its own scoreboard, so a failure names its channel. The top v_sqr holds the two instance virtual sequencers, so soc_vseq runs unchanged on each channel, in parallel or one after the other."
+  nodes={[
+    { id: "dual", label: "env (dual_env)", kind: "env", col: 0, row: 0, colSpan: 4, rowSpan: 4, container: true },
+    { id: "top", label: "v_sqr", sublabel: "dual_vsqr: ch_vsqr[2]", kind: "sequencer", col: 1, row: 0, colSpan: 2 },
+    { id: "c0", label: "ch0 (soc_env)", kind: "env", col: 0, row: 1, colSpan: 2, rowSpan: 3, container: true },
+    { id: "c1", label: "ch1 (soc_env)", kind: "env", col: 2, row: 1, colSpan: 2, rowSpan: 3, container: true },
+    { id: "v0", label: "ch0.v_sqr", sublabel: "soc_vsqr", kind: "sequencer", col: 0, row: 1, colSpan: 2 },
+    { id: "v1", label: "ch1.v_sqr", sublabel: "soc_vsqr", kind: "sequencer", col: 2, row: 1, colSpan: 2 },
+    { id: "a0", label: "4 agents", sublabel: "vifs from ch_cfg[0]", kind: "agent", col: 0, row: 2, colSpan: 2 },
+    { id: "a1", label: "4 agents", sublabel: "vifs from ch_cfg[1]", kind: "agent", col: 2, row: 2, colSpan: 2 },
+    { id: "s0", label: "ch0.scb", sublabel: "checks channel 0 only", kind: "scoreboard", col: 0, row: 3, colSpan: 2 },
+    { id: "s1", label: "ch1.scb", sublabel: "checks channel 1 only", kind: "scoreboard", col: 2, row: 3, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "top", to: "v0", style: "control", label: "ch_vsqr[0]" },
+    { from: "top", to: "v1", style: "control", label: "ch_vsqr[1]" },
+    { from: "v0", to: "a0", style: "control", label: "apb, data, irq" },
+    { from: "v1", to: "a1", style: "control", label: "apb, data, irq" },
+    { from: "a0", to: "s0", style: "data", label: "3 monitors" },
+    { from: "a1", to: "s1", style: "data", label: "3 monitors" }
+  ]}
+/>
+
+The code is the configuration pattern again, in a loop. Every instance gets its object at its **exact** path:
+
+```systemverilog
+// snippet: dual_env builds one soc_env per channel
+class dual_env extends uvm_env;
+  `uvm_component_utils(dual_env)
+  dual_env_cfg cfg;                 // holds soc_env_cfg ch_cfg[2]
+  soc_env      ch[2];
+  dual_vsqr    v_sqr;               // holds soc_vsqr ch_vsqr[2]
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    if (!uvm_config_db#(dual_env_cfg)::get(this, "", "cfg", cfg))
+      `uvm_fatal("NO_CFG", "no dual_env_cfg at the env's path")
+    foreach (ch[i]) begin
+      string name = $sformatf("ch%0d", i);
+      // exact path "ch0" or "ch1": never a wildcard such as "ch*"
+      uvm_config_db#(soc_env_cfg)::set(this, name, "cfg", cfg.ch_cfg[i]);
+      ch[i] = soc_env::type_id::create(name, this);
+    end
+    v_sqr = dual_vsqr::type_id::create("v_sqr", this);
+  endfunction
+  function void connect_phase(uvm_phase phase);
+    foreach (ch[i]) v_sqr.ch_vsqr[i] = ch[i].v_sqr;
+  endfunction
+endclass
+```
+
+**What breaks when an environment is instantiated twice.** Code that was correct with one instance can quietly couple two of them:
+- **A wildcard path.** `set(this, "ch*", "cfg", cfg.ch_cfg[0])` matches both instances, so `ch1` receives channel 0's virtual interfaces. Its active agents then drive channel 0's interfaces too (two UVM drivers writing the same signals, corrupting channel 0's traffic), and channel 1 is never exercised. Set each instance's object at its exact name.
+- **A global event name.** If `soc_vseq` waited on `uvm_event_pool::get_global("cfg_done")`, both channels would share one event, and `ch1`'s data could start the moment `ch0` finished configuring. Keep events in the instance (in its configuration object or virtual sequencer), or prefix pool keys with `get_full_name()`.
+- **A static variable.** A `static` counter or queue in a monitor or scoreboard class is shared by every instance of that class, so two channels' items mix. Use instance members.
+- **A type override meant for one instance.** A type override replaces the class in both channels. To change only `ch1`, use an instance override on its path (IEEE 1800.2-2020 §8.3.1.4.1; the factory is taught in [I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)).
+- **Reports that do not say which instance.** Use `` `uvm_error `` inside components, whose messages carry the full path (`uvm_test_top.env.ch1.scb`), rather than a global reporter.
+
+The same rules make an agent or environment reusable in the next project: everything that differs between uses lives in the configuration object, nothing depends on a global name, and the class assumes nothing about how many copies of it exist.
+
+### Ordering stimulus across agents
+
+The DUT drops data sent before `CTRL.EN = 1`, so the virtual sequence must configure before it sends data, and it must keep the interrupt responder running the whole time without letting it hold up the end of the test. The minimal correct `body()`:
+
+```systemverilog
+// snippet: the core of soc_vseq::body() (full version in Make It Work)
+fork                                          // background: its own fork...join_none
+  irq_seq.start(p_sequencer.irq_sqr, this);   // runs forever
+join_none
+cfg_seq.start(p_sequencer.apb_sqr, this);     // returns after CTRL.EN = 1 is written
+data_seq.start(p_sequencer.data_sqr, this);   // so no item can arrive before it
+```
+
+Two rules make this correct. First, `start()` returns only when the child's `body()` returns, and `dma_cfg_seq` returns after its last write completes, so sequential `start()` calls order the agents. Second, `fork…join` waits for **every** branch, `join_any` for the first and `join_none` for none (IEEE 1800-2023 §9.3.2), so a branch that never ends must never sit in a `join`.
+
+The visual below runs a cycle model of the same bench shape: a configuration agent, a data agent and an interrupt agent, with the same sequence and handle names. Its model is simpler than the Make It Work code (its `cfg_seq` makes two register writes, it sends 6 data items and it has no `MODE`), so its times differ, but every outcome follows the same rules. Pick a `body()` structure, predict what the run reports, then step through the waveform. Try `cfg, then data` first, then `fork cfg | data join`.
+
+<MultiAgentCoordinationVisualizer />
+
+**What the model showed** (each row is the visual's own outcome):
+
+| Structure of `body()` | Run reports | Why |
+|---|---|---|
+| `cfg, then data` | pass | `data_seq` starts after `cfg_seq` returns; the first data item is driven at 50 ns, after `EN = 1` |
+| `fork cfg \| data join` | MISSING in `check_phase` | the data thread does not wait, so items reach the DUT while `EN = 0` and are dropped |
+| `fork + uvm_event` | pass | the data branch calls `cfg_done.wait_on()`, which returns when the configuration branch triggers `cfg_done` |
+| `fork + background irq, join` | `UVM_FATAL [PH_TIMEOUT]` | `join` waits for `irq_seq`, which never ends, so `body()` never returns and the objection is never dropped. `PH_TIMEOUT` is UVM's **phase timeout**, a watchdog that kills a run that never finishes (9200 s of simulated time by default in uvm-core 2020.3.1; "When a multi-agent test hangs" shows how to shorten it) |
+| `wait for irq with a sequence` | `UVM_FATAL [SEQ]` | `irq_agt` is passive here, so `irq_sqr` is null, and the visual starts the child **without** a parent |
+
+The visual's code panel calls `start(p_sequencer.x)` without `this`. With `this`, the passive case behaves differently (it hangs instead of failing at once); the debugging table below and Push Further explain why.
+
+**Reset in the middle of traffic.** Open **Show advanced** in the visual: its reset box applies a reset at 80 ns that clears `EN` and discards data in flight, and a control next to it offers three ways to handle it, **ignore reset**, **flush scoreboard** and **flush + restart vseq**. Before you tick the box, predict which of the three passes, and why the other two fail. Then run all three. With **ignore reset** the run reports MISSING (the scoreboard still expects the discarded items); **flush scoreboard** still reports MISSING, because the virtual sequence keeps sending into a DUT whose `EN` is now 0; only **flush + restart vseq** passes, because the test kills the virtual sequence on reset and restarts it, which reconfigures the DUT. Reset strategy is its own topic (a reset-handling lesson after this one is planned); the point here is that reset is a cross-agent event, so the virtual sequence has to be part of the answer.
+
+### Reconfiguring in mid-stream
+
+Real DUTs change mode while traffic flows: a new compression level, a new channel map. The safe pattern is **quiesce, reprogram, resume**: stop sending data at a point where nothing the change could affect is in flight, write the new settings, then continue. The scoreboard must follow the change too, which it does by watching the configuration monitor, not by being told by the sequence.
+
+The **sequential form** is the one to reach for first. `data_seq.start()` returns after its last item has been sampled, so the next `cfg_seq.start()` is a safe point by construction:
+
+```systemverilog
+// snippet: sequential mid-stream reconfiguration inside soc_vseq::body()
+data_seq.start(p_sequencer.data_sqr, this);   // burst 1: every item sampled
+cfg_seq = dma_cfg_seq::type_id::create("cfg_seq");
+cfg_seq.mode = 1'b1;                          // CTRL.EN = 0, MODE = 1, CTRL.EN = 1
+cfg_seq.start(p_sequencer.apb_sqr, this);
+data_seq = stream_seq::type_id::create("data_seq");
+data_seq.start(p_sequencer.data_sqr, this);   // burst 2 runs with MODE = 1
+```
+
+Here is the tail of burst 1, the three configuration writes and the first item of burst 2, as the Make It Work drivers produce them. Each column is one rising clock edge, and every value is the one sampled at that edge. Before you look at `dout`, predict whether item C comes out inverted.
+
+<TimingDiagram
+  title="Quiesce, reprogram, resume"
+  caption="Burst 1 ends when item B is sampled at edge 3; that is the safe point. cfg_seq disables the DUT (write completes at edge 6), sets MODE (edge 9) and re-enables it (edge 12). Item C is sampled at edge 14 with MODE = 1, so it comes out inverted at edge 16. No data is sent while EN = 0, so the scoreboard's ORDER check stays quiet."
+  edges={17}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "apb write", kind: "bus", values: ["idle", "idle", "idle", "idle", "idle", "CTRL=0", "CTRL=0", "idle", "MODE=1", "MODE=1", "idle", "CTRL=1", "CTRL=1", "idle", "idle", "idle", "idle"] },
+    { name: "CTRL.EN", kind: "bit", values: [1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1] },
+    { name: "MODE", kind: "bit", values: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1] },
+    { name: "din_valid", kind: "bit", values: [0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0] },
+    { name: "din", kind: "bus", values: ["-", "A", "A", "B", "B", "B", "B", "B", "B", "B", "B", "B", "B", "B", "C", "C", "C"] },
+    { name: "dout (valid)", kind: "bus", values: ["-", "-", "-", "A", "-", "B", "-", "-", "-", "-", "-", "-", "-", "-", "-", "-", "~C"] },
+    { name: "vseq step", kind: "bus", values: ["burst 1", "burst 1", "burst 1", "burst 1", "reconfig", "reconfig", "reconfig", "reconfig", "reconfig", "reconfig", "reconfig", "reconfig", "reconfig", "burst 2", "burst 2", "burst 2", "burst 2"] }
+  ]}
+  markers={[
+    { edge: 3, tone: "pass", label: "B sampled: data_seq returns (safe point)" },
+    { edge: 9, tone: "info", label: "MODE = 1: the scoreboard sees it through apb_agt's monitor" },
+    { edge: 16, tone: "pass", label: "C comes out inverted" }
+  ]}
+/>
+
+The `dout (valid)` row shows `dout` only at the edges where `dout_valid` is 1 (3, 5 and 16) and a dash elsewhere; `din` keeps its last value because the driver changes `data` only when it sends a new item.
+
+The **concurrent form** is needed when the data traffic is not yours to stop, for example a free-running stream started by another virtual sequence or as a default sequence. Then you pause it with a sequencer lock, as the next section shows. Either way, the result to look for is the same: no ORDER error, and a scoreboard that matched items before and after the change. That is also the pass condition of **M5**, this curriculum's multi-agent milestone: a bench that orders configuration before data, reconfigures in mid-stream, and catches a planted **mutant** (a deliberately broken copy of the stimulus, here a virtual sequence that sends data before configuration). The Make It Work section builds that bench and its mutant test. The [Coordinated Attack lab](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab) has a guided reconfiguration kata on its own bench.
+
+### Locking an agent's sequencer from a virtual sequence
+
+`lock()` and `grab()` give one sequence exclusive use of a sequencer: while it holds the lock, no other sequence's items are granted there. `lock()` waits its turn in the arbitration queue; `grab()` goes to the front of it (IEEE 1800.2-2020 §14.2.5.5, §14.2.5.6). The full arbitration rules are in [Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration); in a multi-agent bench, two details decide whether your lock does anything at all.
+
+1. **With no argument, the lock goes to your own default sequencer.** A virtual sequence's default sequencer is `v_sqr`. `grab()` called in the virtual sequence therefore locks `v_sqr`, which grants no items, and the data traffic keeps flowing. Pass the agent's handle, or (better) do the grab in a child that runs on that agent's sequencer.
+2. **A lock never blocks the holder's own descendants.** In uvm-core 2020.3.1, `uvm_sequencer_base::is_blocked()` lets through every sequence for which the lock holder is a parent, grandparent and so on (`is_child()`, §15.3.2.2). So if the virtual sequence started the background stream with `this` and then calls `grab(p_sequencer.data_sqr)`, the stream is its child and keeps running. The grab must be held by a sibling child: a small `quiesce_seq` on `data_sqr`.
+
+```systemverilog
+// snippet: a child that pauses other traffic on data_sqr while the vseq reconfigures
+class quiesce_seq extends uvm_sequence #(stream_item);
+  `uvm_object_utils(quiesce_seq)
+  uvm_event paused, resume;                // set by the virtual sequence before start()
+  function new(string name = "quiesce_seq");
+    super.new(name);
+  endfunction
+  virtual task body();
+    grab();                                // no argument: locks data_sqr, where it runs
+    paused.trigger();
+    resume.wait_trigger();                 // the vseq triggers resume after this waits
+    ungrab();                              // before returning, or UVM_ERROR [SEQFINERR]
+  endtask
+endclass
+```
+
+`resume.wait_trigger()` is safe here only because the virtual sequence triggers `resume` after it has seen `paused`, which is after this child is already waiting; the synchronization section explains the race this avoids. The call order:
+
+<SequenceDiagram
+  title="A child grabs data_sqr while the virtual sequence reprograms the DUT"
+  caption="bg_seq is background traffic on data_sqr that is not a descendant of quiesce, so the grab blocks its next request. An item already on the port finishes first: a grab wins the next grant, it never aborts a transfer in progress."
+  participants={[
+    { id: "vseq", label: "vseq", sublabel: "soc_vseq", kind: "sequence" },
+    { id: "q", label: "quiesce", sublabel: "quiesce_seq", kind: "sequence" },
+    { id: "bg", label: "bg_seq", sublabel: "stream_seq", kind: "sequence" },
+    { id: "dsqr", label: "data_sqr", kind: "sequencer" },
+    { id: "cfg", label: "cfg_seq", sublabel: "dma_cfg_seq", kind: "sequence" },
+    { id: "asqr", label: "apb_sqr", kind: "sequencer" }
+  ]}
+  messages={[
+    { from: "vseq", to: "q", label: "quiesce.start(p_sequencer.data_sqr, this)" },
+    { from: "q", to: "dsqr", label: "grab()" },
+    { kind: "return", from: "dsqr", to: "q", label: "granted: no other lock is held" },
+    { from: "bg", to: "dsqr", label: "start_item(next item)" },
+    { kind: "note", from: "bg", to: "dsqr", tone: "error", label: "blocked: bg_seq is not quiesce or its child" },
+    { kind: "async", from: "q", to: "vseq", label: "paused.trigger()" },
+    { from: "vseq", to: "cfg", label: "cfg_seq.start(p_sequencer.apb_sqr, this)" },
+    { from: "cfg", to: "asqr", label: "CTRL=0, MODE=1, CTRL=1" },
+    { kind: "return", from: "cfg", to: "vseq", label: "start() returns" },
+    { kind: "async", from: "vseq", to: "q", label: "resume.trigger()" },
+    { from: "q", to: "dsqr", label: "ungrab()" },
+    { kind: "return", from: "dsqr", to: "bg", label: "start_item returns: traffic resumes with MODE = 1" }
+  ]}
+/>
+
+**Semaphore or lock?** A SystemVerilog `semaphore` (IEEE 1800-2023 §15.3) only serializes the threads that call `get()` on it. Other sequences on the same sequencer know nothing about it and keep sending. Use a semaphore to share a testbench resource between your own threads; use `lock()`/`grab()` when the thing to protect is an agent's sequencer. And use neither just to make two agents take turns: serializing them in the testbench removes exactly the concurrency the DUT's own arbitration should be stressed with.
+
+### Synchronization objects across agents
+
+Sequences on different agents often need to wait for each other without being parent and child. UVM gives you named objects for this; [I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) owns their semantics, and [I-UVM-5](/curriculum/T2_Intermediate/I-UVM-5_UVM_Container_Classes/index) the pools that share them by name. Here they are side by side, in multi-agent terms:
+
+| Tool | What it blocks | Scope | Typical multi-agent use |
+|---|---|---|---|
+| `uvm_event` (§10.1) | callers of `wait_on`, `wait_trigger`, `wait_ptrigger` until a `trigger()` | whoever holds the handle (or the same key in a `uvm_event_pool`) | "configuration done", "interrupt seen", a monitor signalling a virtual sequence |
+| `uvm_barrier` (§10.3) | each caller of `wait_for()` until *threshold* callers are waiting | whoever holds the handle | several agents' bring-up threads all ready before traffic starts |
+| `semaphore` (IEEE 1800-2023 §15.3) | callers of `get()` until enough keys are returned | only the threads that use it | one shared testbench resource (a memory model, a file) |
+| `lock()` / `grab()` (§14.2.5.5–§14.2.5.8) | other sequences' item requests on one sequencer | every sequence on that sequencer except the holder and its descendants | atomic register sequences, pausing traffic for a reconfiguration or an interrupt service |
+
+**`uvm_event` is a state, not a pulse.** `trigger()` resumes every waiting process (§10.1.2.2.4) and turns the event **on**, and it stays on until `reset()` (§10.1.1.2.2). The three waits differ in what they do with a trigger that already happened:
+- `wait_on()` returns at once if the event is on; otherwise it waits for the trigger (§10.1.1.2.2).
+- `wait_trigger()` always waits for the **next** trigger. If it is called after the trigger, it waits for one that may never come (§10.1.1.2.4).
+- `wait_ptrigger()` also accepts a trigger that happened earlier **in the same time slot**, and no earlier (§10.1.1.2.5).
+
+In the picture, `cfg_done` is triggered at edge 3. Three threads start waiting at edge 4, and at edge 7 the virtual sequence loops round for a second DMA and calls `wait_on()` again without resetting the event. Predict which waits return at edge 4, and what the second `wait_on()` does.
+
+<TimingDiagram
+  title="One trigger, four waits"
+  caption="Each column is one time slot (a later simulation time than the column before). cfg_done.trigger() at slot 3 turns the event on, and it stays on. At slot 4, wait_on() returns at once; wait_trigger() and wait_ptrigger() both block, because the trigger was in an earlier time slot. At slot 7 a second wait_on() returns at once on the old trigger: the stale-event bug."
+  edges={10}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "trigger()", kind: "bit", values: [0, 0, 0, 1, 0, 0, 0, 0, 0, 0] },
+    { name: "is_on()", kind: "bit", values: [0, 0, 0, 1, 1, 1, 1, 1, 1, 1] },
+    { name: "wait_trigger()", kind: "bus", values: ["-", "-", "-", "-", "blocked", "blocked", "blocked", "blocked", "blocked", "blocked"] },
+    { name: "wait_ptrigger()", kind: "bus", values: ["-", "-", "-", "-", "blocked", "blocked", "blocked", "blocked", "blocked", "blocked"] },
+    { name: "wait_on()", kind: "bus", values: ["-", "-", "-", "-", "returns", "done", "done", "done", "done", "done"] },
+    { name: "2nd wait_on()", kind: "bus", values: ["-", "-", "-", "-", "-", "-", "-", "returns", "done", "done"] }
+  ]}
+  markers={[
+    { edge: 3, tone: "info", label: "trigger(): on = 1 until reset()" },
+    { edge: 4, tone: "pass", label: "wait_on returns; the other two block" },
+    { edge: 7, tone: "fail", label: "stale: returns without a new trigger" }
+  ]}
+/>
+
+**The rules this gives you.**
+- Wait for a condition that may already be true with `wait_on()`; that is why the visual's `fork + uvm_event` variant uses it.
+- Before reusing an event, `reset()` it, and do so when nobody is waiting on it. In uvm-core 2020.3.1, `reset()` with the default `wakeup = 0` replaces the event's internal SystemVerilog event, so a thread already blocked in `wait_trigger()` is never woken (IEEE 1800.2-2020 §10.1.1.2.8 only says that `wakeup = 1` activates such waiters first). Check `get_num_waiters()` (§10.1.1.2.10) or use `reset(1)`.
+- A **monitor** is the right place to trigger a hardware-driven event: a passive agent cannot run a sequence, but its monitor (or a subscriber on its analysis port) can trigger a named event that a virtual sequence waits on. [Interrupt Handling](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling) builds the robust version, with a queue.
+
+**`uvm_barrier` waits for a head count.** Every participant calls `wait_for()`; all of them are released when the number waiting reaches the threshold (§10.3.2.2). A barrier created with `new("sync")` and no threshold has threshold 0 (§10.3.2.1), so nothing ever blocks: set it with `set_threshold(3)` (§10.3.2.6) for three participants. If a participant is killed while waiting, call `cancel()` (§10.3.2.8) or lower the threshold, or the others wait for ever.
+
+```systemverilog
+// snippet: three agents' bring-up threads meet before traffic starts
+uvm_barrier ready = new("ready");
+ready.set_threshold(3);              // the default threshold is 0: nothing would block
+fork
+  begin cfg_seq.start(p_sequencer.apb_sqr, this);  ready.wait_for(); end
+  begin link_up_seq.start(p_sequencer.data_sqr, this); ready.wait_for(); end
+  begin irq_check_seq.start(p_sequencer.irq_sqr, this); ready.wait_for(); end
+join                                 // all three return together
+```
+
+### Checking across agents
+
+A **cross-agent scoreboard** predicts one interface's traffic from what it sees on several others. For `dma_stream` it needs three inputs: the configuration (to know `EN` and `MODE`), the data in (to predict), and the data out (to compare). Give it one analysis imp per input. The `` `uvm_analysis_imp_decl(SFX) `` macro (IEEE 1800.2-2020 Annex B.5.22) declares a new imp class whose `write()` calls your `write_SFX()` method, so one component can have three differently named write methods.
+
+<ArchitectureDiagram
+  title="Inside soc_scoreboard: the configuration feeds the predictor"
+  cellWidth={136}
+  gapX={44}
+  caption="The predictor's state (en, mode) comes from apb_agt's monitor, never from the sequence. An input seen while en = 0 is reported as ORDER and not predicted, because the DUT drops it; otherwise the predicted output is pushed into expected[$], and each output pops and compares."
+  nodes={[
+    { id: "am", label: "apb_agt.mon", kind: "monitor", col: 0, row: 0 },
+    { id: "dm", label: "data_agt.mon", kind: "monitor", col: 1, row: 0 },
+    { id: "om", label: "out_agt.mon", kind: "monitor", col: 2, row: 0 },
+    { id: "scb", label: "scb (soc_scoreboard)", kind: "scoreboard", col: 0, row: 1, colSpan: 3, rowSpan: 2, container: true },
+    { id: "st", label: "write_cfg", sublabel: "state: en, mode", kind: "predictor", col: 0, row: 1 },
+    { id: "pr", label: "write_in", sublabel: "ORDER if !en, else predict", kind: "predictor", col: 1, row: 1 },
+    { id: "cmp", label: "write_out", sublabel: "pop and compare", kind: "scoreboard", col: 2, row: 1 },
+    { id: "q", label: "expected[$]", kind: "fifo", col: 1, row: 2, colSpan: 2 }
+  ]}
+  edges={[
+    { from: "am", to: "st", style: "data", label: "cfg_imp" },
+    { from: "dm", to: "pr", style: "data", label: "in_imp" },
+    { from: "om", to: "cmp", style: "data", label: "out_imp" },
+    { from: "st", to: "pr", style: "causal", label: "reads en, mode" },
+    { from: "pr", to: "q", style: "data", label: "push_back" },
+    { from: "q", to: "cmp", style: "data", label: "pop_front" }
+  ]}
+/>
+
+**Design rules for cross-agent checking.**
+- **Follow the configuration from the bus, not from the test.** The scoreboard learns `MODE = 1` from the configuration monitor at the edge the write completes, so it is right even when someone else's sequence did the write.
+- **Check ordering, not only data.** Data that arrives while `EN = 0` is dropped by the DUT, so a scoreboard that predicted it would report a MISSING item, which looks like a DUT bug. Not predicting it at all would hide a broken test. Reporting it as `ORDER` names the real cause: the stimulus broke the ordering rule. This is the check that catches the mutant test in Make It Work.
+- **Do not infer order from arrival order within one time slot.** Two monitors that call `write()` at the same clock edge do so in an order the standard leaves open (IEEE 1800-2023 §4.7). If a `MODE` write and a data item can be sampled at the same edge, stamp each transaction with its sampling time and apply the configuration by time, or (as here) make the sequence guarantee they never coincide.
+- **Account at the end of the test.** Anything still in `expected[$]` in `check_phase` is an error, and `report_phase` prints one summary line: `SCB_SUMMARY matches=N mismatches=0 pending=0`. [A-UVM-6](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) covers matching, ordering and draining in depth, and [A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index) replaces the hand-written `en`/`mode` state with a register model and its predictor.
+
+### Where each check lives: per-agent checkers and shared scoreboards
+
+`soc_scoreboard` is a **shared** scoreboard: one component that takes inputs from several agents, because its rule (output = f(`MODE`, input), but only while `EN = 1`) needs all of them. Not every check needs that. A rule about one interface's own protocol needs only that interface, so it belongs to the agent: in its interface as an assertion, or in its monitor. Before you read the table, decide where "APB never raises `penable` without a setup cycle first" should live.
+
+<ArchitectureDiagram
+  title="Per-agent checkers and one shared scoreboard in soc_env"
+  cellWidth={130}
+  gapX={44}
+  caption="Each per-agent checker sits inside its agent, subscribes to that agent's monitor and checks one interface's transaction rules (signal-timing rules go in the interface as assertions), so it travels with the agent to every bench that reuses it. The shared scoreboard needs the configuration, the input and the output, so it lives in the env that owns all three agents."
+  nodes={[
+    { id: "env", label: "env (soc_env)", kind: "env", col: 0, row: 0, colSpan: 3, rowSpan: 3, container: true },
+    { id: "apb", label: "apb_agt", kind: "agent", col: 0, row: 0, rowSpan: 2, container: true },
+    { id: "ac", label: "chk", sublabel: "pready within max_wait", kind: "subscriber", col: 0, row: 0 },
+    { id: "am", label: "mon", kind: "monitor", col: 0, row: 1 },
+    { id: "data", label: "data_agt", sublabel: "sqr + drv + mon", kind: "agent", col: 1, row: 1 },
+    { id: "out", label: "out_agt (passive)", kind: "agent", col: 2, row: 0, rowSpan: 2, container: true },
+    { id: "oc", label: "chk", sublabel: "no X in sampled data", kind: "subscriber", col: 2, row: 0 },
+    { id: "om", label: "mon", kind: "monitor", col: 2, row: 1 },
+    { id: "scb", label: "scb", sublabel: "shared: cfg + in + out", kind: "scoreboard", col: 0, row: 2, colSpan: 3 }
+  ]}
+  ports={[
+    { id: "scb.cfg", node: "scb", side: "top", at: 0.167, kind: "analysis_imp", label: "cfg_imp" },
+    { id: "scb.in", node: "scb", side: "top", at: 0.5, kind: "analysis_imp", label: "in_imp" },
+    { id: "scb.out", node: "scb", side: "top", at: 0.833, kind: "analysis_imp", label: "out_imp" }
+  ]}
+  edges={[
+    { from: "am", to: "ac", style: "data", label: "ap" },
+    { from: "om", to: "oc", style: "data", label: "ap" },
+    { from: "am", to: "scb.cfg", style: "data" },
+    { from: "data", to: "scb.in", style: "data" },
+    { from: "om", to: "scb.out", style: "data" }
+  ]}
+/>
+
+| Where the check lives | What it checks | What it needs | It travels with | Example |
+|---|---|---|---|---|
+| **Per-agent checks:** assertions in the agent's interface (signal timing); the monitor or a subscriber on its analysis port (transaction rules) | one interface's protocol rules | that interface only | the agent (a VIP ships them) | APB setup cycle before every access (assertion); every transfer completes within a configured number of cycles (subscriber) |
+| **Block (env) scoreboard** | the block's end-to-end behaviour | the block's monitors | the block env, into every bench that reuses it vertically | `soc_scoreboard` |
+| **Per-instance scoreboard** | one copy of a repeated block | that instance's monitors | each instance in horizontal reuse | `ch0.scb`, `ch1.scb` |
+| **Shared system scoreboard** | rules that span blocks or instances | monitors from several envs | the level where the rule exists | an end-to-end check from block A's input to block B's output; two channels sharing one output port |
+
+**The rules behind the table.**
+- **Put each check at the lowest level that has all the information it needs.** A protocol rule placed in a system scoreboard is lost the moment the agent is reused elsewhere; an end-to-end rule placed in an agent cannot see the other side.
+- **Give every check one owner.** If `b_scb` and a subsystem scoreboard both predict the internal bus, they can disagree, and two error messages for one bug slow the debug. Decide which is the reference for each path, and switch the other off with a configuration bit.
+- **Prefer one scoreboard per independent instance** over one shared scoreboard keyed by channel: the failures name the channel, and each instance is reusable alone. Use a **shared, keyed** scoreboard (an associative array of expected queues indexed by a channel or ID field) only when the DUT merges the streams, for example two input channels sharing one output port, because then only a component that sees both inputs can predict the merged output.
+- **A per-agent checker does not replace the scoreboard.** It proves each interface is legal; it cannot prove the DUT computed the right data.
+
+The Make It Work agents leave the per-agent checkers out to keep the code short; [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) shows how a VIP ships its own protocol checks with a switch to turn them off.
+
+### When a multi-agent test hangs or passes silently
+
+Most multi-agent failures announce themselves late: a watchdog fatal after every item matched, or no error at all. Read the log for these signatures.
+
+| Symptom in the log | Cause | Fix |
+|---|---|---|
+| `UVM_FATAL [PH_TIMEOUT]` after every item matched | a `forever` branch (the responder) inside the same `fork…join` as the foreground threads, so `body()` never returns | start the responder in its own `fork…join_none` |
+| `UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied…` at the first `start_item()` | a child started on a passive agent's null handle **without** a parent; also with `this` when the virtual sequence itself was started with `start(null)` | null-check the handles at the top of `body()` |
+| no message until `PH_TIMEOUT`; the responder or child never sent anything | a null handle **with** `this`, while the virtual sequence runs on `v_sqr`: uvm-core 2020.3.1 falls back to the parent's sequencer (`v_sqr`), which no driver ever pulls from, so `start_item()` waits for ever | the same null check: turn the hang into a `` `uvm_fatal `` |
+| `UVM_FATAL [DCLPSQ] … Error casting p_sequencer` inside `start()` | the same fallback, when the child declares `` `uvm_declare_p_sequencer `` for its agent's sequencer type and receives `v_sqr` | the same null check |
+| the test never ends; `+UVM_OBJECTION_TRACE` names a sequence | a background sequence with `set_automatic_phase_objection(1)` and a `forever` body (§14.2.4.4 NOTE), or a manual `raise_objection` in a thread that was killed before its drop. The automatic objection is raised only on the sequence's **starting phase**, so this applies to a default sequence or one given `set_starting_phase()` before `start()`; a child started from a virtual sequence has none, and its automatic objection does nothing | raise objections in the test or the top virtual sequence only, never in background sequences |
+| the run ends at 0 ns, or the count check fails | the foreground work was put in `join_none` (or `join_any`), so `body()` returned early | link: the fork patterns in [I-UVM-3B](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer) |
+| a second wait returns immediately, before the second event | the `uvm_event` is still on from the first trigger | `reset()` it before re-arming, when nobody is waiting |
+| other traffic still interleaves with your "exclusive" sequence | `grab()` with no argument in the virtual sequence (locks `v_sqr`), or the traffic is the grabber's own descendant | grab in a child that runs on the agent's sequencer |
+| `UVM_ERROR [SEQFINERR]` | a sequence returned while it (or a descendant) still held a lock or grab | `ungrab()`/`unlock()` before `body()` returns |
+| a simulator null-object error (no UVM id) in an agent's `build_phase` | the env called `set()` with an agent object the test never created, so `get()` returned 1 with a null handle | null-check every agent object in the env before `set()`, and test `cfg == null` in the agent's guard |
+| `UVM_ERROR [ORDER]` (and `ORDER_SVA`) with no mismatches | data reached the DUT while `CTRL.EN = 0`: configuration and data were not ordered | order them in `body()`: sequential `start()` or an event with `wait_on()` |
+
+**Tools that shorten the hunt.** `uvm_root::get().print_topology()` (Annex F.7.4.2) shows what was really built, so a passive agent's missing `sqr` is visible at time 0. uvm-core 2020.3.1 adds `+UVM_OBJECTION_TRACE` and `+UVM_PHASE_TRACE` (implementation, not 1800.2); `phase.get_objection().get_objectors()` (§10.5.1.5.1) lists who still objects. A short `set_timeout()` in the test (Annex F.7.3.3) turns a 9200 s wait into a quick fatal.
+
+The challenge below is the classic: every item matched, yet the regression job is killed by the watchdog. Find the line first, then choose a fix and let the model rerun it.
+
+<MultiAgentCoordinationVisualizer mode="debug" />
+
+**Debrief.** The responder sat in the `join` with the foreground threads, so `join` waited for a thread that never ends. The two tempting fixes fail differently: `join_any` returns when the *first* branch finishes, so `body()` returns early, the objection drops and the run phase kills the data thread mid-burst (in the model, 5 of 6 items are sent and 2 are lost: the count check and MISSING both fire); `join_none` returns at once, so no data is sent at all. Only moving the responder into its own `fork…join_none` before the foreground `fork…join` passes.
+
+### Recap
+
+<VisualRecap
+  title="Multi-agent coordination"
+  rule="One agent per interface, active only if the testbench drives it; the virtual sequence's body() decides every order; background threads never sit in a join."
+  code={"fork irq_seq.start(p_sequencer.irq_sqr, this); join_none\ncfg_seq.start(p_sequencer.apb_sqr, this);\ndata_seq.start(p_sequencer.data_sqr, this);"}
+  mistake="Starting a sequence on a passive agent's null handle, or putting a forever responder inside fork...join: one gives a fatal or a silent hang, the other a PH_TIMEOUT after a perfect run."
+  inTestbench="soc_env builds the agents from one soc_env_cfg, connect_phase wires v_sqr's handles, the test starts soc_vseq inside one objection, and soc_scoreboard follows the configuration through apb_agt's monitor."
+/>
+
+## Make It Work
+
+### The complete bench
+
+One file holds the DUT, three interface types, a package with every class, and `tb_top`. It is the M5 shape: a configuration agent and a data agent ordered by a virtual sequence, a mid-stream reconfiguration, a background responder that does not block the end of the test, a passive output agent, a cross-agent scoreboard with an ordering check, an ordering assertion, and a mutant test that must fail.
+
+```systemverilog
+// compile: dma_stream_tb.sv: the DUT, the interfaces, soc_pkg and tb_top
+`timescale 1ns/1ps
+`include "uvm_macros.svh"
+
+// ======================================================================= DUT
+module dma_stream (
+  input  logic       clk,
+  input  logic       rst_n,
+  input  logic       psel,          // configuration port (APB-style subset)
+  input  logic       penable,
+  input  logic       pwrite,
+  input  logic [3:0] paddr,
+  input  logic [7:0] pwdata,
+  output logic       pready,
+  input  logic       din_valid,     // data in
+  input  logic [7:0] din,
+  output logic       dout_valid,    // data out, two cycles after acceptance
+  output logic [7:0] dout,
+  output logic       irq,           // after every 4th accepted item
+  input  logic       irq_ack
+);
+  logic       ctrl_en;              // CTRL[0] at 0x0: accept data only when 1
+  logic       mode;                 // MODE[0] at 0x4: 1 = invert the data
+  logic       accept;
+  logic [1:0] vld_q;
+  logic [7:0] dat_q0, dat_q1;
+  logic [1:0] acc_cnt;
+
+  assign pready = 1'b1;             // no wait states
+  assign accept = din_valid && ctrl_en;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      ctrl_en <= 1'b0;
+      mode    <= 1'b0;
+    end else if (psel && penable && pwrite) begin
+      if (paddr == 4'h0) ctrl_en <= pwdata[0];
+      if (paddr == 4'h4) mode    <= pwdata[0];
+    end
+  end
+
+  // MODE is applied when an item is accepted; data sent while CTRL.EN = 0 is lost
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      vld_q  <= 2'b00;
+      dat_q0 <= 8'h00;
+      dat_q1 <= 8'h00;
+    end else begin
+      vld_q  <= {vld_q[0], accept};
+      dat_q0 <= mode ? ~din : din;
+      dat_q1 <= dat_q0;
+    end
+  end
+  assign dout_valid = vld_q[1];
+  assign dout       = dat_q1;
+
+  // irq rises after every 4th accepted item and stays high until irq_ack
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      acc_cnt <= 2'd0;
+      irq     <= 1'b0;
+    end else begin
+      if (accept) acc_cnt <= acc_cnt + 2'd1;
+      if (accept && acc_cnt == 2'd3) irq <= 1'b1;
+      else if (irq_ack)              irq <= 1'b0;
+    end
+  end
+endmodule
+
+// ================================================================ interfaces
+interface apb_if (input logic clk, input logic rst_n);
+  logic       psel, penable, pwrite, pready;
+  logic [3:0] paddr;
+  logic [7:0] pwdata;
+  clocking drv_cb @(posedge clk);
+    default input #1step output #1;
+    output psel, penable, pwrite, paddr, pwdata;
+    input  pready;
+  endclocking
+  clocking mon_cb @(posedge clk);
+    default input #1step;
+    input psel, penable, pwrite, paddr, pwdata, pready;
+  endclocking
+endinterface
+
+// Nets, not variables: on out_bus the DUT drives these, and a clocking-block
+// output that is never written stays 'z, so a passive agent cannot fight the
+// DUT (IEEE 1800-2023 §14.16).
+interface stream_if (input logic clk, input logic rst_n);
+  wire       valid;
+  wire [7:0] data;
+  clocking drv_cb @(posedge clk);
+    default input #1step output #1;
+    output valid, data;
+  endclocking
+  clocking mon_cb @(posedge clk);
+    default input #1step;
+    input valid, data;
+  endclocking
+endinterface
+
+interface irq_if (input logic clk, input logic rst_n);
+  logic irq, irq_ack;
+  clocking drv_cb @(posedge clk);
+    default input #1step output #1;
+    input  irq;
+    output irq_ack;
+  endclocking
+endinterface
+
+// =================================================================== soc_pkg
+package soc_pkg;
+  import uvm_pkg::*;
+
+  // -------------------------------------------------------------- items
+  class apb_item extends uvm_sequence_item;
+    `uvm_object_utils(apb_item)
+    rand bit [3:0] addr;
+    rand bit [7:0] data;
+    function new(string name = "apb_item");
+      super.new(name);
+    endfunction
+  endclass
+
+  class stream_item extends uvm_sequence_item;
+    `uvm_object_utils(stream_item)
+    rand bit [7:0] data;
+    function new(string name = "stream_item");
+      super.new(name);
+    endfunction
+  endclass
+
+  class irq_item extends uvm_sequence_item;  // one item = acknowledge one interrupt
+    `uvm_object_utils(irq_item)
+    rand bit [1:0] delay;                     // cycles to wait before acknowledging
+    function new(string name = "irq_item");
+      super.new(name);
+    endfunction
+  endclass
+
+  typedef uvm_sequencer #(apb_item)    apb_sequencer;
+  typedef uvm_sequencer #(stream_item) stream_sequencer;
+  typedef uvm_sequencer #(irq_item)    irq_sequencer;
+
+  // ------------------------------------------- agent configuration objects
+  class apb_cfg extends uvm_object;
+    `uvm_object_utils(apb_cfg)
+    uvm_active_passive_enum is_active = UVM_ACTIVE;
+    virtual apb_if          vif;
+    function new(string name = "apb_cfg");
+      super.new(name);
+    endfunction
+  endclass
+
+  class stream_cfg extends uvm_object;
+    `uvm_object_utils(stream_cfg)
+    uvm_active_passive_enum is_active = UVM_ACTIVE;
+    virtual stream_if       vif;
+    function new(string name = "stream_cfg");
+      super.new(name);
+    endfunction
+  endclass
+
+  class irq_cfg extends uvm_object;
+    `uvm_object_utils(irq_cfg)
+    uvm_active_passive_enum is_active = UVM_ACTIVE;
+    virtual irq_if          vif;
+    function new(string name = "irq_cfg");
+      super.new(name);
+    endfunction
+  endclass
+
+  // ---------------------------------------------------------- apb agent
+  class apb_driver extends uvm_driver #(apb_item);
+    `uvm_component_utils(apb_driver)
+    virtual apb_if vif;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    task run_phase(uvm_phase phase);
+      vif.drv_cb.psel    <= 1'b0;
+      vif.drv_cb.penable <= 1'b0;
+      wait (vif.rst_n === 1'b1);
+      forever begin
+        seq_item_port.get_next_item(req);
+        @(vif.drv_cb);                          // setup cycle
+        vif.drv_cb.psel    <= 1'b1;
+        vif.drv_cb.pwrite  <= 1'b1;
+        vif.drv_cb.paddr   <= req.addr;
+        vif.drv_cb.pwdata  <= req.data;
+        @(vif.drv_cb);                          // access cycle
+        vif.drv_cb.penable <= 1'b1;
+        @(vif.drv_cb iff vif.drv_cb.pready);    // the register is written here
+        vif.drv_cb.psel    <= 1'b0;
+        vif.drv_cb.penable <= 1'b0;
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
+
+  class apb_monitor extends uvm_monitor;
+    `uvm_component_utils(apb_monitor)
+    virtual apb_if                vif;
+    uvm_analysis_port #(apb_item) ap;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      ap = new("ap", this);
+    endfunction
+    task run_phase(uvm_phase phase);
+      apb_item t;
+      forever begin
+        @(vif.mon_cb);
+        if (vif.mon_cb.psel && vif.mon_cb.penable && vif.mon_cb.pready &&
+            vif.mon_cb.pwrite) begin
+          t = apb_item::type_id::create("t");   // a new object per write
+          t.addr = vif.mon_cb.paddr;
+          t.data = vif.mon_cb.pwdata;
+          ap.write(t);
+        end
+      end
+    endtask
+  endclass
+
+  class apb_agent extends uvm_agent;
+    `uvm_component_utils(apb_agent)
+    apb_cfg       cfg;
+    apb_sequencer sqr;                          // stays null when passive
+    apb_driver    drv;
+    apb_monitor   mon;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (!uvm_config_db#(apb_cfg)::get(this, "", "cfg", cfg) || cfg == null)
+        `uvm_fatal("NO_CFG", "no apb_cfg (or a null one) at this agent's path")
+      is_active = cfg.is_active;                // uvm-core's public member; the
+                                                // config object decides
+      mon = apb_monitor::type_id::create("mon", this);
+      mon.vif = cfg.vif;
+      if (get_is_active() == UVM_ACTIVE) begin
+        sqr = apb_sequencer::type_id::create("sqr", this);
+        drv = apb_driver::type_id::create("drv", this);
+        drv.vif = cfg.vif;
+      end
+    endfunction
+    function void connect_phase(uvm_phase phase);
+      if (get_is_active() == UVM_ACTIVE)
+        drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+  endclass
+
+  // ------------------------------------------------------- stream agent
+  class stream_driver extends uvm_driver #(stream_item);
+    `uvm_component_utils(stream_driver)
+    virtual stream_if vif;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    task run_phase(uvm_phase phase);
+      vif.drv_cb.valid <= 1'b0;
+      wait (vif.rst_n === 1'b1);
+      forever begin
+        seq_item_port.get_next_item(req);
+        @(vif.drv_cb);
+        vif.drv_cb.valid <= 1'b1;
+        vif.drv_cb.data  <= req.data;
+        @(vif.drv_cb);                          // the DUT samples the item here
+        vif.drv_cb.valid <= 1'b0;
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
+
+  class stream_monitor extends uvm_monitor;
+    `uvm_component_utils(stream_monitor)
+    virtual stream_if                vif;
+    uvm_analysis_port #(stream_item) ap;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      ap = new("ap", this);
+    endfunction
+    task run_phase(uvm_phase phase);
+      stream_item t;
+      forever begin
+        @(vif.mon_cb);
+        if (vif.mon_cb.valid === 1'b1) begin
+          t = stream_item::type_id::create("t");
+          t.data = vif.mon_cb.data;
+          ap.write(t);
+        end
+      end
+    endtask
+  endclass
+
+  class stream_agent extends uvm_agent;         // used twice: data_agt and out_agt
+    `uvm_component_utils(stream_agent)
+    stream_cfg       cfg;
+    stream_sequencer sqr;
+    stream_driver    drv;
+    stream_monitor   mon;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (!uvm_config_db#(stream_cfg)::get(this, "", "cfg", cfg) || cfg == null)
+        `uvm_fatal("NO_CFG", "no stream_cfg (or a null one) at this agent's path")
+      is_active = cfg.is_active;
+      mon = stream_monitor::type_id::create("mon", this);
+      mon.vif = cfg.vif;
+      if (get_is_active() == UVM_ACTIVE) begin
+        sqr = stream_sequencer::type_id::create("sqr", this);
+        drv = stream_driver::type_id::create("drv", this);
+        drv.vif = cfg.vif;
+      end
+    endfunction
+    function void connect_phase(uvm_phase phase);
+      if (get_is_active() == UVM_ACTIVE)
+        drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+  endclass
+
+  // ---------------------------------------------- irq agent (a responder)
+  class irq_driver extends uvm_driver #(irq_item);
+    `uvm_component_utils(irq_driver)
+    virtual irq_if vif;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    task run_phase(uvm_phase phase);
+      vif.drv_cb.irq_ack <= 1'b0;
+      forever begin
+        seq_item_port.get_next_item(req);
+        @(vif.drv_cb iff vif.drv_cb.irq === 1'b1);  // wait for the DUT
+        repeat (req.delay) @(vif.drv_cb);
+        vif.drv_cb.irq_ack <= 1'b1;
+        @(vif.drv_cb);                          // the DUT clears irq at this edge
+        vif.drv_cb.irq_ack <= 1'b0;
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
+
+  class irq_agent extends uvm_agent;            // no monitor: nothing checks irq here
+    `uvm_component_utils(irq_agent)
+    irq_cfg       cfg;
+    irq_sequencer sqr;
+    irq_driver    drv;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (!uvm_config_db#(irq_cfg)::get(this, "", "cfg", cfg) || cfg == null)
+        `uvm_fatal("NO_CFG", "no irq_cfg (or a null one) at this agent's path")
+      is_active = cfg.is_active;
+      if (get_is_active() == UVM_ACTIVE) begin
+        sqr = irq_sequencer::type_id::create("sqr", this);
+        drv = irq_driver::type_id::create("drv", this);
+        drv.vif = cfg.vif;
+      end
+    endfunction
+    function void connect_phase(uvm_phase phase);
+      if (get_is_active() == UVM_ACTIVE)
+        drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+  endclass
+
+  // --------------------------------- environment configuration, vsqr, scb
+  class soc_env_cfg extends uvm_object;
+    `uvm_object_utils(soc_env_cfg)
+    apb_cfg    apb_agt_cfg;
+    stream_cfg data_agt_cfg;
+    stream_cfg out_agt_cfg;
+    irq_cfg    irq_agt_cfg;
+    bit        has_scoreboard = 1;
+    function new(string name = "soc_env_cfg");
+      super.new(name);
+    endfunction
+  endclass
+
+  class soc_vsqr extends uvm_sequencer;         // handles only: no driver pulls here
+    `uvm_component_utils(soc_vsqr)
+    apb_sequencer    apb_sqr;
+    stream_sequencer data_sqr;
+    irq_sequencer    irq_sqr;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+  endclass
+
+  `uvm_analysis_imp_decl(_cfg)
+  `uvm_analysis_imp_decl(_in)
+  `uvm_analysis_imp_decl(_out)
+
+  class soc_scoreboard extends uvm_scoreboard;
+    `uvm_component_utils(soc_scoreboard)
+    uvm_analysis_imp_cfg #(apb_item, soc_scoreboard)    cfg_imp;
+    uvm_analysis_imp_in  #(stream_item, soc_scoreboard) in_imp;
+    uvm_analysis_imp_out #(stream_item, soc_scoreboard) out_imp;
+    bit          en, mode;                      // followed from the configuration bus
+    bit [7:0]    expected[$];
+    int unsigned matches, mismatches;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      cfg_imp = new("cfg_imp", this);
+      in_imp  = new("in_imp", this);
+      out_imp = new("out_imp", this);
+    endfunction
+    function void write_cfg(apb_item t);
+      if (t.addr == 4'h0) en   = t.data[0];
+      if (t.addr == 4'h4) mode = t.data[0];
+    endfunction
+    function void write_in(stream_item t);
+      if (!en) begin                            // the DUT drops it: not predicted
+        `uvm_error("ORDER", $sformatf("data 0x%02h sent while CTRL.EN = 0", t.data))
+        return;
+      end
+      expected.push_back(mode ? ~t.data : t.data);
+    endfunction
+    function void write_out(stream_item t);
+      bit [7:0] exp;
+      if (expected.size() == 0) begin
+        mismatches++;
+        `uvm_error("UNEXP", $sformatf("output 0x%02h with nothing expected", t.data))
+        return;
+      end
+      exp = expected.pop_front();
+      if (t.data == exp) matches++;
+      else begin
+        mismatches++;
+        `uvm_error("MISMATCH", $sformatf("got 0x%02h, expected 0x%02h", t.data, exp))
+      end
+    endfunction
+    function void check_phase(uvm_phase phase);
+      if (expected.size() != 0)
+        `uvm_error("PENDING", $sformatf("%0d outputs never arrived", expected.size()))
+    endfunction
+    function void report_phase(uvm_phase phase);
+      `uvm_info("SCB_SUMMARY", $sformatf("matches=%0d mismatches=%0d pending=%0d",
+                matches, mismatches, expected.size()), UVM_NONE)
+    endfunction
+  endclass
+
+  // ------------------------------------------------------------ the env
+  class soc_env extends uvm_env;
+    `uvm_component_utils(soc_env)
+    soc_env_cfg    cfg;
+    apb_agent      apb_agt;
+    stream_agent   data_agt, out_agt;           // one class, two personalities
+    irq_agent      irq_agt;
+    soc_vsqr       v_sqr;
+    soc_scoreboard scb;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (!uvm_config_db#(soc_env_cfg)::get(this, "", "cfg", cfg) || cfg == null)
+        `uvm_fatal("NO_CFG", "no soc_env_cfg at the env's path")
+      // set() would store a null handle without complaint, so check every object
+      if (cfg.apb_agt_cfg == null || cfg.data_agt_cfg == null ||
+          cfg.out_agt_cfg == null || cfg.irq_agt_cfg  == null)
+        `uvm_fatal("NO_AGT_CFG", "soc_env_cfg is missing an agent's configuration object")
+      // Each agent gets its own object at its own path, before it is created
+      uvm_config_db#(apb_cfg)::set(this, "apb_agt", "cfg", cfg.apb_agt_cfg);
+      uvm_config_db#(stream_cfg)::set(this, "data_agt", "cfg", cfg.data_agt_cfg);
+      uvm_config_db#(stream_cfg)::set(this, "out_agt", "cfg", cfg.out_agt_cfg);
+      uvm_config_db#(irq_cfg)::set(this, "irq_agt", "cfg", cfg.irq_agt_cfg);
+      apb_agt  = apb_agent::type_id::create("apb_agt", this);
+      data_agt = stream_agent::type_id::create("data_agt", this);
+      out_agt  = stream_agent::type_id::create("out_agt", this);
+      irq_agt  = irq_agent::type_id::create("irq_agt", this);
+      v_sqr    = soc_vsqr::type_id::create("v_sqr", this);
+      if (cfg.has_scoreboard)
+        scb = soc_scoreboard::type_id::create("scb", this);
+    endfunction
+    function void connect_phase(uvm_phase phase);
+      v_sqr.apb_sqr  = apb_agt.sqr;              // null if that agent is passive
+      v_sqr.data_sqr = data_agt.sqr;
+      v_sqr.irq_sqr  = irq_agt.sqr;
+      if (scb != null) begin
+        apb_agt.mon.ap.connect(scb.cfg_imp);
+        data_agt.mon.ap.connect(scb.in_imp);
+        out_agt.mon.ap.connect(scb.out_imp);
+      end
+    endfunction
+  endclass
+
+  // ---------------------------------------------------------- sequences
+  class dma_cfg_seq extends uvm_sequence #(apb_item);
+    `uvm_object_utils(dma_cfg_seq)
+    bit mode;                                   // value for MODE[0]
+    function new(string name = "dma_cfg_seq");
+      super.new(name);
+    endfunction
+    virtual task body();
+      reg_write(4'h0, 8'h00);                   // CTRL.EN = 0: stop accepting data
+      reg_write(4'h4, {7'b0, mode});            // MODE
+      reg_write(4'h0, 8'h01);                   // CTRL.EN = 1: accept data again
+    endtask
+    task reg_write(bit [3:0] addr, bit [7:0] data);
+      req = apb_item::type_id::create("req");
+      start_item(req);
+      if (!req.randomize() with { addr == local::addr; data == local::data; })
+        `uvm_fatal("RAND", "apb_item randomize failed")
+      finish_item(req);
+    endtask
+  endclass
+
+  class stream_seq extends uvm_sequence #(stream_item);
+    `uvm_object_utils(stream_seq)
+    int unsigned n_items = 4;
+    function new(string name = "stream_seq");
+      super.new(name);
+    endfunction
+    virtual task body();
+      repeat (n_items) begin
+        req = stream_item::type_id::create("req");
+        start_item(req);
+        if (!req.randomize()) `uvm_fatal("RAND", "stream_item randomize failed")
+        finish_item(req);
+      end
+    endtask
+  endclass
+
+  class irq_responder_seq extends uvm_sequence #(irq_item);
+    `uvm_object_utils(irq_responder_seq)
+    int unsigned served;                        // interrupts acknowledged so far
+    function new(string name = "irq_responder_seq");
+      super.new(name);
+    endfunction
+    virtual task body();
+      forever begin                             // a responder never ends by itself
+        req = irq_item::type_id::create("req");
+        start_item(req);
+        if (!req.randomize()) `uvm_fatal("RAND", "irq_item randomize failed")
+        finish_item(req);                       // returns after one acknowledge
+        served++;
+      end
+    endtask
+  endclass
+
+  class soc_vseq extends uvm_sequence;
+    `uvm_object_utils(soc_vseq)
+    `uvm_declare_p_sequencer(soc_vsqr)
+    function new(string name = "soc_vseq");
+      super.new(name);
+    endfunction
+    virtual task body();
+      dma_cfg_seq       cfg_seq;
+      stream_seq        data_seq;
+      irq_responder_seq irq_seq;
+      // 1. A passive agent has a null handle: fail now instead of hanging later
+      if (p_sequencer.apb_sqr == null || p_sequencer.data_sqr == null ||
+          p_sequencer.irq_sqr == null)
+        `uvm_fatal("VSEQ", "soc_vseq needs apb_agt, data_agt and irq_agt active")
+      // 2. The background responder: its own fork...join_none, never in a join
+      irq_seq = irq_responder_seq::type_id::create("irq_seq");
+      fork
+        irq_seq.start(p_sequencer.irq_sqr, this);
+      join_none
+      // 3. Configure before any data: start() returns after the last write
+      cfg_seq = dma_cfg_seq::type_id::create("cfg_seq");
+      cfg_seq.mode = 1'b0;
+      cfg_seq.start(p_sequencer.apb_sqr, this);
+      // 4. Burst 1, MODE = 0
+      data_seq = stream_seq::type_id::create("data_seq");
+      data_seq.start(p_sequencer.data_sqr, this);
+      // 5. Reconfigure at a safe point: every item of burst 1 has been sampled
+      cfg_seq = dma_cfg_seq::type_id::create("cfg_seq");
+      cfg_seq.mode = 1'b1;
+      cfg_seq.start(p_sequencer.apb_sqr, this);
+      // 6. Burst 2, MODE = 1
+      data_seq = stream_seq::type_id::create("data_seq");
+      data_seq.start(p_sequencer.data_sqr, this);
+      // 7. Both interrupts answered? Then stop the responder ourselves
+      wait (irq_seq.served == 2);
+      irq_seq.kill();
+    endtask
+  endclass
+
+  // The mutant: configuration and data forked with nothing ordering them
+  class soc_mutant_vseq extends soc_vseq;
+    `uvm_object_utils(soc_mutant_vseq)
+    function new(string name = "soc_mutant_vseq");
+      super.new(name);
+    endfunction
+    virtual task body();
+      dma_cfg_seq cfg_seq;
+      stream_seq  data_seq;
+      cfg_seq  = dma_cfg_seq::type_id::create("cfg_seq");
+      data_seq = stream_seq::type_id::create("data_seq");
+      fork
+        cfg_seq.start(p_sequencer.apb_sqr, this);
+        data_seq.start(p_sequencer.data_sqr, this);  // BUG: does not wait for EN
+      join
+    endtask
+  endclass
+
+  // -------------------------------------------------------------- tests
+  class stream_reconfig_test extends uvm_test;
+    `uvm_component_utils(stream_reconfig_test)
+    soc_env     env;
+    soc_env_cfg env_cfg;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      env_cfg = soc_env_cfg::type_id::create("env_cfg");
+      env_cfg.apb_agt_cfg  = apb_cfg::type_id::create("apb_agt_cfg");
+      env_cfg.data_agt_cfg = stream_cfg::type_id::create("data_agt_cfg");
+      env_cfg.out_agt_cfg  = stream_cfg::type_id::create("out_agt_cfg");
+      env_cfg.irq_agt_cfg  = irq_cfg::type_id::create("irq_agt_cfg");
+      // tb_top published the interfaces before run_test(); keep them in the objects
+      if (!uvm_config_db#(virtual apb_if)::get(this, "", "apb_vif",
+                                               env_cfg.apb_agt_cfg.vif) ||
+          !uvm_config_db#(virtual stream_if)::get(this, "", "data_vif",
+                                                  env_cfg.data_agt_cfg.vif) ||
+          !uvm_config_db#(virtual stream_if)::get(this, "", "out_vif",
+                                                  env_cfg.out_agt_cfg.vif) ||
+          !uvm_config_db#(virtual irq_if)::get(this, "", "irq_vif",
+                                               env_cfg.irq_agt_cfg.vif))
+        `uvm_fatal("NO_VIF", "tb_top did not set every virtual interface")
+      // The topology: the DUT drives the output stream, so out_agt only watches
+      env_cfg.out_agt_cfg.is_active = UVM_PASSIVE;
+      uvm_config_db#(soc_env_cfg)::set(this, "env", "cfg", env_cfg);
+      env = soc_env::type_id::create("env", this);
+      uvm_root::get().set_timeout(20us, 1);     // a hang fails in 20 us, not 9200 s
+    endfunction
+    task run_phase(uvm_phase phase);
+      soc_vseq vseq;
+      phase.raise_objection(this);
+      phase.get_objection().set_drain_time(this, 100ns);  // the last outputs
+      vseq = soc_vseq::type_id::create("vseq");
+      vseq.start(env.v_sqr);
+      phase.drop_objection(this);
+    endtask
+  endclass
+
+  class stream_mutant_test extends stream_reconfig_test;
+    `uvm_component_utils(stream_mutant_test)
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      set_type_override_by_type(soc_vseq::get_type(), soc_mutant_vseq::get_type());
+      super.build_phase(phase);
+    endfunction
+  endclass
+endpackage
+
+// ==================================================================== tb_top
+module tb_top;
+  import uvm_pkg::*;
+  import soc_pkg::*;
+
+  logic clk   = 1'b0;
+  logic rst_n = 1'b0;
+  always #5 clk = ~clk;                         // rising edges at 5, 15, 25 ns, ...
+  initial #22 rst_n = 1'b1;                     // released between two edges
+
+  apb_if    apb_bus  (clk, rst_n);
+  stream_if data_bus (clk, rst_n);
+  stream_if out_bus  (clk, rst_n);
+  irq_if    irq_bus  (clk, rst_n);
+
+  dma_stream dut (
+    .clk, .rst_n,
+    .psel(apb_bus.psel), .penable(apb_bus.penable), .pwrite(apb_bus.pwrite),
+    .paddr(apb_bus.paddr), .pwdata(apb_bus.pwdata), .pready(apb_bus.pready),
+    .din_valid(data_bus.valid), .din(data_bus.data),
+    .dout_valid(out_bus.valid), .dout(out_bus.data),
+    .irq(irq_bus.irq), .irq_ack(irq_bus.irq_ack)
+  );
+
+  // The ordering rule as an assertion that reports through UVM, so it fails the test
+  a_no_data_before_en: assert property (
+    @(posedge clk) disable iff (!rst_n) data_bus.valid |-> dut.ctrl_en)
+    else `uvm_error("ORDER_SVA", "din_valid sampled while CTRL.EN = 0")
+
+  initial begin
+    uvm_config_db#(virtual apb_if)::set(null, "uvm_test_top", "apb_vif", apb_bus);
+    uvm_config_db#(virtual stream_if)::set(null, "uvm_test_top", "data_vif", data_bus);
+    uvm_config_db#(virtual stream_if)::set(null, "uvm_test_top", "out_vif", out_bus);
+    uvm_config_db#(virtual irq_if)::set(null, "uvm_test_top", "irq_vif", irq_bus);
+    run_test("stream_reconfig_test");           // +UVM_TESTNAME overrides this
+  end
+endmodule
+```
+
+### Expected output
+
+Illustrative: traced by hand from the code and the uvm-core 2020.3.1 sources, not captured from a simulator run. File names, line numbers and times are omitted, and the banner and other `UVM_INFO` lines are trimmed. Burst 1 (4 items, `MODE = 0`) and burst 2 (4 items, `MODE = 1`) give 8 matches, and the DUT raises two interrupts, both answered.
+
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test stream_reconfig_test...
+UVM_INFO ... uvm_test_top.env.scb [SCB_SUMMARY] matches=8 mismatches=0 pending=0
+
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+With `+UVM_TESTNAME=stream_mutant_test`, the configuration and data threads start together. In this timing all four data items are sampled before the third configuration write sets `CTRL.EN = 1`, so the DUT drops all four, and both the scoreboard and the assertion say why (also illustrative):
+
+```text
+UVM_ERROR ... uvm_test_top.env.scb [ORDER] data 0x5a sent while CTRL.EN = 0
+UVM_ERROR ... reporter [ORDER_SVA] din_valid sampled while CTRL.EN = 0
+... (four of each)
+UVM_INFO ... uvm_test_top.env.scb [SCB_SUMMARY] matches=0 mismatches=0 pending=0
+UVM_ERROR :    8
+UVM_FATAL :    0
+```
+
+Notice what the mutant would do without the ORDER check: zero matches, zero mismatches, zero pending, and a clean summary. The scoreboard's comparator alone cannot see a dropped item it never predicted.
+
+### Run it
+
+Compile uvm-core 2020.3.1 and this one file with any simulator that supports IEEE 1800.2, then run a test by name:
+
+```bash
+# tool-neutral outline; the exact switches differ per simulator
+<compile> +incdir+$UVM_HOME/src $UVM_HOME/src/uvm_pkg.sv dma_stream_tb.sv
+<simulate> tb_top +UVM_TESTNAME=stream_reconfig_test
+<simulate> tb_top +UVM_TESTNAME=stream_mutant_test +UVM_OBJECTION_TRACE
+```
+
+`+UVM_TESTNAME` (Annex G.2.1) wins over the argument of `run_test()`. `+UVM_OBJECTION_TRACE` is a uvm-core 2020.3.1 plusarg, not part of 1800.2. Open-source Verilator's support for UVM and for clocking blocks is still limited; check its release notes before relying on it for this bench.
+
+### How to build any multi-agent environment
+
+1. **List the DUT's interfaces** and, for each one, who drives it in this configuration. That answer is the agent's mode.
+2. **Write one configuration object per agent** (mode, virtual interface, switches) and **one environment object** that holds them all, plus topology switches such as `has_scoreboard` or an agent count.
+3. **Publish the virtual interfaces from `tb_top`** before `run_test()`; the test stores them in the objects and sets the environment object once.
+4. **In the env, null-check every agent object, set each one at its agent's own path, then create the agent.** Agents check both `get()` and `cfg != null`, copy `cfg.is_active`, and build their sequencer and driver only when active.
+5. **Wire the virtual sequencer in `connect_phase`**, accepting that a passive agent's handle is null, and null-check the handles at the top of every virtual sequence that needs them.
+6. **Define the scoreboard's inputs and its state:** which monitor carries configuration, which carries inputs to predict, which carries outputs to compare, and the ordering rule it enforces.
+7. **Write the virtual sequence's order** with sequential `start()` calls or events, and pick a safe point for every reconfiguration.
+8. **Decide how background traffic runs and stops:** its own `fork…join_none`, no objections inside it, and an explicit `kill()` (or a cooperative stop) when the scenario is over.
+9. **Decide the end of the test:** one objection around the top virtual sequence, a drain time that covers the DUT's latency, and a `set_timeout()` short enough that a hang fails fast.
+10. **Write a mutant** that breaks your ordering rule, and prove your checks catch it.
+
+**Checklist before moving on:**
+- [ ] Every agent's mode follows from "who drives this interface here?", and the mode is set only in a configuration object.
+- [ ] The env fatals on a null agent object before `set()`, and every agent's guard checks both `get()` and `cfg != null`, so a missing object or path fails with a named UVM fatal, never a bare null-object crash.
+- [ ] `v_sqr`'s handles are assigned in `connect_phase`, and the virtual sequence fails fast with a clear `` `uvm_fatal `` on a null handle.
+- [ ] Configuration completes before data in `body()`, and each reconfiguration happens at a point where its effect on in-flight data is defined.
+- [ ] The responder sits in its own `fork…join_none`, raises no objection, and is stopped explicitly.
+- [ ] The scoreboard follows the configuration from the configuration monitor and reports ORDER, not MISSING, for data sent while disabled.
+- [ ] The mutant test fails with ORDER errors, and the real test ends with `SCB_SUMMARY matches=8 mismatches=0 pending=0` and no errors.
+
+## Push Further
+
+### Expert: what a null child sequencer really does
+
+IEEE 1800.2-2020 §14.2.3.1 (`start`) and §14.1.2.5 (`get_sequencer`) do not say what happens when `start()` receives a null sequencer and a parent. uvm-core 2020.3.1 decides it in `uvm_sequence_item::set_item_context()`: `if (sequencer == null && m_parent_sequence != null) sequencer = m_parent_sequence.get_sequencer();`. So the symptom of starting a child on a passive agent's handle depends on two things:
+
+| Child started with | Virtual sequence started with | Result (uvm-core 2020.3.1) |
+|---|---|---|
+| `start(null_handle)` | anything | `UVM_FATAL [SEQ]` at the child's first `start_item()` |
+| `start(null_handle, this)` | `vseq.start(null)` | the parent's sequencer is null too: the same `[SEQ]` fatal |
+| `start(null_handle, this)` | `vseq.start(env.v_sqr)` | the child runs on `v_sqr`; `start_item()` waits for a grant that only a driver's `get_next_item()` could produce, so it hangs until `PH_TIMEOUT` |
+| the same, child declares `` `uvm_declare_p_sequencer(irq_sequencer) `` | `vseq.start(env.v_sqr)` | `UVM_FATAL [DCLPSQ]` inside `start()`, when the cast of `v_sqr` to the child's sequencer type fails (Annex B.3.3; `uvm_sequence_defines.svh`) |
+
+The silent hang is the dangerous one, and it gets worse when the child was a background responder in `join_none`: if the test's own work finishes, the run phase ends normally and the test **passes** with a responder that never answered anything. The defence is the null check at the top of `body()`. [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) has the same rule from the sequence's side.
+
+### Expert: lock and grab across a virtual sequence
+
+- **Descendants pass.** uvm-core 2020.3.1 `uvm_sequencer_base::is_blocked()` returns 0 for any sequence whose ancestry reaches the lock holder (`is_child()`, §15.3.2.2, §15.3.2.8). A virtual sequence that grabs `data_sqr` therefore never pauses traffic it started with `this`; a sequence started with no parent is not a descendant of anything, so it waits like any other.
+- **Nested holders block each other.** §15.3.2.9 notes that even when a sequence holds a lock, a child that also holds one still blocks it. If the reconfiguration child grabs a sequencer its parent has `lock()`ed, the parent's own items wait until the child releases.
+- **Ending while holding.** When a sequence finishes while it or a descendant still has a lock or a queued request on a sequencer it used, uvm-core's `remove_sequence_from_queues()` reports `UVM_ERROR [SEQFINERR]` and removes them. `kill()` (§14.2.5.11) removes the killed sequence's locks, grabs and requests on its default sequencer without that error.
+- **A grab is not pre-emption.** `grab()` is granted ahead of queued requests (§14.2.5.6), but an item the driver is already executing completes first. If the reconfiguration must happen at an exact item boundary, count items in the monitor and trigger from there.
+
+**Interview angle:** "Your reconfiguration sequence grabs the data sequencer, and background traffic still interleaves. Name two causes." The grab was made by the traffic's ancestor, or with no argument on the virtual sequencer.
+
+### Expert: `uvm_event` is a state, and its pool keys are typo-prone
+
+- **On until reset.** §10.1.1.2.2 says that once the event has been triggered, it stays on until it is reset. Any loop that waits for "the next completion" with `wait_on()` must `reset()` between iterations, or the second wait returns on the first trigger.
+- **What `reset()` does to waiters.** §10.1.1.2.8 says `reset(1)` activates the processes blocked in `wait_trigger()`/`wait_ptrigger()` before resetting. With the default `reset(0)`, uvm-core 2020.3.1 assigns a fresh SystemVerilog event to its internal `m_event`; a process already blocked on the old event is never resumed (an event's waiters are bound to the event object they waited on; compare IEEE 1800-2023 §15.5.5.1 on merged events). Reset only with no waiters, or use `reset(1)`.
+- **Same-slot races.** `wait_ptrigger()` is built on the SystemVerilog `triggered` property, which persists only through the time slot of the trigger (IEEE 1800-2023 §15.5.3, uvm-core `uvm_event.svh`). It removes the race between a trigger and a wait in the same time slot; it does nothing for a wait that starts one cycle later. That case needs `wait_on()`.
+- **Pools create on lookup.** `uvm_event_pool::get(key)` creates the event if no event has that key (§10.4.1.2.4). A monitor that triggers `"dma_done"` and a sequence that waits on `"dma_dn"` simply use two different events, with no warning, and the wait hangs. Put the key strings in a shared package as `localparam string` constants.
+- **Debugging.** `get_num_waiters()` (§10.1.1.2.10) and `get_trigger_time()` (§10.1.1.2.6) tell you who is stuck and whether the trigger ever happened.
+
+### Expert: barriers with changing membership
+
+The barrier's threshold is a head count fixed in advance, so it breaks when the set of participants changes during the test.
+- `new()` defaults the threshold to 0 (§10.3.2.1), and uvm-core's `wait_for()` returns as soon as the waiter count reaches the threshold, so an unset barrier never blocks.
+- Auto-reset is on by default (§10.3.2.4): after a release, the next arrivals block again until the threshold is met again. Turn it off and later arrivals pass straight through until `reset()`.
+- Lowering the threshold to fewer than the processes already waiting resets the barrier and releases them all (§10.3.2.6). That is how to shrink a group when an agent is disabled mid-test.
+- A participant that is killed while waiting leaves the count one too high; call `cancel()` (§10.3.2.8) from whoever killed it.
+- `reset()` defaults to `wakeup = 1` (§10.3.2.3), unlike `uvm_event::reset()`. Mixing up the two defaults is a common source of stranded threads.
+
+### Expert: ending background traffic cleanly
+
+- **What the language does.** `wait fork` waits for the current process's immediate children (IEEE 1800-2023 §9.6.1), so a `wait fork` after starting a `forever` responder never returns. `disable fork` kills all descendants of the calling process (§9.6.3), including sequence threads, without telling UVM.
+- **What uvm-core does.** When the run phase ends, uvm-core kills the processes forked for it (`uvm_phase_hopper.svh`). `kill()` on a sequence is §14.2.5.11; in uvm-core 2020.3.1 its `m_kill()` also kills every child in `children_array` before the sequence itself, so killing a virtual sequence stops everything it started with `this`. `stop_sequences()` (§15.3.2.14) kills everything on one sequencer.
+- **Process guards.** uvm-core 2020.3.1 adds a guard (not in 1800.2): if the process that called `start()` is killed while the sequence still runs, it reports `UVM_WARNING [SEQPRTZMB]` and kills the sequence; if `start()`'s own child process is killed, for example by an errant `disable fork`, it reports `[SEQBDYZMB]`. Whether the guard fires for a responder still running when the run phase ends was not confirmed in a simulator for this lesson: by source inspection it can, so the Make It Work bench stops its responder explicitly with `irq_seq.kill()`. Confirm your own tool's behaviour before relying on the phase-end kill.
+- **Alternatives.** A responder can be the **default sequence** of its sequencer's run phase (§15.3.5, set through the resource database or `+uvm_set_default_sequence`, Annex G.2.9); uvm-core kills it when the phase ends. Or give it a cooperative stop: a `stop` flag it checks between items. Both are cleaner than `disable fork`.
+
+### Expert: who may object
+
+- **Never on a `forever` sequence.** §14.2.4.4 NOTE: do not set the automatic phase objection on a sequence whose body has a `forever` loop, "as the objection will never get dropped". Background responders must not object at all.
+- **Only with a starting phase.** The automatic objection is raised on the sequence's **starting phase** (§14.2.4.4, §14.2.4.1). A default sequence gets one when its sequencer starts it for the phase; any other sequence has one only if you call `set_starting_phase(phase)` before `start()`. uvm-core 2020.3.1 `start()` raises only when `get_starting_phase()` is not null and does not copy the parent's phase, so a child started from a virtual sequence with `start(sqr, this)` raises nothing, whatever `set_automatic_phase_objection(1)` says. That is why the forever-sequence hang needs a default sequence or an explicit `set_starting_phase()`, and also why turning the automatic objection on in a child does not keep the phase alive for it.
+- **Kills and objections.** uvm-core 2020.3.1 `kill()` drops the **automatic** phase objection if the killed sequence raised one. A **manual** `raise_objection()` inside a thread that is later killed (by `disable fork` or `kill()`) is never dropped, and the test runs into the timeout. Raise objections in the test or the top virtual sequence, around work that ends.
+- **Draining.** The last outputs appear after the stimulus ends. `set_drain_time()` (§10.5.1.3.7) delays the end of the phase by a fixed time after the last drop; `phase_ready_to_end()` (§13.1.4.3.2) lets a component, such as a scoreboard with pending items, raise an objection again until it is satisfied. A fixed drain time is simpler; the callback scales to DUTs with variable latency.
+- **Tracing.** `+UVM_OBJECTION_TRACE` and `display_objections()` are uvm-core 2020.3.1 implementation; `get_objectors()` (§10.5.1.5.1) is standard.
+
+### Expert: configuration architecture at scale
+
+- **One object or many entries.** One environment object per env is easier to audit, copy and randomize than dozens of scalar `uvm_config_db` settings, and it makes "every agent is configured" a single check. Wildcard settings matched by many components cost lookup time in big environments; [E-PERF-1](/curriculum/T4_Expert/E-PERF-1_UVM_Performance/index) measures that trade-off, so no numbers are quoted here.
+- **Who wins on `is_active`.** §13.4.2.2 says the `is_active` configuration parameter of an agent may be set as `uvm_active_passive_enum` or as a string, which is what `+uvm_set_config_string=<path>,is_active,UVM_PASSIVE` (Annex G.2.8) provides. An agent that then copies `cfg.is_active` over the field silently ignores that command-line setting. Document which source your VIP honours, or make the config object read the field instead.
+- **Audit the result.** `uvm_root::get().print_topology()` (Annex F.7.4.2) in `end_of_elaboration_phase` prints the tree that was really built; a regression can compare it with the intended topology.
+- **Per-agent switches.** Coverage and checks enabled per agent (in the agent's object) let a subsystem test disable a block's checker on an interface that the subsystem scoreboard already covers, without editing either env.
+
+### Expert: reuse at scale, vertical and horizontal
+
+- **Instance count from configuration.** For a DUT with N identical channels, build `ch[i]` in a loop from a count in the environment object, publish the per-channel virtual interfaces from a `generate` loop in `tb_top` (instance selects must be constant, IEEE 1800-2023 §23.6), and size the top virtual sequencer's handle array from the same count. One number then controls the whole topology.
+- **Independence is a property you test.** Start the same virtual sequence on every `ch_vsqr[i]` in parallel; per-instance scoreboards plus instance-qualified event names show at once whether any state leaks between instances (shared event keys, `static` members, wildcard configuration).
+- **Instance overrides.** To make one instance differ (a mutant, a slower responder), use an instance override on that instance's path (§8.3.1.4.1) rather than a type override, which changes every instance.
+- **Nested virtual sequencers or flat handles.** A subsystem virtual sequencer can hold the block virtual sequencers (as in the reuse diagram) or flat handles to every agent sequencer. Nested handles let block virtual sequences run unchanged as children; flat handles are simpler for scenarios that cut across blocks. Large benches usually keep both: block sequencers for reuse, a few flat handles for cross-block scenarios.
+- **Register models compose too.** A block's register model is added to the subsystem model with `add_submap()` (IEEE 1800.2-2020 §18.2.3.5); [A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index) and [A-UVM-4B](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index) cover the register layer.
+- **Checks move inward.** At subsystem level, a block's input agent becomes passive and its scoreboard becomes a checker on an internal bus. That is valuable for localizing bugs, but it also means two checkers can disagree about the same traffic; decide which one is the reference for each path.
+- **Strategy** at SoC scale (which block benches to keep, what to promote, when to switch to software-driven tests) is the subject of [E-SOC-1](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index).
+
+### Expert: interview angles
+
+Try each one before you open the options.
+
+<InterviewQuestionPlayground
+  title="Interview: design the environment for a DMA engine"
+  question="A DMA engine has an APB slave port for its registers, an AXI master port that reads and writes memory, and an interrupt output. Which agents do you build, in which mode, and what checks across them?"
+  options={[
+    { text: "An APB slave agent and an AXI master agent, both active, because the agents mirror the DUT's port names.", isCorrect: false, feedback: "Inverted roles: the testbench plays the other side of each port. The DUT is the APB slave, so the testbench needs an APB master." },
+    { text: "One agent per DUT block (the APB block, the DMA engine, the interrupt controller), because agents model design blocks.", isCorrect: false, feedback: "Agents are per interface, not per design block. Blocks inside the DUT are what you verify, not what you build agents for." },
+    { text: "An active APB master, an active AXI slave responder with a memory model, a passive interrupt monitor, and a scoreboard that predicts memory traffic from the register settings.", isCorrect: true, feedback: "Right. The testbench is the APB master and the AXI slave, because the DUT is the APB slave and the AXI master. The interrupt is an output, so its agent only watches. A register model with a predictor on the APB monitor tracks the settings, and the checking spans APB (configuration), AXI (data) and the interrupt (completion)." },
+    { text: "An active interrupt agent that drives the interrupt line so the test controls when transfers finish, plus active APB and AXI agents.", isCorrect: false, feedback: "The DUT drives its interrupt output. An active driver on it would fight the DUT; the agent must be passive (or a responder that only drives an acknowledge, if the protocol has one)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: every item matched, then the watchdog fired"
+  question="A multi-agent regression shows SCB matches for every item, then UVM_FATAL [PH_TIMEOUT]. What do you look for first?"
+  options={[
+    { text: "A scoreboard bug: the comparisons must be failing silently somewhere, so the matches are not real.", isCorrect: false, feedback: "Every item matched, and the fatal is a timeout. Nothing points at the comparator." },
+    { text: "A thread that never ends inside a join, such as a forever responder in the foreground fork...join.", isCorrect: true, feedback: "Right. The data path is fine, so the problem is the end of the test: body() never returns, so the test never drops its objection, and +UVM_OBJECTION_TRACE shows the test still objecting. Isolate the responder in its own fork...join_none." },
+    { text: "The DUT is too slow for the default timeout; raise the timeout and rerun the regression.", isCorrect: false, feedback: "A larger timeout only makes the same hang take longer. Find who still objects." },
+    { text: "A passive agent's null handle, because a null sequencer always produces PH_TIMEOUT.", isCorrect: false, feedback: "A null handle gives [SEQ] without a parent and a hang only in the parent-fallback case. Here every item already matched, which points at the join first." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: the responder that never ran"
+  question="A test passes, but coverage shows the interrupt responder never acknowledged anything. The env was reused from another project, where irq_agt is passive. Explain the pass."
+  options={[
+    { text: "The responder ran on the passive agent's sequencer, but a passive agent has no driver, so its items were discarded.", isCorrect: false, feedback: "A passive agent written to the A-UVM-7 pattern has no sequencer at all; there was nothing to run on." },
+    { text: "The DUT never raised an interrupt in this test, so the responder simply had nothing to do.", isCorrect: false, feedback: "Possible in general, but here the reused env made the agent passive. Check print_topology() first: no irq_agt.sqr." },
+    { text: "start() with a null sequencer is illegal, so the compiler removed the call.", isCorrect: false, feedback: "start(null) compiles and is legal; what happens at run time depends on the parent." },
+    { text: "irq_sqr was null; with this as parent the responder fell back to v_sqr and hung in a join_none thread nobody waited for.", isCorrect: true, feedback: "Right. The vseq ran on v_sqr, so uvm-core's parent fallback put the responder on v_sqr, where no driver ever grants; start_item() waited for ever, but nothing waited for that thread, so the test ended normally. A null check at the top of body() turns it into a fatal." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Quiz
+
+<Quiz questions={[
+  {
+    question: "soc_vseq's body() is one fork...join with three branches: (1) cfg_seq.start(p_sequencer.apb_sqr, this) then cfg_done.trigger(); (2) cfg_done.wait_on() then data_seq.start(p_sequencer.data_sqr, this); (3) irq_seq.start(p_sequencer.irq_sqr, this), where irq_seq runs forever. All 6 data items match in the scoreboard. What does the run report?",
+    objective: 2,
+    answers: [
+      { text: "PASS: body() returns as soon as the data branch finishes, because that is the sequence's real work", correct: false, feedback: "fork...join waits for every branch, including the one that never ends (IEEE 1800-2023 §9.3.2)." },
+      { text: "UVM_FATAL [SEQ] at irq_seq's first start_item()", correct: false, feedback: "That needs a null sequencer handle with no parent. irq_agt is active here." },
+      { text: "The scoreboard reports MISSING items, because configuration and data run in parallel", correct: false, feedback: "The event orders configuration before data, so nothing is dropped; that outcome belongs to fork without ordering." },
+      { text: "UVM_FATAL [PH_TIMEOUT]", correct: true, feedback: "Right. join waits for irq_seq, which never ends, so body() never returns and the test's objection is never dropped. Move irq_seq into its own fork...join_none before the foreground fork." }
+    ],
+    explanation: "A forever responder inside fork...join keeps join waiting for ever, so a perfectly matched run ends in the phase-timeout fatal. The PASS answer is the common misconception that a virtual sequence finishes when its 'real' work finishes; [SEQ] and MISSING are the symptoms of two different bugs (a null handle, and missing ordering)."
+  },
+  {
+    question: "irq_agt is passive in this test, and the virtual sequence calls irq_wait_seq.start(p_sequencer.irq_sqr); with no parent argument. What happens?",
+    objective: 4,
+    answers: [
+      { text: "UVM_FATAL [SEQ] at irq_wait_seq's first start_item()", correct: true, feedback: "Right: neither the item's sequencer nor a dedicated sequencer was supplied. start(null) itself is legal; the failure comes at the first start_item()." },
+      { text: "irq_wait_seq runs on irq_agt's sequencer, but with no driver its items are never consumed", correct: false, feedback: "A passive agent written to the A-UVM-7 pattern builds no sequencer, so there is nothing to run on: the handle is null." },
+      { text: "A null-handle crash inside start(), because start(null) is illegal", correct: false, feedback: "start(null) is legal (virtual sequences use it). The sequence's body() runs until it tries to send an item." },
+      { text: "It runs on the virtual sequencer instead, because UVM falls back to the caller's sequencer", correct: false, feedback: "That fallback needs a parent sequence (start(handle, this)); with no parent there is nothing to fall back to." }
+    ],
+    explanation: "A passive agent has no sequencer, so its handle in v_sqr is null. Without a parent, uvm-core reports UVM_FATAL [SEQ] at the first start_item(). The second option is the misconception that a passive agent's sequencer can run sequences."
+  },
+  {
+    question: "Same passive irq_agt, but now soc_vseq runs on v_sqr and calls irq_wait_seq.start(p_sequencer.irq_sqr, this). irq_wait_seq does not declare p_sequencer. What happens in uvm-core 2020.3.1?",
+    objective: 4,
+    answers: [
+      { text: "UVM_FATAL [SEQ] at the first start_item(), exactly as with no parent", correct: false, feedback: "With a parent, set_item_context() substitutes the parent's sequencer, so the item does have a sequencer." },
+      { text: "UVM_FATAL [DCLPSQ] inside start(), from the p_sequencer cast", correct: false, feedback: "DCLPSQ comes from the `uvm_declare_p_sequencer cast, and this child declares no p_sequencer." },
+      { text: "It hangs: the child runs on v_sqr, which no driver pulls from", correct: true, feedback: "Right. start_item() waits for a grant that only a driver could produce, until PH_TIMEOUT; and if nothing waits for that thread (join_none), the test can even pass silently." },
+      { text: "It runs on irq_agt's monitor, which forwards the items to the DUT", correct: false, feedback: "Monitors only observe. Sequences run on sequencers." }
+    ],
+    explanation: "uvm-core's set_item_context() uses the parent's sequencer when the given one is null. v_sqr has no driver, so the grant never comes. If the vseq itself had been started with start(null), the parent's sequencer would also be null and the result would be [SEQ]. A null check at the top of body() turns every one of these into a clear fatal."
+  },
+  {
+    question: "In soc_vseq, what guarantees that no data item reaches the DUT before CTRL.EN = 1 is written?",
+    objective: 2,
+    answers: [
+      { text: "The virtual sequencer, which grants the APB sequencer before the data sequencer", correct: false, feedback: "The virtual sequencer only holds handles. It arbitrates nothing between agents and decides no order." },
+      { text: "UVM_SEQ_ARB_STRICT_FIFO arbitration on the data sequencer", correct: false, feedback: "Arbitration orders sequences on one sequencer; it cannot make one agent wait for another." },
+      { text: "The order in which the env creates the agents in build_phase", correct: false, feedback: "Build order decides construction, not when stimulus runs." },
+      { text: "The order of the statements in body()", correct: true, feedback: "Right. cfg_seq.start() returns only after its last write, and data_seq.start() comes after it (or waits on an event the configuration thread triggers). Order across agents comes from body() and nowhere else." }
+    ],
+    explanation: "This is the misconception 'the virtual sequencer controls ordering'. It does not: it is a handle holder. Sequencer arbitration and build order are also unrelated to cross-agent order."
+  },
+  {
+    question: "A monitor triggers dma_done (a uvm_event) at 100 ns. The virtual sequence reaches its wait at 120 ns. Which call returns at 120 ns?",
+    objective: 3,
+    answers: [
+      { text: "wait_trigger()", correct: false, feedback: "wait_trigger() waits for the next trigger; the one at 100 ns is already past." },
+      { text: "wait_ptrigger()", correct: false, feedback: "wait_ptrigger() only accepts a trigger from the same time slot (100 ns is not 120 ns)." },
+      { text: "wait_on()", correct: true, feedback: "Right: the event is on from 100 ns until someone resets it, and wait_on() returns at once when it is on." },
+      { text: "None of them: a uvm_event does not remember triggers", correct: false, feedback: "It does: the on state persists until reset() (§10.1.1.2.2)." }
+    ],
+    explanation: "uvm_event is a state, not a pulse. wait_on() checks the state, wait_trigger() waits for a future trigger, and wait_ptrigger() only covers the same time slot."
+  },
+  {
+    question: "The same virtual sequence loops to run a second DMA and calls dma_done.wait_on() again, without calling reset() in between. What happens?",
+    objective: 3,
+    answers: [
+      { text: "It returns immediately, before the second DMA has finished", correct: true, feedback: "Right: the stale-event bug. reset() the event before re-arming, when nobody is waiting." },
+      { text: "It waits for the second DMA's trigger, as it did for the first", correct: false, feedback: "The event is still on from the first trigger, so there is nothing to wait for." },
+      { text: "It hangs for ever, because the first trigger was already consumed", correct: false, feedback: "A trigger is not consumed. Hanging is wait_trigger() after a missed trigger, not wait_on() on an event that is on." },
+      { text: "UVM reports a stale-event warning and then waits", correct: false, feedback: "There is no such warning; the wait simply returns." }
+    ],
+    explanation: "wait_on() returns at once while the event is on, and it stays on until reset() (§10.1.1.2.2). The silent early return lets the test check the second DMA's results before they exist."
+  },
+  {
+    question: "soc_vseq started a background stream_seq on data_sqr with this as parent. Mid-test it must reprogram MODE while no data item is granted on data_sqr. Which approach works?",
+    objective: 3,
+    answers: [
+      { text: "Call grab() in soc_vseq with no argument", correct: false, feedback: "With no argument the lock goes to soc_vseq's default sequencer, v_sqr, which grants no items; data keeps flowing." },
+      { text: "Start a quiesce_seq child on data_sqr that grabs, then waits for resume", correct: true, feedback: "Right: the background stream is a sibling of quiesce_seq, not its descendant, so the grab blocks it until quiesce_seq ungrabs." },
+      { text: "Call grab(p_sequencer.data_sqr) in soc_vseq, so the lock lands on the data sequencer itself", correct: false, feedback: "In uvm-core a lock never blocks the holder's descendants, and the background stream_seq is soc_vseq's child." },
+      { text: "Get a semaphore key in soc_vseq around the configuration writes", correct: false, feedback: "A semaphore only serializes threads that use it; the stream sequence never touches it." }
+    ],
+    explanation: "Two traps hide in sequencer locks across a virtual sequence: the no-argument form locks the virtual sequencer, and the descendant exemption (uvm-core is_blocked) lets the grabber's own children through. Holding the grab in a sibling child avoids both."
+  },
+  {
+    question: "soc_env builds five agents and calls set() for each one with cfg.<agent>_cfg. The test created only four of those objects, so the fifth handle is null. In this version the env does not null-check, and each agent's guard is only if (!get(...)) `uvm_fatal(\"NO_CFG\", ...). What happens in the fifth agent's build_phase?",
+    objective: 5,
+    answers: [
+      { text: "UVM_FATAL [NO_CFG], because the configuration database has nothing for that agent", correct: false, feedback: "NO_CFG fires only when no set() matches the path. Here set() stored a null handle at the right path, so get() found it and returned 1." },
+      { text: "The agent defaults to active and runs with no virtual interface", correct: false, feedback: "Nothing chooses a default: cfg is null, so even cfg.is_active cannot be read." },
+      { text: "uvm_config_db hands it another agent's object through a wildcard", correct: false, feedback: "The env sets each object at an exact agent path; there is no wildcard to match." },
+      { text: "get() succeeds with a null cfg, and reading cfg.is_active is a simulator null-object error", correct: true, feedback: "Right: a crash with no UVM id that points at the agent, not at the test. Null-check every agent object in the env before set(), and add || cfg == null to each agent's guard." }
+    ],
+    explanation: "A missing set() (or a mistyped path) and a missing object fail differently. The first gives UVM_FATAL [NO_CFG]; the second passes through set() and get() as a null handle unless someone checks. The environment configuration object gives one place to check that every agent's object exists."
+  },
+  {
+    question: "Block B's environment is reused inside a subsystem where block A now drives B's input bus. What do you change?",
+    objective: 1,
+    answers: [
+      { text: "Nothing: as long as no test starts a sequence on it, an active agent is harmless", correct: false, feedback: "An active driver drives idle values on its own from run_phase, so it fights block A on the bus: X on a net where the values disagree, or an error on a variable, because block A's output port is a continuous driver (IEEE 1800-2023 §6.5)." },
+      { text: "Set B's input agent to UVM_PASSIVE in B's configuration object", correct: true, feedback: "Right: only the configuration changes. The agent keeps monitoring and feeding B's scoreboard, so the block's checks keep working on the internal bus." },
+      { text: "Delete B's input agent from blk_b_env, since block A now drives that bus", correct: false, feedback: "That edits the block env (breaking reuse) and throws away the monitor that feeds B's checks." },
+      { text: "Keep it active and set its sequencer's arbitration to STRICT_FIFO", correct: false, feedback: "Arbitration does not stop the driver from driving the pins." }
+    ],
+    explanation: "Vertical reuse changes configuration, not code: agents on internal interfaces become passive, block scoreboards become internal checkers, and the subsystem virtual sequencer holds the block virtual sequencers."
+  },
+  {
+    question: "dual_env builds two soc_env instances, ch0 and ch1, and sets their configuration with a single uvm_config_db#(soc_env_cfg)::set(this, \"ch*\", \"cfg\", cfg.ch_cfg[0]). What does ch1 do?",
+    objective: 1,
+    answers: [
+      { text: "It uses channel 0's interfaces, so channel 1 is never exercised", correct: true, feedback: "Right: its active agents also drive channel 0's signals. Set each instance's object at its exact path (\"ch0\", \"ch1\"), so a missing one fails with NO_CFG instead of silently sharing." },
+      { text: "It verifies channel 1, because each soc_env instance is a separate object", correct: false, feedback: "Separate objects, but the same configuration: the wildcard gives ch1 the object that holds channel 0's virtual interfaces." },
+      { text: "UVM_FATAL [NO_CFG] in ch1, because a wildcard never matches a component name", correct: false, feedback: "A wildcard in the instance path does match: \"ch*\" covers both ch0 and ch1." },
+      { text: "Nothing changes: the factory gives each instance its own copy of the configuration object", correct: false, feedback: "uvm_config_db hands out the same handle to every matching get(); the factory is not involved." }
+    ],
+    explanation: "In horizontal reuse the instances differ only through their configuration objects. A wildcard that matches both instances makes them share one object, and therefore one set of interfaces, which couples the channels instead of verifying both."
+  },
+  {
+    question: "Which check belongs in a per-agent checker that ships with the APB agent, rather than in the shared soc_scoreboard?",
+    objective: 5,
+    answers: [
+      { text: "Every output equals the input inverted when MODE = 1", correct: false, feedback: "That needs the configuration, the input and the output: three agents. It belongs in the shared scoreboard." },
+      { text: "No data item arrives while CTRL.EN = 0", correct: false, feedback: "That relates the configuration agent to the data agent, so it needs both: the shared scoreboard's ORDER check." },
+      { text: "penable rises only after a setup cycle", correct: true, feedback: "Right: it is an APB protocol rule that needs only the APB signals, so it ships with the APB agent (as an assertion in its interface) and checks every bench that reuses it." },
+      { text: "None: all checks belong in one shared scoreboard so that failures are reported in one place", correct: false, feedback: "A protocol check placed in a system scoreboard is lost when the agent is reused elsewhere. Put each check at the lowest level that has the information it needs." }
+    ],
+    explanation: "Per-agent checks cover one interface's protocol and travel with the agent; a shared scoreboard is for rules that need several interfaces. The last distractor is the common habit of putting every check in one big scoreboard."
+  },
+  {
+    question: "In one test, the APB monitor reports a MODE write and the data monitor reports an input item at the same clock edge. Which mode does the scoreboard apply to that item?",
+    objective: 5,
+    answers: [
+      { text: "The new mode, because the APB monitor was connected first", correct: false, feedback: "Connection order does not fix execution order among processes woken at the same time." },
+      { text: "The old mode, because data monitors always run before configuration monitors", correct: false, feedback: "Nothing guarantees that either." },
+      { text: "Neither: UVM detects the race and reports an error automatically", correct: false, feedback: "UVM has no such check; the bug shows up as an intermittent mismatch." },
+      { text: "Either: the order of the two write() calls is not defined", correct: true, feedback: "Right (IEEE 1800-2023 §4.7). The DUT used the old MODE for that item; a scoreboard that guesses wrong reports a false mismatch on some simulators only. Stamp items with their sampling time, or never let the two coincide." }
+    ],
+    explanation: "Monitors woken by the same clock edge run in an order the standard leaves open. Cross-agent scoreboards must not infer order from arrival within a time slot: either the stimulus guarantees separation (a safe point) or the transactions carry their sample time."
+  },
+  {
+    question: "Three bring-up threads each call ready.wait_for() on a barrier created with uvm_barrier ready = new(\"ready\"); and nothing else. What happens?",
+    objective: 3,
+    answers: [
+      { text: "Each returns at once: the default threshold is 0", correct: true, feedback: "Right (§10.3.2.1). Set the threshold to the number of participants." },
+      { text: "All three block until a third thread arrives, then all are released together", correct: false, feedback: "That needs set_threshold(3)." },
+      { text: "All three block for ever", correct: false, feedback: "With threshold 0 no caller ever waits." },
+      { text: "The first blocks and the next two pass", correct: false, feedback: "With threshold 0 even the first returns immediately." }
+    ],
+    explanation: "A barrier needs to know how many participants to wait for; the constructor's default threshold is 0, so an unconfigured barrier synchronizes nothing."
+  },
+  {
+    question: "The test's run_phase raises its objection, then starts the responder itself: irq_seq.set_starting_phase(phase); irq_seq.set_automatic_phase_objection(1); fork irq_seq.start(env.irq_agt.sqr); join_none. irq_responder_seq has a forever body. The foreground virtual sequence finishes and the test drops its own objection. What happens?",
+    objective: 4,
+    answers: [
+      { text: "The run phase ends normally once the test drops its objection", correct: false, feedback: "That is what happens to a sequence with no starting phase, such as a child started from a virtual sequence with start(sqr, this). Here set_starting_phase(phase) gave the responder one, so its automatic objection was really raised and is still held." },
+      { text: "UVM detects the forever loop and drops the objection with a warning", correct: false, feedback: "There is no such detection." },
+      { text: "The phase never ends: the objection drops only when body() returns", correct: true, feedback: "Right; §14.2.4.4 warns against exactly this. The run ends in the phase-timeout fatal. Background sequences must not object." },
+      { text: "The objection is dropped after the responder's first item completes", correct: false, feedback: "The automatic objection spans the whole sequence, not an item." }
+    ],
+    explanation: "The automatic objection is raised on the sequence's starting phase, which a default sequence gets automatically and any other sequence gets only from set_starting_phase(). With one, a forever sequence holds the phase open for ever; +UVM_OBJECTION_TRACE (uvm-core) names the culprit. Objections belong in the test or the top virtual sequence, around work that ends."
+  },
+  {
+    question: "soc_vseq starts the second cfg_seq (MODE = 1) only after burst 1's data_seq.start() returns: that is the safe point in the Quiesce, reprogram, resume diagram. A colleague saves time by forking them instead: fork data_seq.start(p_sequencer.data_sqr, this); cfg_seq.start(p_sequencer.apb_sqr, this); join. What can happen now?",
+    objective: 2,
+    answers: [
+      { text: "Nothing changes: the APB and data sequencers take turns, so no item overlaps a register write", correct: false, feedback: "Two sequencers never arbitrate against each other. Nothing orders the two branches." },
+      { text: "Items sent while cfg_seq has CTRL.EN = 0 are dropped (ORDER); the rest use MODE 0 or 1 by timing", correct: true, feedback: "Right. cfg_seq first writes CTRL.EN = 0, so any burst-1 item sampled before the final CTRL.EN = 1 write is dropped by the DUT and reported as ORDER; items before the disable use MODE 0, items after the re-enable use MODE 1." },
+      { text: "Every burst-1 item uses MODE = 0, because data_seq was started first in the fork", correct: false, feedback: "Starting first is not finishing first: both branches run together, and items accepted after the re-enable use MODE = 1." },
+      { text: "The scoreboard reports MISMATCH, because it learns MODE from cfg_seq, not from the bus", correct: false, feedback: "soc_scoreboard follows the configuration monitor, so its predictions follow the writes as the DUT sees them. The real damage is the DUT dropping items while EN = 0." }
+    ],
+    explanation: "A safe point is a moment when nothing the change could affect is in flight. In the sequential form, the return of data_seq.start() is that point, because every item has been sampled. Forking the reconfiguration with the traffic removes it, so the outcome depends on timing."
+  }
+]} />
+
+### Flashcards
+
+The deck for this lesson, "A-UVM-8 Multi-Agent Topologies", appears below under "Reinforce the essentials". Its 15 cards cover choosing agent modes, the environment configuration object, vertical and horizontal reuse, where each check lives, ordering in `body()` and safe points for reconfiguration, the three classic hangs, `uvm_event` and `uvm_barrier` semantics, locks across a virtual sequence and cross-agent scoreboards.
+
+### Kata 1: predict, then fix three planted bugs
+
+This `body()` has three bugs. For each one, predict the log signature from the debugging table before you read the solution. Assume `soc_vseq` runs on `v_sqr`, and the test makes `irq_agt` passive.
+
+```systemverilog
+// snippet: a broken soc_vseq::body()
+virtual task body();
+  dma_cfg_seq       cfg_seq  = dma_cfg_seq::type_id::create("cfg_seq");
+  stream_seq        data_seq = stream_seq::type_id::create("data_seq");
+  irq_responder_seq irq_seq  = irq_responder_seq::type_id::create("irq_seq");
+  uvm_event         cfg_done = new("cfg_done");
+  fork
+    begin
+      cfg_seq.start(p_sequencer.apb_sqr, this);
+      cfg_done.trigger();
+    end
+    begin
+      #1us;                                       // stands for other work first
+      cfg_done.wait_trigger();                    // bug A
+      data_seq.start(p_sequencer.data_sqr, this);
+    end
+    irq_seq.start(p_sequencer.irq_sqr, this);     // bugs B and C
+  join
+endtask
+```
+
+<details>
+<summary>Worked solution</summary>
+
+- **Bug A: a missed trigger.** In the Make It Work timing, the three configuration writes finish at about 105 ns, long before the data branch reaches `wait_trigger()` at 1 us. The trigger is already past, so `wait_trigger()` waits for one that never comes: no data is ever sent, `join` never completes, and the run ends in `UVM_FATAL [PH_TIMEOUT]`. With a shorter delay the same code passes or fails depending on the APB timing, which is worse. Fix: `cfg_done.wait_on()`, which returns at once when the event is already on, and no delay.
+- **Bug B: the responder in the `join`.** Even with A fixed, `join` waits for the `forever` responder: `UVM_FATAL [PH_TIMEOUT]` after every item matched. Fix: start it in its own `fork…join_none` before the foreground `fork`.
+- **Bug C: a passive agent's null handle with `this`.** `p_sequencer.irq_sqr` is null, the vseq runs on `v_sqr`, so the responder falls back to `v_sqr` and hangs silently in `start_item()`. Once B is fixed (so nothing waits for it), the test can pass with no responder at all. Fix: the null check at the top of `body()`, which reports `UVM_FATAL [VSEQ]` and tells you to make `irq_agt` active.
+
+You can check A and B in the visual above: `fork + uvm_event` is the corrected A, and `background in its own join_none` is the corrected B.
+
+```systemverilog
+// snippet: the fixed body()
+virtual task body();
+  dma_cfg_seq       cfg_seq  = dma_cfg_seq::type_id::create("cfg_seq");
+  stream_seq        data_seq = stream_seq::type_id::create("data_seq");
+  irq_responder_seq irq_seq  = irq_responder_seq::type_id::create("irq_seq");
+  uvm_event         cfg_done = new("cfg_done");
+  if (p_sequencer.irq_sqr == null)
+    `uvm_fatal("VSEQ", "irq_agt is passive: no sequencer to answer interrupts")
+  fork
+    irq_seq.start(p_sequencer.irq_sqr, this);
+  join_none
+  fork
+    begin
+      cfg_seq.start(p_sequencer.apb_sqr, this);
+      cfg_done.trigger();
+    end
+    begin
+      cfg_done.wait_on();                         // returns at once if already on
+      data_seq.start(p_sequencer.data_sqr, this);
+    end
+  join
+  wait (irq_seq.served == 1);                     // 4 items: one interrupt to answer
+  irq_seq.kill();                                 // stop the responder ourselves
+endtask
+```
+
+</details>
+
+### Kata 2: configure an agent count
+
+Change the Make It Work environment so that `soc_env_cfg` holds `int unsigned num_data_agents` and an array `stream_cfg data_agt_cfg[]`, and `soc_env` builds `data_agt0` … `data_agtN-1` in a loop. Configure two data agents in the test with the second one passive, and print the topology at the end of elaboration. Predict what the printout shows under `data_agt1`.
+
+<details>
+<summary>Worked solution</summary>
+
+```systemverilog
+// snippet: the changes
+// soc_env_cfg
+int unsigned num_data_agents = 1;
+stream_cfg   data_agt_cfg[];
+
+// soc_env: declaration and build_phase
+stream_agent data_agt[];
+// ...
+data_agt = new[cfg.num_data_agents];
+foreach (data_agt[i]) begin
+  string name = $sformatf("data_agt%0d", i);
+  uvm_config_db#(stream_cfg)::set(this, name, "cfg", cfg.data_agt_cfg[i]);
+  data_agt[i] = stream_agent::type_id::create(name, this);
+end
+// soc_env::build_phase: the null check now loops over cfg.data_agt_cfg[i]
+// soc_env::connect_phase: both lines that used data_agt now name the active one
+v_sqr.data_sqr = data_agt[0].sqr;
+if (scb != null) data_agt[0].mon.ap.connect(scb.in_imp);  // replaces data_agt.mon...
+
+// the test's build_phase
+env_cfg.num_data_agents = 2;
+env_cfg.data_agt_cfg    = new[2];
+foreach (env_cfg.data_agt_cfg[i]) begin
+  env_cfg.data_agt_cfg[i] = stream_cfg::type_id::create($sformatf("data_agt_cfg%0d", i));
+  if (!uvm_config_db#(virtual stream_if)::get(this, "", $sformatf("data_vif%0d", i),
+                                              env_cfg.data_agt_cfg[i].vif))
+    `uvm_fatal("NO_VIF", $sformatf("data_vif%0d not set", i))
+end
+env_cfg.data_agt_cfg[1].is_active = UVM_PASSIVE;
+
+// the test
+function void end_of_elaboration_phase(uvm_phase phase);
+  uvm_root::get().print_topology();
+endfunction
+```
+
+The test's single `get()` of `"data_vif"` goes away, replaced by the loop above. `tb_top` changes too: the `generate` loop from "Configuring the topology from the test" (with `N_DATA = 2`) replaces the `data_bus` instance and its `set()`, and the DUT's data input and the assertion now name the first generated interface:
+
+```systemverilog
+// snippet: tb_top changes
+// in the DUT instance, replacing the two data_bus connections:
+.din_valid(g_data[0].bus.valid), .din(g_data[0].bus.data),
+// the ordering assertion now watches the generated interface:
+a_no_data_before_en: assert property (
+  @(posedge clk) disable iff (!rst_n) g_data[0].bus.valid |-> dut.ctrl_en)
+  else `uvm_error("ORDER_SVA", "din_valid sampled while CTRL.EN = 0")
+```
+
+**What `data_agt1` is for.** This DUT has one data input, so nothing drives `g_data[1].bus` and `data_agt1`'s monitor never reports anything. In a real bench the same array would watch a second data port that another block drives (as block B's input did in vertical reuse). Here it exists only so that you can see what a passive agent builds, and it is not connected to the scoreboard. The printout lists `data_agt0` with `drv`, `mon` and `sqr`, and `data_agt1` with only `mon`: a passive agent built no sequencer or driver, so `data_agt[1].sqr` is null and must never be copied into a handle a sequence will use.
+
+</details>
+
+### Kata 3 (expert): move the grab
+
+A colleague's reconfiguration code is below. The background traffic `bg` keeps interleaving with the configuration writes. Explain why, and move the grab so the traffic pauses.
+
+```systemverilog
+// snippet: the colleague's version, inside soc_vseq::body()
+fork
+  bg.start(p_sequencer.data_sqr, this);     // background stream, runs for a while
+join_none
+#100ns;
+grab(p_sequencer.data_sqr);                 // "pause the data path"
+cfg_seq.start(p_sequencer.apb_sqr, this);
+ungrab(p_sequencer.data_sqr);
+```
+
+<details>
+<summary>Worked solution</summary>
+
+`bg` was started with `this`, so it is a child of `soc_vseq`, and soc_vseq holds the grab. uvm-core's `is_blocked()` lets every descendant of the lock holder through, so `bg` is never blocked (the `#100ns` is a second smell: never use a delay for synchronization). The grab must be held by a sibling child that runs on `data_sqr`, the `quiesce_seq` from "Locking an agent's sequencer from a virtual sequence":
+
+```systemverilog
+// snippet: the fix
+quiesce = quiesce_seq::type_id::create("quiesce");
+quiesce.paused = new("paused");
+quiesce.resume = new("resume");
+fork
+  quiesce.start(p_sequencer.data_sqr, this);  // grabs data_sqr, holds it until resume
+join_none
+quiesce.paused.wait_on();                     // the grab is held from here
+cfg_seq.start(p_sequencer.apb_sqr, this);
+quiesce.resume.trigger();                     // quiesce ungrabs and returns
+```
+
+`bg` is a sibling of `quiesce`, not its descendant, so its next request waits until the `ungrab()`. If `bg` had been started with no parent, the original grab would have worked, but then `kill()` on the virtual sequence would no longer stop it.
+
+</details>
+
+### More practice
+
+- **Pre-lab:** the [Coordinated Attack lab](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab) runs a two-agent virtual sequence against five mutants, with a reconfiguration extension kata.
+- **Debug challenge:** the `mode="debug"` visual in "When a multi-agent test hangs or passes silently" above.
+- **LAB-M5 (planned):** a runner-graded lab with a configuration agent and a data agent, an ordering assertion, a mid-stream reconfiguration and a hidden mutant virtual sequence that your checks must catch. It is not available yet.
+
 ## References & Next Topics
 
-- **Prerequisite:** [A-UVM-7: VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) — single-agent VIP architecture before multi-agent coordination.
-- **Prerequisite:** [I-UVM-3A: Sequence Fundamentals](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index) — sequence `start()` and `body()` before virtual sequences.
-- **Prerequisite:** [I-UVM-3B: Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) — `p_sequencer`, dispatch to sub-sequencers, and [sequencer arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration).
-- **Prerequisite:** [I-SV-5: Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index) — events and semaphores.
-- **Next:** [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index) — scaling multi-agent environments to full SoC verification.
-- **Related:** [A-UVM-6: Scoreboards](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index) — scoreboards consuming transactions from multiple agents.
+**Primary sources**
+- IEEE 1800.2-2020: §8.3.1.4.1 `set_inst_override_by_type`; §9.3.1.7.1 `get_objection`; §10.1 `uvm_event` (§10.1.1.2.2 `wait_on`, §10.1.1.2.4 `wait_trigger`, §10.1.1.2.5 `wait_ptrigger`, §10.1.1.2.6 `get_trigger_time`, §10.1.1.2.8 `reset`, §10.1.1.2.10 `get_num_waiters`, §10.1.2.2.4 `trigger`); §10.3 `uvm_barrier` (§10.3.2.1–§10.3.2.8); §10.4.1 `uvm_event_pool` (§10.4.1.2.4 `get`); §10.5.1.3.7 `set_drain_time`; §10.5.1.5.1 `get_objectors`; §13.1.4.3.2 `phase_ready_to_end`; §13.3 `uvm_env`; §13.4.2.2 `get_is_active` and the `is_active` parameter; §14.1.2.5 `get_sequencer`; §14.2.3.1 `start`; §14.2.4.1 `get_starting_phase`; §14.2.4.4 `set_automatic_phase_objection` (NOTE); §14.2.5.5–§14.2.5.8 `lock`, `grab`, `unlock`, `ungrab`; §14.2.5.11 `kill`; §15.3.2.2 `is_child`; §15.3.2.8 `is_blocked`; §15.3.2.9 `has_lock`; §15.3.2.14 `stop_sequences`; §15.3.5 default sequence; §18.2.3.5 `add_submap`; Annex B.3.3 `` `uvm_declare_p_sequencer ``; Annex B.5.22 `` `uvm_analysis_imp_decl ``; Annex C.4.2.2.1 `uvm_config_db::set`; Annex F.7.3.3 `set_timeout`; Annex F.7.4.2 `print_topology`; Annex G.2.1 `+UVM_TESTNAME`; Annex G.2.8 `+uvm_set_config_string`; Annex G.2.9 `+uvm_set_default_sequence`.
+- IEEE 1800-2023: §4.7 nondeterminism; §6.5 nets and variables (multiple drivers); §9.3.2 `fork…join`, `join_any`, `join_none`; §9.4.2 event control; §9.6.1 `wait fork`; §9.6.3 `disable fork`; §14.16 synchronous drives (nets driven from a clocking block); §15.3 semaphores; §15.5.3 the `triggered` property; §15.5.5.1 merged events; §23.6 hierarchical names (instance selects are constant).
+- uvm-core 2020.3.1 (Accellera reference implementation; behaviour labelled "uvm-core" on this page): `src/seq/uvm_sequence_item.svh` (`set_item_context()` parent fallback); `src/seq/uvm_sequence_base.svh` (`start_item()` and the `SEQ` fatal, `start()` raising the automatic objection only on a non-null starting phase, `kill()` and `m_kill()` killing children, the `SEQPRTZMB`/`SEQBDYZMB` process guards); `src/seq/uvm_sequencer_base.svh` (`start_phase_sequence()` setting a default sequence's starting phase, `is_blocked()`, `is_child()`, `remove_sequence_from_queues()` and `SEQFINERR`); `src/seq/uvm_sequencer.svh` (`uvm_virtual_sequencer` typedef); `src/base/uvm_event.svh` (`reset()`); `src/base/uvm_barrier.svh` (`wait_for()`); `src/base/uvm_objection.svh` (`+UVM_OBJECTION_TRACE`); `src/base/uvm_phase_hopper.svh` (`PH_TIMEOUT`); `src/comps/uvm_agent.svh` (`is_active`); `src/macros/uvm_sequence_defines.svh` (`DCLPSQ`); `src/macros/uvm_global_defines.svh` (`UVM_DEFAULT_TIMEOUT` of 9200 s).
+
+**Prerequisites:** [I-UVM-3B Advanced Sequencing and Layering](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index), [A-UVM-7 VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) and [I-SV-5 Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index).
+
+**Related**
+- [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) and [The Virtual Sequencer](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer): the mechanics this lesson applies.
+- [Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration) and [Interrupt Handling](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling): `lock()`, `grab()` and the monitor-to-sequence interrupt path.
+- [Coordinated Attack lab](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab): the M5 pre-lab.
+- [A-UVM-6 Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): predictors, comparators and end-of-test accounting.
+- [I-UVM-1C UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) and [I-UVM-5 Container Classes](/curriculum/T2_Intermediate/I-UVM-5_UVM_Container_Classes/index): objections, `uvm_event`, `uvm_barrier` and their pools.
+- [I-UVM-2C Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index): configuration objects and the database's matching rules.
+- [I-UVM-1D Reporting and Run Control](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index): the report summary and pass/fail.
+- [A-UVM-4A RAL Fundamentals](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index): replacing hand-written configuration state with a register model.
+- [E-SOC-1 SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): reuse and integration strategy at SoC scale.
+
+<NextLesson />

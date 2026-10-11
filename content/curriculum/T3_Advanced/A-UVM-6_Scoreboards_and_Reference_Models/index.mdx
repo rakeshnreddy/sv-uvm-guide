@@ -1,432 +1,1510 @@
 ---
 title: "A-UVM-6: Scoreboards and Reference Models"
-description: "Build self-checking testbenches using transaction-level scoreboards, reference models, and analysis FIFOs to catch DUT bugs without manual waveform inspection."
+description: "Build self-checking scoreboards that predict with a reference model, match in order or by key, and account for every transaction at end of test."
 flashcards: "A-UVM-6_Scoreboards"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "AMBA AXI and ACE Protocol Specification"
+    type: "standard"
+    identifier: "Arm IHI0022E"
 ---
 
 ## Quick Take
-- **What it is:** A scoreboard is a passive verification component that collects transactions from monitors, predicts expected results through a reference model, and automatically compares DUT output against those predictions — transforming a testbench from "run and hope" into a self-checking machine.
-- **Why it matters:** Without a scoreboard, catching a bug requires a human staring at waveforms comparing inputs to outputs. Scoreboards automate this comparison across millions of transactions, making bugs surface as `uvm_error` messages instead of invisible waveform anomalies.
-- **The Standard:** IEEE 1800.2-2020 defines `uvm_scoreboard` (§13.6.1), a virtual class that extends `uvm_component` and adds no behavior. Extend it so tools and readers recognize the role; the matching, draining and end-of-test accounting are your code, built from `uvm_analysis_imp` and `uvm_tlm_analysis_fifo` (Clause 12).
+
+- **What it is:** A **scoreboard** is the part of a testbench (TB) that decides, transaction by transaction, whether the design under test (DUT) did the right thing. It receives two streams: **expected items**, which a **reference model** computes from the inputs the DUT accepted, and **actual items**, which an output monitor observed. It pairs them, compares them by value, and at the end of the test counts everything that was never paired. IEEE 1800.2-2020 gives it a base class, `uvm_scoreboard` (§13.6), that adds no behaviour: every rule on this page is code you write.
+- **Why it matters:** A scoreboard is how a regression of millions of transactions can say "fail" without anyone opening a waveform. It is also the easiest place in a UVM environment to build a bench that passes when it should fail: a scoreboard that compares handles instead of values, that saw zero transactions, that never looks at what was left over, or that stops waiting before the last response arrives prints "0 mismatches" just as happily as a correct one. This module is the gate of milestone M3: a reference-model scoreboard, in order and keyed, with end-of-test accounting.
+- **The Analogy:** An exam marker with an answer key. The key is written from the questions each student actually received (prediction from what the input monitor saw, not from what the teacher meant to hand out). Each answer sheet is matched to its question by question number (the key), so sheets handed in out of order still meet the right answer. At the end, the marker counts questions with no answer and answer sheets with no question (accounting). *Where it breaks:* the person who wrote the key can misread a question in exactly the way the student did, so the marker approves a wrong answer (a **common-mode error**: the model and the DUT share one misreading of the specification). And real answers arrive late, so the marker must know when to stop waiting without a fixed timer: a rule this page builds from objections.
+
+**You will be able to:**
+1. **Design** a scoreboard for a DUT: place the predictor and its reference model, choose analysis imps (`` `uvm_analysis_imp_decl ``) or analysis FIFOs, and justify where prediction happens.
+2. **Write** an in-order scoreboard and a keyed out-of-order scoreboard (one queue per key, safe when a key is reused) that compare by value with a checked `compare()`.
+3. **Implement** end-of-test accounting: report missing and unexpected items in `check_phase`, fail a run with zero traffic, hold the run until outstanding items drain without a fixed delay, and print `SCB_SUMMARY matches=N mismatches=0 pending=0`.
+4. **Debug** false passes and false failures caused by aliasing, monitor sampling time, items in flight at the end of the test, reset and expected errors.
+5. **Choose** a reference-model style (a SystemVerilog model, a predictor component, or a DPI-C model) for a given DUT and team.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
-### The Scoreboard Architecture
+You already know the pieces from Tier 2. A **monitor** watches the pins and publishes one transaction object per observed transfer through its **analysis port**, whose `write()` is a zero-time function call delivered to every connected subscriber ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)). The **run phase** ends when no **objection** (a component's "I am still busy" count on a phase) is raised, and afterwards `extract_phase`, `check_phase` and `report_phase` run in that order ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)). `compare()` compares two objects field by field through a comparer policy ([I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index)). [I-UVM-3C](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index) put them together in a single-agent bench whose scoreboard read one stream. This lesson is about everything that bench did not need: two streams, a reference model, ordering, waiting, and the ways a scoreboard lies.
 
-Every production scoreboard follows this data flow:
+Four words used throughout:
+- **Expected item:** a transaction the reference model says the DUT should produce.
+- **Actual item:** a transaction the output monitor saw the DUT produce.
+- **Predictor:** the component that turns each observed input into an expected item by calling the reference model. (A **register predictor**, `uvm_reg_predictor`, is a different thing that updates a register model; see [A-UVM-4B](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index).)
+- **Pending:** an expected item not yet matched, or an actual item not yet matched. At the end of a passing test, nothing is pending.
 
-```
-Monitor → analysis_port → analysis_export → Scoreboard
-                                                  ↓
-                                           Reference Model
-                                                  ↓
-                                           Comparator Logic
-                                                  ↓
-                                         UVM_ERROR / UVM_INFO
-```
+### Three jobs: observe, predict, compare and account
 
-The design separates three concerns:
-1. **Collection** — The scoreboard receives transactions via TLM analysis ports. It never drives or monitors signals directly.
-2. **Prediction** — A reference model computes the expected output from the input stimulus.
-3. **Comparison** — A comparator checks the DUT's actual output against the reference model's predicted output.
+Every scoreboard does the same three jobs, whatever the protocol:
+1. **Observe.** Two passive monitors watch the two sides of the DUT: one publishes each request the DUT **accepted**, the other each response it **produced**. The scoreboard never touches a signal.
+2. **Predict.** A predictor feeds each accepted request to the reference model and publishes the expected item.
+3. **Compare and account.** The scoreboard pairs each actual item with the right expected item, compares them by value, counts matches and mismatches, and at the end of the test reports anything still pending.
 
-### The Analysis FIFO Pattern
+`uvm_scoreboard` is declared `virtual class uvm_scoreboard extends uvm_component` and adds no members (IEEE 1800.2-2020 §13.6.1). Extending it tells readers and tools what the component is for; it does not compare, store or report anything for you.
 
-The recommended connection pattern uses `uvm_tlm_analysis_fifo` as a buffering adapter between the monitor's analysis port and the scoreboard's blocking get port:
+The picture below is the bench this lesson builds in Make It Work. Every name in it is a name in that code.
+
+<ArchitectureDiagram
+  title="Where prediction happens: the alu_pipe bench"
+  caption="dut (alu_pipe) and its interface alu_if0 live in tb_top, outside env; the three wires leaving dut are alu_if0's signals, driven through drv_cb and sampled through mon_cb. in_mon publishes each request the DUT accepted; prd turns it into an expected item with the reference model and writes it to scb.exp_imp. out_mon publishes each result to scb.act_imp. scb pairs the two streams by tag inside write_exp() and write_act(), in zero time, and its check_phase reports anything still pending."
+  cellWidth={124}
+  cellHeight={72}
+  gapX={72}
+  gapY={60}
+  nodes={[
+    { id: "dut", label: "dut", sublabel: "alu_pipe, wired to alu_if0 (both in tb_top)", kind: "dut", col: 0, row: 0, colSpan: 3 },
+    { id: "env", label: "env", sublabel: "alu_env", kind: "env", col: 0, row: 1, colSpan: 3, rowSpan: 3, container: true },
+    { id: "in_agt", label: "in_agt", sublabel: "alu_in_agent (active)", kind: "agent", col: 0, row: 1, colSpan: 2, rowSpan: 2, container: true },
+    { id: "drv", label: "drv", sublabel: "alu_driver", kind: "driver", col: 0, row: 1 },
+    { id: "in_mon", label: "in_mon", sublabel: "alu_in_mon", kind: "monitor", col: 1, row: 1 },
+    { id: "sqr", label: "sqr", sublabel: "alu_sqr", kind: "sequencer", col: 0, row: 2 },
+    { id: "out_agt", label: "out_agt", sublabel: "alu_out_agent (passive)", kind: "agent", col: 2, row: 1, container: true },
+    { id: "out_mon", label: "out_mon", sublabel: "alu_out_mon", kind: "monitor", col: 2, row: 1 },
+    { id: "prd", label: "prd", sublabel: "alu_predictor", kind: "predictor", col: 1, row: 3 },
+    { id: "scb", label: "scb", sublabel: "alu_scoreboard", kind: "scoreboard", col: 2, row: 3 }
+  ]}
+  ports={[
+    { id: "drv.port", node: "drv", side: "bottom", at: 0.6, kind: "port", label: "seq_item_port" },
+    { id: "sqr.export", node: "sqr", side: "top", at: 0.6, kind: "export", label: "seq_item_export" },
+    { id: "in_mon.ap", node: "in_mon", side: "bottom", at: 0.6, kind: "analysis_port", label: "ap" },
+    { id: "prd.in", node: "prd", side: "top", at: 0.6, kind: "analysis_imp", label: "analysis_export" },
+    { id: "prd.ap", node: "prd", side: "right", at: 0.8, kind: "analysis_port", label: "ap" },
+    { id: "out_mon.ap", node: "out_mon", side: "bottom", kind: "analysis_port", label: "ap" },
+    { id: "scb.exp", node: "scb", side: "left", at: 0.8, kind: "analysis_imp", label: "exp_imp" },
+    { id: "scb.act", node: "scb", side: "top", kind: "analysis_imp", label: "act_imp" }
+  ]}
+  edges={[
+    { from: "drv.port", to: "sqr.export", style: "control", label: "get_next_item" },
+    { from: "drv", to: "dut", style: "control", label: "drv_cb", via: [[0.5, 1], [0.5, 0.5]] },
+    { from: "dut", to: "in_mon", style: "structural", label: "mon_cb" },
+    { from: "dut", to: "out_mon", style: "structural", label: "mon_cb", via: [[1.5, 0.5], [1.5, 1]] },
+    { from: "in_mon.ap", to: "prd.in", style: "data", label: "write(t)" },
+    { from: "prd.ap", to: "scb.exp", style: "data", label: "write(exp)" },
+    { from: "out_mon.ap", to: "scb.act", style: "data", label: "write(t)" }
+  ]}
+/>
+
+Three rules follow from the picture:
+- **Predict from what the DUT accepted, not from what the stimulus intended.** The predictor subscribes to `in_mon`, not to the sequence or the driver. A request that was back-pressured, withdrawn or changed on its way to the pins is not what the DUT must answer; only the input monitor knows what it really accepted.
+- **Predict early.** The expected item exists from the moment the request is accepted, before any response can arrive. That makes keyed matching, latency checks and "this response matches nothing" possible. Predicting late (computing the expected value only when the response arrives) works for a simple in-order stream, and nothing more.
+- **The scoreboard lives in the env, never in an agent.** An agent is reusable verification IP for one interface ([A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index)); the scoreboard knows what this particular DUT computes, so it belongs to the environment that knows the DUT.
+
+### Feeding the scoreboard: two imps or two FIFOs
+
+A scoreboard has two inputs, and a class has only one method named `write`. [I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index#two-input-scoreboards) showed the two standard ways round that. Here is how they apply to scoreboards.
+
+**Form A: two imps with `` `uvm_analysis_imp_decl ``** (IEEE 1800.2-2020 Annex B.5.22). Each macro declares a new imp class whose `write()` calls a method with your suffix. The scoreboard's matching then runs inside those calls, in zero time:
 
 ```systemverilog
-class my_scoreboard extends uvm_scoreboard;
-  `uvm_component_utils(my_scoreboard)
+// snippet: form A, the form used in Make It Work
+`uvm_analysis_imp_decl(_exp)   // declares uvm_analysis_imp_exp: write() calls write_exp()
+`uvm_analysis_imp_decl(_act)   // declares uvm_analysis_imp_act: write() calls write_act()
 
-  // Analysis FIFOs buffer transactions from monitors
-  uvm_tlm_analysis_fifo #(my_transaction) input_fifo;
-  uvm_tlm_analysis_fifo #(my_transaction) output_fifo;
+class alu_scoreboard extends uvm_scoreboard;
+  uvm_analysis_imp_exp #(alu_item, alu_scoreboard) exp_imp;   // from prd.ap
+  uvm_analysis_imp_act #(alu_item, alu_scoreboard) act_imp;   // from out_mon.ap
+  // write_exp() stores the prediction; write_act() pairs, compares and counts.
+endclass
+```
+
+**Form B: two `uvm_tlm_analysis_fifo`s and a `run_phase` thread** (§12.2.8.3). Each FIFO accepts every `write()` at once (it is unbounded, and its `write()` is a `try_put` that always succeeds), and the scoreboard's own thread takes items out with `get()`, a task that may wait. The scoreboard exposes two `uvm_analysis_export`s and connects them to its private FIFOs, so the env never reaches inside it:
+
+```systemverilog
+// snippet: form B, used by the in-order scoreboard below and by the lab
+uvm_analysis_export   #(alu_item) exp_export, act_export;  // the env connects here
+uvm_tlm_analysis_fifo #(alu_item) exp_fifo,   act_fifo;    // private buffers
+// connect_phase: exp_export.connect(exp_fifo.analysis_export);
+//                act_export.connect(act_fifo.analysis_export);
+```
+
+| Choose | When |
+|---|---|
+| Form A, two imps | Every action is zero-time: store a prediction, look it up, compare, count. You need a **held queue** for an actual that arrives in the same time step as, but before, its prediction (traced below). |
+| Form B, two FIFOs and a thread | A check must wait: for a sideband signal, a clock, a model that consumes time, or the other stream. Paired in-order FIFOs are race-free without a held queue; a design with **two** threads (one per FIFO) needs a held queue too. |
+
+Both forms are legal and common; the visual later on this page and Make It Work use form A, and the lab uses form B, so you practise both. A graded wiring exercise, [scoreboard connector](/exercises/scoreboard-connector), drills the connections; it connects the env straight to the FIFOs' `analysis_export`s, which is legal, while this page prefers exports on the scoreboard so it can change how it buffers without touching the env.
+
+**One rule for both forms: never modify what you receive.** `write()` hands the same handle to every subscriber, and "an implementation of the `write(T)` shall not modify the value passed to it" (§12.2.10.2). A scoreboard that changes a field of a received item corrupts what the coverage collector and every other subscriber see. Predict into a copy, and store items as received.
+
+### The reference model: three styles
+
+A **reference model** is an executable, transaction-level model of what the DUT must compute, written from the specification by someone other than the RTL designer. It is not the specification, and it is not "golden": that word is often used for it, but the model can share the RTL author's misreading (the common-mode error from the analogy). Its value comes from being simple enough to trust more than the RTL. If your model is as complex as the DUT, you have duplicated the bug surface.
+
+| Style | What it is | Choose it when | Watch out for |
+|---|---|---|---|
+| **SystemVerilog function or class** | A pure function such as `alu_model(op, a, b)` in the package, called by the predictor | The behaviour is small, stateless, and owned by the verification team | Copying the RTL's structure instead of the specification's wording |
+| **Predictor component** | A `uvm_subscriber` (§13.9) that receives observed inputs, keeps any state the model needs (a memory image, a sequence counter), calls the model, and publishes expected items on its own analysis port | The model has state, needs several inputs, or should be reusable and swappable by the factory | Keeping state in step with the DUT across reset (see False passes) |
+| **DPI-C model** | An `import "DPI-C"` function or task that calls an existing C or C++ model, called from the predictor | Architects already maintain a bit-accurate model (a CPU instruction-set simulator, a codec, a DSP datapath) | Marshalling cost per call; a stateful C model must be called in DUT order; `pure` is legal only for a nonvoid function with only input arguments and no side effects (IEEE 1800-2023 §35.5.2) |
+
+The two SystemVerilog styles combine in Make It Work: `alu_model()` is the model, `alu_predictor` is the component that calls it. A DPI-C variant would change one line of the predictor:
+
+```systemverilog
+// snippet: the same model through DPI-C. pure: a nonvoid function, inputs only,
+// no side effects (IEEE 1800-2023 §35.5.2); use context if the C code calls
+// exported SystemVerilog (§35.5.3).
+import "DPI-C" pure function int unsigned alu_ref_c(input int unsigned op,
+                                                    input int unsigned a,
+                                                    input int unsigned b);
+// in alu_predictor::write(): exp.result = 16'(alu_ref_c(t.op, t.a, t.b));
+```
+
+**An illegal input has no prediction.** If the model receives an opcode the specification does not define, it must say so (`'x`, or an error), never return a plausible value such as 0 that a broken DUT might also produce.
+
+### When to predict, and when the monitors sample
+
+The DUT in this lesson, `alu_pipe`, accepts one request per clock and returns its result two rising edges later, in request order, with the request's `tag` (a 4-bit label the DUT copies from input to output). Both monitors sample through the clocking block `mon_cb`, whose inputs are sampled just before each rising edge, as the DUT's own flip-flops see them (`default input #1step`; IEEE 1800-2023 §14.13).
+
+**Predict before you look.** Requests arrive back to back at edges 1, 2 and 3. A bench with a single monitor reads `a`, `b` and `op` from the bus at the edge where it sees `valid_out` high, and publishes them with `result`. Which request's inputs does it pair with the first result? Decide, then read the waveform.
+
+<TimingDiagram
+  title="alu_pipe: requests at edges 1 to 3, results at edges 3 to 5"
+  caption="values[k] is the value mon_cb samples at rising edge k. in_mon samples request A1 at edge 1 and prd writes its expected item in that same time step. out_mon samples R1 at edge 3, and scb compares it with the expected item for tag 0. At edge 3 the request bus already carries A3, so a single monitor that reads a, b and op at the valid_out edge would pair R1 with A3."
+  edges={7}
+  cycleWidth={38}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "valid_in", kind: "bit", values: [0, 1, 1, 1, 0, 0, 0] },
+    { name: "tag_in", kind: "bus", values: [undefined, "0", "1", "2", "2", "2", "2"] },
+    { name: "op, a, b", kind: "bus", values: [undefined, "A1", "A2", "A3", "A3", "A3", "A3"] },
+    { name: "valid_out", kind: "bit", values: [0, 0, 0, 1, 1, 1, 0] },
+    { name: "tag_out", kind: "bus", values: [undefined, undefined, undefined, "0", "1", "2", "2"] },
+    { name: "result", kind: "bus", values: [undefined, undefined, undefined, "R1", "R2", "R3", "R3"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "sample", label: "in_mon samples A1 (tag 0); prd writes the expected item for tag 0", short: "E1" },
+    { edge: 3, tone: "pass", label: "out_mon samples R1 with tag_out 0; scb compares it with the expected item for tag 0", short: "R1" }
+  ]}
+  highlights={[{ from: 3, to: 3, tone: "fail", label: "a single monitor reading op, a, b here would see A3, not A1" }]}
+/>
+
+**What the waveform shows.** The single monitor pairs R1 with A3: by the time a result appears, the request bus has moved on. It only looked right in benches whose driver held each request for the whole latency. Two monitors, each sampling its own side when its own valid is high, with the pairing done in the scoreboard by tag or by order, are correct for any traffic. The same reasoning tells you where to predict: at edge 1, when `in_mon` sees the request accepted.
+
+### In-order matching and comparing by value
+
+When the DUT answers every request in request order, the matching rule is simple: the oldest expected item is the only legal partner for the next actual item. Here is the form-B version, built on two FIFOs:
+
+```systemverilog
+// snippet: an in-order scoreboard (form B); alu_item is defined in Make It Work
+class alu_inorder_sb extends uvm_scoreboard;
+  `uvm_component_utils(alu_inorder_sb)
+
+  uvm_analysis_export   #(alu_item) exp_export, act_export;
+  uvm_tlm_analysis_fifo #(alu_item) exp_fifo,   act_fifo;
+  int unsigned n_match, n_mismatch;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
   endfunction
 
-  function void build_phase(uvm_phase phase);
+  virtual function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    input_fifo  = new("input_fifo", this);
-    output_fifo = new("output_fifo", this);
+    exp_export = new("exp_export", this);
+    act_export = new("act_export", this);
+    exp_fifo   = new("exp_fifo", this);
+    act_fifo   = new("act_fifo", this);
+  endfunction
+
+  virtual function void connect_phase(uvm_phase phase);
+    super.connect_phase(phase);
+    exp_export.connect(exp_fifo.analysis_export);
+    act_export.connect(act_fifo.analysis_export);
+  endfunction
+
+  virtual task run_phase(uvm_phase phase);
+    alu_item exp, act;
+    forever begin
+      exp_fifo.peek(exp);          // wait for a prediction, but leave it in the FIFO
+      act_fifo.get(act);           // wait for the DUT's answer
+      void'(exp_fifo.try_get(exp));  // only now consume the prediction
+      if (exp.compare(act)) n_match++;                   // by value, result checked
+      else begin
+        n_mismatch++;
+        `uvm_error("SCB/MISMATCH", $sformatf("expected %s, got tag=%0d result=%0d",
+                   exp.convert2string(), act.tag, act.result))
+      end
+    end
+  endtask
+
+  // After run_phase: anything left in a FIFO was never compared.
+  virtual function void check_phase(uvm_phase phase);
+    super.check_phase(phase);
+    if (exp_fifo.used() != 0)
+      `uvm_error("SCB/MISSING", $sformatf("%0d predictions never answered",
+                                          exp_fifo.used()))
+    if (act_fifo.used() != 0)
+      `uvm_error("SCB/UNEXPECTED", $sformatf("%0d results matched no prediction",
+                                             act_fifo.used()))
+    if (n_match + n_mismatch == 0)
+      `uvm_error("SCB/NO_TRAFFIC", "no result was compared: this run proves nothing")
   endfunction
 endclass
 ```
 
-In the environment's `connect_phase`, wire the monitor analysis ports to these FIFOs:
+**Why `peek`, then `get`, then `try_get`.** If the thread took the prediction out first and then waited for an answer that never came, the prediction would sit in a local variable when `run_phase` ended and its thread was killed; `check_phase` would find both FIFOs empty and see nothing wrong. Peeking keeps the prediction in `exp_fifo` until its answer is in hand. Trace a DUT that drops the last of three responses:
+
+| Event | `exp_fifo` | `act_fifo` | Thread | Counts |
+|---|---|---|---|---|
+| Predictions E1, E2, E3 arrive | E1 E2 E3 | empty | peeks E1, waits in `act_fifo.get()` | 0 / 0 |
+| R1 arrives | E1 E2 E3 | R1 | gets R1, takes E1, compares: match; peeks E2 | 1 / 0 |
+| R2 arrives | E2 E3 | R2 | gets R2, takes E2: match; peeks E3, waits | 2 / 0 |
+| (R3 never comes) run_phase ends; the thread is killed | E3 | empty | killed in `get()` | 2 / 0 |
+| `check_phase` | `used()` = 1 | 0 | | `SCB/MISSING`: 1 prediction never answered |
+
+Without the `check_phase`, this run ends with two matches, zero mismatches and `UVM_ERROR : 0`: a false pass.
+
+**Comparing by value.** `act == exp` on two class handles is true only when both refer to the **same object** (IEEE 1800-2023 §8.4, §11.4.5). An expected item and an actual item are always two objects, so `==` is always false for them, whatever their fields; `compare()` is what compares values (IEEE 1800.2-2020 §5.3.9.1). Four details decide whether `compare()` protects you:
+- **Check its return value.** By default a miscompare is reported as a `UVM_INFO` message with ID `MISCMP`, at verbosity `UVM_LOW`, and only the first one is shown (§16.3.5.1–§16.3.5.3). `UVM_INFO` never fails a test: if you ignore the `bit` that `compare()` returns, the test passes with miscompares in its log.
+- **Compare what the output side carries.** An actual item has a tag and a result, not the operands. `alu_item::do_compare()` therefore compares `tag` and `result` only. If your item uses the `` `uvm_field_* `` macros instead, flag input-only fields `UVM_NOCOMPARE` (Annex F.2.1.9), or every compare fails on fields the output monitor never fills.
+- **Compare 4-state values with `!==` semantics.** `compare_field_int` uses case inequality, so an X on `result` is a miscompare; a hand-written `act.result != exp.result` would give X, which an `if` treats as false, and hide it.
+- **Use your own comparer when you want detail.** Make It Work passes a scoreboard-owned `uvm_comparer` to `compare()` and puts `get_miscompares()` (§16.3.3.8) into its own `` `uvm_error ``.
+
+### Out-of-order matching: one ordered queue per key
+
+Pipelined, multi-bank or arbitrating DUTs can complete requests out of order. What is legal is the protocol's business; how a particular DUT uses that freedom is its design policy. AXI is the usual example: transactions with the **same** ID must complete in request order, and transactions with **different** IDs have no ordering restriction (Arm IHI0022E §A5.1); how deeply a slave reorders read data is a fixed property of its design (§A5.3.1). The scoreboard encodes the protocol rule, so it accepts every legal policy; a stricter promise in the DUT's own specification ("this block never reorders") is a separate check you can switch on.
+
+So the matching structure is **one ordered queue per key**: an associative array of queues, `exp_q[tag][$]` (IEEE 1800-2023 §7.8, §7.10). A response with key *k* may only match the oldest pending prediction with key *k*. Three tempting alternatives each fail:
+- **One queue for everything** raises false mismatches as soon as the DUT legally answers a later key first.
+- **One slot per key** (`expected[id] = item`) overwrites a prediction when two requests with the same key are outstanding, which is normal in AXI: the first response is compared with the second prediction and the first prediction is lost.
+- **Search any pending item that compares equal** never raises a false alarm, but lets a same-key reorder (a real protocol violation) pass, and costs a full search per response.
+
+The key must be something the DUT carries from input to output: the AXI ID, a tag, an address. A sequence number that only the testbench knows works only if the DUT returns it. Here is the keyed matching in form A, exactly as the Make It Work scoreboard has it:
 
 ```systemverilog
-function void connect_phase(uvm_phase phase);
-  super.connect_phase(phase);
-  // Input monitor → scoreboard input FIFO
-  agent.input_monitor.ap.connect(scoreboard.input_fifo.analysis_export);
-  // Output monitor → scoreboard output FIFO
-  agent.output_monitor.ap.connect(scoreboard.output_fifo.analysis_export);
+// snippet: alu_scoreboard's matching (full class in Make It Work)
+virtual function void write_exp(alu_item t);      // a prediction arrives
+  foreach (held_q[i])
+    if (held_q[i].tag == t.tag) begin             // its actual came first
+      compare_pair(t, held_q[i]);
+      held_q.delete(i);
+      return;
+    end
+  exp_q[t.tag].push_back(t);                      // oldest first, per tag
+  outstanding++;
+  fork watch(t); join_none                        // per-item latency watchdog
+endfunction
+
+virtual function void write_act(alu_item t);      // an actual arrives
+  if (!exp_q.exists(t.tag) || exp_q[t.tag].size() == 0) begin
+    held_q.push_back(t);                          // early or extra: decide later
+    return;
+  end
+  compare_pair(exp_q[t.tag].pop_front(), t);
+  outstanding--;
 endfunction
 ```
 
-> **Why use a FIFO?** A `uvm_analysis_imp` write callback is non-blocking and executes synchronously inside the monitor's `run_phase` context. If the scoreboard needs to do time-consuming comparison or wait for a corresponding output transaction, a FIFO decouples the timing — the scoreboard's `run_phase` can `get()` at its own pace. `uvm_tlm_analysis_fifo` is unbounded, so `write()` never blocks and never drops, but it stores the **handle** it is given, not a copy. A monitor that reuses one transaction object must publish a `clone()`, or every queued entry ends up showing the last transaction.
+**The race the held queue removes.** Both `write` calls happen inside monitor threads. When a request and its response are observed in the **same time step** (a DUT with zero-cycle latency, or monitors on different clock phases), nothing in IEEE 1800-2023 says which monitor runs first. If the output monitor wins, `write_act()` finds no prediction yet. Reporting "unexpected" then would be a false error. Trace a response and its prediction for tag 3 that land in one time step, output first:
 
-## Building a Transaction-Level Reference Model
+| Step (one time step) | `exp_q[3]` | `held_q` | What happens |
+|---|---|---|---|
+| `out_mon` writes actual, tag 3 | empty | `[act3]` | no prediction yet: held |
+| `prd` writes expected, tag 3 | empty | `[act3]` | `write_exp()` finds `act3` in `held_q`: compare, match, remove |
+| end of test, `check_phase` | empty | empty | nothing pending |
 
-The reference model is the golden behavioral specification of your DUT, implemented as pure SystemVerilog logic with no access to the RTL internals.
+If the prediction never comes, the held actual is still in `held_q` at `check_phase`, which reports it as `SCB/UNEXPECTED`. That is also how an **extra** response is caught.
 
-```systemverilog
-class alu_reference_model;
-  // Pure function: no side effects, no DUT access
-  static function my_transaction predict(my_transaction input_txn);
-    my_transaction expected = new();
-    expected.copy(input_txn);
+**Key reuse.** Because each key has a queue, two outstanding requests with the same key are fine: they are answered in order, and each response pops the oldest. The kata in Practice & Reinforce makes you watch a one-slot map fail on exactly that.
 
-    case (input_txn.opcode)
-      ADD:  expected.result = input_txn.operand_a + input_txn.operand_b;
-      SUB:  expected.result = input_txn.operand_a - input_txn.operand_b;
-      AND:  expected.result = input_txn.operand_a & input_txn.operand_b;
-      OR:   expected.result = input_txn.operand_a | input_txn.operand_b;
-      XOR:  expected.result = input_txn.operand_a ^ input_txn.operand_b;
-      default: expected.result = '0;
-    endcase
-
-    return expected;
-  endfunction
-endclass
-```
-
-**Key principle:** The reference model should be simple enough that you trust it more than the RTL. If your reference model is as complex as the DUT, you've just duplicated the bug surface area.
-
-## The Complete Scoreboard: Compare and Report
-
-Combining the analysis FIFO pattern with the reference model, here is a complete self-checking scoreboard:
-
-```systemverilog
-class alu_scoreboard extends uvm_scoreboard;
-  `uvm_component_utils(alu_scoreboard)
-
-  uvm_tlm_analysis_fifo #(my_transaction) input_fifo;
-  uvm_tlm_analysis_fifo #(my_transaction) output_fifo;
-
-  int unsigned match_count;
-  int unsigned mismatch_count;
-
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-  endfunction
-
-  function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    input_fifo  = new("input_fifo", this);
-    output_fifo = new("output_fifo", this);
-    match_count    = 0;
-    mismatch_count = 0;
-  endfunction
-
-  task run_phase(uvm_phase phase);
-    my_transaction input_txn, output_txn, expected;
-
-    forever begin
-      // Wait for an input but leave it in the FIFO until its result arrives,
-      // so check_phase can see an input whose output never came.
-      input_fifo.peek(input_txn);
-      output_fifo.get(output_txn);
-      void'(input_fifo.try_get(input_txn));
-
-      // Predict expected output
-      expected = alu_reference_model::predict(input_txn);
-
-      // Compare the field the output monitor fills (!== also flags X)
-      if (output_txn.result !== expected.result) begin
-        mismatch_count++;
-        `uvm_error("SCOREBOARD",
-          $sformatf("MISMATCH on txn #%0d: op=%s a=0x%0h b=0x%0h expected=0x%0h got=0x%0h",
-            match_count + mismatch_count,
-            input_txn.opcode.name(),
-            input_txn.operand_a,
-            input_txn.operand_b,
-            expected.result,
-            output_txn.result))
-      end else begin
-        match_count++;
-        `uvm_info("SCOREBOARD",
-          $sformatf("MATCH on txn #%0d: op=%s result=0x%0h",
-            match_count,
-            input_txn.opcode.name(),
-            output_txn.result), UVM_HIGH)
-      end
-    end
-  endtask
-
-  // End-of-test accounting: anything left in a FIFO was never compared.
-  function void check_phase(uvm_phase phase);
-    super.check_phase(phase);
-    if (!input_fifo.is_empty())
-      `uvm_error("SCOREBOARD", $sformatf("%0d input(s) never produced an output", input_fifo.used()))
-    if (!output_fifo.is_empty())
-      `uvm_error("SCOREBOARD", $sformatf("%0d output(s) arrived with no input", output_fifo.used()))
-    if (match_count + mismatch_count == 0)
-      `uvm_error("SCOREBOARD", "No transactions compared: check monitor connections")
-  endfunction
-
-  function void report_phase(uvm_phase phase);
-    `uvm_info("SCOREBOARD",
-      $sformatf("\n========== Scoreboard Summary ==========\n  Matches:    %0d\n  Mismatches: %0d\n  Total:      %0d\n=========================================",
-        match_count, mismatch_count, match_count + mismatch_count), UVM_LOW)
-
-    if (mismatch_count > 0)
-      `uvm_error("SCOREBOARD", $sformatf("%0d mismatches detected!", mismatch_count))
-    else
-      `uvm_info("SCOREBOARD", "All transactions matched — test PASSED", UVM_LOW)
-  endfunction
-endclass
-```
-
-> **Design note:** `check_phase` is not optional. If the DUT drops the last output, `run_phase` simply waits in `output_fifo.get()` until the phase ends, and no compare ever fails. Only the leftover input in `input_fifo` shows the bug. The same check catches a scoreboard that received zero transactions because of a broken connection.
-
-## Handling Out-of-Order Transactions
-
-In-order comparison assumes DUT output arrives in the same order as input. Pipelined or arbitrating designs may complete transactions out of order. AXI is the usual case: responses with **different** IDs may return in any order, but responses with the **same** ID must return in request order. That rule is a protocol requirement; how a particular DUT reorders across IDs is its design policy.
-
-So the matching structure is **one ordered queue per ID**: an associative array of queues. The oldest prediction for an ID is the only legal partner for the next response with that ID.
-
-A map with one slot per ID (`expected[id] = item`) is not enough. Two outstanding requests with the same ID are normal, and the second prediction overwrites the first.
-
-```systemverilog
-class ooo_scoreboard extends uvm_scoreboard;
-  `uvm_component_utils(ooo_scoreboard)
-
-  uvm_tlm_analysis_fifo #(my_transaction) input_fifo;
-  uvm_tlm_analysis_fifo #(my_transaction) output_fifo;
-
-  // One ordered queue per ID, oldest prediction first
-  my_transaction expected_q[int unsigned][$];
-  // Outputs that arrived before their prediction (the two threads race)
-  my_transaction held_q[$];
-
-  int unsigned match_count;
-  int unsigned mismatch_count;
-
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-  endfunction
-
-  function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    input_fifo  = new("input_fifo", this);
-    output_fifo = new("output_fifo", this);
-  endfunction
-
-  task run_phase(uvm_phase phase);
-    fork
-      collect_inputs();
-      compare_outputs();
-    join
-  endtask
-
-  task collect_inputs();
-    my_transaction txn;
-    forever begin
-      input_fifo.get(txn);
-      expected_q[txn.id].push_back(alu_reference_model::predict(txn));
-      retry_held(txn.id);
-    end
-  endtask
-
-  task compare_outputs();
-    my_transaction actual;
-    forever begin
-      output_fifo.get(actual);
-      if (expected_q.exists(actual.id) && expected_q[actual.id].size() > 0)
-        compare_pair(expected_q[actual.id].pop_front(), actual);
-      else
-        held_q.push_back(actual);  // maybe early; check_phase reports it if never matched
-    end
-  endtask
-
-  // A prediction just arrived: an output with this ID may already be waiting.
-  function void retry_held(int unsigned id);
-    foreach (held_q[i]) begin
-      if (held_q[i].id == id) begin
-        compare_pair(expected_q[id].pop_front(), held_q[i]);
-        held_q.delete(i);
-        return;
-      end
-    end
-  endfunction
-
-  function void compare_pair(my_transaction exp, my_transaction act);
-    if (act.result !== exp.result) begin
-      mismatch_count++;
-      `uvm_error("OOO_SCB", $sformatf("MISMATCH id=%0d: expected 0x%0h, got 0x%0h", act.id, exp.result, act.result))
-    end else begin
-      match_count++;
-    end
-  endfunction
-
-  function void check_phase(uvm_phase phase);
-    super.check_phase(phase);
-    foreach (expected_q[id])
-      if (expected_q[id].size() > 0)
-        `uvm_error("OOO_SCB", $sformatf("id %0d: %0d expected transaction(s) never received", id, expected_q[id].size()))
-    if (held_q.size() > 0)
-      `uvm_error("OOO_SCB", $sformatf("%0d output(s) matched no prediction", held_q.size()))
-  endfunction
-endclass
-```
-
-**Key insights:**
-- **The race.** `collect_inputs` and `compare_outputs` are separate threads. When an input and its output land in the same time step, the output thread can run first and find no prediction. Reporting "unexpected" at that moment would be a false error. Holding the output and retrying when the prediction arrives removes the race; `check_phase` reports anything still held.
-- **Where the ID comes from.** Match on a field the DUT carries end to end (the AXI ID). A testbench-only sequence number works only if the DUT returns it.
-- **End-of-test accounting.** `check_phase` catches dropped transactions (predictions never consumed) and extra ones (outputs never matched). Without it, both pass silently.
-
-Choose a matching policy, a DUT and a DUT bug, then predict what the test reports. Try the one-slot map with the correct cross-ID DUT, and the search-any policy with a same-ID reorder.
+**Experiment.** The visual below models five tagged requests with IDs 0 and 1, where same-ID requests overlap. Its code panel uses form A with the names `rsp_scoreboard`, `exp_imp`, `act_imp`, `exp_q` and `held_q`, the same structure as `alu_scoreboard`. Before you run each setting, write down your prediction:
+1. "In-order queue" with "Reorders across IDs" and no bug: pass, or a false alarm?
+2. "One slot per ID" with "Reorders across IDs" and no bug: what goes wrong, and on which request?
+3. "Search any match" with "Swaps #1 and #3 (same ID)": is the bug caught?
+4. "Per-ID queues", "Drops the last id-0 response", with "check_phase reports leftovers" unticked: what does the run report?
+5. "Per-ID queues", no bug, with "No drain" as the end of test: pass, or a false `SCB/MISSING`?
 
 <ScoreboardMatchingVisualizer />
 
-The B-AXI-6 lab builds the full per-ID scoreboard for AXI write and read channels: [B-AXI-6: AXI Verification and Performance](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index).
+**Debrief.**
+- With the DUT that reorders across IDs, only per-ID queues with `check_phase` on and "Wait until idle" catch every bug without a false alarm (setting 1 is a false alarm; with an in-order DUT the single queue would also be clean).
+- "One slot per ID" overwrites #1's prediction when #3 (also ID 0) is predicted, so #1's response is compared with #3's data (setting 2).
+- "Search any match" lets the same-ID swap through: each response finds some equal item (setting 3: bug escaped).
+- With `check_phase` off, a dropped response is never noticed: the visual labels it "bug escaped", and its summary says one item was never compared (setting 4).
+- "No drain" ends `run_phase` when the test drops its objection, before the last responses arrive, so `check_phase` reports correct responses as missing (setting 5). A drain time works only when the latency is known; waiting until idle works for any latency.
 
-<LabLink labId="axi-scoreboard-lab" />
+### End-of-test accounting and draining
 
-## Common Pitfalls
+A scoreboard's verdict is only as good as its last minute. Three questions must be answered after `run_phase` ends, in `check_phase`, the phase IEEE 1800.2-2020 provides for exactly this (§9.8.1.7):
+1. **Missing:** is any prediction still unanswered? Each one is `SCB/MISSING`.
+2. **Unexpected:** is any actual still unmatched? Each one is `SCB/UNEXPECTED`.
+3. **Zero traffic:** was anything compared at all? If not, `SCB/NO_TRAFFIC`. Zero mismatches out of zero compares proves nothing: it is also what a scoreboard prints when its port was never connected or the run ended at 0 ns.
 
-### 1. Comparing Objects by Reference Instead of Value
+Then `report_phase` (§9.8.1.8) prints one line a regression script can grep, in this course's milestone format: `SCB_SUMMARY matches=N mismatches=M pending=P`, where pending counts the predictions never answered plus the actuals never matched. The scoreboard **reports**; the report server **decides**. Never print "TEST PASSED" from a scoreboard: it would print after another component's error, or after a `check_phase` error of your own. A run passes when the report summary shows `UVM_ERROR :    0` and `UVM_FATAL :    0` and the `SCB_SUMMARY` line has a non-zero match count and `mismatches=0 pending=0` ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)).
 
-```systemverilog
-// ❌ WRONG: compares handle identity (always fails for different objects)
-if (actual_txn == expected_txn) ...
-
-// ✅ CORRECT: uses uvm_object::compare() which calls do_compare()
-if (actual_txn.compare(expected_txn)) ...
-```
-
-Every transaction class must implement `do_compare()` (or use the `` `uvm_field_* `` macros) for `compare()` to work correctly. If you rely on autopacked field macros, verify they cover all fields — a missing registration silently skips that field in comparisons. The opposite trap: `compare()` checks *every* registered field, so if the output monitor does not fill the operands, every compare fails. Compare the fields the output side really carries, or use a result-only item.
-
-### 2. Scoreboard Receives Zero Transactions
-
-A scoreboard connected to the wrong analysis port—or a monitor that never fires—reports zero mismatches and zero matches. This is a **false pass**.
-
-**Mitigation:** In `report_phase`, assert that the total transaction count is greater than zero:
+**Draining: keep the run alive until the last response is in.** The test drops its objection when its sequence finishes, while the last responses are still inside the DUT. If `run_phase` ends then, those responses are never observed and `check_phase` reports correct work as missing. A fixed delay is a guess: too short tomorrow, wasted time today. Instead the scoreboard, the one component that knows what is outstanding, holds the phase itself through `phase_ready_to_end` (§13.1.4.3.2):
 
 ```systemverilog
-if (match_count + mismatch_count == 0)
-  `uvm_error("SCOREBOARD", "No transactions received — check monitor connections!")
-```
-
-### 3. Phase Ordering: Draining Until Idle
-
-The `run_phase` ends when all objections are dropped. The test usually drops its objection when its sequence finishes, while responses are still inside the DUT. Writes that arrive after the phase ends never reach the scoreboard, so `check_phase` reports them as missing even though the DUT was right.
-
-A fixed timer is a guess. An unconditional `#100ns` inside `phase_ready_to_end` is worse than it looks: UVM calls `phase_ready_to_end` again after every re-raise and drop, up to `max_ready_to_end_iterations` (20 by default in uvm-core `uvm_phase.svh`), so it adds about 2 µs to every test and still never checks that anything is pending.
-
-Raise an objection only while work is outstanding, wait for it with a watchdog, and do it once:
-
-```systemverilog
-int unsigned outstanding;  // ++ when a prediction is stored, -- when it is matched
-bit          drained;
-
-function void phase_ready_to_end(uvm_phase phase);
-  if (phase.get_name() != "run" || outstanding == 0 || drained) return;
-  drained = 1;  // ready_to_end is called again after our drop
+// snippet: alu_scoreboard's drain (full class in Make It Work)
+virtual function void phase_ready_to_end(uvm_phase phase);
+  // Called for run and for every run-time phase: hold only run, and only once,
+  // because UVM calls this again after our own drop.
+  if (phase.get_name() != "run" || drained || outstanding == 0) return;
+  drained = 1;
   phase.raise_objection(this, "scoreboard: responses outstanding");
-  fork begin
-    fork
-      wait (outstanding == 0);  // a variable, so wait() has something to be sensitive to
-      #(drain_timeout);         // watchdog: a dropped response must not hang the test
-    join_any
-    disable fork;
-    phase.drop_objection(this, "scoreboard: idle or timed out");
-  end join_none
+  fork                                   // a function cannot wait: fork the wait
+    begin
+      fork
+        wait (outstanding == 0);         // every prediction answered
+        #(max_latency);                  // watchdog: a lost response must not hang
+      join_any
+      disable fork;
+      if (outstanding != 0)
+        `uvm_warning("SCB/DRAIN_TIMEOUT", "check_phase reports what is still pending")
+      phase.drop_objection(this, "scoreboard: idle or timed out");
+    end
+  join_none
 endfunction
 ```
 
-If the latency is bounded and known, `phase.get_objection().set_drain_time(this, 30ns)` in the test is a simpler alternative: after the last drop the phase waits that long, and a new raise cancels the end (`uvm_objection.svh`). The experiment above shows both rules and what each one misses.
+Why each line is there:
+- **When it is called.** UVM calls `phase_ready_to_end` on every component once all objections to the phase and its siblings have dropped. A component that still has work may raise the phase's objection there and must drop it when ready (§13.1.4.3.2). In uvm-core 2020.3.1 it is called for `run` and for each run-time phase, hence the `get_name()` guard; without it, a one-shot `drained` flag could be used up by an earlier run-time phase.
+- **Why only once.** After the scoreboard's drop, UVM calls `phase_ready_to_end` again, up to `phase.get_max_ready_to_end_iterations()` times (§9.3.1.3.4; the default is 20, §9.3.1.3.5). The `drained` flag makes the second call return at once.
+- **Why `fork ... join_none`.** `phase_ready_to_end` is a function, and a function may not wait, but it may start a background process with `fork ... join_none` (IEEE 1800-2023 §13.4.4).
+- **Why `wait (outstanding == 0)` works.** A `wait` re-evaluates its condition only when an operand changes (§9.4.3). `outstanding` is a class member that `write_exp()` and `write_act()` update, so the wait wakes on the right event. `wait (exp_fifo.used() == 0)` would not be allowed: only non-virtual methods (and built-in methods of arrays and queues) may appear in an event expression (§9.4.2), and `used()` is virtual. That is why form A counts `outstanding` where a prediction enters the scoreboard.
+- **Why the watchdog.** If a response is lost, `outstanding` never reaches 0. The watchdog drops the objection after `max_latency` with a warning, and `check_phase` then reports the missing item by name.
+- **A deliberate exception.** This course's code style says objections are raised in tests and top sequences only. A scoreboard's bounded drain in `phase_ready_to_end` is the standard exception: the scoreboard is the only component that knows what is outstanding.
 
-### 4. Forgetting the `copy()` Before Mutation
+<SequenceDiagram
+  title="How the alu_pipe test ends"
+  caption="The test drops its objection at 235 ns, when the last request is accepted. UVM asks every component whether it is ready; scb still has 2 predictions outstanding, so it raises the objection and waits. The last result is matched at 255 ns; scb drops, UVM asks again, scb returns at once, and run_phase ends. Only then do extract_phase, check_phase and report_phase run, bottom-up."
+  participants={[
+    { id: "test", label: "test", sublabel: "alu_test", kind: "test" },
+    { id: "obj", label: "objection", sublabel: "the run phase's", kind: "generic" },
+    { id: "uvm", label: "phasing", sublabel: "UVM phase hopper", kind: "generic" },
+    { id: "scb", label: "scb", sublabel: "alu_scoreboard", kind: "scoreboard" }
+  ]}
+  messages={[
+    { from: "test", to: "obj", label: "drop_objection(this): count 0 at 235 ns" },
+    { from: "uvm", to: "scb", label: "phase_ready_to_end(run): outstanding = 2" },
+    { from: "scb", to: "obj", label: "raise_objection(this): count 1" },
+    { kind: "note", from: "uvm", to: "scb", label: "scb forks: wait (outstanding == 0) or #(max_latency), then drops" },
+    { kind: "divider", label: "245 ns and 255 ns: write_act() matches tags 2 and 3 (requests 19 and 20; 4-bit tags wrap)" },
+    { from: "scb", to: "obj", label: "drop_objection(this): count 0 at 255 ns" },
+    { from: "uvm", to: "scb", label: "phase_ready_to_end(run): drained, returns" },
+    { kind: "note", from: "test", to: "scb", label: "255 ns: run_phase ends; every run_phase thread is killed" },
+    { from: "uvm", to: "scb", label: "extract_phase()" },
+    { from: "uvm", to: "scb", label: "check_phase(): no MISSING, no UNEXPECTED, traffic seen" },
+    { from: "uvm", to: "scb", label: "report_phase(): SCB_SUMMARY matches=20 mismatches=0 pending=0" }
+  ]}
+/>
 
-When predicting, always `copy()` the input transaction before modifying it. Otherwise you corrupt the original transaction still held by the monitor or sequence:
+**The simpler alternative, when latency is fixed.** If the DUT's latency is bounded and known, the test can set a **drain time** on the phase's objection: `phase.get_objection().set_drain_time(this, 30ns)`. After the last drop, the phase waits that long before ending, and a new raise during the wait cancels it (§10.5.1.3.7). It is a guess dressed as a setting, so prefer waiting until idle whenever latency varies. Never put an unconditional `#100ns` inside `phase_ready_to_end`: UVM calls it again after each drop, so it adds up to 20 × 100 ns = 2 µs to every test and still never checks that anything was pending.
+
+**Latency and timeouts: do not wait for the end to find a hang.** A response that never comes is reported by `check_phase`, but only at the end, and only if the run ends normally. Make It Work adds two run-time guards:
+- **A per-item latency watchdog.** `write_exp()` forks `watch(t)`, which waits `max_latency` and reports `SCB/LATE` if that very object (compared with `==`, which is right here: the question is identity) is still queued. The error names the request and the time it went missing, while the run continues.
+- **A global timeout.** The test calls `uvm_root::get().set_timeout(1ms)` (Annex F.7.3.3). If the run hangs, UVM ends it with `UVM_FATAL [PH_TIMEOUT]`. A fatal skips `check_phase` and `report_phase` entirely; in uvm-core 2020.3.1 the run ends through `uvm_root::die()`, which calls every component's `pre_abort()` first (§13.1.4.6). `alu_scoreboard::pre_abort()` prints its `SCB_SUMMARY` there, so even a killed run leaves its counts in the log.
+
+### False passes and false failures
+
+A **false pass** is a run that reports success although the DUT is wrong; a **false failure** is a run that reports errors although the DUT is right. Both waste time, but false passes ship bugs. Use this table as a debugging checklist: start from what the log shows.
+
+| Symptom in the log | Likely cause | Fix |
+|---|---|---|
+| `SCB_SUMMARY matches=0 mismatches=0 pending=0`, `UVM_ERROR : 0` | Zero traffic: an unconnected analysis port, a monitor waiting on the wrong signal, a run that ended at 0 ns | Make zero compares an error (`SCB/NO_TRAFFIC`); then fix the connection or the objection |
+| Clean log, but a known-bad DUT also passes | No leftover check: dropped responses and stuck predictions are never counted | `check_phase` reports `SCB/MISSING` and `SCB/UNEXPECTED`; prove it with a mutant (Make It Work) |
+| `[MISCMP] Miscompare for ...` as `UVM_INFO`, yet `UVM_ERROR : 0` | The return value of `compare()` is ignored; a miscompare is only `UVM_INFO` by default | `if (!exp.compare(act, cmp))` raise `` `uvm_error ``; put `cmp.get_miscompares()` in the message |
+| Every compare fails on fields the output never carries | `compare()` covers input-only fields | Compare only output fields in `do_compare`, or flag inputs `UVM_NOCOMPARE` |
+| A burst of `SCB/MISMATCH` as soon as traffic overlaps, against a DUT the designers say is right | In-order matching on a DUT that legally reorders | Match per key, with one queue per key |
+| Mismatches only when two requests share an ID | One slot per key overwrote a pending prediction | One queue per key |
+| `SCB/MISSING` for the last few requests on a correct DUT | `run_phase` ended before they arrived: no drain, or a drain time shorter than the latency | Hold the phase in `phase_ready_to_end` until `outstanding == 0` |
+| Every expected item shows the last transaction's data | A monitor reuses one object, and the scoreboard stored handles to it | The monitor creates a new item per transaction (below) |
+| Results paired with the wrong inputs, but only under back-to-back traffic | One monitor samples inputs at the output edge, or samples raw signals on the wrong edge | One monitor per side, each sampling through a clocking block (the waveform above) |
+| A burst of `SCB/MISSING` or `SCB/MISMATCH` right after a mid-test reset | Predictions for requests the reset discarded are still queued | Flush on reset and report the flushed items separately (below) |
+| `SCB/MISMATCH` on every request a test injects as illegal on purpose | The model predicts the normal result for an illegal request | Predict the specified error response; never demote `SCB/*` errors for the whole test |
+
+**Aliasing: one object, many handles.** An analysis FIFO, a queue and a `write()` all store or pass **handles**, never copies. A monitor that creates its item once, before its loop, and overwrites it for every transfer publishes the same object again and again; every handle the scoreboard stored then shows the last transfer's values. Try the model below: it is the same bug, with a plain queue in place of the analysis FIFO. **Predict** which line causes it before you click.
+
+<ObjectHandleVisualizer mode="bug" />
+
+**What it showed, in UVM terms.** Only one `txn` object existed, so every stored handle pointed at it. In a UVM bench the rule has two halves: the **publisher** creates a new item for every transaction (`alu_in_mon` and `alu_out_mon` call `alu_item::type_id::create()` inside their loops) and never touches it after `write()`; the **subscriber** never modifies what it receives (§12.2.10.2) and predicts into a copy (`alu_predictor` calls `clone()`). [I-SV-1](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning) explains shallow and deep copies.
+
+**Reset in the middle of a test (basic version).** When reset is asserted, the DUT discards the requests in flight, so their predictions will never be answered. Without care, `check_phase` reports them as missing on a correct DUT. The minimum a scoreboard needs is a flush, called when a reset monitor sees `rst_n` fall:
 
 ```systemverilog
-// ❌ WRONG: mutates the original transaction
-expected = input_txn;
-expected.result = input_txn.a + input_txn.b;
-
-// ✅ CORRECT: work on an independent copy
-expected = new();
-expected.copy(input_txn);
-expected.result = input_txn.a + input_txn.b;
+// snippet: basic reset handling for alu_scoreboard (the full strategy,
+// including when to stop predicting, is planned for A-UVM-9)
+int unsigned n_flushed;
+function void flush_on_reset();
+  int unsigned flushed = outstanding + held_q.size();
+  exp_q.delete();               // predictions the reset discarded
+  held_q.delete();
+  outstanding = 0;
+  n_flushed += flushed;         // report these in the summary, never as MISSING
+  `uvm_info("SCB/RESET", $sformatf("reset: %0d pending items flushed", flushed),
+            UVM_LOW)
+endfunction
 ```
 
-### 5. A Single Slot per ID
+A form-B scoreboard flushes its FIFOs with `flush()` (IEEE 1800.2-2020 §12.2.8.2.6). The per-item `watch()` processes of flushed items find nothing queued and stay silent.
 
-The original out-of-order scoreboard in this lesson kept `expected[id] = item`. It passed simple tests and failed a correct AXI DUT as soon as two requests with the same ID were outstanding. Find the line in the challenge below, then choose a fix; the model regrades it against a correct DUT and four buggy ones.
+**Expected errors (basic version).** When a test drives an illegal request on purpose and the specification says the DUT answers with an error response, the reference model predicts that error response, and the scoreboard compares as usual. The two shortcuts are both false passes waiting to happen: turning `SCB/MISMATCH` into a warning for the whole test hides every other bug in it, and skipping prediction for "error tests" leaves the error path unchecked. The full strategy (error catchers, demoting one expected message) is planned for A-UVM-9.
 
-<ScoreboardMatchingVisualizer mode="debug" />
+### Recap
 
-## Knowledge Check
+- A scoreboard observes two streams, predicts from what the DUT accepted, compares by value with a checked `compare()`, and accounts for everything at the end (objective 1).
+- In order: the oldest prediction is the only legal partner. Out of order: one ordered queue per key that the DUT carries end to end, plus a held queue for actuals that beat their prediction (objective 2).
+- `check_phase` reports `SCB/MISSING`, `SCB/UNEXPECTED` and `SCB/NO_TRAFFIC`; `report_phase` prints `SCB_SUMMARY`; the scoreboard holds `run_phase` in `phase_ready_to_end` until nothing is outstanding, with a watchdog, never a fixed delay (objective 3).
+- False passes come from zero traffic, unchecked leftovers, ignored `compare()` results and aliasing; false failures from wrong ordering assumptions, monitors sampling at the wrong time, ending too early, reset and unpredicted errors (objective 4).
+- The reference model is a SystemVerilog function, a predictor component, or a DPI-C call, chosen by state, ownership and existing models (objective 5).
+
+## Make It Work
+
+### The complete bench
+
+The block below is one compile-ready file: the DUT, its interface, a package with every class, and `tb_top`. It is the bench in the architecture picture. Three `` `ifdef `` switches plant bugs in the DUT so you can prove the scoreboard fails when it should. The code has been checked by reading against IEEE 1800-2023 and uvm-core 2020.3.1; no simulator run is behind this page.
+
+```systemverilog
+// compile: alu_sb_tb.sv (DUT, interface, package and top in one file)
+// Plant a bug with +define+MUT_DROP, +define+MUT_SUB or +define+MUT_EXTRA.
+
+// ------------------------------------------------------------------ DUT
+// Two-stage ALU: one request per clock; the result appears two rising edges
+// later, in request order, with the request's tag.
+module alu_pipe (
+  input  logic        clk,
+  input  logic        rst_n,      // synchronous, active low
+  input  logic        valid_in,
+  input  logic [3:0]  tag_in,     // returned unchanged with the result
+  input  logic [1:0]  op,         // 0 ADD, 1 SUB, 2 MUL, 3 AND
+  input  logic [7:0]  a,
+  input  logic [7:0]  b,
+  output logic        valid_out,
+  output logic [3:0]  tag_out,
+  output logic [15:0] result
+);
+  timeunit 1ns; timeprecision 1ps;
+
+  logic        v1;
+  logic [3:0]  tag1;
+  logic [15:0] res1, f;
+  logic [4:0]  n_acc;       // requests accepted so far (MUT_DROP uses it)
+  logic        dup_done;    // MUT_EXTRA uses it
+
+  always_comb begin
+    unique case (op)
+      2'd0:    f = a + b;            // 16-bit context keeps the carry
+`ifdef MUT_SUB
+      2'd1:    f = a + b;            // planted bug: SUB executes as ADD
+`else
+      2'd1:    f = a - b;            // wraps modulo 2**16
+`endif
+      2'd2:    f = a * b;
+      2'd3:    f = {8'h00, a & b};
+      default: f = 'x;               // op is X or Z
+    endcase
+  end
+
+  always_ff @(posedge clk) begin
+    if (!rst_n) begin
+      v1        <= 1'b0;
+      valid_out <= 1'b0;
+      n_acc     <= '0;
+      dup_done  <= 1'b0;
+    end else begin
+      // Stage 1: register the request and its result.
+      v1   <= valid_in;
+      tag1 <= tag_in;
+      res1 <= f;
+      if (valid_in) n_acc <= n_acc + 5'd1;
+`ifdef MUT_DROP
+      if (valid_in && n_acc == 5'd9) v1 <= 1'b0;   // planted bug: request 10 is lost
+`endif
+      // Stage 2: present the result; tag and result hold while idle.
+      valid_out <= v1;
+      if (v1) begin
+        tag_out <= tag1;
+        result  <= res1;
+      end
+`ifdef MUT_EXTRA
+      // Planted bug: the first result followed by an idle cycle is sent twice.
+      if (!v1 && valid_out && !dup_done) begin
+        valid_out <= 1'b1;
+        dup_done  <= 1'b1;
+      end
+`endif
+    end
+  end
+endmodule
+
+// ------------------------------------------------------------ interface
+interface alu_if (input logic clk, input logic rst_n);
+  timeunit 1ns; timeprecision 1ps;
+
+  logic        valid_in;
+  logic [3:0]  tag_in;
+  logic [1:0]  op;
+  logic [7:0]  a, b;
+  logic        valid_out;
+  logic [3:0]  tag_out;
+  logic [15:0] result;
+
+  // The driver's view: drives land just after the edge, so alu_pipe samples
+  // them at the next one.
+  clocking drv_cb @(posedge clk);
+    default input #1step output #0;
+    output valid_in, tag_in, op, a, b;
+    input  rst_n;
+  endclocking
+
+  // The monitors' view: everything sampled just before the edge, as the
+  // DUT's flip-flops see it.
+  clocking mon_cb @(posedge clk);
+    default input #1step;
+    input valid_in, tag_in, op, a, b, valid_out, tag_out, result, rst_n;
+  endclocking
+endinterface
+
+// -------------------------------------------------------------- package
+package alu_pkg;
+  timeunit 1ns; timeprecision 1ps;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+
+  typedef enum logic [1:0] {ALU_ADD, ALU_SUB, ALU_MUL, ALU_AND} alu_op_e;
+
+  // The reference model: what the specification says each operation returns.
+  function automatic logic [15:0] alu_model(alu_op_e op,
+                                            logic [7:0] a, logic [7:0] b);
+    case (op)
+      ALU_ADD: return 16'(a) + 16'(b);
+      ALU_SUB: return 16'(a) - 16'(b);   // wraps modulo 2**16, as specified
+      ALU_MUL: return 16'(a) * 16'(b);
+      ALU_AND: return {8'h00, a & b};
+      default: return 'x;                // an X opcode has no defined result
+    endcase
+  endfunction
+
+  class alu_item extends uvm_sequence_item;
+    `uvm_object_utils(alu_item)
+
+    logic      [3:0]  tag;           // set by the sequence, returned by the DUT
+    rand alu_op_e     op;
+    rand logic [7:0]  a, b;
+    logic      [15:0] result;        // predicted (expected) or observed (actual)
+    int unsigned      idle_cycles;   // driver knob: idle cycles after this request
+
+    function new(string name = "alu_item");
+      super.new(name);
+    endfunction
+
+    virtual function void do_copy(uvm_object rhs);
+      alu_item rhs_;
+      super.do_copy(rhs);
+      if (!$cast(rhs_, rhs)) `uvm_fatal("ITEM/COPY", "rhs is not an alu_item")
+      tag    = rhs_.tag;
+      op     = rhs_.op;
+      a      = rhs_.a;
+      b      = rhs_.b;
+      result = rhs_.result;
+    endfunction
+
+    // Compare only what the output side carries: an actual has no op, a or b.
+    virtual function bit do_compare(uvm_object rhs, uvm_comparer comparer);
+      alu_item rhs_;
+      if (!$cast(rhs_, rhs)) return 0;
+      do_compare  = super.do_compare(rhs, comparer);
+      do_compare &= comparer.compare_field_int("tag", tag, rhs_.tag, 4);
+      do_compare &= comparer.compare_field_int("result", result, rhs_.result, 16);
+    endfunction
+
+    virtual function string convert2string();
+      return $sformatf("tag=%0d %s a=%0d b=%0d result=%0d",
+                       tag, op.name(), a, b, result);
+    endfunction
+  endclass
+
+  class alu_seq extends uvm_sequence #(alu_item);
+    `uvm_object_utils(alu_seq)
+
+    int unsigned num_items = 20;
+
+    function new(string name = "alu_seq");
+      super.new(name);
+    endfunction
+
+    virtual task body();
+      for (int unsigned i = 0; i < num_items; i++) begin
+        alu_item it = alu_item::type_id::create("it");
+        start_item(it);
+        if (!it.randomize()) `uvm_fatal("RAND", "alu_item randomization failed")
+        it.tag         = 4'(i);             // the DUT returns it: the match key
+        it.idle_cycles = (i == 9) ? 1 : 0;  // one gap mid-stream, as real traffic has
+        finish_item(it);
+      end
+    endtask
+  endclass
+
+  class alu_driver extends uvm_driver #(alu_item);
+    `uvm_component_utils(alu_driver)
+
+    virtual alu_if vif;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (!uvm_config_db#(virtual alu_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NOVIF", "virtual alu_if 'vif' is not set for the driver")
+    endfunction
+
+    virtual task run_phase(uvm_phase phase);
+      vif.drv_cb.valid_in <= 1'b0;          // idle the bus from the first edge
+      do @(vif.drv_cb); while (vif.drv_cb.rst_n !== 1'b1);
+      forever begin
+        seq_item_port.get_next_item(req);
+        vif.drv_cb.valid_in <= 1'b1;
+        vif.drv_cb.tag_in   <= req.tag;
+        vif.drv_cb.op       <= req.op;
+        vif.drv_cb.a        <= req.a;
+        vif.drv_cb.b        <= req.b;
+        @(vif.drv_cb);                      // alu_pipe accepts it at this edge
+        vif.drv_cb.valid_in <= 1'b0;        // a following item overrides this
+        repeat (req.idle_cycles) @(vif.drv_cb);
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
+
+  // Publishes one new item for every request the DUT accepts.
+  class alu_in_mon extends uvm_monitor;
+    `uvm_component_utils(alu_in_mon)
+
+    virtual alu_if vif;
+    uvm_analysis_port #(alu_item) ap;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      ap = new("ap", this);
+      if (!uvm_config_db#(virtual alu_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NOVIF", "virtual alu_if 'vif' is not set for in_mon")
+    endfunction
+
+    virtual task run_phase(uvm_phase phase);
+      forever begin
+        @(vif.mon_cb);
+        if (vif.mon_cb.rst_n === 1'b1 && vif.mon_cb.valid_in === 1'b1) publish();
+      end
+    endtask
+
+    protected function void publish();
+      alu_item t = alu_item::type_id::create("t");   // a new object every time
+      if ($isunknown({vif.mon_cb.tag_in, vif.mon_cb.op, vif.mon_cb.a, vif.mon_cb.b}))
+        `uvm_error("MON/X", "valid_in is 1 but a request field is X or Z")
+      t.tag = vif.mon_cb.tag_in;
+      t.op  = alu_op_e'(vif.mon_cb.op);
+      t.a   = vif.mon_cb.a;
+      t.b   = vif.mon_cb.b;
+      ap.write(t);
+    endfunction
+  endclass
+
+  // Publishes one new item for every result the DUT presents.
+  class alu_out_mon extends uvm_monitor;
+    `uvm_component_utils(alu_out_mon)
+
+    virtual alu_if vif;
+    uvm_analysis_port #(alu_item) ap;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      ap = new("ap", this);
+      if (!uvm_config_db#(virtual alu_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NOVIF", "virtual alu_if 'vif' is not set for out_mon")
+    endfunction
+
+    virtual task run_phase(uvm_phase phase);
+      forever begin
+        @(vif.mon_cb);
+        if (vif.mon_cb.rst_n === 1'b1 && vif.mon_cb.valid_out === 1'b1) publish();
+      end
+    endtask
+
+    protected function void publish();
+      alu_item t = alu_item::type_id::create("t");
+      if ($isunknown(vif.mon_cb.tag_out))
+        `uvm_error("MON/X", "valid_out is 1 but tag_out is X or Z")
+      t.tag    = vif.mon_cb.tag_out;
+      t.result = vif.mon_cb.result;
+      ap.write(t);
+    endfunction
+  endclass
+
+  typedef uvm_sequencer #(alu_item) alu_sqr;
+
+  class alu_in_agent extends uvm_agent;     // active: drives and watches requests
+    `uvm_component_utils(alu_in_agent)
+
+    alu_sqr    sqr;
+    alu_driver drv;
+    alu_in_mon in_mon;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      sqr = alu_sqr::type_id::create("sqr", this);
+      drv = alu_driver::type_id::create("drv", this);
+      in_mon = alu_in_mon::type_id::create("in_mon", this);
+    endfunction
+
+    virtual function void connect_phase(uvm_phase phase);
+      super.connect_phase(phase);
+      drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+  endclass
+
+  class alu_out_agent extends uvm_agent;    // passive: only watches results
+    `uvm_component_utils(alu_out_agent)
+
+    alu_out_mon out_mon;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      out_mon = alu_out_mon::type_id::create("out_mon", this);
+    endfunction
+  endclass
+
+  // Turns each accepted request into an expected item.
+  class alu_predictor extends uvm_subscriber #(alu_item);
+    `uvm_component_utils(alu_predictor)
+
+    uvm_analysis_port #(alu_item) ap;       // one expected item per request
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      ap = new("ap", this);
+    endfunction
+
+    // Called inside in_mon's ap.write(), in the time step the request was
+    // accepted, so the prediction exists before any result can arrive.
+    virtual function void write(alu_item t);
+      alu_item exp;
+      if (!$cast(exp, t.clone()))
+        `uvm_fatal("PRD/CLONE", "clone() did not return an alu_item")
+      exp.result = alu_model(t.op, t.a, t.b);   // t itself is never modified
+      ap.write(exp);
+    endfunction
+  endclass
+
+  `uvm_analysis_imp_decl(_exp)
+  `uvm_analysis_imp_decl(_act)
+
+  class alu_scoreboard extends uvm_scoreboard;
+    `uvm_component_utils(alu_scoreboard)
+
+    uvm_analysis_imp_exp #(alu_item, alu_scoreboard) exp_imp;   // from prd
+    uvm_analysis_imp_act #(alu_item, alu_scoreboard) act_imp;   // from out_mon
+
+    time max_latency = 100ns;      // the spec's bound plus margin: a knob, not a guess
+
+    protected alu_item     exp_q[int unsigned][$];  // per tag, oldest first
+    protected alu_item     held_q[$];     // actuals that arrived before a prediction
+    protected uvm_comparer cmp;
+    protected bit          drained;
+    int unsigned outstanding;             // predictions not yet answered
+    int unsigned n_match, n_mismatch;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      exp_imp = new("exp_imp", this);
+      act_imp = new("act_imp", this);
+      cmp = uvm_comparer::type_id::create("cmp");
+      cmp.set_threshold(0);          // field-macro items would report every field
+      cmp.set_verbosity(UVM_HIGH);   // SCB/MISMATCH below carries the detail
+    endfunction
+
+    // A prediction arrives (zero time, inside prd's ap.write()).
+    virtual function void write_exp(alu_item t);
+      foreach (held_q[i])
+        if (held_q[i].tag == t.tag) begin    // its actual came first
+          compare_pair(t, held_q[i]);
+          held_q.delete(i);
+          return;
+        end
+      exp_q[t.tag].push_back(t);
+      outstanding++;
+      fork watch(t); join_none               // per-item latency watchdog
+    endfunction
+
+    // An actual arrives (zero time, inside out_mon's ap.write()).
+    virtual function void write_act(alu_item t);
+      if (!exp_q.exists(t.tag) || exp_q[t.tag].size() == 0) begin
+        held_q.push_back(t);                 // early or extra: check_phase decides
+        return;
+      end
+      compare_pair(exp_q[t.tag].pop_front(), t);
+      outstanding--;
+    endfunction
+
+    protected function void compare_pair(alu_item exp, alu_item act);
+      if (exp.compare(act, cmp)) begin       // by value, and the result is checked
+        n_match++;
+        `uvm_info("SCB/MATCH", exp.convert2string(), UVM_HIGH)
+      end else begin
+        n_mismatch++;
+        `uvm_error("SCB/MISMATCH", $sformatf("expected %s, got tag=%0d result=%0d; %s",
+                   exp.convert2string(), act.tag, act.result, cmp.get_miscompares()))
+      end
+    endfunction
+
+    // Reports a prediction that is still queued max_latency after it was made.
+    protected task watch(alu_item e);
+      #(max_latency);
+      if (exp_q.exists(e.tag)) begin
+        alu_item pend[$] = exp_q[e.tag];    // copy of the handles queued for e.tag
+        foreach (pend[i])
+          if (pend[i] == e)                  // == on handles: this very object
+            `uvm_error("SCB/LATE", $sformatf("%s not answered within %0t",
+                                             e.convert2string(), max_latency))
+      end
+    endtask
+
+    virtual function void phase_ready_to_end(uvm_phase phase);
+      // Called for run and for every run-time phase: hold only run, and only
+      // once, because UVM calls this again after our own drop.
+      if (phase.get_name() != "run" || drained || outstanding == 0) return;
+      drained = 1;
+      `uvm_info("SCB/DRAIN", $sformatf("holding run_phase: %0d outstanding",
+                                       outstanding), UVM_MEDIUM)
+      phase.raise_objection(this, "scoreboard: responses outstanding");
+      fork
+        begin
+          fork
+            wait (outstanding == 0);         // every prediction answered
+            #(max_latency);                  // watchdog: a lost result must not hang
+          join_any
+          disable fork;
+          if (outstanding != 0)
+            `uvm_warning("SCB/DRAIN_TIMEOUT", $sformatf(
+              "%0d outstanding after %0t; check_phase reports them",
+              outstanding, max_latency))
+          phase.drop_objection(this, "scoreboard: idle or timed out");
+        end
+      join_none
+    endfunction
+
+    // After run_phase: report everything that was never paired.
+    virtual function void check_phase(uvm_phase phase);
+      super.check_phase(phase);
+      foreach (exp_q[tag, i])               // every key, every queued prediction
+        `uvm_error("SCB/MISSING", {exp_q[tag][i].convert2string(),
+                                   " was never answered"})
+      foreach (held_q[i])
+        `uvm_error("SCB/UNEXPECTED", $sformatf(
+          "tag=%0d result=%0d matched no prediction", held_q[i].tag, held_q[i].result))
+      if (n_match + n_mismatch == 0)
+        `uvm_error("SCB/NO_TRAFFIC", "no result was compared: this run proves nothing")
+    endfunction
+
+    protected function string summary();
+      return $sformatf("SCB_SUMMARY matches=%0d mismatches=%0d pending=%0d",
+                       n_match, n_mismatch, outstanding + held_q.size());
+    endfunction
+
+    virtual function void report_phase(uvm_phase phase);
+      super.report_phase(phase);
+      `uvm_info("SCB_SUMMARY", summary(), UVM_NONE)
+    endfunction
+
+    // A fatal (PH_TIMEOUT, for one) skips check_phase and report_phase:
+    // leave the counts in the log before the simulator stops.
+    virtual function void pre_abort();
+      `uvm_info("SCB_SUMMARY", {summary(), " (run aborted)"}, UVM_NONE)
+    endfunction
+  endclass
+
+  class alu_env extends uvm_env;
+    `uvm_component_utils(alu_env)
+
+    alu_in_agent   in_agt;
+    alu_out_agent  out_agt;
+    alu_predictor  prd;
+    alu_scoreboard scb;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      in_agt  = alu_in_agent::type_id::create("in_agt", this);
+      out_agt = alu_out_agent::type_id::create("out_agt", this);
+      prd     = alu_predictor::type_id::create("prd", this);
+      scb     = alu_scoreboard::type_id::create("scb", this);
+    endfunction
+
+    virtual function void connect_phase(uvm_phase phase);
+      super.connect_phase(phase);
+      in_agt.in_mon.ap.connect(prd.analysis_export);  // accepted requests to the model
+      prd.ap.connect(scb.exp_imp);                    // expected items
+      out_agt.out_mon.ap.connect(scb.act_imp);        // actual results
+    endfunction
+  endclass
+
+  class alu_test extends uvm_test;
+    `uvm_component_utils(alu_test)
+
+    alu_env      env;
+    int unsigned num_items = 20;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      env = alu_env::type_id::create("env", this);
+      uvm_root::get().set_timeout(1ms);      // a hang ends here, not after 9200 s
+    endfunction
+
+    virtual task run_phase(uvm_phase phase);
+      alu_seq seq = alu_seq::type_id::create("seq");
+      seq.num_items = num_items;
+      phase.raise_objection(this, "alu_seq running");
+      seq.start(env.in_agt.sqr);
+      // No drain time and no delay: the scoreboard holds the phase until
+      // every prediction is answered.
+      phase.drop_objection(this, "alu_seq done");
+    endtask
+  endclass
+
+  // Proves that a silent run cannot pass: no stimulus at all.
+  class alu_zero_test extends alu_test;
+    `uvm_component_utils(alu_zero_test)
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      num_items = 0;
+    endfunction
+  endclass
+endpackage
+
+// ------------------------------------------------------------------ top
+module tb_top;
+  timeunit 1ns; timeprecision 1ps;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+  import alu_pkg::*;
+
+  logic clk;
+  logic rst_n;
+
+  alu_if   alu_if0 (.clk(clk), .rst_n(rst_n));
+  alu_pipe dut (.clk(clk), .rst_n(rst_n),
+                .valid_in(alu_if0.valid_in), .tag_in(alu_if0.tag_in),
+                .op(alu_if0.op), .a(alu_if0.a), .b(alu_if0.b),
+                .valid_out(alu_if0.valid_out), .tag_out(alu_if0.tag_out),
+                .result(alu_if0.result));
+
+  initial begin
+    clk = 1'b0;
+    forever #5 clk = ~clk;               // rising edges at 5, 15, 25 ns ...
+  end
+
+  initial begin
+    rst_n = 1'b0;
+    repeat (2) @(posedge clk);
+    rst_n <= 1'b1;                       // nonblocking: the flops at 15 ns see 0
+  end
+
+  initial begin
+    $timeformat(-9, 0, " ns", 0);
+    // Publish the interface before run_test(): the components read it in build_phase.
+    uvm_config_db#(virtual alu_if)::set(null, "uvm_test_top.env.*", "vif", alu_if0);
+    run_test("alu_test");                // +UVM_TESTNAME=<test> overrides this
+  end
+endmodule
+```
+
+### Run it
+
+The steps are tool-neutral; switches differ between simulators, so check your tool's UVM documentation.
+1. **Compile against uvm-core 2020.3.1.** Many simulators ship a precompiled UVM library selected with one switch (tool-dependent). Otherwise compile the library's `src/uvm_pkg.sv` with `src` on the include path.
+2. **Give the compile a default time unit of 1 ns and precision of 1 ps** with your tool's switch, so that `uvm_pkg`, which declares none, uses the same unit as this file ([I-UVM-3C](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index) explains why).
+3. **Compile `alu_sb_tb.sv`** and elaborate with `tb_top` as the top module. Add `+define+MUT_DROP`, `+define+MUT_SUB` or `+define+MUT_EXTRA` to build a buggy DUT.
+4. **Run** with `+UVM_TESTNAME=alu_test` (the default) or `+UVM_TESTNAME=alu_zero_test`.
+
+Whether an open-source simulator runs this bench is tool-dependent, and this page does not claim it.
+
+### Expected output
+
+This is a hand trace of `alu_test` against the correct DUT, not a simulator log (abridged: the release-notes banner is shortened and file and line fields are removed). Message format and the order of the report lines follow uvm-core 2020.3.1; spacing can differ between tools.
+
+```text
+UVM_INFO @ 0 ns: reporter [UVM/RELNOTES] (release-notes banner)
+UVM_INFO @ 0 ns: reporter [RNTST] Running test alu_test...
+UVM_INFO @ 235 ns: uvm_test_top.env.scb [SCB/DRAIN] holding run_phase: 2 outstanding
+UVM_INFO @ 255 ns: uvm_test_top.env.scb [SCB_SUMMARY] SCB_SUMMARY matches=20 mismatches=0 pending=0
+UVM_INFO @ 255 ns: reporter [UVM/REPORT/SERVER]
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO :    4
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+** Report counts by id
+[RNTST]     1
+[SCB/DRAIN]     1
+[SCB_SUMMARY]     1
+[UVM/RELNOTES]     1
+```
+
+How to read it:
+- **The verdict:** `UVM_ERROR :    0`, `UVM_FATAL :    0`, and `SCB_SUMMARY matches=20 mismatches=0 pending=0`. All three are needed: the summary line proves twenty results were checked and nothing was left over.
+- **The times.** Reset is released for the edge at 25 ns, so the driver drives the first request at 25 ns and `alu_pipe` accepts it at 35 ns. Requests 1 to 10 are accepted at 35 to 125 ns, the bus idles at 135 ns, and requests 11 to 20 are accepted at 145 to 235 ns. Each result is sampled two edges after its request: 55 to 145 ns, then 165 to 255 ns.
+- **The drain.** The test drops its objection at 235 ns, the edge where request 20 is accepted. At that moment requests 19 and 20 are predicted but unanswered, so the scoreboard holds the phase (`SCB/DRAIN ... 2 outstanding`). The last result is matched at 255 ns, the scoreboard drops, and `run_phase` ends there: no time is wasted after the last result, and none is guessed.
+- **What you do not see.** `SCB/MATCH` messages are at `UVM_HIGH`; add `+UVM_VERBOSITY=UVM_HIGH` to see all twenty ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)).
+
+### Prove it can fail: four mutants
+
+A scoreboard you have never seen fail is not evidence. Run each mutant and **predict** the first error before you look. Each must fail with its own ID.
+
+| Run | What the planted bug does | The log must show |
+|---|---|---|
+| `+define+MUT_DROP` | Request 10 (tag 9) never gets a result | `SCB/LATE` at 225 ns, `SCB/DRAIN_TIMEOUT` warning, `SCB/MISSING` for tag 9, `pending=1` |
+| `+define+MUT_SUB` | SUB is computed as ADD | `SCB/MISMATCH` for each SUB request with `b` ≠ 0, with the comparer's field detail |
+| `+define+MUT_EXTRA` | The result for request 10 is sent twice, in the idle cycle after it | `SCB/UNEXPECTED` for tag 9 in `check_phase`, `pending=1` |
+| `+UVM_TESTNAME=alu_zero_test` | No stimulus at all | `SCB/NO_TRAFFIC`, `matches=0` |
+
+The key lines, from the same hand trace:
+
+```text
+# +define+MUT_DROP
+UVM_ERROR @ 225 ns: uvm_test_top.env.scb [SCB/LATE] tag=9 ALU_MUL a=12 b=40 result=480 not answered within 100 ns
+UVM_INFO @ 235 ns: uvm_test_top.env.scb [SCB/DRAIN] holding run_phase: 3 outstanding
+UVM_WARNING @ 335 ns: uvm_test_top.env.scb [SCB/DRAIN_TIMEOUT] 1 outstanding after 100 ns; check_phase reports them
+UVM_ERROR @ 335 ns: uvm_test_top.env.scb [SCB/MISSING] tag=9 ALU_MUL a=12 b=40 result=480 was never answered
+UVM_INFO @ 335 ns: uvm_test_top.env.scb [SCB_SUMMARY] SCB_SUMMARY matches=19 mismatches=0 pending=1
+
+# +define+MUT_SUB (one of the SUB requests)
+UVM_ERROR @ 115 ns: uvm_test_top.env.scb [SCB/MISMATCH] expected tag=6 ALU_SUB a=200 b=17 result=183, got tag=6 result=217; t.result: lhs = 'hb7 : rhs = 'hd9
+
+# +define+MUT_EXTRA
+UVM_ERROR @ 255 ns: uvm_test_top.env.scb [SCB/UNEXPECTED] tag=9 result=480 matched no prediction
+UVM_INFO @ 255 ns: uvm_test_top.env.scb [SCB_SUMMARY] SCB_SUMMARY matches=20 mismatches=0 pending=1
+
+# +UVM_TESTNAME=alu_zero_test
+UVM_ERROR @ 0 ns: uvm_test_top.env.scb [SCB/NO_TRAFFIC] no result was compared: this run proves nothing
+UVM_INFO @ 0 ns: uvm_test_top.env.scb [SCB_SUMMARY] SCB_SUMMARY matches=0 mismatches=0 pending=0
+```
+
+Operand values depend on the seed; the IDs, the times and the counts do not, except for `MUT_SUB`, whose number of mismatches is the number of SUB requests in your seed with `b` ≠ 0. Notice three things:
+- **`MUT_DROP` is caught twice.** `SCB/LATE` names the lost request 100 ns after it was accepted, while the run continues; `SCB/MISSING` confirms it at the end. Because the scoreboard is keyed, the other 19 results still match: there is no cascade of mismatches after the lost one.
+- **A SUB with `b = 0` is not caught by `MUT_SUB`.** `a - 0` equals `a + 0`, so a seed with few SUB requests, all with `b = 0`, would pass a buggy DUT. A mutant that does not fail tells you the stimulus is weak, not that the DUT is right: that is why coverage exists ([I-SV-3A](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index)).
+- **`MUT_EXTRA` is caught only because the duplicate arrives while the run is alive.** An extra result that arrives after the scoreboard went idle and the phase ended is invisible to any end-of-test rule. Interface checkers ("a result with no request in flight") close that hole.
+
+### Debug it: three logs, three causes
+
+1. **Log:** `UVM_ERROR @ 335 ns: ... [SCB/MISSING] tag=9 ... was never answered`, after a `SCB/DRAIN_TIMEOUT` warning. **Cause:** the DUT lost the request (or the output monitor missed its result). **Next step:** find tag 9 on the waveform at the output: if `valid_out` never rose for it, it is a DUT bug; if it did, the output monitor's sampling condition is wrong.
+2. **Log:** `UVM_INFO @ 115 ns: reporter [MISCMP] Miscompare for t.result: lhs = 'hb7 : rhs = 'hd9`, and later `UVM_ERROR :    0`. **Cause:** a scoreboard that calls `compare()` and ignores its return value; the default comparer reports miscompares as `UVM_INFO`. **Fix:** test the return value and raise `` `uvm_error ``, as `compare_pair()` does.
+3. **Log:** `UVM_FATAL @ 1000000 ns: reporter [PH_TIMEOUT] Explicit timeout of 1000000 ns hit, indicating a probable testbench issue`, then `SCB_SUMMARY ... (run aborted)` and no other `SCB_SUMMARY`. **Cause:** something kept an objection raised forever, often a scoreboard drain with no watchdog. **What you learn from the log:** `check_phase` never ran, so the pending count in the aborted summary is the only accounting you get; that is why `pre_abort()` prints it.
+
+### How to build a scoreboard
+
+1. **Write the item and its `do_compare`.** Compare only the fields the output side carries; give the item `do_copy` so `clone()` works.
+2. **Write two monitors.** Each samples its own side through a clocking block and creates a new item per transaction.
+3. **Write the reference model and the predictor.** The predictor subscribes to the input monitor, clones, calls the model, and publishes the expected item.
+4. **Choose the feeding form.** Two imps when every action is zero-time; two FIFOs and a thread when a check must wait.
+5. **Write the matching.** In order: oldest first. Out of order: one queue per key, plus a held queue for actuals that arrive first.
+6. **Compare by value** with a checked `compare()` and your own comparer; report `SCB/MISMATCH` with expected, actual and the comparer's detail.
+7. **Account in `check_phase`:** `SCB/MISSING`, `SCB/UNEXPECTED`, `SCB/NO_TRAFFIC`.
+8. **Drain in `phase_ready_to_end`** until nothing is outstanding, with a watchdog; add a per-item latency check and a global timeout.
+9. **Print `SCB_SUMMARY`** in `report_phase` and in `pre_abort()`.
+10. **Run the mutants.** Every one must fail with its own ID before you trust a clean run.
+
+**Checklist before moving on:**
+- [ ] Every item a monitor publishes, and every item the scoreboard stores, is a new object or a copy.
+- [ ] The predictor takes its inputs from the input monitor, not from the sequence or the driver.
+- [ ] The `compare()` result is checked and a miscompare raises `` `uvm_error ``.
+- [ ] `check_phase` reports missing items, unexpected items and zero traffic.
+- [ ] The test ends when the scoreboard is idle, never on a fixed delay, and a watchdog bounds the wait.
+- [ ] `report_phase` prints `SCB_SUMMARY matches=N mismatches=M pending=P`, and nothing prints "PASSED".
+- [ ] Each mutant fails with its own error ID.
+
+## Push Further
+
+### Expert: the end-of-test machinery, exactly
+
+- **The iteration rule.** "If any objection is raised, when all objections to ending the given phase and siblings are dropped, another iteration of `phase_ready_to_end` is called", and the phase ends after at most `phase.get_max_ready_to_end_iterations()` iterations "regardless of whether a previous iteration lead to any objections being raised" (IEEE 1800.2-2020 §13.1.4.3.2). The default limit is 20 (§9.3.1.3.5); `set_max_ready_to_end_iterations()` changes it per phase (§9.3.1.3.3). A scoreboard that raises on every call without a once-only guard uses up the iterations and then the phase ends anyway, possibly with work pending.
+- **When it is called.** uvm-core 2020.3.1 waits for the NBA region before each call (`uvm_phase_hopper.svh`), so every zero-time `write()` made in the time step of the last drop has already run: an item accepted at the very edge where the test drops its objection is already counted in `outstanding`.
+- **Drain time interacts with the iterations.** A drain time set on the test applies each time the test's objection count reaches zero, including after the scoreboard's later drop, and a raise during the drain cancels it (§10.5.1.3.7).
+- **What ending kills.** When `run_phase` ends, uvm-core kills the phase's processes (`uvm_phase_hopper.svh`), and `kill()` terminates every descendant process too (IEEE 1800-2023 §9.7). A monitor's late `write()` therefore never happens: the item is not "dropped by the scoreboard", it was never delivered.
+- **Timeout and abort.** The default global timeout "is implementation specific" (Annex F.7.3.3); in uvm-core 2020.3.1 it is `` `UVM_DEFAULT_TIMEOUT ``, 9200 s (`uvm_global_defines.svh`, uvm-core impl.). The timeout raises `UVM_FATAL [PH_TIMEOUT]`; the fatal's exit action calls `pre_abort()` on every component, bottom-up (§13.1.4.6), then prints the report summary. `check_phase` and `report_phase` never run.
+- **Interview angle:** "Your test ends at the right time in simulation A and 2 µs late in simulation B, with the same seed and code. Where do you look?" (A `phase_ready_to_end` that raises unconditionally with a delay, re-called up to 20 times; or a drain time hit repeatedly because something raises and drops in a loop.)
+
+### Expert: configuring `compare()` for a scoreboard
+
+- **The defaults are normative.** A new comparer shows at most one miscompare message (`show_max` 1, §16.3.5.1), at verbosity `UVM_LOW` (§16.3.5.2), with severity `UVM_INFO` (§16.3.5.3), and with a return threshold of 1 (§16.3.6), which lets `do_compare` "return as quickly as possible after the result ... reaches the threshold value, potentially skipping additional field comparisons".
+- **Who honours the threshold.** In uvm-core 2020.3.1 the field macros stop comparing later fields once the result reaches the threshold (`uvm_comparer_defines.svh`); `compare_field_int` and the other `compare_field*` calls in a hand-written `do_compare` do not check it. `set_threshold(0)` asks for every field to be compared, which matters for field-macro items.
+- **A null comparer means the shared default.** `compare(rhs)` with no comparer uses the default comparer policy and flushes it when the active object depth is 0 (§5.3.9.1). Changing the default comparer's severity to `UVM_ERROR` changes it for every `compare()` in the simulation, including library code: prefer a scoreboard-owned comparer, as `alu_scoreboard` does.
+- **Reading the detail.** `get_miscompares()` returns the miscompare messages since the last flush, one per line (§16.3.3.8); `get_result()` returns their number (§16.3.3.9).
+- **Tolerance.** A model with rounding (a DSP filter, floating point) needs a tolerant compare: override `do_compare` to compare within a bound, or compare a derived value; never weaken the compare by removing the field. [I-UVM-4](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index) shows both ways.
+- **Interview angle:** "`compare()` returned 0, the log shows a `MISCMP` line, and the test passed. How?" (The return value was ignored and the default severity is `UVM_INFO`.)
+
+### Expert: uvm-core's built-in comparators
+
+- **They exist in uvm-core, not in the standard.** `uvm_in_order_class_comparator`, `uvm_in_order_built_in_comparator` and `uvm_algorithmic_comparator` live in uvm-core 2020.3.1 (`src/comps/uvm_in_order_comparator.svh`, `uvm_algorithmic_comparator.svh`); IEEE 1800.2-2020 does not define them, so treat them as uvm-core impl.
+- **Why they are not a scoreboard.** On a mismatch the in-order comparator issues a `uvm_report_warning` ("Comparator Mismatch"), which does not fail a test unless you promote warnings; and nothing checks leftovers: its `flush()` only resets its counters. A dropped item and a mismatch both leave the run green.
+- **When they are still useful.** As a quick in-order check inside a larger scoreboard, wrapped with your own `check_phase` and severity. In production benches, most teams write the matching themselves, as on this page.
+- **Interview angle:** "Can you use `uvm_in_order_class_comparator` as your scoreboard?" (Only with your own accounting and severity on top; on its own it passes dropped items.)
+
+### Expert: keyed matching at scale
+
+- **Reading a missing key.** Reading a nonexistent entry of an associative array issues a warning and returns the default value (IEEE 1800-2023 §7.8.6), so guard reads with `exists()`, as `write_act()` does.
+- **Writing a missing key.** An entry is allocated when it is the target of an assignment, an actual to a `ref` argument, or part of a read-modify-write such as an increment (§7.8.7). A queue method call on a missing key, `exp_q[k].push_back(t)`, is not named explicitly in §7.8.7; major simulators allocate the entry, but treat that as tool-dependent behaviour and keep the guarded read.
+- **Memory.** Delete a key whose queue has emptied when the key space is large (addresses, 16-bit IDs); with 16 tags it does not matter.
+- **The held queue is a linear search.** Its `foreach` is O(held). Bound it: hold an actual only within the race window (the same time step), timestamp it, and report anything older at once with its arrival time. An unbounded held queue also misreports an extra response: the next prediction with the same key claims it, so a `SCB/MISMATCH` is blamed on the wrong request and the real response later shows up as unexpected.
+- **Search-any costs twice.** It is O(n) per response and lets same-key reorders through. Avoid it except for a genuinely unordered protocol.
+- **Light records.** At very high transaction counts, storing a small struct (key, expected data, prediction time) instead of a full `uvm_object` per expected item saves allocation and memory. This is guidance to measure in your simulator, not a figure: profile first (tool-dependent).
+- **Interview angle:** "Make a keyed scoreboard O(1) per transaction for 10 million transactions." (Associative array of queues, delete emptied keys, bounded held queue, per-key rather than per-item watchdogs, light records, no search-any.)
+
+### Expert: protocol ordering versus DUT policy
+
+- **The protocol rule.** AXI: transactions with the same ID complete in order; different IDs are unrestricted (Arm IHI0022E §A5.1). The read-data reordering depth is a static property of a slave's design (§A5.3.1).
+- **The scoreboard checks the rule, not today's behaviour.** A scoreboard that assumes the current RTL's order (for example "always in order") false-fails the day the DUT starts using legal reordering, and a scoreboard that assumes nothing (search-any) misses same-ID violations. Encode the protocol rule; make a stricter promise from the DUT specification a separate, switchable check.
+- **Time-local rules belong elsewhere.** "Same-ID responses never overtake" across one interface is an interface property best checked by assertions and protocol checkers ([B-AXI-3](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index)); the scoreboard checks end-to-end data. The AXI per-ID application is in [B-AXI-6](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index), whose lab builds a per-ID read scoreboard keyed by ARID.
+- **Interview angle:** "The designers changed the arbiter and now responses reorder across IDs. Your scoreboard fails. Is it a DUT bug?" (Only if a same-ID pair reordered or data is wrong; reordering across IDs is legal, so an in-order scoreboard was wrong all along.)
+
+### Expert: reference-model independence and DPI-C
+
+- **Common-mode errors.** A model written by the RTL author, or translated from the RTL, shares its misreadings, and the scoreboard then approves wrong behaviour. Mitigations: a different author working from the specification, directed tests whose expected values were computed by hand, a specification review of the model, and cross-checks against an architectural model where one exists.
+- **DPI-C rules.** `pure` is legal only for a nonvoid function with no `output` or `inout` arguments, and promises no side effects, so a compiler may skip or reuse calls (IEEE 1800-2023 §35.5.2); a stateful model is never `pure`. A C model that calls exported SystemVerilog subroutines must be imported as `context` (§35.5.3).
+- **State and order.** A stateful C model (a CPU simulator, a codec with history) must be called in exactly the order the DUT processes requests, from one place: the predictor component. Calling it from several monitors, or from the sequence, desynchronises it.
+- **Cost.** Each DPI call marshals its arguments; for wide data, pass packed arrays or open arrays, and batch calls when the model allows (tool-dependent: measure).
+- **Interview angle:** "When would you use a DPI-C reference model, and what can go wrong?" (When an architect-owned bit-accurate model exists; wrong `pure` on a stateful model, calls out of DUT order, model and RTL sharing a misreading, and debugging across two languages.)
+
+### Expert: scoreboards across reset and injected errors
+
+- **Reset.** On reset, stop treating discarded requests as missing: flush the expected queues, the held queue and any analysis FIFOs (`flush()`, IEEE 1800.2-2020 §12.2.8.2.6), and count the flushed items separately so a reset that discards too much is still visible. A predictor component with state (a memory image) must reset its state to what the specification says reset does, not to what the RTL happens to do.
+- **When to stop predicting.** Requests accepted while reset is asserted are not requests; monitors that skip cycles with `rst_n` low (as `alu_in_mon` does) keep them out of the model.
+- **Injected errors.** The reference model predicts the specified error response for an illegal input. Demoting one specific expected message with a report catcher (IEEE 1800.2-2020 §6.6) is a precise tool; demoting `SCB/*` for a whole test is a blindfold. The full strategy is planned for A-UVM-9.
+- **Interview angle:** "After a mid-test reset, your scoreboard reports 3 `SCB/MISSING`. The designers say the DUT is right. What do you change?" (Flush on reset and report flushed items separately; do not lengthen the drain or disable `check_phase`.)
+
+### Expert: where checking belongs in a large environment
+
+- **Assertions versus scoreboards.** Time-local interface rules (handshakes, stability, ordering on one interface) are assertions in the interface or VIP; end-to-end data correctness is the scoreboard. Do not reimplement protocol timing in a scoreboard.
+- **Topologies.** One input split to N outputs: route each expected item to the scoreboard (or the queue) for its destination. N inputs merged into one output: keep one queue per source and match on a field that identifies the source. Crossbars combine both.
+- **Knobs for reuse.** A subsystem scoreboard reused passively at SoC level needs configuration: matching mode, maximum latency, enable, which streams are present ([E-SOC-1](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index)).
+- **Interview angle:** "Design the scoreboard for a 4×4 crossbar that reorders across sources and may drop packets by a QoS policy." (Per-destination scoreboards keyed by source and sequence; a model of the QoS policy that predicts which drops are legal; leftover accounting that separates legal drops from losses.)
+
+### Interview angles
+
+Attempt each question before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: a green regression that shipped a bug"
+  question="Nightly regressions are green, yet silicon drops responses under back-pressure. The scoreboard log shows 0 mismatches. Which explanation covers the most likely ways the scoreboard passed?"
+  options={[
+    { text: "The scoreboard saw zero transactions in some tests, never checked leftovers, ignored compare() results, or the run ended before late responses arrived.", correct: true, feedback: "Right. Each of these prints 0 mismatches. The fixes are SCB/NO_TRAFFIC, SCB/MISSING and SCB/UNEXPECTED in check_phase, a checked compare(), and a drain that waits until idle. Then prove it with a drop mutant." },
+    { text: "The regression used too few seeds; more seeds would have found it.", correct: false, feedback: "More seeds help only if the scoreboard can fail. A scoreboard that never counts leftovers passes a dropped response with every seed." },
+    { text: "The reference model was wrong, because a model always has the same bugs as the RTL.", correct: false, feedback: "Common-mode errors exist, but a dropped response is not a value the model computes: it is an item that never arrived, which accounting, not the model, must catch." },
+    { text: "Back-pressure cannot be verified in simulation, only in silicon.", correct: false, feedback: "Back-pressure is ordinary stimulus. The failure here is in the checking, not in what simulation can express." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: predict at input or at output"
+  question="A DUT has variable latency and reuses IDs. Do you predict when the request is accepted, or when the response arrives?"
+  options={[
+    { text: "When the response arrives: only then do you know which request it belongs to.", correct: false, feedback: "Late prediction cannot tell which of two outstanding same-ID requests a response belongs to, cannot detect a response with nothing outstanding, and cannot time out a missing response." },
+    { text: "When the request is accepted, from the input monitor: the expected item then waits in its ID's queue, so ordering, latency and leftovers can all be checked.", correct: true, feedback: "Right. Early prediction is what makes per-ID queues, latency watchdogs and SCB/UNEXPECTED possible. Hold an actual that beats its prediction in the same time step." },
+    { text: "When the sequence randomizes the item, because that is the earliest point.", correct: false, feedback: "The sequence knows intent, not what the DUT accepted. A request that was back-pressured or withdrawn would be predicted anyway." },
+    { text: "It does not matter as long as compare() is used.", correct: false, feedback: "compare() decides whether two items are equal; when you predict decides which items you can pair and what you can account for." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: the fixed drain"
+  question="A colleague ends every test with phase_ready_to_end raising an objection, waiting #100ns, and dropping it. Tests pass. What do you say?"
+  options={[
+    { text: "It is fine: 100 ns is longer than the DUT's latency.", correct: false, feedback: "It is a guess that breaks when latency grows, and it checks nothing: the phase ends whether or not anything is outstanding." },
+    { text: "It costs about 2 µs per test, because UVM calls phase_ready_to_end again after each drop up to 20 times, and it never checks what is pending. Wait until the outstanding count reaches 0, once, with a watchdog.", correct: true, feedback: "Right. Hold the phase only while work is outstanding, only once (a drained flag), only for run, and bound it with a watchdog so a lost response cannot hang the test." },
+    { text: "Objections raised in phase_ready_to_end are ignored, so the delay does nothing.", correct: false, feedback: "IEEE 1800.2-2020 §13.1.4.3.2 explicitly allows a component to raise the phase's objection there." },
+    { text: "Replace it with a #100ns before drop_objection in the test.", correct: false, feedback: "Moving the guess to the test does not stop it being a guess, and it still never checks whether anything is pending." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
 
 <Quiz
   questions={[
     {
-      question: "What TLM component is recommended for buffering transactions between a monitor's analysis port and a scoreboard?",
-      options: [
-        "uvm_analysis_imp",
-        "uvm_tlm_analysis_fifo",
-        "uvm_blocking_put_port",
-        "uvm_sequencer"
+      question: "An in-order scoreboard takes items from two analysis FIFOs in run_phase and has no check_phase. The test sends 20 requests, then keeps the phase open with a 100 ns drain time; the DUT answers in 20 ns. The DUT drops response 20. What does the run report?",
+      answers: [
+        { text: "19 matches, 0 mismatches and UVM_ERROR : 0: a false pass", correct: true, feedback: "Right. Prediction 20 waits in its FIFO for an answer that never comes; run_phase ends after the drain and the thread is killed; nothing ever reports the leftover." },
+        { text: "A mismatch on request 20, because its prediction is compared with nothing", correct: false, feedback: "Nothing is compared: the thread waits in get() for an actual that never arrives. A missing item never turns into a mismatch on its own." },
+        { text: "A hang until the global timeout, because run_phase is blocked in get()", correct: false, feedback: "A blocked thread never holds a phase open; only objections do. The phase ends after the drain and the blocked thread is killed." },
+        { text: "A UVM_ERROR from uvm_scoreboard, which reports items left in its FIFOs", correct: false, feedback: "uvm_scoreboard adds no behaviour (IEEE 1800.2-2020 §13.6). Leftover accounting is code you write in check_phase." }
       ],
-      correctAnswer: 1,
-      explanation: "A uvm_tlm_analysis_fifo provides non-blocking write on its analysis_export side and blocking get on the other side, decoupling the monitor's timing from the scoreboard's processing loop."
+      explanation: "Leftovers are invisible unless check_phase looks for them. The dropped response leaves prediction 20 in the expected FIFO, and only a used() check in check_phase turns that into SCB/MISSING. Neither the FIFO, nor get(), nor uvm_scoreboard reports it.",
+      objective: 3
     },
     {
-      question: "Why is comparing transaction objects with == instead of .compare() a bug?",
-      options: [
-        "The == operator is not valid for class types in SystemVerilog",
-        "The == operator compares object handles (identity), not field values",
-        "The == operator only works with packed structs",
-        "The == operator calls do_compare() which may not be implemented"
+      question: "exp and act are two different alu_item objects whose fields are all equal. What does if (act == exp) evaluate to?",
+      answers: [
+        { text: "1, because the fields are equal", correct: false, feedback: "That is the misconception: == on class handles does not look at fields." },
+        { text: "0, because == on class handles asks whether they refer to the same object", correct: true, feedback: "Right (IEEE 1800-2023 §8.4). Two objects are never ==, however equal their fields. compare() compares values." },
+        { text: "It calls act.compare(exp) under the hood", correct: false, feedback: "SystemVerilog has no operator overloading for classes; == never calls a method." },
+        { text: "A compile error: == is not defined for class handles", correct: false, feedback: "== and != are legal on class handles (§8.4); they compare identity, which is why the bug compiles silently." }
       ],
-      correctAnswer: 1,
-      explanation: "In SystemVerilog, == between class handles checks whether they point to the same object in memory. For field-by-field comparison, you must use the uvm_object::compare() method which internally calls do_compare()."
+      explanation: "Handle equality is identity. An expected item and an actual item are always separate objects, so act == exp is always 0 and a scoreboard using it fails every compare (or, written as !=, reports every item). Use compare() and check its return value.",
+      objective: 2
     },
     {
-      question: "An AXI DUT may return different IDs in any order but keeps each ID in request order. Which expected-item structure matches it?",
-      options: [
-        "One queue for every ID, compared in arrival order",
-        "An associative array of queues keyed by ID, popping the oldest entry for that ID",
-        "An associative array with one slot per ID",
-        "An unordered list, claiming any pending item that compares equal"
+      question: "An AXI-style DUT may return different IDs in any order but keeps each ID in request order, and two requests with the same ID can be outstanding. Which expected-item structure matches it?",
+      answers: [
+        { text: "A single queue shared by all IDs, compared in arrival order", correct: false, feedback: "Legal reordering across IDs makes the oldest item belong to a different ID than the response: false mismatches." },
+        { text: "An associative array with one slot per ID", correct: false, feedback: "The second outstanding request with the same ID overwrites the first prediction; the first response is then compared with the wrong item." },
+        { text: "An associative array of queues keyed by ID, popping the oldest entry for the response's ID", correct: true, feedback: "Right. It accepts every legal reorder across IDs, checks same-ID order, and survives ID reuse." },
+        { text: "An unordered list, claiming any pending item that compares equal", correct: false, feedback: "It never false-fails, but a same-ID reorder passes because each response finds some equal item." }
       ],
-      correctAnswer: 1,
-      explanation: "Per-ID queues accept legal reordering across IDs and still check same-ID order. One queue raises false mismatches when IDs interleave, one slot per ID overwrites a second outstanding request with the same ID, and an unordered search lets a same-ID reorder through. check_phase then reports predictions never consumed and outputs never matched."
+      explanation: "One ordered queue per key encodes the protocol rule exactly: free across keys, ordered within a key. check_phase then reports predictions never consumed and actuals never matched.",
+      objective: 2
     },
     {
-      question: "A scoreboard reports 0 matches and 0 mismatches at the end of simulation. What is the most likely root cause?",
-      options: [
-        "The DUT produced no output because the test was too short",
-        "The scoreboard's analysis FIFO connections are broken or the monitor is not firing",
-        "The reference model returned null for all transactions",
-        "The compare() function suppressed all results"
+      question: "A scoreboard's phase_ready_to_end raises the run phase's objection, waits #100ns in a forked thread and drops it, every time it is called, with no other condition. What happens at the end of every test?",
+      answers: [
+        { text: "UVM calls it again after each drop, up to the default limit of 20 iterations, so it adds about 2 µs to every test and never checks whether anything is pending", correct: true, feedback: "Right (IEEE 1800.2-2020 §13.1.4.3.2, §9.3.1.3.5). Hold the phase only while work is outstanding, and only once." },
+        { text: "It waits 100 ns once, which is safe as long as the DUT answers within 100 ns", correct: false, feedback: "Two misconceptions: it is called again after each drop, and a fixed delay is a guess that checks nothing." },
+        { text: "Objections raised in phase_ready_to_end are ignored, so it has no effect", correct: false, feedback: "The standard explicitly allows a component to raise the phase's objection there." },
+        { text: "The phase ends as soon as the first call returns, killing the forked thread", correct: false, feedback: "The raised objection keeps the phase open until the forked thread drops it." }
       ],
-      correctAnswer: 1,
-      explanation: "Zero transactions through the scoreboard typically means a wiring problem: the monitor's analysis port was never connected to the scoreboard's analysis export, or the monitor itself never called write(). This is a false pass and must be caught with a report_phase assertion."
+      explanation: "Every raise-and-drop inside phase_ready_to_end triggers another iteration, up to get_max_ready_to_end_iterations() (20 by default). An unconditional delay therefore repeats about 20 times. The correct pattern raises only when outstanding is non-zero, only once, and drops when outstanding reaches 0 or a watchdog expires.",
+      objective: 3
+    },
+    {
+      question: "A run's log ends with SCB_SUMMARY matches=0 mismatches=0 pending=0 and UVM_ERROR : 0. What is your verdict?",
+      answers: [
+        { text: "Pass: no mismatches and nothing pending", correct: false, feedback: "Zero mismatches out of zero compares proves nothing. This is the classic false pass." },
+        { text: "Fail: nothing was compared, and the scoreboard is missing the zero-traffic check that should have raised SCB/NO_TRAFFIC", correct: true, feedback: "Right. Make zero compares an error in check_phase, then find out why nothing arrived: an unconnected port, a monitor waiting on the wrong signal, or a run that ended at 0 ns." },
+        { text: "Pass, if functional coverage reached its goal", correct: false, feedback: "Coverage says what was stimulated, not what was checked. A monitor can feed coverage while the scoreboard's port is unconnected." },
+        { text: "Inconclusive: rerun with a longer drain time", correct: false, feedback: "A drain time cannot create traffic that never reached the scoreboard." }
+      ],
+      explanation: "A scoreboard that saw nothing reports the same counts as one that saw a perfect DUT, which is why zero traffic must be an error. The fix is in the scoreboard (SCB/NO_TRAFFIC), and then in whatever cut the stream.",
+      objective: 3
+    },
+    {
+      question: "After a run, every expected item the scoreboard stored shows the data of the last transaction. What is the cause?",
+      answers: [
+        { text: "The analysis FIFO is bounded and overwrote its oldest entries", correct: false, feedback: "uvm_tlm_analysis_fifo is always unbounded (IEEE 1800.2-2020 §12.2.8.3); it never overwrites or drops." },
+        { text: "write() copies only the most recent item into each subscriber", correct: false, feedback: "write() copies nothing: it passes the same handle to every subscriber." },
+        { text: "The drain time was too short", correct: false, feedback: "A short drain loses late items; it does not change the data of items already stored." },
+        { text: "The input monitor reuses one object, and the scoreboard stored handles to it", correct: true, feedback: "Right. Every stored handle refers to the one object, which holds the last values. The monitor must create a new item per transaction." }
+      ],
+      explanation: "Analysis connections and FIFOs move handles, not copies. A monitor that creates its item once and overwrites it publishes the same object every time, so every stored entry is an alias of it. Publishers create a new object per transaction; subscribers never modify what they receive and predict into a copy.",
+      objective: 4
+    },
+    {
+      question: "The input bus can back-pressure a request (hold it waiting) and the sequence can withdraw it before it is accepted. Where should the predictor take its inputs?",
+      answers: [
+        { text: "From the sequence, when each item is randomized", correct: false, feedback: "The sequence knows intent. A withdrawn request would be predicted and then reported missing." },
+        { text: "From the driver, after item_done()", correct: false, feedback: "The driver knows what it tried to drive, not what the DUT accepted; and checks fed from the driver miss interface bugs." },
+        { text: "From the input monitor, which publishes a request when the DUT accepts it", correct: true, feedback: "Right. Only the input monitor sees the handshake complete, so the prediction matches exactly what the DUT must answer." },
+        { text: "From the output monitor's item, which already holds the inputs", correct: false, feedback: "Predicting from the output is circular: you would be checking the DUT against itself." }
+      ],
+      explanation: "Predict from what the DUT accepted, as observed by a passive monitor at the handshake. That keeps stimulus intent out of the check, and it also makes early prediction possible.",
+      objective: 1
+    },
+    {
+      question: "The architects maintain a bit-accurate C model of the datapath, with internal state (a history buffer). How should the scoreboard use it?",
+      answers: [
+        { text: "Rewrite it in SystemVerilog so the bench has one language", correct: false, feedback: "A rewrite duplicates effort and creates a second model that can drift from the architects' one." },
+        { text: "Import it through DPI-C and call it from a predictor component, in DUT order; do not declare it pure, because it has state", correct: true, feedback: "Right. pure is only for nonvoid, input-only functions with no side effects (IEEE 1800-2023 §35.5.2); a stateful model must be called in exactly the DUT's order, from one place." },
+        { text: "Import it as a pure function and call it from both monitors for speed", correct: false, feedback: "A stateful function is not pure, and calling it from two places desynchronises its state from the DUT's order." },
+        { text: "Skip prediction and rely on assertions, because C models are slow", correct: false, feedback: "Assertions check time-local rules, not end-to-end data results; the model is exactly what the scoreboard needs." }
+      ],
+      explanation: "Reuse an existing trusted model through DPI-C, called from the predictor component so calls follow the DUT's order. The pure qualifier is a promise of no side effects, which a model with history cannot keep.",
+      objective: 5
+    },
+    {
+      question: "A test asserts reset in the middle of traffic, with 3 requests in flight. check_phase reports 3 SCB/MISSING, and the designers say the DUT is right to discard them. What do you change?",
+      answers: [
+        { text: "Lengthen the drain watchdog so the 3 responses have time to arrive", correct: false, feedback: "They will never arrive: reset discarded them. Waiting longer only delays the same errors." },
+        { text: "Demote SCB/MISSING to a warning for this test", correct: false, feedback: "That hides every real missing response in the test, including ones unrelated to reset." },
+        { text: "Disable check_phase in tests that use reset", correct: false, feedback: "That removes the accounting that catches dropped responses for the whole test." },
+        { text: "Flush the expected and held queues when reset is seen, and report the flushed items separately", correct: true, feedback: "Right. The scoreboard stops expecting what reset discarded, and the flushed count stays visible in the summary." }
+      ],
+      explanation: "A reset discards in-flight work, so the scoreboard must discard the matching predictions, counting them separately. Blanket demotion and disabling check_phase both create false passes; a longer wait changes nothing.",
+      objective: 4
+    },
+    {
+      question: "A bench has one monitor: at each edge where it samples valid_out high, it reads a, b and op from the request bus and publishes them with result. alu_pipe answers two edges after a request, and requests arrive every cycle. Which inputs does it pair with the first result?",
+      answers: [
+        { text: "The first request's inputs, because the result belongs to it", correct: false, feedback: "The bus does not wait for the result: two edges later it carries a newer request." },
+        { text: "The third request's inputs, because the bus already carries a newer request at that edge", correct: true, feedback: "Right. With back-to-back requests, the edge where R1 is sampled is the edge where request 3 is accepted. Use two monitors and pair in the scoreboard." },
+        { text: "X, because valid_in is low when valid_out is high", correct: false, feedback: "With back-to-back traffic valid_in is still high, and the fields hold the newer request, not X." },
+        { text: "It depends on whether the DUT uses nonblocking assignments", correct: false, feedback: "The DUT's coding style does not change which request occupies the bus at that edge." }
+      ],
+      explanation: "Inputs and results of a pipelined DUT belong to different edges. A single monitor that reads both at the output edge pairs each result with a later request, which only looked right in benches whose driver held each request for the whole latency.",
+      objective: 4
+    },
+    {
+      question: "Before it can compare, your scoreboard must call a reference-model task that waits 3 clock cycles of simulated time. How do you feed the scoreboard?",
+      answers: [
+        { text: "Call the model task from write_act()", correct: false, feedback: "write_act() is a function, and a function may not call a task or wait (IEEE 1800-2023 §13.4)." },
+        { text: "Wrap the call in fork...join inside write_exp()", correct: false, feedback: "fork...join waits for its branches, which a function may not do; only fork...join_none is allowed in a function (§13.4.4)." },
+        { text: "Two analysis FIFOs feeding a run_phase thread that calls the model task and then compares", correct: true, feedback: "Right. The FIFOs accept every write() at once, and the thread may wait as long as it needs." },
+        { text: "Declare write_exp() as a task in the scoreboard", correct: false, feedback: "The imp calls write_exp() as a function; the analysis interface's write is a function (IEEE 1800.2-2020 §12.2.10.2)." }
+      ],
+      explanation: "Imps run your code inside the publisher's zero-time write() call, so they suit zero-time checks only. A check that must wait needs its own thread, and analysis FIFOs are the buffer between the zero-time write and that thread.",
+      objective: 1
     }
   ]}
 />
 
-## Hands-On Lab
+### Flashcards
+
+The deck for this module drills the scoreboard architecture, the matching structures, the end-of-test rules and the false-pass causes. Review it after the quiz, and again before the lab.
+
+### Kata: one slot per tag, then one queue per tag
+
+A teammate wrote a keyed scoreboard with one slot per tag. It passes every test on `alu_pipe`, because the sequence numbers the tags 0 to 15 and no tag is ever outstanding twice. The DUT team now narrows the tag to 2 bits, and the sequence randomizes it, so requests with the same tag can be outstanding together.
+
+```systemverilog
+// snippet: the teammate's matching (form A); exp_by_tag replaces exp_q and held_q
+alu_item exp_by_tag[int unsigned];               // ONE slot per tag
+
+virtual function void write_exp(alu_item t);
+  exp_by_tag[t.tag] = t;                         // overwrites a pending prediction
+endfunction
+
+virtual function void write_act(alu_item t);
+  if (!exp_by_tag.exists(t.tag)) begin
+    `uvm_error("SCB/UNEXPECTED", $sformatf("tag=%0d matched no prediction", t.tag))
+    return;
+  end
+  compare_pair(exp_by_tag[t.tag], t);
+  exp_by_tag.delete(t.tag);
+endfunction
+```
+
+1. **Predict.** Requests A (tag 2), B (tag 2) and C (tag 0) are accepted at edges 1, 2 and 3; `alu_pipe` returns each result two edges later, correctly. Write down the scoreboard's messages, with the edge of each.
+2. **Write** the fix: `write_exp()` and `write_act()` with one queue per tag, plus the `check_phase` lines it needs.
+3. **Predict again** for your fix, first with the correct DUT, then with a DUT that swaps the two tag-2 results (B's result at edge 3, A's at edge 4).
+
+<details>
+<summary>Worked solution</summary>
+
+**1. The one-slot version.** At edge 1 `exp_by_tag[2] = A`. At edge 2 `exp_by_tag[2] = B`: A's prediction is overwritten. At edge 3, A's result (tag 2) is compared with B's prediction: `SCB/MISMATCH` (unless A and B happen to give the same result), and slot 2 is deleted; C is predicted into slot 0 in the same time step. At edge 4, B's result (tag 2) finds no slot: `SCB/UNEXPECTED`. At edge 5, C's result matches. Two errors against a correct DUT: a false failure. If A and B give equal results, the first compare passes by luck, which is worse.
+
+**2. The fix**, exactly the structure of `alu_scoreboard`:
+
+```systemverilog
+// snippet: one ordered queue per tag, plus a held queue
+alu_item exp_q[int unsigned][$];
+alu_item held_q[$];
+int unsigned outstanding;
+
+virtual function void write_exp(alu_item t);
+  foreach (held_q[i])
+    if (held_q[i].tag == t.tag) begin
+      compare_pair(t, held_q[i]);
+      held_q.delete(i);
+      return;
+    end
+  exp_q[t.tag].push_back(t);
+  outstanding++;
+endfunction
+
+virtual function void write_act(alu_item t);
+  if (!exp_q.exists(t.tag) || exp_q[t.tag].size() == 0) begin
+    held_q.push_back(t);
+    return;
+  end
+  compare_pair(exp_q[t.tag].pop_front(), t);
+  outstanding--;
+endfunction
+
+// in check_phase:
+foreach (exp_q[tag, i])                       // every key, every queued prediction
+  `uvm_error("SCB/MISSING", {exp_q[tag][i].convert2string(), " was never answered"})
+foreach (held_q[i])
+  `uvm_error("SCB/UNEXPECTED", $sformatf("tag=%0d matched no prediction", held_q[i].tag))
+```
+
+**3. The fixed version.** Correct DUT: `exp_q[2]` holds A, B after edge 2; edge 3 pops A for A's result (match), edge 4 pops B (match), edge 5 matches C; nothing pending, `SCB_SUMMARY matches=3 mismatches=0 pending=0`. Swapping DUT: at edge 3, B's result is compared with A's prediction (the oldest for tag 2): `SCB/MISMATCH`; at edge 4, A's result with B's prediction: `SCB/MISMATCH`. The same-tag reorder, which is a protocol violation, is caught. A "search any match" scoreboard would have passed it.
+
+</details>
+
+### Debug challenge: the scoreboard that fails a correct DUT
+
+A common first attempt at an out-of-order scoreboard keeps `expected[id] = item`, one slot per ID, and the challenge below shows it as `ooo_scoreboard`. It passed simple tests and then failed a correct AXI-style DUT as soon as two requests with the same ID were outstanding. Read the log, find the line, then choose a fix; the model regrades it against a correct DUT and four buggy ones.
+
+<ScoreboardMatchingVisualizer mode="debug" />
+
+### Lab: the M3 scoreboard gate
+
+Build the reference model, the predictor and an in-order two-FIFO scoreboard for a pipelined ALU, with full accounting and a drain, then prove it with four mutants: a dropped result, a wrong opcode, an extra result and a zero-traffic run. The clean run must end with `SCB_SUMMARY matches=20 mismatches=0 pending=0`.
 
 <LabLink labId="scoreboard-reference-model" />
 
-For the out-of-order version, with per-ID queues on real AXI channels, continue with the B-AXI-6 lab linked in the out-of-order section above.
+Warm-up, if `write()` versus a `run_phase` thread is still shaky: move a check that must wait out of `write()` and into a thread fed by analysis FIFOs.
 
-## Capstone Lab
+<LabLink labId="scoreboard-decoupling" />
+
+Review, if you skipped it: the single-agent FIFO environment from [I-UVM-3C](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index) is the earlier, one-stream version of this architecture.
 
 <LabLink labId="uvm-mini-capstone" />
 
+For the out-of-order application on a real protocol, continue with the per-ID read scoreboard in [B-AXI-6](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index).
+
 ## References & Next Topics
 
-- **IEEE 1800.2-2020 Clause 12** — TLM Interfaces and Ports, defining `uvm_analysis_port`, `uvm_analysis_imp`, and `uvm_tlm_analysis_fifo`.
-- **IEEE 1800.2-2020 Clause 5.3.12** — `uvm_object::compare()` and `do_compare()` method specs.
-- **Prerequisite:** [I-UVM-2B: TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) — understand analysis ports and exports before wiring a scoreboard.
-- **Prerequisite:** [I-UVM-2A: Component Roles](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index) — monitors produce the transactions scoreboards consume.
-- **Next:** [A-UVM-7: VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) — learn how scoreboards fit inside reusable Verification IP packages.
-- **Related:** [A-UVM-5: UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index) — callbacks can inject scoring hooks into drivers for correlation.
+**Primary sources:**
+- IEEE 1800.2-2020:
+  - §13.6 `uvm_scoreboard` (§13.6.1 class declaration); §13.9 `uvm_subscriber`;
+  - §12.2.8.2 `uvm_tlm_fifo` (§12.2.8.2.3 `used`, §12.2.8.2.4 `is_empty`, §12.2.8.2.6 `flush`); §12.2.8.3 `uvm_tlm_analysis_fifo`;
+  - §12.2.10.1 `uvm_analysis_port`, §12.2.10.2 `uvm_analysis_imp` ("shall not modify the value passed to it"), §12.2.10.3 `uvm_analysis_export`; Annex B.5.22 `` `uvm_analysis_imp_decl ``;
+  - §5.3.9.1 `compare`, §5.3.9.2 `do_compare`; §16.3 `uvm_comparer` (§16.3.3.8 `get_miscompares`, §16.3.3.9 `get_result`, §16.3.5.1–§16.3.5.3 `show_max`, verbosity and severity defaults, §16.3.6 threshold); Annex F.2.1.9 `UVM_NOCOMPARE`;
+  - §13.1.4.3.2 `phase_ready_to_end`; §9.3.1.3.3–§9.3.1.3.5 ready-to-end iterations; §9.3.1.7.1 `get_objection`; §10.5.1.3.7 `set_drain_time`;
+  - §9.8.1.6–§9.8.1.8 extract, check and report phases; §13.1.4.6 `pre_abort`; Annex F.7.3.3 `set_timeout`; §6.6 report catchers.
+- IEEE 1800-2023: §7.8 and §7.10 associative arrays and queues (§7.8.6 invalid indices, §7.8.7 allocation); §8.4 operations on object handles; §9.4.2 event control (methods in event expressions); §9.4.3 `wait`; §9.7 process control (`kill`); §13.4 functions, §13.4.4 `fork ... join_none` in functions; §14.13 clocking-block input sampling; §35.5.2 `pure` and §35.5.3 `context` DPI imports.
+- Arm IHI0022E: §A5.1 transaction ordering and IDs; §A5.3.1 read-data reordering depth.
+- uvm-core 2020.3.1 (implementation details named on this page): `base/uvm_phase_hopper.svh` (ready-to-end loop, `PH_TIMEOUT`, killing phase processes), `base/uvm_root.svh` (`die()`), `base/uvm_comparer.svh` and `macros/uvm_comparer_defines.svh` (threshold handling), `tlm1/uvm_tlm_fifos.svh` (`write()` as `try_put`), `comps/uvm_in_order_comparator.svh`, `macros/uvm_global_defines.svh` (`UVM_DEFAULT_TIMEOUT`).
+
+**Prerequisites:** [I-UVM-2B: TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index), [I-UVM-4: UVM Policy Classes](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index) and [I-UVM-3A: Basic UVM Sequences and Items](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index). Review [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) for objections and drain time, and [I-UVM-3C: Your First Complete UVM Testbench](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index) for the single-stream version of this bench.
+
+**Related:**
+- [I-SV-1: Copying and Cloning](/curriculum/T2_Intermediate/I-SV-1_OOP/copying-and-cloning): handles, shallow and deep copies, and why aliasing happens.
+- [I-UVM-1D: Reporting, Run Control and Pass/Fail](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index): how the report server turns errors into a verdict.
+- [I-SV-7: DPI and Foreign Language Interfaces](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index): importing a C reference model.
+- [B-AXI-3: AXI Ordering and IDs](/curriculum/T3_Advanced/B-AXI-3_AXI_Ordering_and_IDs/index): the ordering rules a per-ID scoreboard encodes.
+- [B-AXI-6: AXI Verification and Performance](/curriculum/T3_Advanced/B-AXI-6_AXI_Verification_Performance/index): the per-ID scoreboard applied to AXI reads.
+- [A-UVM-4B: Advanced RAL Techniques](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/index): the register predictor, a different kind of prediction.
+- [A-UVM-5: UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index): callbacks inject errors that the scoreboard must then expect.
+- [A-UVM-7: VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index): package the agents whose monitors feed this scoreboard as reusable VIP.
+- A-UVM-9: Reset Handling and Error Injection (planned): the full strategy for reset and expected errors.
+
+<NextLesson />

@@ -1,29 +1,25 @@
+// The environment. It connects to the scoreboard's req_in and rsp_in, so it
+// does not change when the scoreboard switches from imps to exports and FIFOs.
+
 class my_env extends uvm_env;
   `uvm_component_utils(my_env)
-  my_monitor    mon;
-  my_scoreboard scb;
-  decoupling_lab_config cfg;
-  
-  uvm_tlm_analysis_fifo #(my_txn) sb_fifo;
 
-  function new(string name="my_env", uvm_component parent=null);
+  traffic_gen   gen;
+  my_scoreboard scb;
+
+  function new(string name, uvm_component parent);
     super.new(name, parent);
   endfunction
 
-  function void build_phase(uvm_phase phase);
+  virtual function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    if (!uvm_config_db#(decoupling_lab_config)::get(this, "", "cfg", cfg))
-      `uvm_fatal("NO_CFG", "decoupling_lab_config is not configured")
-    uvm_config_db#(decoupling_lab_config)::set(this, "mon", "cfg", cfg);
-    uvm_config_db#(decoupling_lab_config)::set(this, "scb", "cfg", cfg);
-    mon = my_monitor::type_id::create("mon", this);
+    gen = traffic_gen::type_id::create("gen", this);
     scb = my_scoreboard::type_id::create("scb", this);
-    sb_fifo = uvm_tlm_analysis_fifo#(my_txn)::type_id::create("sb_fifo", this);
   endfunction
 
-  function void connect_phase(uvm_phase phase);
+  virtual function void connect_phase(uvm_phase phase);
     super.connect_phase(phase);
-    mon.ap.connect(sb_fifo.analysis_export);
-    scb.get_port.connect(sb_fifo.get_export);
+    gen.req_ap.connect(scb.req_in);
+    gen.rsp_ap.connect(scb.rsp_in);
   endfunction
 endclass

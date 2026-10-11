@@ -1,34 +1,72 @@
 [
   {
-    "front": "What is a UVM callback and what problem does it solve?",
-    "back": "A callback is a hook method in a component that can be overridden by external callback classes without modifying the original component source. It enables extensibility without subclassing."
+    "id": "a-uvm-5-1",
+    "question": "What are the three parts of a UVM callback, and who writes each?",
+    "answer": "The component's author writes a callback base class (a `virtual class` extending `uvm_callback` with a constructor and empty virtual hook methods) and a component that registers the pair with `` `uvm_register_cb `` and calls the hooks with `` `uvm_do_callbacks ``. The test writer extends the base, overrides the hooks it needs, and attaches an object with `uvm_callbacks#(T,CB)::add` (IEEE 1800.2-2020 §10.7, Annex B.4)."
   },
   {
-    "front": "How do you register a callback with a UVM component?",
-    "back": "Create a callback class extending `uvm_callback`, then call `uvm_callbacks#(comp_type, cb_type)::add(comp_instance, cb_instance)` to attach it to a specific component."
+    "id": "a-uvm-5-2",
+    "question": "What is the difference between registering a callback type and attaching a callback?",
+    "answer": "`` `uvm_register_cb(T,CB) `` in the component declares that the (T, CB) pair is legal; it attaches nothing. `add()` attaches a callback object, in `connect_phase` or later. Without the registration, `add()` warns `CBUNREG` (\"cannot be registered with object\"), and in uvm-core 2020.3.1 the callback is still queued and still runs."
   },
   {
-    "front": "What is the difference between callbacks and virtual method overrides via factory?",
-    "back": "Factory overrides replace the entire component type. Callbacks inject additional behavior into specific hook points without changing the component's type or registration."
+    "id": "a-uvm-5-3",
+    "question": "What does `` `uvm_do_callbacks(my_driver, drv_cb, pre_send(this, req)) `` do?",
+    "answer": "It builds a `uvm_callback_iter` for `this` and calls `pre_send(this, req)` on each **enabled** `drv_cb` in this object's queue (its instance queue if it has one, otherwise the type-wide queue), in queue order. Callbacks whose `callback_mode()` is 0 are skipped."
   },
   {
-    "front": "When should you prefer callbacks over factory overrides?",
-    "back": "Use callbacks when you want to add behavior (logging, error injection, protocol checks) to specific hook points. Use factory overrides when you want to completely replace a component's implementation."
+    "id": "a-uvm-5-4",
+    "question": "What is the difference between `add(obj, cb)` and `add(null, cb)`?",
+    "answer": "`add(obj, cb)` puts `cb` in that object's instance queue only. `add(null, cb)` is type-wide: every object of type T runs it, including objects created later (§10.7.2.3.1). A handle that is still null when `add()` runs does the same, silently."
   },
   {
-    "front": "What is `uvm_do_callbacks` and how is it used?",
-    "back": "`uvm_do_callbacks(comp_type, cb_type, method_call)` is a macro that iterates through all registered callbacks of the given type and calls the specified method on each."
+    "id": "a-uvm-5-5",
+    "question": "Why does `add(env.agt0.drv, cb)` in a `build_phase` often go wrong, and where should it go?",
+    "answer": "The handle is read when `add()` runs, and UVM builds top-down, so the driver may not exist yet: a null driver handle makes the call type-wide, and a null handle earlier on the path (`env.agt0` in the test's `build_phase`) is a null-object access that typically stops the run. Attach in `connect_phase`, `end_of_elaboration_phase` or `start_of_simulation_phase`."
   },
   {
-    "front": "Can you add multiple callbacks to the same component?",
-    "back": "Yes. Multiple callback objects can be registered to the same component. They execute in registration order when `uvm_do_callbacks` is invoked."
+    "id": "a-uvm-5-6",
+    "question": "In what order do callbacks on one component run?",
+    "answer": "In queue order, not registration order. `UVM_APPEND` (the default) adds at the back and `UVM_PREPEND` at the front. An object's first instance `add()` creates its queue as a copy of the type-wide queue, and a later type-wide `add()` goes into every existing instance queue, at the back or the front."
   },
   {
-    "front": "What are common use cases for UVM callbacks?",
-    "back": "Error injection (corrupt data before it reaches the scoreboard), coverage sampling at specific protocol events, debug logging, and protocol checking without modifying VIP source."
+    "id": "a-uvm-5-7",
+    "question": "How do `callback_mode(0)` and `delete(obj, cb)` differ?",
+    "answer": "`callback_mode(0)` switches the callback **object** off in every queue that holds it, keeps its place, and returns the previous mode; `callback_mode(1)` switches it back on. `delete(obj, cb)` removes it from one queue, and `delete(null, cb)` from the type-wide queue and every instance queue. Query the mode with `is_enabled()`."
   },
   {
-    "front": "How do you remove a previously registered callback?",
-    "back": "Call `uvm_callbacks#(comp_type, cb_type)::delete(comp_instance, cb_instance)`. This is useful for phase-dependent behavior where callbacks should only be active during certain test phases."
+    "id": "a-uvm-5-8",
+    "question": "A hook takes the transaction by value, by `ref` or by `const ref`. What can it change in each case?",
+    "answer": "By value: the hook has a copy of the handle, so field writes reach the driver's object but `pkt = new()` changes only the copy. By `ref`: it shares the driver's variable, so `pkt = new()` makes the driver send another object. By `const ref`: the handle cannot be assigned (compile error), but the object's fields can still be written (IEEE 1800-2023 §13.5.2, §6.20.6)."
+  },
+  {
+    "id": "a-uvm-5-9",
+    "question": "How do you see and check which callbacks a component will run?",
+    "answer": "`uvm_callbacks#(T,CB)::display()` (a uvm-core feature, not in IEEE 1800.2) prints each callback with `(*)` for type-wide or the component path, and ON or OFF. `get_all(q, obj)` (§10.7.2.5) fills a queue for self-checks; it includes disabled callbacks, so filter with `is_enabled()` if you mean \"will run\"."
+  },
+  {
+    "id": "a-uvm-5-10",
+    "question": "When does `add_by_name` register nothing?",
+    "answer": "It searches the components that exist when it runs. If nothing matches, it warns `CBNOMTC` and registers nothing (for example during `build_phase`). Matches that are not of type T, such as an agent matched by `\"*.agt0\"`, are skipped without a warning. Check the result with `display()`."
+  },
+  {
+    "id": "a-uvm-5-11",
+    "question": "Callback or factory override: how do you choose?",
+    "answer": "A callback changes what runs at a hook the class already has: per instance, stackable, switchable at run time, and usable on VIP you cannot edit. A factory override changes which class is built: use it to replace behaviour wholesale or to add fields and constraints. They compose rather than replace each other."
+  },
+  {
+    "id": "a-uvm-5-12",
+    "question": "What does `` `uvm_do_callbacks_exit_on(T, CB, METHOD, VAL) `` do?",
+    "answer": "It calls a `bit` hook on each enabled callback and returns `VAL` from the enclosing function as soon as one callback returns `VAL`; otherwise it returns `1 - VAL` after the loop. It always returns, so it must be the last statement of a function that returns `bit` (Annex B.4.5)."
+  },
+  {
+    "id": "a-uvm-5-13",
+    "question": "Where should error-injection and observation callbacks sit in a testbench?",
+    "answer": "Error injection belongs in a driver hook, so the corruption reaches the DUT, and the checker must be told to expect it. Coverage and protocol observation belong in a monitor hook after capture, because a driver hook sees only the intended stimulus, not what the DUT did."
+  },
+  {
+    "id": "a-uvm-5-14",
+    "question": "Why should you not add or delete callbacks inside a hook, and how do you switch one at an exact item?",
+    "answer": "The iterator walks the live queue by position, so a change inside a hook can skip a callback or run one twice. Switch with `callback_mode` between items: with a `get_next_item`/`item_done` driver, a toggle between two sequence calls is exact; with `get()` the boundary item races the toggle, so count inside the callback instead."
   }
 ]

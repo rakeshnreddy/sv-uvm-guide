@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 `include "uvm_macros.svh"
 import uvm_pkg::*;
 
@@ -13,11 +14,12 @@ interface packet_if(input logic clk);
   modport driver_mp(clocking driver_cb);
 
   // Checker: every valid beat must carry even parity (parity == ^payload).
+  // %m names this interface instance, so you can tell vif0's errors from vif1's.
   property p_parity_ok;
     @(posedge clk) valid |-> (parity == ^payload);
   endproperty
   a_parity_ok: assert property (p_parity_ok)
-    else `uvm_error("PARITY_ERR", $sformatf("payload=%02h parity=%0b",
+    else `uvm_error("PARITY_ERR", $sformatf("%m: payload=%02h parity=%0b",
                                             $sampled(payload), $sampled(parity)))
 endinterface
 
@@ -117,10 +119,12 @@ class my_seq extends uvm_sequence #(packet);
   endtask
 endclass
 
+// Two identical driver/sequencer pairs. The test must change drv0 only;
+// drv1 must keep sending clean packets.
 class my_env extends uvm_env;
   `uvm_component_utils(my_env)
-  packet_driver drv;
-  uvm_sequencer #(packet) sqr;
+  packet_driver drv0, drv1;
+  uvm_sequencer #(packet) sqr0, sqr1;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -128,13 +132,16 @@ class my_env extends uvm_env;
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    drv = packet_driver::type_id::create("drv", this);
-    sqr = uvm_sequencer#(packet)::type_id::create("sqr", this);
+    drv0 = packet_driver::type_id::create("drv0", this);
+    sqr0 = uvm_sequencer#(packet)::type_id::create("sqr0", this);
+    drv1 = packet_driver::type_id::create("drv1", this);
+    sqr1 = uvm_sequencer#(packet)::type_id::create("sqr1", this);
   endfunction
 
   function void connect_phase(uvm_phase phase);
     super.connect_phase(phase);
-    drv.seq_item_port.connect(sqr.seq_item_export);
+    drv0.seq_item_port.connect(sqr0.seq_item_export);
+    drv1.seq_item_port.connect(sqr1.seq_item_export);
   endfunction
 endclass
 
@@ -161,35 +168,51 @@ class my_test extends uvm_test;
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
     env = my_env::type_id::create("env", this);
-    // Do NOT add the callback here: env.drv is created later, in
-    // my_env::build_phase (UVM builds top-down), so it is still null.
-    // add(null, cb) would register the callback type-wide, for every
-    // packet_driver in the testbench.
   endfunction
 
-  // TODO 3: In connect_phase, create the callback and attach it to THIS driver:
-  //   uvm_callbacks#(packet_driver, packet_driver_cb)::add(env.drv, my_cb);
-  // Why not in build_phase? env.drv does not exist yet there (see above).
+  // TODO 3: Write connect_phase. Create your callback and attach it to
+  // env.drv0 ONLY, with the static add() of
+  // uvm_callbacks#(packet_driver, packet_driver_cb).
+  // Think first: which phase builds env.drv0, and what would add() receive
+  // if you called it here in build_phase instead?
+
+  // Prints every callback queue for packet_driver: (*) rows are type-wide.
+  function void end_of_elaboration_phase(uvm_phase phase);
+    super.end_of_elaboration_phase(phase);
+    uvm_callbacks#(packet_driver, packet_driver_cb)::display();
+  endfunction
 
   task run_phase(uvm_phase phase);
-    my_seq seq = my_seq::type_id::create("seq");
+    my_seq seq0 = my_seq::type_id::create("seq0");
+    my_seq seq1 = my_seq::type_id::create("seq1");
     phase.raise_objection(this);
-    seq.start(env.sqr);
+    fork
+      seq0.start(env.sqr0);
+      seq1.start(env.sqr1);
+    join
+    // The checker reports a packet one clock after it is driven. Without a
+    // drain time, the run ends in the time step of the last check and that
+    // last error is never printed.
+    phase.get_objection().set_drain_time(this, 20ns);
     phase.drop_objection(this);
   endtask
 
   // TODO 4 (optional): in final_phase, delete the callback from the same
-  // instance you added it to: delete(env.drv, my_cb).
+  // instance you added it to.
 endclass
 
 module tb_top;
   logic clk = 1'b0;
   always #5ns clk = ~clk;
-  packet_if vif(clk);
+  packet_if vif0(clk);
+  packet_if vif1(clk);
 
   initial begin
     uvm_config_db#(virtual packet_if.driver_mp)::set(
-      null, "uvm_test_top.env.drv", "vif", vif
+      null, "uvm_test_top.env.drv0", "vif", vif0
+    );
+    uvm_config_db#(virtual packet_if.driver_mp)::set(
+      null, "uvm_test_top.env.drv1", "vif", vif1
     );
     run_test("my_test");
   end

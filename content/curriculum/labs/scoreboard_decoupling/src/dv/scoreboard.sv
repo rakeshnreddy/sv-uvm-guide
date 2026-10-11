@@ -1,43 +1,73 @@
+// STARTER: a coupled scoreboard. Both inputs are analysis imps, so all of its
+// code runs inside the publisher's write() call, in zero simulation time.
+//
+// The check needs a request AND its response, but the response arrives 3
+// cycles after the request. write_req() is a function: it cannot wait for the
+// response, so the best it can do is give up. Run it and read the log.
+//
+// Your task (README.md): keep the names req_in and rsp_in, but make them
+// uvm_analysis_export #(my_txn) members feeding two uvm_tlm_analysis_fifo
+// buffers, and move the check into a run_phase thread that waits with get().
+
+`uvm_analysis_imp_decl(_req)
+`uvm_analysis_imp_decl(_rsp)
+
 class my_scoreboard extends uvm_scoreboard;
   `uvm_component_utils(my_scoreboard)
-  
-  uvm_blocking_get_port #(my_txn) get_port;
-  decoupling_lab_config cfg;
-  int unsigned processed_count;
-  event all_processed;
 
-  function new(string name="my_scoreboard", uvm_component parent=null);
+  uvm_analysis_imp_req #(my_txn, my_scoreboard) req_in;   // from gen.req_ap
+  uvm_analysis_imp_rsp #(my_txn, my_scoreboard) rsp_in;   // from gen.rsp_ap
+
+  protected my_txn last_rsp;            // the most recent response seen
+  int unsigned n_match, n_mismatch;
+
+  function new(string name, uvm_component parent);
     super.new(name, parent);
-    get_port = new("get_port", this);
   endfunction
 
-  function void build_phase(uvm_phase phase);
+  virtual function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    if (!uvm_config_db#(decoupling_lab_config)::get(this, "", "cfg", cfg))
-      `uvm_fatal("NO_CFG", "decoupling_lab_config is not configured")
+    req_in = new("req_in", this);
+    rsp_in = new("rsp_in", this);
   endfunction
 
-  task run_phase(uvm_phase phase);
-    my_txn t;
-    forever begin
-      get_port.get(t);
-      `uvm_info("SLOW_CONSUMER", $sformatf("Processing txn data: %h", t.data), UVM_LOW)
-      #(cfg.consumer_delay);
-      processed_count++;
-      if (processed_count == cfg.transaction_count)
-        -> all_processed;
+  // A request arrives. Its response is still 3 cycles away.
+  virtual function void write_req(my_txn req);
+    // You cannot write @(...) or wait(...) here: a function shall not contain
+    // a time-controlling statement (IEEE 1800-2023 §13.4).
+    if (last_rsp == null || last_rsp.seq != req.seq) begin
+      `uvm_error("SCB/NO_RSP", {req.convert2string(), ": no response yet, cannot check"})
+      return;
     end
-  endtask
+    check(req, last_rsp);
+  endfunction
 
-  task wait_until_complete();
-    if (processed_count < cfg.transaction_count)
-      @all_processed;
-  endtask
+  virtual function void write_rsp(my_txn rsp);
+    last_rsp = rsp;                     // arrives after write_req() has given up
+  endfunction
 
-  function void check_phase(uvm_phase phase);
+  // The reference rule: the response carries ~data and the request's seq.
+  protected function void check(my_txn req, my_txn rsp);
+    my_txn exp;
+    if (!$cast(exp, req.clone())) `uvm_fatal("SCB/CLONE", "clone() failed")
+    exp.data = ~req.data;               // predict into a copy, never into req
+    if (exp.compare(rsp)) n_match++;    // by value, and the result is checked
+    else begin
+      n_mismatch++;
+      `uvm_error("SCB/MISMATCH", $sformatf("expected %s, got %s",
+                 exp.convert2string(), rsp.convert2string()))
+    end
+  endfunction
+
+  virtual function void check_phase(uvm_phase phase);
     super.check_phase(phase);
-    if (processed_count != cfg.transaction_count)
-      `uvm_error("COUNT", $sformatf("Processed %0d of %0d transactions",
-                                    processed_count, cfg.transaction_count))
+    if (n_match + n_mismatch == 0)
+      `uvm_error("SCB/NO_TRAFFIC", "no response was compared: this run proves nothing")
+  endfunction
+
+  virtual function void report_phase(uvm_phase phase);
+    super.report_phase(phase);
+    `uvm_info("SCB_SUMMARY", $sformatf("SCB_SUMMARY matches=%0d mismatches=%0d pending=0",
+                                       n_match, n_mismatch), UVM_NONE)
   endfunction
 endclass

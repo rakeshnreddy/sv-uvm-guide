@@ -1,81 +1,190 @@
 ---
 title: "A-UVM-4B: Advanced RAL Techniques"
-description: "Master adapters, predictors, and sophisticated debug workflows for robust UVM register environments."
+description: "Keep a UVM register model's mirror correct under real traffic: choose a prediction set-up, predict hardware-changed fields, model memories and shared maps, extend access with frontdoors and callbacks, and debug mirror mismatches from the log."
 flashcards: "A-UVM-4B_Advanced_RAL"
 ---
 
 ## Quick Take
-- **What it is:** Techniques for bridging RAL into bus agents, keeping the mirror synchronized, and debugging mismatches.
-- **Why it matters:** A register model is only as good as its mirror. The mirror changes only when something *predicts* an access, and UVM gives you two ways to do that. Pick the wrong one, or wire it wrong, and the mirror drifts silently.
-- **The terms:** *Implicit* (auto) prediction is `map.set_auto_predict(1)`. *Explicit* prediction is a `uvm_reg_predictor` fed by a bus monitor. By default neither is active.
-- **The Standard:** IEEE 1800.2-2020 Clause 18 (register model: `uvm_reg_map` 18.2, `uvm_reg` 18.4, `uvm_mem` 18.6, memory allocation manager 18.12) and Clause 19 (`uvm_reg_adapter` 19.2, `uvm_reg_predictor` 19.3, `uvm_reg_sequence` 19.4).
+
+- **What it is:** the techniques that keep a register model's **mirror** (its copy of what each DUT register holds) equal to the real hardware while firmware, DMA (direct memory access) engines, hardware events and your own tests all touch the registers. When the copy and the hardware disagree, they also tell you why.
+- **Why it matters:** a stale mirror produces false failures, and a wrongly updated mirror hides real bugs. Out of the box, `uvm_reg_map` updates the mirror after **no** bus access at all, so every environment has to choose how the mirror learns, and a wrong choice fails silently.
+- **The Analogy:** the mirror is your chequebook ledger and the DUT is the bank account. Implicit (auto) prediction writes down only the cheques *you* write. Explicit prediction reconciles every line of the bank statement, including direct debits by others (firmware, a DMA engine). *Where it breaks:* the bank also changes balances by itself, as hardware-set status bits do, with no statement line. You only learn about those changes when you read the balance, or you agree in advance not to check that line (a volatile field). And no ledger keeps a copy of a whole memory: the register model does not mirror memories at all.
+
+**You will be able to:**
+1. Choose implicit (auto), explicit or passive prediction for an environment, and explain which accesses each one can see.
+2. Predict the mirrored value after hardware-set bits, side-effect policies (W1C, W1T, RC), volatile fields and a double prediction.
+3. Debug a mirror mismatch from its log with a fixed checklist: connection, monitor data, `bus2reg()`, map, adapter flags, field policy and double prediction.
+4. Model a memory (`uvm_mem` and its allocation manager) and a register shared by several address maps, and state what the model tracks for each.
+5. Extend the register layer with a user frontdoor (`uvm_reg_frontdoor`) or a register callback (`uvm_reg_cbs`), and turn on register coverage.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
 
-### The Adapter Bridge
-`uvm_reg_adapter` is the translator between generic `uvm_reg_bus_op` requests and your bus transaction item (e.g., `axi_item`). The map calls `reg2bus()` to build the item, and `bus2reg()` on the finished item (or on the response, when `provides_responses = 1`) to get the read data and status. A predictor calls the same `bus2reg()` on every item the monitor publishes.
+### Words this page uses
 
-### Predictors and the Mirror
-Prediction keeps the RAL mirror aligned with the DUT. There are three set-ups:
+[A-UVM-4A: RAL Fundamentals](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index) teaches these terms in depth. Here is the one-line version of each.
 
-| Mode | How you turn it on | Who updates the mirror | Sees firmware, DMA or other masters? | Typical failure |
-| --- | --- | --- | --- | --- |
-| **Implicit** (auto-predict) | `ral.default_map.set_auto_predict(1);` | `read()`/`write()` call `do_predict()` when their own access completes | No | Mirror misses every access the RAL did not start; it trusts the adapter's round trip |
-| **Explicit** | `agent.mon.ap.connect(predictor.bus_in);` plus `predictor.map` and `predictor.adapter` | The `uvm_reg_predictor`, from every transfer the monitor sees | Yes | A missing `connect()` is silent; a null adapter is `UVM_FATAL REG/WRITE/NULL` |
-| **Passive** | A predictor on a bus the RAL never drives | The predictor only | Yes | Same wiring risks as explicit |
+| Term | Meaning on this page |
+| --- | --- |
+| **DUT** | The design under test: the hardware whose registers the model describes. |
+| **Register model (RAL)** | The register abstraction layer: a tree of SystemVerilog objects, one per register block, register and field, that knows each register's address, fields, access policy and reset value (IEEE 1800.2-2020 Clause 18). |
+| **Desired value** | What the test *wants* the register to hold. `set()` changes it; `update()` writes it to the DUT. |
+| **Mirrored value (the mirror)** | What the model *believes* the DUT holds right now. `get_mirrored_value()` returns it. |
+| **Access policy** | How a field reacts to reads and writes: RW (read-write), RO (read-only), W1C (write 1 to clear), W1T (write 1 to toggle), RC (cleared by a read), and so on. |
+| **Volatile field** | A field the hardware may change without any access, such as a status bit or a counter. Marking it volatile tells `mirror(UVM_CHECK)` not to compare it. |
+| **Address map (`uvm_reg_map`)** | The table that places registers at addresses on one bus, and knows which sequencer and adapter reach that bus. |
+| **Adapter (`uvm_reg_adapter`)** | Converts a generic register operation into your bus's sequence item (`reg2bus()`) and back (`bus2reg()`). |
+| **Frontdoor / backdoor** | A frontdoor access goes over the bus as a real transfer. A backdoor access reads or deposits the RTL signal directly through its HDL path (the signal's hierarchical name in the design), with no bus transfer. |
+| **Monitor and analysis port** | The monitor watches the bus pins and publishes every transfer it sees through an analysis port (a broadcast output; see [I-UVM-2B: TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)). |
+| **Sequencer, driver, sequence item** | The UVM stimulus path: a sequence hands sequence items to the sequencer, and the driver turns each item into pin activity (see [I-UVM-3A: Basic UVM Sequences and Items](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)). |
+| **`build_phase`, `connect_phase`** | The UVM phases in which components are created and then wired together (see [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)). |
+| **Prediction** | Updating the mirror from an access, by applying each field's access policy to the old mirror and the data. |
+| **Predictor (`uvm_reg_predictor`)** | The **register** predictor: a component that receives monitored transfers and predicts the mirror from them. It is not a scoreboard's reference model. |
 
-Out of the box, `uvm_reg_map` starts with auto-predict **off** and no predictor exists, so frontdoor accesses do not update the mirror until you choose one. Backdoor `peek()` and `poke()` are different: they call `do_predict()` themselves.
+### How this module is organised
 
-In the visual, choose a wiring and an access, predict `get_mirrored_value()`, then step through the path to see who carries the transfer and who predicts it. Try a firmware write with auto-predict only, and a W1T write with both paths on.
+This page frames the module, teaches the topics no sub-lesson owns, and ends with the debugging workflow and a complete example. Each sub-lesson owns one topic in depth.
 
-<RALPredictorVisualizer />
+| Page | What it owns |
+| --- | --- |
+| This page | The mirror problem in one picture; fields the hardware changes; adapter settings that move the mirror; memories; multiple maps; user frontdoors and register callbacks; register coverage; debugging a mismatch; a complete explicit-prediction example |
+| [Explicit vs. Implicit Prediction](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit) | The prediction terms, how each set-up is wired, double prediction, `predict()` and passive mode |
+| [Frontdoor vs. Backdoor Access](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/frontdoor-vs-backdoor) | Every access path (`write`/`read` through either door, `peek`, `poke`, `mirror`) and what each one does to the DUT and to the mirror; HDL paths |
+| [Built-in RAL Sequences](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/built-in-ral-sequences) | The ready-made register tests of IEEE 1800.2-2020 Annex E, how to fence off unsafe registers, and how those tests can pass falsely |
+
+### The mirror-correctness problem in one picture
+
+The mirror is just a variable inside each field object. It changes only when something writes it:
+- a **prediction** after a bus access;
+- an explicit `predict()` call by your code;
+- `reset()` on the model, which loads the reset values;
+- a backdoor access: in uvm-core 2020.3.1, `peek()`, `poke()` and the backdoor forms of `read()` and `write()` all predict their own access (the [Frontdoor vs. Backdoor](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/frontdoor-vs-backdoor) page covers what each one does and how the IEEE text words it).
+
+For frontdoor traffic, the environment chooses one of three set-ups (IEEE 1800.2-2020 §18.2.5.2 and §19.3):
+
+| Set-up | How you turn it on | What it sees |
+| --- | --- | --- |
+| **Implicit (auto) prediction** | `map.set_auto_predict(1)` | Only the accesses the register model itself starts (`read()`, `write()`, `mirror()`, `update()` through that map). The map predicts each one when it completes. |
+| **Explicit prediction** | A `uvm_reg_predictor` whose `bus_in` is connected to the bus monitor's analysis port, with `predictor.map` and `predictor.adapter` set | Every transfer on the bus: register-model accesses, firmware, DMA, other agents. |
+| **Passive prediction** | A predictor on a bus that the register model never drives | Everything that bus carries; the model only watches. |
+
+A new `uvm_reg_map` starts with auto-predict **off** and no predictor exists, so nothing predicts frontdoor accesses until you choose (uvm-core 2020.3.1 `uvm_reg_map::new`; §18.2.5.2 also says "False (the default)"). Two mistakes cause most mirror bugs:
+1. **Calling the wrong thing "explicit".** Explicit prediction is the predictor component fed by a monitor. Calling `predict()` by hand after each write is neither set-up; it is a manual patch.
+2. **Turning on both.** Auto-predict does not switch a connected predictor off. With both, every access the model starts is predicted twice, which corrupts toggle (W1T) fields.
+
+[Explicit vs. Implicit Prediction](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit) wires each set-up step by step. Keep this picture in mind for the rest of the page:
 
 <VisualRecap
   title="Who updates the mirror?"
-  rule="Implicit = set_auto_predict(1): the register predicts only the accesses the RAL itself started. Explicit = uvm_reg_predictor on the monitor: it predicts everything on the bus. Use one, not both."
-  code={`// explicit (recommended when anything else can write registers)
+  rule="Implicit = set_auto_predict(1): the map predicts only the accesses the register model started. Explicit = a uvm_reg_predictor fed by the bus monitor: it predicts every transfer on the bus. Use one, not both."
+  code={`// explicit (use it whenever anything else can write the registers)
 ral.default_map.set_sequencer(agent.sqr, adapter);
 predictor.map     = ral.default_map;
 predictor.adapter = adapter;
 agent.mon.ap.connect(predictor.bus_in);
-// implicit (only when the RAL is the sole initiator)
+// implicit (only when the register model is the sole initiator)
 ral.default_map.set_auto_predict(1);`}
-  mistake="Calling the predictor flow 'implicit', or turning on auto-predict next to a connected predictor: every RAL access is then predicted twice, which breaks toggle (W1T) fields."
-  inTestbench="connect_phase of the env that owns the RAL. Expose the predictor handle so tests never reach through component internals."
+  mistake="Calling a hand-written predict() 'explicit prediction', or turning on auto-predict next to a connected predictor: every model-started access is then predicted twice, which breaks W1T fields."
+  inTestbench="connect_phase of the env that owns the register model. Expose the predictor handle so tests never reach through component internals."
 >
-  <svg viewBox="0 0 320 150" role="img" aria-label="Two paths into the mirror: auto-predict from the map after a RAL access, and the predictor from the bus monitor, which also sees firmware writes." style={{ width: "100%", maxWidth: 360 }}>
+  <svg viewBox="0 0 320 168" role="img" aria-label="Two paths into the mirror. Left: a register-model read() or write() goes to the map, which auto-predicts into the mirror (dashed arrow). Right: the bus monitor, which sees model, firmware and DMA traffic, feeds the uvm_reg_predictor, which predicts into the mirror (solid arrow)." style={{ width: "100%", maxWidth: 380 }}>
+    <defs>
+      <marker id="a4b-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+        <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+      </marker>
+    </defs>
     <rect x="110" y="8" width="100" height="34" rx="6" fill="rgba(6,182,212,0.12)" stroke="rgb(6,182,212)" />
     <text x="160" y="29" fontSize="11" textAnchor="middle" fill="currentColor">mirror</text>
-    <rect x="8" y="64" width="100" height="30" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="58" y="83" fontSize="10" textAnchor="middle" fill="currentColor">map (auto-predict)</text>
-    <rect x="212" y="64" width="100" height="30" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.5" />
-    <text x="262" y="83" fontSize="10" textAnchor="middle" fill="currentColor">uvm_reg_predictor</text>
-    <line x1="58" y1="64" x2="130" y2="42" stroke="currentColor" strokeDasharray="5 3" />
-    <line x1="262" y1="64" x2="190" y2="42" stroke="currentColor" />
-    <rect x="8" y="112" width="100" height="30" rx="2" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
-    <text x="58" y="131" fontSize="10" textAnchor="middle" fill="currentColor">RAL read()/write()</text>
-    <rect x="212" y="112" width="100" height="30" rx="2" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
-    <text x="262" y="131" fontSize="10" textAnchor="middle" fill="currentColor">bus monitor</text>
-    <text x="160" y="131" fontSize="10" textAnchor="middle" fill="currentColor" fillOpacity="0.7">+ firmware ✓</text>
+    <rect x="8" y="66" width="100" height="30" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+    <text x="58" y="85" fontSize="10" textAnchor="middle" fill="currentColor">map (auto-predict)</text>
+    <rect x="212" y="66" width="100" height="30" rx="8" fill="none" stroke="currentColor" strokeOpacity="0.5" />
+    <text x="262" y="85" fontSize="10" textAnchor="middle" fill="currentColor">uvm_reg_predictor</text>
+    <rect x="8" y="122" width="100" height="30" rx="2" fill="rgba(245,158,11,0.12)" stroke="rgb(245,158,11)" />
+    <text x="58" y="141" fontSize="10" textAnchor="middle" fill="currentColor">RAL read()/write()</text>
+    <rect x="212" y="122" width="100" height="30" rx="2" fill="rgba(139,92,246,0.12)" stroke="rgb(139,92,246)" />
+    <text x="262" y="141" fontSize="10" textAnchor="middle" fill="currentColor">bus monitor</text>
+    <text x="262" y="164" fontSize="9" textAnchor="middle" fill="currentColor" fillOpacity="0.75">sees RAL, firmware, DMA</text>
+    <line x1="58" y1="122" x2="58" y2="98" stroke="currentColor" markerEnd="url(#a4b-arrow)" />
+    <line x1="58" y1="66" x2="122" y2="44" stroke="currentColor" strokeDasharray="5 3" markerEnd="url(#a4b-arrow)" />
+    <line x1="262" y1="122" x2="262" y2="98" stroke="currentColor" markerEnd="url(#a4b-arrow)" />
+    <line x1="262" y1="66" x2="198" y2="44" stroke="currentColor" markerEnd="url(#a4b-arrow)" />
+    <text x="160" y="110" fontSize="9" textAnchor="middle" fill="currentColor" fillOpacity="0.75">dashed: implicit · solid: explicit</text>
   </svg>
 </VisualRecap>
 
-## Adapter/Predictor/Mirror Debug Workflow
-When the RAL mirror diverges from the DUT, use this deterministic workflow. The **Debug** tab of the visual above walks through the most common case.
+### Fields the hardware changes: W1C, W1T, RC and volatile
 
-1. **Was the access predicted at all?** With auto-predict off, only a connected `uvm_reg_predictor` updates the mirror. Check `agent.mon.ap.connect(predictor.bus_in)` in `connect_phase`; a missing connection produces no warning.
-2. **Did the monitor publish the transfer?** Check the bus monitor's `ap` ([analysis port](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)) and that it publishes reads with their data.
-3. **Did `bus2reg()` rebuild the operation?** Wrong `kind`, `addr` or `status` sends the prediction to the wrong register or skips it (`UVM_NOT_OK` is not predicted).
-4. **Does the field's policy and volatility match the hardware?** The predictor applies the policy: an RO field ignores the written bits, W1C clears, RC clears on a read. A hardware-driven field configured `volatile = 0` produces false `mirror(UVM_CHECK)` mismatches.
-5. **Is the access predicted twice?** Auto-predict plus a connected predictor predicts every RAL access twice. Toggle (W1T) fields end up back where they started.
+Prediction applies each field's access policy to the old mirror and the access data. For most policies that gives the right answer. Some fields, though, change without any access, or change in ways a plain "store the data" rule would get wrong:
 
-> **Interview Pitfall:** A common interview question asks "My RAL mirror isn't updating after a bus write, why?". The most frequent architectural cause is simply forgetting to connect the bus monitor's [analysis port](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index) to the `uvm_reg_predictor` in the `connect_phase`.
+| Policy | What the DUT does | What the prediction does (uvm-core 2020.3.1 `uvm_reg_field::XpredictX` and `do_predict`) |
+| --- | --- | --- |
+| **W1C** (write 1 to clear) | A 1 in the write data clears the bit; a 0 leaves it | Write: mirror AND NOT data. When the *hardware* sets the bit, nothing is predicted until something reads it |
+| **W1S** (write 1 to set) | A 1 sets the bit | Write: mirror OR data |
+| **W1T** (write 1 to toggle) | A 1 flips the bit | Write: mirror XOR data, so predicting one write twice cancels it out |
+| **RC** (clear on read) | A read returns the value, then clears it | A predicted frontdoor read sets the mirror to 0 |
+| **Volatile** (any policy) | The hardware may change the value at any time | `configure(…, volatile = 1, …)` sets the field's compare mode to `UVM_NO_CHECK`. Prediction still runs; `mirror(UVM_CHECK)` simply skips the field |
 
-## Memories — `uvm_mem` (IEEE 1800.2-2020 §18.6)
+**A traced example: a bit the hardware sets.** INT_STATUS.ERR is W1C, configured with `volatile = 0`, and an explicit predictor watches the bus. Read the table row by row and predict the mirror column before you look at it.
 
-RAL also models addressable memories via `uvm_mem`. Memories have **no mirror**: the model keeps their size, width, access and address, and `uvm_reg_predictor` does not predict memory accesses. Size, width and access are constructor arguments, so a memory is a small subclass:
+| Step | DUT ERR | Mirror ERR | What happened |
+| --- | --- | --- | --- |
+| Reset | 0 | 0 | `reset()` loaded the reset value |
+| A bus write hits an unmapped address, and the DUT sets ERR | 1 | 0 | No register access, so nothing predicted ERR: the mirror is stale |
+| `mirror(status, UVM_CHECK)` *now* | 1 | 1 | `mirror()` compares the old mirror (0) with the read value (1) and reports a `RegModel` error, a false failure. The predictor then learns 1 from the read |
+| Instead: `read(status, v)` first | 1 | 1 | The predictor sees the read data and sets the mirror to 1 |
+| `write(status, 1)` | 0 | 0 | W1C: 1 AND NOT 1 = 0 in both |
+| `mirror(status, UVM_CHECK)` | 0 | 0 | Passes |
+
+**What this means in a real testbench.**
+- A field that hardware changes at times you **cannot** predict (an interrupt that can fire any cycle, a free-running counter) should be volatile. Check its value with a read and an expectation from your scoreboard, not with `mirror(UVM_CHECK)`.
+- A field that hardware changes only on an event your test causes can stay checked (`volatile = 0`), as long as the test reads it before it checks it. The example in Make It Work does exactly this.
+- To check a volatile field during a quiet window, call `set_compare(UVM_CHECK)` on it, run `mirror(UVM_CHECK)`, and restore `UVM_NO_CHECK` afterwards.
+- No standard policy fits a bit that reads back 0 after you write 1 to it (a "GO" pulse). A register callback fixes its prediction; see [Extending the register layer](#extending-the-register-layer-user-frontdoors-and-register-callbacks).
+
+### Adapter settings that move the mirror
+
+[A-UVM-4A](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index) builds the adapter. Four of its settings decide what the mirror receives, and each one fails quietly when it is wrong.
+
+- **`provides_responses`** (§19.2.1.2.3) says whether the driver returns read data in a *separate* response item. When it is 1, the map waits for that response with `get_base_response()` and calls `bus2reg()` on it. When it is 0, the map calls `bus2reg()` on the request item, so the driver must write the read data into the request. A mismatch fails in one of two ways:
+  - `provides_responses = 1` but the driver never sends a response: every `read()` and `write()` hangs.
+  - `provides_responses = 0` but the driver returns data only through `put_response()`: `read()` returns whatever the request held (usually 0). An explicit predictor still learns the true value from the monitor, so a later `mirror(UVM_CHECK)` reports a mismatch that points at the adapter, not at the DUT.
+- **`status` in `bus2reg()`.** Map your bus's error response to `UVM_NOT_OK`. A `UVM_NOT_OK` access is not predicted: uvm-core warns `PREDICT_NOK` "status UVM_NOT_OK; skip prediction." and the mirror keeps its old value. If `bus2reg()` always returns `UVM_IS_OK`, an access the DUT rejected moves the mirror anyway.
+- **`supports_byte_enable`** (§19.2.1.2.2) says the bus can write single bytes. It matters when you write one field: `ral.ctrl.en.write(st, 1)`. The diagram below shows what uvm-core 2020.3.1 does.
+- **`get_item()`** (§19.2.1.2.7) returns the `uvm_reg_item` being converted, so `reg2bus()` can read extra information that a test attached to the access (its `extension` argument).
+
+<SequenceDiagram
+  title="What uvm-core does with a single-field write"
+  caption="A field write becomes a field-only bus access only if every check in step 2 passes. Otherwise the whole register is written, and the other fields' bits come from the mirror."
+  participants={[
+    { id: "test", label: "test", kind: "test" },
+    { id: "fld", label: "ral.ctrl.en", kind: "reg", sublabel: "uvm_reg_field" },
+    { id: "reg", label: "ral.ctrl", kind: "reg", sublabel: "uvm_reg" },
+    { id: "map", label: "default_map", kind: "reg", sublabel: "uvm_reg_map" }
+  ]}
+  messages={[
+    { from: "test", to: "fld", label: "en.write(st, 1)" },
+    { kind: "self", from: "fld", label: "is_indv_accessible()?" },
+    { kind: "note", from: "fld", to: "map", label: "Checks: a frontdoor access? individually_accessible = 1? no user frontdoor? the adapter's supports_byte_enable = 1? no other field in the same bus-width word?" },
+    { kind: "divider", label: "every check passes" },
+    { from: "fld", to: "map", label: "do_write: field-only transfer, byte enables cover the field" },
+    { kind: "divider", label: "any check fails: a RegModel warning names the reason" },
+    { from: "fld", to: "reg", label: "do_write(whole register value)", tone: "active" },
+    { kind: "note", from: "fld", to: "reg", label: "other fields: RW-like fields take their MIRRORED value; RO, RC and W1x fields get 0; W0x fields get all ones; WC/WS neighbours trigger a side-effect warning" },
+    { from: "reg", to: "map", label: "do_write: full-register transfer" }
+  ]}
+/>
+
+Here "W1x" means the write-1 policies (W1C, W1S, W1T and their variants), and "W0x" the write-0 ones (W0C, W0S, W0T and their variants): uvm-core picks a neighbour value that leaves them unchanged.
+
+**Why this matters.** On a 32-bit register with several fields and a 32-bit bus, a field write is almost always a whole-register write, even with byte enables. The neighbouring fields are then written with their *mirrored* values, so a stale mirror silently corrupts them. Keep the mirror right, or read the register before you write a field.
+
+### Memories: `uvm_mem` and the allocation manager
+
+RAL models addressable memories with `uvm_mem` (§18.6). A memory has a size in locations, a width in bits and an access policy, but **no mirror**: the standard leaves it out "because of the potentially large data space", and `uvm_reg_predictor` never predicts a memory access. To check memory contents, read them back and compare, or let a scoreboard track what was written. Size, width and access are constructor arguments, so a memory is a small subclass:
 
 ```systemverilog
+// snippet: a 1K x 32 memory in a block that has only a memory map
 class sram_mem extends uvm_mem;
   `uvm_object_utils(sram_mem)
   function new(string name = "sram_mem");
@@ -102,133 +211,1092 @@ class sram_block extends uvm_reg_block;
 endclass
 ```
 
-**Memory allocation manager** (`uvm_mem_mam`, §18.12) tracks allocated regions so DMA tests can claim and release buffer space without address collisions. Every `uvm_mem` builds one in `configure()`, available as its `mam` member:
+Every access names an **offset**, which counts memory locations (words), not bytes (§18.6.5):
 
 ```systemverilog
-uvm_mem_region r = ral.sram.mam.request_region(256);   // 256 BYTES = 64 32-bit words, random free offset
-// ... program the DMA with r.get_start_offset() ...
+// snippet: inside a sequence or test task
+uvm_status_e   st;
+uvm_reg_data_t rd;
+uvm_reg_data_t burst[] = '{'h1, 'h2, 'h3, 'h4};
+ral.sram.write(st, 'h10, 'hAB);          // location 16
+ral.sram.read (st, 'h10, rd);            // compare rd yourself: there is no mirror
+ral.sram.burst_write(st, 'h20, burst);   // locations 32 to 35
+ral.sram.peek(st, 'h10, rd);             // backdoor, through the HDL path
+```
+
+The **memory allocation manager** (`uvm_mem_mam`, §18.12) hands out non-overlapping regions, like `malloc` and `free`, so that DMA tests can claim buffer space without collisions. Every `uvm_mem` builds one in `configure()`, available as its `mam` member. A region is accessed like a small memory of its own, with offsets relative to its start:
+
+```systemverilog
+// snippet: claim a DMA buffer, use it, give it back
+uvm_mem_region r = ral.sram.mam.request_region(256);   // 256 bytes = 64 words
+if (r == null) `uvm_fatal("MAM", "no free region of 64 words")
+r.write(st, 0, 'h1234_5678);       // location r.get_start_offset() + 0
+// ... program the DMA with the region's address ...
 r.release_region();
 ```
 
-## Volatile and Special Access Policies
+<figure>
+  <svg viewBox="0 0 320 120" role="img" aria-label="A bar of 1024 memory locations. Locations 0 to 127 and 512 to 767 are already reserved. request_region(256) asks for 256 bytes, which is 64 words of 32 bits, and the manager places the new region at a random free offset, here 192 to 255." style={{ width: "100%", maxWidth: 420 }}>
+    <text x="10" y="18" fontSize="10" fill="currentColor">ral.sram: 1024 locations x 32 bits (no mirror)</text>
+    <rect x="10" y="30" width="300" height="28" fill="none" stroke="currentColor" strokeOpacity="0.6" />
+    <rect x="10" y="30" width="37.5" height="28" fill="rgba(139,92,246,0.25)" stroke="rgb(139,92,246)" />
+    <rect x="160" y="30" width="75" height="28" fill="rgba(139,92,246,0.25)" stroke="rgb(139,92,246)" />
+    <rect x="66.25" y="30" width="18.75" height="28" fill="rgba(6,182,212,0.3)" stroke="rgb(6,182,212)" strokeDasharray="4 2" />
+    <text x="28.75" y="48" fontSize="9" textAnchor="middle" fill="currentColor">in use</text>
+    <text x="197.5" y="48" fontSize="9" textAnchor="middle" fill="currentColor">in use</text>
+    <text x="10" y="72" fontSize="9" fill="currentColor">0</text>
+    <text x="310" y="72" fontSize="9" textAnchor="end" fill="currentColor">1023</text>
+    <line x1="75.6" y1="60" x2="75.6" y2="84" stroke="currentColor" strokeOpacity="0.7" />
+    <text x="75.6" y="96" fontSize="9" textAnchor="middle" fill="currentColor">new region: 64 words at 192 to 255</text>
+    <text x="160" y="112" fontSize="9" textAnchor="middle" fill="currentColor" fillOpacity="0.75">offset chosen at random among the free places</text>
+  </svg>
+  <figcaption className="text-sm text-muted-foreground">`request_region(n_bytes)` rounds up to whole locations: (256 − 1) / 4 + 1 = 64 (uvm-core 2020.3.1 `uvm_mem_mam.svh`). The default policy picks a random start offset that does not overlap a reserved region. When no free space is left, it reports `uvm_error("RegModel", "Unable to randomize policy")` and returns `null`.</figcaption>
+</figure>
 
-Not every field behaves like simple RW memory. Several access policies need care because **the hardware changes the field value behind the RAL's back**:
+The ready-made memory tests (`uvm_mem_access_seq` and `uvm_mem_walk_seq`) are on the [Built-in RAL Sequences](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/built-in-ral-sequences) page.
 
-| Policy | Behavior | Mirror Implication |
-| --- | --- | --- |
-| **W1C** (Write-1-to-Clear) | Writing `1` to a bit clears it | The prediction for a write is mirror AND NOT data. When hardware *sets* the bit, nothing is predicted until a read, `peek()` or `predict()` |
-| **W1S** (Write-1-to-Set) | Writing `1` to a bit sets it | The prediction is mirror OR data |
-| **W1T** (Write-1-to-Toggle) | Writing `1` to a bit toggles it | The prediction is mirror XOR data, so a double prediction undoes it |
-| **RC** (Read-to-Clear) | Reading the field clears it | A predicted frontdoor read sets the mirror to 0. `peek()` does not clear the hardware |
-| **Volatile** | HW can change the value at any time | `configure(…, volatile = 1, …)` sets the compare mode to `UVM_NO_CHECK`, so `mirror(UVM_CHECK)` skips the field unless you call `set_compare(UVM_CHECK)` |
+### One register, several buses: multiple maps
 
-> **Gotcha:** If hardware sets a W1C status bit after your last access, the mirror is stale until the next read, `peek()` or `predict()`. If that field is configured `volatile = 0`, `mirror(UVM_CHECK)` reports a mismatch that is not a DUT bug. Configure hardware-driven fields as volatile, and check them by reading the value and comparing it with what your scoreboard expects.
-
-## `set_auto_predict()` Strategy
-
-Auto-predict is **off** by default (`uvm_reg_map::new` clears it). Turning it on makes `read()` and `write()` predict their own access when it completes. It does not disable or replace a predictor: if a predictor is also connected, the access is predicted twice.
-
-| Mode | Pros | Cons |
-| --- | --- | --- |
-| Explicit (`uvm_reg_predictor`) | Sees every master on the bus; predicts what the bus really carried | Requires monitor, predictor and wiring |
-| Implicit (auto-predict) | No predictor needed, fast bring-up | Blind to firmware, DMA and other masters; predicts the value it wrote rather than what the bus carried, so `reg2bus()` bugs stay hidden |
-
-**When to use auto-predict:**
-- Early bring-up, before a monitor exists.
-- Production environments where the register model is the **only** initiator on that bus and the adapter round trip is trusted.
-- Never together with a connected predictor on the same map.
+A register is often reachable from two buses, for example a CPU configuration bus and a debug port. The model then has **one** register object with **one** mirror, and two address maps that both point at it. Each map places the register at its own address, with its own access **rights**:
 
 ```systemverilog
-// Bring-up: the RAL is the only master and there is no monitor yet
-cfg_map.set_auto_predict(1);
-
-// Explicit prediction: leave auto-predict at 0 and wire the predictor
-cfg_map.set_auto_predict(0);
-predictor.map     = ral.cfg_map;
-predictor.adapter = adapter;
-axi_agt.monitor.ap.connect(predictor.bus_in);
+// snippet: soc_block::build(); one register, two maps
+cfg_map = create_map("cfg_map", 'h0000, 4, UVM_LITTLE_ENDIAN);  // CPU bus
+dbg_map = create_map("dbg_map", 'h1000, 4, UVM_LITTLE_ENDIAN);  // debug port
+cfg_map.add_reg(ctrl, 'h00, "RW");
+dbg_map.add_reg(ctrl, 'h00, "RO");   // the debug port may only read CTRL
+lock_model();
 ```
 
-## Multi-Map Concerns
+Each bus with traffic needs its own sequencer, adapter and predictor, and each predictor is bound to its own map:
 
-When the same register is accessible from multiple bus interfaces (e.g., AXI config bus and APB debug port), there is still **one** register object and **one** mirror; every map references it. What each bus with traffic needs is its own:
-- Adapter instance (different bus protocols).
-- Predictor instance, with `predictor.map` set to **that bus's map** so it decodes that bus's addresses.
-- Sequencer assignment (`set_sequencer` on each map).
+```systemverilog
+// snippet: soc_env::connect_phase()
+ral.cfg_map.set_sequencer(cpu_agent.sqr, cpu_adapter);
+ral.dbg_map.set_sequencer(dbg_agent.sqr, dbg_adapter);
+cpu_pred.map = ral.cfg_map;
+cpu_pred.adapter = cpu_adapter;
+dbg_pred.map = ral.dbg_map;
+dbg_pred.adapter = dbg_adapter;
+cpu_agent.mon.ap.connect(cpu_pred.bus_in);
+dbg_agent.mon.ap.connect(dbg_pred.bus_in);
+```
 
-A write through map A, predicted by A's predictor, updates the same mirror that a read through map B compares against. If one bus has no predictor, accesses on it are invisible to the model.
-
-## Make It Work
-1. **Instantiate Predictors:** Build the adapter and predictor in the `build_phase`.
-2. **Connect the Flow:** In `connect_phase`, call `set_sequencer()` on each map, wire the bus monitor's `ap` into the predictor's `bus_in`, and assign `predictor.map` and `predictor.adapter`. Leave auto-predict at 0.
-3. **Mirror responsibly:** Decide which registers need continuous mirroring; use backdoor `mirror()` or `peek()` where speed matters and HDL paths exist.
-4. **Handle volatile fields:** Configure interrupt-status and other HW-modified fields as volatile. Check them by reading and comparing against your scoreboard's expectation, or temporarily with `set_compare(UVM_CHECK)`, rather than relying on `mirror(UVM_CHECK)`.
-
-**Checklist before moving on:**
-- [ ] You can define implicit and explicit prediction without mixing them up.
-- [ ] You can systematically debug why a mirror fails to update, including the silent missing `connect()`.
-- [ ] Your environment exposes the predictor so tests do not drill through component internals.
-- [ ] You know when `set_auto_predict(1)` is appropriate and why it must not be combined with a predictor.
-- [ ] You know how volatile, W1C, W1T and RC policies affect the mirror and the check.
-
-## Practice & Reinforce
-
-### Retrieval check: no animation allowed
-
-<Quiz
-  questions={[
-    {
-      question: "Firmware writes a scratch register over the bus. The map has set_auto_predict(1) and there is no uvm_reg_predictor. Does the mirror change?",
-      answers: [
-        { text: "Yes: auto-predict watches the bus", correct: false },
-        { text: "No: auto-predict only predicts accesses the register model starts", correct: true },
-        { text: "Only after mirror(UVM_NO_CHECK)", correct: false }
-      ],
-      explanation: "Implicit prediction runs inside uvm_reg::write()/read(). A transfer from another master never passes through them; only a predictor fed by the monitor sees it."
-    },
-    {
-      question: "Which set-up is 'explicit prediction'?",
-      answers: [
-        { text: "ral.default_map.set_auto_predict(1)", correct: false },
-        { text: "A uvm_reg_predictor whose bus_in is connected to the bus monitor's analysis port", correct: true },
-        { text: "Calling predict() after every write", correct: false }
-      ],
-      explanation: "Explicit = a predictor component fed by observed bus transfers. Implicit (auto) = set_auto_predict(1)."
-    },
-    {
-      question: "The env connects a predictor and also calls set_auto_predict(1). The test writes 1 to a W1T LED bit that was 0. What does the mirror hold?",
-      answers: [
-        { text: "1, same as the DUT", correct: false },
-        { text: "0: the access is predicted twice and the toggle cancels out", correct: true },
-        { text: "X until the next read", correct: false }
-      ],
-      explanation: "The predictor predicts mirror XOR 1 = 1, then auto-predict predicts 1 XOR 1 = 0. Idempotent policies hide double prediction; toggles expose it."
-    },
-    {
-      question: "After ral.CTRL.poke(status, 'h3), what must you do to keep the mirror accurate?",
-      answers: [
-        { text: "Call predict('h3)", correct: false },
-        { text: "Nothing: poke() calls do_predict() itself", correct: true },
-        { text: "Call mirror(status, UVM_NO_CHECK)", correct: false }
-      ],
-      explanation: "Backdoor poke() and peek() predict their own access. What a bus-monitor predictor cannot see is the backdoor change, so scoreboards fed by the monitor will not see it either."
-    }
+<ArchitectureDiagram
+  title="One register reached through two root maps"
+  caption="Each bus has its own agent, adapter and predictor, and each predictor is bound to its own root map. Both predictors write the same single mirror of ral.ctrl. Adapters are left out of the drawing."
+  nodes={[
+    { id: "cpu_agent", label: "cpu_agent", kind: "agent", col: 0, row: 1, rowSpan: 2, container: true },
+    { id: "cpu_sqr", label: "sqr", kind: "sequencer", col: 0, row: 1 },
+    { id: "cpu_mon", label: "mon", kind: "monitor", col: 0, row: 2 },
+    { id: "dbg_agent", label: "dbg_agent", kind: "agent", col: 3, row: 1, rowSpan: 2, container: true },
+    { id: "dbg_sqr", label: "sqr", kind: "sequencer", col: 3, row: 1 },
+    { id: "dbg_mon", label: "mon", kind: "monitor", col: 3, row: 2 },
+    { id: "cfg_map", label: "cfg_map", sublabel: "root map, base 'h0000", kind: "reg", col: 1, row: 0 },
+    { id: "dbg_map", label: "dbg_map", sublabel: "root map, base 'h1000", kind: "reg", col: 2, row: 0 },
+    { id: "ctrl", label: "ral.ctrl", sublabel: "one register, one mirror", kind: "reg", col: 1, row: 1, colSpan: 2 },
+    { id: "cpu_pred", label: "cpu_pred", kind: "predictor", col: 1, row: 2 },
+    { id: "dbg_pred", label: "dbg_pred", kind: "predictor", col: 2, row: 2 }
+  ]}
+  ports={[
+    { id: "cpu_mon.ap", node: "cpu_mon", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "cpu_pred.bus_in", node: "cpu_pred", side: "left", kind: "analysis_imp", label: "bus_in" },
+    { id: "dbg_mon.ap", node: "dbg_mon", side: "left", kind: "analysis_port", label: "ap" },
+    { id: "dbg_pred.bus_in", node: "dbg_pred", side: "right", kind: "analysis_imp", label: "bus_in" }
+  ]}
+  edges={[
+    { from: "cfg_map", to: "ctrl", style: "structural", label: "add_reg RW" },
+    { from: "dbg_map", to: "ctrl", style: "structural", label: "add_reg RO" },
+    { from: "cfg_map", to: "cpu_sqr", style: "control", label: "set_sequencer" },
+    { from: "dbg_map", to: "dbg_sqr", style: "control", label: "set_sequencer" },
+    { from: "cpu_mon.ap", to: "cpu_pred.bus_in", style: "data", label: "write(t)" },
+    { from: "dbg_mon.ap", to: "dbg_pred.bus_in", style: "data", label: "write(t)" },
+    { from: "cpu_pred", to: "ctrl", style: "causal", label: "predict" },
+    { from: "dbg_pred", to: "ctrl", style: "causal", label: "predict" }
   ]}
 />
 
-- Dive into **[Explicit vs. Implicit Prediction](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit)** to wire each strategy correctly.
-- Explore **[Frontdoor vs. Backdoor Access](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/frontdoor-vs-backdoor)** to blend realistic bus traffic with fast execution.
-- Leverage **[Built-in RAL Sequences](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/built-in-ral-sequences)** to quickly sanity-check your generated model.
-- Pair the RAL model with callback hooks to inject targeted errors.
+**Rules that keep a shared register right:**
+- **Name the map on every frontdoor access**: `ral.ctrl.write(st, 'h1, UVM_FRONTDOOR, ral.cfg_map)`. IEEE 1800.2-2020 §18.4.4.9 says that for a frontdoor access to a register in more than one map, "an address map shall be specified". uvm-core 2020.3.1 does not stop you: with `map = null` it silently uses the block's default map, which is the first map created unless you call `set_default_map()`.
+- **Rights change the policy seen through that map.** Through `dbg_map`, every writable field of CTRL behaves as RO, so a write through the debug port is predicted as "no change" (uvm-core `uvm_reg_field::get_access(map)`).
+- **One mirror means one truth.** A write through `cfg_map`, predicted by `cpu_pred`, updates the same mirror that a later read through `dbg_map` compares against. A bus without a predictor is invisible to the model.
+- **The root map owns the bus.** A map created with `create_map()` in the top block is a **root** map. A sub-block's map that you add to a parent map with `add_submap()` (§18.2.3.5) is not. In uvm-core 2020.3.1, accesses use the root map's sequencer and adapter, auto-predict is read from the root map (`set_auto_predict()` does not propagate to sub-maps), and a predictor needs the root map's address table. So call `set_sequencer()`, `set_auto_predict()` and set `predictor.map` on root maps only. A predictor bound to a sub-map finds no register at any address and stays silent (see the debugging table below).
+- The built-in `uvm_reg_shared_access_seq` (Annex E.4) checks that a shared register reads the same through every map; see [Built-in RAL Sequences](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/built-in-ral-sequences).
 
-### Mirror Bug Lab
+### Extending the register layer: user frontdoors and register callbacks
 
-Practice debugging a broken RAL mirror in a hands-on lab:
+Sometimes the standard path is not enough: a register has no address of its own, or a field behaves in a way no access policy describes. UVM gives you two extension points, and neither needs a change to the library.
+
+**A user frontdoor** (`uvm_reg_frontdoor`, §19.4.2) replaces the built-in "one bus transfer at this address" for one register in one map. It is a sequence: the register calls its `body()` with `rw_info`, a `uvm_reg_item` that holds the access kind, value and map, and `body()` performs the access however the hardware requires. The classic case is a table of registers reached through an INDEX register and a DATA register:
+
+```systemverilog
+// snippet: TBL[i] is reached by writing i to INDEX, then accessing DATA
+class idx_data_fd extends uvm_reg_frontdoor;
+  `uvm_object_utils(idx_data_fd)
+  uvm_reg      idx, data;   // the two registers the bus really has
+  int unsigned entry;       // which table entry this frontdoor reaches
+
+  function new(string name = "idx_data_fd");
+    super.new(name);
+  endfunction
+
+  virtual task body();
+    uvm_status_e   st;
+    uvm_reg_data_t v;
+    idx.write(st, entry, UVM_FRONTDOOR, rw_info.get_map(), this);
+    if (st == UVM_IS_OK) begin
+      if (rw_info.get_kind() == UVM_WRITE)
+        data.write(st, rw_info.get_value(0), UVM_FRONTDOOR, rw_info.get_map(), this);
+      else begin
+        data.read(st, v, UVM_FRONTDOOR, rw_info.get_map(), this);
+        rw_info.set_value(v, 0);
+      end
+    end
+    rw_info.set_status(st);
+  endtask
+endclass
+```
+
+```systemverilog
+// snippet: in the block's build(), after idx, data and tbl[] are built
+foreach (tbl[i]) begin
+  idx_data_fd fd = idx_data_fd::type_id::create($sformatf("fd%0d", i));
+  fd.idx   = idx;
+  fd.data  = data;
+  fd.entry = i;
+  default_map.add_reg(tbl[i], 'h0, "RW", 1);  // unmapped: no address of its own
+  tbl[i].set_frontdoor(fd, default_map);       // §18.4.5.2
+end
+```
+
+What happens to the mirrors is the part that catches people. An explicit predictor sees only the INDEX and DATA transfers, so it predicts **INDEX and DATA**, never `tbl[i]`. The table entry's mirror moves only through auto-predict (uvm-core predicts the target register after the frontdoor's `body()` returns), through your own `predict()`, or by using `uvm_reg_indirect_data` (§18.7). That class packages this exact index/data pattern, and the predictor forwards its predictions to the indexed register. Write your own frontdoor for anything else that is not "one transfer at one address": an unlock key before a protected register, a mailbox, a serial side channel.
+
+**A register callback** (`uvm_reg_cbs`, §18.11) hooks into every access of a field or register: `pre_write`, `post_write`, `pre_read`, `post_read`, and `post_predict` (§18.11.2.6), which runs after each read or write prediction and may change the predicted value through its `inout value` argument. Callback registration and ordering work as in [A-UVM-5: UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index). The common use is a field that reads back differently from what you wrote, such as a GO bit that starts a job and always reads 0:
+
+```systemverilog
+// snippet: GO always reads 0, but no standard policy says so
+class go_pulse_cb extends uvm_reg_cbs;
+  `uvm_object_utils(go_pulse_cb)
+  function new(string name = "go_pulse_cb");
+    super.new(name);
+  endfunction
+  virtual function void post_predict(input uvm_reg_field  fld,
+                                     input uvm_reg_data_t previous,
+                                     inout uvm_reg_data_t value,
+                                     input uvm_predict_e  kind,
+                                     input uvm_door_e     path,
+                                     input uvm_reg_map    map);
+    if (kind == UVM_PREDICT_WRITE) value = 0;   // match what a read will return
+  endfunction
+endclass
+
+// in the env's connect_phase, after the model is built
+// (go_cb is a go_pulse_cb handle declared in the env):
+go_cb = go_pulse_cb::type_id::create("go_cb");
+uvm_reg_field_cb::add(ral.cmd.go, go_cb);   // typedef from Annex D.4.5.7
+```
+
+`post_predict` is the right hook because every prediction path (auto-predict, the predictor, a backdoor write) runs it. A `post_write` that calls `predict(0)` is fragile: with explicit prediction the monitor may publish *after* `write()` returns, and the predictor would then set GO back to 1. uvm-core also ships two ready callbacks, `uvm_reg_read_only_cbs::add(rg)` and `uvm_reg_write_only_cbs::add(rg)` (§18.11.4–§18.11.5), which turn a write to a read-only register (or a read of a write-only one) into a `UVM/REG/READONLY` (or `UVM/REG/WRTEONLY`) error with `UVM_NOT_OK`.
+
+<SequenceDiagram
+  title="A write through a user frontdoor, with its callbacks"
+  caption="The order follows uvm_reg::do_write in uvm-core 2020.3.1. The predictor (not drawn) sees steps 4 and 5 as ordinary INDEX and DATA writes; only auto-predict predicts tbl[2] itself."
+  participants={[
+    { id: "test", label: "test", kind: "test" },
+    { id: "tbl", label: "ral.tbl[2]", kind: "reg", sublabel: "uvm_reg" },
+    { id: "fd", label: "fd2", kind: "sequence", sublabel: "idx_data_fd" },
+    { id: "idx", label: "ral.idx", kind: "reg" },
+    { id: "data", label: "ral.data", kind: "reg" }
+  ]}
+  messages={[
+    { from: "test", to: "tbl", label: "write(st, 'h5A)" },
+    { kind: "self", from: "tbl", label: "pre_write: field callbacks, then register callbacks" },
+    { from: "tbl", to: "fd", label: "fd.start(sequencer): rw_info holds UVM_WRITE, 'h5A" },
+    { from: "fd", to: "idx", label: "idx.write(st, 2)" },
+    { from: "fd", to: "data", label: "data.write(st, 'h5A)" },
+    { kind: "return", from: "fd", to: "tbl", label: "body() ends; rw_info status set" },
+    { kind: "self", from: "tbl", label: "if auto-predict: do_predict(tbl[2])" },
+    { kind: "note", from: "tbl", to: "fd", label: "post_predict callbacks run inside do_predict. With the root map's auto-predict off, the tbl[2] mirror does not change" },
+    { kind: "self", from: "tbl", label: "post_write: register callbacks, then field callbacks" },
+    { kind: "return", from: "tbl", to: "test", label: "write() returns" }
+  ]}
+/>
+
+### Register coverage (awareness)
+
+The register layer can measure functional coverage of the registers themselves: which bits were written and read, which addresses were accessed, and which field values occurred. The models are named by `uvm_coverage_model_e` (§17.2.2.9):
+
+| Model | Measures |
+| --- | --- |
+| `UVM_CVR_REG_BITS` | Individual register bits written and read |
+| `UVM_CVR_ADDR_MAP` | Individual register and memory addresses accessed |
+| `UVM_CVR_FIELD_VALS` | Field values |
+| `UVM_CVR_ALL` | All of the above |
+
+Coverage is opt-in at two levels:
+
+```systemverilog
+// snippet: in the test's build_phase, BEFORE the env builds the model
+uvm_reg::include_coverage("*", UVM_CVR_ALL);   // §18.4.7.1: which models to build
+
+// snippet: in the env, after ral.build()
+void'(ral.set_coverage(UVM_CVR_ALL));          // §18.1.4.5: start measuring
+```
+
+- `include_coverage()` (§18.4.7.1) only *requests* models. Each register asks for them when it is constructed, through `build_coverage()`, and builds its covergroups only if the request already exists. Called after the model is built, it changes nothing.
+- Register generators write the covergroups for you, inside each register class (`has_coverage()`, `sample()`, `sample_values()`). The base classes contain none, so a hand-written model has no register coverage until you add it.
+- Measurement is off until you call `set_coverage()`: uvm-core 2020.3.1 starts every register with measurement off. `set_coverage()` turns on only models that were built.
+- In uvm-core 2020.3.1, `sample()` runs on each predicted access (from the predictor, or from auto-predict). Field values are sampled only when you call `sample_values()`, for example after a `mirror()` of the block.
+- Register coverage tells you the *registers* were exercised. It does not replace functional coverage of what the design *did* with them (see [I-SV-3A: Functional Coverage Fundamentals](/curriculum/T2_Intermediate/I-SV-3A_Functional_Coverage_Fundamentals/index)).
+
+### Debugging a mirror mismatch
+
+The symptom is almost always this `RegModel` error from `mirror(UVM_CHECK)`, or from check-on-read (a map setting that checks every observed read; see Push Further):
+
+```text
+UVM_ERROR … [RegModel] Register "ral.ctrl" value read from DUT (0x0000000000000003) does not match mirrored value (0x0000000000000000) (valid bit mask = 0x0000000000000003)
+UVM_INFO … [RegModel] Field en (ral.ctrl[0:0]) mismatch read=1'h1 mirrored=1'h0
+UVM_INFO … [RegModel] Field led (ral.ctrl[1:1]) mismatch read=1'h1 mirrored=1'h0
+```
+
+The first line compares the whole register under the "valid bit mask" (the bits of fields that are checked, so volatile and write-only fields are left out). The `Field` lines name every field that differs. The message formats are from uvm-core 2020.3.1 `uvm_reg.svh`; the values are illustrative. Before you blame the DUT, walk the path a prediction takes. Each numbered checkpoint is a place where it can break:
+
+<SequenceDiagram
+  title="The path from a bus transfer to the mirror, with checkpoints"
+  caption="The order follows uvm_reg_predictor::write() in uvm-core 2020.3.1. Each checkpoint matches a row of the table below."
+  participants={[
+    { id: "mon", label: "agent.mon", kind: "monitor" },
+    { id: "pred", label: "predictor", kind: "predictor" },
+    { id: "adp", label: "adapter", kind: "generic" },
+    { id: "map", label: "predictor.map", kind: "reg" },
+    { id: "reg", label: "ral.ctrl", kind: "reg" }
+  ]}
+  messages={[
+    { kind: "note", from: "mon", to: "pred", label: "Checkpoint 1: is mon.ap connected to predictor.bus_in? Checkpoint 2: does the monitor publish every transfer, with read data?" },
+    { from: "mon", to: "pred", label: "ap.write(t) -> bus_in.write(t)" },
+    { from: "pred", to: "adp", label: "bus2reg(t, rw)" },
+    { kind: "note", from: "pred", to: "adp", label: "Checkpoint 3: are kind, addr, data and status right?" },
+    { from: "pred", to: "map", label: "get_reg_by_offset(rw.addr, read?)" },
+    { kind: "note", from: "pred", to: "map", label: "Checkpoint 4: a root map, a locked model, the right address? Else no register is found" },
+    { kind: "note", from: "pred", to: "map", label: "Then: collect every bus word of a wide register, check-on-read (if enabled), pre_predict(), coverage sample" },
+    { from: "pred", to: "reg", label: "do_predict(item, UVM_PREDICT_WRITE or _READ)" },
+    { kind: "note", from: "pred", to: "reg", label: "Checkpoint 5: right policy and volatility? Status OK? Checkpoint 6: is this access also auto-predicted?" },
+    { kind: "self", from: "pred", label: "REG_PREDICT (UVM_HIGH); reg_ap.write(item)" }
+  ]}
+/>
+
+**Symptom → cause → fix.** Message IDs and texts are from uvm-core 2020.3.1 (`uvm_reg_predictor.svh`, `uvm_reg.svh`, `uvm_reg_map.svh`).
+
+| Symptom in the log | Likely cause | Fix |
+| --- | --- | --- |
+| The mirror never changes after frontdoor accesses; **no** predictor messages at all, even at `+UVM_VERBOSITY=UVM_HIGH` | Checkpoint 1: `mon.ap` is not connected to `predictor.bus_in`. An analysis port may legally have no subscriber, so UVM says nothing | Connect it in `connect_phase` |
+| The mirror follows the test's own accesses but misses firmware or DMA writes | Auto-predict is on and no predictor is connected: implicit prediction sees only model-started accesses | Connect a predictor; set auto-predict back to 0 |
+| `UVM_FATAL [REG/WRITE/NULL] write: adapter handle is null` at the first transfer | `predictor.adapter` was never set | Set it to the bus adapter |
+| A null-handle crash inside the predictor at the first transfer | `predictor.map` was never set | Set it to the bus's root map |
+| `REG_PREDICT` lines show values that differ from what `read()` returned | Checkpoint 2 or 3: the monitor publishes the wrong data (for example `wdata` for reads, or a value sampled after the edge), or `bus2reg()` copies the wrong field | Publish `rdata` for reads, sampled like the driver samples it; fix `bus2reg()` |
+| Nothing is predicted; at `+UVM_VERBOSITY=UVM_FULL` every transfer logs `REG_PREDICT_NOT_FOR_ME` "Observed transaction does not target a register" | Checkpoint 4: `predictor.map` is a sub-map, or `bus2reg()` converts the address wrongly (byte vs word), or the map's base address differs from the bus's | Bind the predictor to the root map; compare the logged address with the register's address |
+| `UVM_ERROR [RegModel] Cannot get register by offset: Block ral is not locked.` | Checkpoint 4: the model was never locked, so it has no address table | Call `lock_model()` at the end of the top block's `build()` |
+| `UVM_WARNING [PREDICT_NOK] status UVM_NOT_OK; skip prediction.` | Checkpoint 5: `bus2reg()` reported an error response, so the access was not predicted | Correct if the DUT really rejected it; otherwise fix the status mapping |
+| Only W1T fields (or other non-idempotent ones) mismatch, by exactly one toggle | Checkpoint 6: double prediction, auto-predict on next to a connected predictor | Set auto-predict to 0 |
+| A hardware status field mismatches right after a hardware event | Checkpoint 5: a hardware-changed field with `volatile = 0`, checked before anything read it | Read it first, or make it volatile and check it against your scoreboard |
+| `read()` returns 0 (or stale data) while the bus showed the right value | `provides_responses` does not match how the driver returns read data | Make the adapter flag and the driver agree |
+| `UVM_ERROR [UVM/REG/READONLY] … is read-only. Cannot call write() method.` | A test wrote a register that the map aliases as read-only, or that has `uvm_reg_read_only_cbs` | Write the write-only alias, or do not write it |
+
+**Try it: who forgot what?** The visualizer below models one register access through each wiring. Open its **Debug: the mirror never updates** tab. A test wrote CTRL and the DUT changed, but `mirror(UVM_CHECK)` reports the old value. Before you click any line, predict which line of `connect_phase` is the culprit, and which log message each *other* suspect would have produced instead. Then click your suspect and read the feedback, and try the four candidate fixes.
+
+<RALPredictorVisualizer />
+
+**Debrief.** The culprit is the commented-out `connect()`. It is the classic silent bug because, unlike a null adapter or a null map, a missing subscriber produces no message at all. Of the fixes, only restoring the connection is right. Turning on auto-predict instead hides the bug for the test's own accesses and fails at the first firmware write. Doing both predicts every access twice, which breaks the W1T LED. Calling `mirror(UVM_NO_CHECK)` changes nothing, because in uvm-core a frontdoor `mirror()` updates the mirror only through a predictor or auto-predict. The visualizer's **Experiment** tab replays any access under any wiring; [Explicit vs. Implicit Prediction](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit) uses it in depth.
+
+### Recap: the mistakes that break mirrors
+
+- Nothing is predicting: no predictor connected and auto-predict off (the default).
+- Both are predicting: auto-predict on next to a predictor, so W1T fields toggle back.
+- The predictor is fed wrong data: the monitor publishes the wrong value, or `bus2reg()` or `provides_responses` is wrong.
+- The predictor looks in the wrong table: a sub-map, an unlocked model, or a wrong address conversion.
+- The hardware changed a field that is not volatile, and the test checked it before reading it.
+- A test expects a mirror for a memory (there is none), or for a register reached only through a user frontdoor (only auto-predict or `predict()` move it).
+
+## Make It Work
+
+### An explicit predictor and a W1C test, end to end
+
+The example builds the smallest complete environment that exercises the page: a bus agent, an adapter, a three-register model, an explicit predictor, and a test that makes the hardware set a W1C bit behind the model's back.
+
+The DUT has three registers on a simple valid/write bus (one transfer per cycle in which `valid` is 1; it is always ready):
+
+| Address | Register | Fields | Notes |
+| --- | --- | --- | --- |
+| `'h00` | CTRL | EN[0] RW, LED[1] W1T | LED lets a double prediction show up |
+| `'h04` | INT_STATUS | ERR[0] W1C | Hardware sets ERR when a write hits an address with no register |
+| `'h08` | CNT | [15:0] RO, volatile | Counts clocks while EN = 1 |
+
+<ArchitectureDiagram
+  title="The example environment: explicit prediction"
+  caption="The map sends register accesses to agent.sqr through the adapter. agent.mon publishes every transfer to predictor.bus_in; the predictor converts it with the same adapter (predictor.adapter = adapter) and predicts the ral mirror. Auto-predict stays off."
+  nodes={[
+    { id: "env", label: "env (rb_env)", kind: "env", col: 0, row: 0, colSpan: 3, rowSpan: 3, container: true },
+    { id: "adapter", label: "adapter", sublabel: "rb_adapter", kind: "generic", col: 0, row: 0 },
+    { id: "ral", label: "ral", sublabel: "rb_block, default_map", kind: "reg", col: 1, row: 0 },
+    { id: "predictor", label: "predictor", sublabel: "uvm_reg_predictor #(rb_item)", kind: "predictor", col: 2, row: 0 },
+    { id: "agent", label: "agent (rb_agent)", kind: "agent", col: 0, row: 1, colSpan: 3, rowSpan: 2, container: true },
+    { id: "sqr", label: "sqr", kind: "sequencer", col: 0, row: 1 },
+    { id: "drv", label: "drv", kind: "driver", col: 0, row: 2 },
+    { id: "mon", label: "mon", kind: "monitor", col: 2, row: 2 },
+    { id: "dut", label: "dut", sublabel: "rb_regs", kind: "dut", col: 1, row: 3 }
+  ]}
+  ports={[
+    { id: "mon.ap", node: "mon", side: "top", kind: "analysis_port", label: "ap" },
+    { id: "predictor.bus_in", node: "predictor", side: "bottom", kind: "analysis_imp", label: "bus_in" }
+  ]}
+  edges={[
+    { from: "ral", to: "adapter", style: "structural", label: "reg2bus / bus2reg" },
+    { from: "ral", to: "sqr", style: "control", label: "set_sequencer(agent.sqr, adapter)" },
+    { from: "sqr", to: "drv", style: "data", label: "rb_item" },
+    { from: "drv", to: "dut", style: "data", label: "rb_if" },
+    { from: "dut", to: "mon", style: "data", label: "rb_if" },
+    { from: "mon.ap", to: "predictor.bus_in", style: "data", label: "write(t)" },
+    { from: "predictor", to: "ral", style: "causal", label: "do_predict" }
+  ]}
+/>
+
+```systemverilog
+// compile
+`timescale 1ns/1ps
+`include "uvm_macros.svh"
+
+// ------------------------------------------------------------------ bus interface
+interface rb_if (input logic clk, input logic rst_n);
+  logic        valid, write;
+  logic [7:0]  addr;
+  logic [31:0] wdata, rdata;
+
+  // #1step samples the value just before the edge, so driver and monitor agree.
+  clocking drv_cb @(posedge clk);
+    default input #1step output #0;
+    output valid, write, addr, wdata;
+    input  rdata, rst_n;
+  endclocking
+
+  clocking mon_cb @(posedge clk);
+    default input #1step;
+    input valid, write, addr, wdata, rdata, rst_n;
+  endclocking
+endinterface
+
+// ------------------------------------------------------------------------ the DUT
+// 'h00 CTRL       EN[0] RW, LED[1] W1T
+// 'h04 INT_STATUS ERR[0] W1C; hardware sets it when a write hits no register
+// 'h08 CNT        [15:0] RO; counts clocks while EN = 1
+module rb_regs (rb_if bus);
+  logic        en, led, err;
+  logic [15:0] cnt;
+  wire         wr     = bus.valid && bus.write;
+  wire         mapped = bus.addr inside {8'h00, 8'h04, 8'h08};
+
+  always_ff @(posedge bus.clk or negedge bus.rst_n) begin
+    if (!bus.rst_n) begin
+      en  <= 1'b0;
+      led <= 1'b0;
+      err <= 1'b0;
+      cnt <= '0;
+    end else begin
+      if (wr && bus.addr == 8'h00) begin
+        en  <= bus.wdata[0];
+        led <= led ^ bus.wdata[1];                 // write 1 to toggle
+      end
+      if (wr && bus.addr == 8'h04 && bus.wdata[0]) err <= 1'b0;  // write 1 to clear
+      else if (wr && !mapped)                      err <= 1'b1;  // decode error
+      if (en) cnt <= cnt + 16'd1;
+    end
+  end
+
+  always_comb begin
+    case (bus.addr)
+      8'h00:   bus.rdata = {30'd0, led, en};
+      8'h04:   bus.rdata = {31'd0, err};
+      8'h08:   bus.rdata = {16'd0, cnt};
+      default: bus.rdata = '0;
+    endcase
+  end
+endmodule
+
+package rb_pkg;
+  import uvm_pkg::*;
+
+  // ------------------------------------------------------------- agent classes
+  class rb_item extends uvm_sequence_item;
+    `uvm_object_utils(rb_item)
+    bit        write;
+    bit [7:0]  addr;
+    bit [31:0] data;   // write data, or the read data the driver fills in
+    function new(string name = "rb_item");
+      super.new(name);
+    endfunction
+  endclass
+
+  typedef uvm_sequencer #(rb_item) rb_sqr;
+
+  class rb_drv extends uvm_driver #(rb_item);
+    `uvm_component_utils(rb_drv)
+    virtual rb_if vif;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      if (!uvm_config_db#(virtual rb_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NOVIF", "rb_drv has no virtual interface")
+    endfunction
+    task run_phase(uvm_phase phase);
+      vif.drv_cb.valid <= 1'b0;
+      do @(vif.drv_cb); while (!vif.drv_cb.rst_n);
+      forever begin
+        seq_item_port.get_next_item(req);
+        vif.drv_cb.valid <= 1'b1;
+        vif.drv_cb.write <= req.write;
+        vif.drv_cb.addr  <= req.addr;
+        vif.drv_cb.wdata <= req.data;
+        @(vif.drv_cb);                         // the transfer happens at this edge
+        if (!req.write) req.data = vif.drv_cb.rdata;
+        vif.drv_cb.valid <= 1'b0;
+        @(vif.drv_cb);                         // the monitor published one edge ago
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
+
+  class rb_mon extends uvm_monitor;
+    `uvm_component_utils(rb_mon)
+    virtual rb_if vif;
+    uvm_analysis_port #(rb_item) ap;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      ap = new("ap", this);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      if (!uvm_config_db#(virtual rb_if)::get(this, "", "vif", vif))
+        `uvm_fatal("NOVIF", "rb_mon has no virtual interface")
+    endfunction
+    task run_phase(uvm_phase phase);
+      forever begin
+        @(vif.mon_cb);
+        if (vif.mon_cb.rst_n && vif.mon_cb.valid) begin
+          rb_item t = rb_item::type_id::create("t");   // a new object per transfer
+          t.write = vif.mon_cb.write;
+          t.addr  = vif.mon_cb.addr;
+          t.data  = t.write ? vif.mon_cb.wdata : vif.mon_cb.rdata;
+          ap.write(t);
+        end
+      end
+    endtask
+  endclass
+
+  class rb_agent extends uvm_agent;
+    `uvm_component_utils(rb_agent)
+    rb_sqr sqr;
+    rb_drv drv;
+    rb_mon mon;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      sqr = rb_sqr::type_id::create("sqr", this);
+      drv = rb_drv::type_id::create("drv", this);
+      mon = rb_mon::type_id::create("mon", this);
+    endfunction
+    function void connect_phase(uvm_phase phase);
+      drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+  endclass
+
+  // A bus write the register model did not start, as firmware or a DMA would make.
+  class stray_write_seq extends uvm_sequence #(rb_item);
+    `uvm_object_utils(stray_write_seq)
+    bit [7:0] addr;
+    function new(string name = "stray_write_seq");
+      super.new(name);
+    endfunction
+    task body();
+      req = rb_item::type_id::create("req");
+      start_item(req);
+      req.write = 1'b1;
+      req.addr  = addr;
+      req.data  = '0;
+      finish_item(req);
+    endtask
+  endclass
+
+  // ------------------------------------------------------------ register layer
+  class rb_adapter extends uvm_reg_adapter;
+    `uvm_object_utils(rb_adapter)
+    function new(string name = "rb_adapter");
+      super.new(name);
+      supports_byte_enable = 0;  // the bus has no byte strobes
+      provides_responses   = 0;  // the driver writes read data into the request
+    endfunction
+    virtual function uvm_sequence_item reg2bus(const ref uvm_reg_bus_op rw);
+      rb_item t = rb_item::type_id::create("t");
+      t.write = (rw.kind == UVM_WRITE);
+      t.addr  = rw.addr;
+      t.data  = rw.data;
+      return t;
+    endfunction
+    virtual function void bus2reg(uvm_sequence_item bus_item,
+                                  ref uvm_reg_bus_op rw);
+      rb_item t;
+      if (!$cast(t, bus_item))
+        `uvm_fatal("NOT_RB", "bus2reg was given an item that is not an rb_item")
+      rw.kind   = t.write ? UVM_WRITE : UVM_READ;
+      rw.addr   = t.addr;
+      rw.data   = t.data;
+      rw.status = UVM_IS_OK;     // this bus has no error response
+    endfunction
+  endclass
+
+  class ctrl_reg extends uvm_reg;
+    `uvm_object_utils(ctrl_reg)
+    rand uvm_reg_field en, led;
+    function new(string name = "ctrl_reg");
+      super.new(name, 32, UVM_NO_COVERAGE);
+    endfunction
+    virtual function void build();
+      en  = uvm_reg_field::type_id::create("en");
+      led = uvm_reg_field::type_id::create("led");
+      // parent, size, lsb, access, volatile, reset, has_reset, is_rand, indv
+      en.configure (this, 1, 0, "RW",  0, 1'b0, 1, 1, 0);
+      led.configure(this, 1, 1, "W1T", 0, 1'b0, 1, 0, 0);
+    endfunction
+  endclass
+
+  class int_status_reg extends uvm_reg;
+    `uvm_object_utils(int_status_reg)
+    uvm_reg_field err;
+    function new(string name = "int_status_reg");
+      super.new(name, 32, UVM_NO_COVERAGE);
+    endfunction
+    virtual function void build();
+      err = uvm_reg_field::type_id::create("err");
+      // volatile = 0: hardware sets ERR only on an event the test causes,
+      // so the test reads it before any check (see "Fields the hardware changes").
+      err.configure(this, 1, 0, "W1C", 0, 1'b0, 1, 0, 0);
+    endfunction
+  endclass
+
+  class cnt_reg extends uvm_reg;
+    `uvm_object_utils(cnt_reg)
+    uvm_reg_field value;
+    function new(string name = "cnt_reg");
+      super.new(name, 32, UVM_NO_COVERAGE);
+    endfunction
+    virtual function void build();
+      value = uvm_reg_field::type_id::create("value");
+      // volatile = 1: the counter moves every clock, so mirror() must not compare it
+      value.configure(this, 16, 0, "RO", 1, 16'h0, 1, 0, 0);
+    endfunction
+  endclass
+
+  class rb_block extends uvm_reg_block;
+    `uvm_object_utils(rb_block)
+    rand ctrl_reg       ctrl;
+    rand int_status_reg int_status;
+    rand cnt_reg        cnt;
+    function new(string name = "rb_block");
+      super.new(name, UVM_NO_COVERAGE);
+    endfunction
+    virtual function void build();
+      ctrl = ctrl_reg::type_id::create("ctrl");
+      ctrl.configure(this);
+      ctrl.build();
+      int_status = int_status_reg::type_id::create("int_status");
+      int_status.configure(this);
+      int_status.build();
+      cnt = cnt_reg::type_id::create("cnt");
+      cnt.configure(this);
+      cnt.build();
+      default_map = create_map("default_map", 'h0, 4, UVM_LITTLE_ENDIAN);
+      default_map.add_reg(ctrl,       'h00, "RW");
+      default_map.add_reg(int_status, 'h04, "RW");
+      default_map.add_reg(cnt,        'h08, "RO");
+      lock_model();
+    endfunction
+  endclass
+
+  // ------------------------------------------------------------- env and test
+  class rb_env extends uvm_env;
+    `uvm_component_utils(rb_env)
+    rb_agent                     agent;
+    rb_block                     ral;
+    rb_adapter                   adapter;
+    uvm_reg_predictor #(rb_item) predictor;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      agent     = rb_agent::type_id::create("agent", this);
+      predictor = uvm_reg_predictor #(rb_item)::type_id::create("predictor", this);
+      adapter   = rb_adapter::type_id::create("adapter");
+      ral       = rb_block::type_id::create("ral");
+      ral.build();
+    endfunction
+    function void connect_phase(uvm_phase phase);
+      ral.default_map.set_sequencer(agent.sqr, adapter);
+      ral.default_map.set_auto_predict(0);   // the default; say it for the reader
+      predictor.map     = ral.default_map;   // a root map: it owns the address table
+      predictor.adapter = adapter;           // the same bus2reg() the map uses
+      agent.mon.ap.connect(predictor.bus_in);
+    endfunction
+  endclass
+
+  class rb_test extends uvm_test;
+    `uvm_component_utils(rb_test)
+    rb_env env;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    function void build_phase(uvm_phase phase);
+      env = rb_env::type_id::create("env", this);
+    endfunction
+
+    function void check_ok(uvm_status_e st, string what);
+      if (st != UVM_IS_OK) `uvm_error("ACCESS", {what, " returned ", st.name()})
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      uvm_status_e    st;
+      uvm_reg_data_t  rd, stale;
+      stray_write_seq stray;
+      phase.raise_objection(this);
+
+      // 1. EN = 1, LED toggles 0 -> 1. The predictor sets the CTRL mirror to 'h3.
+      env.ral.ctrl.write(st, 'h3);
+      check_ok(st, "ctrl.write");
+
+      // 2. A write the model did not start, to an address with no register.
+      //    The DUT records the decode error by setting INT_STATUS.ERR.
+      stray = stray_write_seq::type_id::create("stray");
+      stray.addr = 8'hFC;
+      stray.start(env.agent.sqr);
+
+      // 3. Nothing predicted ERR, so its mirror is stale until something reads it.
+      stale = env.ral.int_status.get_mirrored_value();
+      env.ral.int_status.read(st, rd);
+      check_ok(st, "int_status.read");
+      `uvm_info("W1C", $sformatf("ERR mirror before read=%0d, read=%0d, after=%0d",
+                stale, rd, env.ral.int_status.get_mirrored_value()), UVM_LOW)
+
+      // 4. Write 1 to clear. The predictor applies W1C: mirror & ~data = 0.
+      env.ral.int_status.write(st, 'h1);
+      check_ok(st, "int_status.write");
+
+      // 5. Every mirror must now equal the DUT. CNT is volatile: read, not compared.
+      env.ral.ctrl.mirror(st, UVM_CHECK);
+      check_ok(st, "ctrl.mirror");
+      env.ral.int_status.mirror(st, UVM_CHECK);
+      check_ok(st, "int_status.mirror");
+      env.ral.cnt.mirror(st, UVM_CHECK);
+      check_ok(st, "cnt.mirror");
+
+      phase.drop_objection(this);
+    endtask
+  endclass
+endpackage
+
+module tb_top;
+  import uvm_pkg::*;
+  import rb_pkg::*;
+
+  logic clk   = 1'b0;
+  logic rst_n = 1'b0;
+  always #5 clk = ~clk;
+
+  rb_if   bus (.clk(clk), .rst_n(rst_n));
+  rb_regs dut (.bus(bus));
+
+  // Release reset on a falling edge so it never races the DUT's flops.
+  initial begin
+    repeat (2) @(negedge clk);
+    rst_n <= 1'b1;
+  end
+
+  initial begin
+    uvm_config_db#(virtual rb_if)::set(null, "uvm_test_top.env.agent.*", "vif", bus);
+    run_test("rb_test");
+  end
+endmodule
+```
+
+**Run it.** Save the listing as `tb_top.sv`. Compile it with the uvm-core 2020.3.1 library on a simulator with UVM support, with `tb_top` as the top module, and run it. Add `+UVM_VERBOSITY=UVM_HIGH` to see the predictor's `REG_PREDICT` lines. Open-source simulators support UVM only partly; this example has not been run on one.
+
+**Expected output** (illustrative: traced by hand from the code, from IEEE 1800-2023 §14.13 and §14.16, and from the uvm-core 2020.3.1 message formats; not captured from a simulator). Excerpt at `+UVM_VERBOSITY=UVM_HIGH`, with times in ns, and with the file and line fields and the library's own banner and phase messages left out:
+
+```text
+UVM_INFO @ 35: uvm_test_top.env.predictor [REG_PREDICT] Observed WRITE transaction to register ral.ctrl: value='h3 : updated value = 'h3
+UVM_INFO @ 75: uvm_test_top.env.predictor [REG_PREDICT] Observed READ transaction to register ral.int_status: value='h1
+UVM_INFO @ 85: uvm_test_top [W1C] ERR mirror before read=0, read=1, after=1
+UVM_INFO @ 95: uvm_test_top.env.predictor [REG_PREDICT] Observed WRITE transaction to register ral.int_status: value='h1 : updated value = 'h0
+UVM_INFO @ 115: uvm_test_top.env.predictor [REG_PREDICT] Observed READ transaction to register ral.ctrl: value='h3
+UVM_INFO @ 135: uvm_test_top.env.predictor [REG_PREDICT] Observed READ transaction to register ral.int_status: value='h0
+UVM_INFO @ 155: uvm_test_top.env.predictor [REG_PREDICT] Observed READ transaction to register ral.cnt: value='hb
+
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO : …
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+**Why those lines and times.**
+- The clock has a 10 ns period with rising edges at 5, 15, 25 ns and so on. Reset is released at 20 ns, so the driver starts at the 25 ns edge and each access takes two edges: the transfer edge, then one idle edge.
+- The stray write to `'hFC` at 55 ns is published too, but it targets no register. The predictor logs `REG_PREDICT_NOT_FOR_ME` only at `UVM_FULL`, so it is not in this excerpt.
+- At default verbosity you see only the `W1C` line and the summary.
+- CNT reads `'hb` (11) because EN became 1 at the 35 ns edge and the counter then advanced on the 11 edges from 45 ns to 145 ns. Because CNT is volatile, `mirror(UVM_CHECK)` reads it but does not compare it.
+
+**Why the driver waits one extra edge before `item_done()`.** An explicit predictor runs when the monitor publishes, not when `write()` returns. If `item_done()` came at the transfer edge, `write()` could return, and the test could look at the mirror, *before* the monitor's process had run in that same time step. Here the monitor publishes at the transfer edge and `item_done()` comes one edge later, so every prediction has happened by the time the register call returns:
+
+<TimingDiagram
+  title="One register access in the example: the CTRL write"
+  caption="Edges 0 to 3 are the 25, 35, 45 and 55 ns rising edges. values[k] is the value sampled at edge k: the driver drives after edge 0, the DUT and the monitor sample the transfer at edge 1, and the driver calls item_done() at edge 2."
+  edges={4}
+  signals={[
+    { name: "clk", kind: "clock" },
+    { name: "valid", kind: "bit", values: [0, 1, 0, 1] },
+    { name: "write", kind: "bit", values: [undefined, 1, 1, 1] },
+    { name: "addr", kind: "bus", values: [undefined, "'h00", "'h00", "'hFC"] },
+    { name: "wdata", kind: "bus", values: [undefined, "'h3", "'h3", "'h0"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "drive", label: "the driver drives the CTRL write after this edge" },
+    { edge: 1, tone: "sample", label: "transfer: the DUT writes CTRL; the monitor publishes and the predictor sets the mirror to 'h3" },
+    { edge: 2, tone: "info", label: "the driver calls item_done(), so write() returns; the stray write is driven after this edge" },
+    { edge: 3, tone: "sample", label: "the stray write to 'hFC; the DUT sets INT_STATUS.ERR" }
+  ]}
+/>
+
+**How to build an environment like this:**
+1. Make the monitor publish a **new** item for every completed transfer, reads with their read data, sampled the same way the driver samples them (`#1step` here).
+2. Write the adapter so that `reg2bus()` and `bus2reg()` are exact inverses, and set `provides_responses` and `supports_byte_enable` to match the driver and the bus.
+3. In the register model, give each field its real policy, and decide per hardware-changed field: volatile (moves at any time) or checked after a read (moves only on events the test causes).
+4. In `connect_phase`: `set_sequencer()` on the root map, leave auto-predict at 0, set `predictor.map` (the root map) and `predictor.adapter`, and connect `mon.ap` to `predictor.bus_in`.
+5. In the test, read any hardware-changed field before you check it, and check every access's `status`.
+6. Finish with `mirror(UVM_CHECK)` on each register (or on the block). The run must end with `UVM_ERROR :    0` and `UVM_FATAL :    0`.
+7. Prove the checks can fail: try the three mutants in the kata under Practice & Reinforce.
+
+**Checklist before moving on:**
+- [ ] Your monitor publishes reads with their read data, and you can say at which edge it samples.
+- [ ] Auto-predict is off wherever a predictor is connected, and every predictor is bound to a root map.
+- [ ] Every hardware-changed field is either volatile or read before it is checked.
+- [ ] Your adapter's `provides_responses` matches how your driver returns read data.
+- [ ] Your test checks `status` after every access and ends with `mirror(UVM_CHECK)`.
+- [ ] You can predict which check each kata mutant breaks, and why.
+
+## Push Further
+
+### Expert: inside `uvm_reg_predictor::write()`
+
+The predictor is a short function, and knowing it line by line answers most "why did the mirror not move?" questions (uvm-core 2020.3.1 `src/reg/uvm_reg_predictor.svh`; IEEE 1800.2-2020 §19.3.2–§19.3.3):
+1. It fatals with `REG/WRITE/NULL` if `adapter` is null, sets `rw.byte_en` to all ones "in case they forget", and calls `adapter.bus2reg(tr, rw)`.
+2. It looks the address up with `map.get_reg_by_offset(rw.addr, rw.kind == UVM_READ)`. The lookup uses the root map's address table and needs a locked model (§18.2.4.17). The read flag matters for an RO and a WO register aliased at one address. Memories are never looked up, so memory traffic is never predicted.
+3. If no register matches, it logs `REG_PREDICT_NOT_FOR_ME` at `UVM_FULL` and returns. At normal verbosity, a predictor that never matches is completely silent.
+4. A register wider than the bus arrives as several transfers. The predictor collects one per bus word before predicting, raises `REG_PREDICT_COLLISION` if the same word arrives twice, and reports `PENDING REG ITEMS` in `check_phase` if a register is still incomplete at the end of the test (§19.3.3.3).
+5. For a read with check-on-read enabled on the map, it compares the read data with the mirror (`do_check`) **before** predicting.
+6. It calls `pre_predict(item)` (§19.3.3.2: "change the value or redirect the target register"), samples register coverage, and calls `do_predict(item, UVM_PREDICT_WRITE or UVM_PREDICT_READ)` with door `UVM_PREDICT`.
+7. It logs `REG_PREDICT` at `UVM_HIGH` and publishes the item on `reg_ap` (§19.3.2.2), which is the clean place to attach a register scoreboard.
+
+`flush()` clears pending multi-beat items after a reset; it is a uvm-core extension marked `@uvm-contrib`, not part of IEEE 1800.2-2020.
+
+### Expert: passive checking with check-on-read
+
+`map.set_check_on_read(1)` (§18.2.5.3) makes every observed read be compared with the mirror before it is predicted; the clause calls it "useful when the register model is used passively". With an explicit predictor on every bus, the register model becomes a passive register checker for firmware-driven SoC tests: firmware reads registers, and any read that disagrees with what the model predicted from earlier traffic is reported. Unlike `set_auto_predict()`, `set_check_on_read()` propagates to every sub-map.
+
+Two uvm-core 2020.3.1 details that the clause does not state. First, a frontdoor read is checked only by a predictor or inside the auto-predict branch of `uvm_reg::do_read`. With neither, check-on-read checks nothing, and with both (already a wiring error) every mismatch is reported twice. Second, the check uses each field's compare mode, so volatile fields still need correct `volatile` settings, or the passive checker produces false failures on every interrupt.
+
+### Expert: field access, byte enables and the neighbour-fill rule
+
+The single-field diagram above is the core of `uvm_reg_field::is_indv_accessible()` (uvm-core 2020.3.1 `uvm_reg_field.svh`). The precise behaviour:
+- A **backdoor** field access is always a whole-register access ("Individual BACKDOOR field access not available").
+- The byte-enable check applies only when the root map has an adapter whose `supports_byte_enable` is 0. The "only field in its bus word" check then decides whether the neighbours' bits can be left out.
+- When a field write becomes a register write, the other fields are filled from their **mirrored** values (RW-like policies), 0 (RO, RC, RS and the W1x family), or all ones (the W0x family). WC, WS, WCRS, WSRC, WOC and WOS neighbours cause a warning that the write "will cause unintended side effects".
+- Compiling with `+define+UVM_REG_NO_INDIVIDUAL_FIELD_ACCESS` forces every field write to be a register write.
+
+The interview angle: "Writing one field turned off an enable in the same register. Why?" The field write became a whole-register write, and the RW enable was filled from a stale mirror. W1C neighbours are written as 0, so they are not cleared by accident; RW neighbours get whatever the mirror says. Field writes are safe only on a correct mirror.
+
+### Expert: aliased, indirect and FIFO registers
+
+- **Aliases.** An RO register and a WO register may share one address. The map accepts that pair, adds `uvm_reg_read_only_cbs` and `uvm_reg_write_only_cbs` to them, and the predictor picks the right one by direction. Any other overlap warns that a register "maps to same address as register" (uvm-core `uvm_reg_map.svh`).
+- **Indirect registers.** `uvm_reg_indirect_data` (§18.7) models a register array reached through an index register. It installs its own frontdoors on the array entries, and its `do_predict()` forwards predictions to the entry the index selects, so an explicit predictor *does* update the array.
+- **FIFOs.** `uvm_reg_fifo` (§18.8) models a FIFO data register in which writes push and reads pop. Backdoor access is not supported, because no single deposit can set the FIFO's internal state.
+- **Your own frontdoors** get none of this: the predictor sees only the transfers they make. Pair a user frontdoor with auto-predict, an explicit `predict()`, or a `pre_predict()` override that redirects the item.
+
+### Expert: reset and the mirror
+
+`reset()` on the block (§18.4.4.5 for a register) loads every field's reset value into the mirror and the desired value. It does not touch the DUT. When the DUT is reset in the middle of a test:
+- call `ral.reset()` when the reset asserts, so the mirror matches the reset values;
+- call `predictor.flush()` (uvm-core only) so no half-collected multi-beat register survives into the next phase;
+- make sure no register access is in flight, or its completion will be predicted onto the reset mirror.
+
+Without these steps, every `mirror(UVM_CHECK)` after the reset reports the pre-reset values as mismatches. Reset handling across the whole testbench is the topic of the planned A-UVM-9 module.
+
+### Expert: methodology trade-offs at scale
+
+- **Explicit prediction plus check-on-read on every bus** costs a monitor per bus but gives a passive checker for free. Auto-predict is acceptable only on a bus that the register model alone drives, and only before a monitor exists.
+- **Backdoor for set-up, frontdoor for checks.** Backdoor accesses save simulation time in long configuration sequences; the frontdoor still has to be proved, by the access sequence or by targeted tests. [Frontdoor vs. Backdoor Access](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/frontdoor-vs-backdoor) covers the side effects.
+- **Run the built-in tests per IP, not per SoC.** Bit-bash makes several accesses per bit per map; at SoC scale run it on each block in isolation, with unsafe registers fenced off ([Built-in RAL Sequences](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/built-in-ral-sequences)).
+- **A register scoreboard on `reg_ap`** sees every predicted register access in one place. That is easier to maintain than `mirror(UVM_CHECK)` calls scattered through sequences, and it can apply design knowledge that no access policy captures.
+- **The mirror is not a reference model.** It records what the bus did to the registers. Whether the design then *behaved* correctly belongs in your scoreboards ([A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index)).
+
+### Interview angles
+
+Answer each question yourself before you open the options' feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: three initiators, two buses"
+  question="Firmware on a CPU, a DMA engine and your UVM test all write one register file. The CPU and the DMA share an AXI bus; the test also uses an APB debug port. Design the prediction and checking."
+  options={[
+    { text: "One explicit predictor per bus, each bound to that bus's root map, auto-predict off everywhere, hardware-changed fields volatile, and check-on-read on both maps so every observed read is checked.", isCorrect: true, feedback: "Right. Each predictor sees every initiator on its bus, so firmware and DMA writes are predicted; one model means one mirror; volatile settings stop interrupts from causing false failures; check-on-read turns the model into a passive checker." },
+    { text: "Auto-predict on both maps: the test's accesses keep the mirror right, and firmware writes are rare.", isCorrect: false, feedback: "Auto-predict never sees firmware or DMA traffic, so the mirror drifts at the first such write, and every later check is a false failure." },
+    { text: "One predictor on the AXI bus only. The debug port carries only the test's own accesses, so it needs no prediction at all.", isCorrect: false, feedback: "Then every debug-port write leaves the mirror stale, because nothing predicts it, and the next check of that register fails on correct hardware. The debug bus needs its own predictor (or, at the least, auto-predict on its map)." },
+    { text: "Call mirror(UVM_CHECK) on every register after each firmware step.", isCorrect: false, feedback: "That checks the registers against a mirror that was never told about the firmware writes, so it fails on correct hardware. It also costs a bus read per register per step." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: why W1T and not W1C?"
+  question="With auto-predict on and a predictor connected, the mirror goes wrong for a W1T field but stays right for RW and W1C fields. Why?"
+  options={[
+    { text: "Each model-started access is predicted twice. RW (store the data) and W1C (mirror AND NOT data) give the same result when applied twice; W1T (mirror XOR data) undoes itself.", isCorrect: true, feedback: "Right. Double prediction is invisible on idempotent policies, which is why it survives code review. A W1T or other toggle field, or a counter-like custom policy, is the canary." },
+    { text: "The predictor ignores W1C fields, so only W1T fields are predicted twice.", isCorrect: false, feedback: "The predictor applies every policy, including W1C; W1C simply gives the same answer when applied twice." },
+    { text: "Auto-predict runs before the bus transfer, so it predicts W1T from an old value.", isCorrect: false, feedback: "Auto-predict runs after the access completes. The order between it and the predictor does not matter: 0 XOR 1 XOR 1 = 0 either way." },
+    { text: "W1T fields must be configured volatile, and this one is not.", isCorrect: false, feedback: "Making the field volatile would only stop the check from seeing the wrong mirror. The prediction would still be wrong." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "Firmware writes a scratch register over the bus. The map has set_auto_predict(1) and no uvm_reg_predictor exists. What happens to the register's mirror?",
+    objective: 1,
+    answers: [
+      { text: "It is updated: auto-predict watches the bus", correct: false, feedback: "Auto-predict watches nothing. It runs inside the register model's own read() and write() calls." },
+      { text: "It is updated, because firmware transfers pass through the map's sequencer", correct: false, feedback: "Firmware drives the bus from its own master, not through your sequencer. And auto-predict acts only on the accesses the register model itself issues." },
+      { text: "It stays at its old value: auto-predict only predicts accesses the register model starts", correct: true, feedback: "Right. Only a predictor fed by the bus monitor sees transfers from other initiators." },
+      { text: "It is cleared to the reset value", correct: false, feedback: "Nothing resets the mirror except reset() on the model." }
+    ],
+    explanation: "Implicit prediction runs inside uvm_reg::write()/read() when their own access completes. A transfer from firmware never passes through those methods, so only an explicit predictor fed by the monitor would see it."
+  },
+  {
+    question: "Which set-up is explicit prediction?",
+    objective: 1,
+    answers: [
+      { text: "Calling predict() on the register after every write", correct: false, feedback: "That is a manual patch, not a prediction set-up. It predicts what you believe happened, and it misses every access you did not make." },
+      { text: "A uvm_reg_predictor whose bus_in is connected to the bus monitor's analysis port", correct: true, feedback: "Right. Explicit = a predictor component fed by observed transfers." },
+      { text: "ral.default_map.set_auto_predict(1)", correct: false, feedback: "That is implicit (auto) prediction." },
+      { text: "Calling mirror(UVM_CHECK) after every write", correct: false, feedback: "mirror() reads and checks; it predicts only through a predictor or auto-predict." }
+    ],
+    explanation: "Explicit prediction is the uvm_reg_predictor fed by a monitor (IEEE 1800.2-2020 §19.3). Implicit prediction is set_auto_predict(1) (§18.2.5.2). A hand-written predict() is neither."
+  },
+  {
+    question: "The env connects a predictor and also calls set_auto_predict(1). The test writes 1 to a W1T LED bit whose mirror and DUT value are 0. What does the mirror hold afterwards?",
+    objective: 2,
+    answers: [
+      { text: "1, the same as the DUT", correct: false, feedback: "That would need exactly one prediction. Here the access is predicted twice." },
+      { text: "X until the next read", correct: false, feedback: "Prediction never produces X from known values." },
+      { text: "0: the access is predicted twice and the two toggles cancel", correct: true, feedback: "Right. The DUT holds 1, so the next mirror(UVM_CHECK) reports a mismatch on LED." },
+      { text: "1, because auto-predict is skipped when a predictor is connected", correct: false, feedback: "Nothing links the two. Auto-predict runs whenever the root map has it on." }
+    ],
+    explanation: "Both the predictor and auto-predict apply W1T (mirror XOR data). In either order, 0 XOR 1 XOR 1 = 0. RW and W1C fields would hide the bug, because applying them twice gives the same result."
+  },
+  {
+    question: "INT_STATUS.ERR is W1C with volatile = 0, its mirror is 0, and an explicit predictor is connected. The hardware sets ERR. The test immediately calls int_status.mirror(status, UVM_CHECK) without reading first. Predict the result.",
+    objective: 2,
+    answers: [
+      { text: "A RegModel mismatch error (read 1, mirrored 0); afterwards the mirror holds 1", correct: true, feedback: "Right. mirror() compares the old mirror with the read value, then the predictor learns 1 from the read. It is a false failure caused by checking a hardware-set bit before anything read it." },
+      { text: "It passes: mirror() reads first, then compares the new mirror", correct: false, feedback: "mirror() saves the mirrored value before it reads, and compares the read value with that saved value." },
+      { text: "It passes, because W1C fields are never compared", correct: false, feedback: "W1C fields are compared like any other non-volatile field. Only volatile (UVM_NO_CHECK) and write-only fields are left out." },
+      { text: "A mismatch error, and the mirror stays 0", correct: false, feedback: "The read is a bus transfer like any other, so the predictor sees it and sets the mirror to 1." }
+    ],
+    explanation: "uvm_reg::mirror() remembers get_mirrored_value(), reads, and checks the read value against the remembered value. Nothing predicted the hardware's change, so the check fails; read the field first, or make it volatile and check it against your scoreboard."
+  },
+  {
+    question: "What does configure(…, volatile = 1, …) change for a field?",
+    objective: 2,
+    answers: [
+      { text: "The predictor stops updating the field's mirror", correct: false, feedback: "Prediction still runs on every observed access." },
+      { text: "The register model polls the field every clock", correct: false, feedback: "The register model never polls; it only learns from accesses." },
+      { text: "The field becomes read-only", correct: false, feedback: "The access policy is a separate argument." },
+      { text: "Its compare mode becomes UVM_NO_CHECK, so mirror(UVM_CHECK) and check-on-read skip it", correct: true, feedback: "Right. set_compare(UVM_CHECK) turns checking back on when you need it." }
+    ],
+    explanation: "In uvm-core 2020.3.1 the field's check mode is UVM_NO_CHECK when volatile is 1. The mirror is still predicted from every access; the field is simply excluded from the valid bit mask that mirror(UVM_CHECK) compares."
+  },
+  {
+    question: "The mirror never changes. At +UVM_VERBOSITY=UVM_FULL every transfer logs REG_PREDICT_NOT_FOR_ME. The env sets predictor.map = ral.periph.default_map, which was added to ral.default_map with add_submap(). What is the cause?",
+    objective: 3,
+    answers: [
+      { text: "The monitor's analysis port is not connected to the predictor", correct: false, feedback: "Then the predictor would log nothing at all. NOT_FOR_ME proves it is receiving transfers." },
+      { text: "The predictor is bound to a sub-map; only the root map holds the address table, so no register is ever found", correct: true, feedback: "Right. Bind the predictor (and set_sequencer and set_auto_predict) to the root map, ral.default_map." },
+      { text: "The predictor's adapter is null", correct: false, feedback: "A null adapter is a UVM_FATAL REG/WRITE/NULL at the first transfer, before any lookup." },
+      { text: "The registers are volatile", correct: false, feedback: "Volatility affects checking, not the address lookup or prediction." }
+    ],
+    explanation: "uvm_reg_predictor::write() calls map.get_reg_by_offset(), which uses only the root map's address table. On a sub-map every lookup fails, and the only trace is a REG_PREDICT_NOT_FOR_ME message at UVM_FULL."
+  },
+  {
+    question: "Your driver returns read data only in a separate response item through put_response(). The adapter has provides_responses = 0, and an explicit predictor is connected. What do read() and the mirror show?",
+    objective: 3,
+    answers: [
+      { text: "read() returns the response data, because the sequencer routes responses to the map", correct: false, feedback: "With provides_responses = 0 the map never waits for a response; it calls bus2reg() on the request item." },
+      { text: "read() hangs until the response arrives", correct: false, feedback: "That is the opposite mismatch: provides_responses = 1 with a driver that never sends a response." },
+      { text: "Both show the DUT value, because bus2reg() reads the monitor", correct: false, feedback: "bus2reg() converts whatever item it is given. The map gives it the request item; only the predictor gives it the monitor's item." },
+      { text: "read() returns whatever the request item held (usually 0); the mirror, predicted from the monitor, holds the DUT value, so mirror(UVM_CHECK) reports a mismatch", correct: true, feedback: "Right. The mismatch points at the adapter, not the DUT. Make provides_responses match the driver." }
+    ],
+    explanation: "uvm_reg_map's perform_accesses() calls bus2reg() on the response only when provides_responses is 1 (IEEE 1800.2-2020 §19.2.1.2.3). Otherwise it uses the request item, which the driver never updated."
+  },
+  {
+    question: "You run the bit-bash sequence on a block with nothing excluded. The test then fails because a DMA engine started on its own. What is the most likely cause?",
+    objective: 3,
+    answers: [
+      { text: "Bit-bash wrote 1 to the DMA's GO bit: the built-in sequences do not know which registers are unsafe, so you must exclude them", correct: true, feedback: "Right. Set the NO_REG_TESTS (or NO_REG_BIT_BASH_TEST) resource for that register in the REG:: namespace before you start the sequence." },
+      { text: "Bit-bash skips command registers automatically, so the DMA must have a hardware bug", correct: false, feedback: "The sequences have no idea which registers start actions. They test every bit of every register that is not excluded." },
+      { text: "The DMA's GO bit is RW, and bit-bash only writes RO bits", correct: false, feedback: "Bit-bash writes every bit it can, and checks the result against each field's policy." },
+      { text: "The predictor predicted a write to GO that never happened", correct: false, feedback: "Prediction changes only the mirror, never the DUT. Something on the bus really wrote GO." }
+    ],
+    explanation: "The Annex E sequences test whatever is not fenced off. Registers with side effects (GO bits, FIFO pops, interrupt triggers) must be excluded with NO_REG_* resources; the Built-in RAL Sequences page shows how."
+  },
+  {
+    question: "An explicit predictor is connected. The test calls ral.sram.write(status, 'h10, 'hAB) on a uvm_mem. Where does the register model record 'hAB?",
+    objective: 4,
+    answers: [
+      { text: "In the memory's mirror at location 'h10", correct: false, feedback: "Memories have no mirror (IEEE 1800.2-2020 §18.6)." },
+      { text: "In the MAM region that contains location 'h10", correct: false, feedback: "The allocation manager tracks which locations are reserved, not their contents." },
+      { text: "Nowhere: memories have no mirror and the predictor never predicts memory accesses, so check contents by reading them back", correct: true, feedback: "Right. Or keep the expected contents in a scoreboard." },
+      { text: "In the predictor's pending queue until the next read", correct: false, feedback: "The pending queue collects the bus words of wide registers only." }
+    ],
+    explanation: "The standard leaves memories unmirrored because of their size, and uvm_reg_predictor looks up registers only. Memory checking is read-back or scoreboard work."
+  },
+  {
+    question: "CTRL is in cfg_map (RW) and dbg_map (RO), with one predictor per bus. The test writes 'h1 through cfg_map, then reads through dbg_map and calls mirror(UVM_CHECK) with map = ral.dbg_map. What does the check compare against?",
+    objective: 4,
+    answers: [
+      { text: "The dbg_map mirror, which never saw the write, so it reports a mismatch", correct: false, feedback: "There is no per-map mirror. A register has one mirror, whatever map reaches it." },
+      { text: "The single mirror of ral.ctrl, which cpu_pred updated to 'h1 when it saw the write", correct: true, feedback: "Right. One register object, one mirror; the maps differ only in address, rights, sequencer and adapter." },
+      { text: "Nothing: mirror(UVM_CHECK) is not allowed through an RO map", correct: false, feedback: "Reading through an RO map is allowed. Writing through it is what the RO rights restrict." },
+      { text: "The desired value, because the mirror is per map", correct: false, feedback: "mirror(UVM_CHECK) compares with the mirrored value, and there is only one." }
+    ],
+    explanation: "Every map that contains CTRL points at the same uvm_reg object, so a prediction made from either bus updates the one mirror that every check uses."
+  },
+  {
+    question: "TBL[2] is reached through a user frontdoor that writes INDEX then DATA. Auto-predict is off and an explicit predictor watches the bus. The test calls ral.tbl[2].write(status, 'h5A). Whose mirrors change?",
+    objective: 5,
+    answers: [
+      { text: "Only TBL[2]'s, because the frontdoor runs inside its write()", correct: false, feedback: "The target is predicted inside write() only through auto-predict, which is off." },
+      { text: "INDEX's, DATA's and TBL[2]'s", correct: false, feedback: "Nothing on the bus is addressed to TBL[2], so the predictor cannot reach it." },
+      { text: "None, because user frontdoors bypass prediction", correct: false, feedback: "INDEX and DATA are written with ordinary bus transfers, which the predictor sees." },
+      { text: "INDEX's and DATA's only; TBL[2] moves only with auto-predict, predict(), or uvm_reg_indirect_data", correct: true, feedback: "Right. The predictor predicts what the bus carried: two writes to INDEX and DATA." }
+    ],
+    explanation: "An explicit predictor maps each transfer's address to a register. The frontdoor's transfers target INDEX and DATA. uvm_reg_indirect_data (§18.7) is the built-in model whose predictions are forwarded to the indexed register."
+  },
+  {
+    question: "CMD.GO starts a job when written with 1 and always reads back 0. How do you keep its mirror right under explicit prediction?",
+    objective: 5,
+    answers: [
+      { text: "A uvm_reg_cbs whose post_predict sets value to 0 for UVM_PREDICT_WRITE, added with uvm_reg_field_cb::add(ral.cmd.go, cb)", correct: true, feedback: "Right. post_predict runs after every prediction, from any path, and its inout value replaces the predicted mirror (§18.11.2.6)." },
+      { text: "A post_write callback that calls ral.cmd.go.predict(0)", correct: false, feedback: "Fragile: with explicit prediction the monitor may publish after write() returns, and the predictor then sets GO back to 1." },
+      { text: "Configure GO as volatile", correct: false, feedback: "That hides the wrong mirror from checks, but the mirror still says 1. A later write to a neighbouring field is filled from the mirror and would write GO = 1 again." },
+      { text: "A pre_write callback that sets the status to UVM_NOT_OK", correct: false, feedback: "That cancels the write, so the job never starts." }
+    ],
+    explanation: "No standard policy describes a write-1 pulse that reads 0. A post_predict callback corrects the prediction wherever it comes from; field callbacks are registered with the uvm_reg_field_cb typedef (Annex D.4.5.7)."
+  },
+  {
+    question: "The env calls ral.set_coverage(UVM_CVR_ALL), but get_coverage(UVM_CVR_FIELD_VALS) returns 0 for every register. The model was generated with covergroups, and the test calls uvm_reg::include_coverage('*', UVM_CVR_ALL) in its run_phase. Why is there no coverage?",
+    objective: 5,
+    answers: [
+      { text: "set_coverage() must be called on each register, not on the block", correct: false, feedback: "The block's set_coverage() recurses into every register, memory and sub-block." },
+      { text: "include_coverage() ran after the registers were constructed, so none of them built their covergroups; set_coverage() can only turn on models that were built", correct: true, feedback: "Right. Call include_coverage() in the test's build_phase, before the env builds the model." },
+      { text: "Register coverage needs auto-predict", correct: false, feedback: "Coverage is sampled from the predictor too. The problem is earlier: the models were never built." },
+      { text: "UVM_CVR_ALL does not include field values", correct: false, feedback: "UVM_CVR_ALL includes every model (§17.2.2.9)." }
+    ],
+    explanation: "include_coverage() (§18.4.7.1) records which models to build; each register consults that record through build_coverage() when it is constructed. Afterwards, set_coverage() turns measurement on only for models that exist."
+  }
+]} />
+
+### Kata: an explicit predictor and a W1C test, with three mutants
+
+Work from the Make It Work listing.
+1. Without looking, write the env's `connect_phase` (four statements plus the auto-predict line) and steps 2 to 4 of the test from the DUT table alone.
+2. Apply each mutant below, one at a time. Before you run it (or trace it by hand), predict which `mirror(UVM_CHECK)` fails, the register and field the `RegModel` lines name, and the values they print.
+   - **Mutant A:** delete `agent.mon.ap.connect(predictor.bus_in);`.
+   - **Mutant B:** configure ERR as `"RW"` instead of `"W1C"`.
+   - **Mutant C:** change `set_auto_predict(0)` to `set_auto_predict(1)`, keeping the predictor connected.
+3. For each mutant, write one sentence saying which checkpoint of the debugging table it breaks.
+
+<details>
+<summary>Worked solution</summary>
+
+**Step 1.** The four statements are exactly the env's `connect_phase` in the listing. Their order does not matter, as long as all four run in `connect_phase`. The test steps are: start a `stray_write_seq` to `'hFC`; save `get_mirrored_value()`, `read()` INT_STATUS and log both; `write(st, 'h1)`.
+
+**Step 2** (illustrative, traced by hand; each mutant ends with `UVM_ERROR :    1`):
+
+| Mutant | Failing check | `RegModel` lines (abridged) | Checkpoint |
+| --- | --- | --- | --- |
+| A: no connection | `ctrl.mirror` | `Register "ral.ctrl" value read from DUT (0x…03) does not match mirrored value (0x…00)`; `Field en … read=1'h1 mirrored=1'h0`; `Field led … read=1'h1 mirrored=1'h0` | 1: nothing predicts. The `W1C` line also changes to `after=0`. INT_STATUS passes by luck: its mirror stayed 0 and the DUT was cleared to 0 |
+| B: ERR as RW | `int_status.mirror` | `Register "ral.int_status" value read from DUT (0x…00) does not match mirrored value (0x…01)`; `Field err … read=1'h0 mirrored=1'h1` | 5: wrong policy. Writing 1 was predicted as "store 1", but the DUT cleared the bit |
+| C: auto-predict on as well | `ctrl.mirror` | `Register "ral.ctrl" value read from DUT (0x…03) does not match mirrored value (0x…01)`; `Field led … read=1'h1 mirrored=1'h0` | 6: double prediction. The predictor toggled LED to 1 at 35 ns, auto-predict toggled it back at 45 ns. EN, ERR and CNT hide the bug |
+
+**Step 3.** A: checkpoint 1 (no subscriber, so no message until a check fails). B: checkpoint 5 (the model's policy does not match the hardware). C: checkpoint 6 (two predictors for one access).
+</details>
+
+### Debug challenge: match the log to the cause
+
+Each excerpt below comes from a different broken environment (illustrative, built from the uvm-core 2020.3.1 message formats). Name the cause before you open the answers.
+
+1. `UVM_FATAL … [REG/WRITE/NULL] write: adapter handle is null`
+2. With `+UVM_VERBOSITY=UVM_FULL`: `UVM_INFO … [REG_PREDICT_NOT_FOR_ME] Observed transaction does not target a register: …` on every transfer, including those to known register addresses.
+3. `UVM_ERROR … [RegModel] Cannot get register by offset: Block ral is not locked.`
+4. `UVM_WARNING … [PREDICT_NOK] status UVM_NOT_OK; skip prediction.` on every write to one register, while the DUT accepts the writes.
+5. `UVM_ERROR … [RegModel] Register "ral.ctrl" value read from DUT (0x…03) does not match mirrored value (0x…01)` followed by `Field led … read=1'h1 mirrored=1'h0`, and no other field ever mismatches.
+
+<details>
+<summary>Answers</summary>
+
+1. `predictor.adapter` was never set.
+2. The predictor is bound to a sub-map, or `bus2reg()` converts the address wrongly (for example a byte address divided by 4). Compare the logged address with the register's offset.
+3. The top block's `build()` never called `lock_model()`.
+4. The adapter's `bus2reg()` maps that register's response (or every response) to `UVM_NOT_OK`. Check its status mapping against the bus specification.
+5. Double prediction: auto-predict is on next to a connected predictor, and LED is the only W1T field.
+</details>
+
+### Lab: the RAL mirror bug
+
+The lab gives you a complete environment that runs and fails. Using only the log and the debugging table on this page, you find and fix the faults one at a time.
 
 <LabLink labId="ral-mirror-bug" />
 
 ## References & Next Topics
-- IEEE 1800.2-2020, Clauses 18–19.
-- Accellera uvm-core 2020.3.1, `src/reg/uvm_reg_predictor.svh` (explicit predictor), `uvm_reg_map.svh` (`set_auto_predict`, adapter calls), `uvm_reg.svh` (`do_write`/`do_read` auto-predict, `poke`/`peek`).
-- Accellera *UVM User's Guide*, register layer chapter (mirroring and prediction modes).
-- Next: Move to Tier-4 methodology customization for performance and debug.
+
+**Primary sources** (IEEE 1800.2-2020 unless stated):
+
+- §18.1.4 block coverage (`build_coverage`, `has_coverage`, `set_coverage`); §18.1.2.3 `create_map`; §18.1.2.6 `lock_model`.
+- §18.2.3.3 `add_reg`, §18.2.3.5 `add_submap`, §18.2.3.6 `set_sequencer`; §18.2.4.1 `get_root_map`, §18.2.4.17 `get_reg_by_offset`; §18.2.5.2 `set_auto_predict`; §18.2.5.3 `set_check_on_read`.
+- §18.4.4.5 `reset`; §18.4.4.9 `write` ("an address map shall be specified"); §18.4.4.10 `read`; §18.4.4.14 `mirror`; §18.4.4.15 `predict`; §18.4.5.2 `set_frontdoor`; §18.4.7.1 `include_coverage`.
+- §18.5.3.2 `uvm_reg_field::configure` (the volatile argument); §18.6 `uvm_mem` (no mirror) and §18.6.5 its access methods; §18.7 `uvm_reg_indirect_data`; §18.8 `uvm_reg_fifo`.
+- §18.11 `uvm_reg_cbs` (§18.11.2.6 `post_predict`; §18.11.4 `uvm_reg_read_only_cbs`); §18.12 `uvm_mem_mam` (§18.12.5.2 `request_region`); §17.2.2.9 `uvm_coverage_model_e`.
+- §19.2.1.2.2 `supports_byte_enable`, §19.2.1.2.3 `provides_responses`, §19.2.1.2.7 `get_item`; §19.3 `uvm_reg_predictor` (§19.3.2.1 `bus_in`, §19.3.2.2 `reg_ap`, §19.3.3.2 `pre_predict`, §19.3.3.3 `check_phase`); §19.4.2 `uvm_reg_frontdoor`; Annex D.4.5.7 `uvm_reg_field_cb`; Annex E (built-in sequences).
+- uvm-core 2020.3.1 (Accellera): `src/reg/uvm_reg_predictor.svh`, `uvm_reg_map.svh`, `uvm_reg.svh`, `uvm_reg_field.svh`, `uvm_reg_cbs.svh`, `uvm_reg_sequence.svh` (`uvm_reg_frontdoor`), `uvm_reg_indirect.svh`, `uvm_mem.svh`, `uvm_mem_mam.svh`, `uvm_reg_block.svh` and `uvm_reg_model.svh`. Statements labelled "uvm-core" describe this implementation where the standard is silent or worded differently.
+- IEEE 1800-2023 §14.13 (input sampling) and §14.16 (synchronous drives), for the example's clocking blocks.
+
+**Prerequisites:** [A-UVM-4A: RAL Fundamentals](/curriculum/T3_Advanced/A-UVM-4A_RAL_Fundamentals/index).
+
+**In this module:** [Explicit vs. Implicit Prediction](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/explicit-vs-implicit), [Frontdoor vs. Backdoor Access](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/frontdoor-vs-backdoor) and [Built-in RAL Sequences](/curriculum/T3_Advanced/A-UVM-4B_Advanced_RAL_Techniques/built-in-ral-sequences).
+
+**Related:**
+
+- [I-UVM-2B: TLM Connections](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index): analysis ports, the link from monitor to predictor.
+- [A-UVM-5: UVM Callbacks](/curriculum/T3_Advanced/A-UVM-5_UVM_Callbacks/index): how callbacks are registered and ordered, the mechanism behind `uvm_reg_cbs`.
+- [A-UVM-6: Scoreboards and Reference Models](/curriculum/T3_Advanced/A-UVM-6_Scoreboards_and_Reference_Models/index): what to check beyond the mirror.
+- [E-DBG-1: Advanced UVM Debug Methodologies](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/index): report catchers, verbosity and log triage.
+- [E-SOC-1: SoC-Level Verification Strategies](/curriculum/T4_Expert/E-SOC-1_SoC-Level_Verification_Strategies/index): register strategy across a whole SoC.
+
+<NextLesson />

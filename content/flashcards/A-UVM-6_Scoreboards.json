@@ -1,50 +1,82 @@
 [
   {
-    "front": "What is the primary role of a UVM scoreboard?",
-    "back": "A scoreboard collects transactions from monitors via analysis FIFOs, compares DUT output against a reference model's prediction, and reports pass/fail for each transaction."
+    "id": "a-uvm-6-1",
+    "question": "What are a scoreboard's three jobs, and what does `uvm_scoreboard` itself do?",
+    "answer": "Observe (two monitors publish what the DUT accepted and produced), predict (a reference model turns each accepted input into an expected item), and compare and account (pair, compare by value, report what is left over at end of test). `uvm_scoreboard` (IEEE 1800.2-2020 §13.6) extends `uvm_component` and adds no behaviour: every check is code you write."
   },
   {
-    "front": "Why do scoreboards use `uvm_tlm_analysis_fifo` instead of connecting directly to analysis ports?",
-    "back": "Analysis FIFOs decouple the monitor's broadcast timing from the scoreboard's comparison timing, preventing the scoreboard's `write()` method from blocking the monitor."
+    "id": "a-uvm-6-2",
+    "question": "Why does a scoreboard whose check must wait need analysis FIFOs instead of doing the check in `write()`?",
+    "answer": "`write()` is a function, so it runs in zero time and cannot wait for a clock, a model task or the other stream. The analysis FIFO is unbounded and its `write()` is a `try_put` that always succeeds, so it stores each handle while the scoreboard's own `run_phase` thread waits in `get()`. There is no back-pressure on the monitor in either form."
   },
   {
-    "front": "How do you handle out-of-order transactions in a scoreboard?",
-    "back": "Keep a per-ID queue of expected items: an associative array of queues, e.g. `my_item exp_q[int][$]`, indexed by ID. Push predictions onto the queue for their ID; when an actual item arrives, pop the front of that ID's queue and compare. Items that share an ID must still match in order (AXI-style same-ID ordering), so a single entry per ID is not enough."
+    "id": "a-uvm-6-3",
+    "question": "How do you build an out-of-order scoreboard that is safe when an ID is reused?",
+    "answer": "Keep one ordered queue per key, `exp_q[id][$]` (an associative array of queues). Push each prediction onto its key's queue; when an actual arrives, pop the oldest entry for its key and compare. One slot per key overwrites a pending prediction when two requests with the same key are outstanding."
   },
   {
-    "front": "What is a reference model and how does it differ from a scoreboard?",
-    "back": "A reference model predicts expected DUT output from input stimuli (a golden model). The scoreboard compares the reference model's predictions against actual DUT output. They are often separate classes."
+    "id": "a-uvm-6-4",
+    "question": "What is a reference model, and where should the predictor take its inputs?",
+    "answer": "An executable, transaction-level model of what the DUT must compute, written from the specification and simple enough to trust more than the RTL (\"golden model\" is an informal name; it can share the RTL's misreading). The predictor feeds it the inputs the input monitor saw the DUT accept, never the sequence's or driver's intent."
   },
   {
-    "front": "What is the analysis port → analysis FIFO → scoreboard connection pattern?",
-    "back": "Monitor writes transactions to its `uvm_analysis_port`. The scoreboard's `uvm_tlm_analysis_fifo` subscribes. A separate scoreboard thread calls `fifo.get()` to consume items at its own pace."
+    "id": "a-uvm-6-5",
+    "question": "When do you feed a scoreboard with two `uvm_analysis_imp_decl` imps, and when with two analysis FIFOs?",
+    "answer": "Imps (`` `uvm_analysis_imp_decl(_exp) ``, `write_exp()`/`write_act()`) when every action is zero-time: store, look up, compare, count; they need a held queue for an actual that arrives before its prediction in the same time step. FIFOs and a `run_phase` thread when a check must wait."
   },
   {
-    "front": "What is a common pitfall when comparing objects in a scoreboard?",
-    "back": "Comparing by handle reference (`==`) instead of by value (`compare()`). Two distinct objects with identical fields are not reference-equal. Always use `expected.compare(actual)` or `do_compare()`."
+    "id": "a-uvm-6-6",
+    "question": "Why is `if (act == exp)` wrong in a scoreboard, and what do you write instead?",
+    "answer": "`==` on class handles is true only for the same object (IEEE 1800-2023 §8.4), and an expected and an actual item are always two objects. Call `exp.compare(act)` and check the `bit` it returns; `do_compare()` is the hook you implement, not the method you call."
   },
   {
-    "front": "How should a scoreboard report mismatches?",
-    "back": "Use `uvm_error` with a descriptive tag and formatted message including both expected and actual values, transaction ID, and simulation time for easy debug."
+    "id": "a-uvm-6-7",
+    "question": "What should a `SCB/MISMATCH` error message contain?",
+    "answer": "The expected item, the actual item, the match key (tag or ID) and the comparer's detail (`get_miscompares()`). UVM already prints the simulation time and the component path in every message."
   },
   {
-    "front": "When does a scoreboard typically run its comparison logic?",
-    "back": "In a `run_phase` task with a `forever` loop that blocks on `fifo.get()`. Some designs use multiple FIFOs (one for input, one for output) and synchronize between them."
+    "id": "a-uvm-6-8",
+    "question": "What does `compare()` do by default when two items differ, and why can that pass a broken DUT?",
+    "answer": "The default comparer reports one miscompare as a `UVM_INFO` message with ID `MISCMP` at verbosity `UVM_LOW`, with a threshold of 1 (IEEE 1800.2-2020 §16.3.5.1-§16.3.5.3, §16.3.6). `UVM_INFO` never fails a test, so a scoreboard that ignores the return value passes with miscompares in its log."
   },
   {
-    "front": "How do you check that all expected transactions were actually received?",
-    "back": "In `check_phase()`, verify that every expected-item queue is empty (for an out-of-order scoreboard, every per-ID queue). Any remaining entries indicate missed or stuck transactions. Also check that the analysis FIFOs have been drained."
+    "id": "a-uvm-6-9",
+    "question": "What three checks belong in a scoreboard's `check_phase`?",
+    "answer": "Missing: predictions never answered (`SCB/MISSING`). Unexpected: actuals never matched (`SCB/UNEXPECTED`). Zero traffic: nothing was compared at all (`SCB/NO_TRAFFIC`). Then `report_phase` prints `SCB_SUMMARY matches=N mismatches=M pending=P`, and a pass needs N > 0, M = 0 and P = 0."
   },
   {
-    "front": "What is an in-order vs. out-of-order scoreboard?",
-    "back": "In-order: expects transactions to arrive in the same sequence they were predicted, so one queue is enough. Out-of-order: matches by ID with one queue per ID, allowing different IDs to complete in any order while items that share an ID stay in order. Common in pipelined or multi-outstanding DUTs."
+    "id": "a-uvm-6-10",
+    "question": "In-order versus out-of-order scoreboard: what is the matching rule of each?",
+    "answer": "In order: the oldest expected item is the only legal partner of the next actual, so one queue (or two paired FIFOs) is enough. Out of order: an actual with key k may only match the oldest pending prediction with key k, so different keys complete in any order while each key stays in order."
   },
   {
-    "front": "How do you handle DUT responses that carry no transaction ID?",
-    "back": "Track a FIFO queue of expected responses in the order stimuli were generated. Pop from the queue when actual responses arrive, assuming in-order delivery per channel."
+    "id": "a-uvm-6-11",
+    "question": "The DUT reorders responses but carries no ID. How can a scoreboard match them?",
+    "answer": "Key on another field the DUT carries from input to output, such as an address or a tag. A sequence number known only to the testbench works only if the DUT returns it. If the DUT promises in-order delivery, one queue of predictions taken from the input monitor is enough."
   },
   {
-    "front": "What is the purpose of the `extract_phase` in scoreboard context?",
-    "back": "The `extract_phase` runs after `run_phase`. Use it to drain remaining FIFO contents, compute final statistics, and prepare data for the `check_phase` comparison."
+    "id": "a-uvm-6-12",
+    "question": "How does a scoreboard keep the run alive until the last response arrives, without a fixed delay?",
+    "answer": "In `phase_ready_to_end` for the run phase, once only, and only if `outstanding != 0`: raise the phase's objection, fork a wait for `outstanding == 0` against a watchdog, then drop it (IEEE 1800.2-2020 §13.1.4.3.2). UVM calls `phase_ready_to_end` again after each drop, up to 20 iterations by default (§9.3.1.3.5), so an unconditional `#100ns` there costs about 2 us per test."
+  },
+  {
+    "id": "a-uvm-6-13",
+    "question": "How do you catch a response that never arrives before the end of the test, and keep the counts if the run is aborted?",
+    "answer": "Fork a per-item watchdog when each prediction is stored and report `SCB/LATE` if it is still queued after `max_latency`. Set a global timeout with `uvm_root::get().set_timeout()`; its `PH_TIMEOUT` fatal skips `check_phase` and `report_phase`, so override `pre_abort()` to print `SCB_SUMMARY`."
+  },
+  {
+    "id": "a-uvm-6-14",
+    "question": "A test asserts reset with requests in flight. What must the scoreboard do?",
+    "answer": "Flush the expected queues, the held queue and any analysis FIFOs (`flush()`, IEEE 1800.2-2020 §12.2.8.2.6), and count the flushed items separately in the summary. Otherwise `check_phase` reports discarded requests as `SCB/MISSING` on a correct DUT."
+  },
+  {
+    "id": "a-uvm-6-15",
+    "question": "Name the three reference-model styles and when you choose each.",
+    "answer": "A SystemVerilog function or class: small, stateless behaviour owned by verification. A predictor component (`uvm_subscriber`): the model has state or several inputs, or must be swappable by the factory. A DPI-C import of an existing C model: architects already maintain a bit-accurate model; call it from the predictor in DUT order, and declare it `pure` only if it is a nonvoid, input-only function with no side effects."
+  },
+  {
+    "id": "a-uvm-6-16",
+    "question": "Every expected item a scoreboard stored shows the last transaction's data. What happened?",
+    "answer": "The input monitor reused one object for every transfer, and the scoreboard stored handles to it, because analysis connections and FIFOs pass handles, never copies. Monitors create a new item per transaction, and subscribers never modify what they receive (IEEE 1800.2-2020 §12.2.10.2)."
   }
 ]
