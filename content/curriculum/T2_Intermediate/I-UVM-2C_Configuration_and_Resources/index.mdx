@@ -1,117 +1,218 @@
 ---
 title: "I-UVM-2C: Configuration and Resources"
-description: "Use uvm_config_db and uvm_resource_db to pass settings and virtual interface handles down the hierarchy without tight coupling."
+description: "Pass settings, configuration objects and virtual interfaces through the UVM hierarchy with uvm_config_db, predict which set() a get() sees, and debug a get() that silently misses."
 flashcards: "I-UVM-2C_Configuration_and_Resources"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "Accellera UVM reference implementation (uvm-core)"
+    type: "vendor"
+    identifier: "uvm-core"
+    version: "2020.3.1"
 ---
 
 ## Quick Take
-- **What it is:** The `uvm_config_db` (and its underlying database `uvm_resource_db`) allows tests and top-level modules to distribute settings, virtual interfaces, and handles precisely through the component tree.
-- **Why it matters:** It breaks hardcoded dependencies. A driver doesn't need to know where its virtual interface comes from; it just asks the config database.
-- **The Analogy:** The `config_db` is the testbench's DNS service. A test publishes a value (e.g., `is_active=0`) under a specific hierarchal path string. Later, when the agent wakes up, it queries that path to decide its role.
 
-> **Retention Hook:** A `set()` stores a value under a scope pattern, a field name and a type. A `get()` finds it only when all three match: its own path matches the pattern, the field name is identical, and the type is identical.
+- **What it is:** The **configuration database**, `uvm_config_db#(T)`, is a typed store that knows the UVM component tree (IEEE 1800.2-2020 Annex C.4.2). One piece of code calls `set()` to publish a value of type `T` under a name, for a part of the tree. A component later calls `get()` to fetch the value meant for it. The **virtual interface** handle that connects the testbench (TB) classes to the pins travels this way, and so do configuration objects and simple settings.
+- **Why it matters:** Classes are created while the simulation runs and cannot be wired with ports the way module instances are. Without the configuration database, every driver would need a hard-coded path to its interface, and every test would need its own copy of the environment. With it, the top module and the test decide *what* each component gets, and the component only says *what it needs*. The cost: when a lookup misses, nothing is printed, so you must know the matching rules and the debug tools.
+- **The Analogy:** The configuration database works like DNS (the internet's name service). A publisher registers a record under a name; a client looks the name up and gets the address back without knowing who published it. *Where it breaks:* a `get()` also filters by **type**, so a record of the wrong type is invisible even when the name matches. When several records match, the winner depends on *who* published during the build phase and on *when* afterwards. And nothing is pushed to you: a component that already read a value never sees a later change unless it calls `get()` again.
+
+**You will be able to:**
+1. Write `uvm_config_db#(T)::set()` and `get()` calls with the right context, instance path and field name, including passing a virtual interface from `tb_top` with a `null` context before `run_test()`.
+2. Predict which value a `get()` returns when several `set()` calls match: the higher context wins during the build phase, the most recent `set()` wins at equal precedence, and the field name and the type must match exactly.
+3. Write an agent configuration object (`vif`, `is_active`, `coverage_enable`) and publish it once per agent instead of many scalar settings.
+4. Debug a silent `get()` miss (type mismatch, field or scope typo, get before set) with `uvm_fatal`, `+UVM_CONFIG_DB_TRACE`, `print_config()` and `check_config_usage()`.
+5. Choose between `uvm_config_db`, `uvm_resource_db`, automatic field configuration and `+uvm_set_config_int`/`_string`, and explain whether each one reaches a given field.
+
+Also useful: [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) for the top-down order of `build_phase`, and [I-UVM-1A: UVM Objects and Components](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) for what `super.build_phase(phase)` does.
+
+<BeforeYouStart />
 
 ## Build Your Mental Model
-### The Database Mechanics (IEEE 1800.2-2020 Annex C)
-The UVM configuration DB is a typed, string-keyed database that understands the testbench hierarchy. `uvm_config_db#(T)` is built on the resource pool that `uvm_resource_db#(T)` also uses. Each entry has a scope pattern, a field name, a type `T`, and a precedence number.
-- **`uvm_config_db`** builds the scope from the calling component, so it knows *who* made the setting. During build, a setting from a higher component (closer to `uvm_test_top`) gets a higher precedence.
-- **`uvm_resource_db`** takes a raw scope string and has no notion of hierarchy. Equal-precedence resources resolve by queue order, so a plain `set()` does not displace an earlier one; `set_override()` puts the new resource in front.
 
-**Rule of Thumb:** Use `uvm_config_db` for nearly all settings. It adds the hierarchical context for you. Reach for `uvm_resource_db` only for settings that are not tied to the component tree.
+### Why components need configuration
+
+A SystemVerilog **interface** instance, such as `bus_if bus_if0`, is created at **elaboration**, the step in which the tool builds the design hierarchy before simulation time 0, and lives in the module hierarchy under `tb_top`. A **virtual interface** is a class variable that holds a handle to such an instance, so class code can reach its signals ([F4B](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index) teaches both). UVM components are class objects, created at time 0 by their parents in **`build_phase`**, the first phase, which runs top-down: the test builds the environment, the environment builds the agents, and so on ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+
+Two worlds therefore have to meet. `tb_top` owns the interface instances, but cannot see inside the class objects, because they do not exist yet when `tb_top` starts. The driver needs an interface, but should not hard-code a path such as `tb_top.bus_if0`, or it can never be reused on another bus.
+
+Three problems appear without a configuration mechanism:
+
+- **Hard-coded paths.** A driver that writes `tb_top.bus_if0.valid` works in one testbench only.
+- **One environment per test.** If a test cannot tell an agent to be passive, or a driver how many transfers to send, every variation needs an edited copy of the environment.
+- **Null handles.** A virtual interface that was never assigned is `null`, and using it is a fatal run-time error (IEEE 1800-2023 §25.9). The error points at the line that used the handle, far from the real cause.
+
+The configuration database solves all three. Two names you will see in every example: **`uvm_root`** is the invisible top of the component tree (its full name is the empty string), and **`uvm_test_top`** is the name `run_test()` gives to the test object it creates, so every component path starts with `uvm_test_top`.
+
+### set() and get(): the four arguments
+
+Both calls are static methods of the parameterized class `uvm_config_db#(T)` (Annex C.4.2.2.1 and C.4.2.2.2):
 
 ```systemverilog
-class soc_base_test extends uvm_test;
-  `uvm_component_utils(soc_base_test)
-  soc_config cfg;
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-  endfunction
-
-  function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    // 1. Create and randomize a configuration object
-    cfg = soc_config::type_id::create("cfg");
-    if (!cfg.randomize() with { active_lanes == 4; })
-      `uvm_fatal("RAND", "soc_config randomization failed")
-
-    // 2. Publish it! 
-    // Type: soc_config
-    // Target Context: this (uvm_test_top)
-    // Target Path: "*" (everything below the test)
-    // Field Name: "cfg"
-    // Value: cfg
-    uvm_config_db#(soc_config)::set(this, "*", "cfg", cfg);
-  endfunction
-endclass
+// snippet: the two signatures (uvm-core 2020.3.1, src/base/uvm_config_db.svh)
+static function void set(uvm_component cntxt, string inst_name,
+                         string field_name, T value);
+static function bit  get(uvm_component cntxt, string inst_name,
+                         string field_name, inout T value);
 ```
 
-Deep in the hierarchy, an agent or driver queries the exact same database.
+| Argument | Meaning in `set()` | Meaning in `get()` |
+|---|---|---|
+| `T` (the class parameter) | The type of the value you store | The type you ask for; it must be the same type |
+| `cntxt` | The component that makes the setting, usually `this`; `null` means `uvm_root` | The component asking, almost always `this` |
+| `inst_name` | Which components the setting is for, relative to `cntxt`; may contain wildcards | Usually `""`, meaning "me" |
+| `field_name` | The name of the setting, such as `"vif"` | The same name, spelled identically |
+| `value` | The value or handle to store | Filled in only when `get()` returns 1 |
+
+**The scope.** `set()` combines its first two arguments into a **scope**, a pattern for the paths that may read the value: the full name of `cntxt`, a dot, then `inst_name`. With a `null` context, `cntxt` becomes `uvm_root`, whose full name is empty, so `inst_name` alone is the scope. An empty `inst_name` makes the scope the context's own full name. A `get(this, "", …)` looks up its own full path.
+
+| Call (who makes it) | `cntxt` full name | `inst_name` | Stored scope |
+|---|---|---|---|
+| `tb_top`: `set(null, "uvm_test_top.env.agt0.drv", "vif", bus_if0)` | `""` (`uvm_root`) | `uvm_test_top.env.agt0.drv` | `uvm_test_top.env.agt0.drv` |
+| test: `set(this, "env.agt0", "cfg", cfg0)` | `uvm_test_top` | `env.agt0` | `uvm_test_top.env.agt0` |
+| test: `set(this, "env.agt*", "num_pkts", 4)` | `uvm_test_top` | `env.agt*` | `uvm_test_top.env.agt*` |
+| env: `set(this, "", "num_pkts", 8)` | `uvm_test_top.env` | `""` | `uvm_test_top.env` |
+| driver: `get(this, "", "vif", vif)` | `uvm_test_top.env.agt0.drv` | `""` | looks up `uvm_test_top.env.agt0.drv` |
+
+**The minimal correct example.** `tb_top` publishes the interface before it calls `run_test()`; the driver reads it in `build_phase` and stops the test if it is missing. The full, compilable version is in Make It Work.
 
 ```systemverilog
-class my_agent extends uvm_agent;
-  `uvm_component_utils(my_agent)
-  soc_config cfg;
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
-  endfunction
-
-  function void build_phase(uvm_phase phase);
-    super.build_phase(phase);
-    // 3. Retrieve it!
-    // If getting the config fails, raise a fatal error.
-    if (!uvm_config_db#(soc_config)::get(this, "", "cfg", cfg)) begin
-      `uvm_fatal("NOCFG", "Agent requires a soc_config object!")
-    end
-    
-    // Configure agent based on the retrieved data
-    is_active = cfg.is_tx_active ? UVM_ACTIVE : UVM_PASSIVE;
-  endfunction
-endclass
-```
-
-### Passing Virtual Interfaces
-The most common use-case for the config DB is passing the `virtual interface` from the static SystemVerilog `module top` into the dynamic OOP-based UVM testbench.
-
-```systemverilog
-module top;
-  // Static interface instance
-  apb_if apb_vif(clk, rst);
-  
+// snippet: tb_top publishes the interface; the driver reads it in build_phase
+module tb_top;
+  // ... clock, bus_if bus_if0 (.clk(clk)), imports ...
   initial begin
-    // Pass the interface to the UVM world before run_test!
-    uvm_config_db#(virtual apb_if)::set(null, "uvm_test_top.*", "vif", apb_vif);
-    run_test("my_test");
+    // null context: the scope is the full path below
+    uvm_config_db#(virtual bus_if)::set(null, "uvm_test_top.env.agt0.drv", "vif", bus_if0);
+    run_test("cfg_test");
   end
 endmodule
+
+class bus_driver extends uvm_component;
+  `uvm_component_utils(bus_driver)
+  virtual bus_if vif;
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    // get() returns 0 silently on a miss, so a required setting needs a check
+    if (!uvm_config_db#(virtual bus_if)::get(this, "", "vif", vif))
+      `uvm_fatal("NOVIF", {"no virtual bus_if for ", get_full_name()})
+  endfunction
+endclass
 ```
 
-### Precedence and Path Matching
-**Scope.** A `set(cntxt, inst_name, field, value)` stores its value under the scope `{cntxt.get_full_name(), ".", inst_name}`. A `null` context means `uvm_root`, whose full name is empty, so `inst_name` alone is the scope. The scope is a glob: `*` matches any run of characters (dots included) and `?` matches one character.
+<ArchitectureDiagram
+  title="How the virtual interface reaches the driver"
+  caption="Step 1: at time 0, before run_test(), tb_top's initial block stores a handle to bus_if0 in a config DB entry with scope uvm_test_top.env.agt0.drv, field vif and type virtual bus_if. Step 2: during build_phase the driver, whose full name is exactly that scope (the test contains env, env contains agt0, agt0 contains drv), asks for field vif of the same type and gets the handle. Nothing connects tb_top and the driver directly."
+  cellWidth={210}
+  nodes={[
+    { id: "tb", label: "tb_top", kind: "generic", col: 0, row: 1, rowSpan: 2, container: true },
+    { id: "init", label: "initial block", sublabel: "set(null, …), then run_test()", kind: "generic", col: 0, row: 1 },
+    { id: "bif", label: "bus_if0", sublabel: "interface instance", kind: "interface", col: 0, row: 2 },
+    { id: "entry", label: "uvm_test_top.env.agt0.drv", sublabel: "config DB: vif · virtual bus_if", kind: "generic", col: 1, row: 0 },
+    { id: "top", label: "uvm_test_top", kind: "test", col: 2, row: 0, rowSpan: 3, container: true },
+    { id: "env", label: "env", kind: "env", col: 2, row: 1, rowSpan: 2, container: true },
+    { id: "agt", label: "agt0", kind: "agent", col: 2, row: 2, container: true },
+    { id: "drv", label: "drv", sublabel: "vif = handle to bus_if0", kind: "driver", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "bif", to: "init", style: "structural", label: "handle" },
+    { from: "init", to: "entry", style: "causal", label: "1 · set() at time 0" },
+    { from: "entry", to: "drv", style: "data", label: "2 · get(this, \"\", \"vif\", vif)" }
+  ]}
+/>
 
-**Lookup.** A `get(this, "", field, value)` looks up the component's own full name. It sees only entries whose scope glob matches that path, whose field name is *exactly* the same, and whose type parameter `T` is *exactly* the same.
+The convenience typedefs `uvm_config_int`, `uvm_config_string`, `uvm_config_object` and `uvm_config_wrapper` name `uvm_config_db` specialized for `uvm_bitstream_t`, `string`, `uvm_object` and `uvm_object_wrapper` (Annex C.4.2.3). Two of those types are new here: **`uvm_bitstream_t`** is UVM's wide integral type, a signed 4-state vector of 4096 bits by default, and **`uvm_object_wrapper`** is the factory's handle for a registered class ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)). Note that `uvm_config_int` is **not** `uvm_config_db#(int)`; that difference matters later.
 
-**Precedence.** When several entries match, the rules (checked against uvm-core 2020.3.1) are:
-1. **During `build_phase`, the higher context wins.** A set's precedence is 1000 minus the depth of its context: `uvm_root`/`null` is 1000, `uvm_test_top` 999, `env` 998. The env's later `set()` still loses to the test's.
-2. **The top module beats the test.** A `set(null, ...)` made before `run_test()` has precedence 1000.
-3. **Equal precedence: the most recent `set()` wins.** This covers two sets from the same context during build, and every set made after build, since all of them have precedence 1000.
-4. **Path specificity is not a factor.** A test's `"*"` beats an env's exact `"agt0"` during build.
+**Optional settings.** `get()` writes `value` only when it succeeds; on a miss the variable keeps whatever it held. For a setting with a sensible default, assign the default first and ignore the return value:
 
-Predict each scenario below before you reveal it. The debug scenarios show the two silent failures: a type mismatch and a misspelled field name. Neither prints an error; `get()` simply returns 0.
+```systemverilog
+// snippet: an optional setting with a default
+int unsigned num_pkts = 10;   // used when nobody configures num_pkts
+void'(uvm_config_db#(int unsigned)::get(this, "", "num_pkts", num_pkts));
+```
+
+**The two mistakes everyone makes first.**
+- *Not checking a required `get()`.* A miss prints nothing (the lookup runs with error reporting turned off), and the null handle fails later, somewhere else. Wrap every required `get()` in `if (!…)` and call `` `uvm_fatal ``.
+- *Calling `get()` before anyone has called `set()`.* A `get()` sees only settings that exist at that moment. Publish in `tb_top` before `run_test()`, or in a parent's `build_phase`, and read in the child's `build_phase`, never in its constructor. Because build runs top-down, a child's `build_phase` starts only after its parent's `build_phase` has returned, so the parent's `set()` may come before or after it creates the child.
+
+### What a get() can see: three filters
+
+A `get()` sees an entry only when all three of these hold (uvm-core 2020.3.1, `uvm_resource_pool::lookup_name`):
+
+1. **The field name is identical.** Entries are found by exact field name. Do not put wildcards in field names.
+2. **The type is identical.** `uvm_config_db#(T)` keeps entries of each type `T` apart, so a `get()` only sees entries stored with the same `T`.
+3. **The scope pattern matches the caller's path.**
+
+**Type identity.** Each specialization of a parameterized class is a separate type unless the type parameters are *matching types* (IEEE 1800-2023 §8.25, §6.22.1). A `typedef` that renames a type matches it. `int unsigned` matches `bit [31:0]`, but `int` does not, because `int` is signed. And a virtual interface declared with a **modport**, a named view of an interface that lists what its user may access ([F4B](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index)), has the modport as part of its type (§25.9), so `virtual bus_if` and `virtual bus_if.drv_mp` are different types: a `set()` of one is invisible to a `get()` of the other.
+
+The fix pattern for modports: set and get the plain `virtual bus_if`, then assign it to a modport-typed member. §25.9 allows assigning a virtual interface with no modport to one with a modport.
+
+```systemverilog
+// snippet: get the plain type, then narrow to the modport view
+virtual bus_if        base_vif;
+virtual bus_if.drv_mp vif;          // the driver may only use the drv_mp view
+if (!uvm_config_db#(virtual bus_if)::get(this, "", "vif", base_vif))
+  `uvm_fatal("NOVIF", "no virtual bus_if")
+vif = base_vif;                     // legal: no modport -> modport (IEEE 1800-2023 §25.9)
+```
+
+**Scope patterns.** A scope is a **glob**, a pattern with wildcards, matched against the whole path:
+
+| Pattern character | Matches | Example scope | Matches `…agt0` itself? | Matches `…agt0.drv`? |
+|---|---|---|---|---|
+| none | exactly that text | `uvm_test_top.env.agt0` | yes | no |
+| `*` | any run of characters, dots included, or none | `uvm_test_top.env.agt0*` | yes | yes |
+| `*` after a dot | anything below, but not the node itself | `uvm_test_top.env.agt0.*` | **no** | yes |
+| `?` | exactly one character | `uvm_test_top.env.agt?` | yes (and `agt1`) | no |
+| `+` | one or more characters | `uvm_test_top.env.agt0+` | no | yes |
+| `/…/` | a regular expression | `/^uvm_test_top\.env\.agt[01]$/` | yes | no |
+
+The `+` and `/…/` forms use C regular-expression code that uvm-core calls through DPI, the Direct Programming Interface to C ([I-SV-7](/curriculum/T2_Intermediate/I-SV-7_DPI_and_Foreign_Language_Interfaces/index)); with `UVM_NO_DPI` only `*` and `?` work (uvm-core `src/dpi/uvm_regex.svh`). Prefer `*` and `?`. Also note that `agt0*` matches `agt00` as well, and that a scope of `"*"` set with a `null` context reaches every component in the tree.
+
+**Pitfalls, and why they are wrong.**
+- *"`get()` matches on the name, whatever the type."* It filters by type first; a type mismatch is a silent miss.
+- *"`"env.agt0.*"` covers the agent."* The dot before `*` must match, so the agent's own path does not match.
+- *"A setting made with `set(this, "*", …)` from the test is global."* Its scope is `uvm_test_top.*`: everything below the test, not `tb_top` code and not other trees.
+
+### Who wins when several set() calls match
+
+When more than one entry passes the three filters, each entry's **precedence**, a number fixed when `set()` runs, decides. These rules are checked against uvm-core 2020.3.1 (`uvm_config_db_implementation.svh` `set`, `uvm_resource_pool.svh` `get_highest_precedence`):
+
+1. **During `build_phase`, the higher context wins.** A `set()` made while the build phase runs gets precedence 1000 minus the depth of its `cntxt`: `uvm_root` (a `null` context) 1000, `uvm_test_top` 999, `env` 998, an agent 997. The env's later `set()` still loses to the test's. The depth comes from the `cntxt` argument, not from the code that calls `set()`: a component that passes `null` gets 1000.
+2. **Before and after the build phase, every `set()` gets 1000.** That includes `tb_top`'s sets before `run_test()` and sets in the test's constructor, because `run_test()` creates the test before phasing starts. (Other components are constructed during build, so sets in their constructors follow rule 1.)
+3. **At equal precedence, the most recent `set()` wins.** This covers two sets from the same level during build, and every set made after build.
+4. **Path specificity does not count.** A test's broad `"*"` beats an env's exact `"agt0"` during build.
+
+So `tb_top`'s `set(null, …)` beats a `set()` in the test's `build_phase` (1000 against 999), but not a later `set()` made in the test's constructor or in `run_phase` (1000, and more recent).
+
+**Not like the factory.** The factory ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)) picks the *first registered* matching instance override. The configuration database ignores registration order during build and uses the context depth; afterwards it uses the *most recent* set. Carrying one rule over to the other is a classic interview trap.
+
+The explorer below runs a model of these rules. Each scenario lists the `set()` and `get()` calls in the order they execute. **Before you click Reveal, predict** the value the `get()` returns and which rule decides it. Do at least "Test vs env (build)", "Top module vs test", "After build: last wins" and "How far does * reach?", then the two Debug scenarios. The explorer uses an `apb_if` interface and `apb_config` type in its examples; the rules are the same for `bus_if`.
 
 <ConfigDbExplorer />
+
+**What the explorer showed.** In "Test vs env (build)" the test's value wins although the env's `set()` ran later, because during build the context depth decides (999 beats 998). In "Top module vs test" `tb_top`'s value wins although the test's `set()` ran later: `tb_top` set its value before `run_test()`, so it has precedence 1000, and the test's `build_phase` set has 999. In "After build: last wins" the same two calls made in `run_phase` both get 1000, so the most recent one wins, and the component sees it only because it calls `get()` again. "How far does * reach?" shows that `env.agt*` reaches every component below each agent, drivers included, which is why per-agent settings belong in per-agent scopes. The two Debug scenarios show that a type or field mismatch returns 0 and leaves the variable unchanged, with no message unless the trace is on. Open the trace log in each scenario: it shows the `CFGDB/SET` and `CFGDB/GET` lines you will read in Make It Work.
 
 <VisualRecap
   title="Who wins a config_db lookup"
   rule="get() sees only entries with the exact field name, the exact type T, and a scope glob that matches its own path. Among those, the highest precedence wins: during build that is the highest context (1000 minus depth); otherwise every set is 1000 and the most recent one wins."
   code={`// tb_top, before run_test(): precedence 1000
-uvm_config_db#(virtual apb_if)::set(null, "uvm_test_top.env.agt0.*", "vif", apb_vif);
-// my_test::build_phase: precedence 999, beats any env set during build
-uvm_config_db#(int)::set(this, "env.agt*", "num_pkts", 10);
-// my_driver::build_phase: same field, same type, path matches
-if (!uvm_config_db#(virtual apb_if)::get(this, "", "vif", vif))
+uvm_config_db#(virtual bus_if)::set(null, "uvm_test_top.env.agt0.drv", "vif", bus_if0);
+// cfg_test::build_phase: precedence 999, beats any env set during build
+uvm_config_db#(int unsigned)::set(this, "env.agt*", "num_pkts", 10);
+// bus_driver::build_phase: same field, same type, path matches
+if (!uvm_config_db#(virtual bus_if)::get(this, "", "vif", vif))
   \`uvm_fatal("NOVIF", "vif not set for this driver")`}
-  mistake="Setting virtual apb_if and getting virtual apb_if.drv_mp (or int vs bit [31:0]). The types differ, so get() returns 0 without any message."
-  inTestbench="tb_top publishes virtual interfaces with set(null, ...); the base test publishes config objects; every component checks the result of get() and calls uvm_fatal when a required setting is missing."
+  mistake="Setting virtual bus_if and getting virtual bus_if.drv_mp (or int vs bit [31:0]). The types differ, so get() returns 0 without any message."
+  inTestbench="tb_top publishes virtual interfaces with set(null, ...); the test publishes one configuration object per agent; every component checks the result of a required get() and calls uvm_fatal when it fails."
 >
   <svg viewBox="0 0 320 150" role="img" aria-label="Three filters, then precedence: exact field, exact type, scope glob match; highest precedence wins; ties go to the most recent set." style={{ width: "100%", maxWidth: 360 }}>
     <rect x="8" y="8" width="96" height="30" rx="6" fill="rgba(6,182,212,0.10)" stroke="rgb(6,182,212)" />
@@ -122,76 +223,872 @@ if (!uvm_config_db#(virtual apb_if)::get(this, "", "vif", vif))
     <text x="224" y="27" fontSize="11" fill="currentColor">scope glob ✓</text>
     <rect x="8" y="50" width="304" height="40" rx="6" fill="rgba(16,185,129,0.10)" stroke="rgb(16,185,129)" />
     <text x="18" y="67" fontSize="11" fill="currentColor">build: precedence = 1000 − depth of cntxt</text>
-    <text x="18" y="82" fontSize="10" fill="currentColor" opacity="0.8">tb_top 1000 · test 999 · env 998 · agent 997</text>
+    <text x="18" y="82" fontSize="10" fill="currentColor" opacity="0.8">null 1000 · test 999 · env 998 · agent 997</text>
     <rect x="8" y="100" width="304" height="40" rx="6" fill="none" stroke="currentColor" strokeOpacity="0.45" strokeDasharray="4 3" />
-    <text x="18" y="117" fontSize="11" fill="currentColor">after build: every set is 1000</text>
+    <text x="18" y="117" fontSize="11" fill="currentColor">before or after build: every set is 1000</text>
     <text x="18" y="132" fontSize="10" fill="currentColor" opacity="0.8">tie → the most recent set() wins</text>
   </svg>
 </VisualRecap>
 
+### Configuration objects: one handle per agent
+
+An agent usually needs several settings: its virtual interface, whether it is active, whether its monitor collects coverage, and some knobs. Publishing each as a separate scalar means one `set()` and one `get()` per setting, each with its own spelling and its own type to get wrong. A **configuration object** is a small `uvm_object` class that holds all of an agent's settings. The test creates one per agent, fills it in, and publishes the handle once.
+
+```systemverilog
+// snippet: the agent configuration object used in Make It Work
+class bus_agent_cfg extends uvm_object;
+  `uvm_object_utils(bus_agent_cfg)
+
+  virtual bus_if          vif;                    // filled in by the test
+  uvm_active_passive_enum is_active = UVM_ACTIVE; // UVM_PASSIVE: monitor only
+  bit                     coverage_enable = 1;    // the monitor samples coverage when 1
+  int unsigned            num_pkts = 1;           // a test knob for the driver
+
+  function new(string name = "bus_agent_cfg");
+    super.new(name);
+  endfunction
+
+  virtual function string convert2string();
+    return $sformatf("is_active=%s coverage_enable=%0b num_pkts=%0d vif=%s",
+                     is_active.name(), coverage_enable, num_pkts,
+                     (vif == null) ? "null" : "set");
+  endfunction
+endclass
+```
+
+The test publishes it per agent with `uvm_config_db#(bus_agent_cfg)::set(this, "env.agt0", "cfg", cfg0)`. The agent gets it in `build_phase`, copies `cfg.is_active` into its own `is_active`, and hands the same handle to its driver and monitor right after creating them. The diagram shows that route through the complete bench in Make It Work.
+
+<ArchitectureDiagram
+  title="One configuration object per agent (the Make It Work bench)"
+  caption="Top row: tb_top owns bus_if0 and bus_if1, and a register stage standing in for the DUT copies bus_if0 to bus_if1 one clock later. tb_top publishes the two handles through the config DB as vif0 and vif1, scoped to uvm_test_top, and cfg_test gets them into two configuration objects (cfg0 active, cfg1 passive). The test then publishes each object once, to one agent. Each agent gets its cfg and hands the same handle to the children it builds; the passive agent agt1 builds no driver."
+  cellWidth={150}
+  gapY={120}
+  nodes={[
+    { id: "tb", label: "tb_top", kind: "generic", col: 0, row: 0, colSpan: 3, container: true },
+    { id: "bif0", label: "bus_if0", kind: "interface", col: 0, row: 0 },
+    { id: "dut", label: "register stage", sublabel: "DUT stand-in", kind: "dut", col: 1, row: 0 },
+    { id: "bif1", label: "bus_if1", kind: "interface", col: 2, row: 0 },
+    { id: "test", label: "uvm_test_top (cfg_test)", kind: "test", col: 0, row: 1, colSpan: 3, rowSpan: 2, container: true },
+    { id: "cfg0", label: "cfg0", sublabel: "vif=bus_if0 · UVM_ACTIVE", kind: "generic", col: 0, row: 1 },
+    { id: "cfg1", label: "cfg1", sublabel: "vif=bus_if1 · UVM_PASSIVE", kind: "generic", col: 2, row: 1 },
+    { id: "env", label: "env", kind: "env", col: 0, row: 2, colSpan: 3, container: true },
+    { id: "agt0", label: "agt0 (active)", kind: "agent", col: 0, row: 2, colSpan: 2, container: true },
+    { id: "drv", label: "drv", sublabel: "drives cfg.vif", kind: "driver", col: 0, row: 2 },
+    { id: "mon0", label: "mon", sublabel: "samples cfg.vif", kind: "monitor", col: 1, row: 2 },
+    { id: "agt1", label: "agt1 (passive)", kind: "agent", col: 2, row: 2, container: true },
+    { id: "mon1", label: "mon", sublabel: "samples cfg.vif", kind: "monitor", col: 2, row: 2 }
+  ]}
+  edges={[
+    { from: "bif0", to: "dut", style: "structural", label: "1 clk" },
+    { from: "dut", to: "bif1", style: "structural" },
+    { from: "bif0", to: "cfg0", style: "causal", label: "vif0 via config DB" },
+    { from: "bif1", to: "cfg1", style: "causal", label: "vif1 via config DB" },
+    { from: "cfg0", to: "agt0", style: "data", label: "cfg -> env.agt0" },
+    { from: "cfg1", to: "agt1", style: "data", label: "cfg -> env.agt1" }
+  ]}
+/>
+
+**Why objects beat scalars.**
+- **One lookup per agent.** One field name and one type to get right, and one trace line to check.
+- **Type-checked access.** Inside the agent, `cfg.num_pkts` is checked by the compiler; a misspelled member is a compile error, not a silent miss.
+- **Randomizable and printable.** Fields can be `rand` with constraints, and `convert2string()` prints the whole configuration in one log line.
+- **Per-agent by construction.** Each agent gets its own object, so two agents cannot accidentally share a setting.
+
+**Pitfalls.**
+- *One object shared by two agents.* `set()` stores the handle, not a copy. If the test publishes the same `cfg` to `agt0` and `agt1` and then sets `cfg.is_active = UVM_PASSIVE` for `agt1`, both agents become passive. Create one object per agent.
+- *Changing the object after the agents read it.* Because the database holds a handle, a later change to `cfg0.num_pkts` is visible to everyone holding `cfg0` at once, with no `set()`. That can be useful at run time, but during build it means the order of your code matters.
+- *Getting the object as a base type.* `uvm_config_db#(uvm_object)::get(…, "cfg", …)` misses a setting made with `uvm_config_db#(bus_agent_cfg)`; the types differ.
+
+### Automatic configuration: what super.build_phase applies
+
+`uvm_component::build_phase` calls `apply_config_settings()` when `use_automatic_config()` returns 1, its default (IEEE 1800.2-2020 §13.1.4.1.1, §13.1.5.1, §13.1.5.2). That is **automatic configuration**: for each member registered with a `` `uvm_field_* `` macro, the component looks for a setting with the member's name that reaches it, and copies the value in. `uvm_agent::build_phase` also looks up a setting named `is_active` itself, with its own lookup, so that one works even when automatic configuration is turned off. [I-UVM-1A](/curriculum/T2_Intermediate/I-UVM-1A_Components/index) shows what is lost when `super.build_phase(phase)` is forgotten. This lesson owns the caveat: each field macro accepts only certain setting types, and other types are skipped without a message.
+
+| Member and macro | Setting types it accepts (uvm-core 2020.3.1) | Example that is silently ignored |
+|---|---|---|
+| `` `uvm_field_int(num_pkts, UVM_DEFAULT) `` | `uvm_integral_t` (UVM's 64-bit signed 4-state type), `uvm_bitstream_t`, `int`, `int unsigned` | `uvm_config_db#(bit [7:0])::set(…, "num_pkts", 8'd5)` |
+| `` `uvm_field_enum(mode_e, mode, UVM_DEFAULT) `` | the enum type, a `string` holding a literal name, `bit [$bits(mode_e)-1:0]`, or an integral type above | a `string` that is not a literal of `mode_e` |
+| `` `uvm_field_string(name, UVM_DEFAULT) `` | `string` only | — |
+| `` `uvm_field_object(cfg, UVM_DEFAULT) `` | `uvm_object` only, then a `$cast` to the member's class | `uvm_config_db#(bus_agent_cfg)::set(…, "cfg", cfg0)` leaves `cfg` null |
+| `uvm_agent::is_active` (built in) | `uvm_active_passive_enum`, `string`, `bit [$bits(uvm_active_passive_enum)-1:0]`, or an integral type above | — |
+
+Read the fourth row twice: the explicit `uvm_config_db#(bus_agent_cfg)::set()` that Make It Work uses is **not** applied automatically to a `` `uvm_field_object(cfg) `` member. Sources: `src/macros/uvm_object_defines.svh` (the `UVM_SET` branches), `src/macros/uvm_resource_defines.svh`, `src/comps/uvm_agent.svh`.
+
+**Best practice.** Write an explicit, checked `get()` for every setting a component needs. It names the type, it fails loudly, and it does not depend on field macros. A component can turn automatic configuration off by overriding `use_automatic_config()` to return 0 (§13.1.5.2); `uvm_agent` still reads `is_active` in that case, because it does so in its own `build_phase`.
+
+### Settings from the command line: +uvm_set_config_int and +uvm_set_config_string
+
+A **plusarg** is a simulator command-line argument that starts with `+`. IEEE 1800.2-2020 Annex G.2.8 defines two that make settings without recompiling:
+
+```text
++uvm_set_config_int=<component path>,<field>,<value>
++uvm_set_config_string=<component path>,<field>,<value>
+```
+
+For example, `+uvm_set_config_int=uvm_test_top.env.agt1,is_active,0` makes agent 1 passive. The value may be decimal or carry a prefix such as `'h`, `0x`, `'b` or `'o`. uvm-core applies these in `uvm_root`'s `build_phase` as `uvm_config_int::set()` and `uvm_config_string::set()` with a `null` context, so they have precedence 1000 (`uvm_root.svh` `m_process_config`).
+
+The type is the trap. `uvm_config_int` is `uvm_config_db#(uvm_bitstream_t)`, a 4096-bit signed logic vector by default, so:
+
+| Who reads the setting | Does `+uvm_set_config_int` reach it? |
+|---|---|
+| a `` `uvm_field_int `` member, through automatic configuration | yes (`uvm_bitstream_t` is accepted) |
+| `uvm_agent::is_active` | yes (0 is `UVM_PASSIVE`, 1 is `UVM_ACTIVE`) |
+| `uvm_config_db#(uvm_bitstream_t)::get()` (or `uvm_config_int::get()`) | yes |
+| `uvm_config_db#(int)::get()` or `#(int unsigned)` | **no**: different type, silent miss |
+| a member of a configuration object | **no**: nothing looks it up |
+
+If a knob must be controllable from the command line, read it with `uvm_config_int::get()` (or as a field-macro member), or read your own plusarg with `$value$plusargs` in the test and copy it into the configuration object.
+
+### Checking and waiting: exists() and wait_modified()
+
+Two more calls complete the API (Annex C.4.2.2.3 and C.4.2.2.4):
+
+- **`exists(cntxt, inst_name, field_name, spell_chk = 0)`** returns 1 if a setting of type `T` with that field reaches that path, and 0 otherwise. It has no value argument: it never reads the value into a variable, never changes the database, and filters by type like `get()`. Use it when the *presence* of a setting changes behaviour; when you need the value, the optional-`get()` idiom above is simpler.
+- **`wait_modified(cntxt, inst_name, field_name)`** is a task that blocks until a *later* `set()` of the same type `T` and the same field, whose scope matches the waiter's path, is made. It does not return the value: call `get()` afterwards. A setting made before the wait started never wakes it.
+
+A typical `exists()` use: a knob that moved into the configuration object, where an old test that still sets the scalar should get a warning instead of being ignored in silence.
+
+```systemverilog
+// snippet: in the agent's build_phase; presence alone decides, no value is read
+if (uvm_config_db#(int unsigned)::exists(this, "", "num_pkts"))
+  `uvm_warning("OLDKNOB", "num_pkts is no longer read: set cfg.num_pkts in the test")
+```
+
+```systemverilog
+// snippet: a driver that re-reads "rate" whenever someone publishes a new one
+task watch_rate();
+  forever begin
+    uvm_config_db#(int unsigned)::wait_modified(this, "", "rate");
+    if (!uvm_config_db#(int unsigned)::get(this, "", "rate", rate))
+      `uvm_error("NORATE", "wait_modified returned, but get() missed")
+  end
+endtask
+// in run_phase: fork watch_rate(); join_none
+```
+
+<SequenceDiagram
+  title="wait_modified, then get()"
+  caption="The driver blocks in wait_modified. Later in run_phase the test publishes a new rate for the driver's path; the set() wakes the waiter, and the driver must call get() to read the value. A set() made before wait_modified started would not have woken it."
+  participants={[
+    { id: "test", label: "cfg_test", kind: "test" },
+    { id: "db", label: "uvm_config_db", sublabel: "#(int unsigned)", kind: "generic" },
+    { id: "drv", label: "drv", kind: "driver" }
+  ]}
+  messages={[
+    { from: "drv", to: "db", label: "wait_modified(this, \"\", \"rate\")" },
+    { kind: "note", from: "db", to: "drv", label: "the driver's process is blocked here" },
+    { kind: "divider", label: "later in run_phase" },
+    { from: "test", to: "db", label: "set(this, \"env.agt0.drv\", \"rate\", 4)" },
+    { kind: "return", from: "db", to: "drv", label: "wait_modified returns" },
+    { from: "drv", to: "db", label: "get(this, \"\", \"rate\", rate)" },
+    { kind: "return", from: "db", to: "drv", label: "1, rate = 4" }
+  ]}
+/>
+
+### uvm_resource_db: when the component tree is not the key
+
+`uvm_config_db#(T)` is built on `uvm_resource_db#(T)` (Annex C.4.2.1): both store **resources**, named and typed values with a scope and a precedence, in the one global resource pool. The resource database takes a plain scope string instead of a context, so it knows nothing about the component tree and gives every `set()` the default precedence 1000. Its rule for ties differs too: a plain `uvm_resource_db::set()` adds the new resource *behind* the earlier ones, so the **first** one set wins.
+
+```systemverilog
+// snippet: equal precedence in uvm_resource_db (uvm-core 2020.3.1)
+int unsigned max_err;
+uvm_resource_db#(int unsigned)::set("*", "max_err", 10, this);
+uvm_resource_db#(int unsigned)::set("*", "max_err", 20, this);
+void'(uvm_resource_db#(int unsigned)::read_by_name("uvm_test_top.env.scb", "max_err", max_err, this));
+// max_err == 10: the earlier resource is first in the queue
+uvm_resource_db#(int unsigned)::set_override("*", "max_err", 30, this);
+void'(uvm_resource_db#(int unsigned)::read_by_name("uvm_test_top.env.scb", "max_err", max_err, this));
+// max_err == 30: set_override puts the new resource at the front
+```
+
+| After | Queue for name `max_err` (front first) | `read_by_name` returns |
+|---|---|---|
+| first `set` | 10 | 10 |
+| second `set` | 10, 20 | 10 |
+| `set_override` | 30, 10, 20 | 30 |
+
+`set_override` is a uvm-core addition, not part of IEEE 1800.2 (`uvm_resource_db.svh`, marked `@uvm-contrib`). `uvm_config_db::set()` behaves like an override: it moves its resource to the front, which is why the most recent `set()` wins ties there. Use `uvm_resource_db` for data that is not keyed by a component, for example a value shared by objects and sequences under an agreed scope string. For anything a component reads, use `uvm_config_db`.
+
+### Reading configuration from a sequence
+
+A sequence ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)) is an object, not a component, so it has no `this` context to pass. Two forms work, both only after the sequence has been started on a sequencer, so call them in `body()`, never in `new()`:
+
+```systemverilog
+// snippet: inside a sequence's body()
+if (!uvm_config_db#(bus_agent_cfg)::get(m_sequencer, "", "cfg", cfg))
+  `uvm_fatal("NOCFG", "no cfg visible to this sequencer")
+```
+
+`m_sequencer` is a handle, built into every sequence, to the sequencer the sequence was started on; a **sequencer** is the component that hands a sequence's items to a driver ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index)). Here the lookup runs for the sequencer's path, so the `set()` scope must reach the sequencer, for example `"env.agt0*"` instead of `"env.agt0"`. The other form, `get(null, get_full_name(), "cfg", cfg)`, looks up the sequence's own full name, `<sequencer path>.<sequence name>` for a sequence started directly on the sequencer.
+
+| Form (in `body()`) | Path looked up | Scopes that reach it | Scopes that do not |
+|---|---|---|---|
+| `get(m_sequencer, "", "cfg", cfg)` | `uvm_test_top.env.agt0.sqr` | `env.agt0*`, `env.agt0.*`, `env.agt0.sqr` | `env.agt0` |
+| `get(null, get_full_name(), "cfg", cfg)` | `uvm_test_top.env.agt0.sqr.<sequence name>` | `env.agt0*`, `env.agt0.*`, `env.agt0.sqr.*` | `env.agt0`, `env.agt0.sqr` |
+
+The table assumes the sequencer is named `sqr` and the `set()` is made by the test (`cntxt` is `uvm_test_top`).
+
+### Recap and common mistakes
+
+- `set()` stores a value under a scope (context path plus `inst_name`), a field name and a type; `get()` sees it only if all three match its own path, name and type.
+- During build the higher context wins; otherwise the most recent `set()` wins; path specificity never counts.
+- Required settings get a checked `get()` with `` `uvm_fatal ``; optional settings get a default and `void'(get(…))`.
+- One configuration object per agent replaces many scalars.
+
+| Mistake | Why it fails |
+|---|---|
+| `set` with `virtual bus_if`, `get` with `virtual bus_if.drv_mp` (or `int` against `bit [31:0]`) | different types; silent miss |
+| field `"vif"` set, `"m_vif"` read | field names must be identical |
+| scope `"env.agt0.*"` read by the agent itself | the pattern requires something after `agt0.` |
+| `get()` in a constructor, or `set()` in a later-building sibling or a later phase | the setting does not exist yet |
+| `tb_top` sets a default for a field the test also sets in `build_phase` | `tb_top` wins (1000 against 999) |
+| one `set(this, "*", "vif", …)` for two agents | both read the same, most recent handle |
+| `+uvm_set_config_int` for a value read with `uvm_config_db#(int)` | `uvm_bitstream_t` is not `int` |
+
 ## Make It Work
-1. **Combine variables into Config Objects:** Instead of 10 `set()` calls for 10 integers, pack them into a `uvm_object` config class, and set the handle once. It creates a single source of truth.
-2. **Wildcards are powerful, but dangerous:** Passing to `"uvm_test_top.env.agent.drv"` is extremely safe. Passing to `"*"` puts that setting into the global namespace where it might accidentally override another agent's parameters.
-3. **Handle failed gets:** Always wrap a required `get()` in `if (!...)` and call `uvm_fatal`. A failed `get()` prints nothing and leaves the variable at its default, often 0 or `null`.
-4. **Trace when lost:** Run with `+UVM_CONFIG_DB_TRACE` to log every `set()` and `get()` with its scope, field and type. A failed lookup shows as `null (failed lookup)`. `print_config(1)` on a component lists the settings visible to it, and `check_config_usage()` reports settings nobody read.
-5. **Getting from a sequence:** A sequence is not a component. Call `uvm_config_db#(T)::get(null, get_full_name(), "field", value)` or pass the sequencer: `get(m_sequencer, "", "field", value)`.
 
-## Interview Pitfalls
-**The Missing Virtual Interface Issue:**
-You may be given code that has a `null pointer exception` inside the driver's `run_phase` when it tries to wiggle a pin. Look for the `uvm_config_db::set` in the top module and the `get` in the driver's `build_phase`. Typographical errors in the string names (e.g. `"viif"` vs `"vif"`) are a classic bug pattern tested in interviews.
+### Run it
 
-**The Silent Type Mismatch:**
-`tb_top` calls `uvm_config_db#(virtual apb_if)::set(...)`, and the driver calls `uvm_config_db#(virtual apb_if.drv_mp)::get(...)`. Each type parameter is a separate set of entries, so the driver's `get()` returns 0 with no message and `vif` stays `null`. The same happens with `int` vs `bit [31:0]`. Make `set` and `get` use the identical type, or run with `+UVM_CONFIG_DB_TRACE`.
+Use any simulator with IEEE 1800-2023 class and clocking-block support and the Accellera uvm-core 2020.3.1 library. Compile `uvm_pkg` and the file below with `tb_top` as the top module, then run with `+UVM_TESTNAME=cfg_test +UVM_CONFIG_DB_TRACE`. Compile and run switches are simulator-specific; see your simulator's manual. No log on this page was captured from a simulator: each is traced by hand from the code and the uvm-core source, so treat it as illustrative.
 
-**Late Runtime Overrides:**
-If someone calls `set()` *after* the `build_phase` has finished and the target components have already called `get()`, the value will sit in the database unused. The `config_db` is not reactive; components must explicitly `get()` the value again to see runtime changes.
+### Worked example: two agents, one configuration object each
+
+The bench has two interfaces. Agent `agt0` is active and drives `bus_if0`; a register stage standing in for the design under test (DUT) copies `bus_if0` to `bus_if1` one clock later; agent `agt1` is passive and only watches `bus_if1`. Every setting reaches the agents through two kinds of `set()`: the virtual interfaces from `tb_top`, and one configuration object per agent from the test. The driver is a plain component that wiggles pins; real drivers get items from a sequencer, which [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index) adds. Both components touch the pins only through **clocking blocks** (`cb`, `mon_cb`), which drive and sample at the clock edge without races ([F4C](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index)). The test keeps the simulation running with an **objection**: `run_phase` ends only when every raised objection has been dropped ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+
+```systemverilog
+// compile
+`include "uvm_macros.svh"
+
+interface bus_if (input logic clk);
+  timeunit 1ns; timeprecision 1ps;
+  logic       valid;
+  logic [7:0] data;
+
+  clocking cb @(posedge clk);       // the driver's view: outputs
+    output valid, data;
+  endclocking
+  clocking mon_cb @(posedge clk);   // the monitor's view: inputs, sampled before the edge
+    input valid, data;
+  endclocking
+
+  modport drv_mp (clocking cb);
+  modport mon_mp (clocking mon_cb);
+endinterface
+
+package bus_pkg;
+  timeunit 1ns; timeprecision 1ps;
+  import uvm_pkg::*;
+
+  class bus_agent_cfg extends uvm_object;
+    `uvm_object_utils(bus_agent_cfg)
+    virtual bus_if          vif;                    // filled in by the test
+    uvm_active_passive_enum is_active = UVM_ACTIVE;
+    bit                     coverage_enable = 1;
+    int unsigned            num_pkts = 1;
+
+    function new(string name = "bus_agent_cfg");
+      super.new(name);
+    endfunction
+
+    virtual function string convert2string();
+      return $sformatf("is_active=%s coverage_enable=%0b num_pkts=%0d vif=%s",
+                       is_active.name(), coverage_enable, num_pkts,
+                       (vif == null) ? "null" : "set");
+    endfunction
+  endclass
+
+  // A pin-wiggling component standing in for a uvm_driver (sequences come in I-UVM-3A).
+  class bus_driver extends uvm_component;
+    `uvm_component_utils(bus_driver)
+    bus_agent_cfg         cfg;   // handed down by bus_agent before this build_phase runs
+    virtual bus_if.drv_mp vif;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (cfg == null) `uvm_fatal("NOCFG", "bus_agent did not hand cfg to the driver")
+      vif = cfg.vif;   // no modport -> modport view is legal (IEEE 1800-2023 §25.9)
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      for (int unsigned i = 0; i < cfg.num_pkts; i++) begin
+        @(vif.cb);
+        vif.cb.valid <= 1'b1;
+        vif.cb.data  <= 8'(i);
+      end
+      @(vif.cb);
+      vif.cb.valid <= 1'b0;
+      `uvm_info("DRV", $sformatf("drove %0d transfers", cfg.num_pkts), UVM_LOW)
+    endtask
+  endclass
+
+  class bus_monitor extends uvm_component;
+    `uvm_component_utils(bus_monitor)
+    bus_agent_cfg         cfg;
+    virtual bus_if.mon_mp vif;
+    int unsigned          n_seen;
+    int unsigned          n_sampled;   // transfers passed to coverage
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      if (cfg == null) `uvm_fatal("NOCFG", "bus_agent did not hand cfg to the monitor")
+      vif = cfg.vif;
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      forever begin
+        @(vif.mon_cb);
+        if (vif.mon_cb.valid === 1'b1) begin   // === ignores X before the first drive
+          n_seen++;
+          // A configuration field gates behaviour: a real monitor would call its
+          // covergroup's sample() here (I-SV-3A); this one only counts.
+          if (cfg.coverage_enable) n_sampled++;
+        end
+      end
+    endtask
+
+    function void report_phase(uvm_phase phase);
+      `uvm_info("MON", $sformatf("saw %0d transfers, sampled %0d for coverage", n_seen, n_sampled), UVM_LOW)
+    endfunction
+  endclass
+
+  class bus_agent extends uvm_agent;
+    `uvm_component_utils(bus_agent)
+    bus_agent_cfg cfg;
+    bus_driver    drv;
+    bus_monitor   mon;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);   // automatic configuration, and uvm_agent's is_active lookup
+      if (!uvm_config_db#(bus_agent_cfg)::get(this, "", "cfg", cfg))
+        `uvm_fatal("NOCFG", {"no bus_agent_cfg for ", get_full_name()})
+      if (cfg.vif == null)
+        `uvm_fatal("NOVIF", {"cfg.vif is null for ", get_full_name()})
+      is_active = cfg.is_active;  // the configuration object is the one source of truth
+      `uvm_info("CFG", cfg.convert2string(), UVM_LOW)
+
+      mon = bus_monitor::type_id::create("mon", this);
+      mon.cfg = cfg;              // hand the handle down; no second lookup needed
+      if (get_is_active() == UVM_ACTIVE) begin
+        drv = bus_driver::type_id::create("drv", this);
+        drv.cfg = cfg;
+      end
+    endfunction
+  endclass
+
+  class bus_env extends uvm_env;
+    `uvm_component_utils(bus_env)
+    bus_agent agt0, agt1;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      agt0 = bus_agent::type_id::create("agt0", this);
+      agt1 = bus_agent::type_id::create("agt1", this);
+    endfunction
+  endclass
+
+  class cfg_test extends uvm_test;
+    `uvm_component_utils(cfg_test)
+    bus_env       env;
+    bus_agent_cfg cfg0, cfg1;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      cfg0 = bus_agent_cfg::type_id::create("cfg0");
+      cfg1 = bus_agent_cfg::type_id::create("cfg1");
+      // The interfaces come from tb_top, scoped to this test only.
+      if (!uvm_config_db#(virtual bus_if)::get(this, "", "vif0", cfg0.vif))
+        `uvm_fatal("NOVIF", "tb_top did not publish vif0")
+      if (!uvm_config_db#(virtual bus_if)::get(this, "", "vif1", cfg1.vif))
+        `uvm_fatal("NOVIF", "tb_top did not publish vif1")
+      cfg0.num_pkts        = 4;
+      cfg1.is_active       = UVM_PASSIVE;   // agt1 only watches the DUT output
+      cfg1.coverage_enable = 0;
+      // One set() per agent, scoped to that agent alone.
+      uvm_config_db#(bus_agent_cfg)::set(this, "env.agt0", "cfg", cfg0);
+      uvm_config_db#(bus_agent_cfg)::set(this, "env.agt1", "cfg", cfg1);
+      env = bus_env::type_id::create("env", this);
+    endfunction
+
+    function void end_of_elaboration_phase(uvm_phase phase);
+      check_config_usage();   // uvm-core: lists settings written but never read
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      phase.raise_objection(this);
+      // Wait on clock edges, not delays: num_pkts edges to drive, one to end the
+      // burst, and three more for the register stage and the passive monitor.
+      repeat (cfg0.num_pkts + 4) @(cfg0.vif.cb);
+      phase.drop_objection(this);
+    endtask
+
+    function void check_phase(uvm_phase phase);
+      if (env.agt0.mon.n_seen == cfg0.num_pkts && env.agt1.mon.n_seen == cfg0.num_pkts)
+        `uvm_info("CHK", $sformatf("mon0 saw %0d, mon1 saw %0d: PASS",
+                                   env.agt0.mon.n_seen, env.agt1.mon.n_seen), UVM_LOW)
+      else
+        `uvm_error("CHK", $sformatf("expected %0d transfers, mon0 saw %0d, mon1 saw %0d",
+                                    cfg0.num_pkts, env.agt0.mon.n_seen, env.agt1.mon.n_seen))
+    endfunction
+  endclass
+endpackage
+
+module tb_top;
+  timeunit 1ns; timeprecision 1ps;
+  import uvm_pkg::*;
+  import bus_pkg::*;
+
+  logic clk = 1'b0;
+  always #5 clk = ~clk;
+
+  bus_if bus_if0 (.clk(clk));   // driven by agt0
+  bus_if bus_if1 (.clk(clk));   // DUT output, watched by agt1
+
+  // DUT stand-in: one register stage from bus_if0 to bus_if1.
+  always @(posedge clk) begin
+    bus_if1.valid <= bus_if0.valid;
+    bus_if1.data  <= bus_if0.data;
+  end
+
+  initial begin
+    // null context and scope "uvm_test_top": only the test reads these.
+    uvm_config_db#(virtual bus_if)::set(null, "uvm_test_top", "vif0", bus_if0);
+    uvm_config_db#(virtual bus_if)::set(null, "uvm_test_top", "vif1", bus_if1);
+    run_test("cfg_test");
+  end
+endmodule
+```
+
+**Expected output** (illustrative, traced by hand, abbreviated). Each line really starts with `UVM_INFO <file>(<line>) @ <time>:`; here `…` replaces the file and line, times are in ns, and the `(type …)` text and the value after `=` are formatted by your simulator.
+
+```text
+UVM_INFO … @ 0: reporter [CFGDB/SET] Configuration scope='uvm_test_top' name='vif0' (type virtual bus_if) set accessor= = (virtual bus_if) …
+UVM_INFO … @ 0: reporter [CFGDB/SET] Configuration scope='uvm_test_top' name='vif1' (type virtual bus_if) set accessor= = (virtual bus_if) …
+UVM_INFO … @ 0: reporter [RNTST] Running test cfg_test...
+UVM_INFO … @ 0: reporter [CFGDB/GET] Configuration scope='uvm_test_top' name='vif0' (type virtual bus_if) read accessor=uvm_test_top = (virtual bus_if) …
+UVM_INFO … @ 0: reporter [CFGDB/GET] Configuration scope='uvm_test_top' name='vif1' (type virtual bus_if) read accessor=uvm_test_top = (virtual bus_if) …
+UVM_INFO … @ 0: reporter [CFGDB/SET] Configuration scope='uvm_test_top.env.agt0' name='cfg' (type class bus_pkg::bus_agent_cfg) set accessor=uvm_test_top = …
+UVM_INFO … @ 0: reporter [CFGDB/SET] Configuration scope='uvm_test_top.env.agt1' name='cfg' (type class bus_pkg::bus_agent_cfg) set accessor=uvm_test_top = …
+UVM_INFO … @ 0: reporter [CFGDB/GET] Configuration scope='uvm_test_top.env.agt0' name='cfg' (type class bus_pkg::bus_agent_cfg) read accessor=uvm_test_top.env.agt0 = …
+UVM_INFO … @ 0: uvm_test_top.env.agt0 [CFG] is_active=UVM_ACTIVE coverage_enable=1 num_pkts=4 vif=set
+UVM_INFO … @ 0: reporter [CFGDB/GET] Configuration scope='uvm_test_top.env.agt1' name='cfg' (type class bus_pkg::bus_agent_cfg) read accessor=uvm_test_top.env.agt1 = …
+UVM_INFO … @ 0: uvm_test_top.env.agt1 [CFG] is_active=UVM_PASSIVE coverage_enable=0 num_pkts=1 vif=set
+UVM_INFO … @ 45: uvm_test_top.env.agt0.drv [DRV] drove 4 transfers
+UVM_INFO … @ 75: uvm_test_top [CHK] mon0 saw 4, mon1 saw 4: PASS
+UVM_INFO … @ 75: uvm_test_top.env.agt0.mon [MON] saw 4 transfers, sampled 4 for coverage
+UVM_INFO … @ 75: uvm_test_top.env.agt1.mon [MON] saw 4 transfers, sampled 0 for coverage
+
+--- UVM Report Summary ---
+…
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+How to read it: one `SET` and one `GET` per field, and every `GET` ends in a value, not `null (failed lookup)`. `check_config_usage()` printed nothing, because every setting was read. The driver finishes at the fifth rising edge (45 ns); the passive monitor counts the last transfer at the sixth edge (55 ns), one clock later because of the register stage; the test drops its objection at the eighth edge (75 ns). The two `MON` lines show a configuration field gating behaviour: `cfg1.coverage_enable` is 0, so `agt1`'s monitor counts the transfers but sends none to coverage.
+
+### How to add configuration to an agent
+
+1. **List what the agent needs** from outside: its virtual interface, active or passive, coverage on or off, and test knobs.
+2. **Write the configuration object** (`<agent>_cfg extends uvm_object`) with those fields, sensible defaults and a `convert2string()`.
+3. **In `tb_top`, publish each interface** with `set(null, …)` before `run_test()`, with a distinct field name per interface.
+4. **In the test's `build_phase`, create one object per agent**, get the interfaces into them, set the knobs, and publish each object with a scope that names exactly one agent.
+5. **In the agent's `build_phase`, call `super.build_phase(phase)`, then `get()` the object** with a `` `uvm_fatal `` on failure, check `cfg.vif`, set `is_active`, and hand the handle to each child right after creating it.
+6. **Run once with `+UVM_CONFIG_DB_TRACE`** and check that every `GET` of your fields returns a value, and that `check_config_usage()` lists nothing.
+
+### Debugging a silent get() miss: symptom, cause, fix
+
+`+UVM_CONFIG_DB_TRACE` prints one line per `set()` and `get()` of `uvm_config_db`. It is a uvm-core 2020.3.1 feature, not part of IEEE 1800.2; calling `uvm_config_db_options::turn_on_tracing()` in code does the same. Search the log for the field name, then compare the `SET` lines with the failing `GET` line field by field.
+
+```text
+UVM_INFO … [CFGDB/SET] Configuration scope='uvm_test_top.env.agt0.drv' name='vif' (type virtual bus_if) set accessor= = …
+UVM_INFO … [CFGDB/GET] Configuration scope='uvm_test_top.env.agt0.drv' name='vif' (type virtual bus_if.drv_mp) read accessor=uvm_test_top.env.agt0.drv = null (failed lookup)
+UVM_FATAL … @ 0: uvm_test_top.env.agt0.drv [NOVIF] no virtual bus_if for uvm_test_top.env.agt0.drv
+```
+
+1. **Type mismatch.** Symptom: the `GET` line names the field and path you expected but shows a different `(type …)` from the `SET` line, as above. Fix: use the same type on both sides; for a modport, get the plain type and assign it to the modport-typed member.
+2. **Field or path typo.** Symptom: no `SET` line has the field name or a scope that matches the `GET` path. A setting that nobody read appears in the `CFGNRD` report of `check_config_usage()`, which lists every setting in the whole pool that was written and never read, wherever you call it. Fix the spelling on one side.
+3. **Scope that does not reach.** Symptom: the `SET` line has the right field and type, but its scope is, for example, `uvm_test_top.env.agt0.*` while the `GET` path is `uvm_test_top.env.agt0`. Fix: use `env.agt0` for the agent, or `env.agt0*` for the agent and everything below it.
+4. **Get before set.** Symptom: the failing `GET` line appears *before* the `SET` line in the log. The usual causes: the `set()` is in a sibling's `build_phase` and that sibling builds later (siblings build in name order, see Push Further); the `set()` is in a later phase, such as `connect_phase` or `run_phase`; or the `get()` is in the reader's constructor. A `set()` in the parent's `build_phase` is never too late for a `get()` in the child's `build_phase`, before or after `create()`, because the child's `build_phase` runs only after the parent's returns. Fix: publish from `tb_top` before `run_test()` or from a common parent's `build_phase`, and read in `build_phase`.
+5. **The wrong value, not a miss.** Symptom: the `GET` succeeds but returns an unexpected value. Find every `SET` of that field and type whose scope matches, and apply the precedence rules; a `tb_top` default beating the test is the usual cause.
+
+Two more tools, both uvm-core features: `print_config()` called on a component lists every setting whose scope reaches it, and `print_config(1)` does the same for all of its children too. With the trace on, expect failed lookups you did not write: a sequencer reads `wait_for_sequences_count` and every port reads `check_connection_relationships` (`uvm_sequencer_base.svh`, `uvm_port_base.svh`). Those misses are normal; only your own fields matter.
+
+**Checklist before moving on:**
+- [ ] Every required `get()` in your bench is wrapped in `if (!…)` with `` `uvm_fatal ``.
+- [ ] `tb_top` publishes every interface with `set(null, …)` before `run_test()`, one field name per interface.
+- [ ] Each agent receives exactly one configuration object through a scope that names only that agent.
+- [ ] `set()` and `get()` of each field use the same type, including the modport.
+- [ ] You can predict the winner when `tb_top`, the test and the env all set one field, during build and during `run_phase`.
+- [ ] A run with `+UVM_CONFIG_DB_TRACE` shows no `null (failed lookup)` for your own fields, and `check_config_usage()` lists nothing.
+
+## Push Further
+
+### Expert: Precedence corner cases
+
+- **Precedence is decided by `cntxt` and by `uvm_root`'s current phase.** `set()` computes `1000 - cntxt.get_depth()` only while the build phase is running, and 1000 otherwise (`uvm_config_db_implementation.svh` `set`). `uvm_root.m_current_phase` is set when the build phase starts (`uvm_topdown_phase.svh`), after `run_test()` has created `uvm_test_top` (`uvm_root.svh` `run_test`). So a `set()` in the test's constructor has precedence 1000 and, being more recent, beats `tb_top`'s 1000; a `set(null, …)` from any component's `build_phase` also has 1000 and beats the test's 999.
+- **A repeated `set()` overwrites, it does not add.** The database keeps one resource per context, scope and field (key `{inst_name, "__M_UVM__", field_name}` in the per-context pool), so a second `set()` with the same three reuses that resource and moves it to the front.
+- **Siblings build in name order.** Children are stored in an associative array indexed by name (`uvm_component.svh` `m_children[string]`) and the top-down traversal walks them in that order, so `agt0` builds before `scb`. A `set()` in one sibling's `build_phase` meant for another sibling is a get-before-set race in disguise; publish from the common parent.
+- **`check_config_usage()` is never called for you.** Its header comment says it runs automatically in the check phase, but nothing in uvm-core 2020.3.1 calls it, and it is marked `@uvm-compat` (kept for UVM 1.2 compatibility). Call it yourself in `end_of_elaboration_phase` or later. Its `recurse` argument is unused: it always reports the whole pool.
+
+### Expert: Type matching in the configuration database
+
+- `uvm_config_db#(T)` and the resource it stores are parameterized classes. Two specializations are the same type only when their type parameters are matching types (IEEE 1800-2023 §8.25, §6.22.1), and the lookup compares the resource's type handle, so the rule is exact.
+- `typedef bit [31:0] word_t;` matches `bit [31:0]`, and `int unsigned` matches `bit [31:0]` (same width and signedness, both 2-state, range `[31:0]`). `int` does not match `bit [31:0]` (signedness), `logic [31:0]` does not match `bit [31:0]` (4-state against 2-state), and `uvm_bitstream_t` matches neither.
+- A modport is part of a virtual interface's type, and so are the interface's actual parameter values (§25.9). `virtual bus_if #(.W(8))` and `virtual bus_if #(.W(16))` are different database types.
+- Class types match only themselves: `uvm_config_db#(uvm_object)` does not see a `bus_agent_cfg` setting, and a `bus_agent_cfg` declared in two different packages is two types. Keep configuration classes in one package.
+
+### Expert: Automatic configuration modes and cost
+
+- uvm-core 2020.3.1 documents its own `apply_config_settings` as a divergence from IEEE 1800.2 for speed. Its default mode, `CONFIG_CHECK_NAMES`, first asks the field macros for their member names and looks up only those (`uvm_component.svh` `apply_config_settings`, `apply_config_settings_mode`). Compiling the library with `+define+UVM_COMPONENT_CONFIG_MODE_DEFAULT=CONFIG_STRICT` restores the 1800.2 behaviour (`uvm_global_defines.svh`): a scan of every resource whose scope reaches the component, which a comment in `uvm_component.svh` calls "VERY expensive". The mode choice is a uvm-core extension (`@uvm-contrib`), not IEEE 1800.2.
+- The type rules in the automatic-configuration table hold in both modes, because each field macro reads only the types it accepts.
+- Cost scales with the number of components times the number of registered fields, every build. Large environments often turn it off with `use_automatic_config()` returning 0 in a common base class and rely on explicit `get()` calls, which are cheaper and fail loudly.
+
+### Expert: Command-line configuration internals
+
+- `uvm_root::build_phase` processes `+uvm_set_config_int`, `+uvm_set_config_string` and the uvm-core-only `+uvm_set_config_bitstream` through `m_do_config_settings` and `m_process_config` (`uvm_root.svh`). The upper-case spellings `+UVM_SET_CONFIG_INT` and `+UVM_SET_CONFIG_STRING` are accepted too.
+- Each plusarg must have exactly three comma-separated fields, or uvm-core reports `UVM_CMDLINE_PROC` and ignores it. Integer prefixes `'b`, `0b`, `'o`, `'d`, `'h`, `'x` and `0x` are recognized; anything else is parsed as decimal.
+- The settings are made from `uvm_root` during its own `build_phase`, which runs before the test's, so they have precedence 1000: they beat the test's `build_phase` settings of the same type and lose only to a later setting of precedence 1000. They are typed `uvm_bitstream_t` or `string`, which decides what they reach (see Build Your Mental Model).
+- Use them for quick experiments and regression knobs on field-macro members or `is_active`; for anything else, read a dedicated plusarg in the test (`$value$plusargs`, IEEE 1800-2023 §21.6) and put the value into the configuration object, where it is typed and printed.
+
+### Expert: Run-time reconfiguration
+
+- **What wakes `wait_modified`.** Waiters are kept per type `T` and per exact field name; each `uvm_config_db#(T)::set()` of that field wakes every waiter whose path matches the new setting's scope (`uvm_config_db_implementation.svh` `wait_modified`, `trigger_modified`). Precedence is not checked: a low-precedence `set()` during build wakes the waiter even though `get()` still returns the older, higher-precedence value. A `uvm_resource_db` `set()` never wakes it.
+- **Shared handles as the alternative.** Changing a field of a configuration object that every component already holds needs no database traffic, and everyone sees the change immediately. The price is that nothing announces it: components must re-read the field at the right moment, typically at the start of each transaction.
+- **Rule of thumb.** Configure structure (active or passive, which components exist) at build time only; change behaviour knobs at run time through the shared object, and keep `wait_modified` for the rare component that must react the moment a value changes.
+
+### Expert: Tool and library dependence
+
+- `+UVM_CONFIG_DB_TRACE`, `+UVM_RESOURCE_DB_TRACE`, `uvm_config_db_options`, `print_config()` and `check_config_usage()` are uvm-core 2020.3.1 features, not IEEE 1800.2; another UVM implementation may not have them.
+- `+` and `/regex/` scopes need the DPI regular-expression code. A library compiled with `UVM_NO_DPI` (which sets `UVM_REGEX_NO_DPI`) uses a SystemVerilog fallback that understands only `*` and `?` (`src/dpi/uvm_dpi.svh`, `src/dpi/uvm_regex.svh`).
+- The `(type …)` text in the trace comes from `$typename`, and its format, like the printed value of a virtual interface handle, is tool-dependent. Search for field names, not for exact type strings.
+- The whole database implementation can be replaced: `uvm_config_db_implementation_t#(T)` is looked up through a factory override on first use (`set_imp`, `@uvm-contrib`). Debug and logging layers in some company libraries use this hook.
+
+### Expert: Methodology trade-offs
+
+- **Database or handle passing.** Publishing one object per agent through the database keeps agents independent of the env's code. Handing handles down directly (the agent assigning `drv.cfg = cfg`, as in Make It Work, or an env assigning `agt0.cfg = env_cfg.agt_cfg[0]`) avoids lookups and string scopes entirely, at the cost of the parent knowing its children's types. Most benches combine them: the database at the top-level boundaries, handles below the agent.
+- **Scalars or objects.** Scalars are fine for one or two knobs read by a single component; beyond that, objects are easier to type-check, randomize and print.
+- **Per-agent scopes or `uvm_test_top.*`.** Broad scopes are convenient until a second agent of the same type appears. Name each agent in the scope, and nest configuration objects (an env configuration holding agent configurations) for larger environments, as [A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index) and [A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index) do.
+- **Performance.** Each `get()` walks every resource with that field name and runs a pattern match against the caller's path (`uvm_resource_pool.svh` `lookup_name`). Read configuration once in `build_phase` and keep the handle; never call `get()` per transaction.
+
+### Expert: Interview angles
+
+Answer each one before you open the options.
+
+<InterviewQuestionPlayground
+  title="Interview angle: the knob that will not change"
+  question="In build_phase the test sets num_pkts to 20 for env.agt0 with uvm_config_db#(int unsigned). The agent's checked get() of the same type succeeds, yet num_pkts is 1. What is the most likely cause?"
+  options={[
+    { text: "tb_top also sets num_pkts for that agent, with the same type, before run_test(). That setting has precedence 1000 and beats the test's 999.", correct: true, feedback: "Right. During build the higher context wins, and a set() before phasing starts has the top precedence. Remove the tb_top default and give the agent a default in its own code instead." },
+    { text: "The env set num_pkts to 1 later in its build_phase, and the most recent set() wins.", correct: false, feedback: "During build, the env's set() has precedence 998 and loses to the test's 999, whatever the order." },
+    { text: "The field name is misspelled in the test.", correct: false, feedback: "Then the get() would miss or find another setting; a misspelled set() cannot by itself produce the value 1. Something else set 1." },
+    { text: "uvm_config_db can only pass int, not int unsigned.", correct: false, feedback: "Any type can be stored; set and get only have to use the same one." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: two agents, one interface"
+  question="Two agents of the same class end up driving the same interface, although tb_top set a different handle for each. Both sets use the scope uvm_test_top.* and the field vif. Why?"
+  options={[
+    { text: "The two set() calls have the same context, scope, field and type, so the second one overwrites the first. One entry, holding the second handle, reaches both agents.", correct: true, feedback: "Right. Use a distinct scope per agent (or a distinct field name read by the test) so that each setting is its own entry and reaches exactly one agent." },
+    { text: "The first set() wins, because the configuration database keeps the oldest entry.", correct: false, feedback: "That is the uvm_resource_db rule for a plain set(). Here the second uvm_config_db set() replaces the first, so only the second handle is left." },
+    { text: "Virtual interfaces cannot be stored twice under one field name.", correct: false, feedback: "They can, under different scopes. Here the scope is the same too, so the second set() overwrites the first: one entry reaches both agents." },
+    { text: "The factory replaced one agent with the other.", correct: false, feedback: "The factory chooses classes, not configuration values." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: what the command line can reach"
+  question="+uvm_set_config_int=uvm_test_top.env.agt0,is_active,0 makes agt0 passive, but +uvm_set_config_int=uvm_test_top.env.agt0,num_pkts,5 has no effect on a value the agent reads with uvm_config_db#(int)::get. Why?"
+  options={[
+    { text: "The plusarg stores a uvm_bitstream_t setting. uvm_agent reads is_active with a lookup that accepts integral types, but the int get() only sees int settings.", correct: true, feedback: "Right. Read the knob with uvm_config_int::get(), make it a uvm_field_int member, or read your own plusarg and copy it into the configuration object." },
+    { text: "Command-line settings are applied after build_phase, too late for num_pkts.", correct: false, feedback: "They are applied in uvm_root's build_phase, before the test builds, with precedence 1000." },
+    { text: "Only fields of type uvm_active_passive_enum can be set from the command line.", correct: false, feedback: "Any field-macro member of an integral type is reachable, and +uvm_set_config_string exists for strings." },
+    { text: "The path must end in a wildcard.", correct: false, feedback: "uvm_test_top.env.agt0 exactly matches the agent's own path." }
+  ]}
+/>
 
 ## Practice & Reinforce
 
-> **Lab Exercise:** [Debug the Null VIF](/practice/lab/config-debug)
-> 
-> Put the theory into practice. Learn to trace hierarchy spelling typos to fix a fatal null virtual interface error caused by a sloppy `config_db` string.
+Start with the quiz: each question maps to one of the five objectives. Then do the kata and the debug challenge, revisit the explorer's Debug scenarios, and finish with the lab and the flashcards.
+
+### Quiz
 
 <Quiz questions={[
-    {
-      "question": "Where is `uvm_config_db::set` typically called to pass a virtual interface handle?",
-      "answers": [
-        { text: "In a lower-level driver", correct: false },
-        { text: "In the top-level testbench module", correct: true },
-        { text: "Inside the sequence item", correct: false }
-      ],
-      "explanation": "Because interfaces live in the static module domain and UVM lives in the dynamic class domain, the top module must bridge them by setting the `vif` in the config DB."
-    },
-    {
-      "question": "During build_phase, `uvm_test_top` sets an integer 'speed' to 10 and `uvm_test_top.env` sets 'speed' to 20 for the same path. What does the driver's get() return in its build_phase?",
-      "answers": [
-        { text: "10, because during build a set from a higher context has higher precedence.", correct: true },
-        { text: "20, because env's set() ran later.", correct: false },
-        { text: "An error occurs due to conflicts.", correct: false }
-      ],
-      "explanation": "During build, precedence is 1000 minus the depth of the set's context: the test's set has 999, the env's 998. Order does not matter here. After build it does: all sets have precedence 1000 and the most recent one wins."
-    },
-    {
-      "question": "The same two sets are made in run_phase instead: the test at 10 ns, then env at 20 ns. The driver calls get() again at 30 ns. What does it read?",
-      "answers": [
-        { text: "10, because the test always wins.", correct: false },
-        { text: "20, because outside build all sets have equal precedence and the most recent wins.", correct: true },
-        { text: "The value it read during build; config_db cannot change after build.", correct: false }
-      ],
-      "explanation": "Outside build_phase every set() gets the default precedence (1000), so ties go to the most recent set(). The driver must call get() again to see it."
-    },
-    {
-      "question": "tb_top sets the field 'vif' with type virtual apb_if. The driver calls uvm_config_db#(virtual apb_if.drv_mp)::get(this, \"\", \"vif\", vif). What happens?",
-      "answers": [
-        { text: "get() returns 1, because the modport is part of the same interface.", correct: false },
-        { text: "get() returns 0 with no message, and vif stays null.", correct: true },
-        { text: "UVM issues a type-mismatch error.", correct: false }
-      ],
-      "explanation": "uvm_config_db#(T) only finds entries of exactly type T. Different type parameters never match, and get() reports nothing unless +UVM_CONFIG_DB_TRACE is on."
-    }
-  ]} />
+  {
+    question: "tb_top calls uvm_config_db#(virtual bus_if)::set(null, \"uvm_test_top.env.agt0.*\", \"vif\", bus_if0) before run_test(). Which component's get(this, \"\", \"vif\", vif) returns 0?",
+    answers: [
+      { text: "uvm_test_top.env.agt0.drv", correct: false, feedback: "Its path matches: agt0. followed by drv." },
+      { text: "uvm_test_top.env.agt0.mon", correct: false, feedback: "Its path matches the same way as the driver's." },
+      { text: "uvm_test_top.env.agt0 itself", correct: true, feedback: "Right. The scope requires the dot after agt0 plus something more, so the agent's own path does not match." },
+      { text: "None of them: all three see the setting.", correct: false, feedback: "A trailing .* excludes the node itself. Use agt0* to include it." }
+    ],
+    explanation: "The scope is a glob matched against the whole path. uvm_test_top.env.agt0.* matches every path below agt0 but not uvm_test_top.env.agt0, which has no characters after agt0 to match the dot.",
+    objective: 1
+  },
+  {
+    question: "Which call, placed in tb_top before run_test(), lets the driver uvm_test_top.env.agt0.drv (and nothing else) read the virtual interface with get(this, \"\", \"vif\", vif)?",
+    answers: [
+      { text: "uvm_config_db#(virtual bus_if)::set(null, \"uvm_test_top.env.agt0.drv\", \"vif\", bus_if0);", correct: true, feedback: "Right. With a null context the second argument is the whole scope, and it names exactly the driver's path." },
+      { text: "uvm_config_db#(virtual bus_if)::set(this, \"env.agt0.drv\", \"vif\", bus_if0);", correct: false, feedback: "A module has no this. Only a class method can pass this." },
+      { text: "uvm_config_db#(virtual bus_if)::set(null, \"env.agt0.drv\", \"vif\", bus_if0);", correct: false, feedback: "With a null context the scope is just env.agt0.drv, but the driver's full path starts with uvm_test_top, so it never matches." },
+      { text: "uvm_config_db#(virtual bus_if)::set(null, \"*\", \"vif\", bus_if0);", correct: false, feedback: "This works for the driver, but it reaches every component in the tree, not only the driver." }
+    ],
+    explanation: "set() builds the scope from the context's full name plus inst_name. A null context is uvm_root, whose full name is empty, so the inst_name must be the complete path from uvm_test_top.",
+    objective: 1
+  },
+  {
+    question: "agt0's build_phase contains if (uvm_config_db#(int unsigned)::exists(this, \"\", \"num_pkts\")) followed by a uvm_warning. In its build_phase, before it creates env, the test calls uvm_config_db#(int unsigned)::set(this, \"env.agt0\", \"num_pkts\", 8). What happens when agt0 builds?",
+    answers: [
+      { text: "The warning is printed. exists() returns 1 and leaves the setting untouched, so a later get() would still return 8.", correct: true, feedback: "Right. exists() only checks that a setting of that type and field reaches the path; it has no value argument and never changes the database." },
+      { text: "The warning is printed, and exists() consumes the setting, so a later get() returns 0.", correct: false, feedback: "Nothing consumes a setting. exists(), like get(), only looks; any number of lookups can find the same entry." },
+      { text: "Nothing is printed, because exists() only sees settings that some get() has already read.", correct: false, feedback: "Reading has nothing to do with it. The test's set() ran in its build_phase, before agt0 was built, so the setting exists when agt0 asks." },
+      { text: "exists() returns the stored value, 8, and the if treats it as true.", correct: false, feedback: "exists() returns a bit: 1 when a matching setting is found, 0 otherwise. To read the value, call get()." }
+    ],
+    explanation: "exists() runs the same lookup as get(): same field name, same type T, a scope that matches the caller's path. It returns 1 or 0 and writes nothing, which makes it the tool for behaviour that depends only on whether a setting is present.",
+    objective: 1
+  },
+  {
+    question: "During build_phase, uvm_test_top calls set(this, \"env.agt0\", \"speed\", 10) and then uvm_test_top.env calls set(this, \"agt0\", \"speed\", 20), both with uvm_config_db#(int). What does agt0's get() in its build_phase return?",
+    answers: [
+      { text: "10, because during build a setting from a higher context has higher precedence.", correct: true, feedback: "Right: the test's set has precedence 999 and the env's 998." },
+      { text: "20, because the env's set() ran later and the most recent set wins.", correct: false, feedback: "That is the rule at equal precedence. During build the context depth gives the two settings different precedence." },
+      { text: "20, because the env is closer to the agent, so its setting is more specific.", correct: false, feedback: "Closeness and path specificity never count; the setting from the higher context wins during build." },
+      { text: "Neither: UVM reports a conflict and get() returns 0.", correct: false, feedback: "Several matching settings are normal; precedence picks one without any message." }
+    ],
+    explanation: "During build, precedence is 1000 minus the depth of cntxt: uvm_test_top 999, env 998. The order of the calls does not matter. After build it does: all settings have precedence 1000 and the most recent wins.",
+    objective: 2
+  },
+  {
+    question: "The same two calls are made in run_phase instead: the test at 10 ns, then the env at 20 ns. agt0 calls get() again at 30 ns. What does it read?",
+    answers: [
+      { text: "10, because the test always wins.", correct: false, feedback: "The test wins only during build, when context depth sets the precedence." },
+      { text: "20, because outside build every setting has precedence 1000 and the most recent one wins.", correct: true, feedback: "Right. And agt0 sees it only because it calls get() again." },
+      { text: "The value it read during build, because the configuration database cannot change after build.", correct: false, feedback: "Settings can change at any time; a component sees a change only when it calls get() again." },
+      { text: "Whichever value agt0 read first.", correct: false, feedback: "Each get() looks up the database again; earlier reads do not matter." }
+    ],
+    explanation: "Outside build_phase every set() gets the default precedence 1000, so ties go to the most recent set(). The database never pushes values to components: they must call get() again.",
+    objective: 2
+  },
+  {
+    question: "An engineer who knows the factory well expects the configuration database to behave the same way. During build, which rule actually picks among several matching set() calls of the same field and type?",
+    answers: [
+      { text: "The first matching setting registered wins.", correct: false, feedback: "That is how the factory picks among matching instance overrides. The configuration database does not use registration order during build." },
+      { text: "The setting with the most specific path wins.", correct: false, feedback: "Specificity never counts: a test's \"*\" beats an env's exact path during build." },
+      { text: "The setting whose context is highest in the hierarchy wins.", correct: true, feedback: "Right: precedence is 1000 minus the context's depth during build." },
+      { text: "The most recent setting wins.", correct: false, feedback: "That is the tie-break at equal precedence, and the rule after build, not the main rule during build." }
+    ],
+    explanation: "During build, uvm_config_db computes precedence from the depth of cntxt, so the highest context wins; ties go to the most recent set(). The factory's instance overrides use a different rule (first registered match), so carrying one over to the other gives wrong predictions.",
+    objective: 2
+  },
+  {
+    question: "The test creates one bus_agent_cfg called cfg, publishes it with set(this, \"env.agt0\", \"cfg\", cfg) and set(this, \"env.agt1\", \"cfg\", cfg), and then sets cfg.is_active = UVM_PASSIVE so that agt1 is passive. Both agents copy cfg.is_active in their build_phase. What happens?",
+    answers: [
+      { text: "agt0 is active and agt1 is passive, because each set() stored its own copy.", correct: false, feedback: "set() stores the handle, not a copy of the object." },
+      { text: "Both agents are passive, because both entries hold the same object, changed before either agent read it.", correct: true, feedback: "Right. Create one configuration object per agent." },
+      { text: "Both agents are active, because the change came after the set() calls.", correct: false, feedback: "The database holds a handle to the object, so a later change to the object is visible through it." },
+      { text: "agt1's get() fails, because a handle cannot be published twice.", correct: false, feedback: "The same handle can be stored under any number of scopes." }
+    ],
+    explanation: "A class handle stored in the database refers to the one object. Both agents read the same object, after the test made it passive. One object per agent avoids this, and printing cfg.convert2string() in each agent makes it visible.",
+    objective: 3
+  },
+  {
+    question: "tb_top sets field \"vif\" with uvm_config_db#(virtual bus_if). The driver calls uvm_config_db#(virtual bus_if.drv_mp)::get(this, \"\", \"vif\", vif). What happens, in uvm-core 2020.3.1?",
+    answers: [
+      { text: "get() returns 1, because the modport belongs to the same interface.", correct: false, feedback: "A modport is part of a virtual interface's type (IEEE 1800-2023 §25.9), so the two are different types." },
+      { text: "get() returns 1, but vif is null.", correct: false, feedback: "When get() returns 1 it has written a value. Here it returns 0." },
+      { text: "get() returns 0 with no message, and vif keeps its old value (null).", correct: true, feedback: "Right. Only +UVM_CONFIG_DB_TRACE would show the miss, as two different type strings." },
+      { text: "UVM reports a type-mismatch UVM_ERROR.", correct: false, feedback: "The lookup is filtered by type and reports nothing." }
+    ],
+    explanation: "uvm_config_db#(T) only sees entries stored with a matching T, and a failed get() is silent. Fix it by getting the plain virtual bus_if and assigning it to the modport-typed member, which §25.9 allows.",
+    objective: 4
+  },
+  {
+    question: "A driver calls uvm_config_db#(virtual bus_if)::get(this, \"\", \"vif\", vif) with no if around it, and the field name is misspelled in tb_top. What does the log show first?",
+    answers: [
+      { text: "A UVM_FATAL from get() itself during build_phase.", correct: false, feedback: "get() never raises a fatal; it returns 0. The fatal comes only from your own check." },
+      { text: "A UVM_WARNING from the spell checker, naming the closest field.", correct: false, feedback: "uvm_config_db::get() looks up with error reporting turned off, so no spell-check warning appears." },
+      { text: "Nothing at the get(). The run fails later, at the first use of the null vif in run_phase, with the simulator's null virtual interface error.", correct: true, feedback: "Right. That is why every required get() needs an if with uvm_fatal: the failure is then reported in build_phase, by the component that needed the value." },
+      { text: "A UVM_ERROR saying that the field was never set.", correct: false, feedback: "Nothing checks that a field was set; check_config_usage() reports the opposite case, settings never read." }
+    ],
+    explanation: "A failed get() returns 0 silently. Using a null virtual interface is a fatal run-time error (IEEE 1800-2023 §25.9), reported where the handle is used, far from the cause.",
+    objective: 4
+  },
+  {
+    question: "With +UVM_CONFIG_DB_TRACE the log shows: [CFGDB/SET] scope='uvm_test_top.env.agt0' name='cfg' (type class bus_pkg::bus_agent_cfg) and then [CFGDB/GET] scope='uvm_test_top.env.agt0' name='cfg' (type class uvm_pkg::uvm_object) … = null (failed lookup). What is the fix?",
+    answers: [
+      { text: "Change the scope of the set() to env.agt0.*", correct: false, feedback: "The scope already matches the path exactly; env.agt0.* would stop matching the agent." },
+      { text: "Make the get() use uvm_config_db#(bus_agent_cfg), the same type as the set().", correct: true, feedback: "Right. The field and scope match; only the type differs." },
+      { text: "Rename the field in one of the two calls.", correct: false, feedback: "Both lines show name='cfg'." },
+      { text: "Move the set() earlier, because the get() ran first.", correct: false, feedback: "The SET line comes first in the log, so the setting existed when the get() ran." }
+    ],
+    explanation: "Compare SET and GET lines field by field: scope, name, type, order. Here only the type differs: a bus_agent_cfg setting is invisible to a uvm_object get().",
+    objective: 4
+  },
+  {
+    question: "A run adds +uvm_set_config_int=uvm_test_top.env.agt0,num_pkts,5. The agent reads num_pkts with if (!uvm_config_db#(int)::get(this, \"\", \"num_pkts\", num_pkts)) and keeps its default. Why?",
+    answers: [
+      { text: "The plusarg is applied after the agent's build_phase.", correct: false, feedback: "It is applied in uvm_root's build_phase, before the test's." },
+      { text: "The plusarg stores a uvm_bitstream_t setting, and a uvm_config_db#(int) get() only sees int settings.", correct: true, feedback: "Right. uvm_config_int::get() or a uvm_field_int member would see it." },
+      { text: "It works: both are integers, so the get() returns 5.", correct: false, feedback: "Integer-ness does not matter; the lookup compares exact types." },
+      { text: "The path must be written relative to the test.", correct: false, feedback: "The plusarg's path is a full path, set with a null context." }
+    ],
+    explanation: "+uvm_set_config_int calls uvm_config_int::set(), and uvm_config_int is uvm_config_db#(uvm_bitstream_t). Field macros and uvm_agent's is_active lookup accept that type; an explicit int get() does not.",
+    objective: 5
+  },
+  {
+    question: "An agent declares bus_agent_cfg cfg with `uvm_field_object(cfg, UVM_DEFAULT) and relies on super.build_phase to fill it. The test calls uvm_config_db#(bus_agent_cfg)::set(this, \"env.agt0\", \"cfg\", cfg0). What is cfg after super.build_phase?",
+    answers: [
+      { text: "cfg0, because automatic configuration copies every setting whose name matches.", correct: false, feedback: "The field macro for objects reads only uvm_object-typed settings." },
+      { text: "null, because uvm_field_object only accepts settings of type uvm_object; a bus_agent_cfg setting is skipped silently.", correct: true, feedback: "Right. Use an explicit uvm_config_db#(bus_agent_cfg)::get(), or set with uvm_config_db#(uvm_object)." },
+      { text: "A copy of cfg0, because automatic configuration clones objects.", correct: false, feedback: "Nothing is applied here at all, because of the type." },
+      { text: "Compile error: field macros cannot be used in components.", correct: false, feedback: "Components may register fields with the uvm_field macros." }
+    ],
+    explanation: "Automatic configuration looks up settings by the member's name, then each field macro reads only the types it accepts: uvm_field_object reads uvm_object settings. An explicit, checked get() of the right type is the robust choice.",
+    objective: 5
+  }
+]} />
+
+### Kata: one object, not six sets
+
+A test configures one agent with six scalar settings:
+
+```systemverilog
+// snippet: the starting point, inside the test's build_phase
+uvm_config_db#(virtual bus_if)::set(this, "env.agt0*", "vif", vif0);
+uvm_config_db#(uvm_active_passive_enum)::set(this, "env.agt0", "is_active", UVM_ACTIVE);
+uvm_config_db#(bit)::set(this, "env.agt0*", "coverage_enable", 1'b1);
+uvm_config_db#(int unsigned)::set(this, "env.agt0*", "num_pkts", 20);
+uvm_config_db#(int unsigned)::set(this, "env.agt0*", "timeout_cycles", 1000);
+uvm_config_db#(bit [31:0])::set(this, "env.agt0*", "addr_base", 32'h1000_0000);
+```
+
+The driver and the monitor each make their own `get()` calls for the settings they use. Refactor so that the test makes one `set()` per agent and each component makes no more than one `get()`.
+
+**Acceptance:** with `+UVM_CONFIG_DB_TRACE` the log shows exactly one `CFGDB/SET` and one `CFGDB/GET` of the field `cfg` per agent (count by field name: library lookups of other fields may also appear), `check_config_usage()` lists nothing, and the driver prints the configuration with `convert2string()`.
+
+<details>
+<summary>Worked solution</summary>
+
+```systemverilog
+// snippet: the refactored pieces
+class bus_agent_cfg extends uvm_object;
+  `uvm_object_utils(bus_agent_cfg)
+  virtual bus_if          vif;
+  uvm_active_passive_enum is_active       = UVM_ACTIVE;
+  bit                     coverage_enable = 1;
+  int unsigned            num_pkts        = 1;
+  int unsigned            timeout_cycles  = 1000;
+  bit [31:0]              addr_base;
+
+  function new(string name = "bus_agent_cfg");
+    super.new(name);
+  endfunction
+
+  virtual function string convert2string();
+    return $sformatf("is_active=%s cov=%0b num_pkts=%0d timeout=%0d addr_base=%h",
+                     is_active.name(), coverage_enable, num_pkts, timeout_cycles, addr_base);
+  endfunction
+endclass
+
+// test build_phase: one object, one set() per agent
+cfg0 = bus_agent_cfg::type_id::create("cfg0");
+cfg0.vif       = vif0;
+cfg0.num_pkts  = 20;
+cfg0.addr_base = 32'h1000_0000;
+uvm_config_db#(bus_agent_cfg)::set(this, "env.agt0", "cfg", cfg0);
+
+// agent build_phase: one get(), then hand the handle down
+if (!uvm_config_db#(bus_agent_cfg)::get(this, "", "cfg", cfg))
+  `uvm_fatal("NOCFG", {"no bus_agent_cfg for ", get_full_name()})
+is_active = cfg.is_active;
+mon = bus_monitor::type_id::create("mon", this);
+mon.cfg = cfg;
+if (get_is_active() == UVM_ACTIVE) begin
+  drv = bus_driver::type_id::create("drv", this);
+  drv.cfg = cfg;
+end
+
+// driver build_phase: no get() at all
+`uvm_info("CFG", cfg.convert2string(), UVM_LOW)
+```
+
+Why the scope is now `"env.agt0"` and not `"env.agt0*"`: only the agent reads the object, and it hands the handle to its children, so nothing below the agent needs to match. The six type choices, six spellings and six scopes of the original have become one of each. A second agent gets its own `cfg1`, so the two can never share a value by accident.
+
+</details>
+
+### Debug challenge: read the trace
+
+Each excerpt is from a run that stopped with `NOVIF` or `NOCFG`. Name the cause (type, field, scope or order) before you open the answer.
+
+```text
+A: [CFGDB/SET] scope='uvm_test_top.env.agt0.*' name='vif' (type virtual bus_if) …
+   [CFGDB/GET] scope='uvm_test_top.env.agt0' name='vif' (type virtual bus_if) … = null (failed lookup)
+
+B: [CFGDB/SET] scope='uvm_test_top.env.agt0' name='num_pkt' (type int unsigned) …
+   [CFGDB/GET] scope='uvm_test_top.env.agt0' name='num_pkts' (type int unsigned) … = null (failed lookup)
+
+C: [CFGDB/GET] scope='uvm_test_top.env.agt0' name='cfg' (type class bus_pkg::bus_agent_cfg) … = null (failed lookup)
+   [CFGDB/SET] scope='uvm_test_top.env.agt0' name='cfg' (type class bus_pkg::bus_agent_cfg) …
+```
+
+<details>
+<summary>Answers</summary>
+
+- **A: scope.** `agt0.*` reaches the agent's children, not the agent. Use `env.agt0` (or `env.agt0*`).
+- **B: field.** `num_pkt` against `num_pkts`. `check_config_usage()` would also list the `num_pkt` setting as never read.
+- **C: order.** The `GET` comes before the `SET`: the agent looked before anyone published. The `set()` sits in a sibling that builds later (name order), or in a later phase, or the agent calls `get()` in its constructor. Publish from `tb_top` before `run_test()` or from a common parent's `build_phase` (before or after `create()` makes no difference), and read in `build_phase`.
+
+</details>
+
+Then go back to the explorer above and solve its "Debug: type mismatch" and "Debug: field typo" scenarios using only the hints and the trace log.
+
+### Lab: silent config_db misses
+
+The lab gives you a small agent whose run stops with a fatal. Find each of its configuration bugs from the `+UVM_CONFIG_DB_TRACE` log and the `check_config_usage()` report, predict a precedence outcome before you rerun, and finish with a clean report.
+
+<LabLink labId="config-debug" />
 
 ## References & Next Topics
-- IEEE 1800.2-2020 LRM: Annex C (Configuration and Resource Classes): C.4.2.2 (`uvm_config_db` set/get), C.2.4 (`uvm_resource_pool` lookup and precedence).
-- Accellera uvm-core 2020.3.1 reference implementation: `src/base/uvm_config_db.svh`, `uvm_config_db_implementation.svh`, `uvm_resource_pool.svh`.
-- Next: [/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index).
+
+**Primary sources**
+
+- IEEE 1800.2-2020 Annex C.4.2 (`uvm_config_db`): C.4.2.1 (class), C.4.2.2.1 `set`, C.4.2.2.2 `get`, C.4.2.2.3 `exists`, C.4.2.2.4 `wait_modified`, C.4.2.3.1 to C.4.2.3.4 (`uvm_config_int`, `uvm_config_string`, `uvm_config_object`, `uvm_config_wrapper`)
+- IEEE 1800.2-2020 Annex C.3.2 (`uvm_resource_db`): C.3.2.3.1 `set`, C.3.2.3.6 `read_by_name`; Annex C.2.4 (`uvm_resource_pool`): C.2.4.4.1 `lookup_name`, C.2.4.4.2 `get_highest_precedence`
+- IEEE 1800.2-2020 §13.1.4.1.1 (`build_phase` and automatic configuration), §13.1.5.1 `apply_config_settings`, §13.1.5.2 `use_automatic_config`, §13.4.2.2 `get_is_active`; Annex G.2.8 (`+uvm_set_config_int`, `+uvm_set_config_string`)
+- IEEE 1800-2023 §25.9 (virtual interfaces: null use, modport in the type, assignment rules), §8.25 (parameterized class specializations), §6.22.1 (matching types), §21.6 (`$value$plusargs`)
+- uvm-core 2020.3.1, for implementation behaviour and features outside IEEE 1800.2: `src/base/uvm_config_db.svh`, `uvm_config_db_implementation.svh`, `uvm_resource_db.svh`, `uvm_resource_db_implementation.svh`, `uvm_resource_pool.svh`, `uvm_resource_base.svh`, `uvm_component.svh`, `uvm_root.svh`, `uvm_topdown_phase.svh`; `src/comps/uvm_agent.svh`; `src/macros/uvm_object_defines.svh`, `uvm_resource_defines.svh`, `uvm_global_defines.svh`; `src/dpi/uvm_regex.svh`, `uvm_dpi.svh`
+- IEEE 1800.2-2020 clause numbers above are taken from the `@uvm-ieee 1800.2-2020` annotations in the uvm-core 2020.3.1 source next to each API.
+
+**Prerequisites:** [I-UVM-2A: Component Roles and the Testbench Hierarchy](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index) and [F4B: Bundling Signals with Interfaces and Modports](/curriculum/T1_Foundational/F4B_Interfaces_and_Modports/index).
+
+**Related**
+
+- [I-UVM-1A: UVM Objects and Components](/curriculum/T2_Intermediate/I-UVM-1A_Components/index): what `super.build_phase(phase)` does, with the tree explorer
+- [I-UVM-1B: The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index): override precedence, which works differently
+- [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index): top-down build order, and when a setting exists
+- [F4C: Synchronizing with Clocking and Program Blocks](/curriculum/T1_Foundational/F4C_Clocking_Blocks/index): the clocking blocks the driver and monitor use
+- [I-UVM-3A: Basic UVM Sequences and Items](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index): sequences that read configuration through their sequencer
+- [I-UVM-3C: Your First Complete UVM Testbench](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index): a complete bench that uses an agent configuration object
+- [A-UVM-7: VIP Construction](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index): configuration hierarchies in reusable VIP
+- [A-UVM-8: Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index): configuring many agents and environments
+
+<NextLesson />

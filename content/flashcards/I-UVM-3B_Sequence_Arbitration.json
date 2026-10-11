@@ -1,1 +1,67 @@
-[]
+[
+  {
+    "id": "i-uvm-3b-arb-1",
+    "question": "When does a sequencer choose between the sequences waiting in start_item()?",
+    "answer": "Only when the driver asks for an item (get_next_item(), try_next_item(), get() or peek()), and only among requests already queued. It first drops requests blocked by another sequence's lock and requests whose is_relevant() returns 0; uvm-core 2020.3.1 also waits one NBA region before choosing."
+  },
+  {
+    "id": "i-uvm-3b-arb-2",
+    "question": "What is a sequencer's default arbitration mode, and does it use priority?",
+    "answer": "`UVM_SEQ_ARB_FIFO` (IEEE 1800.2-2020 §15.3.2.18): the oldest unblocked, relevant request wins. It ignores priority completely, as does `UVM_SEQ_ARB_RANDOM`."
+  },
+  {
+    "id": "i-uvm-3b-arb-3",
+    "question": "What does UVM_SEQ_ARB_STRICT_FIFO do, and what is its risk?",
+    "answer": "It grants the highest waiting priority first and uses age only to break ties among equal priorities. A lower-priority sequence can starve while higher-priority requests keep arriving."
+  },
+  {
+    "id": "i-uvm-3b-arb-4",
+    "question": "Under UVM_SEQ_ARB_WEIGHTED, A (priority 100) and B (priority 300) are waiting. Is B always granted?",
+    "answer": "No. WEIGHTED is odds, not order: chance = priority ÷ sum of the waiting priorities, so B wins 75 % and A 25 % of such grants. Only the STRICT modes always prefer the higher priority."
+  },
+  {
+    "id": "i-uvm-3b-arb-5",
+    "question": "Why does seq.set_priority(300) before seq.start(sqr) have no effect, and how do you set the priority instead?",
+    "answer": "start() assigns the priority itself (100 for a root sequence, the parent's for a child when the argument is -1), overwriting the earlier value in uvm-core 2020.3.1. Pass it as `seq.start(sqr, null, 300)`, use `start_item(req, 300)` for one item, or call `set_priority()` inside body() before later `start_item()` calls."
+  },
+  {
+    "id": "i-uvm-3b-arb-6",
+    "question": "lock() vs grab(): what is the difference?",
+    "answer": "Both reserve the sequencer until unlock()/ungrab(). A lock request joins the back of the arbitration queue; a grab request goes to the front, ahead of waiting locks (§14.2.5.5, §14.2.5.6). Neither takes the sequencer from a sequence that already holds a lock."
+  },
+  {
+    "id": "i-uvm-3b-arb-7",
+    "question": "While sequence P holds a lock, which sequences can still be granted on that sequencer?",
+    "answer": "P itself and its children at any depth: sequences started with P as parent, such as `child.start(sqr, this)` or `` `uvm_do(child) `` (is_child(), §15.3.2.2). A child started with `child.start(sqr)` has no parent, is blocked, and deadlocks P."
+  },
+  {
+    "id": "i-uvm-3b-arb-8",
+    "question": "A sequence calls lock() and returns from body() without unlock(). What do you see?",
+    "answer": "Every other sequence on that sequencer starves silently while the holder is alive. When the holder's start() finishes, uvm-core removes the lock and reports `UVM_ERROR [SEQFINERR]`; if it never finishes, the run hangs until the phase timeout."
+  },
+  {
+    "id": "i-uvm-3b-arb-9",
+    "question": "What must you write if a sequence overrides is_relevant()?",
+    "answer": "A matching `wait_for_relevant()` task that returns when the sequence may be relevant again (§14.2.5.4). Without it uvm-core stops with `UVM_FATAL [RELMSM]`; if it returns without time advancing more than 10 times (`set_max_zero_time_wait_relevant_count()`), you get `UVM_FATAL [SEQRELEVANTLOOP]`."
+  },
+  {
+    "id": "i-uvm-3b-arb-10",
+    "question": "A sequence must wait for DUT credits. Where may it wait without stalling the driver?",
+    "answer": "Before `start_item()`, or inside it by overriding `is_relevant()` and `wait_for_relevant()`. Waiting after the grant (between start_item() and finish_item(), or in pre_do()) blocks the driver in get_next_item(); mid_do() is a function and cannot wait at all."
+  },
+  {
+    "id": "i-uvm-3b-arb-11",
+    "question": "When is a lock() granted: by IEEE 1800.2-2020 and by uvm-core 2020.3.1?",
+    "answer": "§14.2.5.5: a lock is arbitrated like any other request and granted after previously arbitrated requests complete. uvm-core grants an unblocked lock at once inside lock(), ahead of older item requests and even while the driver is busy. Treat the timing as tool-dependent."
+  },
+  {
+    "id": "i-uvm-3b-arb-12",
+    "question": "With UVM_SEQ_ARB_USER, what does user_priority_arbitration() receive and what must it return?",
+    "answer": "It receives `avail_sequences`, the arbitration-queue indexes of the unblocked, relevant item requests; `get_arbitration_sequence(i)` gives each one's sequence (§15.3.2.3, §15.3.2.4). It must return one of those indexes, or uvm-core fatals with 'Error in User arbitration'."
+  },
+  {
+    "id": "i-uvm-3b-arb-13",
+    "question": "How does a virtual sequence lock a physical sequencer, and how must it release it?",
+    "answer": "Pass the sequencer: `grab(p_sequencer.data_sqr)` and later `ungrab(p_sequencer.data_sqr)`, and start helper sequences with the virtual sequence as parent so the grab does not block them. A bare `ungrab()` acts on the virtual sequence's own sequencer, warns `SQRUNL` and leaves data_sqr grabbed."
+  }
+]

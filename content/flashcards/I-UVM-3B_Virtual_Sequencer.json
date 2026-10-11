@@ -1,1 +1,67 @@
-[]
+[
+  {
+    "id": "i-uvm-3b-vsqr-1",
+    "question": "What is a virtual sequencer, and what does it never do?",
+    "answer": "A `uvm_sequencer` with no driver that holds handles to the agent sequencers, so virtual sequences started on it can reach them. It never forwards items, never arbitrates between the children and never decides their order."
+  },
+  {
+    "id": "i-uvm-3b-vsqr-2",
+    "question": "Who decides the order in which a virtual sequence's children run on different agents?",
+    "answer": "Only the statements in the virtual sequence's `body()`. Sequential `start()` calls order them because `start()` returns when the child's `body()` ends; `fork…join` runs them in parallel."
+  },
+  {
+    "id": "i-uvm-3b-vsqr-3",
+    "question": "In which phase should the env assign `vsqr.cfg_sqr = cfg_agt.sqr;`, and why not earlier?",
+    "answer": "In `connect_phase`. `build_phase` runs top-down, so during the env's `build_phase` the agent has not yet created its `sqr` and the copied handle would be `null`."
+  },
+  {
+    "id": "i-uvm-3b-vsqr-4",
+    "question": "What is the difference between `m_sequencer` and `p_sequencer`?",
+    "answer": "Both refer to the sequencer the sequence was started on. `m_sequencer` is a `uvm_sequencer_base` handle every sequence has; `p_sequencer` is the same object as your sequencer class, so you can reach its fields such as `cfg_sqr`."
+  },
+  {
+    "id": "i-uvm-3b-vsqr-5",
+    "question": "What does `` `uvm_declare_p_sequencer(soc_vsqr) `` add to a sequence in uvm-core 2020.3.1?",
+    "answer": "A `soc_vsqr p_sequencer;` variable and an `m_set_p_sequencer()` override that casts `m_sequencer` into it whenever the sequencer is set, which `start()` does before `body()`. IEEE 1800.2-2020 Annex B.3.3 defines only the variable."
+  },
+  {
+    "id": "i-uvm-3b-vsqr-6",
+    "question": "A virtual sequence that declares `p_sequencer` as `soc_vsqr` is started on an agent's sequencer. What happens?",
+    "answer": "`UVM_FATAL [DCLPSQ]` (\"Error casting p_sequencer…\") during `start()`, before `body()` runs, because the agent's sequencer is not a `soc_vsqr`."
+  },
+  {
+    "id": "i-uvm-3b-vsqr-7",
+    "question": "What is `p_sequencer` when a virtual sequence is started with `start(null)`?",
+    "answer": "`null`, with no `DCLPSQ`: the cast succeeds because the handle types are cast compatible; IEEE 1800-2023 §8.16 makes a null source fail only when they are not. The first `p_sequencer.x` access is a simulator null-handle error, not a UVM report."
+  },
+  {
+    "id": "i-uvm-3b-vsqr-8",
+    "question": "A child is started with a null handle and no parent: `d.start(p_sequencer.data_sqr)`. What is the first symptom?",
+    "answer": "`UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied to start item…` at the child's first `start_item()`."
+  },
+  {
+    "id": "i-uvm-3b-vsqr-9",
+    "question": "Why does `d.start(p_sequencer.data_sqr, this)` with a null handle hang instead of failing?",
+    "answer": "uvm-core gives a child with no sequencer its parent's sequencer: the virtual sequencer. It has no driver, so `start_item()` waits for a grant until `UVM_FATAL [PH_TIMEOUT]` (9200 s by default). Check handles for `null` at the top of `body()`."
+  },
+  {
+    "id": "i-uvm-3b-vsqr-10",
+    "question": "Does `fork…join_none` in a virtual sequence's `body()` keep the test alive until the children finish?",
+    "answer": "No. `body()` and `vseq.start()` return at once, the test drops its objection, and the run phase ends, killing the children before any item completes. Stop or wait for `join_none` branches before `body()` returns."
+  },
+  {
+    "id": "i-uvm-3b-vsqr-11",
+    "question": "What does a virtual sequence give up when it is started with `start(null)` and handles set by the test?",
+    "answer": "A sequencer of its own: it reports through the global reporter (IEEE 1800.2-2020 §14.1.3), uvm-core records no transaction for it, and `p_sequencer` is unusable. Objections work the same way in both styles."
+  },
+  {
+    "id": "i-uvm-3b-vsqr-12",
+    "question": "When would you choose handles set by the test over a virtual sequencer?",
+    "answer": "When the same virtual sequence must run in environments that do not share one virtual sequencer class, or when each sequence should state exactly which sequencers it needs. A virtual sequencer is better when many tests share one env and the wiring should live in one place."
+  },
+  {
+    "id": "i-uvm-3b-vsqr-13",
+    "question": "Why type the virtual sequencer's handles as the agents' sequencer types rather than `uvm_sequencer_base`?",
+    "answer": "Cross-wiring then fails at compile time, because different specializations are different types (IEEE 1800-2023 §8.25). With base handles, a child on the wrong agent fails only at its first `finish_item()` with `UVM_FATAL [SQRSNDREQCAST]`."
+  }
+]

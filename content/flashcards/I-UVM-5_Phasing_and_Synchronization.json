@@ -1,27 +1,77 @@
 [
   {
     "id": "uvm5-phase-groups",
-    "question": "Name the three major groupings of UVM phases and give one example from each.",
-    "answer": "Build-time (e.g., `build_phase`), run-time (e.g., `run_phase`), and cleanup (e.g., `report_phase`)."
+    "question": "Which common UVM phases run top-down, which run bottom-up, and which one consumes simulation time?",
+    "answer": "`build` and `final` run top-down; `connect`, `end_of_elaboration`, `start_of_simulation`, `extract`, `check` and `report` run bottom-up. The standard only requires children before parents for bottom-up (§9.5) and parents before children for top-down (§9.7); in uvm-core both are depth-first walks. `run` is the only common task phase: every phase before it runs at time 0 (IEEE 1800.2-2020 §9.8.1), and the phases after it run, in zero time, when it ends."
   },
   {
     "id": "uvm5-objection-role",
-    "question": "Why do components raise objections during `run_phase`?",
-    "answer": "To keep the phase alive while they still have work; the phase ends only when all raised objections are dropped." 
+    "question": "Why does the test, not the driver, raise the `run_phase` objection?",
+    "answer": "An objection means \"do not end this phase yet\", so its owner must know when the work is done. The test (or a top sequence) knows when stimulus ends; a driver loops `forever` and would never drop. UVM kills the driver's loop when `run_phase` ends."
   },
   {
     "id": "uvm5-dain-time",
-    "question": "How can you allow a monitor time to flush its FIFOs after dropping objections?",
-    "answer": "Set a drain time with `uvm_phase::set_drain_time` so the phase lingers briefly before ending." 
+    "question": "How do you give in-flight transactions 10 ns to reach the scoreboard after the last objection drops?",
+    "answer": "`phase.get_objection().set_drain_time(this, 10ns);` (§10.5.1.3.7). The drain starts each time that object's total reaches zero, and a new raise cancels it. `uvm_phase` itself has no `set_drain_time`."
   },
   {
     "id": "uvm5-component-vs-object",
-    "question": "Which UVM base class participates in phasing and why?",
-    "answer": "`uvm_component` does—components are structural elements that own phase callbacks, unlike `uvm_object` data classes." 
+    "question": "Which UVM classes take part in phasing, and why?",
+    "answer": "Classes derived from `uvm_component`: they form the testbench tree, and UVM calls their phase methods (the phasing interface, §13.1.4). A `uvm_object`, such as a transaction, is data with no place in the tree and no phases."
   },
   {
     "id": "uvm5-debug",
-    "question": "What switch helps you visualize phase ordering and objections in the log?",
-    "answer": "Enable `+UVM_PHASE_TRACE` to see phase entry/exit and objection counts in real time." 
+    "question": "Which plusargs trace objections and phases, and what does each show?",
+    "answer": "`+UVM_OBJECTION_TRACE` logs every raise, drop and all_dropped with count and total (ID `OBJTN_TRC`). `+UVM_PHASE_TRACE` logs phase state changes, such as `PH/TRC/SKIP` \"No objections raised, skipping phase\". Both are uvm-core implementation features, not part of IEEE 1800.2-2020."
+  },
+  {
+    "id": "i-uvm-1c-1",
+    "question": "Do `run_phase` and `main_phase` run one after the other?",
+    "answer": "No. `run_phase` runs in parallel with the twelve run-time phases (`pre_reset` … `post_shutdown`), which run one after another (§9.8.1.5, §9.8.2). `run_phase` and `post_shutdown_phase` are siblings, so neither ends until both are ready (§9.6)."
+  },
+  {
+    "id": "i-uvm-1c-2",
+    "question": "No objection has been raised in `run_phase` when UVM first checks, just after the phase starts. What happens?",
+    "answer": "UVM stops waiting for a first raise. The phase ends once its sibling phases also have no objections and `phase_ready_to_end` raises none, and its threads are killed. Beside an idle schedule that is the same time slot, so raise before anything consumes time."
+  },
+  {
+    "id": "i-uvm-1c-3",
+    "question": "Does a drain time rescue a test that never drops its objection?",
+    "answer": "No. The drain starts only when the count reaches zero, so it never starts. Only the timeout ends the run, with `UVM_FATAL [PH_TIMEOUT]`, and `extract`, `check` and `report` do not run."
+  },
+  {
+    "id": "i-uvm-1c-4",
+    "question": "What three rules does a correct `phase_ready_to_end` override follow?",
+    "answer": "It is a function, so fork the wait with `join_none` and drop later; it is called for every task phase, so check `phase.get_name()`; and UVM calls it again after each new drop, at most 20 times by default (§13.1.4.3.2, §9.3.1.3.5)."
+  },
+  {
+    "id": "i-uvm-1c-5",
+    "question": "Where and how do you bound a hung test, and what is the default?",
+    "answer": "Call `uvm_root::get().set_timeout(10us, 1)` before `run_phase` starts, for example in the test's `build_phase`; the value is absolute simulation time (F.7.3.3, §9.8.1.5). Without it the default is implementation specific: 9200 s in uvm-core."
+  },
+  {
+    "id": "i-uvm-1c-6",
+    "question": "uvm-core: what does `+UVM_TIMEOUT=1000000,NO` do?",
+    "answer": "`uvm_root::build_phase` sets the timeout to 1000000 in `uvm_pkg`'s time unit and makes it non-overridable, so the test's later `set_timeout` is ignored with `NOTIMOUTOVR`. With `,YES` or nothing after the comma, the test's call replaces it. Give a bare integer: `2ms` parses as 2."
+  },
+  {
+    "id": "i-uvm-1c-7",
+    "question": "What is the difference between an objection's count and its total for a component?",
+    "answer": "The count is the objections that component raised itself; the total adds every descendant's (§10.5.1.5.3–4). Raises propagate up to `uvm_top`, and the phase can end only when `uvm_top`'s total is zero."
+  },
+  {
+    "id": "i-uvm-1c-8",
+    "question": "Why can `uvm_event::wait_trigger()` hang where `wait_ptrigger()` would not?",
+    "answer": "`wait_trigger()` is `@` on the wrapped event, so it misses a `trigger()` that ran earlier in the same time slot (§10.1.1.2.4). `wait_ptrigger()` returns at once if the event was triggered in this time slot (§10.1.1.2.5); `wait_on()` also covers a waiter that arrives later."
+  },
+  {
+    "id": "i-uvm-1c-9",
+    "question": "Three threads call `wait_for()` on a `uvm_barrier` created with `type_id::create(\"bar\")` and nothing else. Which ones block?",
+    "answer": "None: the default threshold is 0 (§10.3.2.1), so every `wait_for()` returns at once. Call `set_threshold(3)`. With the default `auto_reset` of 1, the barrier blocks new callers again after it releases a group."
+  },
+  {
+    "id": "i-uvm-1c-10",
+    "question": "Why are custom domains and phase jumps advanced and hazardous?",
+    "answer": "In uvm-core, a domain made with `set_domain()` runs its own run-time phases unsynchronized with the uvm domain, because `set_domain` never calls `sync()`; §9.8 says run-time components are synchronized by default, so call `sync()` or `unsync()` explicitly (§13.1.4.4.1, §9.3.1.8). `phase.jump()` kills the threads of the phase it leaves, sequences included, and clears its objections, while `run_phase` drivers keep running (§9.3.1.9.1)."
   }
 ]

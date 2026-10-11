@@ -674,7 +674,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-1B: The UVM Factory",
             "slug": "index",
-            "description": "Swap component and object implementations dynamically using UVM's factory registry without touching your testbench wiring."
+            "description": "Create objects and components through the UVM factory so a test can substitute types or instances, in code or from the command line, without editing the environment."
           }
         ],
         "track": "core",
@@ -693,7 +693,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-1C: UVM Phasing and Synchronization",
             "slug": "index",
-            "description": "Orchestrate build, run, and cleanup with UVM phases, domains, objections, and synchronization primitives so every component stays in lockstep."
+            "description": "Predict the order and concurrency of UVM phases and end a test deliberately with objections, drain time and timeouts."
           }
         ],
         "track": "core",
@@ -756,7 +756,8 @@ export const curriculumData: Module[] = [
         ],
         "track": "core",
         "prerequisites": [
-          "I-UVM-2A_Component_Roles"
+          "I-UVM-2A_Component_Roles",
+          "I-UVM-1C_UVM_Phasing"
         ],
         "milestones": [
           "M3"
@@ -769,7 +770,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-2C: Configuration and Resources",
             "slug": "index",
-            "description": "Use uvm_config_db and uvm_resource_db to pass settings and virtual interface handles down the hierarchy without tight coupling."
+            "description": "Pass settings, configuration objects and virtual interfaces through the UVM hierarchy with uvm_config_db, predict which set() a get() sees, and debug a get() that silently misses."
           }
         ],
         "track": "core",
@@ -831,7 +832,7 @@ export const curriculumData: Module[] = [
           {
             "title": "I-UVM-3B: Advanced Sequencing and Layering",
             "slug": "index",
-            "description": "Master virtual sequences, arbitration, layering, and driver-sequencer synchronization patterns."
+            "description": "Coordinate stimulus across sequences, sequencers and agents (arbitration, locks, libraries, layering, virtual sequences and interrupts), and debug the hangs and starvation they cause."
           },
           {
             "title": "The Sequencer-Driver Handshake",
@@ -839,39 +840,39 @@ export const curriculumData: Module[] = [
             "description": "Debug sequencer-driver hangs from their log signatures, route responses with set_id_info(), and collect pipelined, out-of-order responses with use_response_handler() or get_response() by transaction_id."
           },
           {
-            "title": "Sequence Arbitration and Priority | Advanced UVM Sequencing",
+            "title": "Sequence Arbitration and Priority",
             "slug": "sequence-arbitration",
-            "description": "Understand how UVM sequencers choose the next sequence, how to apply lock/grab, and how to customize arbitration for complex stimulus coordination."
+            "description": "Predict which sequence a sequencer grants under each arbitration mode, priority, lock() and grab(), and keep shared stimulus flowing without starving other sequences or stalling the driver."
           },
           {
-            "title": "Sequence Libraries & Arbitration Control | Advanced UVM Sequencing",
+            "title": "Sequence Libraries & Arbitration Control",
             "slug": "sequence-libraries",
-            "description": "Package reusable stimulus into a uvm_sequence_library, choose its selection mode, and know what it can and cannot control."
+            "description": "Package scenario sequences in a uvm_sequence_library, predict what each selection mode runs, bias the mix correctly, and run it from a test or as a phase default sequence."
           },
           {
-            "title": "Layered Sequences and p_sequencer | Advanced UVM Sequencing",
+            "title": "Layered Sequences and Protocol Layering",
             "slug": "layered-sequences",
-            "description": "Design atomic, scenario, and virtual layers of sequences while using p_sequencer to orchestrate cross-agent stimulus."
+            "description": "Compose atomic sequences into scenario sequences, and write a translation sequence and a layered monitor that carry one protocol's items inside another's."
           },
           {
             "title": "Virtual Sequences and Sequencers",
             "slug": "virtual-sequences",
-            "description": "Learn how to use virtual sequences and sequencers to coordinate and synchronize stimulus across multiple agents in a UVM testbench."
+            "description": "Write a virtual sequence that configures the DUT before any data is sent, choose sequential start() or a fork pattern for each dependency between agents, and start it on a null sequencer or on a virtual sequencer."
           },
           {
-            "title": "UVM Virtual Sequencer",
+            "title": "Virtual Sequencer: Handles, p_sequencer and Dispatch",
             "slug": "uvm-virtual-sequencer",
-            "description": "Coordinating stimulus across multiple agents."
+            "description": "Build a virtual sequencer, wire its agent-sequencer handles in the env, reach them through p_sequencer, predict how body() orders the agents, and choose between a virtual sequencer and handles set by the test."
           },
           {
-            "title": "Interrupt Handling and Layered Stimulus | Advanced UVM Sequencing",
+            "title": "Interrupt-Driven Stimulus",
             "slug": "interrupt-handling",
-            "description": "Turn asynchronous interrupts into deterministic stimulus by combining monitor events, routing policy, and virtual sequences."
+            "description": "Turn DUT interrupts into recovery stimulus that pre-empts background traffic with grab() and then lets it resume, without losing, duplicating or hanging on an interrupt."
           },
           {
             "title": "Lab: Coordinated Attack",
             "slug": "coordinated-attack-lab",
-            "description": "Apply your knowledge of virtual sequences to coordinate transactions between a slow configuration interface and a fast data interface."
+            "description": "Write and prove a virtual sequence that configures the DUT before any data, runs a layered message stream beside background traffic, and services an interrupt with grab(), with every rule checked by the bench."
           }
         ],
         "track": "core",
@@ -914,7 +915,8 @@ export const curriculumData: Module[] = [
         "track": "core",
         "prerequisites": [
           "I-UVM-1A_Components",
-          "F2B_Dynamic_Structures"
+          "F2B_Dynamic_Structures",
+          "I-UVM-1C_UVM_Phasing"
         ],
         "milestones": [
           "M5",

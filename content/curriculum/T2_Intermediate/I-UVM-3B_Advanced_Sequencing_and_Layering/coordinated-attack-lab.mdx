@@ -1,40 +1,541 @@
-import { InfoPage } from "@/components/templates/InfoPage";
-import { InteractiveCode } from "@/components/ui";
+---
+title: "Lab: Coordinated Attack"
+description: "Write and prove a virtual sequence that configures the DUT before any data, runs a layered message stream beside background traffic, and services an interrupt with grab(), with every rule checked by the bench."
+flashcards: "I-UVM-3B_Coordinated_Attack_Lab"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual (§10.1.1, §14.2.3.1, §14.2.5.5-§14.2.5.11, §14.2.6, §15.5.2; Annexes B.3.3, B.5.22, F.7.3.3)"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog (§4.7 nondeterminism, §9.3.2 fork-join, §9.6.1 wait fork, §9.7 process control)"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+---
 
-export const metadata = {
-  title: "Lab: Coordinated Attack",
-  description: "Apply your knowledge of virtual sequences to coordinate transactions between a slow configuration interface and a fast data interface.",
-};
+## Quick Take
 
-<InfoPage
-  title="Lab: Coordinated Attack"
-  uvm_concept_tags={["virtual sequence", "coordination", "sequencer"]}
->
+- **What it is:** The capstone exercise of I-UVM-3B. A design under test (DUT) has a slow configuration port and a fast data port. You write the one **virtual sequence** (a sequence that sends no items itself and starts other sequences on several agents' sequencers) that drives a whole scenario: configure the DUT, send messages through a **translation layer**, keep background traffic running, and service the interrupt the DUT raises halfway through. A self-checking bench tells you whether you got it right, and five broken versions (**mutants**) show you what each mistake looks like in a log.
+- **Why it matters:** Each sub-lesson of this module taught one tool on its own. Real tests use them together, and most of the bugs live where they meet: data that overtakes configuration, an interrupt service that is interleaved with other traffic, a test that ends while stimulus is still running, or one that never ends. None of these prints an error unless the bench checks for it. This lab is the guided pre-lab for milestone M5 (a multi-agent environment with virtual sequences).
+- **The Analogy:** A stage manager calling a show from a script. The stage manager (the virtual sequence) tells the lighting desk (the configuration agent) and the sound desk (the data agent) what to do, strictly in script order: house lights up before the music starts. An assistant (the translation sequence) turns each line of the script into the individual sound cues. When the fire alarm goes off (the interrupt), the duty electrician takes over the lighting desk for two cues in a row (`grab()`), and the show waits until the alarm is reset. *Where it breaks:* a stage manager watches a clock, but a virtual sequence orders things only by waiting for one step to *finish* before starting the next. A desk operator in UVM (the driver) takes the next cue only when it asks for one. And taking over the desk never interrupts a cue that is already running.
 
-  *Page 8 of 8 in I-UVM-3B. You need [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) and [UVM Virtual Sequencer: Dispatch Order](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer).*
+**You will be able to:**
+1. **Write** a virtual sequence with a typed `p_sequencer` that configures the DUT before any data is sent, then runs background polling, a layered message stream and an interrupt service together, and ends with nothing left running.
+2. **Predict** when each access completes on each port, for the working virtual sequence and for a mutant, from how `start()` blocks, how `fork…join` behaves, when the layer calls `item_done()`, and what `grab()` blocks.
+3. **Write** an interrupt service sequence that uses `grab()` and `ungrab()` so that its STATUS read and its clear reach the driver back to back, and **explain** what changes with `lock()`, with a priority, or with no grab at all.
+4. **Configure** the bench: assign the virtual sequencer's handles in `connect_phase`, and start the virtual sequence from the test inside an objection, with a timeout so that a hang fails quickly.
+5. **Debug** a broken run from its log: say which self-check fired (ORDER, ATOMIC, COUNT or the timeout) and which line of the virtual sequence caused it.
 
-  ## Introduction
+This lab combines five sub-lessons. If one of them is new to you, read it first: [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) (`p_sequencer`), [Dispatch Order](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer) (`fork…join` shapes), [Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences) (translation sequences), [Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration) (`grab()` and `lock()`) and [Interrupt Handling](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling).
 
-  The DUT has a slow configuration interface (`cfg_agent`) and a fast data interface (`data_agent`). It silently drops any data that arrives before configuration is complete. You will write the virtual sequence, wire its sequencer handles, and start it from the test so that **no data item is driven before the last configuration item has completed**.
+<BeforeYouStart />
 
-  ## Objectives
+## Build Your Mental Model
 
-  1. Declare a typed `p_sequencer` for the virtual sequencer.
-  2. Create the configuration and data sequences.
-  3. Start them so the order requirement holds, and justify the choice of sequential calls over `fork … join`.
-  4. Assign the virtual sequencer's handles in the env's `connect_phase`.
-  5. Start the virtual sequence from the test inside an objection.
+**How to read this page.** The core path is the first seven subsections: the words, the scenario, the bench, and the four ideas the solution rests on. Then you trace the whole run, and the practitioner subsection shows how to read a failing log. Make It Work is the lab itself, and Push Further holds the expert layer. Try not to read the worked solution before you have written your own.
 
-  ## Lab Task: Complete the Starter Code
+### Words this lab uses
 
-  Fill in the five `TODO`s. Write your answer before opening the solution.
+Every term below is taught in full elsewhere; here is each one in a sentence.
 
-  ```systemverilog
+- A **sequence item** (item) holds one transaction, such as one register write. A **sequence** is an object whose `body()` task sends items with `start_item()` and `finish_item()`. A **sequencer** passes items from sequences to one **driver**, which pulls each one with `get_next_item()` and reports it finished with `item_done()`. An **agent** groups one sequencer, one driver and (usually) one monitor for one port ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index), [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)).
+- `seq.start(sqr, parent)` runs a sequence on sequencer `sqr` and **returns only when the sequence's `body()` has finished**. Passing the calling sequence as `parent` (usually `this`) makes the new sequence its **child** (IEEE 1800.2-2020 §14.2.3.1).
+- `finish_item()` returns when the driver calls `item_done()` for that item. When several sequences wait on one sequencer, the sequencer chooses which goes next: that choice is **arbitration**, and the default mode grants requests in arrival order ([Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration)).
+- A **virtual sequencer** is a sequencer with no driver that only holds handles to the agents' sequencers. A sequence declares a typed handle to it, `p_sequencer`, with the `` `uvm_declare_p_sequencer `` macro (Annex B.3.3) ([Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences)).
+- A **translation sequence** (or **layer**) runs on a lower agent's sequencer, pulls upper-layer items from a sequencer that has no driver, and sends each one as lower-layer items ([Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences)).
+- `grab()` asks a sequencer for exclusive use, ahead of every waiting request; `ungrab()` gives it back. While a sequence holds a grab, only that sequence and its children are granted (§14.2.5.6, §14.2.5.8).
+- An **interrupt** is a signal the DUT raises to ask for attention; the **interrupt service** is the stimulus that answers it. Here the DUT's interrupt line is a `uvm_event` called `irq`: `trigger()` turns it on, `reset()` turns it off, `wait_on()` waits until it is on and `wait_off()` until it is off (§10.1.1.2).
+- A **write-1-to-clear** (W1C) register bit is cleared by writing 1 to it.
+- An **objection** keeps the **run phase** (the part of the test in which simulation time passes) alive; the run phase ends when every raised objection is dropped, and UVM then kills every process still running in it ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)).
+- An **analysis port** broadcasts a transaction to every connected **analysis imp** with `write()`. The bench's checker receives transactions this way ([I-UVM-2B](/curriculum/T2_Intermediate/I-UVM-2B_TLM_Connections/index)).
+- A **process** is one thread of execution; `fork` starts several. `fork…join` waits for all of them, `fork…join_none` waits for none (IEEE 1800-2023 §9.3.2; [F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index)).
+
+### The scenario: what the DUT requires
+
+The DUT is a small message engine with two ports. There is no RTL in this lab: each driver plays the DUT behind its port, so you can follow every event by reading the code.
+
+- **Configuration port** (`cfg_agt`, 10 ns per access). Three registers: `CTRL` (bit 0 enables the data path), `STATUS` (bit 0 means "a message had a bad destination"; write 1 to clear) and `STATS` (a counter that test software reads now and then).
+- **Data port** (`data_agt`, 4 ns per beat). A **message** goes over it as one header beat (the destination and the length) and then one payload beat per data word.
+
+The test must satisfy five requirements. Each one is a job for a different tool from this module:
+
+| # | Requirement | Tool | Taught in |
+|---|---|---|---|
+| R1 | No data beat before the CTRL write has completed | Sequential `start()` calls in the virtual sequence | [Virtual Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) |
+| R2 | The test thinks in messages, not beats | A translation sequence on the data sequencer | [Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences) |
+| R3 | Background polling of `STATS` runs during the traffic | `fork…join` in the virtual sequence | [Dispatch Order](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer) |
+| R4 | When the interrupt fires, read `STATUS` and clear it, back to back, with no poll in between | An interrupt branch, and `grab()` in the service sequence | [Interrupt Handling](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling), [Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration) |
+| R5 | The test ends when everything planned was driven, with nothing left running | `join`, an objection, and `kill()` for the endless layer | [Dispatch Order](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer) |
+
+One more DUT behaviour ties the ports together. The second message goes to destination `4'hF`, which does not exist. When the DUT accepts that header it raises its interrupt and **stalls the data port** until software clears `STATUS`. So if nobody services the interrupt, the rest of the traffic never moves.
+
+### The bench at a glance
+
+Before you look at the diagram, predict: which component decides that configuration happens before data? Which one decides that the interrupt service goes ahead of the poll?
+
+<ArchitectureDiagram
+  title="The Coordinated Attack bench"
+  cellHeight={70}
+  caption="Top row: the sequences. coordinated_vseq runs on vsqr and starts every other sequence shown; ctrl, poll and isr run on cfg_agt.sqr, xlate on data_agt.sqr and msgs on msg_sqr, which has no driver. xlate pulls messages from msg_sqr like a driver. Both drivers publish every completed access to chk. The interrupt line irq is not drawn here; the sequence diagram further down shows it."
+  nodes={[
+    { id: "cfgseqs", label: "ctrl, poll, isr", sublabel: "cfg sequences", kind: "sequence", col: 0, row: 0 },
+    { id: "vseq", label: "vseq", sublabel: "coordinated_vseq", kind: "sequence", col: 1, row: 0 },
+    { id: "xlate", label: "xlate", sublabel: "msg_to_beat_seq", kind: "sequence", col: 2, row: 0 },
+    { id: "msgs", label: "msgs", sublabel: "msg_seq", kind: "sequence", col: 3, row: 0 },
+    { id: "env", label: "env (atk_env)", kind: "env", col: 0, row: 1, colSpan: 4, rowSpan: 2, container: true },
+    { id: "cfg_agt", label: "cfg_agt", kind: "agent", col: 0, row: 1, rowSpan: 2, container: true },
+    { id: "data_agt", label: "data_agt", kind: "agent", col: 2, row: 1, rowSpan: 2, container: true },
+    { id: "csqr", label: "sqr", sublabel: "vsqr.cfg_sqr", kind: "sequencer", col: 0, row: 1 },
+    { id: "vsqr", label: "vsqr", sublabel: "lab_vsqr: handles only", kind: "sequencer", col: 1, row: 1 },
+    { id: "dsqr", label: "sqr", sublabel: "vsqr.data_sqr", kind: "sequencer", col: 2, row: 1 },
+    { id: "msqr", label: "msg_sqr", sublabel: "no driver", kind: "sequencer", col: 3, row: 1 },
+    { id: "cdrv", label: "drv", sublabel: "10 ns per access", kind: "driver", col: 0, row: 2 },
+    { id: "chk", label: "chk", sublabel: "atk_checker", kind: "scoreboard", col: 1, row: 2 },
+    { id: "ddrv", label: "drv", sublabel: "4 ns per beat", kind: "driver", col: 2, row: 2 }
+  ]}
+  ports={[
+    { id: "csqr.export", node: "csqr", side: "bottom", kind: "export", label: "seq_item_export" },
+    { id: "cdrv.port", node: "cdrv", side: "top", kind: "port", label: "seq_item_port" },
+    { id: "dsqr.export", node: "dsqr", side: "bottom", kind: "export" },
+    { id: "ddrv.port", node: "ddrv", side: "top", kind: "port" },
+    { id: "cdrv.ap", node: "cdrv", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "ddrv.ap", node: "ddrv", side: "left", kind: "analysis_port", label: "ap" },
+    { id: "chk.cfg", node: "chk", side: "left", kind: "analysis_imp", label: "cfg_imp" },
+    { id: "chk.data", node: "chk", side: "right", kind: "analysis_imp", label: "data_imp" }
+  ]}
+  edges={[
+    { from: "vseq", to: "vsqr", style: "causal", label: "runs on" },
+    { from: "cfgseqs", to: "csqr", style: "causal", label: "items" },
+    { from: "xlate", to: "dsqr", style: "causal", label: "beats" },
+    { from: "msgs", to: "msqr", style: "causal", label: "messages" },
+    { from: "xlate", to: "msqr", style: "control", label: "get_next_item / item_done" },
+    { from: "cdrv.port", to: "csqr.export", style: "data", label: "accesses" },
+    { from: "ddrv.port", to: "dsqr.export", style: "data", label: "beats" },
+    { from: "cdrv.ap", to: "chk.cfg", style: "data", label: "write(t)" },
+    { from: "ddrv.ap", to: "chk.data", style: "data", label: "write(t)" }
+  ]}
+/>
+
+**What the diagram shows.**
+- **No sequencer decides the order across ports.** `vsqr` is only a box of handles; nothing runs through it. Configuration comes before data only because of the order of statements in `coordinated_vseq`'s `body()`. That is the first misconception this module set out to remove: *the virtual sequencer does not decide sub-sequence order.*
+- **One sequencer does decide something:** `cfg_agt.sqr` is shared by three sequences (`ctrl`, `poll`, `isr`), so its arbitration, and any grab, decides which of them goes next on the configuration port.
+- **The data port has one sequence on it, the layer.** Tests never send beats; they send messages on `msg_sqr`, and `xlate` turns each message into beats.
+- **The checker watches completed accesses**, published by the drivers, not what the sequences intended.
+
+### Core idea 1: order across agents comes from `body()`
+
+`start()` returns only when the child's `body()` has finished, and the child's last `finish_item()` returns only when the driver has called `item_done()` (§14.2.3.1, §14.2.6.3). So two statements in a row are already an ordering rule:
+
+```systemverilog
+// snippet: R1 in the solution's body(). The data path cannot start before CTRL completes.
+ctrl.start(p_sequencer.cfg_sqr, this);   // returns at 10 ns, after CTRL's item_done()
+fork
+  msgs.start(p_sequencer.msg_sqr, this); // so the first beat is driven from 10 ns on
+  // ... the other branches
+join
+```
+
+**Pitfalls.**
+- **"The virtual sequencer will sort it out."** It cannot: it never sees the items. If you write the CTRL write inside the same `fork` as the traffic, both start at 0 ns and the first data beat completes at 4 ns, before CTRL (mutant M1 in the kata).
+- **"Handshake order is pin order."** It is only if the driver calls `item_done()` after the transfer has really finished. A driver that pulls with `get()` (which completes the handshake at once), or a pipelined driver, lets `ctrl.start()` return before the write reaches the DUT. This bench's drivers call `item_done()` after driving, and Push Further explains how to check this in a real bench.
+
+### Core idea 2: three jobs at once, and nothing left running
+
+After configuration, three jobs overlap: the background poll, the message traffic, and a branch that waits for the interrupt and services it. `fork…join` starts all three and waits until **all three** have finished (IEEE 1800-2023 §9.3.2), so `body()` cannot return while any of them is still running. That matters because the test drops its objection as soon as `body()` returns, and the run phase then kills everything still running.
+
+The layer is different: `xlate`'s `body()` is a `forever` loop, so it never finishes. If it were inside the `join`, the `join` would never complete. It therefore starts in its own `fork…join_none`, which returns at once, and the virtual sequence stops it with `xlate.kill()` once the other three jobs are done (§14.2.5.11). `kill()` removes the layer's requests from its sequencer and ends its `body()` cleanly, so nothing is left for the end of the run phase to kill.
+
+**Pitfalls.**
+- **"`fork…join_none` keeps the test alive."** It does the opposite: `body()` carries on at once, returns, and the test ends at that moment (mutant M3). Only objections keep the run phase alive.
+- **`wait fork` instead of `kill()`.** `wait fork` waits for every immediate child process of the caller (IEEE 1800-2023 §9.6.1), and the endless layer is one of them, so it would wait forever.
+- **An interrupt branch that waits for an interrupt that never comes** keeps the `join` open until the timeout. This test expects exactly one interrupt; a test with zero or several needs the queue pattern from [Interrupt Handling](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling) (Push Further compares them).
+
+### Core idea 3: the layer keeps "delivered" honest
+
+`xlate` plays the driver of `msg_sqr`: it calls `msg_sqr.get_next_item(m)`, sends the header beat and the payload beats on the data port with `start_item()` and `finish_item()`, and only then calls `msg_sqr.item_done()`. So the message sequence's `finish_item()` returns when the **last beat of that message has been driven**, exactly as it would on an agent with a real driver.
+
+**Predict.** The bad-destination message's header completes at 26 ns, and its one payload beat cannot start until the interrupt is cleared. When does `msgs`'s `finish_item()` for that message return? (The trace below gives the answer: 54 ns, after the payload beat, not 26 ns after the header.)
+
+**Pitfall.** Calling `msg_sqr.item_done()` right after `get_next_item()` makes the message sequence run ahead of the wire, so a test that ends when `msgs` returns can end with beats unsent ([Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences) shows the log).
+
+### Core idea 4: the interrupt service jumps the queue with `grab()`
+
+The interrupt branch of `body()` waits with `p_sequencer.irq.wait_on()`. `wait_on()` returns at once if the event is already on, so it cannot miss an interrupt that fired before the branch began waiting (§10.1.1.2.2). Then it starts `isr` on the configuration sequencer. `isr` calls `grab()`, reads `STATUS`, writes 1 to clear it and calls `ungrab()`.
+
+Why the grab? The poll keeps a request waiting on the same sequencer almost all the time. Without the grab, the default arbitration (`UVM_SEQ_ARB_FIFO`) grants the oldest request, and after the service's STATUS read completes, the poll's next read is older than the service's clear. A poll read would land between the read and the clear, which breaks R4. With the grab, the poll's requests are blocked until `ungrab()`, while the service's own items are not.
+
+<SequenceDiagram
+  title="The interrupt service grabs the configuration sequencer"
+  caption="Times are from the traced run below. The grab is granted at 26 ns because no other sequence holds a lock or grab, but it cannot stop poll's read that is already on the port: the service's first item goes at 30 ns. From then until ungrab() at 50 ns, poll's request waits, and the service's read and clear reach the driver back to back."
+  participants={[
+    { id: "ddrv", label: "data_agt.drv", kind: "driver" },
+    { id: "vseq", label: "vseq", sublabel: "interrupt branch", kind: "sequence" },
+    { id: "isr", label: "isr", sublabel: "isr_seq", kind: "sequence" },
+    { id: "poll", label: "poll", sublabel: "poll_seq", kind: "sequence" },
+    { id: "csqr", label: "cfg_agt.sqr", kind: "sequencer" },
+    { id: "cdrv", label: "cfg_agt.drv", kind: "driver" }
+  ]}
+  messages={[
+    { kind: "self", from: "ddrv", label: "26 ns: header to dest F done; irq.trigger()" },
+    { kind: "async", from: "ddrv", to: "vseq", label: "irq on: wait_on() returns" },
+    { from: "vseq", to: "isr", label: "isr.start(p_sequencer.cfg_sqr, this)" },
+    { from: "isr", to: "csqr", label: "grab()" },
+    { kind: "return", from: "csqr", to: "isr", label: "granted at once: no lock is held", tone: "active" },
+    { from: "isr", to: "csqr", label: "start_item(rd STATUS)" },
+    { kind: "note", from: "csqr", to: "cdrv", label: "the driver is busy with poll's 2nd STATS read until 30 ns" },
+    { kind: "divider", label: "30 ns" },
+    { from: "poll", to: "csqr", label: "start_item(rd STATS)" },
+    { kind: "note", from: "poll", to: "csqr", tone: "error", label: "blocked: isr holds the grab and poll is not its child" },
+    { kind: "return", from: "csqr", to: "isr", label: "start_item returns (granted)" },
+    { from: "isr", to: "csqr", label: "finish_item(rd STATUS)" },
+    { kind: "return", from: "csqr", to: "cdrv", label: "get_next_item returns rd STATUS" },
+    { kind: "divider", label: "40 ns" },
+    { kind: "async", from: "cdrv", to: "csqr", label: "item_done(): read data 0x1" },
+    { kind: "return", from: "csqr", to: "isr", label: "finish_item returns" },
+    { from: "isr", to: "csqr", label: "start_item, finish_item(wr STATUS = 1)" },
+    { kind: "note", from: "isr", to: "csqr", label: "granted at once: poll is still blocked" },
+    { kind: "return", from: "csqr", to: "cdrv", label: "get_next_item returns wr STATUS" },
+    { kind: "divider", label: "50 ns" },
+    { kind: "self", from: "cdrv", label: "write 1 to clear: irq.reset()" },
+    { kind: "async", from: "cdrv", to: "ddrv", label: "irq off: wait_off() returns, data resumes" },
+    { kind: "async", from: "cdrv", to: "csqr", label: "item_done()" },
+    { kind: "return", from: "csqr", to: "isr", label: "finish_item returns" },
+    { from: "isr", to: "csqr", label: "ungrab()" },
+    { kind: "return", from: "csqr", to: "poll", label: "start_item returns: 3rd STATS read granted" }
+  ]}
+/>
+
+**What the diagram shows.**
+- `grab()` returns at 26 ns, but the configuration driver is still busy until 30 ns. **A grab wins the next grant; it never aborts an access already on the port.**
+- `poll` is blocked because it is not `isr` and not a child of `isr`. `isr`'s own items are never blocked by its own grab.
+- The interrupt line is the only link between the two ports: the data driver raises it, the configuration driver clears it, and the data driver waits for it to go off.
+
+**Pitfalls.**
+- **Priority instead of a grab.** The default `UVM_SEQ_ARB_FIFO` mode ignores priority. `UVM_SEQ_ARB_WEIGHTED` treats priority as a random weight, so a high priority makes the service *likely*, not certain, to win each grant; it also does nothing to keep the read and the clear together. Only a lock or a grab makes the two accesses atomic.
+- **Forgetting `ungrab()`.** uvm-core 2020.3.1 removes the grab when `isr`'s `start()` finishes and reports `UVM_ERROR [SEQFINERR]`. Until then every other sequence on the sequencer starves. Here `isr` ends right after the clear, so the cost is the error message; in a longer service routine it is a silent stall.
+- **`lock()` versus `grab()`.** In this bench they behave the same, because nothing else holds or waits for a lock. They differ when another lock is held or waiting: a grab goes to the front of the queue (§14.2.5.6). Push Further has the details.
+
+### Core idea 5: the bench proves it
+
+`atk_checker` receives every completed access from both drivers. Each driver publishes an access **after** it completes, just before `item_done()`, so the checker sees what really happened on the port. The checker enforces three rules, each with its own message ID:
+
+| Rule | Check | Catches |
+|---|---|---|
+| `ORDER` | A data beat arrives while CTRL.enable has not yet been written | Configuration overtaken by data (R1) |
+| `ATOMIC` | Between a STATUS read and the STATUS clear, any other configuration access arrives | An interleaved interrupt service (R4) |
+| `COUNT` | In `check_phase`: 8 configuration accesses, 8 data beats and 1 clear were seen | A test that ended early, or stimulus that never ran (R5) |
+
+`ORDER` and `ATOMIC` catch the wrong thing happening; `COUNT` catches the right thing *not* happening. A bench with only the first two passes a test that ends at 10 ns having driven nothing, because nothing ever broke a rule. Hangs are caught by a fourth, built-in check: the test calls `uvm_root::get().set_timeout(1us)` (Annex F.7.3.3), so a hang ends with `UVM_FATAL [PH_TIMEOUT]` at 1 µs instead of at the much longer default.
+
+### Predict, then trace the whole run
+
+Write down your answers before you read the table. In the working solution:
+1. When does the first data beat complete?
+2. When is `STATUS` cleared, and what was on the configuration port just before the clear?
+3. When does `msgs.start()` return, and when does the test end?
+
+This is a hand trace of the working solution against the uvm-core 2020.3.1 source (illustrative: no simulator run). Each row is a time at which a driver finishes an access.
+
+| Time (ns) | Configuration port | Data port | What happened |
+|---|---|---|---|
+| 10 | WR CTRL = 1 | | `ctrl.start()` returns; `xlate` starts in the background; the three-branch `fork` starts |
+| 14 | | HDR dest 1, length 2 | Message 0 begins; the data port started at 10 ns, after CTRL |
+| 18 | | PLD `0xA0` | |
+| 20 | RD STATS (poll 1) | | |
+| 22 | | PLD `0xA1` | `xlate` calls `msg_sqr.item_done()`; message 0's `finish_item()` returns |
+| 26 | | HDR dest F, length 1 | The DUT raises `irq` and stalls the data port. The interrupt branch wakes; `isr` grabs `cfg_agt.sqr` |
+| 30 | RD STATS (poll 2) | | Poll's next request waits: blocked by the grab. `isr`'s read is granted |
+| 40 | RD STATUS, data `0x1` | | `isr`'s clear is granted at once |
+| 50 | WR STATUS = 1 | | `irq` is cleared; the data port resumes; `isr` calls `ungrab()`; poll is granted |
+| 54 | | PLD `0xB0` | Message 1's `finish_item()` returns, 28 ns after its header |
+| 58 | | HDR dest 2, length 2 | |
+| 60 | RD STATS (poll 3) | | |
+| 62 | | PLD `0xC0` | |
+| 66 | | PLD `0xC1` | `msgs.start()` returns |
+| 70 | RD STATS (poll 4) | | |
+| 80 | RD STATS (poll 5) | | `poll.start()` returns; the `join` completes; `xlate.kill()`; `body()` returns; the test drops its objection and the run phase ends |
+
+**Debrief.** (1) 14 ns: the data path starts at 10 ns because `ctrl.start()` returned then. (2) At 50 ns, right after the STATUS read at 40 ns; the poll read that "should" have come next waited. (3) `msgs.start()` returns at 66 ns, but the test ends at 80 ns: the `join` waits for the slowest branch, the poll. Counts: 1 + 5 + 2 = 8 configuration accesses, 3 + 2 + 3 = 8 beats, 1 clear, so `COUNT` is silent.
+
+### Practitioner depth: reading a failing run
+
+Read a failing log in this order: first *which check fired*, then *at what time*, then *what the other port was doing at that time*.
+
+| First symptom | Likely cause | Fix |
+|---|---|---|
+| `UVM_ERROR [ORDER]` at 4 ns or soon after | Configuration was started inside the same `fork` as the traffic, or with `fork…join_none` | Make `ctrl.start()` a plain statement before the `fork` |
+| `UVM_ERROR [ATOMIC]` naming a `RD addr=0x08` access | The service sequence does not grab, or grabs a different sequencer than the one it runs on | `grab()` and `ungrab()` around the two accesses, on `cfg_agt.sqr` |
+| The run ends at 10 ns; `UVM_ERROR [COUNT]` with almost nothing seen | `body()` returned early: `fork…join_none`, or a forgotten `fork` in the test | End the three-branch `fork` with `join` |
+| `UVM_ERROR [COUNT] … cfg=0/8 beats=0/8` at 0 ns | The test never started the virtual sequence, or never raised an objection | Start it in `run_phase` between `raise_objection()` and `drop_objection()` |
+| Data stops after the bad header, the poll finishes, then `UVM_FATAL [PH_TIMEOUT]` | Nobody services the interrupt, so the data port stays stalled and `msgs` never returns | Add the interrupt branch to the `fork` |
+| `UVM_FATAL [PH_TIMEOUT]` with no data beats at all, and no `UVM_FATAL [SEQ]` | A sequencer handle is null and the child was started with `this` as parent, so it fell back to `vsqr`, which has no driver (uvm-core impl.) | Assign every `vsqr` handle in `connect_phase` |
+| `UVM_ERROR [SEQFINERR]` at 50 ns, timeline otherwise correct | `isr` returned without `ungrab()` | Call `ungrab()` before `body()` ends |
+
+### Recap
+
+- **Order across agents** is the order of statements in the virtual sequence's `body()`. The virtual sequencer only holds handles.
+- **Overlap** is `fork…join`: it starts the branches and waits for all of them, so `body()` cannot return early. An endless layer goes in its own `fork…join_none` and is stopped with `kill()`.
+- **The layer** calls `item_done()` on the upper sequencer after the last beat, so "message sent" means "every beat driven".
+- **The interrupt service** waits with `wait_on()`, then `grab()`s the configuration sequencer so that its read and clear are back to back; `ungrab()` lets the poll resume.
+- **The bench proves it** with ORDER, ATOMIC and COUNT checks on completed accesses, plus a short timeout for hangs.
+
+## Make It Work
+
+### The starter bench
+
+Copy this file. It compiles and runs as given, and the checker fails it: that is your first proof that the checks work. Your job is the five `TODO`s.
+
+```systemverilog
+// compile
+// atk_tb.sv: the Coordinated Attack starter. There is no RTL: each driver plays the
+// DUT behind its port. Finish TODO 1 to TODO 5 until the checker is silent.
+`include "uvm_macros.svh"
+
+package atk_pkg;
+  timeunit 1ns; timeprecision 1ns;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+
+  // Configuration port registers
+  localparam bit [7:0] CTRL   = 8'h00;  // bit 0 enables the data path
+  localparam bit [7:0] STATUS = 8'h04;  // bit 0: bad destination; write 1 to clear
+  localparam bit [7:0] STATS  = 8'h08;  // a counter that the background poll reads
+  // Data port beat types
+  localparam bit [7:0] HDR = 8'h80;     // header beat: data[7:4] dest, data[3:0] length
+  localparam bit [7:0] PLD = 8'h84;     // payload beat: one data word
+
+  // One access on either port.
+  class bus_item extends uvm_sequence_item;
+    bit        write = 1;
+    bit [7:0]  addr;
+    bit [31:0] data;                    // write data, or the read data the driver returns
+    `uvm_object_utils(bus_item)
+    function new(string name = "bus_item");
+      super.new(name);
+    endfunction
+    virtual function string convert2string();
+      return $sformatf("%s addr=0x%02h data=0x%08h", write ? "WR" : "RD", addr, data);
+    endfunction
+  endclass
+
+  // Upper layer: one message, carried as a header beat plus one beat per word.
+  class msg_item extends uvm_sequence_item;
+    bit [3:0]  dest;                    // 4'hF is not a valid destination
+    bit [31:0] words[$];
+    `uvm_object_utils(msg_item)
+    function new(string name = "msg_item");
+      super.new(name);
+    endfunction
+  endclass
+
+  typedef uvm_sequencer #(bus_item) bus_sqr;
+  typedef uvm_sequencer #(msg_item) msg_sequencer;
+
+  // Plays the DUT behind one port. It publishes each access after the access has
+  // completed, just before item_done(), so the checker sees completed transfers only.
+  class bus_drv extends uvm_driver #(bus_item);
+    `uvm_component_utils(bus_drv)
+    bit       is_cfg;                   // 1: configuration port, 0: data port
+    time      item_time;
+    uvm_event irq;                      // the DUT's interrupt line, shared by the env
+    uvm_analysis_port #(bus_item) ap;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      ap = new("ap", this);
+    endfunction
+    virtual task run_phase(uvm_phase phase);
+      forever begin
+        seq_item_port.get_next_item(req);
+        if (!is_cfg)
+          irq.wait_off();               // the data port stalls while irq is on
+        #item_time;
+        if (is_cfg && req.addr == STATUS) begin
+          if (!req.write)
+            req.data = {31'b0, irq.is_on()};   // read: report the pending bit
+          else if (req.data[0])
+            irq.reset();                       // write 1 to clear
+        end
+        if (!is_cfg && req.addr == HDR && req.data[7:4] == 4'hF)
+          irq.trigger();                // bad destination: raise the interrupt
+        `uvm_info("DRV", req.convert2string(), UVM_LOW)
+        ap.write(req);
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
+
+  class bus_agent extends uvm_agent;    // always active in this lab
+    `uvm_component_utils(bus_agent)
+    bus_sqr   sqr;
+    bus_drv   drv;
+    bit       is_cfg;                   // the env sets these three before build_phase
+    time      item_time = 10ns;
+    uvm_event irq;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      sqr = bus_sqr::type_id::create("sqr", this);
+      drv = bus_drv::type_id::create("drv", this);
+      drv.is_cfg    = is_cfg;
+      drv.item_time = item_time;
+      drv.irq       = irq;
+    endfunction
+    virtual function void connect_phase(uvm_phase phase);
+      drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+  endclass
+
+  `uvm_analysis_imp_decl(_cfg)
+  `uvm_analysis_imp_decl(_data)
+
+  // The self-check: three rules, each with its own message ID.
+  class atk_checker extends uvm_component;
+    `uvm_component_utils(atk_checker)
+    uvm_analysis_imp_cfg  #(bus_item, atk_checker) cfg_imp;
+    uvm_analysis_imp_data #(bus_item, atk_checker) data_imp;
+    bit          enabled;               // CTRL.enable has been written
+    bit          in_isr;                // STATUS was read and not yet cleared
+    int unsigned n_cfg, n_beats, n_clears;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+      cfg_imp  = new("cfg_imp", this);
+      data_imp = new("data_imp", this);
+    endfunction
+    // ORDER: no data beat before the CTRL write has completed.
+    virtual function void write_data(bus_item t);
+      n_beats++;
+      if (!enabled)
+        `uvm_error("ORDER", {"data beat before CTRL.enable: ", t.convert2string()})
+    endfunction
+    // ATOMIC: the interrupt service's STATUS read and its clear are back to back.
+    virtual function void write_cfg(bus_item t);
+      n_cfg++;
+      if (in_isr && !(t.write && t.addr == STATUS))
+        `uvm_error("ATOMIC", {t.convert2string(), " between STATUS read and clear"})
+      if (t.write && t.addr == CTRL && t.data[0])
+        enabled = 1;
+      if (!t.write && t.addr == STATUS)
+        in_isr = 1;
+      if (t.write && t.addr == STATUS) begin
+        in_isr = 0;
+        n_clears++;
+      end
+    endfunction
+    // COUNT: everything planned was driven, and the interrupt was cleared once.
+    virtual function void check_phase(uvm_phase phase);
+      if (n_cfg != 8 || n_beats != 8 || n_clears != 1)
+        `uvm_error("COUNT", $sformatf("cfg=%0d/8 beats=%0d/8 clears=%0d/1",
+                                      n_cfg, n_beats, n_clears))
+    endfunction
+  endclass
+
+  // Base for configuration sequences: one access, which returns when it completes.
+  class cfg_base_seq extends uvm_sequence #(bus_item);
+    `uvm_object_utils(cfg_base_seq)
+    function new(string name = "cfg_base_seq");
+      super.new(name);
+    endfunction
+    protected task access(bit wr, bit [7:0] addr, bit [31:0] data, output bus_item t);
+      t = bus_item::type_id::create("t");
+      start_item(t);
+      t.write = wr;
+      t.addr  = addr;
+      t.data  = data;
+      finish_item(t);                   // returns after the driver's item_done()
+    endtask
+  endclass
+
+  class ctrl_seq extends cfg_base_seq;  // enable the data path
+    `uvm_object_utils(ctrl_seq)
+    function new(string name = "ctrl_seq");
+      super.new(name);
+    endfunction
+    virtual task body();
+      bus_item t;
+      access(1, CTRL, 32'h1, t);
+    endtask
+  endclass
+
+  class poll_seq extends cfg_base_seq;  // background traffic: read STATS n times
+    `uvm_object_utils(poll_seq)
+    int unsigned n = 5;
+    function new(string name = "poll_seq");
+      super.new(name);
+    endfunction
+    virtual task body();
+      bus_item t;
+      repeat (n) access(0, STATS, 32'h0, t);
+    endtask
+  endclass
+
+  // The interrupt service routine.
+  class isr_seq extends cfg_base_seq;
+    `uvm_object_utils(isr_seq)
+    function new(string name = "isr_seq");
+      super.new(name);
+    endfunction
+    virtual task body();
+      // TODO 3: read STATUS; if bit 0 is set, write 1 to STATUS to clear it.
+      //         No other configuration access may come between the two.
+    endtask
+  endclass
+
+  // Upper-layer stimulus: three messages; the second has an invalid destination.
+  class msg_seq extends uvm_sequence #(msg_item);
+    `uvm_object_utils(msg_seq)
+    function new(string name = "msg_seq");
+      super.new(name);
+    endfunction
+    virtual task body();
+      send(4'h1, 2, 32'hA0);
+      send(4'hF, 1, 32'hB0);            // the DUT raises its interrupt on this header
+      send(4'h2, 2, 32'hC0);
+    endtask
+    protected task send(bit [3:0] dest, int unsigned n_words, bit [31:0] base);
+      msg_item m = msg_item::type_id::create("m");
+      start_item(m);
+      m.dest = dest;
+      for (int i = 0; i < n_words; i++)
+        m.words.push_back(base + i);
+      finish_item(m);                   // returns when xlate calls msg_sqr.item_done()
+    endtask
+  endclass
+
+  // The layer: plays msg_sqr's driver and sends each message as beats.
+  class msg_to_beat_seq extends uvm_sequence #(bus_item);
+    `uvm_object_utils(msg_to_beat_seq)
+    msg_sequencer msg_sqr;              // the upper sequencer; set before start()
+    function new(string name = "msg_to_beat_seq");
+      super.new(name);
+    endfunction
+    virtual task body();
+      msg_item m;
+      if (msg_sqr == null)
+        `uvm_fatal("XLATE", "msg_sqr was not set before start()")
+      forever begin
+        msg_sqr.get_next_item(m);       // wait for the next message
+        beat(HDR, {24'b0, m.dest, 4'(m.words.size())});
+        foreach (m.words[i])
+          beat(PLD, m.words[i]);
+        msg_sqr.item_done();            // only now does msg_seq's finish_item() return
+      end
+    endtask
+    protected task beat(bit [7:0] addr, bit [31:0] data);
+      bus_item b = bus_item::type_id::create("b");
+      start_item(b);
+      b.addr = addr;
+      b.data = data;
+      finish_item(b);                   // returns after the data driver's item_done()
+    endtask
+  endclass
+
+  // Holds handles only: it has no driver and decides nothing.
   class lab_vsqr extends uvm_sequencer;
     `uvm_component_utils(lab_vsqr)
-    cfg_sequencer  cfg_sqr;
-    data_sequencer data_sqr;
-
+    bus_sqr       cfg_sqr;
+    bus_sqr       data_sqr;
+    msg_sequencer msg_sqr;
+    uvm_event     irq;
     function new(string name, uvm_component parent);
       super.new(name, parent);
     endfunction
@@ -42,99 +543,510 @@ export const metadata = {
 
   class coordinated_vseq extends uvm_sequence;
     `uvm_object_utils(coordinated_vseq)
-    // TODO 1: give this sequence a typed p_sequencer for lab_vsqr
-
+    // TODO 1: declare a typed p_sequencer for lab_vsqr.
     function new(string name = "coordinated_vseq");
       super.new(name);
     endfunction
-
     virtual task body();
-      cfg_seq  c_seq;
-      data_seq d_seq;
-      // TODO 2: create c_seq and d_seq with the factory
-      // TODO 3: start them so that no data item is driven before
-      //         the last configuration item has completed
+      // TODO 2: (a) run ctrl_seq on cfg_sqr; nothing else may start before it ends.
+      //         (b) start msg_to_beat_seq on data_sqr in the background.
+      //         (c) then run poll_seq, msg_seq and the interrupt service together,
+      //             and wait until all three have finished.
+      //         (d) stop the endless layer before body() returns.
     endtask
   endclass
 
-  // TODO 4: in lab_env::connect_phase, point vsqr.cfg_sqr and vsqr.data_sqr
-  //         at cfg_agt.sqr and data_agt.sqr
-  // TODO 5: in lab_test::run_phase, start a coordinated_vseq on env.vsqr
-  //         so that run_phase stays alive until it finishes
-  ```
+  class atk_env extends uvm_env;
+    `uvm_component_utils(atk_env)
+    bus_agent     cfg_agt;
+    bus_agent     data_agt;
+    msg_sequencer msg_sqr;              // upper-layer sequencer: no driver
+    lab_vsqr      vsqr;
+    atk_checker   chk;
+    uvm_event     irq;                  // the DUT's interrupt line
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      irq      = new("irq");
+      cfg_agt  = bus_agent::type_id::create("cfg_agt", this);
+      data_agt = bus_agent::type_id::create("data_agt", this);
+      cfg_agt.is_cfg     = 1;           // 10 ns per access (the default item_time)
+      cfg_agt.irq        = irq;
+      data_agt.item_time = 4ns;         // the data port is faster
+      data_agt.irq       = irq;
+      msg_sqr = msg_sequencer::type_id::create("msg_sqr", this);
+      vsqr    = lab_vsqr::type_id::create("vsqr", this);
+      chk     = atk_checker::type_id::create("chk", this);
+    endfunction
+    virtual function void connect_phase(uvm_phase phase);
+      cfg_agt.drv.ap.connect(chk.cfg_imp);
+      data_agt.drv.ap.connect(chk.data_imp);
+      // TODO 4: give vsqr its four handles: cfg_sqr, data_sqr, msg_sqr and irq.
+    endfunction
+  endclass
 
-  ## Check Your Work
+  class atk_test extends uvm_test;
+    `uvm_component_utils(atk_test)
+    atk_env env;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      env = atk_env::type_id::create("env", this);
+      uvm_root::get().set_timeout(1us); // a hang fails at 1 us, not at the default
+    endfunction
+    virtual task run_phase(uvm_phase phase);
+      // TODO 5: create a coordinated_vseq and start it on env.vsqr, with an
+      //         objection raised before start() and dropped after it returns.
+    endtask
+  endclass
+endpackage
 
-  Answer these before you look at the solution. Each one has a model-checked answer in the [dispatch explorer](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer).
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+  import uvm_pkg::*;
+  import atk_pkg::*;
+  initial run_test("atk_test");   // no RTL and no virtual interface in this lab
+endmodule
+```
 
-  1. With config items taking 20 ns each (2 items) and data items 10 ns each (3 items), at what time does your first data item reach the data driver? (Set the explorer to *one after another* and compare.)
-  2. If you had written `fork c_seq.start(...); d_seq.start(...); join`, when would the first data item be driven, and would the test notice?
-  3. You skip TODO 4 for `data_sqr`. What does the log show, and at what time?
-  4. You start the sequence without raising an objection. When does `run_phase` end?
+**Expected output** of the starter as given (illustrative: traced by hand against the uvm-core 2020.3.1 source, not from a simulator run; the file and line part of each prefix and the other `UVM_INFO` lines are trimmed):
 
-  <details className="my-4 rounded-xl border border-border/70 p-3">
-  <summary className="cursor-pointer font-semibold">Show the answers to the questions</summary>
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test atk_test...
+UVM_ERROR @ 0: uvm_test_top.env.chk [COUNT] cfg=0/8 beats=0/8 clears=0/1
 
-  1. At 40 ns: `c_seq.start()` returns after its last `item_done()`, and only then does `d_seq.start()` run.
-  2. At 0 ns, in parallel with the first configuration item. The DUT drops that data silently, so only a scoreboard that expects it would notice.
-  3. `UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied to start item in …`, at 40 ns, when `d_seq`'s first `start_item()` runs with a null sequencer.
-  4. At 0 ns, before any item is driven: nothing holds the phase open.
+--- UVM Report Summary ---
 
-  </details>
+** Report counts by severity
+UVM_WARNING :    0
+UVM_ERROR :    1
+UVM_FATAL :    0
+```
 
-  <details className="my-4 rounded-xl border border-border/70 p-3">
-  <summary className="cursor-pointer font-semibold">Show a reference solution</summary>
+Nothing raised an objection, so the run phase ended at 0 ns, and `COUNT` reported that nothing was driven. A bench without the count check would have passed this empty run.
 
-  <InteractiveCode
-    language="systemverilog"
-    fileName="coordinated_vseq.sv"
-    code={`class coordinated_vseq extends uvm_sequence;
-  \`uvm_object_utils(coordinated_vseq)
-  \`uvm_declare_p_sequencer(lab_vsqr)
+### Your tasks
 
-  function new(string name = "coordinated_vseq");
+1. **TODO 1: give the virtual sequence its typed handle.** Add `` `uvm_declare_p_sequencer(lab_vsqr) `` under the `` `uvm_object_utils `` line. It declares `p_sequencer` of type `lab_vsqr` and sets it when the sequence starts on a sequencer of that type (`UVM_FATAL [DCLPSQ]` if the type is wrong).
+2. **TODO 4: wire the handles.** In `atk_env::connect_phase`, assign `vsqr.cfg_sqr`, `vsqr.data_sqr`, `vsqr.msg_sqr` and `vsqr.irq`. `connect_phase` runs after every component's `build_phase`, so the agents' sequencers exist by then.
+3. **TODO 5: start the virtual sequence.** In `atk_test::run_phase`, create a `coordinated_vseq`, raise an objection, call `vseq.start(env.vsqr)`, and drop the objection after it returns. Run now: you should see `UVM_ERROR [COUNT] … cfg=0/8` again, now because `body()` is still empty.
+4. **TODO 2: write `body()`.** Create the five child sequences with `::type_id::create`, give `xlate` its `msg_sqr` handle, and write steps (a) to (d). Start every child with `this` as its parent. Hint: the interrupt branch is a `begin … end` block inside the `fork` that first waits on `p_sequencer.irq`.
+5. **TODO 3: write `isr_seq::body()`.** Use the `access()` task from `cfg_base_seq`. Decide where `grab()` and `ungrab()` go.
+6. **Run and compare** your log with the solution's expected output. Then do the mutant kata in Practice & Reinforce.
+
+<details>
+<summary>Worked solution (write your own first)</summary>
+
+```systemverilog
+// snippet: the five TODOs, solved. Each part replaces the matching TODO in atk_tb.sv.
+
+// TODO 1, in coordinated_vseq after `uvm_object_utils
+`uvm_declare_p_sequencer(lab_vsqr)
+
+// TODO 2: coordinated_vseq::body()
+virtual task body();
+  ctrl_seq        ctrl  = ctrl_seq::type_id::create("ctrl");
+  poll_seq        poll  = poll_seq::type_id::create("poll");
+  msg_seq         msgs  = msg_seq::type_id::create("msgs");
+  isr_seq         isr   = isr_seq::type_id::create("isr");
+  msg_to_beat_seq xlate = msg_to_beat_seq::type_id::create("xlate");
+  xlate.msg_sqr = p_sequencer.msg_sqr;
+  // (a) R1: configuration first. start() returns after CTRL's item_done().
+  ctrl.start(p_sequencer.cfg_sqr, this);
+  // (b) The layer never ends by itself, so it runs in the background.
+  fork
+    xlate.start(p_sequencer.data_sqr, this);
+  join_none
+  // (c) Everything else overlaps; join waits for all three branches.
+  fork
+    poll.start(p_sequencer.cfg_sqr, this);
+    msgs.start(p_sequencer.msg_sqr, this);
+    begin                                 // the interrupt branch
+      p_sequencer.irq.wait_on();          // returns at once if irq is already on
+      isr.start(p_sequencer.cfg_sqr, this);
+    end
+  join
+  // (d) Stop the layer before body() returns and the test drops its objection.
+  xlate.kill();
+endtask
+
+// TODO 3: isr_seq::body()
+virtual task body();
+  bus_item t;
+  grab();                                 // front of cfg_sqr's queue; blocks poll
+  access(0, STATUS, 32'h0, t);            // which interrupt is pending?
+  if (t.data[0])
+    access(1, STATUS, 32'h1, t);          // write 1 to clear it
+  ungrab();                               // poll may be granted again
+endtask
+
+// TODO 4: at the end of atk_env::connect_phase()
+vsqr.cfg_sqr  = cfg_agt.sqr;
+vsqr.data_sqr = data_agt.sqr;
+vsqr.msg_sqr  = msg_sqr;
+vsqr.irq      = irq;
+
+// TODO 5: atk_test::run_phase()
+virtual task run_phase(uvm_phase phase);
+  coordinated_vseq vseq = coordinated_vseq::type_id::create("vseq");
+  phase.raise_objection(this);
+  vseq.start(env.vsqr);                   // returns when body() has finished
+  phase.drop_objection(this);
+endtask
+```
+
+**Expected output** with the solution (illustrative, traced as above; it matches the trace table row for row):
+
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test atk_test...
+UVM_INFO @ 10: uvm_test_top.env.cfg_agt.drv [DRV] WR addr=0x00 data=0x00000001
+UVM_INFO @ 14: uvm_test_top.env.data_agt.drv [DRV] WR addr=0x80 data=0x00000012
+UVM_INFO @ 18: uvm_test_top.env.data_agt.drv [DRV] WR addr=0x84 data=0x000000a0
+UVM_INFO @ 20: uvm_test_top.env.cfg_agt.drv [DRV] RD addr=0x08 data=0x00000000
+UVM_INFO @ 22: uvm_test_top.env.data_agt.drv [DRV] WR addr=0x84 data=0x000000a1
+UVM_INFO @ 26: uvm_test_top.env.data_agt.drv [DRV] WR addr=0x80 data=0x000000f1
+UVM_INFO @ 30: uvm_test_top.env.cfg_agt.drv [DRV] RD addr=0x08 data=0x00000000
+UVM_INFO @ 40: uvm_test_top.env.cfg_agt.drv [DRV] RD addr=0x04 data=0x00000001
+UVM_INFO @ 50: uvm_test_top.env.cfg_agt.drv [DRV] WR addr=0x04 data=0x00000001
+UVM_INFO @ 54: uvm_test_top.env.data_agt.drv [DRV] WR addr=0x84 data=0x000000b0
+UVM_INFO @ 58: uvm_test_top.env.data_agt.drv [DRV] WR addr=0x80 data=0x00000022
+UVM_INFO @ 60: uvm_test_top.env.cfg_agt.drv [DRV] RD addr=0x08 data=0x00000000
+UVM_INFO @ 62: uvm_test_top.env.data_agt.drv [DRV] WR addr=0x84 data=0x000000c0
+UVM_INFO @ 66: uvm_test_top.env.data_agt.drv [DRV] WR addr=0x84 data=0x000000c1
+UVM_INFO @ 70: uvm_test_top.env.cfg_agt.drv [DRV] RD addr=0x08 data=0x00000000
+UVM_INFO @ 80: uvm_test_top.env.cfg_agt.drv [DRV] RD addr=0x08 data=0x00000000
+
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+**Why each part works.**
+- **TODO 1.** `p_sequencer` is cast from the sequencer `start()` was given, so `vseq.start(env.vsqr)` makes `p_sequencer.cfg_sqr` and the other handles reachable.
+- **TODO 2.** (a) is R1: the `fork` cannot begin until `ctrl.start()` has returned at 10 ns. (b) keeps the endless layer out of the `join`. (c) overlaps R2, R3 and R4, and the `join` keeps `body()` alive until the slowest branch (the poll) ends at 80 ns. (d) stops the layer cleanly: it is waiting in `msg_sqr.get_next_item()` with nothing outstanding on the data port.
+- **TODO 3.** The grab blocks the poll from 26 ns to 50 ns, so the read at 40 ns and the clear at 50 ns are back to back (R4). `if (t.data[0])` works because the driver wrote the read data into the same item before calling `item_done()`.
+- **TODO 4.** The handles are copied after `build_phase` has created every agent.
+- **TODO 5.** The objection covers the whole `vseq.start()`, which returns only when `body()` has finished.
+
+</details>
+
+**Run it.** Compile `atk_tb.sv` with any simulator that ships an IEEE 1800.2 UVM library (uvm-core 2020.3.1 or your vendor's equivalent), with the UVM package and macros on the include path, and run `tb_top`. `run_test("atk_test")` selects the test, so no plusarg is needed. Command lines differ by simulator (tool-dependent).
+
+**Checklist before moving on:**
+- [ ] The starter fails with `COUNT`, and your solution prints no `UVM_ERROR` and no `UVM_FATAL`.
+- [ ] Your log matches the trace table: the first beat at 14 ns, the STATUS read at 40 ns and the clear at 50 ns with no access between them, and the last access at 80 ns.
+- [ ] Every "before" rule in your `body()` is a sequential `start()` call, never a delay or a priority.
+- [ ] Every `fork` either ends in `join`, or holds only the endless layer, which you `kill()` before `body()` returns.
+- [ ] Every child is started on the sequencer of the port it drives, with `this` as its parent.
+- [ ] `grab()` and `ungrab()` are in the same task, with nothing between them that can wait forever.
+- [ ] You can name, for each of the three checks, a mistake it catches that the other two miss.
+
+## Push Further
+
+### Expert: handshake order is not pin order
+
+Every ordering guarantee in this lab rests on one fact: `finish_item()` returns when the driver calls `item_done()`. IEEE 1800.2-2020 §14.2.6.3 notes that this "does not strictly indicate that the driver has completed all processing of the request". Three real drivers break the link between handshake order and pin order:
+- a driver that pulls with `get()`, which completes the handshake as soon as it takes the item (§15.5.2.6);
+- a pipelined driver, which calls `item_done()` when it has *issued* an access and sends responses later ([The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake));
+- a DUT that needs a write response or settling time before the new configuration takes effect.
+
+In each case `ctrl.start()` returns early and the virtual sequence looks correct while the DUT still drops data. That is why this bench's checker watches **completed transfers**, and why a real bench takes them from a pin-level monitor, not from the driver ([A-UVM-7](/curriculum/T3_Advanced/A-UVM-7_VIP_Construction/index)). If your configuration must be *applied* before data, wait for the evidence: a write response, or a read-back of CTRL, before you start the data path.
+
+### Expert: lock() or grab() for the interrupt service
+
+Replace `grab()` and `ungrab()` with `lock()` and `unlock()` and this bench behaves identically under uvm-core 2020.3.1: `m_lock_req()` grants the first unblocked lock request in the queue at once, so the lock is granted at 26 ns just like the grab (`uvm_sequencer_base.svh`, `grant_queued_locks()`). The standard words it differently: "A lock is granted after all previously arbitrated requests are completed" (§14.2.5.5). Read literally, the lock would wait for poll's in-flight read and be granted at 30 ns, which still gives the same order here (tool-dependent). The two calls differ in a case this bench does not have: when another sequence already holds a lock, waiting grabs are granted before waiting locks, because a grab request is put at the front of the arbitration queue (§14.2.5.6). So:
+- use `grab()` for an interrupt service that must go next even if other sequences are queued for a lock;
+- use `lock()` for an atomic burst that may wait its turn;
+- neither aborts the access already on the port, so the worst-case service latency includes one full access of whatever was running.
+
+The arbitration sandbox on [Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration) has a "grab vs lock" scenario that shows the difference.
+
+### Expert: ending a test that has an endless layer
+
+Three ways to stop `xlate`, and what each costs:
+- **`kill()` from the virtual sequence (this lab).** The layer's lifetime is visible in one `body()`. `kill()` removes the sequence's requests and locks from its sequencer and ends its `body()` (§14.2.5.11). Kill only when the layer is idle; here it is waiting in `get_next_item()` with no beat outstanding, because `msgs` has returned. (§14.2.5.11 says `post_body()` and `post_start()` then run; uvm-core 2020.3.1 does not run them, so put no clean-up there: tool-dependent.)
+- **The layering environment owns the layer** and kills it from `phase_ready_to_end()` (§13.1.4.3.2), as [Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences) does. Better for reusable VIP: tests never see the layer.
+- **Let the end of the run phase kill it.** Reading the uvm-core 2020.3.1 source (not confirmed by a simulator run), the process guard that `start()` creates should then report `UVM_WARNING [SEQPRTZMB]` and kill the sequence (`uvm_sequence_base.svh`, `process_guard_triggered()`). That is uvm-core behaviour, not IEEE 1800.2; avoid relying on it either way.
+
+Never use `wait fork` to wait for the other branches while the layer runs: it waits for every immediate child process (IEEE 1800-2023 §9.6.1), the layer included. If you need `join_none` for several finite jobs, wrap them as `fork begin … end join` so that only they are waited for.
+
+### Expert: interrupt delivery: a level event versus a queue
+
+The bench models the interrupt line as a `uvm_event` used as a **level**: `trigger()` turns it on and it stays on until `reset()` (§10.1.1.2.2, §10.1.1.2.8). That is why the interrupt branch uses `wait_on()`, which returns at once if the line is already on, and the data driver uses `wait_off()`.
+
+`wait_trigger()` would be a mistake here: it waits for the *next* trigger, so it misses one that fired before the call (§10.1.1.2.4 warns about the same-time race too). The level form has its own limit. Two interrupts that arrive while the first is still pending turn the line on only once, so a single `wait_on()` services one of them. A test with several interrupts needs a loop that reads `STATUS` until no bit is pending, or a queue of interrupt transactions from a monitor (`uvm_tlm_analysis_fifo`, §12.2.8.3), as [Interrupt Handling](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling) builds. In a real bench the line is a DUT pin, and an interrupt monitor turns its rising edges into transactions; reaching into a shared event, as this lab does, is a teaching shortcut.
+
+### Expert: handles from the test, and the parent fallback
+
+The same lab works without a virtual sequencer. Give `coordinated_vseq` its own `cfg_sqr`, `data_sqr`, `msg_sqr` and `irq` fields, let the test assign them from `env`, and call `vseq.start(null)` ([Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) compares the two styles). `p_sequencer` is then null, so every handle must come from the test.
+
+Either way, watch what a **null handle** does. With no parent, `seq.start(null)` followed by `start_item()` stops the test with `UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied…`. With `this` as the parent, uvm-core 2020.3.1 `set_item_context()` silently takes the **parent's** sequencer instead (`uvm_sequence_item.svh`; uvm-core impl.). Forget `vsqr.data_sqr = data_agt.sqr;` and `xlate` runs on `vsqr`, which has no driver: no fatal message, no beats, and a `PH_TIMEOUT` at 1 µs. A one-line guard at the top of `body()`, `` if (p_sequencer.data_sqr == null) `uvm_fatal("VSEQ", "data_sqr not set") ``, turns the hang into a clear message.
+
+### Expert: interview angles
+
+Answer each question before you look at the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview angle: config before data, and the proof"
+  question="A colleague says their virtual sequence enforces 'configure before data' and the test passes. What do you ask to see before you believe it?"
+  options={[
+    { text: "That the virtual sequencer is created before the agents.", correct: false, feedback: "Creation order decides nothing about traffic order. The virtual sequencer only holds handles." },
+    { text: "That configuration and data are started in separate fork branches, so they cannot interfere.", correct: false, feedback: "Separate branches of one fork start together. That is exactly the bug." },
+    { text: "A checker that fires when data arrives before the configuration has completed on the port, a count check that fails a run cut short, and a mutant run that shows the checker firing.", correct: true, feedback: "Right. A passing test proves nothing until you have seen the checks fail on a broken sequence, and the order must be observed on completed transfers." },
+    { text: "That the data sequence has a lower priority than the configuration sequence.", correct: false, feedback: "Priority works inside one sequencer. Configuration and data run on different sequencers, so priority cannot order them." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: an interrupt service with bounded latency"
+  question="Background traffic shares a register agent with an interrupt service routine. The specification says the clear must follow the status read with no other access between them. How do you guarantee it, and what is the worst-case delay before the read?"
+  options={[
+    { text: "Give the service sequence priority 1000; the read and the clear then always go next.", correct: false, feedback: "The default FIFO mode ignores priority, and WEIGHTED only makes the service likely to win. Neither keeps the two accesses together." },
+    { text: "grab() before the read and ungrab() after the clear. Worst case: the access already on the port must finish first, because a grab never aborts it.", correct: true, feedback: "Right. The grab makes the pair atomic and puts the service ahead of every waiting request; latency is bounded by one in-flight access (plus any lock another sequence already holds)." },
+    { text: "Let the interrupt monitor send the read and the clear itself, bypassing the sequencer.", correct: false, feedback: "A monitor only observes, and a passive agent has no driver to send through. Bypassing the sequencer also feeds the driver from two places with no arbitration at all." },
+    { text: "Put the read and the clear in one sequence; one sequence's items are never interleaved with another's.", correct: false, feedback: "They are. Each item is arbitrated on its own; without a lock or grab another sequence can win between them." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview angle: a regression that sometimes fails"
+  question="A test fails with two ORDER errors on one simulator and four on another, with the same seed. The virtual sequence starts ctrl, poll and the message traffic as branches of one fork. What is going on?"
+  options={[
+    { text: "One simulator has a bug in its arbitration.", correct: false, feedback: "Both simulators are legal. The standard does not fix which of two processes started by the same fork runs first." },
+    { text: "ctrl and poll request the configuration sequencer at the same time; which one is queued first, and so whether CTRL completes at 10 ns or 20 ns, depends on process order, which the language leaves open. The real bug is that configuration is not ordered before the traffic.", correct: true, feedback: "Right (IEEE 1800-2023 §4.7, §9.3.2). Do not 'fix' it with a delay; make ctrl.start() a statement before the fork." },
+    { text: "The random seed is ignored by one of the simulators.", correct: false, feedback: "Nothing here is random. The difference is process ordering inside one time slot." },
+    { text: "The data driver is faster on one simulator.", correct: false, feedback: "Delays are part of the code; both simulators use 4 ns per beat." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Quiz
+
+<Quiz questions={[
+  {
+    question: "In the working solution the first data beat completes at 14 ns, not at 4 ns. Why?",
+    objective: 2,
+    answers: [
+      { text: "ctrl.start() returns only at 10 ns, after CTRL's item_done(), and the fork that starts the traffic is the next statement.", correct: true, feedback: "Right. start() blocks until the child's body() has finished, so the data path starts at 10 ns and its first beat takes 4 ns." },
+      { text: "The virtual sequencer grants cfg_sqr before data_sqr because cfg_sqr was assigned first in connect_phase.", correct: false, feedback: "The virtual sequencer grants nothing to the agents: it only holds handles. The order comes from body()." },
+      { text: "data_agt's sequencer has a lower priority than cfg_agt's, so it waits.", correct: false, feedback: "Priority is a property of requests inside one sequencer. It never orders two different sequencers." },
+      { text: "The data driver waits for the interrupt line before every beat, and irq is on until 10 ns.", correct: false, feedback: "irq is off until 26 ns. wait_off() returns at once for the first beat." }
+    ],
+    explanation: "Order across agents is code order in the virtual sequence: ctrl.start() returns at 10 ns, then msgs and the layer start, and the first 4 ns beat completes at 14 ns. Neither the virtual sequencer nor any priority is involved."
+  },
+  {
+    question: "The bad-destination message's header completes at 26 ns. When does msgs's finish_item() for that message return?",
+    objective: 2,
+    answers: [
+      { text: "At 26 ns, when the header has been driven.", correct: false, feedback: "xlate calls msg_sqr.item_done() only after the last beat of the message, and the payload beat still has to go." },
+      { text: "At 30 ns: the payload beat follows the header 4 ns later.", correct: false, feedback: "The DUT stalls the data port while irq is on, so the payload beat cannot start at 26 ns." },
+      { text: "At 54 ns: the payload beat waits until the clear at 50 ns, takes 4 ns, and then xlate calls msg_sqr.item_done().", correct: true, feedback: "Right. The upper finish_item() means 'every beat of this message was driven', including the stall." },
+      { text: "Never: the data port stays stalled.", correct: false, feedback: "The interrupt branch clears STATUS at 50 ns, which turns irq off and lets the data port resume." }
+    ],
+    explanation: "The layer completes a message only after its last beat. The payload beat is stalled by the interrupt from 26 ns to 50 ns and completes at 54 ns, so finish_item() returns at 54 ns."
+  },
+  {
+    question: "You delete grab() and ungrab() from isr_seq. What does the configuration port do between 30 ns and 60 ns?",
+    objective: 3,
+    answers: [
+      { text: "The same as before: the service's request is older than the poll's, so the read and the clear still go back to back.", correct: false, feedback: "The read's request is older (26 ns), but the clear's is not: it is queued at 40 ns, after the poll's request from 30 ns." },
+      { text: "STATUS read (30 to 40 ns), a poll STATS read (40 to 50 ns), then the STATUS clear (50 to 60 ns), with UVM_ERROR [ATOMIC] at 50 ns.", correct: true, feedback: "Right. Under the default FIFO mode the oldest request wins each grant, and after the read the oldest request is the poll's." },
+      { text: "The service waits until the poll has finished all five reads, then reads and clears.", correct: false, feedback: "FIFO arbitration grants the oldest request each time; the service's read request from 26 ns is the oldest at 30 ns." },
+      { text: "UVM reports an error because two sequences use one sequencer without a lock.", correct: false, feedback: "Sharing a sequencer is normal. Only the bench's own ATOMIC check notices the interleaving." }
+    ],
+    explanation: "Without a grab each access is arbitrated on its own. The read wins at 30 ns as the oldest request, the poll's request from 30 ns beats the clear queued at 40 ns, so a STATS read lands between the read and the clear. The data port also stays stalled 10 ns longer."
+  },
+  {
+    question: "Which change to isr_seq keeps the STATUS read and clear back to back in this bench?",
+    objective: 3,
+    answers: [
+      { text: "Remove grab() and start isr with priority 1000.", correct: false, feedback: "The default UVM_SEQ_ARB_FIFO mode ignores priority, so the poll still wins after the read." },
+      { text: "Remove grab(), set cfg_sqr to UVM_SEQ_ARB_WEIGHTED and give isr priority 1000.", correct: false, feedback: "WEIGHTED is random by weight, not strict priority: the poll can still win a grant, only less often." },
+      { text: "Replace grab()/ungrab() with lock()/unlock().", correct: true, feedback: "Right, here. Nothing else holds or waits for a lock, so in uvm-core 2020.3.1 the lock is granted at once and blocks the poll exactly like the grab." },
+      { text: "Nothing else works, because grab() and lock() are different names for the same call.", correct: false, feedback: "They are not the same. A grab request goes to the front of the queue, so when another lock is held or waiting, a grab is granted before waiting locks (§14.2.5.6)." }
+    ],
+    explanation: "Only a lock or a grab makes two items atomic. In this bench lock() and grab() give the same result; they differ when other lock requests are waiting. Priority never makes a pair atomic: FIFO ignores it and WEIGHTED is a random bias."
+  },
+  {
+    question: "Which body() is correct for this lab? (xlate is created and given msg_sqr in every option.)",
+    objective: 1,
+    answers: [
+      { text: "fork ctrl.start(...); xlate.start(...); poll.start(...); msgs.start(...); begin irq.wait_on(); isr.start(...); end join", correct: false, feedback: "Everything starts at 0 ns, so data overtakes CTRL; and the join waits for the endless layer, so the test hangs." },
+      { text: "ctrl.start(...); fork xlate.start(...); join_none; fork poll.start(...); msgs.start(...); begin irq.wait_on(); isr.start(...); end join; xlate.kill();", correct: true, feedback: "Right. Configuration first, the endless layer in the background, the three finite jobs joined, then the layer stopped." },
+      { text: "ctrl.start(...); fork xlate.start(...); poll.start(...); msgs.start(...); begin irq.wait_on(); isr.start(...); end join_none", correct: false, feedback: "join_none does not keep the test alive: body() returns at 10 ns, the test drops its objection and the run phase kills every branch." },
+      { text: "ctrl.start(...); fork xlate.start(...); poll.start(...); msgs.start(...); begin irq.wait_on(); isr.start(...); end join_none; wait fork;", correct: false, feedback: "wait fork waits for every immediate child, including the endless layer, so the test hangs until the timeout." }
+    ],
+    explanation: "Order with sequential statements, overlap with fork…join, keep the endless layer out of anything that waits for it, and stop it with kill() before body() returns."
+  },
+  {
+    question: "Where must the env give vsqr its handles (vsqr.cfg_sqr = cfg_agt.sqr and so on), and why?",
+    objective: 4,
+    answers: [
+      { text: "In atk_env::build_phase, right after creating the agents.", correct: false, feedback: "The agents' sequencers are created in the agents' own build_phase, which runs after the env's. At that point cfg_agt.sqr is still null." },
+      { text: "In coordinated_vseq::new(), so that the sequence carries its own handles.", correct: false, feedback: "A sequence object knows nothing about the env when it is constructed, and p_sequencer is not set until start()." },
+      { text: "In atk_test::run_phase, after vseq.start() returns.", correct: false, feedback: "By then the sequence has already run, with null handles." },
+      { text: "In atk_env::connect_phase, which runs after every component's build_phase has created its children.", correct: true, feedback: "Right. connect_phase is where handles to other components are copied and ports are connected." }
+    ],
+    explanation: "Build phases run top-down, so a parent's build_phase cannot see its grandchildren. connect_phase runs after all of them, which is why handles are wired there."
+  },
+  {
+    question: "A run shows data beats until 26 ns, poll reads until 60 ns, then nothing until UVM_FATAL [PH_TIMEOUT] at 1 µs. What is the most likely cause?",
+    objective: 5,
+    answers: [
+      { text: "The test never raised an objection.", correct: false, feedback: "Without an objection the run would end at 0 ns with a COUNT error, not run until the timeout." },
+      { text: "The translation sequence was never started.", correct: false, feedback: "Then there would be no data beats at all, not four beats up to 26 ns." },
+      { text: "The data driver forgets item_done() after each beat.", correct: false, feedback: "Then the first beat at 14 ns would be the last one." },
+      { text: "The interrupt branch is missing, so nobody clears STATUS; the data port stays stalled, msgs never returns and the join never completes.", correct: true, feedback: "Right. The stall after the bad header and the poll finishing normally point straight at the missing service." }
+    ],
+    explanation: "Read which port stopped and when: the data port stopped right after the bad-destination header, which is where the DUT stalls until STATUS is cleared. The poll is unaffected, so only the interrupt service is missing."
+  },
+  {
+    question: "A run ends at 10 ns with UVM_ERROR [COUNT] cfg=1/8 beats=0/8 clears=0/1. What happened?",
+    objective: 5,
+    answers: [
+      { text: "The three-branch fork ends in join_none, so body() returned at 10 ns and the run phase killed the branches before they completed anything.", correct: true, feedback: "Right. join_none does not keep the test alive: only the objection does, and it was dropped when body() returned." },
+      { text: "vsqr.cfg_sqr was never assigned, so UVM_FATAL [SEQ] stopped the run.", correct: false, feedback: "A null handle with this as parent falls back to vsqr and hangs until PH_TIMEOUT (uvm-core impl.); and CTRL did complete here." },
+      { text: "The ORDER check stopped the simulation after CTRL.", correct: false, feedback: "uvm_error does not stop a run, and ORDER did not fire." },
+      { text: "The poll sequence held a lock that blocked everything else.", correct: false, feedback: "poll takes no lock, and a starved run would end at the timeout, not at 10 ns." }
+    ],
+    explanation: "One configuration access (CTRL) and nothing else means body() got past ctrl.start() and returned at once. That is the join_none mutant; the COUNT check is the only rule that catches it."
+  }
+]} />
+
+### Flashcards
+
+The deck for this lab covers the three self-checks, why sequential `start()` orders the ports, `fork…join` versus `join_none` and the endless layer, `wait_on()` for the interrupt, `grab()` versus `lock()` and priority, a forgotten `ungrab()`, the publish point of the drivers, and the parent fallback. Review it until you can answer each card without the page.
+
+### Kata: catch the five mutants
+
+Make each change to your working solution, **predict the log first** (which check fires, at what time, and what the summary shows), then run it or compare with the answers. Restore the solution after each one.
+
+1. **M1:** move `ctrl.start(p_sequencer.cfg_sqr, this);` into the three-branch `fork` as a fourth branch.
+2. **M2:** delete `grab();` and `ungrab();` from `isr_seq`.
+3. **M3:** change the three-branch `fork`'s `join` to `join_none`.
+4. **M4:** delete the interrupt branch (`begin … end`) from the `fork`.
+5. **M5:** delete only `ungrab();` from `isr_seq`.
+
+<details>
+<summary>Predicted logs (illustrative, traced by hand against uvm-core 2020.3.1)</summary>
+
+**M1.** `ctrl` and `poll` both ask for the configuration sequencer at 0 ns, and the data path starts at 0 ns. `UVM_ERROR [ORDER] data beat before CTRL.enable: WR addr=0x80 data=0x00000012` at 4 ns, and again at 8 ns. Which of `ctrl` and `poll` is queued first is not fixed by the language (IEEE 1800-2023 §4.7, §9.3.2): if `ctrl` wins, CTRL completes at 10 ns and there are 2 ORDER errors; if `poll` wins, CTRL completes at 20 ns and there are 4 (at 4, 8, 12 and 16 ns). Every count is still right, so `COUNT` is silent. **Only ORDER catches this mutant.**
+
+**M2.** As in the quiz: the read at 40 ns, a poll read at 50 ns with `UVM_ERROR [ATOMIC] RD addr=0x08 data=0x00000000 between STATUS read and clear`, then the clear at 60 ns. The data port resumes 10 ns later (beats at 64, 68, 72 and 76 ns). One error; **only ATOMIC catches it.**
+
+**M3.** `body()` returns at 10 ns and `xlate.kill()` does nothing, because the layer has not started yet (forked processes start only when the parent blocks, §9.3.2). The test drops its objection and the run phase ends at 10 ns, killing every branch before it completes an access. In `check_phase`: `UVM_ERROR [COUNT] cfg=1/8 beats=0/8 clears=0/1`. Reading the uvm-core source, it may also print `UVM_WARNING [SEQPRTZMB]` for the killed children (not confirmed by a simulator run). **Only COUNT catches it.**
+
+**M4.** Data beats at 14, 18, 22 and 26 ns, then nothing: the data port is stalled. The poll runs undisturbed (20, 30, 40, 50 and 60 ns) and returns. `msgs` never returns, so the `join` never completes, and at 1 µs: `UVM_FATAL [PH_TIMEOUT] Explicit timeout of … hit, indicating a probable testbench issue`. The fatal ends the run, so `check_phase` never reports. **The timeout catches it.**
+
+**M5.** The timeline is unchanged. When `isr`'s `start()` finishes at 50 ns, uvm-core removes the grab it still holds and reports `UVM_ERROR [SEQFINERR] Parent sequence '…isr' should not finish before locks from itself and descedent sequences are removed…` (the spelling is uvm-core's). The poll was blocked for a few delta cycles longer, which no check can see. **uvm-core's own check catches it**; if the service did more work after the clear, the poll would starve for all of it.
+
+</details>
+
+### Extension kata: mid-stream reconfiguration
+
+Milestone M5 asks for a virtual sequence that also handles a **reconfiguration in the middle of the traffic**. Change the lab so that:
+1. messages 0 and 1 are sent first; then
+2. the data path is disabled (`CTRL = 0`) and re-enabled (`CTRL = 1`), standing in for a real settings change; then
+3. message 2 is sent.
+
+Extend the checker so that `ORDER` also fires for a beat that arrives while CTRL.enable is 0, and update `COUNT` (the configuration port now carries 10 accesses). Predict: can a data beat of message 1 still be on the port when `CTRL = 0` is written?
+
+<details>
+<summary>Worked solution</summary>
+
+```systemverilog
+// snippet: new sequences, the changed body() and the changed checker lines
+class reconfig_seq extends cfg_base_seq;
+  `uvm_object_utils(reconfig_seq)
+  function new(string name = "reconfig_seq");
     super.new(name);
   endfunction
-
   virtual task body();
-    cfg_seq  c_seq;
-    data_seq d_seq;
-    c_seq = cfg_seq::type_id::create("c_seq");
-    d_seq = data_seq::type_id::create("d_seq");
-
-    c_seq.start(p_sequencer.cfg_sqr);   // returns after the last config item_done()
-    d_seq.start(p_sequencer.data_sqr);  // only then does data start
+    bus_item t;
+    access(1, CTRL, 32'h0, t);            // disable the data path
+    access(1, CTRL, 32'h1, t);            // re-enable it with the new settings
   endtask
 endclass
 
-// lab_env
-function void connect_phase(uvm_phase phase);
-  vsqr.cfg_sqr  = cfg_agt.sqr;
-  vsqr.data_sqr = data_agt.sqr;
-endfunction
+class msg_batch_seq extends msg_seq;      // reuses msg_seq's send() task
+  `uvm_object_utils(msg_batch_seq)
+  bit second;                             // 0: messages 0 and 1; 1: message 2
+  function new(string name = "msg_batch_seq");
+    super.new(name);
+  endfunction
+  virtual task body();
+    if (!second) begin
+      send(4'h1, 2, 32'hA0);
+      send(4'hF, 1, 32'hB0);
+    end
+    else
+      send(4'h2, 2, 32'hC0);
+  endtask
+endclass
 
-// lab_test
-task run_phase(uvm_phase phase);
-  coordinated_vseq vseq = coordinated_vseq::type_id::create("vseq");
-  phase.raise_objection(this);
-  vseq.start(env.vsqr);
-  phase.drop_objection(this);
-endtask`}
-    explanationSteps={[
-      { target: "3", title: "TODO 1: typed p_sequencer", explanation: "`uvm_declare_p_sequencer declares p_sequencer as lab_vsqr and casts m_sequencer when the sequence starts." },
-      { target: "12-13", title: "TODO 2: create", explanation: "Declarations come first, then the factory calls." },
-      { target: "15-16", title: "TODO 3: order", explanation: "start() blocks until the child's body() returns, so two sequential calls order configuration before data. fork...join would run them in parallel." },
-      { target: "21-24", title: "TODO 4: wiring", explanation: "connect_phase runs after every component is built, so the agent sequencers exist." },
-      { target: "27-32", title: "TODO 5: start inside an objection", explanation: "vseq.start() returns when body() is done, so the objection covers the whole scenario." }
-    ]}
-  />
+// coordinated_vseq::body(), with batch1, batch2 (second = 1) and reconfig created
+// like the other children: only the data branch of the fork changes.
+fork
+  poll.start(p_sequencer.cfg_sqr, this);
+  begin                                   // the data path, in three ordered steps
+    batch1.start(p_sequencer.msg_sqr, this);    // returns after its last beat
+    reconfig.start(p_sequencer.cfg_sqr, this);  // no beat can be in flight now
+    batch2.start(p_sequencer.msg_sqr, this);
+  end
+  begin
+    p_sequencer.irq.wait_on();
+    isr.start(p_sequencer.cfg_sqr, this);
+  end
+join
+xlate.kill();
 
-  </details>
+// atk_checker::write_cfg(): track enable in both directions
+if (t.write && t.addr == CTRL)
+  enabled = t.data[0];
+// atk_checker::check_phase(): expect cfg=10 instead of 8
+```
 
-  ## Conclusion
+**Prediction:** no. `batch1.start()` returns only when the layer calls `msg_sqr.item_done()` for message 1, which happens after message 1's last beat has completed (54 ns in the original trace). The reconfiguration starts after that, so no beat can overlap it, and `batch2` starts only after `CTRL = 1` has completed. The poll still shares the configuration port, so a poll read may land between `CTRL = 0` and `CTRL = 1`; that is harmless, because the rule concerns data beats.
 
-  The virtual sequencer only gives the sequence handles. The order of traffic across agents comes entirely from how `body()` calls `start()`. Sequential calls order; `fork … join` overlaps; `fork … join_none` needs a later `wait fork`.
+**Why it works:** the same rule as R1, applied in the middle of the run. Sequential `start()` calls in one branch order the data path against the configuration path; the other branches keep overlapping.
 
-  Back to the [I-UVM-3B overview](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index), or continue to [I-UVM-4: Policy Classes](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index).
+</details>
 
-</InfoPage>
+### More practice
+
+- [Dispatch Order](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer) has the dispatch explorer: predict when the first data item is driven for sequential calls, `fork…join` and `fork…join_none`, then compare.
+- The [sequencer arbitration exercise](/exercises/sequencer-arbitration) drills grants under each mode, lock and grab.
+- **LAB-M5** (planned) will turn this pre-lab into a graded lab with a hidden mutant virtual sequence; [A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index) applies the same patterns to larger multi-agent environments.
+
+## References & Next Topics
+
+**Primary sources**
+- IEEE 1800.2-2020 §14.2.3.1 `start` (parent sequence, returns when the sequence has completed); §14.2.5.5 `lock`; §14.2.5.6 `grab` (front of the arbitration queue); §14.2.5.7 `unlock`; §14.2.5.8 `ungrab`; §14.2.5.11 `kill`; §14.2.6.2 `start_item`; §14.2.6.3 `finish_item` (including its note on what its return means).
+- IEEE 1800.2-2020 §15.5.2.3 `get_next_item`; §15.5.2.5 `item_done`; §15.5.2.6 `get`; §15.3.2.14 `stop_sequences`; §13.1.4.3.2 `phase_ready_to_end`; §12.2.8.3 `uvm_tlm_analysis_fifo`.
+- IEEE 1800.2-2020 §10.1.1.2.2 `wait_on`; §10.1.1.2.3 `wait_off`; §10.1.1.2.4 `wait_trigger`; §10.1.1.2.7 `is_on`; §10.1.1.2.8 `reset`; §10.1.2.2.4 `trigger`.
+- IEEE 1800.2-2020 Annex B.3.3 `` `uvm_declare_p_sequencer ``; Annex B.5.22 `` `uvm_analysis_imp_decl ``; Annex F.7.3.3 `set_timeout`.
+- IEEE 1800-2023 §4.7 (nondeterminism), §9.3.2 (fork-join, and when forked processes start), §9.6.1 (`wait fork`), §9.7 (process control and `kill`).
+- uvm-core 2020.3.1 (uvm-core impl.): `src/seq/uvm_sequencer_base.svh` (`m_lock_req`, `grant_queued_locks`, `is_blocked`, `remove_sequence_from_queues` and `SEQFINERR`), `src/seq/uvm_sequence_base.svh` (`start`, `kill`, `process_guard_triggered`), `src/seq/uvm_sequence_item.svh` (`set_item_context`, the parent-sequencer fallback), `src/base/uvm_event.svh`, `src/base/uvm_phase_hopper.svh` (`PH_TIMEOUT`).
+
+**Prerequisites:** [I-UVM-3A: Basic UVM Sequences and Items](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index), and the I-UVM-3B sub-lessons named in Quick Take.
+
+**Related**
+- [I-UVM-3B overview](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/index): the map of the module and the tool chooser.
+- [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences): `p_sequencer`, and handles from the test.
+- [Dispatch Order](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer): sequential calls, `fork…join`, `join_any` and `join_none` in a timeline.
+- [Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences): translation sequences and layered monitors.
+- [Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration): arbitration modes, priority, `lock()` and `grab()`.
+- [Interrupt Handling](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling): interrupt monitors, queues and service sequences.
+- [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake): what blocks where, and hang signatures.
+- [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index): objections and the end of the run phase.
+- [A-UVM-8: Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index): the same coordination in larger environments.
+
+<NextLesson />

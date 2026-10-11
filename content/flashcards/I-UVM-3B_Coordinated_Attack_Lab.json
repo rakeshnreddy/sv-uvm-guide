@@ -1,1 +1,72 @@
-[]
+[
+  {
+    "id": "i-uvm-3b-lab-1",
+    "question": "What three rules does the Coordinated Attack checker enforce, and what does each catch?",
+    "answer": "ORDER: no data beat before the CTRL write has completed (data overtaking configuration). ATOMIC: nothing on the configuration port between the STATUS read and its clear (an interleaved interrupt service). COUNT, in check_phase: 8 configuration accesses, 8 beats and 1 clear (a run that ended early or never ran)."
+  },
+  {
+    "id": "i-uvm-3b-lab-2",
+    "question": "Why do `ctrl.start(p_sequencer.cfg_sqr, this);` followed by the traffic `fork` guarantee configuration before data?",
+    "answer": "`start()` returns only when `ctrl`'s `body()` has finished, and its `finish_item()` returns only after the driver's `item_done()`. So the `fork` that starts the traffic cannot begin until the CTRL write has completed (10 ns in the lab)."
+  },
+  {
+    "id": "i-uvm-3b-lab-3",
+    "question": "Does the virtual sequencer `vsqr` decide that configuration happens before data?",
+    "answer": "No. It only holds handles (`cfg_sqr`, `data_sqr`, `msg_sqr`, `irq`) and never sees an item. The order across ports is the order of statements in the virtual sequence's `body()`."
+  },
+  {
+    "id": "i-uvm-3b-lab-4",
+    "question": "Why is the translation sequence started in its own `fork…join_none`, and how does it end?",
+    "answer": "Its `body()` is a `forever` loop, so inside a `join` it would keep the `join` open forever. It runs in the background, and the virtual sequence calls `xlate.kill()` after the other branches have finished, while the layer is idle."
+  },
+  {
+    "id": "i-uvm-3b-lab-5",
+    "question": "What happens if the three-branch `fork` ends in `join_none` instead of `join`?",
+    "answer": "`body()` returns at once (10 ns), the test drops its objection, and the run phase ends and kills every branch before it completes an access. Only the COUNT check notices: `cfg=1/8 beats=0/8 clears=0/1`."
+  },
+  {
+    "id": "i-uvm-3b-lab-6",
+    "question": "Why does the interrupt branch wait with `irq.wait_on()` rather than `irq.wait_trigger()`?",
+    "answer": "`wait_on()` returns at once if the event is already on, so it cannot miss an interrupt raised before the branch started waiting (IEEE 1800.2-2020 §10.1.1.2.2). `wait_trigger()` waits for the next trigger and misses an earlier one."
+  },
+  {
+    "id": "i-uvm-3b-lab-7",
+    "question": "In `isr_seq`, what does `grab()` do, and what can it not do?",
+    "answer": "It asks for exclusive use of `cfg_agt.sqr` ahead of every waiting request (§14.2.5.6): from then on only `isr` and its children are granted, so the poll is blocked until `ungrab()`. It cannot abort the access already on the port, so the service's first access waits for it (30 ns in the lab)."
+  },
+  {
+    "id": "i-uvm-3b-lab-8",
+    "question": "Without `grab()`, why does a poll read land between the STATUS read and the clear?",
+    "answer": "Under the default `UVM_SEQ_ARB_FIFO` mode the oldest request wins each grant. The service's clear is requested at 40 ns, after the poll's request from 30 ns, so the poll goes first and ATOMIC fires at 50 ns."
+  },
+  {
+    "id": "i-uvm-3b-lab-9",
+    "question": "Are `grab()` and `lock()` interchangeable for the interrupt service?",
+    "answer": "In this bench, yes in uvm-core 2020.3.1: no other lock is held or waiting, so the lock is granted at once and blocks the poll the same way. They differ when other lock requests wait: a grab goes to the front of the arbitration queue and is granted before them."
+  },
+  {
+    "id": "i-uvm-3b-lab-10",
+    "question": "Would priority 1000 with `UVM_SEQ_ARB_WEIGHTED` keep the STATUS read and clear together?",
+    "answer": "No. `UVM_SEQ_ARB_WEIGHTED` picks randomly by weight, so the poll can still win a grant, and the default FIFO mode ignores priority entirely. Only a lock or a grab makes two items atomic."
+  },
+  {
+    "id": "i-uvm-3b-lab-11",
+    "question": "What does a forgotten `ungrab()` cost in this lab?",
+    "answer": "uvm-core 2020.3.1 removes the grab when `isr`'s `start()` finishes and reports `UVM_ERROR [SEQFINERR]` at 50 ns. Until then every other sequence on `cfg_agt.sqr` is blocked, so a longer service routine would starve the poll silently."
+  },
+  {
+    "id": "i-uvm-3b-lab-12",
+    "question": "Why do the lab's drivers publish each access just before `item_done()`, and why does that matter for ordering?",
+    "answer": "So the checker sees completed transfers, not intentions. Sequence-level order equals pin order only if the driver calls `item_done()` after the transfer has finished; a `get()`-style or pipelined driver breaks that link (§14.2.6.3 note)."
+  },
+  {
+    "id": "i-uvm-3b-lab-13",
+    "question": "You forget `vsqr.data_sqr = data_agt.sqr;`. What does the run show, and why no `UVM_FATAL [SEQ]`?",
+    "answer": "No data beats and a `UVM_FATAL [PH_TIMEOUT]` at 1 us. `xlate` was started with a null sequencer but with `this` as parent, so uvm-core's `set_item_context()` gives it the parent's sequencer, `vsqr`, which has no driver: a silent hang (uvm-core impl.)."
+  },
+  {
+    "id": "i-uvm-3b-lab-14",
+    "question": "Why does the lab's test call `uvm_root::get().set_timeout(1us)` in `build_phase`?",
+    "answer": "So a hang ends with `UVM_FATAL [PH_TIMEOUT]` at 1 us instead of at the much longer default (Annex F.7.3.3). The run-phase watchdog reads the timeout when the run phase starts, so it must be set before then."
+  }
+]

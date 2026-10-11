@@ -1,7 +1,77 @@
 [
   {
     "id": "iuvm2c-1",
-    "question": "In uvm_config_db#(T)::set(cntxt, inst_name, field_name, value), which components can get the value?",
-    "answer": "Those whose full path matches the scope formed from cntxt's full name followed by inst_name (with a null cntxt meaning uvm_root, so inst_name is the whole path). inst_name can use wildcards, and get() must use the same type T and field_name."
+    "question": "When does uvm_config_db#(T)::get() see a value stored with set(cntxt, inst_name, field_name, value)?",
+    "answer": "Only when all three match: the field name is identical, the type parameter T is the same type, and the scope (cntxt's full name, a dot, then inst_name; with a null cntxt, inst_name alone) matches the caller's full path. inst_name may contain wildcards."
+  },
+  {
+    "id": "iuvm2c-2",
+    "question": "The test calls uvm_config_db#(int unsigned)::set(this, \"env.agt0\", \"num_pkts\", 4). What scope is stored?",
+    "answer": "`uvm_test_top.env.agt0`: the test's full name, a dot, then inst_name. Only the agent itself matches; its children do not."
+  },
+  {
+    "id": "iuvm2c-4",
+    "question": "What is a set()'s precedence during build_phase, and who wins?",
+    "answer": "1000 minus the depth of its cntxt: a null context (uvm_root, depth 0) 1000, uvm_test_top 999, env 998, an agent 997. The highest context wins, whatever the call order. Unlike the factory, which picks the first registered matching instance override, registration order does not matter."
+  },
+  {
+    "id": "iuvm2c-5",
+    "question": "What is a set()'s precedence outside build_phase, and how are ties broken?",
+    "answer": "Every set() gets 1000, including tb_top's sets before run_test(). At equal precedence the most recent set() wins, and a component sees it only if it calls get() again."
+  },
+  {
+    "id": "iuvm2c-6",
+    "question": "tb_top sets virtual bus_if; the driver gets virtual bus_if.drv_mp. What happens, and what is the fix?",
+    "answer": "get() returns 0 silently: a modport is part of a virtual interface's type (IEEE 1800-2023 §25.9). Get the plain virtual bus_if and assign it to the modport-typed member, which §25.9 allows."
+  },
+  {
+    "id": "iuvm2c-7",
+    "question": "Does a failed uvm_config_db get() print anything?",
+    "answer": "No. It returns 0 and leaves the variable unchanged. Wrap every required get() in an if (!...) check with a uvm_fatal, or the null handle fails later, somewhere else."
+  },
+  {
+    "id": "iuvm2c-8",
+    "question": "What does +UVM_CONFIG_DB_TRACE show for a missed lookup?",
+    "answer": "A [CFGDB/GET] line with the scope, field and (type ...) asked for, ending in `= null (failed lookup)`. Compare it with the [CFGDB/SET] lines field by field. It is a uvm-core feature, not IEEE 1800.2."
+  },
+  {
+    "id": "iuvm2c-9",
+    "question": "What does check_config_usage() report?",
+    "answer": "Under the ID CFGNRD, every setting in the whole resource pool that was written but never read, which exposes field and scope typos. uvm-core 2020.3.1 never calls it for you; call it in end_of_elaboration_phase or later."
+  },
+  {
+    "id": "iuvm2c-10",
+    "question": "What wakes uvm_config_db#(T)::wait_modified(this, \"\", \"rate\")?",
+    "answer": "A later set() of the same type T and exact field name whose scope matches the waiter's path, whatever its precedence. It returns no value: call get() afterwards. A set made before the wait never wakes it."
+  },
+  {
+    "id": "iuvm2c-11",
+    "question": "Why does +uvm_set_config_int=uvm_test_top.env.agt0,num_pkts,5 miss a uvm_config_db#(int)::get?",
+    "answer": "The plusarg makes a uvm_config_int setting, which is uvm_config_db#(uvm_bitstream_t), and int is a different type. It reaches uvm_field_int members, uvm_agent's is_active and uvm_config_int::get()."
+  },
+  {
+    "id": "iuvm2c-12",
+    "question": "An agent registers cfg with uvm_field_object and the test sets uvm_config_db#(bus_agent_cfg) \"cfg\". Is cfg filled by super.build_phase?",
+    "answer": "No. Automatic configuration lets uvm_field_object read only uvm_object-typed settings, so the bus_agent_cfg setting is skipped silently. Use an explicit, checked get() of bus_agent_cfg."
+  },
+  {
+    "id": "iuvm2c-13",
+    "question": "Which components does the scope uvm_test_top.env.agt0.* reach, and which does uvm_test_top.env.agt0* reach?",
+    "answer": "agt0.* reaches everything below agt0 but not agt0 itself. agt0* reaches agt0 and everything below it (and also a sibling named agt00)."
+  },
+  {
+    "id": "iuvm2c-15",
+    "question": "Why publish one configuration object per agent instead of several scalar settings?",
+    "answer": "One set() and one get() per agent, members checked by the compiler, randomizable and printable with convert2string(). Use one object per agent: set() stores a handle, so a shared object gives both agents the same values."
+  },
+  {
+    "id": "iuvm2c-16",
+    "question": "Two plain uvm_resource_db#(int unsigned)::set(\"*\", \"max_err\", ...) calls store 10, then 20. What does read_by_name return, and how does that differ from uvm_config_db?",
+    "answer": "10. A plain uvm_resource_db set() adds the new resource behind the earlier one at the same precedence (1000), so the first one wins; set_override (a uvm-core addition) puts it in front. uvm_config_db::set() always moves its resource to the front, so the most recent set() wins ties."
+  },
+  {
+    "id": "iuvm2c-17",
+    "question": "What does uvm_config_db#(T)::exists(cntxt, inst_name, field_name) return, and what does it never do?",
+    "answer": "1 if a setting of type T with that exact field name has a scope that matches the path, 0 otherwise. It has no value argument: it never reads the value into a variable and never changes the database. Use it when only the presence of a setting matters; call get() when you need the value."
   }
 ]

@@ -1,36 +1,827 @@
 ---
 title: "I-UVM-3B: Advanced Sequencing and Layering"
-description: "Master virtual sequences, arbitration, layering, and driver-sequencer synchronization patterns."
+description: "Coordinate stimulus across sequences, sequencers and agents (arbitration, locks, libraries, layering, virtual sequences and interrupts), and debug the hangs and starvation they cause."
 flashcards: "I-UVM-3B_Advanced_Sequencing"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual (Clauses 14 and 15; Annexes B.3 and F.2.4)"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog (§4.7 nondeterminism, §9.3.2 fork-join, §9.6.1 wait fork, §9.7 process control)"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
 ---
 
 ## Quick Take
-- **What it is:** Advanced sequencing coordinates several agents from one virtual sequence, controls which of several competing sequences a sequencer serves (arbitration, priority, `lock()`, `grab()`), layers one protocol on another (for example IP packets carried in Ethernet frames), and reacts to asynchronous events such as interrupts.
-- **Why it matters:** As testbenches grow from blocks to SoCs, stimulus must stay coordinated and maintainable. A single `` `uvm_do `` loop on one agent no longer describes the test.
 
-## Track Contents
+- **What it is:** In [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index) one sequence fed one driver through one sequencer. Real tests are busier. Several sequences compete for one driver, and stimulus on one agent must happen before, during or after stimulus on another. **Advanced sequencing** is the set of UVM tools for both problems: arbitration modes and priority, `lock()` and `grab()`, sequence libraries, layering, virtual sequences, the interrupt pattern and the response handler. This page is the map of the module. It teaches the two decisions every advanced test makes, gives you the core rule for each, and then sends you to the eight sub-lessons that take each tool to full depth.
+- **Why it matters:** As a testbench (TB) grows from one block to a subsystem, a single `` `uvm_do `` loop on one agent no longer describes the test. The bugs change too. Data reaches the design under test (DUT) before its configuration, a background stream starves an urgent one, an interrupt is serviced late, or the test ends while stimulus is still running. Most of these print no error at all. Knowing which tool controls which decision is what lets you write such tests on purpose and debug them quickly.
+- **The Analogy:** Think of each agent as an airport with one runway. The driver is the runway, the sequencer is the control tower, and each sequence is an airline asking the tower for a slot. The tower's rule (the arbitration mode) decides who flies next, and priority is a number written on each request. `lock()` books a block of consecutive slots; `grab()` is an emergency block booking, served before any ordinary block booking that is still waiting. A virtual sequence is the airline operations centre that tells several airports what to do and in which order, and a virtual sequencer is only that centre's phone book. *Where it breaks:* a real tower clears planes on its own schedule, but a UVM sequencer chooses only when its driver asks for the next item. A block booking never expires by itself: a `lock()` lasts until `unlock()`, and other sequences wait silently while it is held. And the phone book never schedules anything: the virtual sequencer decides no order at all.
 
-Work through the pages in this order. Each one builds on the previous.
+**You will be able to:**
+1. **Choose** the tool for a stimulus requirement (arbitration mode and priority, `lock()`, `grab()`, a sequence library, layering, a virtual sequence, the interrupt pattern or the response handler), and say whether it controls the order inside one sequencer or the order across sequencers.
+2. **Predict** which waiting request a sequencer grants under the default FIFO mode, under `UVM_SEQ_ARB_WEIGHTED` and `UVM_SEQ_ARB_STRICT_FIFO`, and when locks and grabs are waiting.
+3. **Write** a virtual sequence that runs configuration before data on two agents, with the sequencer handles assigned by the test or taken from a virtual sequencer.
+4. **Predict** when each item is driven for sequential `start()` calls, `fork…join` and `fork…join_none` in a virtual sequence, including how `join_none` lets the test end before the stimulus does.
+5. **Diagnose** a stuck, starved or misordered stimulus run from its first symptom, and name the sub-lesson whose triage fixes it.
 
-1. [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake): what blocks where, responses, and the hang signatures.
-2. [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences): one sequence that starts sequences on several agents.
-3. [UVM Virtual Sequencer: Dispatch Order](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer): ordered vs `fork…join` vs `fork…join_none`, in a timeline.
-4. [Sequencer Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration): the five arbitration modes, priority, `lock()` and `grab()`.
-5. [Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences): atomic, scenario and virtual layers, and protocol layering.
-6. [Sequence Libraries](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-libraries): `uvm_sequence_library` and its selection modes.
-7. [Interrupt Handling](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling): turning interrupts into ordered recovery stimulus.
-8. [Lab: Coordinated Attack](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab): write a virtual sequence that configures before it sends data.
+This page teaches you to choose each tool and to predict its effect. Across the module's lessons you will also write layered stimulus ([Layered Sequences and Protocol Layering](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences)) and a sequence library ([Sequence Libraries & Arbitration Control](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-libraries)), write a sequence that waits with `is_relevant()` ([Sequence Arbitration and Priority](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration)), and collect out-of-order responses with `use_response_handler()` and debug the four hang signatures ([The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake)).
 
-### Virtual sequences vs virtual sequencers
+<BeforeYouStart />
 
-A **virtual sequence** controls other sequences across several agents. It sends no items to a driver itself; it starts sub-sequences on the agents' sequencers.
+## Build Your Mental Model
 
-A **virtual sequencer** is one way to give the virtual sequence those sequencer handles: a `uvm_sequencer` with no driver that holds the handles, assigned in the env's `connect_phase`. The other common way skips the virtual sequencer: the test copies the handles into the virtual sequence and starts it with `vseq.start(null)`. Both are standard; page 2 shows each.
+**How to read this page.** The core path is the first four subsections: the recap, the two decisions, the core rule inside one sequencer and the core rule across sequencers. Then come practitioner tools: dispatch timing, the tool chooser and symptom triage. The last subsection shows how the eight sub-lessons fit together. Push Further holds the expert layer.
+
+### Recap from I-UVM-3A: one sequence, one sequencer, one driver
+
+Five terms carry the whole module, so here they are again in one place:
+
+- A **sequence item** (`uvm_sequence_item`) holds the data of one transaction, such as one bus write.
+- A **sequence** (`uvm_sequence`) is an object whose `body()` task creates items and sends them, one at a time, with `start_item()` and `finish_item()`.
+- A **sequencer** (`uvm_sequencer`) is the component that passes items from sequences to one driver. When several sequences want to send at once, it chooses which one goes next. That choice is called **arbitration**.
+- A **driver** (`uvm_driver`) is the component that pulls the next item with `get_next_item()`, turns it into pin activity, and reports completion with `item_done()`.
+- An **agent** groups one sequencer, one driver and one monitor for one interface ([I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index)).
+
+The handshake you learned in I-UVM-3A has one property that matters on every page of this module: **a sequence waits inside `start_item()` until the sequencer grants it, and the sequencer only grants when its driver asks for work.** A test starts a sequence with `seq.start(sqr)`. That call returns only when the sequence's `body()` has finished. Keep both facts in mind; everything below builds on them.
+
+### Two decisions every advanced test makes
+
+Every question in this module is one of two questions:
+
+1. **Inside one sequencer:** several sequences are waiting to send on the same driver. Which one goes next? The *sequencer* decides, using its arbitration mode, the requests' priorities, and any `lock()` or `grab()` in force.
+2. **Across sequencers:** stimulus on one agent must happen before, during or after stimulus on another. Who enforces that order? No sequencer can, because each one only sees its own requests. The order comes from *your code*: the `body()` of a **virtual sequence** that starts sequences on several sequencers.
+
+Keep the two apart and most confusion in this module disappears. A priority never orders two agents; a virtual sequence never decides which of two sequences on the same sequencer goes first. The next two subsections give the core rule for each decision.
+
+### Inside one sequencer: who is granted next
+
+Picture three sequences sharing the data agent's sequencer: a background stream, a burst that must not be split, and an interrupt service sequence. Each one has called `start_item()` and is waiting in the sequencer's **arbitration queue**: the sequencer's list of waiting requests, oldest first.
+
+<ArchitectureDiagram
+  title="Three sequences competing for one sequencer"
+  caption="Each sequence waits in start_item(). When the driver calls get_next_item(), the sequencer chooses one waiting request by its arbitration mode, the priorities and any lock or grab. The driver never sees the competition, only the winner's item."
+  nodes={[
+    { id: "bg", label: "bg_seq", sublabel: "priority 100", kind: "sequence", col: 0, row: 0 },
+    { id: "burst", label: "burst_seq", sublabel: "priority 100", kind: "sequence", col: 1, row: 0 },
+    { id: "isr", label: "isr_seq", sublabel: "priority 300", kind: "sequence", col: 2, row: 0 },
+    { id: "agt", label: "data_agt", kind: "agent", col: 0, row: 1, colSpan: 3, rowSpan: 2, container: true },
+    { id: "sqr", label: "sqr", sublabel: "arbitration queue", kind: "sequencer", col: 1, row: 1 },
+    { id: "drv", label: "drv", kind: "driver", col: 1, row: 2 }
+  ]}
+  ports={[
+    { id: "drv.port", node: "drv", side: "top", kind: "port", label: "seq_item_port" },
+    { id: "sqr.export", node: "sqr", side: "bottom", kind: "export", label: "seq_item_export" }
+  ]}
+  edges={[
+    { from: "bg", to: "sqr", style: "causal", label: "start_item" },
+    { from: "burst", to: "sqr", style: "causal", label: "start_item" },
+    { from: "isr", to: "sqr", style: "causal", label: "start_item" },
+    { from: "drv.port", to: "sqr.export", style: "control", label: "get_next_item" }
+  ]}
+/>
+
+The rules, in the order the sequencer applies them:
+
+1. **Locks and grabs filter first.** While a sequence holds a `lock()` or a `grab()` on the sequencer, only that sequence (and, in uvm-core 2020.3.1, its child sequences) can be granted; every other request waits. Both are exclusive until they are released with `unlock()` or `ungrab()`. They differ in where the request enters the arbitration queue: a lock request at the back, a grab request at the front (IEEE 1800.2-2020 §14.2.5.5, §14.2.5.6). So **when a lock and a grab are both waiting, the grab is served first.** Use `grab()` when your intent is to pre-empt other traffic (an interrupt), and `lock()` when you only need your items kept together. If the holding sequence ends without releasing, uvm-core 2020.3.1 removes the lock and reports `UVM_ERROR [SEQFINERR]`.
+
+   *Standard versus uvm-core:* when nothing is held, the standard's wording says a lock "is arbitrated the same as any other request" and waits for earlier requests (§14.2.5.5). uvm-core 2020.3.1, the reference implementation, grants an unblocked lock at once, ahead of older item requests, just like a grab (`grant_queued_locks()` in `uvm_sequencer_base.svh`). Do not write tests that depend on either reading.
+2. **Then the arbitration mode chooses** among the unblocked requests. Set it on the sequencer with `set_arbitration()` (§15.3.2.19). There are six modes (Annex F.2.4.1):
+   - `UVM_SEQ_ARB_FIFO`, **the default**: the oldest request wins, and **priority is ignored**.
+   - `UVM_SEQ_ARB_WEIGHTED`: a random pick in which each request's chance is proportional to its priority.
+   - `UVM_SEQ_ARB_RANDOM`: a random pick that ignores priority.
+   - `UVM_SEQ_ARB_STRICT_FIFO`: the highest priority wins; ties go to the oldest.
+   - `UVM_SEQ_ARB_STRICT_RANDOM`: the highest priority wins; ties are broken at random.
+   - `UVM_SEQ_ARB_USER`: your sequencer's `user_priority_arbitration()` decides (§15.3.2.3).
+3. **Priority** is an integer attached to a sequence. A sequence started with no parent gets 100 by default, and a child gets its parent's priority (§14.2.3.1). Pass another value as the third argument of `start()`, as in `isr.start(sqr, null, 300)`. Use values of 1 or more.
+
+Now apply the rules. In this traced example the three requests arrived in the order `bg_seq`, `burst_seq`, `isr_seq`, with the priorities in the picture, and nobody holds a lock unless the row says so:
+
+| Situation | Next grant | Why |
+|---|---|---|
+| `UVM_SEQ_ARB_FIFO` (the default) | `bg_seq` | Oldest request; the 300 on `isr_seq` is ignored |
+| `UVM_SEQ_ARB_STRICT_FIFO` | `isr_seq` | Highest priority |
+| `UVM_SEQ_ARB_WEIGHTED` | random: `bg_seq` 20 %, `burst_seq` 20 %, `isr_seq` 60 % | Chance = priority ÷ sum = 100, 100 and 300 out of 500 |
+| `UVM_SEQ_ARB_RANDOM` | random, one third each | Priority ignored |
+| `burst_seq` holds a `lock()`, any mode | `burst_seq` | The others are blocked until it calls `unlock()` |
+| Suppose instead that, while `burst_seq` holds a lock, `bg_seq` calls `lock()` and then `isr_seq` calls `grab()`; `burst_seq` then calls `unlock()` | `isr_seq` gets the sequencer | Both requests were blocked by the held lock; the grab waits at the front of the queue, so it is granted before the earlier lock request (§14.2.5.6). The standard and uvm-core 2020.3.1 agree here |
+
+Two misconceptions to drop now. **`UVM_SEQ_ARB_WEIGHTED` is not strict priority**: `isr_seq` loses two times in five. If the urgent sequence must win whenever it is waiting, use `UVM_SEQ_ARB_STRICT_FIFO`, or `grab()`. And **`grab()` is not just another name for `lock()`**: both give exclusive access until released, but when a lock and a grab are both waiting, the grab is served first, as in the last row. Choose by intent: `grab()` to pre-empt, `lock()` to keep a burst together. The [Sequence Arbitration and Priority](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration) lesson owns these rules in full, with a sandbox that replays each case grant by grant.
+
+### Across sequencers: virtual sequences
+
+A **virtual sequence** is a sequence whose `body()` sends no items of its own. Instead it starts other sequences, each on the sequencer of the agent it targets, and the order of those `start()` calls in its code *is* the cross-agent order. Because `start()` returns only after the child's `body()` has finished, a plain sequence of calls is already an ordering rule.
+
+**Practitioner note: handshake order is not pin order.** `start()` returns when the driver has called `item_done()` for the child's last item, so "the configuration sequence returned" means "the configuration is applied" only if the driver calls `item_done()` after the transfer has really completed. Three common cases break that link while the sequence-level order still looks right:
+- a driver that pulls items with `get()`, which completes the handshake at once, before anything is driven;
+- a **pipelined driver**, one that accepts the next item before the previous one has finished on the bus;
+- a DUT that needs a **write response** (an acknowledgement it returns after a write) or **settling time** (time after a write before the new setting takes effect).
+
+The bench's ordering check should therefore watch completed transfers, as the driver's check in Make It Work does. [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences#expert-handshake-order-is-not-pin-order) takes this further.
+
+Here is the two-agent bench you will build in Make It Work. A configuration agent (`cfg_agt`) writes control registers; a data agent (`data_agt`) writes the data path. The DUT accepts nothing until its CTRL register's enable bit is 1, so configuration must come first.
+
+<ArchitectureDiagram
+  title="A virtual sequence driving two agents"
+  caption="top_vseq runs ctrl and thr on cfg_agt.sqr, and data on data_agt.sqr. The test gives the virtual sequence its two sequencer handles and starts it with vseq.start(null). No sequencer sees both agents; only the code in top_vseq.body() does."
+  nodes={[
+    { id: "test", label: "two_agent_test", kind: "test", col: 0, row: 0 },
+    { id: "vseq", label: "top_vseq", sublabel: "virtual sequence", kind: "sequence", col: 1, row: 0 },
+    { id: "env", label: "env", kind: "env", col: 0, row: 1, colSpan: 2, rowSpan: 2, container: true },
+    { id: "cfg", label: "cfg_agt", kind: "agent", col: 0, row: 1, rowSpan: 2, container: true },
+    { id: "data", label: "data_agt", kind: "agent", col: 1, row: 1, rowSpan: 2, container: true },
+    { id: "csqr", label: "sqr", sublabel: "cfg_sqr in top_vseq", kind: "sequencer", col: 0, row: 1 },
+    { id: "cdrv", label: "drv", sublabel: "10 ns per item", kind: "driver", col: 0, row: 2 },
+    { id: "dsqr", label: "sqr", sublabel: "data_sqr in top_vseq", kind: "sequencer", col: 1, row: 1 },
+    { id: "ddrv", label: "drv", sublabel: "4 ns per item", kind: "driver", col: 1, row: 2 }
+  ]}
+  edges={[
+    { from: "test", to: "vseq", style: "causal", label: "start(null)" },
+    { from: "vseq", to: "csqr", style: "causal", label: "ctrl, thr" },
+    { from: "vseq", to: "dsqr", style: "causal", label: "data" },
+    { from: "cdrv", to: "csqr", style: "control", label: "get_next_item" },
+    { from: "ddrv", to: "dsqr", style: "control", label: "get_next_item" }
+  ]}
+/>
+
+The virtual sequence needs handles to the agents' sequencers. There are two common, supported ways to provide them:
+
+- **From the test.** The virtual sequence declares two sequencer handles; the test assigns them from the environment and calls `vseq.start(null)`. The `null` says the virtual sequence runs on no sequencer, which is fine because it never sends an item itself. Make It Work uses this form.
+- **From a virtual sequencer.** A **virtual sequencer** is a sequencer with no driver whose only job is to hold the agents' sequencer handles. The environment fills them in its `connect_phase`. The virtual sequence is started on it, `vseq.start(env.vsqr)`, and reads the handles through a typed `p_sequencer` handle that the `` `uvm_declare_p_sequencer `` macro declares (IEEE 1800.2-2020 Annex B.3.3).
+
+```systemverilog
+// snippet: the same virtual sequence, with its handles taken from a virtual sequencer.
+// Assumes bus_sqr and top_vseq from Make It Work; env.connect_phase sets
+// vsqr.cfg_sqr = cfg_agt.sqr and vsqr.data_sqr = data_agt.sqr.
+class two_agent_vsqr extends uvm_sequencer;     // REQ defaults to uvm_sequence_item
+  `uvm_component_utils(two_agent_vsqr)
+  bus_sqr cfg_sqr;
+  bus_sqr data_sqr;
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+endclass
+
+class top_vseq_vsqr extends top_vseq;
+  `uvm_object_utils(top_vseq_vsqr)
+  `uvm_declare_p_sequencer(two_agent_vsqr)   // p_sequencer: a two_agent_vsqr handle
+  function new(string name = "top_vseq_vsqr");
+    super.new(name);
+  endfunction
+  virtual task body();
+    cfg_sqr  = p_sequencer.cfg_sqr;          // copy the handles, then run the same body
+    data_sqr = p_sequencer.data_sqr;
+    super.body();
+  endtask
+endclass
+```
+
+The virtual sequencer is a convenience, not a scheduler. IEEE 1800.2-2020 does not define a virtual sequencer class at all; it is a usage pattern, and uvm-core 2020.3.1 only adds the name `uvm_virtual_sequencer` as a typedef of `uvm_sequencer #(uvm_sequence_item)`. **The virtual sequencer does not decide the order of your sub-sequences.** They run on the agents' sequencers, so the virtual sequencer never arbitrates between them; the order is exactly what `body()` says. [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) owns the virtual sequence itself; [Virtual Sequencer: Handles, p_sequencer and Dispatch](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer) owns the virtual sequencer, its wiring and `p_sequencer` in depth.
+
+### Dispatch timing: sequential, fork…join and fork…join_none
+
+A virtual sequence orders agents with three shapes of code. They come from [F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index): statements in a `begin…end` run one after another; a `fork…join` starts each statement as a separate **process** (a thread) and waits for all of them; a `fork…join_none` starts them and continues at once without waiting.
+
+Trace them with the Make It Work bench. The configuration driver takes 10 ns per item and the data driver 4 ns. `ctrl` writes CTRL (1 item), `thr` writes two threshold registers (2 items) and `data` writes three data words (3 items). Each cell shows the times at which the driver finishes each item:
+
+| `body()` shape | `ctrl` (cfg) | `data` (data) | `thr` (cfg) | `body()` returns | What happens |
+|---|---|---|---|---|---|
+| A. `ctrl`; `data`; `thr`, all sequential | 10 | 14, 18, 22 | 32, 42 | 42 ns | Correct, but the cfg agent idles while data runs |
+| B. `ctrl`; then `fork data; thr; join` (Make It Work) | 10 | 14, 18, 22 | 20, 30 | 30 ns | Correct and faster: the two agents overlap after configuration |
+| C. `fork ctrl; join_none`; then `data`; then `thr` | 10 | **4, 8**, 12 | 22, 32 | 32 ns | Data at 4 and 8 ns arrives before CTRL is enabled: two ordering errors |
+| D. `ctrl`; then `fork data; thr; join_none` | 10 | — | — | **10 ns** | `body()` returns as soon as the fork starts, the test ends at 10 ns, and the forked sequences are killed before any of their items completes |
+
+Read the table twice:
+
+- **Order across agents is code order.** B is right because `ctrl.start()` returns before the `fork` begins. C breaks the rule even though `ctrl` is written first: `join_none` lets `data` start at time 0.
+- **`fork…join_none` does not keep the test alive.** The test raised an **objection** around `vseq.start()`. An objection keeps the **run phase**, the part of the test in which simulation time advances, from ending until every raised objection is dropped ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)). In D, `start()` returns at 10 ns, the test drops its objection, the run phase ends, and UVM kills every thread still running in it, including the two forked sequences. Nothing reports an error unless your test counts what was driven, which is why Make It Work does.
+
+[Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences#running-work-in-parallel-the-fork-patterns) teaches these patterns in full, including `fork…join_any` and how to stop background children cleanly. [Virtual Sequencer: Handles, p_sequencer and Dispatch](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer) replays three of them (one after another, `fork…join` and `fork…join_none`) in an interactive timeline.
+
+### Which tool for which problem
+
+Each tool answers one requirement. The right-hand column says which of the two decisions it controls; the links go to the lesson that owns the tool.
+
+| Requirement | Tool | Controls | Full depth in |
+|---|---|---|---|
+| A driver hangs, a response is lost, or a pipelined driver returns responses out of order | Handshake triage; `use_response_handler(1)` with a `response_handler()` override (§14.2.7.1) | The handshake between one sequence and one driver | [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake) |
+| One of several sequences must get more of the driver on average | Priority plus `UVM_SEQ_ARB_WEIGHTED` | Inside one sequencer | [Sequence Arbitration and Priority](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration) |
+| An urgent sequence must win whenever it is waiting | Priority plus `UVM_SEQ_ARB_STRICT_FIFO` | Inside one sequencer | Sequence Arbitration and Priority |
+| A burst, such as a read-modify-write, must not be interleaved, and must not pre-empt urgent traffic | `lock()` … `unlock()` | Inside one sequencer | Sequence Arbitration and Priority |
+| A sequence must not be granted until a resource (credits, a FIFO slot) is ready | Wait before `start_item()`, or override `is_relevant()` together with `wait_for_relevant()` (§14.2.5.3, §14.2.5.4) | Inside one sequencer | Sequence Arbitration and Priority |
+| A regression needs a random mix of many scenario sequences | `uvm_sequence_library` and its selection modes (§14.4, Annex F.2.4.3) | Which sequence runs next on one sequencer | [Sequence Libraries & Arbitration Control](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-libraries) |
+| One protocol rides inside another (for example packets carried in frames) | Layering: a translation sequence that turns each upper-layer item into lower-layer items | Which items reach the lower driver | [Layered Sequences and Protocol Layering](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences) |
+| Configuration on one agent must finish before data on another | A virtual sequence | Across sequencers | [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) |
+| Two agents must overlap, or background traffic must stop cleanly | `fork…join`, `join_any` or `join_none` in the virtual sequence | Across sequencers | [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences#running-work-in-parallel-the-fork-patterns) |
+| An interrupt must be serviced next, ahead of queued traffic | A monitor event wakes a service sequence, which calls `grab()` on the physical sequencer, then `ungrab()` | Both: the event crosses agents; the grab acts inside one sequencer | [Interrupt-Driven Stimulus](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling) |
+
+A **sequence library** is itself a sequence: when you start it, it picks member sequences from its registered list (at random, random-cyclic, by your own rule, or plain items only) and runs them one after another on its sequencer. **Layering** means one sequence produces the items of another: an upper-layer sequence creates, say, packets, and a translation sequence on the lower agent turns each packet into the bus items that carry it. Both are introduced here only by what they decide; their lessons cover them in full.
+
+Layering is easiest to see as a picture. The names below are the ones [Layered Sequences and Protocol Layering](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences) uses: IP packets carried in Ethernet frames.
+
+<ArchitectureDiagram
+  title="Layering: one sequence feeds another"
+  caption="ip_burst_seq sends packets to ip_sqr, a sequencer with no driver. The translation sequence xlate runs on eth_agt.sqr. It plays ip_sqr's driver, pulling each packet with get_next_item, and sends the frames that carry it to the Ethernet driver as ordinary items."
+  nodes={[
+    { id: "seq", label: "ip_burst_seq", sublabel: "upper layer: packets", kind: "sequence", col: 0, row: 0 },
+    { id: "xlate", label: "xlate", sublabel: "translation sequence", kind: "sequence", col: 1, row: 0 },
+    { id: "ip_sqr", label: "ip_sqr", sublabel: "no driver", kind: "sequencer", col: 0, row: 1 },
+    { id: "agt", label: "eth_agt", kind: "agent", col: 1, row: 1, rowSpan: 2, container: true },
+    { id: "eth_sqr", label: "sqr", kind: "sequencer", col: 1, row: 1 },
+    { id: "eth_drv", label: "drv", kind: "driver", col: 1, row: 2 }
+  ]}
+  ports={[
+    { id: "eth_sqr.export", node: "eth_sqr", side: "bottom", kind: "export", label: "seq_item_export" },
+    { id: "eth_drv.port", node: "eth_drv", side: "top", kind: "port", label: "seq_item_port" }
+  ]}
+  edges={[
+    { from: "seq", to: "ip_sqr", style: "causal", label: "start_item / finish_item" },
+    { from: "xlate", to: "ip_sqr", style: "control", label: "get_next_item(pkt)" },
+    { from: "xlate", to: "eth_sqr", style: "causal", label: "frames" },
+    { from: "eth_drv.port", to: "eth_sqr.export", style: "control", label: "get_next_item" }
+  ]}
+/>
+
+The interrupt path is the one tool that uses both decisions at once. A monitor notices the interrupt, which is outside any sequencer; a service sequence then takes the agent's sequencer with `grab()`, which acts inside one sequencer. The names below are the ones [Interrupt-Driven Stimulus](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling) uses.
+
+<ArchitectureDiagram
+  title="The interrupt path: from the irq pin to a recovery write"
+  caption="irq_mon sees the DUT's interrupt and writes it to irq_fifo. The endless service sequence svc waits in get(), then grabs cfg_sqr, so its recovery items go to cfg_drv before bg's queued items. bg resumes after ungrab(cfg_sqr). The monitor never starts a sequence, and the driver never looks at interrupts."
+  nodes={[
+    { id: "irq_mon", label: "irq_mon", kind: "monitor", col: 0, row: 0 },
+    { id: "irq_fifo", label: "irq_fifo", kind: "fifo", col: 1, row: 0 },
+    { id: "svc", label: "svc", sublabel: "service sequence", kind: "sequence", col: 2, row: 0 },
+    { id: "dut", label: "DUT", kind: "dut", col: 0, row: 1 },
+    { id: "cfg_drv", label: "cfg_drv", kind: "driver", col: 1, row: 1 },
+    { id: "cfg_sqr", label: "cfg_sqr", kind: "sequencer", col: 2, row: 1 },
+    { id: "bg", label: "bg", sublabel: "background traffic", kind: "sequence", col: 3, row: 1 }
+  ]}
+  ports={[
+    { id: "irq_mon.ap", node: "irq_mon", side: "right", kind: "analysis_port", label: "ap" },
+    { id: "irq_fifo.imp", node: "irq_fifo", side: "left", kind: "analysis_imp", label: "analysis_export" },
+    { id: "cfg_drv.port", node: "cfg_drv", side: "right", kind: "port", label: "seq_item_port" },
+    { id: "cfg_sqr.export", node: "cfg_sqr", side: "left", kind: "export", label: "seq_item_export" }
+  ]}
+  edges={[
+    { from: "dut", to: "irq_mon", style: "data", label: "irq pin" },
+    { from: "irq_mon.ap", to: "irq_fifo.imp", style: "data", label: "write(tr)" },
+    { from: "svc", to: "irq_fifo", style: "control", label: "get(tr)" },
+    { from: "svc", to: "cfg_sqr", style: "control", label: "grab / ungrab" },
+    { from: "bg", to: "cfg_sqr", style: "causal", label: "start_item" },
+    { from: "cfg_drv.port", to: "cfg_sqr.export", style: "control", label: "get_next_item" },
+    { from: "cfg_drv", to: "dut", style: "data", label: "recovery write" }
+  ]}
+/>
+
+### When stimulus stops: read the symptom first
+
+Advanced sequencing bugs look alike from the outside: "the test hangs" or "the test passed but drove too little". Each one stops the handshake at a different point. This diagram marks those points on the call sequence you already know.
+
+<SequenceDiagram
+  title="Where each sequencing bug stops the flow"
+  caption="Read the red notes against your log. A sequence stuck in start_item() is waiting for a grant; one stuck in finish_item() is waiting for the driver; a parent that never waits for start() to return may let the test end first."
+  participants={[
+    { id: "vseq", label: "top_vseq", kind: "sequence" },
+    { id: "seq", label: "data", kind: "sequence" },
+    { id: "sqr", label: "data_agt.sqr", kind: "sequencer" },
+    { id: "drv", label: "data_agt.drv", kind: "driver" }
+  ]}
+  messages={[
+    { from: "vseq", to: "seq", label: "data.start(data_sqr, this)" },
+    { from: "drv", to: "sqr", label: "get_next_item(req)" },
+    { from: "seq", to: "sqr", label: "start_item(req)" },
+    { kind: "note", from: "seq", to: "sqr", tone: "error", label: "Starvation: waits here while another sequence holds a lock or grab, or loses every arbitration" },
+    { kind: "return", from: "sqr", to: "seq", label: "start_item returns (granted)" },
+    { from: "seq", to: "sqr", label: "finish_item(req)" },
+    { kind: "return", from: "sqr", to: "drv", label: "req" },
+    { kind: "self", from: "drv", label: "drive req on the pins" },
+    { kind: "async", from: "drv", to: "sqr", label: "item_done()" },
+    { kind: "note", from: "seq", to: "drv", tone: "error", label: "Handshake hang: without item_done() the sequence waits in finish_item() forever, and each new get_next_item() returns the same item with a 'called twice' error" },
+    { kind: "return", from: "sqr", to: "seq", label: "finish_item returns" },
+    { kind: "return", from: "seq", to: "vseq", label: "data.start returns" },
+    { kind: "note", from: "vseq", to: "seq", tone: "error", label: "Cut short: with fork…join_none the parent does not wait for this return, and the test can end first" }
+  ]}
+/>
+
+| First symptom | Likely cause | Where the fix is taught |
+|---|---|---|
+| `UVM_ERROR` from the sequencer, "Get_next_item called twice without item_done or get in between", repeated once per driver loop; the driver drives the same item again and again | The driver skipped `item_done()`, so the sequence waits in `finish_item()` forever (if instead every item is driven twice and the error repeats once per item, the driver calls `get_next_item()` twice per loop) | [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake) |
+| No message at all; the driver logged that it fetched an item but never that it finished it | The driver is blocked in its own drive code, for example waiting for a DUT handshake that never comes | The Sequencer-Driver Handshake |
+| One sequence stops getting items while another keeps going; no error; the run ends at the timeout or when objections drop | A `lock()` or `grab()` that is never released, or a priority setting that starves it | [Sequence Arbitration and Priority](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration) |
+| `UVM_ERROR [SEQFINERR]` (uvm-core 2020.3.1) saying a sequence finished while still holding a lock | The locking sequence returned without `unlock()` | Sequence Arbitration and Priority |
+| A checker reports data or interrupts handled in the wrong order | The virtual sequence's `fork` shape, as in rows C and D above | [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences), [Interrupt-Driven Stimulus](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling) |
+| The test passes but drove fewer items than planned; uvm-core 2020.3.1 may print `UVM_WARNING [SEQPRTZMB]` | The virtual sequence returned before its children (`join_none`), so the run phase killed them | [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences#expert-stopping-parallel-and-background-children-cleanly) |
+| `UVM_FATAL [PH_TIMEOUT]` (uvm-core 2020.3.1) after a long silence | Any of the hangs above, reached the global timeout | Start at the handshake lesson; then [E-DBG-1: Hang Lab](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab) |
+
+### How the sub-lessons fit together
+
+The module runs in three steps. The first three lessons stay on **one sequencer**: how the handshake blocks, how the sequencer chooses, and how a library feeds it. Layering then connects **two layers of sequencers**, one sequence feeding another. The next three lessons work **across agents**: virtual sequences, the virtual sequencer and asynchronous interrupts. The lab then combines them all.
+
+1. [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake): what blocks where, responses including out-of-order ones, and the hang signatures.
+2. [Sequence Arbitration and Priority](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration): the six modes, priority, `lock()`, `grab()` and `is_relevant()`.
+3. [Sequence Libraries & Arbitration Control](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-libraries): `uvm_sequence_library`, registration and selection modes.
+4. [Layered Sequences and Protocol Layering](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences): scenario sequences built from atomic ones, and a translation sequence that carries one protocol's items inside another's.
+5. [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences): one sequence that starts sequences on several agents, sequential `start()` versus the fork patterns, and how background children stop.
+6. [Virtual Sequencer: Handles, p_sequencer and Dispatch](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer): building and wiring a virtual sequencer, `p_sequencer`, and an interactive timeline of how `body()` orders the agents.
+7. [Interrupt-Driven Stimulus](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling): turning an interrupt into recovery stimulus that pre-empts background traffic with `grab()`.
+8. [Lab: Coordinated Attack](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab): a virtual sequence that configures the DUT before any data, runs a layered message stream beside background traffic, and services an interrupt with `grab()`, with every rule checked by the bench.
+
+### Recap
+
+- Two decisions: **inside one sequencer** (the sequencer decides, by locks, grabs, mode and priority) and **across sequencers** (your virtual sequence's code decides).
+- The default mode, `UVM_SEQ_ARB_FIFO`, ignores priority. `UVM_SEQ_ARB_WEIGHTED` is random by weight, not strict. `lock()` and `grab()` are both exclusive until released; a waiting grab is served before a waiting lock, so grab to pre-empt and lock to keep a burst together.
+- `start()` returns when the child is done, so sequential calls are an ordering rule. `fork…join_none` does not wait, and it does not keep the test alive.
+- The virtual sequencer only holds handles. It never orders anything.
+- Read the first symptom to find where the flow stopped: in `start_item()` (starvation), in `finish_item()` (handshake), or before `start()` returned (cut short).
+
+## Make It Work
+
+### A virtual sequence that configures before it sends data
+
+This complete bench has two agents of the same type and no DUT: each driver only prints its items and waits a fixed time, standing in for pin activity. A static bit in the driver plays the DUT's CTRL.enable register and reports an ordering error if anything other than CTRL is written before enable is set. The test checks at the end that every planned item was driven, so a run that is cut short fails too.
+
+```systemverilog
+// compile
+// tb.sv: a two-agent bench with no DUT. The drivers print instead of driving pins.
+`include "uvm_macros.svh"
+
+package two_agent_pkg;
+  timeunit 1ns; timeprecision 1ns;
+  import uvm_pkg::*;
+  `include "uvm_macros.svh"
+
+  localparam bit [7:0] CTRL_ADDR = 8'h00;   // bit 0 of CTRL enables the DUT
+
+  class bus_item extends uvm_sequence_item;
+    rand bit [7:0]  addr;
+    rand bit [31:0] data;
+    `uvm_object_utils(bus_item)
+    function new(string name = "bus_item");
+      super.new(name);
+    endfunction
+    virtual function string convert2string();
+      return $sformatf("addr=0x%02h data=0x%08h", addr, data);
+    endfunction
+  endclass
+
+  typedef uvm_sequencer #(bus_item) bus_sqr;
+
+  class bus_drv extends uvm_driver #(bus_item);
+    `uvm_component_utils(bus_drv)
+    static bit   ctrl_enabled;    // plays the DUT's CTRL.enable; shared by both agents
+    time         item_time = 10ns;
+    int unsigned n_driven;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    virtual task run_phase(uvm_phase phase);
+      forever begin
+        seq_item_port.get_next_item(req);
+        #item_time;                         // the time the transfer takes on the bus
+        `uvm_info("DRV", req.convert2string(), UVM_LOW)
+        if (req.addr == CTRL_ADDR)
+          ctrl_enabled = req.data[0];
+        else if (!ctrl_enabled)                   // the DUT ignores writes until enabled
+          `uvm_error("ORDER", $sformatf("write to 0x%02h before CTRL.enable", req.addr))
+        n_driven++;
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
+
+  class bus_agent extends uvm_agent;              // always active in this example
+    `uvm_component_utils(bus_agent)
+    bus_sqr sqr;
+    bus_drv drv;
+    time    item_time = 10ns;               // set by the env before build_phase runs
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      sqr = bus_sqr::type_id::create("sqr", this);
+      drv = bus_drv::type_id::create("drv", this);
+      drv.item_time = item_time;
+    endfunction
+    virtual function void connect_phase(uvm_phase phase);
+      drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+  endclass
+
+  // Writes n words at base_addr, base_addr+4, ... Fixed values keep the log predictable;
+  // a real test would randomize them.
+  class bus_write_seq extends uvm_sequence #(bus_item);
+    `uvm_object_utils(bus_write_seq)
+    bit [7:0]    base_addr;
+    bit [31:0]   base_data;
+    int unsigned n = 1;
+    function new(string name = "bus_write_seq");
+      super.new(name);
+    endfunction
+    virtual task body();
+      for (int i = 0; i < n; i++) begin
+        req = bus_item::type_id::create($sformatf("req%0d", i));
+        start_item(req);
+        req.addr = base_addr + 8'(4 * i);
+        req.data = base_data + i;
+        finish_item(req);
+      end
+    endtask
+  endclass
+
+  // The virtual sequence: it sends no items itself, it orders the agents.
+  class top_vseq extends uvm_sequence;
+    `uvm_object_utils(top_vseq)
+    bus_sqr cfg_sqr;                              // assigned before start()
+    bus_sqr data_sqr;
+    function new(string name = "top_vseq");
+      super.new(name);
+    endfunction
+    virtual task body();
+      bus_write_seq ctrl = bus_write_seq::type_id::create("ctrl");
+      bus_write_seq thr  = bus_write_seq::type_id::create("thr");
+      bus_write_seq data = bus_write_seq::type_id::create("data");
+      if (cfg_sqr == null || data_sqr == null)
+        `uvm_fatal("VSEQ", "sequencer handles not set: assign them before start()")
+      ctrl.base_addr = 8'h00; ctrl.base_data = 32'h1;  ctrl.n = 1;
+      thr.base_addr  = 8'h04; thr.base_data  = 32'h10; thr.n  = 2;
+      data.base_addr = 8'h40; data.base_data = 32'hA0; data.n = 3;
+      // Rule: configuration first. start() returns only when ctrl's body() is done.
+      ctrl.start(cfg_sqr, this);
+      // Then data and the rest of the configuration overlap. join waits for both,
+      // so the test cannot end while either is still running.
+      fork
+        data.start(data_sqr, this);
+        thr.start(cfg_sqr, this);
+      join
+    endtask
+  endclass
+
+  class two_agent_env extends uvm_env;
+    `uvm_component_utils(two_agent_env)
+    bus_agent cfg_agt;
+    bus_agent data_agt;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      cfg_agt  = bus_agent::type_id::create("cfg_agt", this);
+      data_agt = bus_agent::type_id::create("data_agt", this);
+      data_agt.item_time = 4ns;                   // the data bus is faster
+    endfunction
+  endclass
+
+  class two_agent_test extends uvm_test;
+    `uvm_component_utils(two_agent_test)
+    two_agent_env env;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      env = two_agent_env::type_id::create("env", this);
+    endfunction
+    virtual task run_phase(uvm_phase phase);
+      top_vseq vseq = top_vseq::type_id::create("vseq");
+      vseq.cfg_sqr  = env.cfg_agt.sqr;      // handles from the test: no virtual sequencer
+      vseq.data_sqr = env.data_agt.sqr;
+      phase.raise_objection(this);
+      vseq.start(null);                     // null: the virtual sequence sends no items
+      phase.drop_objection(this);
+    endtask
+    virtual function void check_phase(uvm_phase phase);
+      if (env.cfg_agt.drv.n_driven != 3)
+        `uvm_error("COUNT", $sformatf("cfg_agt drove %0d of 3 items",
+                                      env.cfg_agt.drv.n_driven))
+      if (env.data_agt.drv.n_driven != 3)
+        `uvm_error("COUNT", $sformatf("data_agt drove %0d of 3 items",
+                                      env.data_agt.drv.n_driven))
+    endfunction
+  endclass
+endpackage
+
+module tb_top;
+  timeunit 1ns; timeprecision 1ns;
+  import uvm_pkg::*;
+  import two_agent_pkg::*;
+  initial run_test("two_agent_test");   // no DUT and no virtual interface in this example
+endmodule
+```
+
+**Expected output** (illustrative: traced by hand against the uvm-core 2020.3.1 source, not from a simulator run. Trimmed: the release-notes banner that uvm-core prints first as a `UVM_INFO [UVM/RELNOTES]` message, and the file and line part of each prefix. The time is shown in ns; how a simulator prints the time is tool-dependent):
+
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test two_agent_test...
+UVM_INFO @ 10: uvm_test_top.env.cfg_agt.drv [DRV] addr=0x00 data=0x00000001
+UVM_INFO @ 14: uvm_test_top.env.data_agt.drv [DRV] addr=0x40 data=0x000000a0
+UVM_INFO @ 18: uvm_test_top.env.data_agt.drv [DRV] addr=0x44 data=0x000000a1
+UVM_INFO @ 20: uvm_test_top.env.cfg_agt.drv [DRV] addr=0x04 data=0x00000010
+UVM_INFO @ 22: uvm_test_top.env.data_agt.drv [DRV] addr=0x48 data=0x000000a2
+UVM_INFO @ 30: uvm_test_top.env.cfg_agt.drv [DRV] addr=0x08 data=0x00000011
+
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO :    8
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+** Report counts by id
+[DRV]     6
+[RNTST]     1
+[UVM/RELNOTES]     1
+```
+
+The eight `UVM_INFO` messages are the banner, `RNTST` and the six `DRV` lines. Every time stamp matches row B of the dispatch table: CTRL at 10 ns, then the data words every 4 ns and the threshold registers every 10 ns, overlapping. The test ends at 30 ns, when `thr` finishes and the `join` completes.
+
+**Run it.** Compile `tb.sv` with any simulator that ships an IEEE 1800.2 UVM library (uvm-core 2020.3.1 or your vendor's equivalent), with the UVM package and macros on the include path, and run `tb_top`. `run_test("two_agent_test")` selects the test, so no plusarg is needed. The command lines differ by simulator (tool-dependent).
+
+### How to build a virtual sequence yourself
+
+1. **List the ordering rules first,** in words: "CTRL before anything else", "thresholds and data may overlap", "the test ends when both are done".
+2. **Write one ordinary sequence per agent-level job** (`ctrl`, `thr`, `data`). Keep each one ignorant of the other agents.
+3. **Write the virtual sequence:** declare one handle per target sequencer, fail fast with `` `uvm_fatal `` if a handle is null, and in `body()` express each rule as code: sequential `start()` for "before", `fork…join` for "overlap, then wait".
+4. **Start each child on its own sequencer with the virtual sequence as parent:** `child.start(target_sqr, this)`. The parent argument makes the child a child for naming, priority and locks.
+5. **Give the virtual sequence its handles,** from the test as here or from a virtual sequencer, and start it under an objection: `vseq.start(null)` or `vseq.start(env.vsqr)`.
+6. **Make the bench prove the order and the amount:** an ordering check that fires on a violation, and a count of what was driven, checked in `check_phase`.
+
+**Checklist before moving on:**
+- [ ] Every "before" rule is a sequential `start()` call, never a delay and never a priority.
+- [ ] Every `fork` in the virtual sequence ends in `join`, or in `join_none` followed by a deliberate `wait fork` or `kill()`.
+- [ ] Each child is started on the sequencer of the agent it targets, with `this` as its parent.
+- [ ] The virtual sequence checks its handles before using them.
+- [ ] The test raises an objection around `vseq.start()`, and nothing else is needed to keep the stimulus alive.
+- [ ] The bench counts what it drove, so a run that is cut short fails instead of passing quietly.
+
+### Break it on purpose
+
+Make each change, predict the log before you look, then restore the original.
+
+1. **Configuration in the background.** Replace `ctrl.start(cfg_sqr, this);` with `fork ctrl.start(cfg_sqr, this); join_none` and replace the final `fork…join` with two sequential calls, `data.start(data_sqr, this);` then `thr.start(cfg_sqr, this);`.
+2. **Children in the background.** Restore the original, then change the final `join` to `join_none`.
+
+<details>
+<summary>Predicted logs (illustrative, traced as above)</summary>
+
+**1.** This is row C. `data` no longer waits for `ctrl`, so the data driver finishes 0x40 at 4 ns and 0x44 at 8 ns while CTRL.enable is still 0: two `UVM_ERROR [ORDER]` lines, "write to 0x40 before CTRL.enable" and "write to 0x44 before CTRL.enable". CTRL completes at 10 ns, 0x48 is accepted at 12 ns, and `thr` writes at 22 and 32 ns. Both counts are 3, so the summary shows `UVM_ERROR :    2`.
+
+**2.** This is row D. `body()` returns at 10 ns, right after CTRL, and the test drops its objection. The run phase ends and UVM kills the two forked threads before either driver finishes another item, so the last `DRV` line is the 10 ns one. uvm-core 2020.3.1 then prints `UVM_WARNING [SEQPRTZMB]` once for `vseq.data` and once for `vseq.thr`: the thread that called `start()` was killed without killing the sequence. In `check_phase`, both counts fail: "cfg_agt drove 1 of 3 items" and "data_agt drove 0 of 3 items". Without the count check, this run would have passed.
+
+</details>
+
+## Push Further
+
+### Expert: where the two decisions meet
+
+- **A `fork` in a virtual sequence feeds one sequencer's queue.** If two children forked by a virtual sequence target the *same* sequencer, the virtual sequence decides only that both start; from then on the sequencer's arbitration interleaves their items. To keep one child's items together, that child takes `lock()` or `grab()` on the sequencer.
+- **Same-time requests have no defined order.** Two children forked in the same time slot (at the same simulation time) reach the sequencer's queue in an order IEEE 1800-2023 leaves open (§9.3.2 says the forked statements run concurrently; §4.7 lets a simulator run same-time processes in any order). Under the default FIFO mode, the first grant can therefore differ between simulators. When the first grant matters, serialize the two `start()` calls, or give the requests different priorities under `UVM_SEQ_ARB_STRICT_FIFO`.
+- **Locks from a virtual sequence must name the sequencer.** A virtual sequence started with `start(null)` has no default sequencer, and §14.2.5.5 requires a fatal message when `lock()` gets no sequencer and none is set. Write `lock(data_sqr)` … `unlock(data_sqr)`, or `grab(data_sqr)`. Sequences started with the locking sequence as their parent are not blocked by its lock in uvm-core 2020.3.1 (`is_blocked()` exempts children through `is_child()`, `uvm_sequencer_base.svh`), so the virtual sequence's own children get through. [Virtual Sequences and Sequencers](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences#expert-locking-an-agent-from-a-virtual-sequence) works through an example.
+
+### Expert: IEEE 1800.2-2020 versus uvm-core 2020.3.1 in sequencing
+
+The standard and the reference implementation differ in several places this module touches. Each difference below was observed in the uvm-core 2020.3.1 source; none is listed in its `DEVIATIONS.md`. Code that depends on either side is not portable between UVM libraries (tool-dependent).
+
+| Topic | IEEE 1800.2-2020 says | uvm-core 2020.3.1 does | Taught in |
+|---|---|---|---|
+| When a lock is granted | "A lock request is arbitrated the same as any other request" and is granted after all previously arbitrated requests complete (§14.2.5.5) | `grant_queued_locks()` grants the first unblocked lock request at once, ahead of older item requests (`uvm_sequencer_base.svh`) | [Sequence Arbitration and Priority](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration#expert-when-is-a-lock-granted-the-standard-and-uvm-core) |
+| Several waiting grabs | A grab "is put in front of the arbitration queue" (§14.2.5.6) | Each new grab is pushed to the very front, so a later grab is served before an earlier waiting one; a source comment marks this as a known gap | [Sequence Arbitration and Priority](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration#expert-when-is-a-lock-granted-the-standard-and-uvm-core) |
+| `user_priority_arbitration()` | Called "even if there is only one sequence available" (§15.3.2.3) | Not called when only one request is available; that request is granted directly | [Sequence Arbitration and Priority](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration#expert-custom-arbitration-with-uvm_seq_arb_user) |
+| Response-queue overflow | An error by default (§14.2.7.4, §14.2.7.5); default depth 8 (§14.2.7.7) | The error-report bit starts at 0, so extra responses are dropped silently | [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake#expert-ieee-18002-2020-versus-uvm-core-202031-on-responses) |
+| Sequence-library settings | Accessors such as `set_selection_mode()` (§14.4.4.1–§14.4.4.4); the §14.4.2 example constructor only calls `super.new()` | Public variables `selection_mode`, `min_random_count`, `max_random_count`; every library must call `init_sequence_library()` in its constructor (`uvm_sequence_library.svh`) | [Sequence Libraries & Arbitration Control](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-libraries#expert-ieee-18002-2020-versus-uvm-core-202031) |
+| `kill()` | `post_body()` and `post_start()` are executed (§14.2.5.11) | Neither is called on a kill | [Sequence Arbitration and Priority](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration#expert-locks-killed-processes-and-cleanup) |
+| Virtual sequencer | No such class | `typedef uvm_sequencer #(uvm_sequence_item) uvm_virtual_sequencer` (`uvm_sequencer.svh`) | [Virtual Sequencer: Handles, p_sequencer and Dispatch](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer#expert-what-the-standard-defines-and-what-uvm-core-adds) |
+| Killed callers | Nothing specified | Process guards warn `SEQPRTZMB` or `SEQBDYZMB` and kill the orphaned sequence (`uvm_sequence_base.svh`, `uvm_process_guard.svh`, marked `@uvm-contrib`) | [Virtual Sequencer: Handles, p_sequencer and Dispatch](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer#expert-wait-fork-disable-fork-and-the-end-of-the-run-phase) |
+
+Each sub-lesson labels its difference where it teaches the feature; the last column links that explanation. The quiz on this page uses only scenarios on which both readings agree.
+
+### Expert: ending a test that has background stimulus
+
+Row D of the dispatch table is what happens when `join_none` meets objections. When a task phase ends, uvm-core 2020.3.1 "forcibly and immediately" kills every thread still running in it (`uvm_task_phase.svh`, `uvm_phase_hopper.svh`), and IEEE 1800-2023 §9.7 says killing a process also kills the processes it created. Choose how background stimulus ends instead of letting the phase decide:
+
+- **Wait for it.** End the virtual sequence's `body()` with `wait fork`, which blocks until every immediate child process of the calling thread has finished (IEEE 1800-2023 §9.6.1). Use it when the background work is finite.
+- **Stop it on purpose.** For a `forever` background sequence, call `bg.kill()` before `body()` returns. `kill()` removes the sequence's requests, locks and grabs from its sequencer (IEEE 1800.2-2020 §14.2.5.11), and in uvm-core 2020.3.1 it also clears the process guard, so no `SEQPRTZMB` warning appears.
+- **Let in-flight items finish.** A drain time delays the end of the phase after the last objection drops: `phase.get_objection().set_drain_time(this, 100ns)` (§9.3.1.7.1, §10.5.1.3.7). It is a margin, not a guarantee; prefer the two options above.
+- **Object from the sequence itself.** `set_automatic_phase_objection(1)` makes a sequence raise and drop the starting phase's objection around its own execution (§14.2.4.4). The standard's own note warns against it for a sequence with a `forever` loop, because the objection never drops.
+
+### Expert: choosing between a library, a virtual sequence and a scenario model
+
+- **A sequence library** (§14.4) varies *which* scenario runs on one sequencer. It knows nothing about other agents and cannot express "A must happen before B".
+- **A virtual sequence** expresses order across agents directly in code. It scales by composition: a top virtual sequence can start lower virtual sequences, each owning one subsystem. Its weakness is that every legal ordering you want to explore must be written, or randomized, by hand.
+- **A scenario model** in the Accellera Portable Test and Stimulus Standard (PSS) describes actions and their legal orderings once, and a tool generates many valid orderings, including into UVM sequences. Use it when the number of legal cross-agent orderings outgrows hand-written virtual sequences. [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index) covers it; how a given tool maps PSS onto UVM sequences is tool-dependent.
+
+### Expert: Interview angles
+
+Answer each one yourself before you open the options' feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: data before configuration, one seed in fifty"
+  question="A two-agent test programs a configuration agent and then sends traffic on a data agent. On about one seed in fifty, a checker reports data reaching the DUT before configuration has finished. The virtual sequence's body() starts both sequences inside one fork…join. What is wrong, and what do you change?"
+  options={[
+    { text: "The fork lets both sequences start at once, so data runs before configuration whenever its first item finishes earlier. Start the configuration sequence on its own first, then fork the rest.", isCorrect: true, feedback: "Right. A fork…join waits for both children but orders nothing between them. Configure-before-data is a sequential start() rule; the seed only changes how often the data agent wins the race." },
+    { text: "Give the configuration sequence a higher priority, such as 500.", isCorrect: false, feedback: "Priority acts only inside one sequencer, between requests to the same driver. The two sequences use different sequencers, so priority cannot order them." },
+    { text: "Start the virtual sequence on a virtual sequencer so that it orders the sub-sequences.", isCorrect: false, feedback: "A virtual sequencer only holds handles. The children still run on the agents' sequencers in whatever order body() starts them." },
+    { text: "Add #100 before the data sequence starts.", isCorrect: false, feedback: "A delay guesses at the configuration time and breaks when that time changes. Make the order explicit with a sequential start()." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: make the interrupt sequence pre-empt background traffic"
+  question="A colleague starts the interrupt service sequence with priority 1000 and says that this makes it pre-empt the background traffic on the same sequencer. The sequencer uses its default arbitration mode. Do you agree?"
+  options={[
+    { text: "Yes: the highest priority always wins the next arbitration.", isCorrect: false, feedback: "Not in the default mode. UVM_SEQ_ARB_FIFO ignores priority and grants the oldest request (Annex F.2.4.1)." },
+    { text: "No: in the default FIFO mode priority is ignored. Switch to UVM_SEQ_ARB_STRICT_FIFO if it only needs to win each arbitration, or have it grab() the sequencer if its items must go next and stay together; either way the item the driver already holds is not pre-empted.", isCorrect: true, feedback: "Right. Strict priority makes it win each arbitration; grab() puts it at the front and keeps others out until ungrab(). Neither interrupts the transfer the driver is already performing." },
+    { text: "Yes, as long as the sequencer uses UVM_SEQ_ARB_WEIGHTED.", isCorrect: false, feedback: "Weighted arbitration is random by weight. A priority of 1000 makes the interrupt sequence likely to win, never certain." },
+    { text: "No, because priorities above 100 are illegal.", isCorrect: false, feedback: "Any value of 1 or more is usable; 100 is only the default for a root sequence (§14.2.3.1)." }
+  ]}
+/>
 
 ## Practice & Reinforce
-- The [Sequencer Arbitration sandbox](/exercises/sequencer-arbitration) lets you set modes, priorities, `lock()` and `grab()` for three sequences, predict each grant, and read the sequencer's reason for every candidate.
-- The handshake page has a debug scenario for each common hang: a missing `item_done()`, two `get_next_item()` calls, a response without `set_id_info()`, uncollected responses, and a `get_response()` that never returns.
 
-## References
-- IEEE 1800.2-2020: clause 14 (sequences: 14.2 `uvm_sequence_base`, 14.4 `uvm_sequence_library`) and clause 15 (sequencers: 15.2.1 `uvm_sqr_if_base`, 15.3 `uvm_sequencer_base`). Numbers taken from the `@uvm-ieee` annotations in uvm-core 2020.3.1.
-- Next: [I-UVM-4: Policy Classes](/curriculum/T2_Intermediate/I-UVM-4_UVM_Policy_Classes/index).
+### Retrieval quiz
+
+<Quiz questions={[
+  {
+    question: "A register read-modify-write sequence must reach the driver as three consecutive items, with no other sequence's item between them. An interrupt service sequence on the same sequencer uses grab(), and whenever both are waiting, the interrupt service must go first. Which tool fits the read-modify-write best?",
+    objective: 1,
+    answers: [
+      { text: "Start it with a higher priority than the other sequences", correct: false, feedback: "Priority only affects who wins each arbitration, and the default FIFO mode ignores it. Other sequences can still be granted between its items." },
+      { text: "A virtual sequence that starts it before the other sequences", correct: false, feedback: "A virtual sequence orders whole sequences across sequencers. Once the others are running on the same sequencer, arbitration can still interleave their items." },
+      { text: "lock() before the first item and unlock() after the last", correct: true, feedback: "Right. A lock keeps other items out until unlock(), and a waiting lock is served after a waiting grab, so the interrupt service still goes first (§14.2.5.5, §14.2.5.6)." },
+      { text: "grab() before the first item and ungrab() after the last", correct: false, feedback: "That also keeps its items together, but then two sequences compete with grabs. Which waiting grab is served first depends on when each called grab() (in uvm-core 2020.3.1 the later one), so the interrupt service is no longer sure to go first." }
+    ],
+    explanation: "lock() and grab() are both exclusive until released; they differ when both are waiting, because a grab is served first. Use lock() to keep a burst together and grab() to pre-empt. Priority and arbitration modes cannot keep other items out between yours, and a virtual sequence orders sequences, not items inside one sequencer."
+  },
+  {
+    question: "A nightly regression should run a random mix of eight scenario sequences on one agent, a different mix each seed. Which tool is built for this?",
+    objective: 1,
+    answers: [
+      { text: "A virtual sequence with eight fork branches", correct: false, feedback: "That runs all eight at once on every seed and orders nothing randomly. A virtual sequence is for order across agents." },
+      { text: "A uvm_sequence_library with the eight sequences registered", correct: true, feedback: "Right. In UVM_SEQ_LIB_RAND, RANDC or USER mode a library picks member sequences and runs them on its sequencer (§14.4, Annex F.2.4.3). UVM_SEQ_LIB_ITEM is different: it sends random items and runs no member sequence." },
+      { text: "UVM_SEQ_ARB_RANDOM on the agent's sequencer", correct: false, feedback: "That randomizes which of the waiting requests is granted. All eight sequences would still have to be started, and each would still run to completion." },
+      { text: "Layering the eight sequences on top of each other", correct: false, feedback: "Layering translates the items of one protocol into the items of another. It does not choose scenarios." }
+    ],
+    explanation: "Choosing which scenario runs is the library's job. Arbitration chooses among requests that already exist, a virtual sequence orders agents, and layering translates protocols."
+  },
+  {
+    question: "Two sequences wait on one sequencer: A with priority 100, queued first, and B with priority 300. The sequencer uses UVM_SEQ_ARB_WEIGHTED. Over many such decisions, what happens?",
+    objective: 2,
+    answers: [
+      { text: "B always wins, because it has the higher priority", correct: false, feedback: "That is strict priority, UVM_SEQ_ARB_STRICT_FIFO. Weighted arbitration is random." },
+      { text: "A always wins, because it was queued first", correct: false, feedback: "That is UVM_SEQ_ARB_FIFO, the default mode, which ignores priority." },
+      { text: "Each wins half the time", correct: false, feedback: "That is UVM_SEQ_ARB_RANDOM, which ignores priority." },
+      { text: "B wins about 75 % of the time and A about 25 %", correct: true, feedback: "Right. Each request's chance is its priority divided by the sum: 300 / 400 and 100 / 400." }
+    ],
+    explanation: "UVM_SEQ_ARB_WEIGHTED is a random pick weighted by priority, so a high priority makes a request likely to win, never certain. Use UVM_SEQ_ARB_STRICT_FIFO or grab() when the urgent sequence must win."
+  },
+  {
+    question: "Sequence X holds a lock on a sequencer. At 2 ns sequence B calls lock() on it, and at 4 ns sequence C calls grab(). At 30 ns X calls unlock(). Which sequence gets the sequencer next?",
+    objective: 2,
+    answers: [
+      { text: "B, because it asked first", correct: false, feedback: "Arrival order decides between locks, but a grab is put in front of the arbitration queue (§14.2.5.6)." },
+      { text: "C, because a waiting grab is ahead of a waiting lock", correct: true, feedback: "Right. Both were blocked by X's lock. When it is released, the grab at the front of the queue is granted first, and B's lock waits for C's ungrab()." },
+      { text: "Both, because lock() and grab() are the same thing", correct: false, feedback: "They both give exclusive access, but they enter the queue at different ends, and only one sequence can hold the sequencer exclusively." },
+      { text: "Whichever item request has waited longest", correct: false, feedback: "Older item requests wait too. The grab sits at the front of the queue and is granted before any of them (§14.2.5.6)." }
+    ],
+    explanation: "lock() and grab() differ only in where they enter the arbitration queue: a lock at the back, a grab at the front. This scenario gives the same answer in IEEE 1800.2-2020 and in uvm-core 2020.3.1."
+  },
+  {
+    question: "Which body() guarantees that cfg_seq finishes on the configuration agent before data_seq starts on the data agent?",
+    objective: 3,
+    answers: [
+      { text: "fork cfg_seq.start(cfg_sqr, this); data_seq.start(data_sqr, this); join", correct: false, feedback: "Both branches start at the same time. The join waits for both, but nothing orders them." },
+      { text: "cfg_seq.start(cfg_sqr, this); data_seq.start(data_sqr, this);", correct: true, feedback: "Right. start() returns only when cfg_seq's body() has finished, so data_seq cannot start earlier (§14.2.3.1)." },
+      { text: "Either order inside fork…join, as long as the virtual sequence runs on a virtual sequencer", correct: false, feedback: "A virtual sequencer only holds handles. The sub-sequences run on the agents' sequencers, and the order is whatever body() codes." },
+      { text: "cfg_seq.start(cfg_sqr, this, 500); data_seq.start(data_sqr, this, 100); inside fork…join", correct: false, feedback: "Priority acts only between requests on the same sequencer. These sequences use different sequencers, so priority orders nothing." }
+    ],
+    explanation: "Order across agents is the code order of start() calls in the virtual sequence. Neither the virtual sequencer nor priority can order sequences that run on different sequencers."
+  },
+  {
+    question: "top_vseq_vsqr (the snippet above) reads its handles from p_sequencer, declared with the uvm_declare_p_sequencer macro for two_agent_vsqr. Which test code runs it correctly?",
+    objective: 3,
+    answers: [
+      { text: "vseq.start(null); with no handles assigned", correct: false, feedback: "With no sequencer there is nothing for p_sequencer to point to, so the first read of p_sequencer.cfg_sqr fails. start(null) suits the handles-from-the-test style, where the test assigns cfg_sqr and data_sqr first." },
+      { text: "vseq.start(env.cfg_agt.sqr);", correct: false, feedback: "The macro casts the sequencer to two_agent_vsqr. An agent's bus_sqr is not one, so the cast fails and uvm-core 2020.3.1 reports UVM_FATAL [DCLPSQ]." },
+      { text: "vseq.start(env.vsqr); where env.connect_phase sets vsqr.cfg_sqr and vsqr.data_sqr", correct: true, feedback: "Right. Started on the virtual sequencer, p_sequencer points to it, and the handles it holds were filled in connect_phase." },
+      { text: "vseq.start(env.vsqr); the virtual sequencer finds the agents' sequencers by itself", correct: false, feedback: "A virtual sequencer finds nothing: it only holds the handles the environment assigns. Left unassigned, they stay null, and top_vseq's check stops the run with UVM_FATAL [VSEQ]." }
+    ],
+    explanation: "A virtual sequence that reads p_sequencer must be started on that virtual sequencer, and the environment must fill the virtual sequencer's handles in connect_phase. With handles from the test, assign them and use start(null)."
+  },
+  {
+    question: "In the Make It Work bench, suppose body() runs all three sequences sequentially: ctrl, then data, then thr. When does the last item finish?",
+    objective: 4,
+    answers: [
+      { text: "At 30 ns, as in the original", correct: false, feedback: "The original overlaps data and thr after ctrl. Run in series, thr cannot start until data has finished at 22 ns." },
+      { text: "At 22 ns, when data finishes", correct: false, feedback: "thr still has two 10 ns items to run after data." },
+      { text: "At 42 ns", correct: true, feedback: "Right. ctrl ends at 10 ns, data at 14, 18 and 22 ns, then thr at 32 and 42 ns: row A of the dispatch table." },
+      { text: "At 10 ns, because start() returns at once", correct: false, feedback: "start() returns only when the child's body() is done; it is fork…join_none that returns at once." }
+    ],
+    explanation: "Sequential start() calls add up the durations; fork…join overlaps them and waits for the longest. Both are correct here, but the fork version finishes 12 ns sooner."
+  },
+  {
+    question: "A test raises an objection, calls vseq.start(null) and then drops the objection. The virtual sequence's body() ends with fork data.start(data_sqr, this); join_none. What happens to data?",
+    objective: 4,
+    answers: [
+      { text: "It runs to completion, because the forked thread keeps the test alive", correct: false, feedback: "A forked thread holds no objection. Once the test drops its objection, the run phase can end while the thread is still running." },
+      { text: "The run phase ends when the test drops its objection, and UVM kills data before it finishes", correct: true, feedback: "Right. body() returns at once, the objection drops, and the phase kills the threads still running in it. Only a count or a scoreboard will notice." },
+      { text: "UVM reports a fatal error because a sequence is still running", correct: false, feedback: "Nothing stops the phase from ending. uvm-core 2020.3.1 prints only a SEQPRTZMB warning about the killed caller, and the standard requires nothing." },
+      { text: "start() waits for data anyway, because data was started with this as its parent", correct: false, feedback: "The parent argument links the sequences for naming, priority and locks. It does not make the parent's body() wait." }
+    ],
+    explanation: "fork…join_none does not keep the test alive. End such a body() with wait fork, kill the background sequence deliberately, or use join."
+  },
+  {
+    question: "A run stops making progress. The log shows the UVM_ERROR 'Get_next_item called twice without item_done or get in between' from data_agt.sqr, repeated once per driver loop. The driver prints the same item again and again, and the sequence never returns from finish_item(). What is the most likely cause?",
+    objective: 5,
+    answers: [
+      { text: "The driver loop is missing item_done(), so each new get_next_item() returns the same item", correct: true, feedback: "Right. Without item_done() the item stays the current one: each get_next_item() reports the error and returns that item again, so the driver re-drives it for ever and the sequence waits in finish_item(). The handshake lesson's triage covers it." },
+      { text: "Another sequence holds a lock on the sequencer", correct: false, feedback: "A lock starves other sequences silently. It does not make the driver call get_next_item() twice, and it does not make the driver repeat an item." },
+      { text: "The driver is blocked in its own drive code, waiting for the DUT", correct: false, feedback: "That hang is silent: the driver never gets back to get_next_item(), so there is no 'called twice' error and no repeated item. Repeated errors mean the driver loop is running." },
+      { text: "The sequencer uses UVM_SEQ_ARB_WEIGHTED", correct: false, feedback: "The arbitration mode changes who is granted, not whether the driver completes its handshake." }
+    ],
+    explanation: "Match the first symptom to where the flow stopped. A 'called twice' error that repeats once per loop, with the same item driven again, is a missing item_done(); if instead every item is driven twice, the driver calls get_next_item() twice per loop. A silent log points elsewhere: a held lock, a lost response, or a driver stuck in its own code."
+  },
+  {
+    question: "Background traffic on a sequencer stops after an interrupt service sequence runs. There is no error, and the interrupt sequence is still running a long wait for a status bit. What do you check first?",
+    objective: 5,
+    answers: [
+      { text: "Whether the driver calls item_done()", correct: false, feedback: "Then the interrupt sequence would also be stuck, in finish_item(), and the sequencer would usually have reported a get_next_item() error." },
+      { text: "Whether the arbitration mode is UVM_SEQ_ARB_FIFO", correct: false, feedback: "FIFO grants every unblocked request in turn, so it cannot starve the background on its own." },
+      { text: "Whether the virtual sequence ended with join_none", correct: false, feedback: "That kills sequences at the end of the test; here the test is still running and one sequence is starved." },
+      { text: "Whether the interrupt sequence still holds a grab() or lock(), with its ungrab() or unlock() after the wait", correct: true, feedback: "Right. While it holds the sequencer exclusively, every other request is blocked without any message. Release before you wait, or keep the exclusive window short." }
+    ],
+    explanation: "Silent starvation of one sequence while its owner is still alive is the signature of a held lock or grab. The Sequence Arbitration lesson shows how to inspect the sequencer's lock list and fix the release order."
+  }
+]} />
+
+### Kata: plan the stimulus for a two-agent DUT
+
+**Goal:** choose a tool for each requirement and justify it by the decision it controls. This is the planning step you do before writing any sequence.
+
+A DMA block has a register agent (`reg_agt`) and a memory-side data agent (`mem_agt`). Its test plan says:
+
+1. Program the channel registers before any data moves.
+2. Background memory traffic runs during the whole test, at a low share of the bus.
+3. A descriptor update is a read-modify-write of three register items that must not be interleaved.
+4. When the DMA raises its interrupt, service it next on the register agent, ahead of queued register traffic.
+5. Nightly runs pick a random mix of six transfer scenarios on `mem_agt`.
+6. The test must end only when the transfers are done, and the background traffic must stop cleanly.
+
+For each requirement, write the tool, whether it acts inside one sequencer or across sequencers, and the lesson that teaches it.
+
+<details>
+<summary>Worked solution</summary>
+
+| # | Tool | Decision | Lesson |
+|---|---|---|---|
+| 1 | Virtual sequence: `prog.start(reg_sqr, this);` before the data `fork` | Across sequencers | Virtual Sequences and Sequencers |
+| 2 | A background sequence started in the virtual sequence, with a lower priority than the transfers and `UVM_SEQ_ARB_WEIGHTED` on `mem_agt`'s sequencer, if the transfers share that sequencer | Inside one sequencer (its share); across (when it starts) | Sequence Arbitration and Priority; Virtual Sequences and Sequencers |
+| 3 | `lock(reg_sqr)` … `unlock(reg_sqr)` around the three items: exclusive, without competing with the interrupt's `grab()` | Inside one sequencer | Sequence Arbitration and Priority |
+| 4 | A monitor event wakes a service sequence, which calls `grab()` on the register sequencer and `ungrab()` when done | Across (the event); inside (the grab) | Interrupt-Driven Stimulus |
+| 5 | A `uvm_sequence_library` on `mem_agt` with the six scenarios registered, in `UVM_SEQ_LIB_RAND` or `UVM_SEQ_LIB_RANDC` mode | Which sequence runs on one sequencer | Sequence Libraries |
+| 6 | `fork … join` for the transfers; for the `forever` background sequence, `bg.kill()` before `body()` returns; the test's objection around `vseq.start()` | Across sequencers (end of test) | Virtual Sequences and Sequencers; Push Further above |
+
+Common wrong answers:
+
+- **Priority for requirement 1:** priority cannot order two agents.
+- **`grab()` for requirement 3:** it keeps the items together, but it states the wrong intent. If the interrupt service of requirement 4 is waiting for the same sequencer, a waiting lock is sure to yield to its grab, while a second grab competes with it. Use `grab()` only to pre-empt.
+- **WEIGHTED or a large priority for requirement 4:** "next" must be certain, so use `grab()`, or `UVM_SEQ_ARB_STRICT_FIFO` with a higher priority.
+- **`join_none` with nothing after it for requirement 6:** the test would end and kill the transfers early.
+
+</details>
+
+### Practise each tool
+
+- **Arbitration sandbox:** the [Sequencer Arbitration exercise](/exercises/sequencer-arbitration) lets you set modes, priorities, `lock()` and `grab()` for three sequences, predict each grant, and read the sequencer's reason for every candidate. Try the WEIGHTED and STRICT_FIFO cases from the traced table first.
+- **Hang debugging:** [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake) has a debug scenario for each common hang: a missing `item_done()`, two `get_next_item()` calls, a response without `set_id_info()`, uncollected responses and a `get_response()` that never returns.
+- **Lab:** [Lab: Coordinated Attack](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab) has you write and prove a virtual sequence that configures the DUT before any data, runs a layered message stream beside background traffic, and services an interrupt with `grab()`, with every rule checked by the bench.
+- **Flashcards:** the deck below covers this page: the two decisions, the arbitration core rules, virtual sequences, dispatch timing and symptom triage. Each sub-lesson has its own deck for its tool.
+
+## References & Next Topics
+
+**Primary sources:**
+
+- IEEE 1800.2-2020:
+  - §14.2.3.1 `start()` (returns when the sequence completes; default priority 100 for a root sequence, else the parent's);
+  - §14.2.4.4 `set_automatic_phase_objection()`;
+  - §14.2.5.3 `is_relevant()`; §14.2.5.5 `lock()`; §14.2.5.6 `grab()`; §14.2.5.7 `unlock()`; §14.2.5.11 `kill()`;
+  - §14.2.7.1 `use_response_handler()`; §14.2.7.4–§14.2.7.7 response-queue error reporting and depth;
+  - §14.4 `uvm_sequence_library` (§14.4.2 example, §14.4.4.1–§14.4.4.4 settings);
+  - §15.3.2.3 `user_priority_arbitration()`; §15.3.2.19 `set_arbitration()`; §15.5 `uvm_sequencer`;
+  - §9.3.1.7.1 `get_objection()`; §10.5.1.3.7 `set_drain_time()`;
+  - Annex B.3.3 `` `uvm_declare_p_sequencer ``; Annex F.2.4.1 `uvm_sequencer_arb_mode`; Annex F.2.4.3 `uvm_sequence_lib_mode`.
+- IEEE 1800-2023: §4.7 nondeterminism; §9.3.2 parallel blocks; §9.6.1 `wait fork`; §9.7 fine-grain process control (`kill()` and descendants).
+- uvm-core 2020.3.1 (implementation-only behaviour): `src/seq/uvm_sequencer_base.svh` (arbitration, `grant_queued_locks()`, `is_blocked()`, `SEQFINERR`), `src/seq/uvm_sequencer.svh` (`get_next_item()` error, `uvm_virtual_sequencer` typedef), `src/seq/uvm_sequence_base.svh` (`start()`, `kill()`, `SEQPRTZMB`), `src/seq/uvm_sequence_library.svh`, `src/base/uvm_task_phase.svh` and `src/base/uvm_phase_hopper.svh` (threads killed at phase end, `PH_TIMEOUT`).
+
+**Prerequisites:**
+
+- [I-UVM-3A: Basic UVM Sequences and Items](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index): items, sequences, the handshake and starting a sequence under an objection.
+- [I-UVM-3C: First Complete Testbench](/curriculum/T2_Intermediate/I-UVM-3C_First_Complete_Testbench/index): a full single-agent bench, which this module extends to several agents.
+- Review [F2C: Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index) for `fork…join`, `join_any` and `join_none`, and [I-UVM-1C: UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index) for objections and the end of test.
+
+**Related:**
+
+- [I-SV-5: Synchronization and IPC](/curriculum/T2_Intermediate/I-SV-5_Synchronization_and_IPC/index): events and the wait-for graphs behind starvation and deadlock.
+- [A-UVM-8: Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index): environments with many agents and cross-agent checking, where these virtual sequences are applied.
+- [E-DBG-1: Hang Lab](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab): triaging hangs in a full UVM bench.
+- [E-PSS-1: Portable Stimulus Standard](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index): generating cross-agent scenarios from a model.
+
+<NextLesson />

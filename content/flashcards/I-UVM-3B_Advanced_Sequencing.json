@@ -2,6 +2,81 @@
   {
     "id": "iuvm3b-1",
     "question": "What does a virtual sequence do?",
-    "answer": "It coordinates stimulus across interfaces by starting sub-sequences on the real agent sequencers, usually through handles held by a virtual sequencer. It generates no items of its own."
+    "answer": "It starts other sequences, each on the sequencer of the agent it targets, and the order of those `start()` calls in its `body()` is the cross-agent order. It sends no items of its own."
+  },
+  {
+    "id": "iuvm3b-2",
+    "question": "What are the two decisions every advanced sequencing test makes, and who makes each?",
+    "answer": "Inside one sequencer, which waiting sequence goes next: the sequencer decides, by locks, grabs, arbitration mode and priority. Across sequencers, which agent's stimulus comes first: the code in a virtual sequence decides."
+  },
+  {
+    "id": "iuvm3b-3",
+    "question": "What is a virtual sequencer, and does it decide the order of sub-sequences?",
+    "answer": "A sequencer with no driver that only holds the agents' sequencer handles, read through `p_sequencer` (`` `uvm_declare_p_sequencer ``). It decides no order: the sub-sequences run on the agents' sequencers in the order `body()` starts them."
+  },
+  {
+    "id": "iuvm3b-4",
+    "question": "Name the two common ways to give a virtual sequence its sequencer handles.",
+    "answer": "The test assigns the handles and calls `vseq.start(null)`, or the environment fills a virtual sequencer in `connect_phase` and the test calls `vseq.start(env.vsqr)`. IEEE 1800.2-2020 defines no virtual sequencer class; both are usage patterns."
+  },
+  {
+    "id": "iuvm3b-5",
+    "question": "What is the default arbitration mode, and what does it do with priority?",
+    "answer": "`UVM_SEQ_ARB_FIFO`: the oldest waiting request is granted and priority is ignored (Annex F.2.4.1). Set another mode with `set_arbitration()` on the sequencer."
+  },
+  {
+    "id": "iuvm3b-6",
+    "question": "A waits with priority 100 and B with priority 300 under `UVM_SEQ_ARB_WEIGHTED`. Who is granted?",
+    "answer": "A random pick weighted by priority: B about 75 % of the time, A about 25 %. Weighted is not strict priority; use `UVM_SEQ_ARB_STRICT_FIFO` or `grab()` when the urgent sequence must win."
+  },
+  {
+    "id": "iuvm3b-7",
+    "question": "How do `lock()` and `grab()` differ?",
+    "answer": "Both give one sequence exclusive use of a sequencer until `unlock()`/`ungrab()`. A lock request enters the back of the arbitration queue and a grab request the front, so when both are waiting the grab is served first (IEEE 1800.2-2020 §14.2.5.5, §14.2.5.6). Use `grab()` to pre-empt and `lock()` to keep a burst together. When nothing is held, uvm-core 2020.3.1 grants either at once."
+  },
+  {
+    "id": "iuvm3b-8",
+    "question": "When does a sequencer actually arbitrate?",
+    "answer": "It chooses among waiting item requests only when its driver asks for work (`get_next_item()`, `try_next_item()`, `get()` or `peek()`). Until then each sequence waits inside `start_item()`."
+  },
+  {
+    "id": "iuvm3b-9",
+    "question": "In a virtual sequence, how do you make configuration on one agent finish before data starts on another?",
+    "answer": "Call the two `start()`s one after the other: `cfg.start(cfg_sqr, this); data.start(data_sqr, this);`. `start()` returns only when the child's `body()` is done. Priority and the virtual sequencer cannot order different sequencers."
+  },
+  {
+    "id": "iuvm3b-10",
+    "question": "A virtual sequence ends with `fork ... join_none` and returns. What happens to the forked sequences?",
+    "answer": "The test drops its objection, the run phase ends, and the phase kills every thread still running in it, so the sequences stop part-way with no error. End with `wait fork`, `join`, or a deliberate `kill()`."
+  },
+  {
+    "id": "iuvm3b-11",
+    "question": "What is a sequence library for?",
+    "answer": "Running a random (or user-chosen) mix of registered member sequences on one sequencer, a different mix per seed. `uvm_sequence_library` (§14.4) picks members in `UVM_SEQ_LIB_RAND`, `UVM_SEQ_LIB_RANDC` or `UVM_SEQ_LIB_USER` mode; `UVM_SEQ_LIB_ITEM` sends random items instead and runs no member (Annex F.2.4.3)."
+  },
+  {
+    "id": "iuvm3b-12",
+    "question": "What is sequence layering?",
+    "answer": "One sequence produces the items of another: an upper-layer sequence creates, say, packets, and a translation sequence on the lower agent turns each one into the bus items that carry it."
+  },
+  {
+    "id": "iuvm3b-13",
+    "question": "How is an interrupt usually turned into stimulus?",
+    "answer": "A monitor event wakes a service sequence, which calls `grab()` on the physical sequencer so its items go next, and `ungrab()` when done. From a virtual sequence, name the sequencer: `grab(reg_sqr)`."
+  },
+  {
+    "id": "iuvm3b-14",
+    "question": "The log shows \"Get_next_item called twice without item_done or get in between\" repeated once per driver loop, and the driver drives the same item again and again. Where did the flow stop?",
+    "answer": "On the driver side of the handshake: the driver skipped `item_done()`, so each new `get_next_item()` reports the error and returns the same item, and the sequence waits in `finish_item()` for ever. If every item is driven twice instead, the driver calls `get_next_item()` twice per loop. A silent log points elsewhere: a held lock, a lost response, or a driver stuck in its own drive code."
+  },
+  {
+    "id": "iuvm3b-15",
+    "question": "One sequence stops getting items while another runs on, with no error. What do you suspect first?",
+    "answer": "A `lock()` or `grab()` that is still held, often by a sequence that is waiting for something before it unlocks. Every other request on that sequencer is blocked silently."
+  },
+  {
+    "id": "iuvm3b-16",
+    "question": "Which tool collects responses that a pipelined driver returns out of order?",
+    "answer": "`use_response_handler(1)` with an overridden `response_handler()` (IEEE 1800.2-2020 §14.2.7.1), matching each response by its transaction id. The handshake lesson covers it in depth."
   }
 ]

@@ -1,47 +1,497 @@
-import { InfoPage } from "@/components/templates/InfoPage";
+---
+title: "Sequence Arbitration and Priority"
+description: "Predict which sequence a sequencer grants under each arbitration mode, priority, lock() and grab(), and keep shared stimulus flowing without starving other sequences or stalling the driver."
+flashcards: "I-UVM-3B_Sequence_Arbitration"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+---
 
-export const metadata = {
-  title: "Sequence Arbitration and Priority | Advanced UVM Sequencing",
-  description: "Understand how UVM sequencers choose the next sequence, how to apply lock/grab, and how to customize arbitration for complex stimulus coordination.",
-};
+## Quick Take
 
-<InfoPage
-  title="Sequence Arbitration and Priority"
-  uvm_concept_tags={["sequence arbitration", "lock", "grab", "sequencer priority"]}
+- **What it is:** When two or more sequences run on the same sequencer at the same time, each `start_item()` call puts a **request** into the sequencer's **arbitration queue**. **Arbitration** is the sequencer's choice of which waiting request the driver serves next. Four things decide it: the **arbitration mode** (one of six, set with `set_arbitration()`), the **priority** of each request, any **`lock()`** or **`grab()`** that reserves the sequencer for one sequence, and an optional **`is_relevant()`** check that lets a sequence sit out a round (IEEE 1800.2-2020 §14.2.5, §15.3.2).
+- **Why it matters:** Real agents are shared. Background traffic, register programming and an interrupt routine all want the same driver. If you cannot predict who wins, you get a sequence that never runs (**starvation**), a "back-to-back" burst that other traffic splits in half, or a silent hang that looks like a design bug.
+- **The Analogy:** The sequencer is an air-traffic control tower with one runway, the driver. Sequences are aircraft that radio in to ask for a slot. The arbitration mode is the tower's rule for picking the next aircraft; priority is how urgent each one claims to be. `lock()` books a block of consecutive slots, and `grab()` is an emergency booking that jumps to the head of the line. *Where it breaks:* the tower clears an aircraft only when the runway asks for the next one, it ignores aircraft that have not radioed in yet, and a block booking never expires by itself: if the owner forgets to release it, the runway sits idle.
+
+**You will be able to:**
+1. Predict which request the sequencer grants under each of the six arbitration modes, given the priorities and the queue order.
+2. Choose between priority, `lock()` and `grab()` for a scenario, and predict the grant order when locks and grabs wait together.
+3. Write a sequence that waits for a resource without stalling the driver: wait before `start_item()`, or use `is_relevant()` with `wait_for_relevant()`.
+4. Debug starvation and deadlock (an unreleased lock, an unparented child under a locked parent, a priority that has no effect) from the sequencer state and the log.
+
+**Before you start:** read [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake), the previous lesson, for what blocks where. From [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index) you need `start(sqr, parent, priority)`, `start_item()`/`finish_item()` and nested sequences.
+
+<BeforeYouStart />
+
+## Build Your Mental Model
+
+**How to read this lesson.** The core path is the first four subsections: the words, when the sequencer chooses, the six modes and priority. Then come `lock()` and `grab()`, waiting without stalling the driver (`is_relevant()` and throttling), and debugging. Make It Work gives you a complete test whose grant order you predict, and Push Further holds the standard-versus-implementation details and interview angles.
+
+Everything here is about **one sequencer**. Coordinating several sequencers is the job of [virtual sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences), later in this module.
+
+### The words you need
+
+You met most of these in I-UVM-3A; here they are in one place, with the meaning this lesson relies on.
+
+| Term | Meaning here |
+|---|---|
+| **sequence item** (item) | The `uvm_sequence_item` object a sequence hands to the driver, one transaction at a time. |
+| **sequence** | A `uvm_sequence` object whose `body()` task creates and sends items. Several sequences can run on one sequencer at once, each in its own process (thread). |
+| **sequencer** | The `uvm_sequencer` component between the sequences and the driver. It holds the arbitration queue and decides which sequence's item goes next. |
+| **driver** | The `uvm_driver` component that pulls items with `seq_item_port.get_next_item()` and drives them onto the pins. One item at a time. |
+| **request** | An entry in the arbitration queue. `start_item()` adds an **item request**; `lock()` and `grab()` add a **lock request**. |
+| **grant** | The sequencer's decision for one request. For an item request, `start_item()` returns; for a lock request, `lock()` or `grab()` returns. |
+| **root sequence**, **child sequence** | A sequence started with no parent (`seq.start(sqr)`) is a root. One started with a parent (`seq.start(sqr, this)` or `` `uvm_do ``) is that parent's child. |
+| **priority** | An integer attached to each request. Higher means more important, but only some modes look at it. |
+| **starvation** | A sequence that is ready but is never granted, because the rule always prefers someone else. |
+
+### When the sequencer arbitrates
+
+A sequence waits inside `start_item()` (which calls the sequencer's `wait_for_grant()`). The sequencer makes the choice when the driver asks for work: `get_next_item()`, `try_next_item()`, `get()` or `peek()` (§15.2.1.2). Three facts explain most surprises:
+
+1. **Only when the driver asks.** No item request is granted while the driver is busy with the previous item. In uvm-core 2020.3.1, the reference implementation of IEEE 1800.2, the sequencer also waits for one nonblocking-assignment (NBA) region of the current time slot before it chooses (`uvm_wait_for_nba_region()`), so requests made earlier in the same time slot are counted. (A **time slot** is everything the simulator does at one simulation time; the NBA region is one of its ordered steps, see [F3B Scheduling Regions](/curriculum/T1_Foundational/F3B_Scheduling_Regions/index).) A request made after that point waits for the next choice.
+2. **Only among requests already queued.** A sequence that starts later, or is still inside `finish_item()` for its previous item, is not a candidate, whatever its priority.
+3. **Filters first, then the rule.** The sequencer removes requests from sequences blocked by another sequence's lock, and requests whose sequence says `is_relevant() == 0`. The mode's rule picks among the rest.
+
+Lock requests are the exception to fact 1. In uvm-core 2020.3.1 a `lock()` or `grab()` is granted as soon as no other lock blocks it, even while the driver is busy. The standard words this differently ("A lock request is arbitrated the same as any other request", §14.2.5.5); [Expert: when is a lock granted?](#expert-when-is-a-lock-granted-the-standard-and-uvm-core) compares the two.
+
+**Predict first.** Two sequences are waiting: `bulk_seq` with priority 100 queued first, then `urgent_seq` with priority 300. The driver calls `get_next_item()`. Who is granted under the default mode, and who under `UVM_SEQ_ARB_STRICT_FIFO`? Decide, then read the diagram.
+
+<SequenceDiagram
+  title="One arbitration decision on a shared sequencer"
+  caption="Both sequences wait inside start_item(). The choice happens only when the driver calls get_next_item(). Under STRICT_FIFO the priority-300 request wins; under the default FIFO mode bulk_seq would win because it queued first. The NBA wait is uvm-core 2020.3.1 behaviour."
+  participants={[
+    { id: "bulk", label: "bulk_seq", kind: "sequence" },
+    { id: "urgent", label: "urgent_seq", kind: "sequence" },
+    { id: "sqr", label: "sqr", kind: "sequencer" },
+    { id: "drv", label: "drv", kind: "driver" }
+  ]}
+  messages={[
+    { from: "bulk", to: "sqr", label: "start_item(req): request queued, priority 100" },
+    { from: "urgent", to: "sqr", label: "start_item(req): request queued, priority 300" },
+    { kind: "note", from: "bulk", to: "urgent", label: "both sequences now wait inside start_item()" },
+    { from: "drv", to: "sqr", label: "get_next_item(req)" },
+    { kind: "self", from: "sqr", label: "wait one NBA region (uvm-core)" },
+    { kind: "self", from: "sqr", label: "skip blocked and not-relevant requests, apply the mode's rule" },
+    { kind: "return", from: "sqr", to: "urgent", label: "grant (STRICT_FIFO): start_item() returns", tone: "active" },
+    { from: "urgent", to: "sqr", label: "finish_item(req)" },
+    { kind: "return", from: "sqr", to: "drv", label: "req from urgent_seq" },
+    { kind: "note", from: "bulk", to: "sqr", label: "bulk_seq keeps waiting; it competes again at the next get_next_item()" }
+  ]}
+/>
+
+**Debrief.** The grant goes to a *request*, not to a sequence for good: after its item is done, `urgent_seq` must queue a new request and compete again. Under FIFO the same picture grants `bulk_seq`, because FIFO never reads priority.
+
+### The six arbitration modes
+
+Set the mode with `set_arbitration()` and read it back with `get_arbitration()` (§15.3.2.19, §15.3.2.18). The type is the enum `uvm_sequencer_arb_mode` (Annex F.2.4.1). If you never set it, the mode is `UVM_SEQ_ARB_FIFO` (§15.3.2.18).
+
+| Mode | Rule, among the unblocked and relevant item requests | Priority used? |
+| --- | --- | --- |
+| `UVM_SEQ_ARB_FIFO` | the oldest request | no |
+| `UVM_SEQ_ARB_WEIGHTED` | random; chance = its priority ÷ the sum of the waiting priorities | yes, as a weight |
+| `UVM_SEQ_ARB_RANDOM` | uniformly random | no |
+| `UVM_SEQ_ARB_STRICT_FIFO` | the oldest request among those with the highest priority | yes, strictly |
+| `UVM_SEQ_ARB_STRICT_RANDOM` | uniformly random among those with the highest priority | yes, strictly |
+| `UVM_SEQ_ARB_USER` | whatever your override of `user_priority_arbitration()` returns (§15.3.2.3) | your rule |
+
+The rules above are how uvm-core 2020.3.1 implements them (`m_choose_next_request()` in `uvm_sequencer_base.svh`); the standard's one-line definitions in F.2.4.1 agree. Read the table as two questions: *is priority ignored, a weight, or a rank?* and *how are ties broken: by age or at random?*
+
+**Worked example: WEIGHTED is odds, not order.** Under `UVM_SEQ_ARB_WEIGHTED`, A (priority 100) and B (priority 300) are waiting. The sum is 400, so B wins this grant with probability 300 ÷ 400 = 75 % and A with 25 %. Over many grants B gets about three of every four, but A is never locked out. That is the main difference from `STRICT_FIFO`, where B wins every time both are waiting and A can starve.
+
+```systemverilog
+// snippet: set the mode once, before any sequence starts on this sequencer
+class bus_sequencer extends uvm_sequencer #(bus_item);
+  `uvm_component_utils(bus_sequencer)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+  endfunction
+
+  function void build_phase(uvm_phase phase);
+    super.build_phase(phase);
+    set_arbitration(UVM_SEQ_ARB_WEIGHTED);   // priorities now act as weights
+  endfunction
+endclass
+```
+
+You can also call `env.agt.sqr.set_arbitration(...)` from the test before it starts the sequences. UVM 1.1 spelled these names `SEQ_ARB_*`; uvm-core 2020.3.1 defines only the `UVM_SEQ_ARB_*` names, so old code needs renaming.
+
+**Experiment: the arbitration sandbox.** The sandbox below runs a model of the uvm-core 2020.3.1 arbitration code. Three sequences compete for one driver that takes 10 ns per item.
+
+1. Load **FIFO**. C has priority 300 but queued last. Predict who gets grant #2, then step.
+2. Load **STRICT_FIFO** (same sequences) and predict grant #2 again.
+3. Load **WEIGHTED** and predict B's chance at the first contested grant.
+
+<SequencerArbitrationSandbox />
+
+**Debrief.** Under FIFO, grant #2 went to B: C's priority 300 changed nothing, because FIFO never reads priority. Under STRICT_FIFO, grant #2 went to C: priority decides first, and age only breaks ties among equals. Under WEIGHTED, with all three waiting, B's chance was 300 ÷ 500 = 60 %, not 100 %: weighted is odds, not order. The sandbox does not model `UVM_SEQ_ARB_USER` or `is_relevant()`; both are taught below.
+
+### Priority
+
+A sequence's priority comes from `start()`, and each item request copies it:
+
+- **From `start()`.** The third argument of `start(sqr, parent, this_priority)` sets it. With the default `-1`, a root sequence gets **100** and a child gets its parent's priority (§14.2.3.1, §14.2.5.2).
+- **Into each request.** `start_item(item, set_priority)` queues the request with `set_priority` if you pass one (≥ 0), otherwise with the sequence's current `get_priority()` (§14.2.6.2). The value is captured when the request is queued.
+- **Changing it.** `set_priority()` inside `body()` affects the *next* `start_item()`, not a request already waiting. In uvm-core 2020.3.1, `start()` assigns the priority when it begins, so `seq.set_priority(300)` *before* `seq.start(sqr)` is overwritten: pass the value as `start(sqr, null, 300)` instead.
+- **Legal values.** Use values ≥ 1 (§14.2.5.2: "value shall be >= 1"). uvm-core 2020.3.1 stops the run with `UVM_FATAL [SEQITEMPRI]` when it reads a request priority of 0 or below.
+- **Who reads it.** Only `WEIGHTED`, `STRICT_FIFO`, `STRICT_RANDOM`, and a `USER` rule that chooses to. `FIFO` and `RANDOM` ignore it entirely.
+
+```systemverilog
+// snippet: three ways to raise priority
+// in the test: the whole sequence, from start()
+urgent.start(env.agt.sqr, null, 300);
+
+// inside a sequence's body(): one item only
+start_item(req, 500);   // this request only; later ones use get_priority()
+
+// inside a sequence's body(): from now on
+set_priority(300);      // affects the next start_item(), not a queued one
+```
+
+**The classic mistake.** "I set priority 500 and nothing changed." Check, in order: the mode (FIFO and RANDOM ignore priority), *when* the priority was set (before `start()` it is overwritten), and whether a lock is blocking the sequence (filters come before the rule).
+
+### lock() and grab()
+
+Priority only *biases* each single grant: between two of your items, another sequence can still win. When a burst must reach the driver back to back, with nothing in between, the sequence reserves the sequencer.
+
+- **`lock()`** asks for exclusive use of a sequencer. Once it is granted, every other sequence's requests are blocked until the holder calls `unlock()` (§14.2.5.5, §14.2.5.7).
+- **`grab()`** asks for the same exclusive use, but its request goes to the **front** of the arbitration queue, ahead of every waiting request, including waiting locks (§14.2.5.6). `ungrab()` releases it (§14.2.5.8).
+
+**Syntax and variants.** Both are tasks on the sequence, and both release methods are functions:
+
+```systemverilog
+// snippet: the signatures (uvm_sequence_base, IEEE 1800.2-2020 §14.2.5.5-§14.2.5.10)
+task lock (uvm_sequencer_base sequencer = null);   // returns when the lock is granted
+task grab (uvm_sequencer_base sequencer = null);   // returns when the grab is granted
+function void unlock (uvm_sequencer_base sequencer = null);
+function void ungrab (uvm_sequencer_base sequencer = null);   // same as unlock()
+function bit is_blocked ();   // 1 if another sequence's lock blocks this one
+function bit has_lock ();     // 1 if this sequence holds a lock on its sequencer
+```
+
+With no argument they act on the sequence's own sequencer, the one it was started on. A **virtual sequence** (one that starts sequences on other agents' sequencers and runs on a virtual sequencer or on `null`) must name the real sequencer: `grab(p_sequencer.data_sqr)` and later `ungrab(p_sequencer.data_sqr)`. Here `p_sequencer` is the virtual sequence's typed handle to its virtual sequencer, which holds `data_sqr`; [Virtual Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) builds both. With no argument and no sequencer, the standard requires a fatal message (§14.2.5.5); uvm-core reports `UVM_FATAL [LOCKSEQR]` for `lock()` and `UVM_FATAL [GRAB]` for `grab()`. The sequencer offers matching queries: `sqr.is_grabbed()`, `sqr.current_grabber()`, `sqr.is_blocked(seq)` and `sqr.has_lock(seq)` (§15.3.2.8, §15.3.2.9, §15.3.2.15, §15.3.2.16).
+
+| Tool | What it does (uvm-core 2020.3.1) | Use it for | Watch out for |
+| --- | --- | --- | --- |
+| `lock()` / `unlock()` | Queues a lock request at the back of the queue. It is granted as soon as no other sequence holds a lock or grab. From then on, every other sequence's requests are blocked until `unlock()`. | Short atomic bursts: program a register, then read it back. | The lock is held until `unlock()`, even while the holder queues nothing. If the holder's `start()` finishes still holding it, the sequencer removes it then, with `UVM_ERROR [SEQFINERR]`, after everyone else has starved. |
+| `grab()` / `ungrab()` | Same as `lock()`, but the request goes to the **front** of the queue, so it is granted before any lock or grab that is already waiting. | Urgent stimulus, such as an interrupt service routine. | It jumps the queue; it cannot take the sequencer away from a sequence that already holds a lock. |
+| priority | Weights (`WEIGHTED`) or ranks (`STRICT_*`) the waiting item requests. | Biasing traffic without exclusivity. | Ignored by `FIFO` and `RANDOM`; never makes a burst atomic. |
+
+**Who is *not* blocked by a lock.** The holder itself, and its **children** at any depth: sequences started with the holder as their parent (`child.start(sqr, this)` or `` `uvm_do(child) ``). The sequencer checks this with `is_child()` (§15.3.2.2), which walks the parent chain. A sequence started *without* the parent argument (`child.start(sqr)`) is a new root, so the parent's own lock blocks it. The parent then waits inside `child.start()` for a child that can never be granted: a **deadlock**, with no error message.
+
+**Experiment: the child under a locked parent.** In the explorer below, tick **Debug: top_seq calls lock() first**, set `read_seq` to `start(m_sequencer)`, and predict what happens at `read_seq`'s first `start_item()`. Then switch `read_seq` to `start(m_sequencer, this)` and predict again.
+
+<UvmSequenceHierarchyVisualizer />
+
+**Debrief.** With `start(m_sequencer)`, `read_seq` has no parent, so `top_seq`'s lock blocks it and `top_seq` waits forever in `read_seq.start()`. Nothing reports an error; the test hangs until the phase timeout. With `start(m_sequencer, this)` (or `` `uvm_do ``), `read_seq` is a child and runs inside the lock.
+
+**Experiment: locks and grabs in the sandbox.** Scroll back to the arbitration sandbox and load the last three scenarios, predicting before each step:
+
+- **lock()**: C queued an item at 3 ns; B calls `lock()` at 5 ns while A's first item is being driven. Who gets grant #2 at 10 ns?
+- **Forgot unlock()**: B locks, sends two items, then idles for 40 ns and returns without `unlock()`. When does C run?
+- **grab vs lock**: A holds a lock until 30 ns; B calls `lock()` at 2 ns and C calls `grab()` at 4 ns. Who runs after A?
+
+**Debrief.** *lock():* B's lock was granted at 5 ns, while the driver was still busy, so at 10 ns C's older request was skipped as blocked and B was granted. That is uvm-core behaviour; the standard's wording suggests C would go first (see Push Further). *Forgot unlock():* C waited until B's `start()` finished at 70 ns and the sequencer removed the lock with `SEQFINERR`; the driver sat idle from 30 to 70 ns. *grab vs lock:* C won, because a grab request sits at the front of the queue; B's lock waited until C's `ungrab()`. This last answer is the same under the standard and under uvm-core.
+
+<VisualRecap
+  title="Who gets the next grant"
+  rule="When the driver asks, the sequencer drops every request blocked by another sequence's lock or grab, and every request whose sequence is not relevant, then applies the mode's rule to the rest. Item requests are granted only when the driver asks; in uvm-core 2020.3.1 a lock or grab is granted as soon as no other lock blocks it."
+  code={`sqr.set_arbitration(UVM_SEQ_ARB_STRICT_FIFO);
+fork
+  bulk_seq.start(sqr, null, 100);
+  urgent_seq.start(sqr, null, 300);
+join
+// in a sequence: lock(); ...items...; unlock();`}
+  mistake="Forgetting unlock(). The lock does not expire when the owner stops sending: everyone else starves until the owner's start() finishes (UVM_ERROR SEQFINERR), or forever if it never does."
+  inTestbench="Any agent shared by several sequences: background traffic plus register programming, or an interrupt routine that must grab() the bus."
 >
+  <svg viewBox="0 0 340 176" role="img" aria-label="Snapshot while sequence A holds a lock: the arbitration queue holds GRAB C at the front, then item requests D and E, then LOCK B. Step 1 drops requests blocked by the lock list, step 2 applies the mode's rule, step 3 grants one. When A unlocks, waiting lock and grab requests are granted front first, so C goes before B." style={{ width: "100%", maxWidth: 380 }}>
+    <text x="8" y="14" fontSize="10" fill="currentColor">lock_list (holder):</text>
+    <rect x="104" y="3" width="44" height="16" rx="4" fill="none" stroke="currentColor" strokeWidth="1.5" />
+    <text x="112" y="15" fontSize="10" fill="currentColor">A</text>
+    <text x="8" y="36" fontSize="10" fill="currentColor">arbitration queue (front to back)</text>
+    <rect x="8" y="42" width="70" height="22" rx="5" fill="rgba(245,158,11,0.15)" stroke="rgb(245,158,11)" strokeDasharray="4 2" />
+    <text x="14" y="57" fontSize="10" fill="currentColor">GRAB C</text>
+    <rect x="84" y="42" width="66" height="22" rx="5" fill="rgba(6,182,212,0.15)" stroke="rgb(6,182,212)" />
+    <text x="90" y="57" fontSize="10" fill="currentColor">REQ D</text>
+    <rect x="156" y="42" width="66" height="22" rx="5" fill="rgba(6,182,212,0.15)" stroke="rgb(6,182,212)" />
+    <text x="162" y="57" fontSize="10" fill="currentColor">REQ E</text>
+    <rect x="228" y="42" width="70" height="22" rx="5" fill="rgba(245,158,11,0.15)" stroke="rgb(245,158,11)" strokeDasharray="4 2" />
+    <text x="234" y="57" fontSize="10" fill="currentColor">LOCK B</text>
+    <text x="8" y="84" fontSize="9" fill="currentColor" fillOpacity="0.8">dashed = lock request, solid = item request</text>
+    <text x="8" y="104" fontSize="10" fill="currentColor">1. drop requests blocked by lock_list</text>
+    <text x="8" y="122" fontSize="10" fill="currentColor">2. rule: FIFO, WEIGHTED, RANDOM, STRICT_*, USER</text>
+    <text x="8" y="140" fontSize="10" fill="currentColor">3. grant one: its start_item() returns</text>
+    <text x="8" y="164" fontSize="9" fill="currentColor" fillOpacity="0.8">When A unlocks: C's grab first, then B's lock</text>
+  </svg>
+</VisualRecap>
 
-  *Page 4 of 8 in I-UVM-3B. Read [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake) first: arbitration happens inside `start_item()`.*
+**Locks from a virtual sequence.** An interrupt handler often lives in a virtual sequence. It grabs the *data* sequencer, then starts the service routine as its child so that the grab does not block it. The [Interrupt Handling](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling) lesson builds the full pattern around an interrupt event.
 
-  ## Elevator Pitch
+<SequenceDiagram
+  title="A virtual sequence grabs a physical sequencer for its child"
+  caption="irq_vseq names data_sqr in grab(), so the grab lands on the real sequencer. isr_seq is started with irq_vseq as its parent, so is_child() exempts it; bulk_seq is blocked until ungrab(p_sequencer.data_sqr)."
+  participants={[
+    { id: "vseq", label: "irq_vseq", kind: "sequence" },
+    { id: "isr", label: "isr_seq", kind: "sequence" },
+    { id: "bulk", label: "bulk_seq", kind: "sequence" },
+    { id: "sqr", label: "data_sqr", kind: "sequencer" }
+  ]}
+  messages={[
+    { from: "vseq", to: "sqr", label: "grab(p_sequencer.data_sqr)" },
+    { kind: "return", from: "sqr", to: "vseq", label: "granted: lock_list holds irq_vseq", tone: "active" },
+    { from: "vseq", to: "isr", label: "isr.start(p_sequencer.data_sqr, this)" },
+    { from: "isr", to: "sqr", label: "start_item(req)" },
+    { kind: "note", from: "isr", to: "sqr", label: "not blocked: is_child(irq_vseq, isr_seq) is 1" },
+    { kind: "return", from: "sqr", to: "isr", label: "grant at the driver's next request" },
+    { from: "bulk", to: "sqr", label: "start_item(req)" },
+    { kind: "note", from: "bulk", to: "sqr", label: "blocked while irq_vseq holds the grab", tone: "error" },
+    { kind: "return", from: "isr", to: "vseq", label: "isr.start() returns" },
+    { from: "vseq", to: "sqr", label: "ungrab(p_sequencer.data_sqr)" },
+    { kind: "return", from: "sqr", to: "bulk", label: "bulk_seq can be granted again" }
+  ]}
+/>
 
-  When several sequences run on one sequencer, each `start_item()` puts a request in the sequencer's arbitration queue. Every time the driver asks for an item, the sequencer picks one request. The arbitration mode, the sequence priorities, and any `lock()` or `grab()` decide which. Get it wrong and you see starvation or hangs that look like DUT bugs.
+Two rules fall out of the diagram. Release with the **same sequencer argument** you locked with: a bare `ungrab()` in `irq_vseq` acts on its own (virtual) sequencer, reports `UVM_WARNING [SQRUNL]`, and leaves `data_sqr` grabbed. (If `irq_vseq` was started with `start(null)`, a bare `ungrab()` stops the run with `UVM_FATAL [UNLOCK]` instead.) And keep the lock and the release in the **same task**, with nothing between them that can block forever.
 
-  ## When Arbitration Happens
+### Waiting for a resource: is_relevant() and wait_for_relevant()
 
-  Three facts explain most surprises (all from `uvm_sequencer_base` in uvm-core 2020.3.1):
+Some sequences may only send when the design under test (DUT) can accept: it has free buffer credits, or a mode is configured. Such a sequence can stay in the queue but **sit out** each choice until it is ready.
 
-  1. **Only when the driver asks.** The choice is made inside the driver's `get_next_item()`, after every request made in the same time step has been queued. While the driver is busy, nothing is granted.
-  2. **Only among requests already queued.** A sequence that starts later, or is still inside `finish_item()` for its previous item, is not a candidate, whatever its priority.
-  3. **Locks filter first.** Requests from sequences blocked by another sequence's `lock()` or `grab()` are removed before the mode's rule is applied, in every mode.
+- **`is_relevant()`** is a virtual function of the sequence. The default returns 1. At every choice the sequencer calls it on the queued, unblocked item requests it considers (in FIFO mode it stops at the first relevant one); a request whose sequence returns 0 is skipped this time (§14.2.5.3).
+- **`wait_for_relevant()`** is a virtual task. When *no* request can be granted and some are only waiting because they are not relevant, the sequencer calls `wait_for_relevant()` on each of those sequences and chooses again as soon as one returns, or as soon as the queue changes (§14.2.5.4; uvm-core `m_wait_for_available_sequence()`).
+- **The rule:** if you override `is_relevant()`, you must also override `wait_for_relevant()` (§14.2.5.4: the sequence "shall also supply a wait_for_relevant method"). uvm-core enforces it with `UVM_FATAL [RELMSM] is_relevant() was implemented without defining wait_for_relevant()`.
 
-  ## The Arbitration Modes
+```systemverilog
+// snippet: a credit-gated sequence; credit_pool is a plain class shared with the test
+class credit_pool;
+  int credits;                     // the testbench adds credits as the DUT frees space
+endclass
 
-  Set the mode with `set_arbitration()`. The default is `UVM_SEQ_ARB_FIFO`.
+class credit_seq extends burst_seq;
+  `uvm_object_utils(credit_seq)
+  credit_pool pool;                // set by whoever starts the sequence
 
-  | Mode | Rule (among unblocked requests) | Priority used? |
-  | --- | --- | --- |
-  | `UVM_SEQ_ARB_FIFO` | the oldest request | no |
-  | `UVM_SEQ_ARB_WEIGHTED` | random; chance = priority ÷ sum of the waiting priorities | yes, as a weight |
-  | `UVM_SEQ_ARB_RANDOM` | uniformly random | no |
-  | `UVM_SEQ_ARB_STRICT_FIFO` | the oldest request among those with the highest priority | yes, strictly |
-  | `UVM_SEQ_ARB_STRICT_RANDOM` | uniformly random among those with the highest priority | yes, strictly |
-  | `UVM_SEQ_ARB_USER` | your `user_priority_arbitration()` override returns the choice | your rule |
+  function new(string name = "credit_seq");
+    super.new(name);
+  endfunction
 
-  `STRICT_FIFO` does not mean "strict order across locks": it means *priority first, FIFO among equals*. A lower-priority sequence can starve under either STRICT mode while higher-priority traffic keeps arriving. UVM 1.1 spelled these names `SEQ_ARB_*`; uvm-core 2020.3.1 defines only the `UVM_SEQ_ARB_*` names.
+  // Called at every arbitration: cheap, no side effects, no waiting.
+  virtual function bit is_relevant();
+    return pool.credits > 0;
+  endfunction
 
-  ```systemverilog
-  class my_sequencer extends uvm_sequencer #(my_item);
-    `uvm_component_utils(my_sequencer)
+  // Called only when nothing can be granted: return once a credit exists.
+  virtual task wait_for_relevant();
+    wait (pool.credits > 0);
+  endtask
+
+  virtual task body();
+    repeat (n) begin
+      req = bus_item::type_id::create("req");
+      start_item(req);             // granted only while is_relevant() is 1
+      pool.credits--;              // spend the credit that made us relevant
+      if (!req.randomize()) `uvm_fatal("RAND", "bus_item randomize failed")
+      req.src = get_name();
+      finish_item(req);
+    end
+  endtask
+endclass
+```
+
+`burst_seq` and `bus_item` are the classes from Make It Work below. `pool.credits--` comes right after the grant: the sequencer checked `is_relevant()` at that grant, so a credit exists, as long as this sequence is the only one spending them.
+
+**Predict first.** The pool has 0 credits, `credit_seq` is the only sequence with a request queued, and the driver calls `get_next_item()`. What does the sequencer do, and when does the driver get an item?
+
+<SequenceDiagram
+  title="A request that is not relevant waits without stalling the sequencer"
+  caption="At each choice the sequencer asks is_relevant(). With 0 credits it grants nothing and calls wait_for_relevant(). When the test adds a credit, wait_for_relevant() returns, the sequencer asks again and grants."
+  participants={[
+    { id: "seq", label: "credit_seq", kind: "sequence" },
+    { id: "sqr", label: "sqr", kind: "sequencer" },
+    { id: "drv", label: "drv", kind: "driver" }
+  ]}
+  messages={[
+    { from: "seq", to: "sqr", label: "start_item(req): request queued" },
+    { from: "drv", to: "sqr", label: "get_next_item(req)" },
+    { from: "sqr", to: "seq", label: "is_relevant()" },
+    { kind: "return", from: "seq", to: "sqr", label: "0: no credits" },
+    { kind: "note", from: "sqr", to: "drv", label: "no request can be granted; the driver keeps waiting in get_next_item()" },
+    { from: "sqr", to: "seq", label: "wait_for_relevant()" },
+    { kind: "divider", label: "the test adds a credit" },
+    { kind: "return", from: "seq", to: "sqr", label: "wait_for_relevant() returns" },
+    { from: "sqr", to: "seq", label: "is_relevant()" },
+    { kind: "return", from: "seq", to: "sqr", label: "1" },
+    { kind: "return", from: "sqr", to: "seq", label: "grant: start_item() returns", tone: "active" },
+    { kind: "self", from: "seq", label: "pool.credits--" },
+    { from: "seq", to: "sqr", label: "finish_item(req)" },
+    { kind: "return", from: "sqr", to: "drv", label: "req" }
+  ]}
+/>
+
+**Debrief.** The driver waited, but only because nothing else could go. Had another relevant sequence been queued, the sequencer would have granted it and never called `wait_for_relevant()`. Two more pitfalls:
+
+- `wait_for_relevant()` must really wait. If it keeps returning without simulation time advancing while the sequence stays irrelevant, uvm-core stops with `UVM_FATAL [SEQRELEVANTLOOP] Zero time loop detected, passed wait_for_relevant N times without time advancing`. The limit is 10 by default and can be changed with `sqr.set_max_zero_time_wait_relevant_count()` (§15.3.2.21).
+- `is_relevant()` is called often, also by `has_do_available()` (§15.3.2.17). Keep it a pure check: no randomization, no counters, no waiting.
+
+### Throttling without stalling the driver
+
+A simpler way to wait for credits is to wait *before* `start_item()`: the sequence queues no request while it waits, so the sequencer serves everyone else. Waiting *after* `start_item()` is the bug: the sequence has already been granted, the driver is blocked in `get_next_item()` until this sequence calls `finish_item()`, and nobody else can be served.
+
+<SequenceDiagram
+  title="Wait before start_item(): the driver keeps working"
+  caption="credit_seq waits for a credit with no request queued, so the sequencer grants bulk_seq meanwhile."
+  participants={[
+    { id: "cseq", label: "credit_seq", kind: "sequence" },
+    { id: "bulk", label: "bulk_seq", kind: "sequence" },
+    { id: "sqr", label: "sqr", kind: "sequencer" },
+    { id: "drv", label: "drv", kind: "driver" }
+  ]}
+  messages={[
+    { kind: "self", from: "cseq", label: "wait (pool.credits > 0): no request queued" },
+    { from: "bulk", to: "sqr", label: "start_item(req)" },
+    { from: "drv", to: "sqr", label: "get_next_item(req)" },
+    { kind: "return", from: "sqr", to: "bulk", label: "grant", tone: "active" },
+    { kind: "return", from: "sqr", to: "drv", label: "req from bulk_seq" },
+    { kind: "divider", label: "a credit arrives" },
+    { from: "cseq", to: "sqr", label: "start_item(req): now it competes" }
+  ]}
+/>
+
+<SequenceDiagram
+  title="Wait after start_item(): the driver stalls"
+  caption="credit_seq was granted, then waits while holding the grant. The driver waits in get_next_item() for its item, and bulk_seq's request cannot be served."
+  participants={[
+    { id: "cseq", label: "credit_seq", kind: "sequence" },
+    { id: "bulk", label: "bulk_seq", kind: "sequence" },
+    { id: "sqr", label: "sqr", kind: "sequencer" },
+    { id: "drv", label: "drv", kind: "driver" }
+  ]}
+  messages={[
+    { from: "cseq", to: "sqr", label: "start_item(req)" },
+    { from: "drv", to: "sqr", label: "get_next_item(req)" },
+    { kind: "return", from: "sqr", to: "cseq", label: "grant" },
+    { kind: "self", from: "cseq", label: "wait (pool.credits > 0) while granted", tone: "error" },
+    { from: "bulk", to: "sqr", label: "start_item(req): queued, never chosen" },
+    { kind: "note", from: "sqr", to: "drv", label: "the driver waits for credit_seq's item; no one else can be served", tone: "error" }
+  ]}
+/>
+
+**Which one to use.** Waiting before `start_item()` is simpler, but the check can go stale: the request may wait behind others while their items use up the credits, and the item is then sent anyway. `is_relevant()` is evaluated at every choice, so it gates at grant time. Use the early wait when only this sequence spends the resource; use `is_relevant()` when several sequences compete for it.
+
+**Two hooks that do not throttle.** `pre_do()` is a task, but it runs *after* the grant (§14.2.6.2), so waiting there stalls the driver just like waiting after `start_item()`. `mid_do()` is a `void` function that runs inside `finish_item()`; it cannot delay or refuse anything.
+
+### Debugging starvation and deadlock
+
+A blocked request never prints anything: arbitration problems look like silence. Work from the symptom.
+
+| Symptom | Likely cause | Probe | Fix |
+| --- | --- | --- | --- |
+| One sequence never runs while others do | `STRICT_*` mode and a higher-priority stream that never pauses | `sqr.get_arbitration()`; the priorities passed to `start()` | Use `WEIGHTED`, lower the stream's priority, or let it pause |
+| All traffic stops; no errors; the driver idles in `get_next_item()` | A lock or grab that is never released while its holder is still running | `sqr.is_grabbed()`, `sqr.current_grabber().get_full_name()` | Pair every `lock()` with `unlock()` in the same task, on every path |
+| Hang right after a parent calls `lock()` | A child started without a parent: `child.start(m_sequencer)` | `child.is_blocked()` returns 1 | Start it as `child.start(m_sequencer, this)` or with `` `uvm_do `` |
+| `UVM_ERROR [SEQFINERR] Parent sequence '…' should not finish before locks from itself and descedent sequences are removed.` | A sequence's `start()` finished while it, or a child, still held a lock | The two sequence names in the message | Add the missing `unlock()`/`ungrab()` (the log line keeps uvm-core's spelling "descedent") |
+| `UVM_WARNING [SQRUNL] Sequence '…' called ungrab / unlock, but didn't have lock` | `unlock()` called twice, by another sequence object, or on the wrong sequencer | `sqr.has_lock(seq)` on the sequencer you meant | Release with the same sequence and the same sequencer argument |
+| Priority "has no effect" | `FIFO` or `RANDOM` mode, or `set_priority()` before `start()` | `get_arbitration()`, `seq.get_priority()` inside `body()` | Pick a priority-aware mode; pass the priority to `start()` |
+| `UVM_FATAL [SEQITEMPRI] Sequence item from … has illegal priority: 0` | A priority of 0 or below, read by `WEIGHTED` or `STRICT_*` | The `start()` or `start_item()` arguments | Use priorities ≥ 1 |
+| `UVM_FATAL [RELMSM]` or `[SEQRELEVANTLOOP]` | `is_relevant()` without `wait_for_relevant()`, or a `wait_for_relevant()` that returns at once | The sequence's two overrides | Override both; make `wait_for_relevant()` wait on the real condition |
+
+`sqr.convert2string()` prints the queue and the lock list as numbers, `-- arb i/id/type: 0/2/SEQ_TYPE_REQ …` and `-- lock_list i/id: 0/3`, where *id* is the sequence id on that sequencer (uvm-core `uvm_sequencer_base.svh`). Map an id to a name with `seq.get_sequence_id()` in each candidate's log, or print `current_grabber().get_full_name()` directly. If nothing ends the hang, uvm-core stops at its default phase timeout of 9200 s (`UVM_DEFAULT_TIMEOUT`) with `UVM_FATAL [PH_TIMEOUT]`; set `uvm_root::get().set_timeout(...)` in the test to end such runs much sooner (IEEE 1800.2-2020 F.7.3.3 leaves the default to the implementation). The [E-DBG-1 hang lab](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab) practises the full triage.
+
+### Recap
+
+- The sequencer chooses only when the driver asks, only among queued requests, after dropping blocked and not-relevant ones.
+- `FIFO` (the default) and `RANDOM` ignore priority; `WEIGHTED` treats it as odds; `STRICT_*` as rank, which can starve.
+- A sequence's priority comes from `start()` (100 for a root, the parent's for a child) and is copied into each request at `start_item()`.
+- `lock()` and `grab()` reserve the sequencer until released; the holder and its children are exempt. A grab queues at the front; neither takes the sequencer from a current holder.
+- Wait for resources before `start_item()` or with `is_relevant()` plus `wait_for_relevant()`, never after the grant.
+- Arbitration bugs are silent: probe the mode, `is_grabbed()`, `current_grabber()` and the log ids.
+
+## Make It Work
+
+### A shared sequencer whose grant order you can predict
+
+This test runs three sequences on one sequencer: `bulk` (priority 100) from 0 ns, `urgent` (priority 300) from 1 ns, and an interrupt routine `isr` that grabs the sequencer at 25 ns. The driver logs which sequence each item came from and takes 10 ns per item. The default run uses `UVM_SEQ_ARB_STRICT_FIFO`; `+ARB=FIFO` keeps the default mode for comparison.
+
+```systemverilog
+// compile
+`timescale 1ns/1ps
+`include "uvm_macros.svh"
+
+package arb_pkg;
+  import uvm_pkg::*;
+
+  class bus_item extends uvm_sequence_item;
+    rand bit [7:0] data;
+    string src;                      // which sequence sent it, for the log
+    `uvm_object_utils(bus_item)
+
+    function new(string name = "bus_item");
+      super.new(name);
+    endfunction
+  endclass
+
+  // Stands in for a real driver: logs each grant and takes 10 ns per item.
+  class log_driver extends uvm_driver #(bus_item);
+    `uvm_component_utils(log_driver)
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      forever begin
+        seq_item_port.get_next_item(req);    // the sequencer arbitrates here
+        `uvm_info("DRV", $sformatf("item from %s", req.src), UVM_LOW)
+        #10ns;                               // time on the bus
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
+
+  class burst_seq extends uvm_sequence #(bus_item);
+    `uvm_object_utils(burst_seq)
+    int unsigned n = 3;                      // items per run
+
+    function new(string name = "burst_seq");
+      super.new(name);
+    endfunction
+
+    task body();
+      repeat (n) begin
+        req = bus_item::type_id::create("req");
+        start_item(req);                     // waits here for the grant
+        if (!req.randomize()) `uvm_fatal("RAND", "bus_item randomize failed")
+        req.src = get_name();
+        finish_item(req);                    // returns after item_done()
+      end
+    endtask
+  endclass
+
+  // An interrupt routine: exclusive use of the sequencer for its items.
+  class isr_seq extends burst_seq;
+    `uvm_object_utils(isr_seq)
+
+    function new(string name = "isr_seq");
+      super.new(name);
+    endfunction
+
+    task body();
+      grab();                                // front of the queue
+      super.body();
+      ungrab();                              // same task as grab(): no path skips it
+    endtask
+  endclass
+
+  class arb_test extends uvm_test;
+    `uvm_component_utils(arb_test)
+    uvm_sequencer #(bus_item) sqr;
+    log_driver                drv;
 
     function new(string name, uvm_component parent);
       super.new(name, parent);
@@ -49,148 +499,390 @@ export const metadata = {
 
     function void build_phase(uvm_phase phase);
       super.build_phase(phase);
-      set_arbitration(UVM_SEQ_ARB_WEIGHTED);
-    endfunction
-  endclass
-
-  // In the test: priorities are passed to start()
-  fork
-    bulk_seq.start(env.agt.sqr, null, 100);
-    urgent_seq.start(env.agt.sqr, null, 300);   // 3× the chance under WEIGHTED
-  join
-  ```
-
-  **Setting priority.** A root sequence started with no priority argument gets 100. `start()` overwrites the priority, so `seq.set_priority(300)` *before* `seq.start(sqr)` has no effect. Pass the priority as the third argument of `start()`, or call `set_priority()` inside `body()`. A single item can also carry its own priority: `start_item(req, 500)`.
-
-  ## Locks vs. Grabs vs. Priority
-
-  | Tool | What it does in uvm-core 2020.3.1 | Use it for | Watch out for |
-  | --- | --- | --- | --- |
-  | `lock()` / `unlock()` | Queues a lock request at the back of the arbitration queue. It is granted as soon as no other sequence holds a lock or grab. From then on, every other sequence's requests are blocked until `unlock()`. | Short atomic bursts (program a register, then read it back). | The lock is held until `unlock()`, even while you queue nothing. If `body()` returns still holding it, UVM removes it with `UVM_ERROR [SEQFINERR]`, after everyone else has starved. |
-  | `grab()` / `ungrab()` | Same as `lock()`, but the request goes to the **front** of the queue, so it is granted before any lock or grab that is already waiting. | Urgent stimulus, such as an interrupt service routine. | It only jumps the queue; it cannot take the sequencer from a sequence that already holds a lock. |
-  | priority | Weights (`WEIGHTED`) or ranks (`STRICT_*`) the waiting requests. | Biasing traffic without exclusivity. | Ignored by `FIFO` and `RANDOM`. |
-
-  The library's own comment on `lock()` says a lock request is "arbitrated the same as any other request". The code (`grant_queued_locks()`) grants it as soon as nothing blocks it, even ahead of older item requests. The sandbox follows the code.
-
-  A child sequence started *with* its parent (`child.start(sqr, this)` or `` `uvm_do ``) is not blocked by its parent's lock. A sequence started without a parent (`child.start(sqr)`) is, which deadlocks a locked parent.
-
-  <VisualRecap
-    title="Who gets the next grant"
-    rule="When the driver asks, the sequencer drops every request blocked by another sequence's lock or grab, then applies the mode's rule to the rest. Nothing is granted while the driver is busy."
-    code={`sqr.set_arbitration(UVM_SEQ_ARB_STRICT_FIFO);
-fork
-  bulk_seq.start(sqr, null, 100);
-  urgent_seq.start(sqr, null, 300);
-join
-// in a sequence: lock(); ...items...; unlock();`}
-    mistake="Forgetting unlock(). The lock does not expire when the owner stops sending: everyone else starves until the owner's body() returns (UVM_ERROR SEQFINERR) or forever."
-    inTestbench="Any agent shared by several sequences: background traffic plus register programming, or an interrupt routine that must grab() the bus."
-  >
-    <svg viewBox="0 0 320 140" role="img" aria-label="Arbitration in two filters: first locks remove blocked requests, then the mode's rule picks one of the remaining requests for the driver." style={{ width: "100%", maxWidth: 360 }}>
-      <text x="8" y="16" fontSize="10" fill="currentColor">arbitration queue (front → back)</text>
-      <rect x="8" y="24" width="64" height="22" rx="5" fill="rgba(245,158,11,0.15)" stroke="rgb(245,158,11)" />
-      <text x="14" y="39" fontSize="10" fill="currentColor">⚑ GRAB C</text>
-      <rect x="78" y="24" width="60" height="22" rx="5" fill="rgba(6,182,212,0.15)" stroke="rgb(6,182,212)" />
-      <text x="84" y="39" fontSize="10" fill="currentColor">REQ A</text>
-      <rect x="144" y="24" width="60" height="22" rx="5" fill="rgba(6,182,212,0.15)" stroke="rgb(6,182,212)" />
-      <text x="150" y="39" fontSize="10" fill="currentColor">REQ B</text>
-      <rect x="210" y="24" width="70" height="22" rx="5" fill="rgba(245,158,11,0.15)" stroke="rgb(245,158,11)" />
-      <text x="216" y="39" fontSize="10" fill="currentColor">🔒 LOCK D</text>
-      <text x="8" y="70" fontSize="10" fill="currentColor">1. drop requests blocked by lock_list</text>
-      <text x="8" y="90" fontSize="10" fill="currentColor">2. rule: FIFO · WEIGHTED · RANDOM · STRICT_*</text>
-      <text x="8" y="110" fontSize="10" fill="currentColor">3. grant one → start_item() returns</text>
-      <text x="8" y="132" fontSize="9" fill="currentColor" fillOpacity="0.7">Waiting locks/grabs are granted front-first when lock_list empties</text>
-    </svg>
-  </VisualRecap>
-
-  > **Try it hands-on:** the sandbox below (also at [/exercises/sequencer-arbitration](/exercises/sequencer-arbitration)) has a scenario for each row above, including **Forgot unlock()** and **grab vs lock**. Predict the grant, then read the reason the model gives for every waiting sequence.
-
-  <SequencerArbitrationSandbox />
-
-  ## Throttling Without Stalling the Driver
-
-  A common need: a sequence must not send while the DUT has no credits. Wait *before* `start_item()`, so the sequence has no request queued and the sequencer serves other sequences meanwhile.
-
-  ```systemverilog
-  class credit_sensitive_seq extends uvm_sequence #(my_item);
-    `uvm_object_utils(credit_sensitive_seq)
-
-    credit_monitor credits;    // handle set by whoever starts the sequence
-
-    function new(string name = "credit_sensitive_seq");
-      super.new(name);
+      sqr = uvm_sequencer#(bus_item)::type_id::create("sqr", this);
+      drv = log_driver::type_id::create("drv", this);
     endfunction
 
-    virtual task body();
-      repeat (20) begin
-        wait (credits.available > 0);              // no request queued while waiting
-        req = my_item::type_id::create("req");
-        start_item(req);
-        if (!req.randomize() with { opcode inside { READ, WRITE }; })
-          `uvm_error("RAND", "randomization failed")
-        finish_item(req);
-      end
+    function void connect_phase(uvm_phase phase);
+      drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+
+    task run_phase(uvm_phase phase);
+      burst_seq              bulk, urgent;
+      isr_seq                isr;
+      string                 arg;
+      uvm_sequencer_arb_mode mode;
+      bulk   = burst_seq::type_id::create("bulk");
+      urgent = burst_seq::type_id::create("urgent");
+      isr    = isr_seq::type_id::create("isr");
+      isr.n  = 1;
+      // +ARB=FIFO keeps the default mode; otherwise use STRICT_FIFO
+      if (!$value$plusargs("ARB=%s", arg) || arg != "FIFO")
+        sqr.set_arbitration(UVM_SEQ_ARB_STRICT_FIFO);
+      mode = sqr.get_arbitration();
+      `uvm_info("TEST", $sformatf("mode %s", mode.name()), UVM_LOW)
+      phase.raise_objection(this);
+      fork
+        bulk.start(sqr, null, 100);
+        begin #1ns;  urgent.start(sqr, null, 300); end
+        begin #25ns; isr.start(sqr);               end  // stands in for an interrupt
+      join
+      phase.drop_objection(this);
     endtask
   endclass
-  ```
+endpackage
 
-  Two things that do **not** work:
-  - Waiting *after* `start_item()` returns. The sequence has been granted, the driver is blocked in `get_next_item()` waiting for this item, and nobody else can be served: you stall the driver.
-  - Using `mid_do()` to refuse an item. `mid_do()` is a `void` function that runs inside `finish_item()`, after the grant. It cannot veto or delay anything.
+module tb_top;
+  import uvm_pkg::*;
+  import arb_pkg::*;
 
-  For a sequence that should stay queued but be skipped until it is ready, override `is_relevant()` (return 0 while not ready) together with `wait_for_relevant()` (a task that returns when it may be ready again). UVM requires both.
+  initial run_test("arb_test");
+endmodule
+```
 
-  ## Debugging Starvation
+**Expected output** (illustrative: traced by hand through `m_choose_next_request()` and `grant_queued_locks()` in uvm-core 2020.3.1, not captured from a simulator; file names and line numbers are omitted, and your simulator may print times in another unit, such as 10000 for 10 ns):
 
-  - Print the sequencer state: `` `uvm_info("ARB", env.agt.sqr.convert2string(), UVM_LOW) `` shows the arbitration queue and the lock list.
-  - Ask directly: `sqr.is_blocked(seq)`, `sqr.has_lock(seq)`, `sqr.current_grabber()`.
-  - Look for `UVM_ERROR [SEQFINERR]` (a sequence ended while still holding a lock) and `UVM_ERROR [SQRUNL]` (`unlock()` without a lock).
-  - Put `lock()`/`unlock()` in the same task, with nothing that can block forever in between. SystemVerilog has no exceptions or `finally`; a `disable` or a killed process skips the `unlock()`.
-  - Run some regressions with a random mode (`WEIGHTED` or `RANDOM`) to expose ordering assumptions.
+```text
+UVM_INFO @ 0: uvm_test_top [TEST] mode UVM_SEQ_ARB_STRICT_FIFO
+UVM_INFO @ 0: uvm_test_top.drv [DRV] item from bulk
+UVM_INFO @ 10: uvm_test_top.drv [DRV] item from urgent
+UVM_INFO @ 20: uvm_test_top.drv [DRV] item from urgent
+UVM_INFO @ 30: uvm_test_top.drv [DRV] item from isr
+UVM_INFO @ 40: uvm_test_top.drv [DRV] item from urgent
+UVM_INFO @ 50: uvm_test_top.drv [DRV] item from bulk
+UVM_INFO @ 60: uvm_test_top.drv [DRV] item from bulk
+...
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
 
-  ## Checklist
+Why each line, in short:
 
-  - [ ] Can you describe when to choose `lock()` versus `grab()`?
-  - [ ] Do you know which arbitration mode your sequencer uses, and whether it reads priority?
-  - [ ] Is every `lock()` paired with an `unlock()` on every path through `body()`?
-  - [ ] Is a global timeout set, so starvation ends with a fatal instead of a hang?
+| Time | Waiting when the driver asks | Grant | Reason |
+|---|---|---|---|
+| 0 | bulk | bulk | only candidate |
+| 10 | urgent (300, since 1 ns), bulk (100, since 10 ns) | urgent | highest priority |
+| 20 | bulk (100), urgent (300, since 20 ns) | urgent | highest priority; bulk starts to wait |
+| 30 | bulk and urgent (both blocked), isr | isr | isr's grab was granted at 25 ns, so only isr is unblocked |
+| 40 | bulk (100), urgent (300) | urgent | isr called `ungrab()` at 40 ns |
+| 50, 60 | bulk | bulk | urgent has finished its three items |
 
-  ## Quiz Yourself
+With `+ARB=FIFO` the order becomes bulk, urgent, bulk, isr, urgent, bulk, urgent: the oldest unblocked request wins every time, and priority 300 changes nothing. Both runs end at 70 ns, when the fork joins and the test drops its objection.
 
-  <Quiz
-    questions={[
-      {
-        question: "A sequence needs five uninterrupted items to program a mode register. What is the best tool?",
-        answers: [
-          { text: "Increase its priority with set_priority(10)", correct: false },
-          { text: "Call lock() before the burst and unlock() after", correct: true },
-          { text: "Call grab() at the start of the test and never release it", correct: false },
-          { text: "Switch the sequencer to UVM_SEQ_ARB_RANDOM", correct: false },
-        ],
-        explanation: "Priority only biases each individual grant; other sequences can still win in between. A lock blocks every other sequence until unlock().",
-      },
-      {
-        question: "You set UVM_SEQ_ARB_WEIGHTED and called seq.set_priority(500) before seq.start(sqr), but traffic is still evenly mixed. Why?",
-        answers: [
-          { text: "WEIGHTED ignores priority", correct: false },
-          { text: "start() overwrote the priority with the default 100; pass it as start(sqr, null, 500)", correct: true },
-          { text: "Priorities only work with grab()", correct: false },
-          { text: "The driver must call try_next_item()", correct: false },
-        ],
-        explanation: "start() stores its own priority argument (100 for a root sequence when none is given), replacing what set_priority() set earlier.",
-      },
-      {
-        question: "Under UVM_SEQ_ARB_STRICT_FIFO, A (priority 100) queued at 0 ns and B (priority 300) queued at 5 ns. The driver asks at 10 ns. Who is granted?",
-        answers: [
-          { text: "A, because it queued first", correct: false },
-          { text: "B, because STRICT_FIFO takes the highest priority first and only uses FIFO order among equals", correct: true },
-          { text: "Either, at random", correct: false },
-        ],
-        explanation: "That is the difference from plain FIFO, which would grant A.",
-      },
-    ]}
-  />
+### How to run the experiment
 
-  Next: [Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences).
+1. Compile `tb_top` with the UVM library (IEEE 1800.2, for example uvm-core 2020.3.1) on any UVM-capable simulator, and run with `+UVM_TESTNAME=arb_test` or no test name (the default in `run_test()` is used).
+2. Before running, cover the expected output and write your own predicted grant order. Run and compare.
+3. Run again with `+ARB=FIFO`. Explain each line that changed using the FIFO rule.
+4. Change `urgent.start(sqr, null, 300)` to `urgent.set_priority(300); urgent.start(sqr);` and predict the STRICT_FIFO order. (It matches the FIFO order: `start()` reset the priority to 100, so both sequences tie and age decides.)
+5. In `isr_seq`, replace `grab()`/`ungrab()` with `lock()`/`unlock()` and predict. (In uvm-core 2020.3.1 the log is unchanged: nothing held a lock at 25 ns, so the lock was granted at once. A grab and a lock differ only when both are waiting.)
+6. Delete the `ungrab()` and run. Predict which lines disappear and which message appears. (Answer: nothing changes until isr's `start()` ends at 40 ns, which removes the grab with `UVM_ERROR [SEQFINERR]`; the order is the same here because isr ends right after its item. Make isr wait 30 ns after its item and the starvation becomes visible.)
 
-</InfoPage>
+**Checklist before moving on:**
+- [ ] I can name my sequencer's arbitration mode and say whether it reads priority.
+- [ ] Every priority I rely on is passed to `start()` or `start_item()`, and is ≥ 1.
+- [ ] Every `lock()`/`grab()` is paired with `unlock()`/`ungrab()` in the same task, with the same sequencer argument, on every path; I never lock twice expecting one `unlock()` to release both.
+- [ ] Children of a locking sequence are started with the parent argument (`start(sqr, this)` or `` `uvm_do ``).
+- [ ] No sequence waits for a resource between `start_item()` and `finish_item()`, or in `pre_do()`.
+- [ ] Any `is_relevant()` override has a matching `wait_for_relevant()` that waits on the real condition.
+- [ ] The test sets a timeout with `uvm_root::get().set_timeout(...)`, so a starved run ends in minutes, not at the 9200 s default.
+
+## Push Further
+
+### Expert: when is a lock granted? The standard and uvm-core
+
+IEEE 1800.2-2020 §14.2.5.5 says: "A lock request is arbitrated the same as any other request. A lock is granted after all previously arbitrated requests are completed and no other locks or grabs are blocking this sequence." §15.3.2.10 repeats it for the sequencer's `lock()`.
+
+What uvm-core 2020.3.1 does, as observed in `uvm_sequencer_base.svh` (`m_lock_req()`, `grant_queued_locks()`): `lock()` pushes the lock request to the back of the queue, then immediately grants the first lock request in the queue that is not blocked. With no other lock held, the lock is granted at once, ahead of older item requests, even while the driver is busy. Lock requests are also granted from `unlock()`, `item_done()`, `send_request()` and every arbitration. `DEVIATIONS.md` in the release does not list this; treat it as **tool-dependent**: other implementations may make the lock wait for earlier requests.
+
+Two more source observations:
+
+- **Grabs among grabs.** `grab()` uses `push_front`, so a later grab is queued ahead of an earlier waiting grab. The source marks this with "Missing: grabs get arbitrated behind other grabs".
+- **Nested locks.** A second `lock()` by the holder is granted at once and adds a second entry to the lock list. `unlock()` removes one entry, so `lock(); lock(); unlock();` still blocks everyone else. §14.2.5.7 says unlock "removes any locks obtained by this sequence".
+
+Write tests that hold under both readings: take the lock before you queue competing traffic, and test pre-emption with scenarios such as "a lock and a grab both wait behind a held lock", where every reading gives the same answer.
+
+### Expert: custom arbitration with UVM_SEQ_ARB_USER
+
+Set `UVM_SEQ_ARB_USER` and override `user_priority_arbitration()` in a sequencer subclass (§15.3.2.3). The argument `avail_sequences` holds **indexes into the arbitration queue** of the requests that are unblocked and relevant; `get_arbitration_sequence(index)` returns the sequence behind an index (§15.3.2.4). The override must return one of those indexes. In uvm-core 2020.3.1 anything else stops the run with `UVM_FATAL [Sequencer] Error in User arbitration, sequence N not available`.
+
+```systemverilog
+// snippet: "strict LIFO": highest sequence priority wins, the newest request breaks ties
+class lifo_sequencer extends uvm_sequencer #(bus_item);
+  `uvm_component_utils(lifo_sequencer)
+
+  function new(string name, uvm_component parent);
+    super.new(name, parent);
+    set_arbitration(UVM_SEQ_ARB_USER);
+  endfunction
+
+  virtual function int user_priority_arbitration(int avail_sequences[$]);
+    int best = avail_sequences[0];
+    foreach (avail_sequences[i]) begin
+      int idx = avail_sequences[i];
+      // avail_sequences is in queue order, so >= keeps the newest of equal priority
+      if (get_arbitration_sequence(idx).get_priority() >=
+          get_arbitration_sequence(best).get_priority())
+        best = idx;
+    end
+    return best;
+  endfunction
+endclass
+```
+
+A traced decision: the queue holds `0: bulk (100)`, `1: credit_seq (200)` whose `is_relevant()` returns 0, `2: urgent_a (300)` and `3: urgent_b (300)`. `avail_sequences` is `{0, 2, 3}`: the not-relevant request is filtered out before your function is called. The loop keeps 0, then 2 (300 ≥ 100), then 3 (300 ≥ 300), and returns 3, so `urgent_b` is granted.
+
+Two cautions. This override reads the *sequence's* current priority, not the priority captured in each request; `get_arbitration_sequence()` gives no access to the latter. And §15.3.2.3 says the function "is called even if there is only one sequence available", but uvm-core 2020.3.1 returns early with 0 or 1 candidates without calling it, so do not count calls to track state such as round-robin history (tool-dependent).
+
+### Expert: priority values, inheritance and capture
+
+- **The standard is inconsistent about 0.** §14.2.3.1 allows "a non-negative value of `this_priority`", while §14.2.5.2 says the value "shall be >= 1". Use values ≥ 1.
+- **What uvm-core 2020.3.1 checks.** `start()` stops with `UVM_FATAL [SEQPRI]` for a priority below -1. A priority of 0 is accepted there, but because `start_item()` copies the priority into the request, the request then has priority 0, and `UVM_FATAL [SEQITEMPRI]` fires as soon as a `WEIGHTED` or `STRICT_*` choice with two or more candidates reads it. A priority-0 sequence can therefore pass silently under FIFO and fail when someone changes the mode.
+- **Inheritance.** A child started with the default priority takes its parent's (§14.2.3.1). A library or virtual sequence started at 300 therefore runs all its children at 300, unless they pass their own value.
+- **Capture.** §14.2.5.2 says a changed priority is used "the next time that it arbitrates". In practice the request already holds its own copy from `start_item()`, so `set_priority()` reaches only requests queued afterwards.
+
+### Expert: fairness, randomness and reproducibility
+
+- **Starvation by design.** `STRICT_FIFO` and `STRICT_RANDOM` never grant a lower priority while a higher one waits. A background stream at priority 200 that never pauses starves everything at 100. Use `WEIGHTED` when every stream must make progress.
+- **Where the random draws come from.** `WEIGHTED`, `RANDOM` and `STRICT_RANDOM` call `$urandom_range()` (IEEE 1800-2023 §18.13.2) inside the arbitration code, which runs in the thread that called `get_next_item()`: the driver's. By random stability (§18.14, §18.14.2), a change in how many random numbers that thread draws, for example a driver that starts randomizing delays, changes every later arbitration pick for the same seed.
+- **Same-time starts.** Sequences started at the same simulation time queue in an order the simulator chooses (IEEE 1800-2023 §4.7). Under FIFO that order decides the first grant. When a test depends on it, stagger the starts (as Make It Work does with `#1ns`) or start sequentially.
+- **Regression strategy.** Run some seeds with `WEIGHTED` or `RANDOM` to flush out stimulus that silently assumes one ordering, and record the mode in the log.
+
+### Expert: locks, killed processes and cleanup
+
+A lock belongs to the **sequence object**, not to a thread. SystemVerilog has no exceptions or `finally` block, so a `disable` statement, a `disable fork` or a killed process can skip the `unlock()`.
+
+- If only an inner thread of `body()` dies, the lock stays in place until the sequence's `start()` finishes, which removes it with `SEQFINERR`.
+- In uvm-core 2020.3.1, if the process that called `start()` is killed, a process guard reports `UVM_WARNING [SEQPRTZMB]` and calls `kill()`; if `body()`'s own process is killed (an errant `disable fork`), `start()` reports `UVM_WARNING [SEQBDYZMB]` and calls `kill()`. Lock requests whose calling process died are removed with `UVM_ERROR [SEQLCKZMB]`. These guards are uvm-core features, not part of IEEE 1800.2.
+- `kill()` (§14.2.5.11) and `sqr.stop_sequences()` (§15.3.2.14) remove the sequence's requests and locks, including its children's. §14.2.5.11 says `post_body()` and `post_start()` then run; uvm-core 2020.3.1 kills the process that would run them, so they do not (tool-dependent). Never put the `unlock()` in `post_body()` as a safety net.
+
+### Expert: interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: the priority-300 sequence that still waits"
+  question="Your priority-300 sequence still waits behind priority-100 bulk traffic on the same sequencer. What are the most likely causes?"
+  options={[
+    { text: "The sequencer runs FIFO or RANDOM, which ignore priority; or the priority was set with set_priority() before start(), which overwrote it with 100; or another sequence holds a lock that blocks it.", isCorrect: true, feedback: "Correct. Check the mode, then where the priority is set, then is_grabbed() and current_grabber(). Under WEIGHTED it would also lose about a quarter of the grants by design." },
+    { text: "Priorities above 255 wrap around, so 300 is treated as 44.", isCorrect: false, feedback: "Priority is an int; no wrapping happens. Look at the mode and at where the priority is set." },
+    { text: "Priority only applies to sequences that call grab().", isCorrect: false, feedback: "Priority is read by WEIGHTED and STRICT_* for ordinary item requests. grab() is a separate mechanism." },
+    { text: "The driver chooses which sequence to serve by the size of each item.", isCorrect: false, feedback: "The driver only calls get_next_item(); the sequencer chooses, and item size plays no part." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: when is a lock granted?"
+  question="A sequence calls lock() while two older item requests from other sequences are waiting and nobody holds a lock. When is the lock granted?"
+  options={[
+    { text: "By IEEE 1800.2-2020 §14.2.5.5 it is arbitrated like any request and granted after the previously arbitrated requests complete; uvm-core 2020.3.1 grants it at once, ahead of the older item requests. Tests should not depend on the difference.", isCorrect: true, feedback: "Correct. Name both readings and show you write tests that hold under either, for example by taking the lock before competing traffic starts." },
+    { text: "Never until the driver calls get_next_item(), in every implementation.", isCorrect: false, feedback: "That is one reading of the standard, but uvm-core grants an unblocked lock inside lock() itself, even while the driver is busy." },
+    { text: "Only after every queued item request has been granted, including ones queued later.", isCorrect: false, feedback: "Neither the standard nor uvm-core waits for later requests." },
+    { text: "Immediately, and it also takes the sequencer from any sequence that holds a lock.", isCorrect: false, feedback: "No lock or grab pre-empts a current holder; it waits until the holder releases." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: pre-empting background traffic safely"
+  question="Design an interrupt sequence that pre-empts background traffic on a sequencer where a register read-modify-write sequence sometimes holds a lock."
+  options={[
+    { text: "Call grab() and ungrab() in the same task around the service items, start any helper sequences as children, and keep the read-modify-write lock short. The grab waits for the lock holder to unlock, then goes before every other waiting request.", isCorrect: true, feedback: "Correct. A grab cannot break an atomic read-modify-write, which is exactly what you want; the latency bound is the length of the longest lock." },
+    { text: "Give the interrupt sequence priority 1000 under FIFO.", isCorrect: false, feedback: "FIFO ignores priority, and even under STRICT_FIFO priority never gives exclusivity or pre-empts a lock." },
+    { text: "Call sqr.stop_sequences() when the interrupt fires, then start the routine.", isCorrect: false, feedback: "That kills the read-modify-write halfway, leaving the register in an unknown state, and kills the background stimulus too." },
+    { text: "Call rmw.unlock() on behalf of the read-modify-write sequence, then grab().", isCorrect: false, feedback: "It works mechanically, but it breaks the read-modify-write halfway, the exact bug its lock exists to prevent, and the RMW sequence's own unlock() later warns SQRUNL." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval check
+
+<Quiz
+  questions={[
+    {
+      question: "Under UVM_SEQ_ARB_WEIGHTED, sequence A (priority 100) and sequence B (priority 300) both have a request waiting, and no lock is held. What happens at the next grant?",
+      objective: 1,
+      answers: [
+        { text: "B always wins, because it has the higher priority", correct: false, feedback: "That is STRICT_FIFO or STRICT_RANDOM. WEIGHTED treats priority as odds, so A still wins sometimes." },
+        { text: "A wins, because it queued first", correct: false, feedback: "Queue order decides only under FIFO (or among equals under STRICT_FIFO). WEIGHTED draws at random." },
+        { text: "B wins with probability 75 % and A with 25 %", correct: true, feedback: "Correct: chance = priority ÷ sum of the waiting priorities = 300 ÷ 400 for B." },
+        { text: "Each wins with probability 50 %", correct: false, feedback: "That is UVM_SEQ_ARB_RANDOM, which ignores priority." }
+      ],
+      explanation: "WEIGHTED draws a random winner weighted by priority: 300/400 = 75 % for B, 100/400 = 25 % for A. 'B always' is the strict modes, 'A first' is FIFO, and 50/50 is RANDOM."
+    },
+    {
+      question: "Under UVM_SEQ_ARB_STRICT_FIFO, A (priority 100) queued at 0 ns and B (priority 300) queued at 5 ns. The driver asks for an item at 10 ns. Who is granted?",
+      objective: 1,
+      answers: [
+        { text: "A, because it queued first", correct: false, feedback: "That is the plain FIFO rule. STRICT_FIFO looks at priority first." },
+        { text: "Either, at random", correct: false, feedback: "STRICT_RANDOM picks at random among the highest priority; STRICT_FIFO uses age to break ties, and there is no tie here." },
+        { text: "B, because STRICT_FIFO takes the highest priority first and uses FIFO order only among equals", correct: true, feedback: "Correct. A waits until no higher-priority request is waiting, and can starve." },
+        { text: "Neither: the driver must call get_next_item() twice", correct: false, feedback: "One get_next_item() makes one choice among the queued requests." }
+      ],
+      explanation: "STRICT_FIFO filters to the highest waiting priority (300, only B), then takes the oldest of those. Plain FIFO would grant A; RANDOM-based modes would draw."
+    },
+    {
+      question: "You set UVM_SEQ_ARB_WEIGHTED and wrote seq.set_priority(500) before seq.start(sqr), but the traffic mix looks the same as with priority 100. Why?",
+      objective: 4,
+      answers: [
+        { text: "WEIGHTED ignores priority", correct: false, feedback: "WEIGHTED uses priority as a weight. FIFO and RANDOM are the modes that ignore it." },
+        { text: "start() set the priority again, to the default 100 for a root sequence; pass it as start(sqr, null, 500)", correct: true, feedback: "Correct. In uvm-core 2020.3.1 start() assigns its own priority argument, replacing what set_priority() stored earlier." },
+        { text: "Priorities only work together with grab()", correct: false, feedback: "Priority and grab() are independent mechanisms." },
+        { text: "The driver must call try_next_item() for priorities to apply", correct: false, feedback: "Every driver call that asks for an item triggers the same arbitration." }
+      ],
+      explanation: "A root sequence started with the default priority argument gets 100, overwriting the earlier set_priority(500). Pass the priority to start(), or call set_priority() inside body() before the start_item() calls it should affect."
+    },
+    {
+      question: "A sequence must send five items back to back to program a mode register, with no other sequence's item in between. What is the right tool?",
+      objective: 2,
+      answers: [
+        { text: "Raise its priority with set_priority(1000) inside body()", correct: false, feedback: "Priority only biases each grant; between two of your items another sequence can still win, and FIFO ignores priority entirely." },
+        { text: "Switch the sequencer to UVM_SEQ_ARB_RANDOM", correct: false, feedback: "RANDOM ignores priority and gives no exclusivity at all." },
+        { text: "Call grab() at the start of the test and never release it", correct: false, feedback: "That starves every other sequence for the rest of the test." },
+        { text: "Call lock() before the five items and unlock() after them, in the same task", correct: true, feedback: "Correct. While the lock is held, every other sequence's requests are blocked, so the five items reach the driver back to back." }
+      ],
+      explanation: "Atomicity needs exclusivity: lock()/unlock() (or grab()/ungrab() if it must also jump the queue). Priority never makes a burst atomic."
+    },
+    {
+      question: "A holds a lock until 30 ns. B calls lock() at 2 ns and C calls grab() at 4 ns; both wait. A calls unlock() at 30 ns. Who gets the sequencer next?",
+      objective: 2,
+      answers: [
+        { text: "B, because it asked first", correct: false, feedback: "A grab request is put at the front of the arbitration queue (§14.2.5.6), ahead of every waiting lock, whenever it was made." },
+        { text: "C, because its grab request sits at the front of the queue", correct: true, feedback: "Correct. When A unlocks, the first unblocked lock request in the queue is C's grab. B's lock waits until C calls ungrab()." },
+        { text: "Both: B holds the lock while C holds the grab", correct: false, feedback: "Locks and grabs share one lock list. While one sequence holds it, every other sequence is blocked, including other lock and grab requests." },
+        { text: "Whichever sequence has the oldest item request waiting", correct: false, feedback: "Lock and grab requests are granted before item requests are considered, and B and C both block everyone else once granted." }
+      ],
+      explanation: "This is the case where lock() and grab() differ: both wait behind a held lock, and the grab is at the front. The answer is the same under the standard's wording and in uvm-core 2020.3.1."
+    },
+    {
+      question: "A credit-limited sequence may only send when pool.credits > 0, and other sequences must keep running meanwhile. Where should it wait?",
+      objective: 3,
+      answers: [
+        { text: "Between start_item() and finish_item()", correct: false, feedback: "By then the sequence is granted: the driver is blocked in get_next_item() waiting for this item, so no other sequence can be served." },
+        { text: "In pre_do(), which is a task", correct: false, feedback: "pre_do() runs after the grant (§14.2.6.2), so waiting there stalls the driver too." },
+        { text: "Before start_item(), or inside start_item() by overriding is_relevant() and wait_for_relevant()", correct: true, feedback: "Correct. Before start_item() nothing is queued; with is_relevant() the request stays queued but is skipped until a credit exists, checked at every grant." },
+        { text: "In mid_do(), returning early when there are no credits", correct: false, feedback: "mid_do() is a void function that runs inside finish_item(), after the grant. It cannot delay or refuse the item." }
+      ],
+      explanation: "Only waits that happen before the grant leave the driver free. pre_do(), the gap after start_item() and mid_do() all come after the grant."
+    },
+    {
+      question: "A sequence overrides is_relevant() to return 0 while a FIFO is full, but does not override wait_for_relevant(). It is the only sequence with a request queued, and the FIFO is full. What happens in uvm-core 2020.3.1?",
+      objective: 3,
+      answers: [
+        { text: "The sequencer polls is_relevant() every NBA region until it returns 1", correct: false, feedback: "The sequencer does not poll. With no grantable request, it calls wait_for_relevant() and waits for it (or for the queue to change)." },
+        { text: "The default wait_for_relevant() returns at once, so the item is sent anyway", correct: false, feedback: "The default never returns: it detects the missing override and stops the run." },
+        { text: "The run stops with UVM_FATAL [RELMSM]: is_relevant() was implemented without defining wait_for_relevant()", correct: true, feedback: "Correct. §14.2.5.4 requires both overrides, and uvm-core enforces it when the default wait_for_relevant() is called." },
+        { text: "Nothing: the request is granted because it is the only one", correct: false, feedback: "is_relevant() is checked even for a single request; a not-relevant request is never granted." }
+      ],
+      explanation: "When no request can be granted, the sequencer calls wait_for_relevant() on each not-relevant sequence. The default implementation reports RELMSM if is_relevant() was overridden alone. A wait_for_relevant() that returns without time advancing more than 10 times gives SEQRELEVANTLOOP instead."
+    },
+    {
+      question: "top_seq calls lock(), then starts read_seq with read_seq.start(m_sequencer). The simulation hangs with no error. Why?",
+      objective: 4,
+      answers: [
+        { text: "read_seq inherits top_seq's lock, so it should have run; the hang is elsewhere", correct: false, feedback: "Only children are exempt from a lock. Without the parent argument read_seq is a new root sequence." },
+        { text: "read_seq has no parent, so top_seq's lock blocks it, while top_seq waits inside read_seq.start(): a deadlock", correct: true, feedback: "Correct. Start it as read_seq.start(m_sequencer, this) or with `uvm_do so is_child() exempts it." },
+        { text: "read_seq's request goes to the front of the queue and starves top_seq", correct: false, feedback: "That describes grab(). read_seq never gets past start_item() at all." },
+        { text: "UVM reports SEQFINERR at once and removes the lock", correct: false, feedback: "SEQFINERR appears only when a sequence's start() finishes while holding a lock. Here nothing finishes, so nothing is reported until the phase timeout." }
+      ],
+      explanation: "is_blocked() exempts only the lock holder and sequences whose parent chain reaches it. A child started without a parent is blocked by its own parent's lock, and the parent waits for the child: a silent deadlock."
+    },
+    {
+      question: "A virtual sequence calls grab(p_sequencer.data_sqr), sends its items through a child, then calls ungrab() with no argument. The log shows UVM_WARNING [SQRUNL] … called ungrab / unlock, but didn't have lock, and all other traffic on data_sqr stops. What is wrong?",
+      objective: 4,
+      answers: [
+        { text: "ungrab() with no argument acts on the virtual sequence's own sequencer, not data_sqr, so the grab on data_sqr is never released; call ungrab(p_sequencer.data_sqr)", correct: true, feedback: "Correct. The release must name the same sequencer as the grab." },
+        { text: "The warning is harmless: ungrab() released data_sqr anyway", correct: false, feedback: "If it had, the other traffic would resume. The warning says this sequencer had no lock from this sequence." },
+        { text: "ungrab() is a task and was not waited for", correct: false, feedback: "ungrab() and unlock() are functions; they return at once." },
+        { text: "Virtual sequences cannot grab physical sequencers", correct: false, feedback: "They can, by passing the sequencer handle to grab(); that is the standard way to pre-empt from a virtual sequence." }
+      ],
+      explanation: "lock(), grab(), unlock() and ungrab() default to the sequence's own sequencer. A virtual sequence must pass the physical sequencer to both the grab and the release."
+    }
+  ]}
+/>
+
+### Drill: the arbitration sandbox
+
+Use the [arbitration sandbox](/exercises/sequencer-arbitration) (the same model as the embedded one above) and predict before every step:
+
+1. **STRICT_FIFO starvation.** Load STRICT_FIFO, then set C to 4 items and A to priority 50. When does A get its second grant? Explain from the rule.
+2. **WEIGHTED odds.** Load WEIGHTED, predict B's chance at the first contested grant, then change the seed several times and compare the observed share with the rule.
+3. **What the lock bought.** Load lock(), then set B's "Before items" to nothing (no lock). Predict who gets grant #2 now, and explain why the answer changed.
+
+### Kata: credits without stalling
+
+**Goal:** write `credit_seq` (objective 3) and predict its grant times.
+
+**Setup.** Start from Make It Work. Remove `urgent` and `isr`, give `bulk` `n = 2`, keep the default FIFO mode, and add a `credit_pool` with `credits = 1`. Start `credit_seq` (`n = 2`) at 1 ns on the same sequencer, and let the test do `#35ns pool.credits++;`.
+
+**Requirements:**
+1. `credit_seq` stays queued while it has no credit, and other traffic keeps flowing.
+2. It spends one credit per item, and never sends an item without one.
+3. Before you run anything, write down the time and source of every grant.
+
+<details>
+<summary>Worked solution (try the kata first)</summary>
+
+The class is the `credit_seq` shown in "Waiting for a resource" above: `is_relevant()` returns `pool.credits > 0`, `wait_for_relevant()` does `wait (pool.credits > 0)`, and `body()` decrements `pool.credits` right after `start_item()` returns. The test side:
+
+```systemverilog
+// snippet: the kata's run_phase body (FIFO mode, from the Make It Work test)
+credit_pool pool = new();
+burst_seq   bulk = burst_seq::type_id::create("bulk");
+credit_seq  cs   = credit_seq::type_id::create("cs");
+pool.credits = 1;
+bulk.n = 2;
+cs.n   = 2;
+cs.pool = pool;
+phase.raise_objection(this);
+fork
+  bulk.start(sqr);
+  begin #1ns; cs.start(sqr); end
+  begin #35ns; pool.credits++; end      // the DUT frees one buffer
+join
+phase.drop_objection(this);
+```
+
+Declare `pool`, `bulk` and `cs` at the top of `run_phase`, before any statement. The grant order, traced through uvm-core 2020.3.1:
+
+| Time | Waiting | Credits | Grant | Why |
+|---|---|---|---|---|
+| 0 | bulk | 1 | bulk | only candidate |
+| 10 | cs (since 1 ns), bulk (since 10 ns) | 1 | cs | oldest and relevant; credits drop to 0 |
+| 20 | bulk, cs (not relevant) | 0 | bulk | cs is skipped; bulk's last item |
+| 30 | cs (not relevant) | 0 | none | the sequencer calls `cs.wait_for_relevant()`; the driver waits |
+| 35 | cs | 1 | cs | the credit arrives, `wait_for_relevant()` returns, the sequencer chooses again |
+
+The run ends at 45 ns. The driver sat idle from 30 to 35 ns only because nothing could legally go.
+
+**Extension.** Give bulk `n = 4` and predict again. The correct `credit_seq` is skipped at 30 ns, so bulk runs at 30 ns; cs takes its second item at 40 ns and the run ends at 60 ns. A version that waits for the credit *after* `start_item()` is granted at 30 ns with no credit, holds the driver idle until 35 ns while bulk is ready, and the run ends at 65 ns.
+
+</details>
+
+### Debug challenge: stimulus stops after an interrupt
+
+In the simulator below, choose the scenario **Stimulus stops after the interrupt**. Read the log, probe the testbench, name the component that owns the problem and pick a fix. Then explain in one sentence why "use `lock()` instead of `grab()`" does not help (objective 4).
+
+<DebuggingSimulator scenario="hang" />
+
+The flashcards for this lesson follow below, under "Reinforce the essentials".
+
+## References & Next Topics
+
+**Primary sources**
+- IEEE 1800.2-2020: §14.2.3.1 `start`; §14.2.5.1–§14.2.5.2 priority; §14.2.5.3–§14.2.5.4 `is_relevant`, `wait_for_relevant`; §14.2.5.5–§14.2.5.10 `lock`, `grab`, `unlock`, `ungrab`, `is_blocked`, `has_lock`; §14.2.5.11 `kill`; §14.2.6.2 `start_item`.
+- IEEE 1800.2-2020: §15.2.1.2 sequencer interface methods (`get_next_item`, `try_next_item`, `get`, `peek`); §15.3.2.2–§15.3.2.4 `is_child`, `user_priority_arbitration`, `get_arbitration_sequence`; §15.3.2.6 `wait_for_grant`; §15.3.2.8–§15.3.2.17 lock queries, `stop_sequences`, `is_grabbed`, `current_grabber`, `has_do_available`; §15.3.2.18–§15.3.2.19 `get_arbitration`, `set_arbitration`; §15.3.2.21 `set_max_zero_time_wait_relevant_count`; Annex F.2.4.1 `uvm_sequencer_arb_mode`; F.7.3.3 `set_timeout`.
+- uvm-core 2020.3.1 (Accellera reference implementation): `src/seq/uvm_sequencer_base.svh` (`m_choose_next_request()`, `grant_queued_locks()`, `m_lock_req()`, `m_unlock_req()`, `is_blocked()`, `m_wait_for_available_sequence()`, `remove_sequence_from_queues()`), `src/seq/uvm_sequence_base.svh` (`start()`, `start_item()`, `lock()`, `grab()`, `is_relevant()`, `wait_for_relevant()`, `kill()`), `src/base/uvm_object_globals.svh` (the mode enum), `src/macros/uvm_global_defines.svh` (`UVM_DEFAULT_TIMEOUT`).
+- IEEE 1800-2023: §4.7 nondeterminism; §18.13.2 `$urandom_range()`; §18.14 and §18.14.2 random and thread stability.
+
+**Prerequisites:** [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake) and [I-UVM-3A: Basic UVM Sequences and Items](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index).
+
+**Related**
+- [Interrupt Handling](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling): `grab()` driven by an interrupt event.
+- [Virtual Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences): coordinating several sequencers, where locks must name the physical sequencer.
+- [Sequence Libraries](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-libraries): library members run as children of the library, so they inherit its priority and its locks.
+- [A-UVM-8: Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index): shared agents in larger environments.
+- [E-DBG-1: Hang lab](/curriculum/T4_Expert/E-DBG-1_Advanced_UVM_Debug_Methodologies/hang-lab): triage of silent hangs, including leaked grabs.
+
+<NextLesson />

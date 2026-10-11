@@ -1,140 +1,924 @@
 ---
 title: "Virtual Sequences and Sequencers"
-description: "Learn how to use virtual sequences and sequencers to coordinate and synchronize stimulus across multiple agents in a UVM testbench."
+description: "Write a virtual sequence that configures the DUT before any data is sent, choose sequential start() or a fork pattern for each dependency between agents, and start it on a null sequencer or on a virtual sequencer."
+flashcards: "I-UVM-3B_Virtual_Sequences"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual (§14.1.2.2, §14.2.3, §14.2.4, §14.2.5.5–§14.2.5.11, §14.2.6.2–§14.2.6.3, §14.3, §15.3.2.14, Annex B.3.3, Annex F.7.3.3)"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog: Unified Hardware Design, Specification, and Verification Language (§9.3.2, §9.6.1, §9.6.3, §9.7)"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+  - title: "Accellera uvm-core reference implementation (src/seq/uvm_sequence_base.svh, uvm_sequence_item.svh, uvm_sequencer_base.svh, uvm_sequencer_param_base.svh, src/macros/uvm_sequence_defines.svh)"
+    type: "implementation"
+    identifier: "uvm-core 2020.3.1"
 ---
 
-import { Quiz, InteractiveCode } from '@/components/ui';
-import UvmVirtualSequencerDiagram from '@/components/diagrams/UvmVirtualSequencerDiagram';
+## Quick Take
 
-*Page 2 of 8 in I-UVM-3B. Read [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake) first.*
+- **What it is:** A **virtual sequence** is a UVM sequence that drives no items of its own. Its `body()` starts ordinary sequences (its **child sequences**) on the sequencers of several **agents**, and the order of the statements in that `body()` decides which agent works when. It needs handles to those agent sequencers, which it gets in one of two ways: the test copies them into the sequence and starts it with `vseq.start(null)`, or the sequence runs on a **virtual sequencer**, a driverless component that holds the handles.
+- **Why it matters:** Real designs have several interfaces that must work together. A typical rule is "write the configuration registers over the slow register bus before any packet arrives on the fast data bus". Each bus has its own agent, and no agent knows the others exist. The virtual sequence is the one place where cross-agent order is written down, so it is where ordering bugs are made and fixed.
+- **The Analogy:** A virtual sequence is a conductor's score, the agent sequencers are the musicians, and a virtual sequencer is the podium the score sits on. The score says who plays when; each musician plays only its own instrument. *Where it breaks:* the podium gives no cues, so all the timing comes from the score (`body()`); a score can be played with no podium at all (`start(null)`); and between the score's cues each musician also takes requests from other players (its own [arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration)), which the score cannot see.
 
-## The "Why" of Virtual Sequences
+**You will be able to:**
+1. Explain what a virtual sequence does and why neither a virtual sequencer nor the agent sequencers decide the order of traffic across agents.
+2. Write a virtual sequence that runs configuration before data on two agent sequencers, start it from a test on a null sequencer or on a virtual sequencer, and keep the run phase alive with an objection.
+3. Predict when each agent's first item starts and when `body()` returns for sequential `start()` calls, `fork…join`, `fork…join_any` and `fork…join_none`, and choose the pattern a stated dependency needs.
+4. Debug a virtual sequence from its symptom: `UVM_FATAL [SEQ]`, a silent hang until the run-phase timeout, a test that ends at 0 ns, a test that never ends, and `UVM_FATAL [SQRSNDREQCAST]`.
 
-In a complex DUT, several interfaces must work together. For example, you might need to write a configuration register over a slow I2C bus and then send a high-speed packet over Ethernet. Each interface has its own agent with its own sequencer. A **virtual sequence** is one sequence that starts and orders the sequences on all of them.
+This lesson builds on sequences, `start(sqr, parent)` and the two objection patterns from [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index); what `start_item()`, `finish_item()` and `item_done()` block on, from [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake); and `fork…join`, `join_any`, `join_none`, `wait fork` and `disable fork` from [F2C](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index).
 
-## Level 1: The Orchestra Conductor Analogy
+<BeforeYouStart />
 
-- **Agent sequencers** are the musicians. Each plays its own instrument (drives its own interface).
-- **The virtual sequencer** is the conductor's podium: it plays nothing, but it knows where every musician sits.
-- **The virtual sequence** is the score: it says who plays when.
+## Build Your Mental Model
 
-## Level 2: Core Mechanics
+**How to read this lesson.** The core path is the first four sections: the problem, what a virtual sequence is, a first virtual sequence line by line, and why two `start()` calls in a row give an order. Practitioner depth follows: objections, the fork patterns, the two ways to get the handles, null handles, pitfalls and debugging. Make It Work is a complete bench you can run, and Push Further holds the expert corner cases.
 
-### The virtual sequencer
+### The problem: one test, several agents
 
-A virtual sequencer is a plain `uvm_sequencer` with no driver. It gives the virtual sequence a place to run and holds handles to the real agent sequencers. Those handles are ordinary class references, assigned in the env's `connect_phase`. There is no TLM connection between the virtual sequencer and the agents.
+Recall the pieces from [I-UVM-2A](/curriculum/T2_Intermediate/I-UVM-2A_Component_Roles/index) and [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index). An **agent** bundles everything for one interface: a **sequencer**, which queues and grants **sequence items** (items for short); a **driver**, which pulls each item from the sequencer and wiggles the pins; and a monitor. A **sequence** generates items in its `body()` task and runs on exactly one sequencer, the one passed to its `start()`.
 
-### The virtual sequence
+This lesson's running example has two agents:
 
-A virtual sequence runs on the virtual sequencer, sends no items itself, and starts child sequences on the agent sequencers. A child runs on the sequencer passed to its `start()`.
+| Agent | Sequencer handle | Driver (called this in the diagrams) | Item | Sequence | Time per item |
+|---|---|---|---|---|---|
+| `cfg_agt` (register bus) | `cfg_agt.sqr`, type `cfg_sequencer` | `cfg_agt.drv`, type `cfg_driver` (`cfg_drv`) | `cfg_item` | `cfg_seq`: 2 register writes, C1 and C2 | 20 ns |
+| `data_agt` (data bus) | `data_agt.sqr`, type `data_sequencer` | `data_agt.drv`, type `data_driver` (`data_drv`) | `data_item` | `data_seq`: 3 payloads, D1 to D3 | 10 ns |
 
-Select each block in the map to see its role and code, and switch to **Handles in the sequence** to compare the design that needs no virtual sequencer:
+The rule: **no data item may start before both configuration writes have completed.** `cfg_seq` cannot enforce that, because it only knows `cfg_sqr`. `data_seq` cannot either. Something above both agents has to say "this, then that".
+
+### A virtual sequence starts sequences; it sends no items
+
+A **virtual sequence** is a class derived from `uvm_sequence` (IEEE 1800.2-2020 §14.3) whose `body()` calls `start()` on other sequences, its **children**, and never calls `start_item()` itself. Each child runs on the sequencer passed to its `start()` call and sends its items through that agent's sequencer and driver as usual. The virtual sequence is called *virtual* because it has no physical interface of its own: it coordinates sequences that do.
+
+Two facts follow, and juniors get both wrong:
+- **Items never pass through the virtual sequence.** There is no TLM connection from a virtual sequence (or a virtual sequencer) to any agent. It holds plain class **handles** (references) to the agent sequencers and hands them to `start()`.
+- **Only `body()` decides the order across agents.** Each agent sequencer grants items only among the sequences running on *it*; it has no idea another agent exists.
+
+The map below shows the two ways a virtual sequence reaches the agents. Select each block to read its role and code, toggle between **With a virtual sequencer** and **Handles in the sequence (start(null))**, then answer the prediction prompt before you read on.
 
 <UvmVirtualSequencerDiagram />
 
+**What the map showed.**
+- In both architectures the dotted lines are handles and the only item path is the solid pull connection inside each agent, from the driver's port to its sequencer's export.
+- `cfg_seq`'s items are arbitrated on `cfg_sqr`, the handle passed to `c.start()`. The virtual sequencer, when there is one, never sees an item; it is only where `soc_vseq` itself runs. (That rule assumes the handle is not null; a null handle behaves differently, as a later section shows.)
+- The two architectures differ only in *who supplies the handles*: the env (into a virtual sequencer) or the test (into the sequence). The order still comes from `body()` in both.
+
+### Your first virtual sequence, line by line
+
+This is `soc_vseq` in the style that needs no extra component: the sequence holds its own handles, the test fills them in and starts it with `vseq.start(null)`. Step through the walkthrough, and before each step predict what the highlighted lines are for.
+
 <InteractiveCode
   language="systemverilog"
-  fileName="virtual_sequence_example.sv"
-  code={`// 1. The virtual sequencer holds handles to the agent sequencers
-class virtual_sequencer extends uvm_sequencer;
-  \`uvm_component_utils(virtual_sequencer)
+  fileName="soc_vseq.sv"
+  code={`
+// snippet: soc_vseq and the test that starts it (full unit in Make It Work)
+class soc_vseq extends uvm_sequence;   // no item type: it sends no items
+  \`uvm_object_utils(soc_vseq)
 
-  pci_sequencer m_pci_sequencer;
-  eth_sequencer m_eth_sequencer;
+  cfg_sequencer  cfg_sqr;              // handles to the agent sequencers,
+  data_sequencer data_sqr;             // filled in by the test
 
-  function new(string name = "virtual_sequencer", uvm_component parent = null);
-    super.new(name, parent);
-  endfunction
-endclass
-
-// 2. The virtual sequence starts agent sequences through p_sequencer
-class virtual_sequence extends uvm_sequence;
-  \`uvm_object_utils(virtual_sequence)
-  \`uvm_declare_p_sequencer(virtual_sequencer)
-
-  function new(string name = "virtual_sequence");
+  function new(string name = "soc_vseq");
     super.new(name);
   endfunction
 
   virtual task body();
-    pci_sequence pci_seq;
-    eth_sequence eth_seq;
-    pci_seq = pci_sequence::type_id::create("pci_seq");
-    eth_seq = eth_sequence::type_id::create("eth_seq");
-
-    // Concurrent: both agents get traffic at the same time
-    fork
-      pci_seq.start(p_sequencer.m_pci_sequencer);
-      eth_seq.start(p_sequencer.m_eth_sequencer);
-    join
+    cfg_seq  c = cfg_seq::type_id::create("c");
+    data_seq d = data_seq::type_id::create("d");
+    c.start(cfg_sqr, this);   // returns after cfg_seq's last item_done()
+    d.start(data_sqr, this);  // so no data item starts before that
   endtask
 endclass
 
-// 3. In my_env: assign the handles
-function void connect_phase(uvm_phase phase);
-  vsqr.m_pci_sequencer = pci_agt.sqr;
-  vsqr.m_eth_sequencer = eth_agt.sqr;
-endfunction
-
-// 4. In my_test: start the virtual sequence inside an objection
-task run_phase(uvm_phase phase);
-  virtual_sequence vseq = virtual_sequence::type_id::create("vseq");
-  phase.raise_objection(this);
-  vseq.start(env.vsqr);
-  phase.drop_objection(this);
+// soc_test::run_phase
+virtual task run_phase(uvm_phase phase);
+  soc_vseq vseq = soc_vseq::type_id::create("vseq");
+  vseq.cfg_sqr  = env.cfg_agt.sqr;     // the handles this test wants
+  vseq.data_sqr = env.data_agt.sqr;
+  phase.raise_objection(this, "soc_vseq running");
+  vseq.start(null);                    // null: soc_vseq needs no sequencer
+  phase.drop_objection(this, "soc_vseq finished");
 endtask`}
   explanationSteps={[
-    { target: "2-11", title: "Virtual sequencer class", explanation: "A uvm_sequencer with no driver. The default item type is fine because no item ever goes through it." },
-    { target: "5-6", title: "Sequencer handles", explanation: "Plain handles to the agent sequencers. They stay null until the env assigns them in connect_phase (step 3)." },
-    { target: "14-16", title: "Virtual sequence and p_sequencer", explanation: "A uvm_sequence with no item type. `uvm_declare_p_sequencer declares a p_sequencer handle of type virtual_sequencer and casts m_sequencer to it when the sequence starts. Starting it on any other sequencer type is a UVM_FATAL [DCLPSQ]." },
-    { target: "18-20", title: "Constructor", explanation: "A sequence is an object, not a component: its constructor takes only a name." },
-    { target: "23-26", title: "Declarations first", explanation: "SystemVerilog requires variable declarations at the start of a block, before any statement. Create the child sequences after declaring them." },
-    { target: "29-32", title: "Starting agent sequences", explanation: "Each child runs on the sequencer passed to start(). fork...join starts both at the same time and waits for both. For ordering, call them one after another instead (page 3 compares the options)." },
-    { target: "37-40", title: "Wiring the handles", explanation: "connect_phase runs after every component is built, so the agent sequencers exist. A forgotten line leaves a null handle, and the child's start_item() fails with UVM_FATAL [SEQ]." },
-    { target: "43-48", title: "Starting from the test", explanation: "vseq.start() blocks until body() returns, so the objection keeps run_phase alive for the whole scenario." }
+    { target: "2-3", title: "A sequence with no item type", explanation: "soc_vseq extends uvm_sequence with its default parameters. It never calls start_item(), so the item type does not matter. It is still an object, registered with uvm_object_utils so the factory can create (and override) it." },
+    { target: "5-6", title: "Handles, not connections", explanation: "Two plain class handles of the agents' sequencer types. They are null until someone assigns them; nothing in UVM fills them in for you." },
+    { target: "12-14", title: "Declare, then create the children", explanation: "Each child is an ordinary agent sequence, created through the factory. Declarations come first in a task body; each object is started once." },
+    { target: "15", title: "c.start(cfg_sqr, this)", explanation: "cfg_seq runs on cfg_sqr. Passing this makes soc_vseq its parent: the child inherits the parent's priority and gets the hierarchical name vseq.c. start() blocks until cfg_seq's body() has finished, which is after the driver's item_done() for C2." },
+    { target: "16", title: "The order is the statement order", explanation: "d.start() is not reached until c.start() returns. That one fact is the whole config-before-data guarantee. No sequencer setting is involved." },
+    { target: "21-24", title: "The test supplies the handles", explanation: "The test can name env.cfg_agt.sqr because every component has been built and connected before run_phase starts. Forgetting one of these lines is the classic bug of this style." },
+    { target: "25-27", title: "start(null) inside an objection", explanation: "A virtual sequence needs no sequencer to run on, so null is legal. vseq.start() blocks until body() returns, so the objection keeps run_phase alive for the whole scenario." }
   ]}
 />
 
-## Level 3: Expert Insights
+### Why two `start()` calls in a row give an order
 
-**Without a virtual sequencer.** Because a virtual sequence sends no items, it does not need a sequencer at all. Give the sequence its own handle fields, have the test assign them, and call `vseq.start(null)`. Do not use `p_sequencer` in that style: it only exists when the sequence runs on a typed sequencer.
+`start()` is a blocking task (§14.2.3.1). It runs the child's `pre_start()`, `pre_body()`, `body()`, `post_body()` and `post_start()` (the two `*_body()` hooks only when its `call_pre_post` argument is 1, the default), and returns only when all of them have finished. A child's `body()` finishes after its last `finish_item()` returns, and `finish_item()` returns only when the driver calls `item_done()` for that item (§14.2.6.3). So in `soc_vseq`, `d.start()` cannot begin until the configuration driver has called `item_done()` for C2.
 
-**Ordering is your job.** `fork…join` runs children concurrently; sequential `start()` calls order them; `fork…join_none` returns immediately, so `body()` (and the test's `vseq.start()`) can finish before any item is driven. [UVM Virtual Sequencer: Dispatch Order](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer) lets you predict and compare all three on a timeline.
+<SequenceDiagram
+  title="Call order when soc_vseq runs cfg_seq, then data_seq"
+  caption="Each start() returns only when its child's body() has finished, so data_seq starts at 40 ns, after the last configuration item_done()."
+  participants={[
+    { id: "test", label: "soc_test", kind: "test" },
+    { id: "vseq", label: "vseq", sublabel: "soc_vseq", kind: "sequence" },
+    { id: "c", label: "c", sublabel: "cfg_seq on cfg_sqr", kind: "sequence" },
+    { id: "d", label: "d", sublabel: "data_seq on data_sqr", kind: "sequence" }
+  ]}
+  messages={[
+    { from: "test", to: "vseq", label: "vseq.start(null) at 0 ns" },
+    { from: "vseq", to: "c", label: "c.start(cfg_sqr, this)" },
+    { kind: "divider", label: "0 to 40 ns: C1 and C2 go through cfg_sqr to cfg_drv, 20 ns each" },
+    { kind: "return", from: "c", to: "vseq", label: "start() returns at 40 ns, after item_done() for C2" },
+    { from: "vseq", to: "d", label: "d.start(data_sqr, this)" },
+    { kind: "divider", label: "40 to 70 ns: D1, D2, D3 go through data_sqr to data_drv, 10 ns each" },
+    { kind: "return", from: "d", to: "vseq", label: "start() returns at 70 ns" },
+    { kind: "return", from: "vseq", to: "test", label: "body() done: vseq.start() returns at 70 ns" },
+    { kind: "note", from: "test", label: "the test drops its objection; run_phase can end" }
+  ]}
+/>
 
-**Retention tip:** Virtual sequencer = podium (holds handles). Virtual sequence = score (decides who plays when). Agent sequencers = musicians (each arbitrates its own items).
+Notice what the guarantee is: *the configuration handshakes have completed*. That equals "the DUT is configured" only if the configuration driver calls `item_done()` after the write has really finished on the bus. Push Further returns to this ("handshake order is not pin order").
 
-## Check Your Understanding
+### Who keeps the test alive
 
-<Quiz questions={[
+The **run phase** (`run_phase`) is a task phase that ends as soon as no component holds an **objection**, a counter that says "I am still busy" ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)). A virtual sequence is usually the top of the stimulus, so it is what the objection must cover. Use one of the two patterns you met in I-UVM-3A:
+
+- **The test objects around `vseq.start()`**, as in the walkthrough. Simple and explicit.
+- **The virtual sequence objects for itself:** `vseq.set_starting_phase(phase); vseq.set_automatic_phase_objection(1);` before `vseq.start(...)` (§14.2.4.2, §14.2.4.4). `start()` then raises an objection before `pre_start()` and drops it after `post_start()`.
+
+The rule is the same whichever way the handles arrive: `set_automatic_phase_objection(1)` raises nothing unless `set_starting_phase()` was called, because `get_starting_phase()` returns null otherwise (§14.2.4.1). Starting the sequence on a virtual sequencer does not supply a starting phase.
+
+**Children never object.** `cfg_seq` and `data_seq` run inside `vseq.start()`, which is already covered. A child that raises its own objection only adds noise, and a forever-running child that raises one keeps the test alive for ever.
+
+### Running work in parallel: the fork patterns
+
+Sequential `start()` calls are the right tool for "this, then that". When two agents should work *at the same time*, `body()` uses SystemVerilog's parallel blocks (IEEE 1800-2023 §9.3.2). Each branch of a `fork` runs as its own **process** (a thread of execution); the keyword after the branches decides when the parent continues:
+
+| Pattern in `body()` | When `body()` continues | Use it for | Risk |
+|---|---|---|---|
+| `c.start(...); d.start(...);` | after each child finishes, one at a time | "configure, then send data" | none: it is the safe default |
+| `fork c.start(...); d.start(...); join` | when **every** branch has finished | independent traffic that must all complete | it does not order the branches; a branch that never ends hangs `body()` |
+| `fork … join_any` | when **the first** branch finishes; the others keep running | a race against a watchdog | the losers keep running; stopping them with `disable fork` can kill more than you meant |
+| `fork … join_none` | **at once**; the branches start when the parent next blocks (§9.3.2) | background traffic that the end of the test does not depend on | if nothing waits, `body()` returns, the test drops its objection and the run phase ends |
+
+**Predict first.** With the timings in the table at the top (2 configuration items of 20 ns, 3 data items of 10 ns), write down for each pattern when D1 starts on the data driver and when `body()` returns. Then compare with the three waveforms below. In each one a column is 10 ns, the `10 ns` row is a time grid, not a real clock, and the `cfg_drv` and `data_drv` rows show the item each driver is working on.
+
+<TimingDiagram
+  title="Pattern 1: one start() after another"
+  caption="c.start(); d.start(); in order. D1 waits until configuration is done at 40 ns (marker 40), and body() returns when D3 completes at 70 ns (marker 70)."
+  edges={8}
+  signals={[
+    { name: "10 ns", kind: "clock" },
+    { name: "cfg_drv", kind: "bus", values: ["idle", "C1", "C1", "C2", "C2", "idle", "idle", "idle"] },
+    { name: "data_drv", kind: "bus", values: ["idle", "idle", "idle", "idle", "idle", "D1", "D2", "D3"] }
+  ]}
+  markers={[
+    { edge: 4, tone: "info", label: "40 ns: C2 completes, c.start() returns and d.start() begins", short: "40" },
+    { edge: 7, tone: "pass", label: "70 ns: D3 completes and body() returns", short: "70" }
+  ]}
+/>
+
+<TimingDiagram
+  title="Pattern 2: fork…join"
+  caption="fork c.start(); d.start(); join. D1 runs from 0 ns, while C1 is still being written (marker D1: the order rule is broken, and nothing reports it). Data is done at 30 ns, and body() returns at 40 ns, when the longer branch ends (marker 40)."
+  edges={8}
+  signals={[
+    { name: "10 ns", kind: "clock" },
+    { name: "cfg_drv", kind: "bus", values: ["idle", "C1", "C1", "C2", "C2", "idle", "idle", "idle"] },
+    { name: "data_drv", kind: "bus", values: ["idle", "D1", "D2", "D3", "idle", "idle", "idle", "idle"] }
+  ]}
+  markers={[
+    { edge: 1, tone: "fail", label: "D1 is driven while the configuration is still being written: the order rule is broken, and nothing reports it", short: "D1" },
+    { edge: 3, tone: "info", label: "30 ns: D3 completes; the data branch ends, the configuration branch is still running", short: "30" },
+    { edge: 4, tone: "info", label: "40 ns: C2 completes; the last branch ends, so join lets body() return", short: "40" }
+  ]}
+/>
+
+<TimingDiagram
+  title="Pattern 3: fork…join_none with nothing waiting"
+  caption="fork c.start(); d.start(); join_none. body() returns at 0 ns, the test drops its objection and the run phase ends at 0 ns (marker end). The children may reach their first item, so the log can show start C1 and start D1 at 0 ns, but no item completes: from 0 ns on both rows read ended."
+  edges={8}
+  signals={[
+    { name: "10 ns", kind: "clock" },
+    { name: "cfg_drv", kind: "bus", values: ["idle", "ended", "ended", "ended", "ended", "ended", "ended", "ended"] },
+    { name: "data_drv", kind: "bus", values: ["idle", "ended", "ended", "ended", "ended", "ended", "ended", "ended"] }
+  ]}
+  markers={[
+    { edge: 0, tone: "fail", label: "0 ns: body() returns, the test drops its objection and the run phase ends before any item completes", short: "end" }
+  ]}
+/>
+
+**What the waveforms showed.**
+- **One after another** is the only pattern that meets the rule: D1 starts at 40 ns, `body()` returns at 70 ns.
+- **`fork…join` runs the agents in parallel; it does not order them.** D1 runs at 0 ns. The run passes silently unless a checker looks at the order, which is why the [Coordinated Attack lab](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab) adds one. `body()` returns when the longer branch (configuration) ends, at 40 ns.
+- **`fork…join_none` with nothing waiting ends the test.** `vseq.start()` returns at 0 ns, so the test carries on at 0 ns (the Make It Work bench prints its `TEST` line then), drops its objection, and the run phase ends and kills the children. The children do start at 0 ns and the drivers may even print `start C1` and `start D1`; no item completes.
+- **`fork…join_any`** (not drawn) would return at 30 ns, when `data_seq` finishes first, while C2 is still being written. If `body()` then returns, the run ends at 30 ns in the middle of C2.
+
+The [dispatch explorer on the next page](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer) runs the same three patterns on a virtual sequencer, with a timeline you can replay.
+
+**Patterns you will write in real virtual sequences.** Each fragment is a `body()` of `soc_vseq` or an extension of it; `bg` is an endless background sequence (for example a responder that answers the DUT's requests for ever) on some agent sequencer `rsp_sqr`.
+
+```systemverilog
+// snippet: configure, then run two independent streams together
+c.start(cfg_sqr, this);              // phase 1: in order
+fork                                 // phase 2: both streams, both must finish
+  d.start(data_sqr, this);
+  s.start(cfg_sqr, this);            // s: a second cfg_seq object, e.g. status reads
+join
+```
+
+```systemverilog
+// snippet: a background responder alongside an ordered foreground
+fork
+  bg.start(rsp_sqr, this);           // never ends on its own
+join_none
+c.start(cfg_sqr, this);              // the foreground is still in order
+d.start(data_sqr, this);
+bg.kill();                           // stop it on purpose before body() returns
+```
+
+```systemverilog
+// snippet: a watchdog race, isolated so disable fork kills only this race
+fork begin                           // isolation: the race's own parent process
+  fork
+    d.start(data_sqr, this);
+    begin #1us; `uvm_fatal("VSEQ_TO", "data_seq still running after 1 us") end
+  join_any
+  disable fork;                      // kills the timer; d has already finished
+end join
+```
+
+```systemverilog
+// snippet: N copies in parallel, one sequence object and one handle per branch
+data_seq ds[4];                      // data_sqrs[4]: four data sequencer handles
+foreach (ds[i]) begin
+  ds[i] = data_seq::type_id::create($sformatf("ds%0d", i));
+  fork
+    automatic int k = i;             // per-branch copy, set before the branch spawns
+    ds[k].start(data_sqrs[k], this);
+  join_none
+end
+wait fork;                           // waits for every immediate child process
+```
+
+Why each detail is there:
+- **`bg.kill()`** stops the background sequence explicitly (§14.2.5.11). Without it, the run phase kills the process that started `bg` when the objection drops, and uvm-core 2020.3.1 reacts with a warning (see Push Further).
+- **The isolation wrapper `fork begin … end join`.** `disable fork` terminates *every* descendant of the calling process (§9.6.3), not just the branches of the last fork. Without the wrapper it would also kill `bg` and any other child started earlier in the same `body()`.
+- **`automatic int k = i`.** Branches of a `join_none` start only after the loop has moved on, so a branch that read `i` directly would see a later value. A variable declared at the top of the `fork` is initialized each time execution enters the fork, before its branch is spawned, which gives every branch its own copy (§9.3.2 uses exactly this idiom).
+- **`wait fork`** waits for every *immediate* child process of the caller (§9.6.1), including an endless `bg` forked earlier. Use it only when every child forked so far in this process is meant to finish, or isolate the forks you want to wait for with `fork begin … end join`.
+
+To see these process rules step by step, replay the *timeout-disable-fork* and *wait-fork* scenarios of the fork visualizer in [F2C: Waiting for and cleaning up threads](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index#waiting-for-and-cleaning-up-threads). Map them onto a virtual sequence like this: `bg.start()` is an endless immediate child process of `body()`, exactly like the background monitor there, so `disable fork` without a wrapper kills it and `wait fork` waits for it for ever.
+
+### Where the handles come from: a null sequencer or a virtual sequencer
+
+So far the test copied the handles into the sequence. The other standard style puts them in a **virtual sequencer**: a `uvm_sequencer` component with no driver, built by the env next to the agents, whose handle fields the env assigns in `connect_phase`. The virtual sequence then runs *on* that component, and reaches the handles through a typed handle called `p_sequencer`, which the `` `uvm_declare_p_sequencer(soc_vsqr) `` macro declares and casts when the sequence starts (Annex B.3.3). The body is the same; only the handle expressions and the `start()` argument change:
+
+```systemverilog
+// snippet: the same body() when soc_vseq runs on a virtual sequencer soc_vsqr
+virtual task body();
+  cfg_seq  c = cfg_seq::type_id::create("c");
+  data_seq d = data_seq::type_id::create("d");
+  c.start(p_sequencer.cfg_sqr, this);   // handles now live in soc_vsqr
+  d.start(p_sequencer.data_sqr, this);
+endtask
+
+// in the test: no handle copying; start on the virtual sequencer
+vseq.start(env.vsqr);
+```
+
+The [next lesson, the virtual sequencer](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer), builds `soc_vsqr`, explains `p_sequencer` and the macro in full, and compares the alternatives. What matters here is how the choice changes the *sequence*:
+
+| | `vseq.start(null)`, handles set by the test | `vseq.start(env.vsqr)`, handles in a virtual sequencer |
+|---|---|---|
+| Who assigns the handles | every test that starts the sequence | the env, once, in `connect_phase` |
+| Extra component | none | a virtual sequencer per env |
+| `p_sequencer` | not used (with `start(null)` it would be null) | the way `body()` reaches the handles |
+| A child started with a null handle and `this` as parent | `UVM_FATAL [SEQ]` at its first `start_item()` | a silent hang (next section) |
+| Transaction recording and the sequence's full name | not recorded; the name is just `vseq` | recorded on the virtual sequencer; the name includes its path |
+| Objections | the test objects, or `set_starting_phase()` plus the automatic objection | the same rules: starting on a sequencer supplies no starting phase |
+
+Both styles are in wide use; teams usually pick one per project and keep it.
+
+### What `start()` does with a null handle
+
+A forgotten handle assignment is the most common virtual-sequence bug, and its symptom depends on the parent. When `start(sequencer, parent)` begins, it calls `set_item_context()` (§14.1.2.2). In uvm-core 2020.3.1, if `sequencer` is null *and* a parent was given, the child takes **the parent's sequencer** instead (`uvm_sequence_item.svh`, `set_item_context()`).
+
+<SequenceDiagram
+  title="A null child handle, with and without a sequencer on the parent"
+  caption="The same forgotten handle gives a fatal error when soc_vseq was started with start(null), and a silent hang when soc_vseq runs on the virtual sequencer soc_vsqr, a sequencer component with no driver."
+  columnWidth={200}
+  participants={[
+    { id: "vseq", label: "vseq", sublabel: "soc_vseq", kind: "sequence" },
+    { id: "d", label: "d", sublabel: "data_seq", kind: "sequence" },
+    { id: "vsqr", label: "soc_vsqr", sublabel: "no driver", kind: "sequencer" }
+  ]}
+  messages={[
+    { kind: "divider", label: "Style 1: vseq.start(null), and the test never set vseq.data_sqr" },
+    { from: "vseq", to: "d", label: "d.start(data_sqr, this): data_sqr is null" },
+    { kind: "note", from: "vseq", to: "d", label: "set_item_context(): no handle, and the parent's sequencer is null too" },
+    { kind: "self", from: "d", label: "start_item(req)", tone: "error" },
+    { kind: "note", from: "vseq", to: "d", label: "UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied to start item in vseq.d", tone: "error" },
+    { kind: "divider", label: "Style 2: vseq.start(env.vsqr); the env never set vsqr.data_sqr, so it is null" },
+    { from: "vseq", to: "d", label: "d.start(p_sequencer.data_sqr, this)" },
+    { kind: "note", from: "d", to: "vsqr", label: "set_item_context(): falls back to the parent's sequencer, soc_vsqr" },
+    { from: "d", to: "vsqr", label: "start_item(req): wait_for_grant()", tone: "error" },
+    { kind: "note", from: "d", to: "vsqr", label: "no driver ever asks soc_vsqr for an item, so the grant never comes: a hang until UVM_FATAL [PH_TIMEOUT]", tone: "error" }
+  ]}
+/>
+
+Without a parent (`d.start(null_handle)`) both styles give the `UVM_FATAL [SEQ]` of style 1. The hang of style 2 is the dangerous one: nothing is printed until the run-phase timeout, which the standard leaves implementation specific (Annex F.7.3.3) and uvm-core 2020.3.1 sets to 9200 s of simulated time (`UVM_DEFAULT_TIMEOUT` in `uvm_global_defines.svh`), unless the test sets a shorter one with `uvm_root::get().set_timeout()` in its `build_phase`. The cheap defence is a null check at the top of `body()`, as Make It Work shows.
+
+### Pitfalls and misconceptions
+
+- **"The virtual sequencer decides which agent goes first."** It holds handles and nothing else; it has no scheduling logic. The order is the statement order in `body()`.
+- **"`fork…join` makes the children run in order."** It runs them in parallel and waits for all. Two `start()` calls without a fork are the ordered form.
+- **"`fork…join_none` keeps the test alive until the children finish."** It returns at once. The objection covers `vseq.start()`, which returns as soon as `body()` does.
+- **"Items flow through the virtual sequencer."** Items go from each child to the sequencer passed to its `start()`. A virtual sequencer has no TLM connection to the agents.
+- **"`set_automatic_phase_objection(1)` is enough."** Without `set_starting_phase(phase)` it raises nothing, and the run phase ends at 0 ns with no error.
+- **Reusing one sequence object in two parallel branches.** A sequence object can run only once at a time; the second `start()` stops with `UVM_FATAL [SEQ_NOT_DONE] … already started` (uvm-core 2020.3.1). Create one object per branch.
+- **A child on the wrong agent.** `cfg_seq` started on `data_sqr` compiles, because `start()` takes any `uvm_sequencer_base`, but the first `finish_item()` fails with `UVM_FATAL [SQRSNDREQCAST] send_request failed to cast sequence item` (uvm-core 2020.3.1, `uvm_sequencer_param_base.svh`).
+
+### Debugging: symptom, cause, fix
+
+| What you see | Likely cause | Fix |
+|---|---|---|
+| `UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied to start item in vseq.d` | a child handle is null and the parent has no sequencer (or no parent was passed) | assign the handle; add a null check at the top of `body()` |
+| nothing for a long time, then `UVM_FATAL [PH_TIMEOUT]`; the child never gets past `start_item()` | a child handle is null, `this` was passed as parent, and the parent runs on a virtual sequencer | assign the handle in `connect_phase`; add a null check; set a short timeout while debugging |
+| the `TEST` line appears too early (at 0 ns, or before the last item), with few driver lines, and the run ends right after it | `fork…join_none` (`TEST` at 0 ns) or `fork…join_any` (`TEST` when the first branch ends) in `body()`, with nothing waiting for the rest | wait for the work that matters: `fork…join`, or sequential `start()` calls |
+| the run ends at 0 ns with no `TEST` line and no error; at most a `start` line from each driver | no objection around `vseq.start()`; or `set_automatic_phase_objection(1)` without `set_starting_phase(phase)` | raise and drop an objection in the test, or call `set_starting_phase(phase)` before `start()` |
+| every item checks out, but the test never ends | an endless child inside `fork…join`, or `wait fork` that also waits for an endless child | start endless children with `join_none` and stop them with `kill()`; isolate the forks you wait for |
+| data appears on the bus before configuration has finished | the children are in a `fork…join`; or the configuration driver calls `item_done()` before the write has completed | start them one after another; fix the driver (Push Further) |
+| `UVM_FATAL [SQRSNDREQCAST] send_request failed to cast sequence item` | a child was started on another agent's sequencer | pass the sequencer whose item type matches the child |
+| `UVM_FATAL [SEQ_NOT_DONE] Sequence … already started` | one sequence object started twice while still running | create a new object per branch |
+
+Two habits make these quick to find: name every child after its role (`"c"`, `"d"`), so the full names in the log (`vseq.d`) point at the guilty line; and log one line per phase of `body()` at `UVM_MEDIUM` verbosity ([I-UVM-1D](/curriculum/T2_Intermediate/I-UVM-1D_Reporting_and_Run_Control/index)).
+
+### Where virtual sequences live in a real testbench
+
+- **One top virtual sequence per test.** The test creates it, sets its knobs (counts, modes) and handles, and starts it inside the objection. The test itself stays short.
+- **Virtual sequences start other virtual sequences.** A subsystem-level virtual sequence starts block-level virtual sequences as children (`blk.start(null, this)` after copying the handles down), so block scenarios are reused unchanged at subsystem level. Passing `this` keeps the hierarchy in names and lets `kill()` on the top sequence stop everything below it.
+- **A base virtual sequence holds the handles.** Projects that use the `start(null)` style usually write one `base_vseq` with the handle fields and one helper that copies them from the env; every scenario extends it.
+- **When not to use one.** A test that drives a single agent does not need a virtual sequence; start the agent sequence directly. Cross-agent *checking* (for example "no data before configuration") belongs in a scoreboard or checker, not in the virtual sequence; [A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index) builds both into a multi-agent environment.
+
+### Recap
+
+- A virtual sequence starts child sequences on agent sequencers and sends no items itself; each child's items go to the sequencer passed to its `start()`.
+- `start()` blocks until the child has finished, so two calls in a row give an order; `fork…join` gives parallelism, not order; `fork…join_none` with nothing waiting ends the test.
+- The handles come from the test (`vseq.start(null)`) or from a virtual sequencer (`p_sequencer`, next lesson). The order comes from `body()` in both.
+- The test, or the virtual sequence with a starting phase, owns the objection; children never object.
+- A null child handle gives `UVM_FATAL [SEQ]`, or a silent hang when `this` is the parent and the parent runs on a virtual sequencer.
+
+## Make It Work
+
+### A configured-before-data bench you can run
+
+This file is the whole lesson in one unit: two items, two sequences, two agents whose drivers have no pins (each driver takes the time a real transfer would and prints what it is doing), an env, `soc_vseq` in the `start(null)` style with a null check, a test and `tb_top`. No interface, no DUT and no configuration database are needed, so you can focus on the order.
+
+**Run it.** Compile uvm-core 2020.3.1 (or your simulator's built-in UVM library) together with this file, with `tb_top` as the top module, and run it. `run_test("soc_test")` names the test. The exact switches are tool-dependent. No simulator was available to the course authors, so the code was checked by reading it against IEEE 1800-2023 and the uvm-core 2020.3.1 source.
+
+```systemverilog
+// compile
+// tb_top.sv: two agents, one virtual sequence, configuration before data
+`include "uvm_macros.svh"
+
+package soc_pkg;
+  timeunit 1ns;
+  timeprecision 1ps;
+
+  import uvm_pkg::*;
+
+  // ---------------------------------------------------------------- items
+  class cfg_item extends uvm_sequence_item;        // one register write
+    rand bit [7:0]  addr;
+    rand bit [31:0] data;
+    `uvm_object_utils(cfg_item)
+    function new(string name = "cfg_item");
+      super.new(name);
+    endfunction
+  endclass
+
+  class data_item extends uvm_sequence_item;       // one data-bus payload
+    rand bit [15:0] payload;
+    `uvm_object_utils(data_item)
+    function new(string name = "data_item");
+      super.new(name);
+    endfunction
+  endclass
+
+  // ------------------------------------------------------- agent sequences
+  class cfg_seq extends uvm_sequence #(cfg_item);   // the two config writes
+    `uvm_object_utils(cfg_seq)
+    function new(string name = "cfg_seq");
+      super.new(name);
+    endfunction
+    virtual task body();
+      for (int i = 1; i <= 2; i++) begin
+        req = cfg_item::type_id::create($sformatf("C%0d", i));
+        start_item(req);
+        if (!req.randomize()) `uvm_fatal("RAND", "cfg_item failed to randomize")
+        finish_item(req);                           // returns after item_done()
+      end
+    endtask
+  endclass
+
+  class data_seq extends uvm_sequence #(data_item); // three payloads
+    `uvm_object_utils(data_seq)
+    function new(string name = "data_seq");
+      super.new(name);
+    endfunction
+    virtual task body();
+      for (int i = 1; i <= 3; i++) begin
+        req = data_item::type_id::create($sformatf("D%0d", i));
+        start_item(req);
+        if (!req.randomize()) `uvm_fatal("RAND", "data_item failed to randomize")
+        finish_item(req);
+      end
+    endtask
+  endclass
+
+  // -------------------------------------------- drivers with no pins
+  class cfg_driver extends uvm_driver #(cfg_item);
+    `uvm_component_utils(cfg_driver)
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    virtual task run_phase(uvm_phase phase);
+      forever begin
+        seq_item_port.get_next_item(req);
+        `uvm_info("CFG_DRV", {"start ", req.get_name()}, UVM_LOW)
+        #20ns;                        // stands in for one register write
+        seq_item_port.item_done();    // the write is complete: release finish_item()
+      end
+    endtask
+  endclass
+
+  class data_driver extends uvm_driver #(data_item);
+    `uvm_component_utils(data_driver)
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    virtual task run_phase(uvm_phase phase);
+      forever begin
+        seq_item_port.get_next_item(req);
+        `uvm_info("DATA_DRV", {"start ", req.get_name()}, UVM_LOW)
+        #10ns;                        // stands in for one data transfer
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
+
+  typedef uvm_sequencer #(cfg_item)  cfg_sequencer;
+  typedef uvm_sequencer #(data_item) data_sequencer;
+
+  // --------------------------------------------------------------- agents
+  class cfg_agent extends uvm_agent;              // always active here
+    `uvm_component_utils(cfg_agent)
+    cfg_sequencer sqr;
+    cfg_driver    drv;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      sqr = cfg_sequencer::type_id::create("sqr", this);
+      drv = cfg_driver::type_id::create("drv", this);
+    endfunction
+    virtual function void connect_phase(uvm_phase phase);
+      drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+  endclass
+
+  class data_agent extends uvm_agent;
+    `uvm_component_utils(data_agent)
+    data_sequencer sqr;
+    data_driver    drv;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      sqr = data_sequencer::type_id::create("sqr", this);
+      drv = data_driver::type_id::create("drv", this);
+    endfunction
+    virtual function void connect_phase(uvm_phase phase);
+      drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+  endclass
+
+  class soc_env extends uvm_env;
+    `uvm_component_utils(soc_env)
+    cfg_agent  cfg_agt;
+    data_agent data_agt;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      cfg_agt  = cfg_agent::type_id::create("cfg_agt", this);
+      data_agt = data_agent::type_id::create("data_agt", this);
+    endfunction
+  endclass
+
+  // ------------------------------------------------- the virtual sequence
+  class soc_vseq extends uvm_sequence;            // sends no items itself
+    `uvm_object_utils(soc_vseq)
+
+    cfg_sequencer  cfg_sqr;                       // set by the test
+    data_sequencer data_sqr;
+
+    function new(string name = "soc_vseq");
+      super.new(name);
+    endfunction
+
+    virtual task body();
+      cfg_seq  c = cfg_seq::type_id::create("c");
+      data_seq d = data_seq::type_id::create("d");
+      // Fail loudly now rather than at start_item() (or hang, on a vsqr)
+      if (cfg_sqr == null || data_sqr == null)
+        `uvm_fatal("VSEQ_HANDLES", "set cfg_sqr and data_sqr before start()")
+      c.start(cfg_sqr, this);    // blocks until C2's item_done()
+      d.start(data_sqr, this);   // only then does data start
+    endtask
+  endclass
+
+  // ------------------------------------------------------------------ test
+  class soc_test extends uvm_test;
+    `uvm_component_utils(soc_test)
+    soc_env env;
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      env = soc_env::type_id::create("env", this);
+    endfunction
+    virtual task run_phase(uvm_phase phase);
+      soc_vseq vseq = soc_vseq::type_id::create("vseq");
+      vseq.cfg_sqr  = env.cfg_agt.sqr;
+      vseq.data_sqr = env.data_agt.sqr;
+      phase.raise_objection(this, "soc_vseq running");
+      vseq.start(null);                           // no sequencer needed
+      `uvm_info("TEST", "soc_vseq finished", UVM_LOW)
+      phase.drop_objection(this, "soc_vseq finished");
+    endtask
+  endclass
+endpackage
+
+module tb_top;
+  timeunit 1ns;
+  timeprecision 1ps;
+
+  import uvm_pkg::*;
+  import soc_pkg::*;
+
+  initial run_test("soc_test");
+endmodule
+```
+
+**Expected output** (illustrative, not captured from a simulator; file and line fields are shown as `…`, the time unit printed depends on how your simulator compiles `uvm_pkg`, and banner lines are left out):
+
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test soc_test...
+UVM_INFO tb_top.sv(…) @ 0: uvm_test_top.env.cfg_agt.drv [CFG_DRV] start C1
+UVM_INFO tb_top.sv(…) @ 20: uvm_test_top.env.cfg_agt.drv [CFG_DRV] start C2
+UVM_INFO tb_top.sv(…) @ 40: uvm_test_top.env.data_agt.drv [DATA_DRV] start D1
+UVM_INFO tb_top.sv(…) @ 50: uvm_test_top.env.data_agt.drv [DATA_DRV] start D2
+UVM_INFO tb_top.sv(…) @ 60: uvm_test_top.env.data_agt.drv [DATA_DRV] start D3
+UVM_INFO tb_top.sv(…) @ 70: uvm_test_top [TEST] soc_vseq finished
+
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO :    …
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+Read it against the rule: D1 starts at 40 ns, exactly when C2 completes, and the test reports completion at 70 ns. The order comes from two lines of `body()`.
+
+### How to build one yourself
+
+1. **List the agents and the dependency.** Write the rule in one sentence ("no data before both configuration writes complete") and name each agent's sequencer and the sequence that runs on it.
+2. **Write or reuse one sequence per agent.** Each must work on its own when started on its agent's sequencer. A virtual sequence only coordinates them.
+3. **Write the virtual sequence.** Extend `uvm_sequence`, register it with `` `uvm_object_utils ``, add one handle field per agent sequencer (or use a virtual sequencer, next lesson), and check the handles at the top of `body()`.
+4. **Express each dependency in `body()`.** "Then" is two `start()` calls in a row; "at the same time, and both must finish" is `fork…join`; "in the background" is `fork…join_none` plus an explicit `kill()` before `body()` returns.
+5. **Pass `this` as the parent** of every child, so priorities, names and `kill()` follow the hierarchy.
+6. **Start it from the test** inside an objection, after copying the handles (or on the virtual sequencer).
+7. **Check the order in the log**, then make a checker enforce it so a regression catches a change ([Coordinated Attack lab](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab)).
+
+### Break it on purpose
+
+Change one thing at a time in the bench above, predict the log, then open the answer.
+
+| # | Change | Your prediction |
+|---|---|---|
+| 1 | Put `c.start(...)` and `d.start(...)` inside `fork … join` | |
+| 2 | Put them inside `fork … join_none` | |
+| 3 | Delete `vseq.data_sqr = env.data_agt.sqr;` from the test, and remove the null check from `body()` | |
+| 4 | Swap the two handles in `body()`: `c.start(data_sqr, this); d.start(cfg_sqr, this);` | |
+
+<details>
+<summary>Answers</summary>
+
+1. C1 at 0, D1 at 0, D2 at 10, C2 at 20, D3 at 20; `TEST` at 40 ns. No error: the order rule is broken silently.
+2. `vseq.start(null)` returns at 0 ns, so `[TEST] soc_vseq finished` appears at 0 ns, before any item completes. The drivers may also print `start C1` and `start D1` at 0 ns (the children reach their first item before the phase ends). Then the test drops its objection, the run phase ends at 0 ns and the report summary follows; no item completes. Treat any extra warnings about killed sequences as tool and library behaviour (Push Further).
+3. C1 at 0 and C2 at 20, then at 40 ns `UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied to start item in vseq.d`. With the null check kept, the fatal is `VSEQ_HANDLES` at 0 ns instead, before any traffic.
+4. It compiles, because `start()` accepts any `uvm_sequencer_base`. At 0 ns `cfg_seq` is granted on the data sequencer, and its `finish_item()` fails with `UVM_FATAL [SQRSNDREQCAST] send_request failed to cast sequence item`; no `start` line is printed. The typed handle fields catch a different slip at compile time: `vseq.cfg_sqr = env.data_agt.sqr;` in the test is a type error.
+
+</details>
+
+**Checklist before moving on:**
+- [ ] I can say, without looking, which statement in `soc_vseq` makes data wait for configuration.
+- [ ] My virtual sequence checks its handles at the top of `body()` and passes `this` as every child's parent.
+- [ ] The test (or the virtual sequence, with a starting phase) holds the objection; no child objects.
+- [ ] Every `fork…join_none` in my `body()` has a matching `kill()` or wait, and every `disable fork` sits inside an isolation wrapper.
+- [ ] I can predict D1's start time and `body()`'s return time for in order, `fork…join`, `join_any` and `join_none`.
+- [ ] I can tell a `UVM_FATAL [SEQ]` from a `PH_TIMEOUT` hang and name the missing handle in each.
+
+## Push Further
+
+### Expert: the parent fallback inside `start()`
+
+IEEE 1800.2-2020 §14.2.3.1 says only that `start()` runs the sequence on the given sequencer, with the given parent. uvm-core 2020.3.1 makes the null case concrete: `start()` calls `set_item_context(parent_sequence, sequencer)` (§14.1.2.2), and `set_item_context()` replaces a null `sequencer` with `m_parent_sequence.get_sequencer()` when a parent exists (`uvm_sequence_item.svh`). Consequences:
+- A child started with a null handle and `this` as parent, inside a sequence that runs on a *real* agent sequencer, silently runs on that sequencer, the same result as the explicit `child.start(m_sequencer, this)` taught in [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index).
+- Inside a virtual sequence running on a virtual sequencer, the same call queues the child's request on a sequencer no driver ever pulls from. Arbitration runs only when a driver asks for an item ([Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration)), so `start_item()` waits until `UVM_FATAL [PH_TIMEOUT]`.
+- A nested *virtual* sequence started with `blk.start(null, this)` inherits the parent's virtual sequencer, which is usually what you want: `p_sequencer` then works in the child too.
+
+**Interview angle:** "Why does the same forgotten handle crash one testbench and hang another?" The answer is the parent's sequencer.
+
+### Expert: what `start(null)` changes, and what it does not
+
+Reading `start()` in uvm-core 2020.3.1 (`uvm_sequence_base.svh`):
+- **Recording.** `begin_tr()` and `end_tr()` run only when `m_sequencer` is non-null, so a virtual sequence started with `start(null)` produces no transaction record of its own. Its children, which have real sequencers, are still recorded ([I-UVM-6](/curriculum/T2_Intermediate/I-UVM-6_UVM_Recording_Classes/index) covers recording).
+- **Names.** `get_full_name()` prefixes the sequencer's path only when there is a sequencer and no parent, so the sequence is plain `vseq` and its children `vseq.c` and `vseq.d`. Messages and debug dumps are less self-locating; name your sequences well.
+- **`p_sequencer`.** The `` `uvm_declare_p_sequencer `` cast of a null `m_sequencer` succeeds (casting null is legal, IEEE 1800-2023 §8.16), so there is no `DCLPSQ` error; `p_sequencer.cfg_sqr` then fails at run time as a null-handle access reported by the simulator, not by UVM.
+- **Locks.** `lock()` and `grab()` with no argument act on `m_sequencer`; with `start(null)` that is null, and uvm-core stops with `UVM_FATAL [LOCKSEQR]` or `UVM_FATAL [GRAB]` (next item).
+- **Not the objection.** `set_automatic_phase_objection(1)` behaves the same in both styles: it needs `set_starting_phase()` (§14.2.4.1–§14.2.4.4). Only a default sequence started by the sequencer gets a starting phase automatically.
+
+### Expert: locking an agent from a virtual sequence
+
+To keep other traffic off an agent while a multi-item scenario runs, the virtual sequence must name the agent sequencer: `lock(cfg_sqr)` … `unlock(cfg_sqr)` (§14.2.5.5, §14.2.5.7), or `grab(cfg_sqr)` … `ungrab(cfg_sqr)` (§14.2.5.6, §14.2.5.8).
+- **With no argument**, `lock()` targets the virtual sequence's own sequencer: a virtual sequencer, where it blocks nothing useful, or null after `start(null)`, where uvm-core stops with `UVM_FATAL [LOCKSEQR] Null m_sequencer reference`.
+- **Children must be started with `this` as parent.** A sequencer blocks every request whose sequence is neither the lock holder nor one of its descendants (`is_blocked()` and `is_child()` in `uvm_sequencer_base.svh`). A child started without a parent is *not* a descendant, so it waits behind its own parent's lock while the parent waits in `c.start()`: a deadlock that ends only at `PH_TIMEOUT`.
+- When locks and grabs are granted relative to queued requests is taught, with the uvm-core details, in [Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration).
+
+### Expert: handshake order is not pin order
+
+Sequential `start()` calls order *handshakes*: `d.start()` begins after the configuration driver's last `item_done()` (§14.2.6.3). That is "the DUT is configured" only if three things hold:
+- **The driver calls `item_done()` after the transfer is complete.** A driver that uses `get()` instead of `get_next_item()` completes the handshake as soon as it takes the item ([The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake)); a pipelined driver calls `item_done()` when it accepts the next request, not when the write's response returns.
+- **The write takes effect at once in the DUT.** Some configuration needs a response, a settling time or a "ready" status bit. Then `cfg_seq` must wait for it (read the status back, or collect the response) before its `body()` ends.
+- **The checker watches the pins, not the sequences.** An ordering checker fed by the sequences passes even when the bus reordered the transfers. Feed it from the monitors, as the [Coordinated Attack lab](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab) does.
+
+**Interview angle:** "The ordering check passes, but the DUT still drops the first packet. Where do you look?" At what `item_done()` means in the configuration driver, and at what the checker observes.
+
+### Expert: stopping parallel and background children cleanly
+
+- **The library's own guards.** uvm-core 2020.3.1 wraps every `start()` in a process guard. If the process that called `start()` is killed while the sequence still runs (for example by the end of the run phase, or by a `disable fork`), it reports `UVM_WARNING [SEQPRTZMB]` and calls `kill()`; if the sequence's `body()` process itself is killed, `start()` reports `UVM_WARNING [SEQBDYZMB]` (`uvm_sequence_base.svh`). These are uvm-core behaviour, not IEEE 1800.2, and the end-of-run case is read from the source, not confirmed in simulation: check what your simulator prints.
+- **Stop on purpose.** Call `bg.kill()` (§14.2.5.11) or, to clear a whole sequencer, `sqr.stop_sequences()` (§15.3.2.14) before `body()` returns and before the objection drops. A sequence that was started with `this` as parent is also killed when its parent is.
+- **Mid-item kills.** The two ways of stopping a sequence leave the driver in different states, so the driver's rule differs (uvm-core 2020.3.1, `uvm_sequencer_base.svh`, `uvm_sequencer.svh`):
+  - after `seq.kill()`, the item the driver holds stays in the sequencer's request FIFO and the sequencer still expects `item_done()`. The driver must finish or cut short the item and call `item_done()` as usual; any response it sends is dropped with a warning, because the sequence is gone. Skipping `item_done()` here makes the next `get_next_item()` report "Get_next_item called twice" and return the same stale item again.
+  - after `sqr.stop_sequences()`, the sequencer also empties its request FIFO, so the driver must abandon the item *without* calling `item_done()`; calling it fires `UVM_FATAL [SQRBADITMDN]`.
+  The handshake lesson's "killed and stopped sequences" item and the arbitration lesson's "locks, killed processes and cleanup" item cover the details.
+- **`disable fork` versus `kill()`.** `disable fork` ends processes (IEEE 1800-2023 §9.6.3); `kill()` ends a sequence and removes its requests and locks from the sequencer. Prefer `kill()` for sequences, and keep any `disable fork` inside an isolation wrapper.
+
+### Expert: virtual sequences at scale
+
+- **Vertical reuse.** Block-level virtual sequences become children of subsystem- and SoC-level ones. Keep them free of test-specific handles: pass handles down from the parent (a helper in a base class), or run them on a virtual sequencer whose handles the env sets. Starting them with `this` as parent inherits the parent's priority (§14.2.3.1), which matters when several scenarios share an agent.
+- **Knobs, not copies.** Give the virtual sequence `rand` fields (counts, modes, which agents take part) with constraints, randomize it in the test before `start()` (check the result), and write one scenario family instead of ten near-copies.
+- **Ownership of order versus checking.** The virtual sequence *creates* the intended order; a checker *proves* it. Keep them separate, so a broken sequence cannot hide its own bug ([A-UVM-8](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index)).
+- **Factory overrides.** Create every child through `::type_id::create()`, so a test can replace `data_seq` with an error-injecting variant without touching the virtual sequence ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)).
+
+### Expert: interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: who decides the order?"
+  question="A virtual sequence must configure the DUT before data flows. A colleague says the virtual sequencer guarantees the order. Is that right?"
+  options={[
+    { text: "Yes: the virtual sequencer grants the config sequencer before the data sequencer.", isCorrect: false, feedback: "A virtual sequencer holds handles; it has no scheduling logic and forwards nothing (IEEE 1800.2-2020 §14.2.3.1: a child runs on the sequencer passed to start())." },
+    { text: "No: the order is the statement order in the virtual sequence's body(). Two start() calls in a row give config-then-data because start() blocks until the child finishes.", isCorrect: true, feedback: "Correct. And it orders handshakes, so the configuration driver must call item_done() only after the write completes." },
+    { text: "Yes, if the arbitration mode of both agents is UVM_SEQ_ARB_STRICT_FIFO.", isCorrect: false, feedback: "Arbitration chooses among sequences on one sequencer. It cannot order traffic on two different agents." },
+    { text: "No: you need a uvm_barrier between the two agent sequences.", isCorrect: false, feedback: "A barrier is one way to synchronize threads, but sequential start() calls already give the order with no extra objects." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: background traffic and the end of the test"
+  question="A virtual sequence starts an endless responder with fork…join_none, runs config and data in order, then ends with wait fork. The test never finishes. Why, and what is the fix?"
+  options={[
+    { text: "wait fork waits for every immediate child process, including the responder, which never ends. Stop the responder with kill() instead of waiting for it.", isCorrect: true, feedback: "Correct (IEEE 1800-2023 §9.6.1). The ordered foreground needs no wait at all; kill the background explicitly before body() returns." },
+    { text: "join_none is illegal inside body().", isCorrect: false, feedback: "It is legal; it is the right way to start background work." },
+    { text: "The responder holds an objection.", isCorrect: false, feedback: "Nothing in the description raises one. The hang is in body() itself." },
+    { text: "wait fork waits only for the last fork, so it returns too early, and the test ends at 0 ns.", isCorrect: false, feedback: "wait fork covers every immediate child of the calling process, not just the last fork." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: a hang with no message"
+  question="A virtual sequence runs on a virtual sequencer. One child, started with this as parent, never produces an item, and the job is killed by the regression timeout with no UVM error. What do you suspect first?"
+  options={[
+    { text: "The agent's driver is not connected to its sequencer.", isCorrect: false, feedback: "Possible, but then the agent sequencer would be blocked too, and the other children on that agent would also stall. Check the handle first." },
+    { text: "The child's sequencer handle is null, so start() fell back to the parent's sequencer, the virtual sequencer, where no driver ever pulls an item.", isCorrect: true, feedback: "Correct (uvm-core set_item_context()). Without a parent it would have been an immediate UVM_FATAL [SEQ]." },
+    { text: "The child has a lower priority than the other sequences on the agent.", isCorrect: false, feedback: "Under the default FIFO mode priority is ignored, and even strict modes do not starve a sequence for ever unless higher-priority traffic never pauses." },
+    { text: "UVM_SEQ_ARB_WEIGHTED never grants low-priority sequences.", isCorrect: false, feedback: "WEIGHTED treats priority as odds, not as a strict order; every waiting request has a chance." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval check
+
+<Quiz
+  questions={[
     {
-      "question": "What is the primary role of a virtual sequencer?",
-      "answers": [
-        {"text": "To drive transactions to the DUT.", "correct": false},
-        {"text": "To give a virtual sequence a place to run and hold handles to the agent sequencers.", "correct": true},
-        {"text": "To check the results from a monitor.", "correct": false},
-        {"text": "To forward items to the agent sequencers through TLM ports.", "correct": false}
+      question: "soc_vseq runs on the virtual sequencer soc_vsqr and must send configuration before data. Who decides that cfg_seq runs before data_seq?",
+      objective: 1,
+      answers: [
+        { text: "soc_vsqr, the virtual sequencer", correct: false, feedback: "A virtual sequencer only holds handles to the agent sequencers. It has no scheduling logic." },
+        { text: "The arbitration mode of each agent sequencer", correct: false, feedback: "Arbitration chooses among sequences on one sequencer. cfg_sqr and data_sqr never see each other's traffic." },
+        { text: "The order of the statements in soc_vseq.body()", correct: true, feedback: "Correct. c.start() blocks until cfg_seq finishes, so a following d.start() cannot begin earlier." },
+        { text: "The order in which the env assigns the handles in connect_phase", correct: false, feedback: "connect_phase runs before the run phase starts. Assignment order there has no effect on when traffic runs." }
       ],
-      "explanation": "A virtual sequencer has no driver and no TLM connection to the agents. It only holds handles, assigned in the env's connect_phase."
+      explanation: "Only body() orders work across agents. The virtual sequencer holds handles, each agent sequencer arbitrates only its own traffic, and handle assignment happens long before any item exists."
     },
     {
-      "question": "In a virtual sequence, how do you start a sequence on a specific agent's sequencer?",
-      "answers": [
-        {"text": "`p_sequencer.start(agent_seq)`", "correct": false},
-        {"text": "`agent_seq.start(p_sequencer.m_agent_sequencer)`", "correct": true},
-        {"text": "`m_agent_sequencer.start(agent_seq)`", "correct": false},
-        {"text": "Start it on the virtual sequencer; it forwards the items", "correct": false}
+      question: "Inside soc_vseq.body(), c.start(cfg_sqr, this) runs. On which sequencer are cfg_seq's items arbitrated, and does soc_vseq see them?",
+      objective: 1,
+      answers: [
+        { text: "On cfg_sqr; soc_vseq never handles the items", correct: true, feedback: "Correct. A child runs on the (non-null) sequencer passed to its start(); the virtual sequence only started it." },
+        { text: "On the sequencer soc_vseq runs on, which forwards them to cfg_sqr", correct: false, feedback: "Nothing forwards items between sequencers. That is the 'items flow through the virtual sequencer' misconception." },
+        { text: "On cfg_sqr, but each item passes through soc_vseq first, so it can modify them", correct: false, feedback: "soc_vseq calls no start_item() or finish_item(); it never touches cfg_seq's items." },
+        { text: "On every agent sequencer, so all drivers see them", correct: false, feedback: "A sequence runs on exactly one sequencer, the one passed to start()." }
       ],
-      "explanation": "Call start() on the child sequence and pass the agent sequencer. The child's items are then arbitrated on that agent's sequencer."
+      explanation: "The handle passed to start() becomes the child's sequencer. The virtual sequence sends nothing; the items go cfg_seq → cfg_sqr → cfg_drv."
     },
     {
-      "question": "The env forgot `vsqr.m_eth_sequencer = eth_agt.sqr;`. What happens when the virtual sequence runs?",
-      "answers": [
-        {"text": "eth_seq runs on the virtual sequencer instead.", "correct": false},
-        {"text": "eth_seq starts with a null sequencer and its first start_item() is a UVM_FATAL.", "correct": true},
-        {"text": "Nothing: the factory finds the Ethernet sequencer automatically.", "correct": false}
+      question: "A test runs soc_vseq in the start(null) style. What must it do before calling vseq.start(null)?",
+      objective: 2,
+      answers: [
+        { text: "Nothing: UVM finds the agent sequencers from the item types", correct: false, feedback: "No such lookup exists. The handle fields stay null until assigned." },
+        { text: "Copy the agent sequencer handles into the sequence: vseq.cfg_sqr = env.cfg_agt.sqr; vseq.data_sqr = env.data_agt.sqr;", correct: true, feedback: "Correct. That is the defining duty of this style, repeated in every test that starts the sequence." },
+        { text: "Add `uvm_declare_p_sequencer to soc_vseq", correct: false, feedback: "p_sequencer is the other style. With start(null) there is no sequencer to cast, so p_sequencer would be null." },
+        { text: "Call vseq.set_sequencer(env.cfg_agt.sqr) so the sequence has somewhere to run", correct: false, feedback: "start(null) overwrites the sequence's sequencer with null again, so this call has no effect, and it never fills the cfg_sqr or data_sqr fields that body() uses." }
       ],
-      "explanation": "start(null) succeeds, but start_item() finds no sequencer: UVM_FATAL [SEQ] 'neither the item's sequencer nor dedicated sequencer has been supplied'."
+      explanation: "In the start(null) style the sequence holds its own handles and the test fills them. A missing assignment gives UVM_FATAL [SEQ] at the child's first start_item(), or the VSEQ_HANDLES fatal if body() checks first."
+    },
+    {
+      question: "A test does vseq.set_automatic_phase_objection(1); vseq.start(env.vsqr); and raises no objection itself. What happens?",
+      objective: 2,
+      answers: [
+        { text: "The run phase stays alive while the sequence runs, because it was started on a virtual sequencer", correct: false, feedback: "Starting on a sequencer does not supply a starting phase; only the sequencer's default-sequence mechanism does." },
+        { text: "The run phase ends at 0 ns with no error: the automatic objection needs set_starting_phase(phase), and no starting phase was set", correct: true, feedback: "Correct (IEEE 1800.2-2020 §14.2.4.1–§14.2.4.4). The rule is the same in the start(null) style." },
+        { text: "UVM_FATAL: an automatic objection requires start(null)", correct: false, feedback: "There is no such rule; the handle style does not change the objection rules." },
+        { text: "Each child raises its own objection, so the test runs to completion", correct: false, feedback: "Children do not object unless written to, and they should not." }
+      ],
+      explanation: "set_automatic_phase_objection(1) raises on get_starting_phase(), which is null unless set_starting_phase(phase) was called. Add vseq.set_starting_phase(phase), or raise and drop around vseq.start() in the test."
+    },
+    {
+      question: "Configuration is 2 items of 20 ns and data is 3 items of 10 ns. body() is fork c.start(cfg_sqr, this); d.start(data_sqr, this); join. When does D1 start, and when does body() return?",
+      objective: 3,
+      answers: [
+        { text: "D1 at 40 ns; body() at 70 ns", correct: false, feedback: "That is the sequential version. fork runs the branches at the same time; it does not order them." },
+        { text: "D1 at 0 ns; body() at 40 ns", correct: true, feedback: "Correct. Both children start at 0 ns, and join waits for the longer one, configuration, which ends at 40 ns." },
+        { text: "D1 at 0 ns; body() at 30 ns", correct: false, feedback: "30 ns is when data finishes. join waits for every branch; join_any would return at 30 ns." },
+        { text: "D1 at 0 ns; body() at 0 ns", correct: false, feedback: "That is join_none, which returns at once." }
+      ],
+      explanation: "fork…join gives parallelism, not order: D1 runs during configuration, and body() returns when the last branch ends (cfg at 40 ns). Sequential calls would give D1 at 40 and body() at 70; join_any 30; join_none 0."
+    },
+    {
+      question: "body() is fork c.start(cfg_sqr, this); d.start(data_sqr, this); join_none and then returns. The test raises an objection before vseq.start() and drops it after. What happens?",
+      objective: 3,
+      answers: [
+        { text: "The test waits for the children, because they are children of the virtual sequence", correct: false, feedback: "vseq.start() waits only for body(), and body() did not wait for anything." },
+        { text: "The drivers keep the run phase alive until the items are done", correct: false, feedback: "Drivers do not object; their forever loops simply end with the phase." },
+        { text: "vseq.start() returns at 0 ns, the test drops its objection, and the run phase ends, killing the children before any item completes", correct: true, feedback: "Correct. join_none does not keep the test alive." },
+        { text: "Configuration runs first and data second, because join_none preserves statement order", correct: false, feedback: "join_none starts all branches together and returns at once; it orders nothing." }
+      ],
+      explanation: "join_none returns immediately, so body() and vseq.start() return at 0 ns. The objection drops, the run phase ends, and the children are killed. The children may reach their first start_item() at 0 ns, but no item completes."
+    },
+    {
+      question: "Which body() meets this rule: configure first; then send data on data_sqr while a status sequence polls on cfg_sqr; body() must return only when both have finished?",
+      objective: 3,
+      answers: [
+        { text: "fork c.start(cfg_sqr, this); d.start(data_sqr, this); s.start(cfg_sqr, this); join", correct: false, feedback: "This starts configuration, data and status together, so data can start before configuration completes." },
+        { text: "c.start(cfg_sqr, this); fork d.start(data_sqr, this); s.start(cfg_sqr, this); join", correct: true, feedback: "Correct. Phase 1 in order, phase 2 in parallel, and join waits for both branches." },
+        { text: "c.start(cfg_sqr, this); fork d.start(data_sqr, this); s.start(cfg_sqr, this); join_none", correct: false, feedback: "Configuration comes first, but body() returns at once after it, so the test can end before data or status finish." },
+        { text: "c.start(cfg_sqr, this); fork d.start(data_sqr, this); s.start(cfg_sqr, this); join_any", correct: false, feedback: "join_any returns when the first of the two finishes, leaving the other running when body() returns." }
+      ],
+      explanation: "Write each dependency literally: 'then' is sequence, 'at the same time and both must finish' is fork…join. join_none and join_any both let body() return while work the test depends on is still running."
+    },
+    {
+      question: "soc_vseq runs on soc_vsqr. The env forgot vsqr.data_sqr = data_agt.sqr; and body() calls d.start(p_sequencer.data_sqr, this) after configuration. What does the log show?",
+      objective: 4,
+      answers: [
+        { text: "UVM_FATAL [SEQ] at 40 ns, at data_seq's first start_item()", correct: false, feedback: "That is what happens with no parent, or when the parent has no sequencer. Here the parent runs on soc_vsqr." },
+        { text: "UVM_FATAL [DCLPSQ] when soc_vseq starts", correct: false, feedback: "DCLPSQ is a wrong sequencer type for p_sequencer. The type is right; one handle inside it is null." },
+        { text: "C1 and C2, then nothing until UVM_FATAL [PH_TIMEOUT]: data_seq fell back to the parent's sequencer, soc_vsqr, where no driver pulls items", correct: true, feedback: "Correct. set_item_context() replaces a null sequencer with the parent's; start_item() then waits for a grant that never comes." },
+        { text: "data_seq runs on data_sqr anyway, because data_item matches its item type", correct: false, feedback: "Sequencers are never found by item type. The child runs on the sequencer start() resolves, here soc_vsqr." }
+      ],
+      explanation: "With a parent, a null sequencer handle falls back to the parent's sequencer (uvm-core set_item_context()). On a virtual sequencer no driver ever asks for an item, so the grant never comes and only the run-phase timeout ends the test. A null check at the top of body() turns this into an immediate, named fatal."
+    },
+    {
+      question: "body() is fork bg.start(rsp_sqr, this); join_none, then c.start(cfg_sqr, this); d.start(data_sqr, this); then wait fork. bg is an endless responder. Every item checks out, but the test never ends. Why?",
+      objective: 4,
+      answers: [
+        { text: "wait fork waits for every immediate child process, including the one running the endless bg", correct: true, feedback: "Correct (IEEE 1800-2023 §9.6.1). Replace wait fork with bg.kill() once the foreground is done." },
+        { text: "join_none must always be followed by disable fork", correct: false, feedback: "disable fork would kill bg (and anything else forked by this process), but it is not required, and it is not why the test hangs." },
+        { text: "bg holds a lock on rsp_sqr", correct: false, feedback: "Nothing in body() takes a lock. The hang is in wait fork." },
+        { text: "The objection was never raised", correct: false, feedback: "Without an objection the test would end at 0 ns, not hang." }
+      ],
+      explanation: "wait fork blocks until all immediate children of the calling process have terminated, and the process running bg.start() never terminates. Background work should be stopped explicitly (bg.kill()) before body() returns; the foreground needs no wait because it is sequential."
     }
-  ]} />
+  ]}
+/>
 
-Next: [UVM Virtual Sequencer: Dispatch Order](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer).
+### Kata: configure, then two streams with a watchdog
+
+**Goal:** extend the Make It Work bench (objectives 2 and 3).
+
+**Requirements:**
+1. Write `soc_vseq2`, which extends `soc_vseq` and overrides `body()`.
+2. Phase 1: run `cfg_seq` on `cfg_sqr`, as before.
+3. Phase 2: run `data_seq` on `data_sqr` and a second `cfg_seq` object `s` (standing for status reads) on `cfg_sqr` at the same time. `body()` returns only when both have finished.
+4. Guard phase 2 with a watchdog: if it has not finished within 100 ns, stop with `` `uvm_fatal("VSEQ_TO", …) ``. The watchdog must not kill anything outside phase 2.
+5. Change the test to create `soc_vseq2` (keep the handle copying).
+6. **Predict before you run:** the start time of every item and the time of the `TEST` line.
+
+<details>
+<summary>Worked solution</summary>
+
+```systemverilog
+// snippet: add to soc_pkg after soc_vseq, and create soc_vseq2 in soc_test
+class soc_vseq2 extends soc_vseq;
+  `uvm_object_utils(soc_vseq2)
+
+  function new(string name = "soc_vseq2");
+    super.new(name);
+  endfunction
+
+  virtual task body();
+    cfg_seq  c = cfg_seq::type_id::create("c");
+    cfg_seq  s = cfg_seq::type_id::create("s");    // a second object, not c again
+    data_seq d = data_seq::type_id::create("d");
+    if (cfg_sqr == null || data_sqr == null)
+      `uvm_fatal("VSEQ_HANDLES", "set cfg_sqr and data_sqr before start()")
+
+    c.start(cfg_sqr, this);                        // phase 1: in order
+
+    fork begin                                     // isolation for disable fork
+      fork
+        begin                                      // phase 2: both must finish
+          fork
+            d.start(data_sqr, this);
+            s.start(cfg_sqr, this);
+          join
+        end
+        begin                                      // watchdog
+          #100ns;
+          `uvm_fatal("VSEQ_TO", "phase 2 still running after 100 ns")
+        end
+      join_any
+      disable fork;                                // kills the watchdog only
+    end join
+  endtask
+endclass
+```
+
+In `soc_test::run_phase`, write `soc_vseq2 vseq = soc_vseq2::type_id::create("vseq");`. The handle fields are inherited, so the copying lines stay the same.
+
+**Predicted log** (illustrative): C1 at 0, C2 at 20; then at 40 both D1 and s's first item (named C1 again, because `cfg_seq` names its items C1 and C2); D2 at 50, D3 at 60; s's C2 at 60; `TEST` at 80 ns. Phase 2 ends at 80 ns, when `s` finishes (40 + 2 × 20), well inside the 100 ns watchdog, which `disable fork` then kills.
+
+**Why the shape.** The inner `fork…join` is the "both must finish" rule. The `join_any` races it against the watchdog. The outer `fork begin … end join` gives `disable fork` its own parent process, so it can only reach the watchdog and phase 2, never a background sequence started earlier in `body()` (IEEE 1800-2023 §9.6.3). Using `c` again for the status reads instead of a new `s` would fail with `UVM_FATAL [SEQ_NOT_DONE]` only if `c` were still running; creating a new object keeps the two runs independent and clearly named in the log.
+
+</details>
+
+### Hands-on next steps
+
+- **The dispatch explorer.** On the [next page](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer), keep the data handle wired and predict D1's start time and the end of the run for all three dispatch styles before you run each one. Compare your answers with the waveform on this page.
+- **The lab.** The [Coordinated Attack lab](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab) asks you to write a configure-before-data virtual sequence and prove the order with a self-check.
+
+### Flashcards
+
+The deck for this page, "I-UVM-3B Virtual Sequences", appears below under "Reinforce the essentials". It covers what a virtual sequence does, the fork patterns, the two handle styles, objections and the null-handle symptoms.
+
+## References & Next Topics
+
+**Primary sources**
+- IEEE 1800.2-2020: §14.1.2.2 `set_item_context`; §14.2.3.1 `start`; §14.2.3.2–§14.2.3.9 the `start()` hooks; §14.2.4.1–§14.2.4.4 starting phase and automatic phase objection; §14.2.5.5–§14.2.5.8 `lock`, `grab`, `unlock`, `ungrab`; §14.2.5.11 `kill`; §14.2.6.2 `start_item`; §14.2.6.3 `finish_item`; §14.3 `uvm_sequence`; §15.3.2.14 `stop_sequences`; Annex B.3.3 `` `uvm_declare_p_sequencer ``; Annex F.7.3.3 `set_timeout`.
+- uvm-core 2020.3.1 (Accellera reference implementation): `src/seq/uvm_sequence_base.svh` (`start()`, `start_item()`, `kill()`, `lock()`, `grab()`, the `SEQ`, `SEQ_NOT_DONE`, `SEQPRTZMB`, `SEQBDYZMB`, `LOCKSEQR` and `GRAB` reports); `src/seq/uvm_sequence_item.svh` (`set_item_context()`, `get_full_name()`); `src/seq/uvm_sequencer_base.svh` (`is_blocked()`, `is_child()`); `src/seq/uvm_sequencer_param_base.svh` (`SQRSNDREQCAST`); `src/macros/uvm_global_defines.svh` (`UVM_DEFAULT_TIMEOUT`).
+- IEEE 1800-2023: §8.16 casting; §9.3.2 parallel blocks (Table 9-1); §9.6.1 `wait fork`; §9.6.3 `disable fork`; §9.7 fine-grain process control.
+
+**Prerequisites:** [I-UVM-3A: Basic UVM Sequences and Items](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index), [The Sequencer-Driver Handshake](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequencer-driver-handshake) and [F2C Procedural Code and Flow Control](/curriculum/T1_Foundational/F2C_Procedural_Code_and_Flow_Control/index).
+
+**Related**
+- [The Virtual Sequencer](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/uvm-virtual-sequencer): the driverless component, `p_sequencer`, `` `uvm_declare_p_sequencer `` and the alternatives, with the dispatch explorer.
+- [Sequence Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration): how each agent sequencer chooses among the sequences running on it, and `lock()`/`grab()`.
+- [Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences): stacking sequences inside one agent and across protocols.
+- [Interrupt Handling](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling): a virtual sequence that reacts to interrupts with recovery stimulus.
+- [Lab: Coordinated Attack](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/coordinated-attack-lab): write and prove a configure-before-data virtual sequence.
+- [I-UVM-1C UVM Phasing](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index): objections and the end of the run phase.
+- [A-UVM-8 Multi-Agent Topologies](/curriculum/T3_Advanced/A-UVM-8_Multi_Agent_Topologies/index): virtual sequences and cross-agent checking in a full multi-agent environment.
+
+<NextLesson />

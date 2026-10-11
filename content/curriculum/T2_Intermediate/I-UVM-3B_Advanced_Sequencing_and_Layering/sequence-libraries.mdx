@@ -1,119 +1,889 @@
-import { InfoPage } from "@/components/templates/InfoPage";
+---
+title: "Sequence Libraries & Arbitration Control"
+description: "Package scenario sequences in a uvm_sequence_library, predict what each selection mode runs, bias the mix correctly, and run it from a test or as a phase default sequence."
+flashcards: "I-UVM-3B_Sequence_Libraries"
+sources:
+  - title: "IEEE Standard for Universal Verification Methodology Language Reference Manual (§14.4 uvm_sequence_library; §15.3.5 default sequence; Annex B.3.2, F.2.4.3, G.2.9)"
+    type: "standard"
+    identifier: "IEEE 1800.2-2020"
+  - title: "IEEE Standard for SystemVerilog (§18.4.2 randc, §18.11 inline random variable control, §10.5 variable initialization)"
+    type: "standard"
+    identifier: "IEEE 1800-2023"
+---
 
-export const metadata = {
-  title: "Sequence Libraries & Arbitration Control | Advanced UVM Sequencing",
-  description: "Package reusable stimulus into a uvm_sequence_library, choose its selection mode, and know what it can and cannot control.",
-};
+## Quick Take
 
-<InfoPage
-  title="Sequence Libraries & Arbitration Control"
-  uvm_concept_tags={["sequence library", "grab", "uvm_sequence_library"]}
->
+- **What it is:** A **sequence library** is a sequence (`uvm_sequence_library`, IEEE 1800.2-2020 §14.4) that holds a list of sequence *types*, its **members**. When you start it like any other sequence, it picks members by its **selection mode**, creates a fresh member object for each pick, and runs it on its own sequencer, a given number of times.
+- **Why it matters:** One `start()` call runs a random mix of every scenario you have registered, and a new scenario joins the mix by registering itself, without anyone editing the test. That makes a library a cheap way to get broad, seed-driven regression stimulus from sequences you already wrote.
+- **The Analogy:** A library is a playlist on shuffle. RAND is shuffle with repeats, RANDC plays every song once before any repeats, ITEM ignores the songs and plays random notes, and USER is your own DJ rule. *Where it breaks:* a playlist stores recordings, but a library stores song *types* and records a brand-new song (a new, freshly randomized sequence object) every time it plays one. And it plays one song at a time on one speaker: a library never runs two members at once or drives two sequencers.
 
-  *Page 6 of 8 in I-UVM-3B. Read [Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences) first.*
+**You will be able to:**
+1. Write a `uvm_sequence_library` subtype, register member sequences with it, and run it from a test or as a phase default sequence.
+2. Predict which members, and how many, a library runs for each selection mode and count setting.
+3. Bias a library's mix with a USER-mode `select_sequence()`, and explain why registering a type twice is not a portable way to do it.
+4. Debug the common library failures from the log: `SEQLIB/NOSEQS`, a count that is ignored, the ITEM-mode fallback, and member hooks that never run.
+5. Decide when a library is the right tool, and how its members share the sequencer with other sequences, compared with a virtual sequence or a directed test.
 
-  ## Elevator Pitch
+<BeforeYouStart />
 
-  A `uvm_sequence_library` is itself a sequence. It holds a list of sequence types and, when started, runs a number of them, chosen by its selection mode. Register your scenario sequences once and a test can run a random mix of them with one `start()` call.
+## Build Your Mental Model
 
-  ## Building a Library
+**How to read this lesson.** The core path is the first four sections: what a library is, how members register, what each selection mode runs, and what happens when a library starts. Practitioner depth follows: running a library from a test or as a default sequence, how it meets arbitration, biasing the mix, debugging from the log and when not to use one. Make It Work builds a complete library you can run, and Push Further holds the expert layer.
 
-  ```systemverilog
-  // The library: a uvm_sequence_library parameterized by the item type
+This page builds on three things you already know. From [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index): a **sequence** generates items in `body()`, a **sequencer** passes them to a **driver**, and `start(sequencer, parent, priority, call_pre_post)` runs a sequence. From [Sequencer Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration): how a sequencer chooses between several sequences that want to send an item at the same time. From [I-SV-2A](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index#randc-one-permutation-per-object): what `randc` does.
+
+Two terms first. A **uvm-core 2020.3.1** label marks behaviour of the Accellera reference implementation that the standard does not specify, or specifies differently; Push Further lists every such difference on this page. And `uvm_object_wrapper` is the **factory**'s handle for a *type* ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)): `wr_seq::get_type()` returns one, and the factory can create a `wr_seq` object from it. A library's member list is a queue of these type handles, not of sequence objects.
+
+### What a sequence library is
+
+Suppose you have three scenario sequences for a memory interface: a write, a read and a write to an unmapped address. A regression test should run a random mix of them. Without a library you write the loop yourself:
+
+```systemverilog
+// snippet: the loop a library writes for you (inside some sequence's body())
+repeat (n) begin
+  uvm_sequence_base s;
+  case ($urandom_range(2))
+    0: s = wr_seq::type_id::create("wr");
+    1: s = rd_seq::type_id::create("rd");
+    2: s = err_seq::type_id::create("err");
+  endcase
+  if (!s.randomize()) `uvm_fatal("RAND", "member randomization failed")
+  s.start(m_sequencer, this);
+end
+```
+
+This works, but every new scenario means editing the `case`, and every team writes the loop slightly differently. A `uvm_sequence_library` is that loop, written once, with an *open* member list (§14.4):
+
+- It **is a sequence**: `uvm_sequence_library #(REQ, RSP)` extends `uvm_sequence #(REQ, RSP)` (§14.4.1), so you create it with the factory and run it with `start()`.
+- It holds a queue of member **types**. Members join by registering, from their own class or from code, so the library class never names them.
+- When started, it runs `sequence_count` picks. For each pick it chooses an index into the member queue by its **selection mode**, creates a new member with the factory, randomizes it and starts it on the library's sequencer.
+
+**Where it lives in a testbench.** A library usually sits next to the agent's sequences, in the agent's or the environment's package. A test, or the sequencer's default-sequence setting, starts it on one agent's sequencer. It is the "random mix of known scenarios" layer, between the individual scenario sequences below it and the test above it.
+
+### Registering members
+
+A library subtype needs two macros and, in uvm-core 2020.3.1, one call in its constructor:
+
+```systemverilog
+// snippet: a library subtype (uvm-core 2020.3.1)
+class mem_seq_lib extends uvm_sequence_library #(mem_item);
+  `uvm_object_utils(mem_seq_lib)
+  `uvm_sequence_library_utils(mem_seq_lib)
+
+  function new(string name = "mem_seq_lib");
+    super.new(name);
+    init_sequence_library();   // copy the registered types into this object
+  endfunction
+endclass
+```
+
+- `` `uvm_sequence_library_utils(mem_seq_lib) `` gives the subtype its own **static** member list (a static class variable is one variable shared by every object of the class), plus the functions that fill it (Annex B.3.2.2).
+- `init_sequence_library()` copies that static list into this object's own queue, `sequences`. In uvm-core 2020.3.1 the subtype's constructor must call it. The standard's own example constructor (§14.4.2) calls only `super.new(name)`; code copied from it compiles, but the library is empty and reports `SEQLIB/NOSEQS` when started.
+
+There are three ways to add a member. The first runs during **static initialization**: the step, before any `initial` or `always` procedure starts, in which the simulator gives every static variable its declared initial value (IEEE 1800-2023 §10.5).
+
+| Way | Code | Who sees it | When it takes effect |
+| --- | --- | --- | --- |
+| Static, from the member's class | `` `uvm_add_to_seq_lib(wr_seq, mem_seq_lib) `` inside `wr_seq` (Annex B.3.2.1) | every `mem_seq_lib` | during static initialization, before any `initial` procedure runs, so before `run_test()` |
+| Static, from code | `mem_seq_lib::add_typewide_sequence(wr_seq::get_type())`, or `add_typewide_sequences(q)` for a queue (§14.4.5.1, §14.4.5.2) | every `mem_seq_lib` built **afterwards** | at the call; libraries already constructed are not changed |
+| One instance | `lib.add_sequence(wr_seq::get_type())`, or `lib.add_sequences(q)` (§14.4.5.3, §14.4.5.4) | this `lib` only | at the call; do it after `create()` and before `start()` |
+
+The macro expands to a static `bit` whose initializer calls the library's registration function, which is why it runs before the test starts. A member class can use the macro several times with *different* libraries, joining each of them, but only once per member and library pair (B.3.2.1). The standard says every registration function silently ignores a type that is already registered (§14.4.5.1 to §14.4.5.4). `remove_sequence()`, `get_sequences()` and `get_sequence(idx)` (§14.4.5.5, §14.4.5.6, §14.4.4.10) inspect or edit an instance's list.
+
+**Picture it.** Follow the dashed arrows from the members to the static list, from the static list into one library object, and from there to the sequencer.
+
+<ArchitectureDiagram
+  title="How three sequences become members of one library object"
+  caption="Each member registers its type with the library class at static initialization. The constructor's init_sequence_library() copies that list into the new object. start() then runs the members one at a time on one sequencer."
+  nodes={[
+    { id: "wr", label: "wr_seq", sublabel: "uvm_add_to_seq_lib", kind: "sequence", col: 0, row: 0 },
+    { id: "rd", label: "rd_seq", sublabel: "uvm_add_to_seq_lib", kind: "sequence", col: 1, row: 0 },
+    { id: "err", label: "err_seq", sublabel: "uvm_add_to_seq_lib", kind: "sequence", col: 2, row: 0 },
+    { id: "tw", label: "mem_seq_lib static list", sublabel: "one list for the class: type handles", kind: "generic", col: 0, row: 1, colSpan: 3 },
+    { id: "lib", label: "lib.sequences", sublabel: "this object's copy; add_sequence() edits only this", kind: "sequence", col: 0, row: 2, colSpan: 3 },
+    { id: "agt", label: "agt", kind: "agent", col: 0, row: 3, colSpan: 3, container: true },
+    { id: "sqr", label: "sqr", kind: "sequencer", col: 0, row: 3 },
+    { id: "drv", label: "drv", kind: "driver", col: 2, row: 3 }
+  ]}
+  edges={[
+    { from: "wr", to: "tw", style: "causal", label: "static init" },
+    { from: "rd", to: "tw", style: "causal" },
+    { from: "err", to: "tw", style: "causal" },
+    { from: "tw", to: "lib", style: "causal", label: "init_sequence_library() in new()" },
+    { from: "lib", to: "sqr", style: "data", label: "lib.start(agt.sqr)" },
+    { from: "drv", to: "sqr", style: "control", label: "get_next_item / item_done" }
+  ]}
+/>
+
+What to take from it: the class-wide list and the object's list are two different queues. Registration fills the first; `init_sequence_library()` copies it into the second; `start()` only ever reads the second. Every registration bug on this page is one of these arrows missing.
+
+### Selection modes and counts
+
+A library has three public fields that decide what it runs (uvm-core 2020.3.1 exposes them as fields; the standard's accessors are in Push Further):
+
+| Field | Meaning | Default |
+| --- | --- | --- |
+| `selection_mode` | how the next member is chosen: `UVM_SEQ_LIB_RAND`, `UVM_SEQ_LIB_RANDC`, `UVM_SEQ_LIB_ITEM` or `UVM_SEQ_LIB_USER` (Annex F.2.4.3) | `UVM_SEQ_LIB_RAND` (§14.4.4.1) |
+| `min_random_count`, `max_random_count` | the range that `sequence_count` is constrained to | 10 and 10 (§14.4.4.2, §14.4.4.3) |
+| `sequence_count` | how many picks one `start()` makes; a `rand` field constrained inside `[min_random_count:max_random_count]` | 10 (§14.4.4.6) |
+
+The four modes:
+
+| `selection_mode` | What one pick does |
+| --- | --- |
+| `UVM_SEQ_LIB_RAND` | Randomizes `select_rand`, constrained to a valid index (§14.4.4.7). Repeats are allowed, and a member may never be picked in a short run. |
+| `UVM_SEQ_LIB_RANDC` | Uses `randc bit [15:0] select_randc`, constrained to a valid index (§14.4.4.8). A `randc` variable walks through a random permutation of its legal values before repeating any (IEEE 1800-2023 §18.4.2), so with N members every N consecutive picks run each member once. |
+| `UVM_SEQ_LIB_ITEM` | Runs no members at all: each pick creates and randomizes one item of the library's request type (`mem_item` here) and sends it (§14.4). |
+| `UVM_SEQ_LIB_USER` | Calls `select_sequence(max)`, which returns the index of the next member, from 0 to `max` (§14.4.4.9). The default returns 0, 1, 2… and wraps: plain **round robin** by index. Override it to write your own rule. |
+
+**The count only changes when the library is randomized.** `min_random_count` and `max_random_count` feed a constraint on `sequence_count`, and constraints act only when something calls `randomize()`. If you set them and then call `start()` without `randomize()`, the library runs `sequence_count` at its initial value, 10. Either call `lib.randomize()` (and check the result), or set `lib.sequence_count` directly and skip randomization.
+
+**Predict first.** A library has three members whose indexes are A = 0, B = 1 and C = 2, and `sequence_count = 5`. Before you read the table, write down what each mode can run, and in particular: with `UVM_SEQ_LIB_USER` and no override, which five indexes?
+
+| Pick | RAND (one possible run) | RANDC (one possible run) | ITEM | USER, default `select_sequence()` |
+| --- | --- | --- | --- | --- |
+| 1 | B | C | one `mem_item` | index 0 (A) |
+| 2 | A | A | one `mem_item` | index 1 (B) |
+| 3 | B | B | one `mem_item` | index 2 (C) |
+| 4 | C | B | one `mem_item` | index 0 (A) |
+| 5 | A | A | one `mem_item` | index 1 (B) |
+
+**What the table shows.**
+- RAND ran B twice and C only once. Nothing stops a member from running zero times in a short run.
+- RANDC ran picks 1 to 3 as one full permutation (C, A, B); picks 4 and 5 are the first two of a new permutation. With 5 picks and 3 members, two members run twice and one runs once; you cannot predict which.
+- ITEM ran five items and no member sequences: your scenarios do not run at all in this mode.
+- USER without an override is deterministic *by index*. Which member sits at which index follows registration order, and the order of static initialization across classes is not defined by IEEE 1800-2023 (§10.5 requires only that it happens before any `initial` or `always` procedure starts). So "A B C A B" is right only if you know A registered first.
+
+### What happens when a library starts
+
+The library's `body()` does the loop for you. Read the diagram top to bottom; it shows one pick in RAND mode.
+
+<SequenceDiagram
+  title="lib.start(agt.sqr): one pick of a RAND-mode library"
+  caption="The library creates each member with the factory, randomizes it and starts it with the library as parent, priority -1 and call_pre_post = 0. In RANDC mode, uvm-core draws every pick first and then runs the members in that order."
+  participants={[
+    { id: "test", label: "lib_test", kind: "test" },
+    { id: "lib", label: "lib", kind: "sequence" },
+    { id: "mem", label: "wr_seq:1", kind: "sequence" },
+    { id: "sqr", label: "agt.sqr", kind: "sequencer" },
+    { id: "drv", label: "agt.drv", kind: "driver" }
+  ]}
+  messages={[
+    { from: "test", to: "lib", label: "lib.randomize(): picks sequence_count" },
+    { from: "test", to: "lib", label: "lib.start(agt.sqr)" },
+    { kind: "note", from: "lib", to: "lib", label: "SEQLIB/START: N iterations in mode M" },
+    { kind: "self", from: "lib", label: "randomize(select_rand): pick an index" },
+    { from: "lib", to: "mem", label: "factory creates the member, named wr_seq:1" },
+    { from: "lib", to: "mem", label: "member.randomize()" },
+    { from: "lib", to: "mem", label: "start(agt.sqr, lib, -1, 0)" },
+    { kind: "note", from: "mem", to: "sqr", label: "pre_start runs; pre_body and post_body do not; priority is the library's" },
+    { from: "mem", to: "sqr", label: "start_item / finish_item" },
+    { kind: "return", from: "sqr", to: "drv", label: "get_next_item returns the item" },
+    { kind: "async", from: "drv", to: "sqr", label: "item_done()" },
+    { kind: "return", from: "mem", to: "lib", label: "member start() returns" },
+    { kind: "divider", label: "repeat for each of the sequence_count picks" },
+    { kind: "note", from: "lib", to: "lib", label: "SEQLIB/END, then SEQLIB/DSTRB at UVM_HIGH" },
+    { kind: "return", from: "lib", to: "test", label: "lib.start() returns" }
+  ]}
+/>
+
+The details that matter, each checked against the uvm-core 2020.3.1 `body()` and `execute()` in `uvm_sequence_library.svh`:
+
+1. **A fresh member each pick.** The factory creates the member by type, so a factory type override on `wr_seq` changes what the library runs ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)). Each member is named `<type>:<n>`, where `n` counts every member run so far: `rd_seq:1`, `err_seq:2`, `wr_seq:3`.
+2. **The member is randomized,** unless its `set_randomize_enabled(0)` was called (§14.2.2.2). A failed randomization is only a warning, `UVM_WARNING [RNDFLD] Randomization failed in uvm_rand_send action`, and the member still runs with whatever values its `rand` fields had.
+3. **It starts with the library as parent, priority -1 and `call_pre_post = 0`**, exactly what `` `uvm_rand_send `` does (Annex B.3.1.3, §14.2.3.1). So the member inherits the library's priority, runs as the library's child, and its `pre_body()` and `post_body()` never run. `pre_start()` and `post_start()` always run.
+4. **One member at a time.** The next pick starts only after the member's `start()` returns. A library never runs two members concurrently.
+5. **Log lines** (all from `uvm_sequence_library.svh`): `SEQLIB/START` and `SEQLIB/END` at `UVM_LOW`; `SEQLIB/DSTRB`, a count per member type, at `UVM_HIGH`; `SEQLIB/EXEC` (one line per pick) and `SEQLIB/SPRINT` (a table of the library) at `UVM_FULL`.
+
+**Pitfall: an objection in `pre_body()`.** An **objection** is the counter that keeps a phase running until it drops to zero ([I-UVM-1C](/curriculum/T2_Intermediate/I-UVM-1C_UVM_Phasing/index)). A sequence that raises its objection in `pre_body()` works when a test starts it, and silently raises nothing when it runs inside a library. Put objection code in `pre_start()` and `post_start()`, which run in every start style ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index#practitioner-depth-hooks-and-nested-sequences) shows the same trap with `` `uvm_do ``).
+
+### Running a library: from a test or as a default sequence
+
+**From a test** (the pattern Make It Work uses): create the library, set its fields, randomize it, and start it inside an objection, exactly like any sequence ([I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index#starting-a-sequence-from-a-test)).
+
+```systemverilog
+// snippet: lib_test::run_phase
+virtual task run_phase(uvm_phase phase);
+  mem_seq_lib lib = mem_seq_lib::type_id::create("lib");
+  lib.selection_mode   = UVM_SEQ_LIB_RANDC;
+  lib.min_random_count = 6;
+  lib.max_random_count = 6;
+  if (!lib.randomize()) `uvm_fatal("RAND", "mem_seq_lib randomization failed")
+  phase.raise_objection(this, "mem_seq_lib running");
+  lib.start(agt.sqr);
+  phase.drop_objection(this, "mem_seq_lib finished");
+endtask
+```
+
+Variants you will meet:
+- `lib.set_starting_phase(phase)` before `start()` names the phase in the `SEQLIB/START` line, and in uvm-core 2020.3.1 the library then raises and drops an objection on that phase itself, around its whole run.
+- `lib.start(agt.sqr, null, 300)` gives the library, and therefore every member, priority 300. That matters only under a priority-aware arbitration mode (next section).
+- For ITEM mode, call `lib.set_sequencer(agt.sqr)` before `lib.randomize()`. The reason is in the debugging section.
+
+**As a phase default sequence.** A sequencer can start a **default sequence** by itself when a run-time phase begins. You name the sequence type in a resource called `default_sequence`, scoped to the sequencer's full name plus the phase (§15.3.5); I-UVM-3A's [default sequences](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index#expert-starting-phase-and-default-sequences) item shows the mechanism. The command-line form needs no test code (Annex G.2.9):
+
+```text
++uvm_set_default_sequence=uvm_test_top.agt.sqr,main_phase,mem_seq_lib
+```
+
+When `main_phase` starts, the sequencer creates `mem_seq_lib` with the factory, sets its sequencer and starting phase, randomizes it and starts it (§15.3.5). Two library-specific facts make this work well:
+- The library is randomized, so `sequence_count` lands in `[min_random_count:max_random_count]`. Set those, and the mode, in the library's constructor, or with the uvm-core knobs in Push Further.
+- In uvm-core 2020.3.1 the library raises an objection on its starting phase, so `main_phase` stays alive until the library ends. A plain sequence used as a default sequence does not object by itself.
+
+Use the full sequencer path (`uvm_test_top.agt.sqr`) and the `_phase` suffix; a wrong scope starts nothing and reports no error. The test must not also start the same library in `run_phase`, or two copies run.
+
+### Libraries and arbitration
+
+Selection and arbitration are different layers, and the page title puts them side by side because people confuse them.
+
+- **Selection** (`selection_mode`) decides *which member the library runs next*. It happens inside the library, one member at a time.
+- **Arbitration** (`set_arbitration()`, IEEE 1800.2-2020 §15.3.2.19) decides *whose item the sequencer grants next* when several sequences are waiting at the same sequencer ([Sequencer Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration)).
+
+So arbitration only matters when something *else* runs on the same sequencer as the library, for example a background traffic sequence. Then the library's current member competes with it like any sequence:
+- **Priority.** Members inherit the library's priority (point 3 above). The default mode, `UVM_SEQ_ARB_FIFO`, ignores priority. Under `UVM_SEQ_ARB_WEIGHTED`, priority is a weight, not a rank: a member with priority 300 against a sequence with priority 100 wins about three grants in four, not all of them.
+- **Locks.** Members are children of the library. If a sequence calls `lock()` and then starts the library with itself as parent, `lib.start(m_sequencer, this)`, every member is a descendant of the lock holder and is not blocked by the lock, while other sequences are (§14.2.5.5, §15.3.2.2). A member that calls `lock()` or `grab()` itself holds it only until that member unlocks or ends.
+
+Picking a selection mode never changes arbitration, and `set_arbitration()` never changes which member a library picks.
+
+### Biasing the mix
+
+There is no per-member weight in a library. To make `err_seq` run three times as often as each other member, override `select_sequence()` and use USER mode:
+
+```systemverilog
+// snippet: in mem_seq_lib; used only when selection_mode == UVM_SEQ_LIB_USER
+virtual function int unsigned select_sequence(int unsigned max);
+  int unsigned w[$];
+  int unsigned total, pick;
+  foreach (sequences[i])                          // weight per member type
+    w.push_back(sequences[i].get_type_name() == "err_seq" ? 3 : 1);
+  foreach (w[i]) total += w[i];
+  pick = $urandom_range(total - 1);
+  foreach (w[i]) begin
+    if (pick < w[i]) return i;                    // an index from 0 to max
+    pick -= w[i];
+  end
+  return 0;
+endfunction
+```
+
+It weights by **type name**, not by index, because registration order is not defined. `max` is the last valid index (`sequences.size() - 1`); returning anything larger is an error (`SEQLIB/USER_FAIL`). With three members the weights are 3, 1, 1, so `err_seq` gets about 60% of the picks. Confirm the result with `SEQLIB/DSTRB` at `UVM_HIGH`.
+
+**Registering a type twice is not a way to bias.** The standard ignores a repeated registration (§14.4.5.1 to §14.4.5.4), and the macro may be used only once per member and library pair (B.3.2.1); a second `` `uvm_add_to_seq_lib(err_seq, mem_seq_lib) `` in the same class does not even compile, because it declares the same static variable twice. uvm-core 2020.3.1 happens to keep a duplicate made with `add_typewide_sequence()` on a library subtype (Push Further explains why), which does skew RAND, but that is an accident of one implementation. Use USER mode, or a constraint on `select_rand` (Push Further).
+
+### Debugging a library from its log
+
+Raise the verbosity first: `+UVM_VERBOSITY=UVM_HIGH` shows `SEQLIB/DSTRB`, and `UVM_FULL` adds one `SEQLIB/EXEC` line per pick and a `SEQLIB/SPRINT` table that lists the library's members. `lib.print()` prints the same table at any time.
+
+| Symptom in the log | Cause | Fix |
+| --- | --- | --- |
+| `UVM_ERROR [SEQLIB/NOSEQS] Sequence library does not contain any sequences. Did you forget to call init_sequence_library() in the constructor?` | The subtype's constructor does not call `init_sequence_library()`, or no member registered with this library type (the macro names another library, or the member's class is not compiled into the build) | Add the call; check the macro's second argument; print the library to see its list |
+| `SEQLIB/START … 10 iterations` although you set min = max = 3 | The library was started without `randomize()`, so `sequence_count` kept its initial value 10 | Call `lib.randomize()` and check it, or set `lib.sequence_count = 3` |
+| `UVM_ERROR [SEQLIB/VIRT_SEQ] selection_mode cannot be UVM_SEQ_LIB_ITEM when running as a virtual sequence. Using UVM_SEQ_LIB_RAND mode` | ITEM mode, and the library was randomized before it had a sequencer: uvm-core checks the mode in `pre_randomize()` | `lib.set_sequencer(agt.sqr)` before `lib.randomize()` |
+| `UVM_FATAL [SEQLIB/VIRT_SEQ] Sequence library 'm_sequencer' handle is null …` | The library was started with a null sequencer, for example from a `p_sequencer` field that was never set | Start it on a real sequencer handle |
+| `UVM_ERROR [SEQLIB/MIN_GT_MAX]` | `min_random_count` is larger than `max_random_count`; uvm-core sets min to max | Fix the two values |
+| `UVM_WARNING [SEQLIB/MAX_ZERO]` and nothing runs | `max_random_count` is 0 | Set a non-zero maximum |
+| `UVM_ERROR [SEQLIB/BASE_ITEM]` | ITEM mode on a library declared with the base `uvm_sequence_item` as its request type | Parameterize the library with your item type, or use another mode |
+| `UVM_ERROR [SEQLIB/USER_FAIL] User sequence selection out of range`, then an item instead of a member | Your `select_sequence()` returned an index larger than `max` | Return a value from 0 to `max` |
+| `UVM_WARNING [RNDFLD] Randomization failed in uvm_rand_send action` | A member's constraints failed; it runs anyway with stale field values | Fix the member's constraints |
+| A member's `pre_body()` work never happens | Members start with `call_pre_post = 0` | Move the work to `pre_start()` |
+| `lib.randomize()` fails | An inline constraint such as `with { sequence_count == 20; }` conflicts with the built-in `[min:max]` constraint | Set `max_random_count` instead, or set `sequence_count` directly |
+
+All message texts are from uvm-core 2020.3.1 (`uvm_sequence_library.svh`, and `uvm_sequence_defines.svh` for `RNDFLD`).
+
+### When not to use a library
+
+A library is good at one thing: an unordered random mix of independent scenarios on one sequencer. Use something else when:
+- **Scenarios must overlap in time**, for example traffic on two agents at once. A library runs one member at a time on one sequencer; use a [virtual sequence](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) that forks sub-sequences.
+- **Order matters**, such as "configure, then send data". The library has no notion of dependencies; a virtual sequence or a layered sequence ([Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences)) encodes the order.
+- **You are closing a specific coverage hole.** Blind random selection may take many seeds to reach it; a directed or tightly constrained sequence gets there at once.
+- **There are only two or three variants of one scenario.** A single sequence with a `rand` kind field and a `case` is simpler to read and debug.
+- **The scenario mix must be portable across simulation, emulation and post-silicon, or generated from a model.** That is what [E-PSS-1: Portable Stimulus](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index) is for.
+
+### Recap: the mistakes everyone makes once
+
+1. Forgetting `init_sequence_library()` in the constructor: the library is empty (`SEQLIB/NOSEQS`).
+2. Setting `min_random_count` and `max_random_count` but never randomizing: 10 picks run.
+3. Expecting RAND to run every member: only RANDC guarantees that, and only per full cycle of N picks.
+4. Expecting a member's `pre_body()` to run: members start with `call_pre_post = 0`.
+5. Registering a member twice to bias the mix: use a USER-mode `select_sequence()`.
+6. Confusing `selection_mode` with sequencer arbitration: the first chooses the next member, the second chooses between competing sequences.
+
+## Make It Work
+
+### A library of three memory scenarios
+
+This file builds a library with three members and runs it in RANDC mode for six picks. It also shows the hook trap: every member logs from `pre_start()` and from `pre_body()`, and only the first appears.
+
+The driver has no pins. It logs each item and takes 10 ns per transfer to stand in for real bus cycles, so the example needs no interface and no DUT, as in [I-UVM-3A](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index). The memory map in this example is addresses `0x00` to `0xef`; `err_seq` writes to `0xff`, which a real design would reject.
+
+**Run it.** Compile uvm-core 2020.3.1 (or your simulator's built-in UVM library) together with this file, with `tb_top` as the top module, and run. Add `+UVM_VERBOSITY=UVM_HIGH` to see the `SEQLIB/DSTRB` line. The exact compile and run switches are tool-dependent. No simulator was available to the course authors, so the code was checked by reading it against IEEE 1800-2023 and the uvm-core 2020.3.1 source.
+
+```systemverilog
+// compile
+// tb_top.sv: the package and the top module in one file
+`include "uvm_macros.svh"
+
+package mem_lib_pkg;
+  timeunit 1ns;
+  timeprecision 1ps;
+
+  import uvm_pkg::*;
+
+  typedef enum bit {MEM_READ, MEM_WRITE} mem_op_e;
+
+  // One memory transfer.
+  class mem_item extends uvm_sequence_item;
+    rand mem_op_e   op;
+    rand bit [7:0]  addr;
+    rand bit [31:0] data;
+
+    `uvm_object_utils(mem_item)
+
+    function new(string name = "mem_item");
+      super.new(name);
+    endfunction
+
+    virtual function string convert2string();
+      if (op == MEM_WRITE)
+        return $sformatf("MEM_WRITE addr=0x%02h data=0x%08h", addr, data);
+      return $sformatf("MEM_READ  addr=0x%02h", addr);
+    endfunction
+  endclass
+
+  // The library. Declared before the members, because their macros name it.
   class mem_seq_lib extends uvm_sequence_library #(mem_item);
     `uvm_object_utils(mem_seq_lib)
     `uvm_sequence_library_utils(mem_seq_lib)
 
     function new(string name = "mem_seq_lib");
       super.new(name);
-      init_sequence_library();        // copies the registered types into this instance
+      init_sequence_library();   // uvm-core: copy the static member list
     endfunction
   endclass
 
-  // Each member registers itself with the library type
-  class mem_atomic_write extends uvm_sequence #(mem_item);
-    `uvm_object_utils(mem_atomic_write)
-    `uvm_add_to_seq_lib(mem_atomic_write, mem_seq_lib)
+  // Common base for the members: shows which hooks run under a library.
+  class mem_base_seq extends uvm_sequence #(mem_item);
+    `uvm_object_utils(mem_base_seq)
 
-    function new(string name = "mem_atomic_write");
+    function new(string name = "mem_base_seq");
       super.new(name);
     endfunction
-    // body() as on the Layered Sequences page
+
+    virtual task pre_start();   // runs in every start style
+      `uvm_info("MEMBER", {get_name(), ": pre_start"}, UVM_MEDIUM)
+    endtask
+
+    virtual task pre_body();    // runs only when call_pre_post is 1
+      `uvm_info("MEMBER", {get_name(), ": pre_body"}, UVM_MEDIUM)
+    endtask
   endclass
 
-  // In the test: configure the selection, then start the library like any sequence
-  task run_phase(uvm_phase phase);
-    mem_seq_lib lib = mem_seq_lib::type_id::create("lib");
-    lib.selection_mode   = UVM_SEQ_LIB_RANDC;   // every member once before any repeats
-    lib.min_random_count = 5;
-    lib.max_random_count = 10;
-    if (!lib.randomize())                        // picks sequence_count in [5:10]
-      `uvm_error("RAND", "library randomization failed")
-    phase.raise_objection(this);
-    lib.start(env.agt.sqr);
-    phase.drop_objection(this);
-  endtask
-  ```
+  // Member 1: one write to a mapped address the library randomizes.
+  class wr_seq extends mem_base_seq;
+    `uvm_object_utils(wr_seq)
+    `uvm_add_to_seq_lib(wr_seq, mem_seq_lib)
 
-  **Walkthrough pointers**
-  - `` `uvm_sequence_library_utils(mem_seq_lib) `` gives the library type its own static list of member types. `` `uvm_add_to_seq_lib(seq, lib) `` adds a sequence type to that list. `init_sequence_library()` in the constructor copies the list into the instance; forget it and the library reports `SEQLIB/NOSEQS` "Sequence library does not contain any sequences".
-  - Members can also be added in code: `mem_seq_lib::add_typewide_sequence(mem_burst_program::get_type())` for every instance, or `lib.add_sequence(...)` for one instance.
-  - `lib.start(sqr)` runs `sequence_count` member sequences on that sequencer. `randomize()` picks `sequence_count` between `min_random_count` and `max_random_count` (both 10 by default).
+    rand bit [7:0] base_addr;
+    constraint c_mapped { base_addr < 8'hf0; }
 
-  ## Selection Modes
+    function new(string name = "wr_seq");
+      super.new(name);
+    endfunction
 
-  | `selection_mode` | What the library runs |
-  | --- | --- |
-  | `UVM_SEQ_LIB_RAND` | a random member each time (repeats possible) |
-  | `UVM_SEQ_LIB_RANDC` | random order, every member once before any repeats |
-  | `UVM_SEQ_LIB_ITEM` | no member sequences: just `sequence_count` random items of the request type |
-  | `UVM_SEQ_LIB_USER` | your `select_sequence(max)` override returns the index of the next member |
+    virtual task body();
+      mem_item it = mem_item::type_id::create("it");
+      start_item(it);
+      if (!it.randomize() with { op == MEM_WRITE; addr == local::base_addr; })
+        `uvm_fatal("RAND", "wr_seq: item randomization failed")
+      finish_item(it);
+    endtask
+  endclass
 
-  There is no built-in per-sequence weight. To bias the mix, use `UVM_SEQ_LIB_USER` and override `select_sequence()`, or register a sequence type more than once. Library selection is also unrelated to sequencer arbitration: the library runs its members one after another on one sequencer, so `UVM_SEQ_ARB_WEIGHTED` and `set_priority()` only matter when other sequences compete with it.
+  // Member 2: one read from a mapped address.
+  class rd_seq extends mem_base_seq;
+    `uvm_object_utils(rd_seq)
+    `uvm_add_to_seq_lib(rd_seq, mem_seq_lib)
 
-  ## grab()/ungrab(): Use Sparingly
+    function new(string name = "rd_seq");
+      super.new(name);
+    endfunction
 
-  - `grab()` puts a lock request at the front of the arbitration queue. When granted, every other sequence is blocked until `ungrab()`. It cannot take the sequencer away from a sequence that already holds a lock; it only waits at the front of the line.
-  - Keep `grab()` … `ungrab()` short and in one task, with nothing in between that can block forever. SystemVerilog has no exceptions or `finally` block, so a killed process or a `disable` skips the `ungrab()`.
-  - Prefer `lock()` or priorities when you do not need to jump the queue.
+    virtual task body();
+      mem_item it = mem_item::type_id::create("it");
+      start_item(it);
+      if (!it.randomize() with { op == MEM_READ; addr < 8'hf0; })
+        `uvm_fatal("RAND", "rd_seq: item randomization failed")
+      finish_item(it);
+    endtask
+  endclass
 
-  ## Quiz Yourself
+  // Member 3: a write to an unmapped address, the error scenario.
+  class err_seq extends mem_base_seq;
+    `uvm_object_utils(err_seq)
+    `uvm_add_to_seq_lib(err_seq, mem_seq_lib)
 
-  <Quiz
-    questions={[
-      {
-        question: "A test starts mem_seq_lib and sees 'Sequence library does not contain any sequences'. The members use `uvm_add_to_seq_lib. What is the most likely cause?",
-        answers: [
-          { text: "The library constructor does not call init_sequence_library()", correct: true },
-          { text: "selection_mode was left at UVM_SEQ_LIB_RAND", correct: false },
-          { text: "The sequencer is not using UVM_SEQ_ARB_WEIGHTED", correct: false },
-          { text: "The library must be started with grab()", correct: false },
-        ],
-        explanation: "The macros register types on the library class; init_sequence_library() copies them into the instance.",
-      },
-      {
-        question: "You want each registered sequence to run once, in random order, before any repeats. Which setting?",
-        answers: [
-          { text: "selection_mode = UVM_SEQ_LIB_RAND", correct: false },
-          { text: "selection_mode = UVM_SEQ_LIB_RANDC", correct: true },
-          { text: "set_arbitration(UVM_SEQ_ARB_RANDOM)", correct: false },
-          { text: "selection_mode = UVM_SEQ_LIB_ITEM", correct: false },
-        ],
-        explanation: "RANDC uses a randc index, which cycles through every value before repeating.",
-      },
-      {
-        question: "When is grab() appropriate?",
-        answers: [
-          { text: "Whenever you want more bandwidth", correct: false },
-          { text: "For short, urgent stimulus that must be served before any waiting lock or request", correct: true },
-          { text: "For routine register programming", correct: false },
-          { text: "To take the sequencer away from a sequence that holds a lock", correct: false },
-        ],
-        explanation: "grab() only jumps to the front of the queue; an existing lock still has to be released first.",
-      },
-    ]}
-  />
+    function new(string name = "err_seq");
+      super.new(name);
+    endfunction
 
-  Next: [Interrupt Handling](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/interrupt-handling).
+    virtual task body();
+      mem_item it = mem_item::type_id::create("it");
+      start_item(it);
+      if (!it.randomize() with { op == MEM_WRITE; addr == 8'hff; })
+        `uvm_fatal("RAND", "err_seq: item randomization failed")
+      finish_item(it);
+    endtask
+  endclass
 
-</InfoPage>
+  // A driver without pins: it logs each item, 10 ns per transfer.
+  class mem_drv extends uvm_driver #(mem_item);
+    `uvm_component_utils(mem_drv)
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual task run_phase(uvm_phase phase);
+      forever begin
+        seq_item_port.get_next_item(req);
+        #10ns;                       // stands in for one bus transfer
+        `uvm_info("DRV", req.convert2string(), UVM_MEDIUM)
+        seq_item_port.item_done();
+      end
+    endtask
+  endclass
+
+  typedef uvm_sequencer #(mem_item) mem_sqr;
+
+  class mem_agent extends uvm_agent;
+    `uvm_component_utils(mem_agent)
+
+    mem_sqr sqr;
+    mem_drv drv;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      sqr = mem_sqr::type_id::create("sqr", this);
+      drv = mem_drv::type_id::create("drv", this);
+    endfunction
+
+    virtual function void connect_phase(uvm_phase phase);
+      drv.seq_item_port.connect(sqr.seq_item_export);
+    endfunction
+  endclass
+
+  class lib_test extends uvm_test;
+    `uvm_component_utils(lib_test)
+
+    mem_agent agt;
+
+    function new(string name, uvm_component parent);
+      super.new(name, parent);
+    endfunction
+
+    virtual function void build_phase(uvm_phase phase);
+      super.build_phase(phase);
+      agt = mem_agent::type_id::create("agt", this);
+    endfunction
+
+    virtual task run_phase(uvm_phase phase);
+      mem_seq_lib lib = mem_seq_lib::type_id::create("lib");
+      lib.selection_mode   = UVM_SEQ_LIB_RANDC;  // every member once per cycle
+      lib.min_random_count = 6;                  // 6 picks = two full cycles of 3
+      lib.max_random_count = 6;
+      if (!lib.randomize())                      // sets sequence_count to 6
+        `uvm_fatal("RAND", "mem_seq_lib randomization failed")
+      phase.raise_objection(this, "mem_seq_lib running");
+      lib.start(agt.sqr);
+      phase.drop_objection(this, "mem_seq_lib finished");
+    endtask
+  endclass
+endpackage
+
+module tb_top;
+  timeunit 1ns;
+  timeprecision 1ps;
+
+  import uvm_pkg::*;
+  import mem_lib_pkg::*;
+
+  initial run_test("lib_test");
+endmodule
+```
+
+**Expected output** (illustrative, not captured from a simulator; the member order, addresses and data depend on the seed, file and line fields are shown as `…`, and the format of the `%p` line in `SEQLIB/DSTRB` is tool-dependent). The `SEQLIB/DSTRB` line appears only with `+UVM_VERBOSITY=UVM_HIGH`:
+
+```text
+UVM_INFO @ 0: reporter [RNTST] Running test lib_test...
+UVM_INFO … @ 0: uvm_test_top.agt.sqr@@lib [SEQLIB/START] Starting sequence library mem_seq_lib in unknown phase: 6 iterations in mode UVM_SEQ_LIB_RANDC
+UVM_INFO … @ 0: uvm_test_top.agt.sqr@@lib.rd_seq:1 [MEMBER] rd_seq:1: pre_start
+UVM_INFO … @ 10: uvm_test_top.agt.drv [DRV] MEM_READ  addr=0x5c
+UVM_INFO … @ 10: uvm_test_top.agt.sqr@@lib.err_seq:2 [MEMBER] err_seq:2: pre_start
+UVM_INFO … @ 20: uvm_test_top.agt.drv [DRV] MEM_WRITE addr=0xff data=0x1b2c3d4e
+UVM_INFO … @ 20: uvm_test_top.agt.sqr@@lib.wr_seq:3 [MEMBER] wr_seq:3: pre_start
+UVM_INFO … @ 30: uvm_test_top.agt.drv [DRV] MEM_WRITE addr=0x21 data=0x9c1e2f07
+UVM_INFO … @ 30: uvm_test_top.agt.sqr@@lib.wr_seq:4 [MEMBER] wr_seq:4: pre_start
+UVM_INFO … @ 40: uvm_test_top.agt.drv [DRV] MEM_WRITE addr=0xa8 data=0x05d3b6e1
+UVM_INFO … @ 40: uvm_test_top.agt.sqr@@lib.err_seq:5 [MEMBER] err_seq:5: pre_start
+UVM_INFO … @ 50: uvm_test_top.agt.drv [DRV] MEM_WRITE addr=0xff data=0x7f00c3a2
+UVM_INFO … @ 50: uvm_test_top.agt.sqr@@lib.rd_seq:6 [MEMBER] rd_seq:6: pre_start
+UVM_INFO … @ 60: uvm_test_top.agt.drv [DRV] MEM_READ  addr=0x10
+UVM_INFO … @ 60: uvm_test_top.agt.sqr@@lib [SEQLIB/END] Ending sequence library in phase unknown
+UVM_INFO … @ 60: uvm_test_top.agt.sqr@@lib [SEQLIB/DSTRB] '{"err_seq":2, "rd_seq":2, "wr_seq":2}
+...
+--- UVM Report Summary ---
+
+** Report counts by severity
+UVM_INFO :   …
+UVM_WARNING :    0
+UVM_ERROR :    0
+UVM_FATAL :    0
+```
+
+**How to read it.**
+- **Six picks, two of each.** Picks 1 to 3 (`rd`, `err`, `wr`) are one RANDC cycle and picks 4 to 6 (`wr`, `err`, `rd`) are the next; each cycle contains every member once (IEEE 1800-2023 §18.4.2). Your order will differ, but every run of this test prints two of each.
+- **No `pre_body` lines.** Every member logs from `pre_start()` and never from `pre_body()`, because the library starts members with `call_pre_post = 0`.
+- **"unknown phase".** The test started the library without a starting phase. Call `lib.set_starting_phase(phase)` first and the lines read `in run phase` and `in phase run`.
+- **Names.** Messages from a member show the library's path then the member's name, `lib.wr_seq:3`; the number counts all members run so far, not runs of that type.
+- **Timing.** One item per member and 10 ns per item: the sixth item completes at 60 ns, and the library ends in the same time slot.
+
+### How to build it yourself
+
+1. **Write the library subtype.** Extend `uvm_sequence_library #(your_item)`, add `` `uvm_object_utils `` and `` `uvm_sequence_library_utils `` with the subtype's name, and call `init_sequence_library()` after `super.new(name)`.
+2. **Write the members as ordinary sequences.** Give each a complete `body()` and any `rand` knobs the library should randomize. Put objection or setup code in `pre_start()`, never in `pre_body()`.
+3. **Register each member** with `` `uvm_add_to_seq_lib(member, library) `` in its class, which must come after the library's declaration. Or register from code with `add_typewide_sequence()` before the library is created, or with `lib.add_sequence()` on one instance.
+4. **Choose the mode and the count** in the test (or in the library's constructor): `selection_mode`, `min_random_count`, `max_random_count`.
+5. **Randomize, check, then start** inside an objection. For ITEM mode, `set_sequencer()` before `randomize()`.
+6. **Read the log**: `SEQLIB/START` states the count and the mode; at `UVM_HIGH`, `SEQLIB/DSTRB` states what ran.
+
+**Checklist before moving on:**
+- [ ] My library subtype has both macros and calls `init_sequence_library()` in its constructor.
+- [ ] Every member registers with the right library type, and its class is compiled into the build.
+- [ ] I randomize the library (and check the result) whenever I rely on `min_random_count` and `max_random_count`, or I set `sequence_count` directly.
+- [ ] I can predict what each selection mode runs for a given count, and I know USER mode is round robin by index unless I override `select_sequence()`.
+- [ ] No member depends on `pre_body()` or `post_body()`.
+- [ ] I bias the mix with a USER-mode `select_sequence()`, never by registering a type twice.
+- [ ] I can find `SEQLIB/START`, `SEQLIB/END` and `SEQLIB/DSTRB` in my log and say what each tells me.
+
+## Push Further
+
+### Expert: IEEE 1800.2-2020 versus uvm-core 2020.3.1
+
+Code written from the standard's text alone does not always compile, or behave the same, on uvm-core 2020.3.1. Every difference below was observed in the uvm-core 2020.3.1 source (`src/seq/uvm_sequence_library.svh`, `src/macros/uvm_sequence_defines.svh`); none is listed in its `DEVIATIONS.md`.
+
+| Topic | IEEE 1800.2-2020 | uvm-core 2020.3.1 |
+| --- | --- | --- |
+| Mode and counts | Accessors `get/set_selection_mode`, `get/set_min_random_count`, `get/set_max_random_count`, `get_num_sequences_executed` (§14.4.4.1 to §14.4.4.4) | None of these methods exist; you write the public fields `selection_mode`, `min_random_count` and `max_random_count`. `sequences_executed` is protected |
+| Constructor | The §14.4.2 example calls only `super.new(name)` | The subtype must call `init_sequence_library()`, or the library is empty |
+| Duplicate registration | Silently ignored (§14.4.5.1 to §14.4.5.4) | `add_sequence()` ignores it. On a subtype made with `` `uvm_sequence_library_utils ``, `add_typewide_sequence()` checks for duplicates in the *base* class's static list, not the subtype's, so a second registration of the same type is kept and RAND picks it twice as often |
+| `remove_sequence()` | Removing a statically registered type updates every instance; a warning if the type is not registered (§14.4.5.5) | Removes the first match from this instance only, with no warning |
+| USER default | Returns 0, incrementing, wrapping back to 0 (§14.4.4.9) | Returns 0 to `max` inclusive, then wraps. The counter is not reset between starts, so a second `start()` of the same object continues where the first stopped |
+| Objection | Not specified | `body()` raises and drops an objection on the library's starting phase, if it has one |
+| Default-sequence knobs | Not in the standard | `pre_randomize()` reads `default_sequence.*` resources and a `uvm_sequence_library_cfg` (next item) |
+
+To keep code portable, touch the library's fields in one place, for example a helper function in your library base class, so a later implementation that follows the standard's accessors needs one edit.
+
+### Expert: libraries as phase default sequences
+
+Default sequences are the regression use the library class was designed around: a test, or just a command line, names the library for a sequencer and phase, and the library runs a random mix there.
+
+- **How it starts.** When the phase starts, the sequencer looks up `default_sequence` in the scope `<sequencer full name>.<phase>_phase`, creates the sequence with the factory, sets its sequencer and starting phase, randomizes it unless randomization is disabled, and starts it (§15.3.5; uvm-core `uvm_sequencer_base::start_phase_sequence`). `+uvm_set_default_sequence=<seqr>,<phase>,<type>` sets that resource from the command line (Annex G.2.9). uvm-core sets that resource from `uvm_root`, whose full name is empty, so `<seqr>` must be the sequencer's full name, `uvm_test_top.agt.sqr`, not `agt.sqr`.
+- **Configuring it without test code** (uvm-core 2020.3.1 only; the names do not appear in IEEE 1800.2-2020). The library's `pre_randomize()` looks, in the same `<sequencer>.<phase>_phase` scope of the configuration database ([I-UVM-2C](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index)), for either a `uvm_sequence_library_cfg` object named `default_sequence.config`, which carries a mode, a minimum and a maximum, or the three separate resources `default_sequence.selection_mode` (type `uvm_sequence_lib_mode`), `default_sequence.min_random_count` and `default_sequence.max_random_count` (type `int unsigned`). The knobs are read in `pre_randomize()`, or at the start of `body()` when randomization is disabled with `set_randomize_enabled(0)`; the default-sequence path randomizes the library, so they always apply there. A library that a test starts without randomizing never reads them.
+- **Ending.** The library objects on its starting phase (uvm-core), so the phase waits for it. If the phase is ended anyway, for example by a phase jump, a default sequence that is still running is killed (§15.3.5).
+- **Trade-off.** Default sequences hide the stimulus from the test code, and a misspelt scope starts nothing without an error. Many teams therefore start libraries explicitly in a test and keep default sequences for regression scripts that vary stimulus from the command line.
+
+### Expert: randomness, reproducibility and measurement
+
+- **Which generator.** RAND and RANDC picks call `randomize(select_rand)` or `randomize(select_randc)` on the library object, so they use the library's own random generator (IEEE 1800-2023 §18.14.3, object stability). Each member is reseeded from its name when the library sets its context (uvm-core `set_item_context()`), and member names include the run counter, so a given seed reproduces the same mix on one simulator.
+- **What breaks reproducibility.** Adding, removing or reordering members shifts the indexes, so the same seed picks different members. Registration order follows static initialization, which IEEE 1800-2023 does not order across classes (§10.5), so it can change with file order, compile options or the simulator (tool-dependent). If an exact order matters, register in the library's constructor with `add_sequences()` and a queue in a fixed order, instead of the macros.
+- **RANDC draws first.** uvm-core's RANDC branch draws all `sequence_count` indexes into a queue, then runs them; RAND, ITEM and USER pick one, run it, then pick the next. A RANDC run therefore cannot react to what earlier members did. The `randc` permutation is recomputed whenever the constraints on it change (§18.4.2), which is why each `start()` begins a fresh cycle: `body()` switches the index constraint on before the loop.
+- **Inline control.** `randomize(select_rand)` makes `select_rand` the only random variable for that call; every other field is a state variable whose constraints must still hold (§18.11). An extension that adds a constraint linking its own fields to `select_rand` can therefore make a pick fail with `SEQLIB/RAND_FAIL`.
+- **Measuring the mix.** `SEQLIB/DSTRB` (UVM_HIGH) prints how many times each type ran in that `start()`. For coverage across a regression, override `post_do(uvm_sequence_item this_item)` in the library: the library is every member's parent, so `post_do()` runs after each member's `body()` (§14.2.3.1), and `this_item.get_type_name()` tells you which one.
+
+### Expert: biasing and coverage-driven selection
+
+- **Constraints on `select_rand`.** The standard allows extensions to add constraints to `select_rand` and `select_randc` (§14.4.4.7, §14.4.4.8). Keep any index you need in a state variable, computed once after construction with `get_sequence(i)` (§14.4.4.10), rather than calling functions inside the constraint. An exclusion such as `select_rand != skip_idx` is simple; per-member weights are clearer in a USER-mode `select_sequence()`, as shown in the mental model.
+- **Coverage-driven selection.** A USER-mode `select_sequence()` can read coverage your environment collects, such as which members have already hit their goals, and pick an uncovered one. Keep that logic deterministic per seed and log every decision, or failures become hard to reproduce.
+- **Factory overrides as a bias.** Because members are created by the factory every pick, a test can replace one member with a variant (`wr_seq` with a burst version) by a type override, without touching the library ([I-UVM-1B](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index)). An override of the request type also changes what ITEM mode sends.
+
+### Expert: choosing between a library, a virtual sequence and PSS
+
+| Need | Library | Randomized virtual sequence | PSS |
+| --- | --- | --- | --- |
+| Random mix of independent scenarios on one sequencer | Best fit: one `start()` | Possible, but you write the loop | Overkill |
+| Concurrency across agents | No: one member at a time, one sequencer | Yes: `fork` sub-sequences on several sequencers | Yes, scheduled by the tool |
+| Ordering and dependencies | No | Yes, written in `body()` | Yes, declared as a model |
+| Adding a scenario | The new sequence registers itself | Edit the virtual sequence | Edit the model |
+| Reuse beyond simulation | No | No | Yes (emulation, post-silicon) |
+
+A library can also be built from virtual sequences: parameterize it with `uvm_sequence_item`, register virtual sequences as members, and start it on a virtual sequencer handle. It then picks one coordinated scenario at a time; ITEM mode is not available there (`SEQLIB/BASE_ITEM`). See [Virtual Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences) and [E-PSS-1](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index).
+
+### Expert: interview angles
+
+Answer each one before you open the feedback.
+
+<InterviewQuestionPlayground
+  title="Interview: the member that never runs"
+  question="A RAND-mode library has eight members and makes 10 picks per run. err_seq has not run once in 1000 regression seeds. How do you debug it?"
+  options={[
+    { text: "Print the library (UVM_FULL shows the SEQLIB/SPRINT table) to see whether err_seq is in its sequences list at all; if it is, read SEQLIB/DSTRB and the selection mode, and check for a select_sequence() override or a constraint on select_rand that excludes its index.", isCorrect: true, feedback: "Correct. With eight members and 10 picks per run, RAND would pick err_seq in most seeds, so a member that never runs almost always is not registered with this library type (wrong macro argument, registered after the library was built, or not compiled), or is excluded by user selection code." },
+    { text: "Raise err_seq's priority so the sequencer grants it more often.", isCorrect: false, feedback: "Priority is an arbitration setting between competing sequences. The library decides which member to start before any arbitration happens, and members inherit the library's priority anyway." },
+    { text: "RAND is biased against members registered last; switch to RANDC and the problem disappears.", isCorrect: false, feedback: "RAND draws a uniform valid index (§14.4.4.7). Switching modes might hide the symptom only if err_seq is in the list, and would not explain why it never ran." },
+    { text: "Run 10000 seeds; 1000 is not enough to hit one member in eight.", isCorrect: false, feedback: "At 10 picks per run, the chance that one member in eight is never picked is about (7/8) to the power 10, roughly 26% per seed. Missing it in 1000 seeds in a row is not bad luck." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: library or virtual sequence?"
+  question="When would you choose a uvm_sequence_library over a randomized virtual sequence?"
+  options={[
+    { text: "Whenever the testbench has more than one agent.", isCorrect: false, feedback: "Several agents usually call for a virtual sequence, because a library runs its members one at a time on one sequencer." },
+    { text: "When I want a random mix of independent, already-written scenarios on one sequencer, with new scenarios joining by registration and the count and mode set per test or from the command line.", isCorrect: true, feedback: "Correct. That is the library's niche. Dependencies, ordering and concurrency belong in a virtual sequence; portability across platforms belongs in PSS." },
+    { text: "When the scenarios must run in a fixed order, because RANDC preserves registration order.", isCorrect: false, feedback: "RANDC randomizes the order within each cycle, and registration order is not defined across classes anyway." },
+    { text: "Never: libraries are deprecated in IEEE 1800.2-2020.", isCorrect: false, feedback: "uvm_sequence_library is a normative class in IEEE 1800.2-2020 §14.4 and is not in Annex H (deprecation)." }
+  ]}
+/>
+
+<InterviewQuestionPlayground
+  title="Interview: a reproducible, measurable mix"
+  question="How do you make a sequence library's mix reproducible across reruns and measurable across a regression?"
+  options={[
+    { text: "Reproducible: rerun with the same seed, simulator and build, and keep the member list fixed, since adding a member shifts the indexes. Measurable: log SEQLIB/DSTRB at UVM_HIGH per run, or count member types in the library's post_do().", isCorrect: true, feedback: "Correct. The picks come from the library object's generator (§18.14.3), and the indexes depend on the member list and its registration order." },
+    { text: "Use RANDC: it always runs the members in the same order for a given library.", isCorrect: false, feedback: "RANDC draws a new random permutation per cycle; it guarantees coverage of every member per cycle, not a fixed order." },
+    { text: "Set selection_mode to UVM_SEQ_LIB_ITEM, which removes randomness from member selection.", isCorrect: false, feedback: "ITEM mode runs no members at all; it sends random items of the request type." },
+    { text: "Call lib.srandom() with a constant in every test.", isCorrect: false, feedback: "That makes every test pick the same mix regardless of the regression seed, which defeats the point of a random library." }
+  ]}
+/>
+
+## Practice & Reinforce
+
+### Retrieval quiz
+
+<Quiz
+  questions={[
+    {
+      question: "Which line, inside the class wr_seq, makes wr_seq a member of every mem_seq_lib?",
+      answers: [
+        { text: "`uvm_add_to_seq_lib(wr_seq, mem_seq_lib)", correct: true, feedback: "Right. The macro takes the member type first and the library type second, and registers the member for every instance of that library (B.3.2.1)." },
+        { text: "`uvm_sequence_library_utils(wr_seq)", correct: false, feedback: "That macro belongs in the library subtype, with the library's own name; it gives the library its static member list (B.3.2.2)." },
+        { text: "mem_seq_lib::add_sequence(wr_seq::get_type());", correct: false, feedback: "add_sequence() is an instance method that adds a member to one library object (§14.4.5.3); it cannot be called through the class name. The static form is add_typewide_sequence()." },
+        { text: "`uvm_add_to_seq_lib(mem_seq_lib, wr_seq)", correct: false, feedback: "The arguments are reversed: the first is the sequence type, the second the library type." }
+      ],
+      explanation: "Static registration from the member's class uses `uvm_add_to_seq_lib(TYPE, LIBTYPE). The library subtype itself needs `uvm_sequence_library_utils(LIBTYPE) and, in uvm-core 2020.3.1, init_sequence_library() in its constructor. add_sequence() works on one instance, and add_typewide_sequence() is the static call.",
+      objective: 1
+    },
+    {
+      question: "You want mem_seq_lib to run in main_phase on the sequencer at uvm_test_top.agt.sqr, set from the command line. Which plusarg works?",
+      answers: [
+        { text: "+uvm_set_default_sequence=agt.sqr,main_phase,mem_seq_lib", correct: false, feedback: "uvm-core sets this resource from uvm_root, whose full name is empty, so the scope becomes agt.sqr.main_phase, which never matches the sequencer's lookup. Nothing starts and no error is reported." },
+        { text: "+uvm_set_default_sequence=uvm_test_top.agt.sqr,main,mem_seq_lib", correct: false, feedback: "The sequencer looks up <full name>.<phase name>_phase, so the phase field must be main_phase." },
+        { text: "+uvm_set_default_sequence=uvm_test_top.agt.sqr,main_phase,mem_seq_lib", correct: true, feedback: "Right: the sequencer's full name, the phase with its _phase suffix, and the factory type name (Annex G.2.9, §15.3.5)." },
+        { text: "+UVM_TESTNAME=mem_seq_lib", correct: false, feedback: "+UVM_TESTNAME names a test component to build, not a sequence; a library is not a test." }
+      ],
+      explanation: "The default sequence resource is scoped to the sequencer's full name plus the phase name with _phase (§15.3.5). The plusarg form is <seqr>,<phase>,<type> (G.2.9). A wrong scope fails silently, which is why the full path matters.",
+      objective: 1
+    },
+    {
+      question: "A library has members at indexes 0, 1 and 2, selection_mode = UVM_SEQ_LIB_USER, no select_sequence() override, and sequence_count = 5. Which indexes does it run?",
+      answers: [
+        { text: "Five random indexes, repeats allowed", correct: false, feedback: "That is RAND. The default select_sequence() is not random." },
+        { text: "A random permutation of 0, 1, 2, then two more from a new permutation", correct: false, feedback: "That is RANDC." },
+        { text: "0, 1, 2, 0, 1", correct: true, feedback: "Right. The default select_sequence() returns 0, increments on each call and wraps (§14.4.4.9): round robin by index." },
+        { text: "0, 0, 0, 0, 0", correct: false, feedback: "The default increments on each call; it only returns 0 again after wrapping." }
+      ],
+      explanation: "USER mode calls select_sequence(max) for every pick. Without an override it is round robin by index. Which member is at which index follows registration order, which is not defined across classes, so state the answer by index.",
+      objective: 2
+    },
+    {
+      question: "A library with three members runs in UVM_SEQ_LIB_RANDC mode with sequence_count = 6. How many times does each member run?",
+      answers: [
+        { text: "Exactly twice each", correct: true, feedback: "Right. Each run of three consecutive picks is one randc permutation that contains every member once (IEEE 1800-2023 §18.4.2), so six picks are two full cycles." },
+        { text: "Between 0 and 6 times each, at random", correct: false, feedback: "That describes RAND, where repeats are allowed and a member can be skipped." },
+        { text: "The first-registered member runs 4 times, the others once each", correct: false, feedback: "randc does not favour any value; it walks a random permutation of all legal values." },
+        { text: "Each once, then the library stops early because RANDC never repeats", correct: false, feedback: "randc never repeats within a cycle; when a cycle ends, a new permutation starts, and the library always makes sequence_count picks." }
+      ],
+      explanation: "select_randc is a randc variable constrained to a valid index, so every N consecutive picks cover all N members. With 6 picks and 3 members that is two of each, in a random order per cycle.",
+      objective: 2
+    },
+    {
+      question: "You want err_seq to run about three times as often as each of the other two members. What do you do?",
+      answers: [
+        { text: "Register err_seq with the library three times", correct: false, feedback: "The standard silently ignores repeated registrations (§14.4.5.1 to §14.4.5.4), and a repeated `uvm_add_to_seq_lib in one class does not compile. One uvm-core path happens to keep a duplicate, which is not portable." },
+        { text: "Start the library with priority 300", correct: false, feedback: "Priority affects arbitration between sequences competing at the sequencer. It does not change which member the library picks." },
+        { text: "Set the sequencer to UVM_SEQ_ARB_WEIGHTED", correct: false, feedback: "Arbitration modes choose between competing sequences, not between library members; and WEIGHTED is a probability by priority, not a strict ranking." },
+        { text: "Use UVM_SEQ_LIB_USER and override select_sequence() to weight the members 3:1:1 by type name", correct: true, feedback: "Right. USER mode hands the choice to your select_sequence(), which may implement any distribution (§14.4.4.9)." }
+      ],
+      explanation: "Libraries have no built-in weights. Bias with a USER-mode select_sequence(), weighting by type name because index order is not defined, or with an added constraint on select_rand (§14.4.4.7). Check the result with SEQLIB/DSTRB.",
+      objective: 3
+    },
+    {
+      question: "lib.start(agt.sqr) logs: UVM_ERROR [SEQLIB/NOSEQS] Sequence library does not contain any sequences. All three members use `uvm_add_to_seq_lib(..., mem_seq_lib). What is the most likely cause?",
+      answers: [
+        { text: "selection_mode was left at UVM_SEQ_LIB_RAND", correct: false, feedback: "The mode decides how members are picked, not whether any exist. NOSEQS is checked before the mode is used." },
+        { text: "mem_seq_lib's constructor does not call init_sequence_library()", correct: true, feedback: "Right. In uvm-core 2020.3.1 the macros fill the class's static list, and init_sequence_library() copies it into the object; without the call the object's list is empty." },
+        { text: "The library was not randomized before start()", correct: false, feedback: "Skipping randomization leaves sequence_count at 10; it does not empty the member list." },
+        { text: "The sequencer uses the default UVM_SEQ_ARB_FIFO mode", correct: false, feedback: "Arbitration has nothing to do with the library's member list." }
+      ],
+      explanation: "NOSEQS means the object's sequences queue is empty when body() starts. With correct macros in the members, the usual cause is a missing init_sequence_library() in the subtype's constructor; the message itself suggests it. The standard's §14.4.2 example omits the call, so code copied from it hits this.",
+      objective: 4
+    },
+    {
+      question: "A test sets min_random_count = 3 and max_random_count = 3 and calls lib.start(agt.sqr). The log says: SEQLIB/START ... 10 iterations. Why?",
+      answers: [
+        { text: "max_random_count only applies in RANDC mode", correct: false, feedback: "The count constraint applies in every mode." },
+        { text: "The library was never randomized, so sequence_count kept its initial value of 10", correct: true, feedback: "Right. min and max only constrain sequence_count when randomize() runs (§14.4.4.6). Call lib.randomize() and check it, or set sequence_count = 3 directly." },
+        { text: "A default_sequence knob overrode the values", correct: false, feedback: "Those knobs are read in pre_randomize(), which never ran here, and nothing set them." },
+        { text: "UVM_SEQ_LIB_RAND always runs at least 10 members", correct: false, feedback: "There is no such minimum; RAND runs exactly sequence_count picks." }
+      ],
+      explanation: "sequence_count is a rand field with an initializer of 10 and a constraint to [min_random_count:max_random_count]. Constraints act only during randomize(), so a library started without randomization runs 10 picks whatever min and max say.",
+      objective: 4
+    },
+    {
+      question: "A test sets lib.selection_mode = UVM_SEQ_LIB_ITEM, calls lib.randomize(), then lib.start(agt.sqr). The log shows UVM_ERROR [SEQLIB/VIRT_SEQ] ... Using UVM_SEQ_LIB_RAND mode, and the library runs member sequences. What is the fix?",
+      answers: [
+        { text: "Call lib.set_sequencer(agt.sqr) before lib.randomize()", correct: true, feedback: "Right. uvm-core checks ITEM mode in pre_randomize(); at that moment the library had no sequencer, so it fell back to RAND. Giving it the sequencer first lets the check pass." },
+        { text: "Start the library on a virtual sequencer instead", correct: false, feedback: "ITEM mode needs a sequencer of the library's request type; a virtual sequencer makes the check fail for the same reason." },
+        { text: "Register at least one member with the library", correct: false, feedback: "Members are irrelevant in ITEM mode, and this message is about the sequencer, not the member list." },
+        { text: "Use UVM_SEQ_ARB_RANDOM on the sequencer", correct: false, feedback: "Arbitration mode has nothing to do with the library's selection mode check." }
+      ],
+      explanation: "In uvm-core 2020.3.1, pre_randomize() calls m_get_config(), which switches ITEM mode to RAND with SEQLIB/VIRT_SEQ when m_sequencer is null or not a uvm_sequencer of the request type. In the usual create, randomize, start pattern the sequencer is set only by start(), too late. Set it first, or skip randomization and set sequence_count.",
+      objective: 4
+    },
+    {
+      question: "A sequence raises an objection in pre_body() and drops it in post_body(). Started by a test it works; as a library member the phase ends while it is still sending items. Why?",
+      answers: [
+        { text: "Library members cannot use objections at all", correct: false, feedback: "They can; they just need hooks that run." },
+        { text: "The library kills members at the end of each pick", correct: false, feedback: "The library waits for each member's start() to return before the next pick." },
+        { text: "The library starts members with call_pre_post = 0, so pre_body() and post_body() never run", correct: true, feedback: "Right. Use pre_start() and post_start(), which run in every start style (B.3.1.3, §14.2.3.1)." },
+        { text: "pre_body() runs only for sequences with priority above 100", correct: false, feedback: "Priority has nothing to do with hooks; call_pre_post alone decides." }
+      ],
+      explanation: "uvm-core's library runs each member with `uvm_rand_send, which starts it with the library as parent, priority -1 and call_pre_post = 0. Anything a sequence does in pre_body() or post_body() is therefore skipped under a library.",
+      objective: 4
+    },
+    {
+      question: "A test needs register writes on the configuration agent and data traffic on the data agent at the same time, with a random choice of data scenario. Which structure fits?",
+      answers: [
+        { text: "One library holding both the register and the data sequences, started on the data agent's sequencer", correct: false, feedback: "A library runs one member at a time on the one sequencer it was started on; it cannot drive two agents at once." },
+        { text: "A virtual sequence that forks the register sequence on the configuration sequencer and a data library (or a randomized data sequence) on the data sequencer", correct: true, feedback: "Right. Concurrency across agents is a virtual sequence's job; a library can still supply the random data mix on its own sequencer." },
+        { text: "A library in RANDC mode, so the two kinds of scenario alternate", correct: false, feedback: "Alternating is not concurrency, and the members would still all run on one sequencer." },
+        { text: "Two members in one library with priority 300 and 100", correct: false, feedback: "Members run one after another, and priority only matters between sequences competing at the same sequencer." }
+      ],
+      explanation: "A library is a serial random mix on one sequencer. Overlapping traffic on several agents needs a virtual sequence that starts sub-sequences on each agent's sequencer, possibly including a library on one of them.",
+      objective: 5
+    },
+    {
+      question: "A background traffic sequence runs on the same sequencer as your library, and its items interleave with the library's members. You want the library's whole run to be uninterrupted. What works?",
+      answers: [
+        { text: "A wrapper sequence calls lock(), starts the library with lib.start(m_sequencer, this), then calls unlock()", correct: true, feedback: "Right. The members are descendants of the lock holder, so the lock does not block them, while the background sequence waits (§14.2.5.5, §15.3.2.2)." },
+        { text: "Call grab() in the first member, because grab() and lock() are the same thing", correct: false, feedback: "They are not the same: a grab request goes to the front of the arbitration queue, a lock request waits its turn (§14.2.5.5, §14.2.5.6). And a lock taken by one member covers only that member, whose children the later members are not." },
+        { text: "Start the library with priority 1000", correct: false, feedback: "The default arbitration mode, UVM_SEQ_ARB_FIFO, ignores priority; even under WEIGHTED, a higher priority only wins more often, not always." },
+        { text: "Set the library's selection_mode to UVM_SEQ_LIB_RANDC", correct: false, feedback: "The selection mode chooses the next member; it has no effect on other sequences at the sequencer." }
+      ],
+      explanation: "Exclusive access is a lock held by an ancestor of every member. Priority changes the odds only under priority-aware modes, grab is a lock that jumps the queue rather than a synonym, and selection mode is unrelated to arbitration.",
+      objective: 5
+    }
+  ]}
+/>
+
+### Flashcards
+
+The deck for this lesson covers registration, the four modes, counts, member hooks, biasing, the log messages and when not to use a library. It follows below, under "Reinforce the essentials".
+
+### Kata: build and bias a library
+
+**Task.** Start from the Make It Work file.
+1. **Predict, then run.** Change `min_random_count` and `max_random_count` to 9. Predict the `SEQLIB/DSTRB` counts.
+2. **Bias.** Add a USER-mode `select_sequence()` to `mem_seq_lib` that runs `err_seq` three times as often as each other member. Change the test to `UVM_SEQ_LIB_USER` with a count of 50, run with `+UVM_VERBOSITY=UVM_HIGH`, and predict the counts before you look.
+3. **Break it.** Remove the `select_sequence()` override but keep USER mode. Predict the counts again.
+
+<details>
+<summary>Worked solution</summary>
+
+1. **Nine picks in RANDC** are three full cycles, so `SEQLIB/DSTRB` shows 3 for each of `err_seq`, `rd_seq` and `wr_seq`.
+2. **The override** is the one from the mental model, added to `mem_seq_lib`:
+
+```systemverilog
+// snippet: add to class mem_seq_lib
+virtual function int unsigned select_sequence(int unsigned max);
+  int unsigned w[$];
+  int unsigned total, pick;
+  foreach (sequences[i])
+    w.push_back(sequences[i].get_type_name() == "err_seq" ? 3 : 1);
+  foreach (w[i]) total += w[i];
+  pick = $urandom_range(total - 1);
+  foreach (w[i]) begin
+    if (pick < w[i]) return i;
+    pick -= w[i];
+  end
+  return 0;
+endfunction
+```
+
+and in `lib_test::run_phase`:
+
+```systemverilog
+// snippet: replaces the three field assignments in lib_test::run_phase
+lib.selection_mode   = UVM_SEQ_LIB_USER;
+lib.min_random_count = 50;
+lib.max_random_count = 50;
+```
+
+The weights are 3, 1 and 1 out of 5, so expect about 30 `err_seq` and about 10 each of `rd_seq` and `wr_seq`, for example `'{"err_seq":31, "rd_seq":9, "wr_seq":10}` (illustrative; the exact numbers depend on the seed, and the total is always 50).
+
+3. **Without the override**, USER mode is round robin by index: 50 picks over 3 members give 17, 17 and 16. The two members at indexes 0 and 1 get 17 each; which members those are depends on registration order, which is not defined.
+
+**How to check yourself.** The `SEQLIB/START` line must say `50 iterations in mode UVM_SEQ_LIB_USER`. If it says 10, the library was not randomized; if it says `UVM_SEQ_LIB_RAND`, the mode assignment did not happen before `randomize()`.
+
+</details>
+
+### Debug challenge: three library logs
+
+Each log comes from a variation of the Make It Work test. Name the cause and the fix before you open the answer.
+
+**Log A**
+```text
+UVM_ERROR … @ 0: uvm_test_top.agt.sqr@@lib [SEQLIB/NOSEQS] Sequence library does not contain any sequences. Did you forget to call init_sequence_library() in the constructor?
+```
+
+**Log B** (the test sets `min_random_count = 3` and `max_random_count = 3`)
+```text
+UVM_INFO … @ 0: uvm_test_top.agt.sqr@@lib [SEQLIB/START] Starting sequence library mem_seq_lib in unknown phase: 10 iterations in mode UVM_SEQ_LIB_RANDC
+```
+
+**Log C** (the test sets `selection_mode = UVM_SEQ_LIB_ITEM`)
+```text
+UVM_ERROR … @ 0: reporter@@lib [SEQLIB/VIRT_SEQ] selection_mode cannot be UVM_SEQ_LIB_ITEM when running as a virtual sequence. Using UVM_SEQ_LIB_RAND mode
+UVM_INFO … @ 0: uvm_test_top.agt.sqr@@lib [SEQLIB/START] Starting sequence library mem_seq_lib in unknown phase: 6 iterations in mode UVM_SEQ_LIB_RAND
+```
+
+<details>
+<summary>Answers</summary>
+
+- **Log A.** `mem_seq_lib::new()` lost its `init_sequence_library()` call, so the object's member list is empty. If the call is there, check that each member's macro names `mem_seq_lib` and that the member classes are compiled. Fix: call `init_sequence_library()` after `super.new(name)`.
+- **Log B.** The test deleted `lib.randomize()`, so `sequence_count` kept its initial value 10. Fix: randomize the library and check the result, or set `lib.sequence_count = 3`.
+- **Log C.** `lib.randomize()` ran before the library had a sequencer. uvm-core checks ITEM mode in `pre_randomize()`, found `m_sequencer` null and switched to RAND, so members ran instead of items. The first line shows `reporter@@lib` instead of `uvm_test_top.agt.sqr@@lib` because a sequence that has no sequencer yet reports through the top of the hierarchy: one more clue that the sequencer was missing. Fix: `lib.set_sequencer(agt.sqr)` before `lib.randomize()`.
+
+</details>
+
+## References & Next Topics
+
+**Primary sources**
+- IEEE 1800.2-2020 §14.4 `uvm_sequence_library`: §14.4.1 class declaration, §14.4.2 example, §14.4.3 `new`, §14.4.4.1 to §14.4.4.10 sequence selection (`selection_mode`, `min_random_count`, `max_random_count`, `get_num_sequences_executed`, `sequences_executed`, `sequence_count`, `select_rand`, `select_randc`, `select_sequence`, `get_sequence`), §14.4.5.1 to §14.4.5.6 sequence registration.
+- IEEE 1800.2-2020 §14.2.2.2 `get_randomize_enabled`; §14.2.3.1 `start`; §14.2.4.2 `set_starting_phase`; §14.2.5.5 `lock`; §14.2.5.6 `grab`; §14.1.2.6 `set_sequencer`; §15.3.2.2 `is_child`; §15.3.2.19 `set_arbitration`; §15.3.5 default sequence.
+- IEEE 1800.2-2020 Annex B.3.1.3 `` `uvm_rand_send ``; Annex B.3.2.1 `` `uvm_add_to_seq_lib ``; Annex B.3.2.2 `` `uvm_sequence_library_utils ``; Annex F.2.4.3 `uvm_sequence_lib_mode`; Annex G.2.9 `+uvm_set_default_sequence`.
+- IEEE 1800-2023 §10.5 variable declaration assignment (static initialization); §18.4.2 `randc`; §18.6.2 `pre_randomize()`; §18.11 inline random variable control; §18.13.2 `$urandom_range()`; §18.14.3 object stability.
+- uvm-core 2020.3.1 (uvm-core impl.): `src/seq/uvm_sequence_library.svh` (`body()`, `execute()`, `m_get_config()`, `uvm_sequence_library_cfg`), `src/macros/uvm_sequence_defines.svh` (`` `uvm_add_to_seq_lib ``, `` `uvm_sequence_library_utils ``, `` `uvm_rand_send ``), `src/seq/uvm_sequencer_base.svh` (`start_phase_sequence`), `src/base/uvm_object_globals.svh` (`uvm_sequence_lib_mode`), `src/base/uvm_root.svh` (`+uvm_set_default_sequence`).
+
+**Prerequisites:** [Sequencer Arbitration](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/sequence-arbitration) for priorities and locks; [I-UVM-3A: Basic UVM Sequences and Items](/curriculum/T2_Intermediate/I-UVM-3A_Fundamentals/index) for `start()`, its hooks and objections; [I-SV-2A: Constrained Randomization Fundamentals](/curriculum/T2_Intermediate/I-SV-2A_Constrained_Randomization_Fundamentals/index) for `randc` and constraints.
+
+**Related**
+- [I-UVM-1B: The UVM Factory](/curriculum/T2_Intermediate/I-UVM-1B_The_UVM_Factory/index): type handles and overrides, which decide what a library creates.
+- [I-UVM-2C: Configuration and Resources](/curriculum/T2_Intermediate/I-UVM-2C_Configuration_and_Resources/index): the configuration database behind default sequences and the library's knobs.
+- [Layered Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/layered-sequences) and [Virtual Sequences](/curriculum/T2_Intermediate/I-UVM-3B_Advanced_Sequencing_and_Layering/virtual-sequences): ordered and concurrent stimulus, where a library does not fit.
+- [E-PSS-1: Portable Stimulus Standard](/curriculum/T4_Expert/E-PSS-1_Portable_Stimulus_Standard/index): model-based scenario selection beyond a library.
+
+<NextLesson />

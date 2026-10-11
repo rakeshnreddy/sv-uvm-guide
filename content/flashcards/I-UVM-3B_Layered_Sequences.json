@@ -1,1 +1,67 @@
-[]
+[
+  {
+    "id": "iuvm3b-layer-1",
+    "question": "What are the two meanings of \"layering\" in UVM?",
+    "answer": "Sequence layering: parent sequences start child sequences of the same item type, for example atomic sequences inside a scenario sequence. Protocol layering: a translation sequence carries one protocol's items inside another protocol's items, for example packets inside frames."
+  },
+  {
+    "id": "iuvm3b-layer-2",
+    "question": "When do you choose protocol layering instead of sequence layering?",
+    "answer": "When the stimulus is a different protocol that travels inside the one your agent drives (packets in frames, commands on a serial link). Use sequence layering when it is the same protocol at a higher level of abstraction."
+  },
+  {
+    "id": "iuvm3b-layer-3",
+    "question": "What does `child.start(m_sequencer, this)` give the child sequence?",
+    "answer": "The parent's sequencer, the parent's priority (by default), the parent's `pre_do`/`mid_do`/`post_do` calls and a full name nested under the parent. It is also not blocked by a `lock()` its parent holds."
+  },
+  {
+    "id": "iuvm3b-layer-4",
+    "question": "Inside a sequence, `req.randomize() with { addr == addr; }`. What does the right-hand `addr` mean?",
+    "answer": "The item's own `addr`: unqualified names are looked up in the randomized object first, so the constraint is always true. Write `addr == local::addr` to mean the sequence's field (IEEE 1800-2023 §18.7.1)."
+  },
+  {
+    "id": "iuvm3b-layer-5",
+    "question": "A scenario sequence calls `lock()` and then starts a child with `wr.start(m_sequencer)`, without `this`. What happens?",
+    "answer": "A deadlock. Without a parent the child is a root sequence, so the parent's lock blocks it, and the parent waits inside `wr.start()` forever."
+  },
+  {
+    "id": "iuvm3b-layer-6",
+    "question": "In protocol layering, what plays the upper layer's driver?",
+    "answer": "A translation sequence that runs on the lower agent's sequencer. It calls `get_next_item()` on the driverless upper sequencer, sends lower items with `start_item()`/`finish_item()`, then calls `item_done()` on the upper sequencer."
+  },
+  {
+    "id": "iuvm3b-layer-7",
+    "question": "When does an upper-layer sequence's `finish_item()` return in a layered stack?",
+    "answer": "When the translation sequence calls `item_done()` on the upper sequencer. Call it after the last lower item for that upper item has completed, so `finish_item()` still means \"delivered\"."
+  },
+  {
+    "id": "iuvm3b-layer-8",
+    "question": "Why should a translation sequence not pull with `ip_sqr.get(pkt)`?",
+    "answer": "`get()` calls `item_done()` at once (IEEE 1800.2-2020 §15.5.2.6), so the upper sequence's `finish_item()` returns before any lower item is sent. The upper layer then runs ahead of the wire."
+  },
+  {
+    "id": "iuvm3b-layer-9",
+    "question": "Does an endless translation sequence keep the test alive?",
+    "answer": "No. Only objections keep a phase alive; when the test drops its objection the run phase ends and its processes are killed. Stop the layer explicitly first, for example with `xlate.kill()` from `phase_ready_to_end()`."
+  },
+  {
+    "id": "iuvm3b-layer-10",
+    "question": "An upper-layer sequence is stuck in `start_item()`, no lower-layer item is ever driven, and the run ends with `PH_TIMEOUT`. Most likely cause?",
+    "answer": "Nobody started the translation sequence, so nothing calls `get_next_item()` on the upper sequencer and its arbitration never grants. Start it in the layering environment's `run_phase`."
+  },
+  {
+    "id": "iuvm3b-layer-11",
+    "question": "Where do upper-layer checks and coverage belong in a layered testbench?",
+    "answer": "In subscribers of a layered monitor that rebuilds upper items from the lower items actually observed. Sequences only know what they tried, and the monitor must publish a new object per rebuilt item."
+  },
+  {
+    "id": "iuvm3b-layer-12",
+    "question": "What must you do before restarting a protocol layer after a mid-test reset?",
+    "answer": "Call `stop_sequences()` on the upper and the lower sequencer (§15.3.2.14). Otherwise the upper sequencer still has an item outstanding, and the new translation sequence logs \"Get_next_item called twice…\" and resends the old item."
+  },
+  {
+    "id": "iuvm3b-layer-13",
+    "question": "Two translation sequences share one lower sequencer in `UVM_SEQ_ARB_WEIGHTED` mode, and the IP one has the higher priority. Does it always win the grant?",
+    "answer": "No. `UVM_SEQ_ARB_WEIGHTED` grants randomly by weight, so higher priority only wins more often; only the `STRICT` modes always grant the highest priority first (IEEE 1800.2-2020 Annex F.2.4.1)."
+  }
+]

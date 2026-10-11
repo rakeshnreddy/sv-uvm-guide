@@ -1,1 +1,72 @@
-[]
+[
+  {
+    "id": "i-uvm-3b-irq-1",
+    "question": "An interrupt monitor loops on `@(vif.mon_cb iff vif.mon_cb.irq)`. Why does one level interrupt create several transactions?",
+    "answer": "`iff` filters each clocking-block event; it does not wait for `irq` to change (IEEE 1800-2023 §9.4.2.3). While a level interrupt stays high until the clear write lands, every clock edge passes, so the loop publishes once per clock. Publish on the rising edge instead: `if (vif.mon_cb.irq && !prev_irq)`."
+  },
+  {
+    "id": "i-uvm-3b-irq-2",
+    "question": "What can an edge-detecting interrupt monitor miss, and how do you cover it?",
+    "answer": "On a level line shared by several sources, a source that fires while the line is already high makes no new rising edge. Have the service routine read the status register after each clear and loop until nothing is pending, or check that `irq` falls within N clocks of the clear."
+  },
+  {
+    "id": "i-uvm-3b-irq-3",
+    "question": "Why does an interrupt subscriber's `write()` use `try_put()` and not `put()`, even on an unbounded mailbox?",
+    "answer": "`write()` is a function, and a function shall not call a task such as mailbox `put()` (IEEE 1800-2023 §13.4), whether or not it would block. `try_put()` is a function and never fails on an unbounded mailbox (§15.4.4). `uvm_tlm_analysis_fifo::write()` already does exactly this."
+  },
+  {
+    "id": "i-uvm-3b-irq-4",
+    "question": "Why must the interrupt monitor create a new `irq_tr` for every interrupt?",
+    "answer": "`uvm_tlm_analysis_fifo` and most subscribers store the handle passed to `write()` without copying it. Reusing one object would make every queued entry point at the same object, which the next interrupt overwrites."
+  },
+  {
+    "id": "i-uvm-3b-irq-5",
+    "question": "Why does an interrupt handler wait on a queue rather than a `uvm_event`?",
+    "answer": "A `uvm_event` does not count triggers: `wait_trigger()` returns only for a trigger that happens while the process waits (IEEE 1800.2-2020 §10.1.1.2.4), and only the last trigger's data is kept. An interrupt that fires while the handler is busy is lost. A `uvm_tlm_analysis_fifo` or mailbox keeps every interrupt, in order."
+  },
+  {
+    "id": "i-uvm-3b-irq-6",
+    "question": "A recovery sequence calls `grab()` while background traffic runs on the same sequencer. Which item does the driver get next?",
+    "answer": "The item already on the bus finishes first; `grab()` never aborts it. At the driver's next request only the grabber and its children can be granted. If another sequence already holds a `lock()` or grab, the grab waits until that is released."
+  },
+  {
+    "id": "i-uvm-3b-irq-7",
+    "question": "Are `grab()` and `lock()` the same in uvm-core 2020.3.1?",
+    "answer": "Almost: both are granted at once when no other lock or grab is held, and both block everyone except the holder and its children. They differ when a lock is already held: a grab request sits at the front of the queue, so it is granted before every waiting lock."
+  },
+  {
+    "id": "i-uvm-3b-irq-8",
+    "question": "A service virtual sequence grabs `cfg_sqr`. Why must it start the recovery with `clr.start(cfg_sqr, this)`?",
+    "answer": "Only the grabber and its children pass a grab (`is_blocked()` uses `is_child()`). Without `this`, `clr` is a new root, so the parent's own grab blocks it while the parent waits in `clr.start()`: a silent deadlock until the run-phase timeout."
+  },
+  {
+    "id": "i-uvm-3b-irq-9",
+    "question": "What happens when a virtual sequence started with `start(null)` calls a bare `grab()`?",
+    "answer": "It has no sequencer of its own, so uvm-core stops with `UVM_FATAL [GRAB] Null m_sequencer reference`. A virtual sequence must name the agent sequencer: `grab(cfg_sqr)` and later `ungrab(cfg_sqr)`."
+  },
+  {
+    "id": "i-uvm-3b-irq-10",
+    "question": "What does a forgotten `ungrab()` cost?",
+    "answer": "Every other sequence on that sequencer is blocked, with no message, until the grabbing sequence ends. Then the sequencer removes the grab and reports `UVM_ERROR [SEQFINERR]`; if the sequence never ends, the others starve for the rest of the test."
+  },
+  {
+    "id": "i-uvm-3b-irq-11",
+    "question": "How is the endless interrupt service sequence started and stopped in a test?",
+    "answer": "Start it with `fork svc.start(null); join_none` and never let it hold the objection. At the end, wait until it is not mid-recovery (`busy == 0`), call `svc.kill()`, then drop the objection. `join_none` does not keep it alive: when the objection drops, the run phase ends and its processes die."
+  },
+  {
+    "id": "i-uvm-3b-irq-12",
+    "question": "Can a high priority replace `grab()` for an interrupt recovery?",
+    "answer": "No. The default `UVM_SEQ_ARB_FIFO` mode ignores priority, `UVM_SEQ_ARB_WEIGHTED` is random by weight rather than strict, and no mode gives exclusivity: a held lock still blocks the recovery, and other items can interleave with it."
+  },
+  {
+    "id": "i-uvm-3b-irq-13",
+    "question": "In an interrupt scheme run from a virtual sequencer, does the virtual sequencer decide that the clear goes before background traffic?",
+    "answer": "No. A virtual sequencer only holds handles to agent sequencers and arbitrates nothing across them. The order comes from the service sequence's `body()` (its `grab(cfg_sqr)`) and from arbitration on `cfg_sqr` itself."
+  },
+  {
+    "id": "i-uvm-3b-irq-14",
+    "question": "An interrupt service sequence holds a grab and calls `regmodel.irq_status.read(status, value)`. Why does it hang, and what is the fix?",
+    "answer": "Without `.parent(this)`, uvm-core 2020.3.1 starts the bus item from a proxy `default_parent_seq`, which is not the grabber's child, so the grab blocks it. Pass `.parent(this)` so the item comes from the grabbing sequence."
+  }
+]

@@ -1,27 +1,87 @@
 [
   {
     "id": "uvm4-register",
-    "question": "What two actions must you perform before an override can succeed?",
-    "answer": "Register the class with `uvm_*_utils` and construct it through `::type_id::create` so the factory can intercept creation." 
+    "question": "What two things must be true before a factory override can change the class of an object?",
+    "answer": "The original and override classes are registered with a `uvm_*_utils` macro, and the object is built with `T::type_id::create(...)`, not `new()`. `new()` calls the constructor directly, so the factory is never asked."
   },
   {
     "id": "uvm4-type-vs-inst",
-    "question": "When would you choose a type override instead of an instance override?",
-    "answer": "Use a type override when every instantiation of a base class should swap to a new implementation across the entire environment." 
+    "question": "When do you choose a type override instead of an instance override?",
+    "answer": "When every object of the original class should become the override class, wherever it is created. A type override applies only where no instance override matches; use an instance override to change one place, such as one agent's driver."
   },
   {
     "id": "uvm4-instance",
-    "question": "How do you limit an override to a single component path?",
-    "answer": "Call `set_inst_override_by_type` (or `set_inst_override`) with the target path, optionally using wildcards like `*.env.drv`." 
+    "question": "How do you limit an override to agent 0's driver from a test, and which forms take a relative path?",
+    "answer": "`base_driver::type_id::set_inst_override(err_driver::get_type(), \"env.agt0.drv\", this)` registers `uvm_test_top.env.agt0.drv`. Relative paths are taken by that shortcut with a parent argument and by `uvm_component`'s `set_inst_override_by_type(relative_path, orig, ovr)` and by-name `set_inst_override(relative_path, orig_name, ovr_name)`; the factory's own methods and the command line take absolute paths, and `*` or `?` wildcards are allowed in all of them."
   },
   {
     "id": "uvm4-debug",
-    "question": "Which factory utility helps you confirm the active override mappings?",
-    "answer": "`uvm_factory::get().print()` (or `uvm_top.print_topology()`) dumps the current type-to-implementation assignments." 
+    "question": "Which two prints tell you whether an override took effect, and what does each show?",
+    "answer": "`uvm_factory::get().print()` lists the instance and type overrides the factory holds (what you asked for). `uvm_root::get().print_topology()` lists the component tree with each component's actual class (what you got); it shows no overrides. Call both in `end_of_elaboration_phase`."
   },
   {
     "id": "uvm4-ordering",
-    "question": "When must overrides be applied relative to component construction?",
-    "answer": "Before the target component's `build_phase` runs—typically in the test or a virtual sequence prior to calling `run_test()`." 
+    "question": "When must an override be registered relative to the object it should change?",
+    "answer": "Before the factory creates that object: the lookup happens inside `create`. For components, register in the test's `build_phase` (before `env` is created is the safe habit) or in `tb_top` before `run_test()`; an override never changes an object that already exists, so one set in `connect_phase` or in a sequence reaches no component."
+  },
+  {
+    "id": "i-uvm-1b-1",
+    "question": "What does `` `uvm_component_utils(mock_driver) `` declare inside the class?",
+    "answer": "`typedef uvm_component_registry #(mock_driver, \"mock_driver\") type_id;` (the proxy class), a static `get_type()` returning the proxy, a virtual `get_object_type()`, and the type name returned by `get_type_name()`. The proxy is registered with the factory; no `mock_driver` is built."
+  },
+  {
+    "id": "i-uvm-1b-2",
+    "question": "In what order does the factory check overrides when `create` runs?",
+    "answer": "Instance overrides first, in registration order, and the first matching path wins, however general it is. Only if none matches does it use the type override for that class. If the result is a different class, it repeats the lookup for that class."
+  },
+  {
+    "id": "i-uvm-1b-3",
+    "question": "`base_driver -> mock_driver` and `mock_driver -> err_driver` are both registered as type overrides. What does a request for `base_driver` build, and does the order of the two calls matter?",
+    "answer": "`err_driver`: the factory follows the chain at `create` time, so the call order does not matter. The standard makes a chain that loops back to a class already visited an error (IEEE 1800.2-2020 §8.3.1.5); uvm-core 2020.3.1 may instead recurse until the simulator fails, so never register a loop."
+  },
+  {
+    "id": "i-uvm-1b-4",
+    "question": "What does the `replace` argument of a type override do?",
+    "answer": "There is one type override per original class. With `replace = 1` (the default) a later override for the same class replaces the earlier one (uvm-core logs `TPREGR`); with `replace = 0` the later call is ignored (`TPREGD`)."
+  },
+  {
+    "id": "i-uvm-1b-5",
+    "question": "Write the two factory override plusargs, and say how their names and paths are interpreted.",
+    "answer": "`+uvm_set_type_override=<req_type>,<override_type>[,<replace>]` and `+uvm_set_inst_override=<req_type>,<override_type>,<full_inst_path>` (IEEE 1800.2-2020 G.2.7). They are by-name overrides, so they need type names, and the path is absolute, such as `uvm_test_top.env.agt0.drv`. uvm-core applies them in `uvm_root`'s `build_phase`, before the test's `build_phase`."
+  },
+  {
+    "id": "i-uvm-1b-6",
+    "question": "Which macros register a parameterized class and an abstract (`virtual`) class, and what does each change?",
+    "answer": "`uvm_component_param_utils` / `uvm_object_param_utils` register without a type name, so by-name lookups, `+UVM_TESTNAME` and the override plusargs cannot find the class; by-type overrides still work, and `factory.print()` shows `<unknown>`. `uvm_component_abstract_utils` / `uvm_object_abstract_utils` use an abstract registry, so the class must be overridden with a concrete subclass before it is created."
+  },
+  {
+    "id": "i-uvm-1b-7",
+    "question": "What do `UVM_WARNING [TYPDUP]` and `UVM_FATAL [FCTTYP]` tell you about an override?",
+    "answer": "`TYPDUP` (\"Original and override type arguments are identical\"): the override class has no registration macro, so its `get_type()` is its parent's and the override does nothing. `FCTTYP`: the override class does not extend the requested class, so the `$cast` inside `type_id::create` failed."
+  },
+  {
+    "id": "i-uvm-1b-8",
+    "question": "Why can an instance override miss an object created with `my_txn::type_id::create(\"tr\")`, and how do you fix it?",
+    "answer": "With no parent and no `contxt`, the object's path is just `tr`, which no `uvm_test_top...` pattern matches. Pass a context: `create(\"tr\", this)` in a component, or `create(\"tr\", , get_full_name())` in a sequence."
+  },
+  {
+    "id": "i-uvm-1b-9",
+    "question": "Why does `set_inst_override(err_driver::get_type(), \"env.agt0.drv\", this);` fail to compile inside a test?",
+    "answer": "Unqualified inside a component, `set_inst_override` is `uvm_component`'s by-name method, which takes three strings (relative path, original type name, override type name). Qualify the shortcut, `base_driver::type_id::set_inst_override(...)`, or use `set_inst_override_by_type(\"env.agt0.drv\", base_driver::get_type(), err_driver::get_type())`."
+  },
+  {
+    "id": "i-uvm-1b-10",
+    "question": "What does `uvm_factory::get()` return, and where does it come from?",
+    "answer": "The one factory of the simulation, normally a `uvm_default_factory`. It is a convenience wrapper for `uvm_coreservice_t::get().get_factory()`; the core service is the singleton that also holds `uvm_root` and the report server (IEEE 1800.2-2020 §8.3.1.2.1, F.4.1.4.2)."
+  },
+  {
+    "id": "i-uvm-1b-11",
+    "question": "Why can't an abstract (`virtual`) component use `` `uvm_component_utils ``, and what do you use instead?",
+    "answer": "That macro's proxy calls `new` on the class, and constructing an abstract class is a compile error (IEEE 1800-2023 §8.21). Use `` `uvm_component_abstract_utils(T) `` (or `` `uvm_object_abstract_utils(T) ``): its proxy never calls `new`, and a test must override the class with a concrete subclass; creating it with no override gives `CREATE_ABSTRACT_CMPNT` in uvm-core (IEEE 1800.2-2020 §8.2.5)."
+  },
+  {
+    "id": "i-uvm-1b-12",
+    "question": "How do you create an object whose class name is known only at run time, and what must you check?",
+    "answer": "`uvm_factory::get().create_object_by_name(name, parent_inst_path, inst_name)` (or `create_component_by_name`), IEEE 1800.2-2020 §8.3.1.5. Overrides apply as for `type_id::create`. The result is a base handle, so `$cast` it, and check for null first: an unknown, misspelled or parameterized class name returns null (uvm-core warns `BDTYP`)."
   }
 ]

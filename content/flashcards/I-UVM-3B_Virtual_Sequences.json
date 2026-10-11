@@ -1,1 +1,77 @@
-[]
+[
+  {
+    "id": "i-uvm-3b-vseq-1",
+    "question": "What does a virtual sequence send to a driver?",
+    "answer": "Nothing. Its `body()` starts child sequences on agent sequencers, and each child's items go to the sequencer passed to its `start()`. The virtual sequence never calls `start_item()` itself."
+  },
+  {
+    "id": "i-uvm-3b-vseq-2",
+    "question": "Does a virtual sequencer decide the order in which agents get traffic?",
+    "answer": "No. It only holds handles to the agent sequencers and forwards nothing. The order comes from the statements in the virtual sequence's `body()`."
+  },
+  {
+    "id": "i-uvm-3b-vseq-3",
+    "question": "Why do `c.start(cfg_sqr, this); d.start(data_sqr, this);` guarantee that no data item starts before configuration has finished?",
+    "answer": "`start()` returns only when the child's `body()` has finished, and `finish_item()` returns only after the driver's `item_done()` (IEEE 1800.2-2020 §14.2.3.1, §14.2.6.3). So `d.start()` begins after the last configuration `item_done()`."
+  },
+  {
+    "id": "i-uvm-3b-vseq-4",
+    "question": "In a virtual sequence, what does `fork c.start(...); d.start(...); join` guarantee?",
+    "answer": "Parallelism, not order: both children start at the same time, and `body()` continues when both have finished. Data can be driven while configuration is still being written."
+  },
+  {
+    "id": "i-uvm-3b-vseq-5",
+    "question": "A virtual sequence starts its children with `fork…join_none` and returns. The test objects around `vseq.start()`. What happens?",
+    "answer": "`vseq.start()` returns at 0 ns, the test drops its objection, and the run phase ends and kills the children before any item completes. `join_none` does not keep the test alive."
+  },
+  {
+    "id": "i-uvm-3b-vseq-6",
+    "question": "What is the risk of `fork…join_any` in a virtual sequence's `body()`?",
+    "answer": "It continues when the first branch finishes and leaves the others running. If `body()` then returns, the test can end mid-item; if you stop the losers with `disable fork`, it kills every descendant of the process unless the race sits inside its own `fork begin … end join` (IEEE 1800-2023 §9.6.3)."
+  },
+  {
+    "id": "i-uvm-3b-vseq-7",
+    "question": "Why can `wait fork` at the end of a virtual sequence's `body()` hang the test?",
+    "answer": "It waits for every immediate child process of the caller (IEEE 1800-2023 §9.6.1), including one that runs an endless background sequence. Stop background sequences with `kill()` instead, or isolate the forks you want to wait for."
+  },
+  {
+    "id": "i-uvm-3b-vseq-8",
+    "question": "How do you run a virtual sequence without a virtual sequencer?",
+    "answer": "Give the sequence its own handle fields (`cfg_sqr`, `data_sqr`), have the test copy the agent sequencer handles into them, and call `vseq.start(null)`. Every test that starts it must set the handles."
+  },
+  {
+    "id": "i-uvm-3b-vseq-9",
+    "question": "What does `vseq.start(null)` change compared with `vseq.start(env.vsqr)`?",
+    "answer": "The virtual sequence is not recorded and its full name has no component path, and `p_sequencer` would be null (uvm-core 2020.3.1). The objection rules do not change: either the test objects, or `set_starting_phase()` plus the automatic objection is used."
+  },
+  {
+    "id": "i-uvm-3b-vseq-10",
+    "question": "A child is started with a null sequencer handle, and either no parent or a parent that was started with `start(null)`. What does the log show?",
+    "answer": "`UVM_FATAL [SEQ] neither the item's sequencer nor dedicated sequencer has been supplied to start item in …`, at the child's first `start_item()`."
+  },
+  {
+    "id": "i-uvm-3b-vseq-11",
+    "question": "Inside a virtual sequence that runs on a virtual sequencer, a child is started with `d.start(null_handle, this)`. What happens?",
+    "answer": "uvm-core's `set_item_context()` gives the child its parent's sequencer, the virtual sequencer. No driver pulls from it, so `start_item()` never returns: a silent hang until `UVM_FATAL [PH_TIMEOUT]`, not an immediate fatal."
+  },
+  {
+    "id": "i-uvm-3b-vseq-12",
+    "question": "A test calls `vseq.set_automatic_phase_objection(1)` and then `vseq.start(env.vsqr)`. Why does the run phase end at 0 ns?",
+    "answer": "The automatic objection is raised on `get_starting_phase()`, which is null unless `set_starting_phase(phase)` was called (IEEE 1800.2-2020 §14.2.4.1–§14.2.4.4). Starting on a virtual sequencer supplies no starting phase."
+  },
+  {
+    "id": "i-uvm-3b-vseq-13",
+    "question": "`cfg_seq` (items of type `cfg_item`) is started on the data agent's sequencer by mistake. What happens?",
+    "answer": "It compiles, because `start()` takes any `uvm_sequencer_base`. At the first `finish_item()` uvm-core stops with `UVM_FATAL [SQRSNDREQCAST] send_request failed to cast sequence item`."
+  },
+  {
+    "id": "i-uvm-3b-vseq-14",
+    "question": "Sequential `start()` calls order the configuration and data handshakes. When does that still not mean \"the DUT was configured before data\"?",
+    "answer": "When the configuration driver calls `item_done()` before the write has completed (for example it uses `get()` or is pipelined), or when the DUT needs a response or settling time. Check the order at the pins with a monitor-fed checker."
+  },
+  {
+    "id": "i-uvm-3b-vseq-15",
+    "question": "A driver holds an item when its sequence is stopped. When must it still call `item_done()`, and when must it not?",
+    "answer": "After `seq.kill()` the item stays in the sequencer's request FIFO, so the driver finishes or cuts short the item and calls `item_done()` (a response is dropped with a warning). After `sqr.stop_sequences()` the FIFO is emptied, so calling `item_done()` fires `UVM_FATAL [SQRBADITMDN]` (uvm-core 2020.3.1)."
+  }
+]
